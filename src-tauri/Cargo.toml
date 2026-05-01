@@ -1,0 +1,38 @@
+[package]
+name = "marcel-ssh"
+version = "0.1.0"
+edition = "2021"
+description = "AI-Native SSH Client with Autonomous Agent Operations"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "^2", features = [] }
+
+[dependencies]
+tauri = { version = "^2", features = ["tray-icon"] }
+tauri-plugin-shell = "^2"
+serde = { version = "^1", features = ["derive"] }
+serde_json = "^1"
+tokio = { version = "^1", features = ["full"] }
+thiserror = "^2"
+uuid = { version = "^1", features = ["v4", "serde"] }
+log = "^0.4"
+env_logger = "^0.11"
+chrono = { version = "^0.4", features = ["serde"] }
+async-trait = "^0.1"
+russh = { version = "0.60", default-features = false, features = ["flate2", "ring", "rsa"] }
+zeroize = { version = "^1", features = ["derive"] }
+keyring = { version = "^3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
+reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls"] }
+futures = "^0.3"
+parking_lot = "^0.12"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
