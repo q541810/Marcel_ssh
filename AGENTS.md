@@ -190,7 +190,7 @@ pub enum RiskLevel {
 | `process_management` | 查看/管理远程进程 | Moderate |
 | `system_info` | 获取系统信息 | ReadOnly |
 
-### 4.4 安全沙箱
+### 4.4 安全
 
 ```
 ┌─────────────────────────────────────────┐
