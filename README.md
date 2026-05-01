@@ -1,93 +1,153 @@
-# Marcel SSH
+# Marcel SSH (玛瑟尔 SSH)
 
+> **AI 原生 SSH 客户端，具备自主 Agent 操作能力**
 
+---
 
-## Getting started
+## 快速开始
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+### 1. 安装依赖
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+双击运行：
 ```
-cd existing_repo
-git remote add origin http://4712c730fdfd/root/marcel-ssh.git
-git branch -M main
-git push -uf origin main
+install.cmd
 ```
 
-## Integrate with your tools
+或手动执行：
+```bash
+pnpm install
+```
 
-* [Set up project integrations](http://4712c730fdfd/root/marcel-ssh/-/settings/integrations)
+### 2. 启动应用
 
-## Collaborate with your team
+双击运行：
+```
+dev.cmd
+```
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+首次启动需要 1-2 分钟编译 Rust 后端，之后启动只需几秒。
 
-## Test and Deploy
+### 3. 仅预览前端 UI
 
-Use the built-in continuous integration in GitLab.
+如果只想在浏览器中查看界面（不启动完整应用）：
+```
+dev-frontend.cmd
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+然后打开 http://localhost:1420
 
-***
+---
 
-# Editing this README
+## 项目特色
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+- **智能助手驱动**：内置 AI Agent，可自主理解意图、规划操作、在远程服务器上执行命令序列
+- **三种操作模式**：手动模式 / 副驾驶模式 / 自主模式
+- **安全沙箱**：命令风险评估、黑名单过滤、路径保护、操作审计
+- **原生性能**：基于 Tauri 2 + Rust，打包体积 < 15MB，内存占用 < 80MB
 
-## Suggestions for a good README
+---
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## 技术栈
 
-## Name
-Choose a self-explaining name for your project.
+- **后端**：Rust + Tauri 2 + russh + tokio
+- **前端**：React 18 + TypeScript + Vite 6 + TailwindCSS 4
+- **终端**：xterm.js 5
+- **状态管理**：Zustand
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+---
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## 开发状态
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+**Phase 0 已完成**：
+- ✅ 项目脚手架搭建
+- ✅ 完整的模块架构（SSH / Agent / LLM / Config）
+- ✅ 安全沙箱实现（含 11 个单元测试）
+- ✅ 前端 UI 组件（终端 / 智能助手 / 连接管理）
+- ✅ 界面中文化
+- ✅ 构建验证通过（Rust + TypeScript）
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+**Phase 1 待实现**：
+- 🚧 真实 SSH 连接（russh 集成）
+- 🚧 PTY 通道与双向数据流
+- 🚧 LLM Provider 实现（OpenAI / Anthropic / Ollama）
+- 🚧 Agent 工具系统执行
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+---
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## 项目结构
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```
+marcel-ssh/
+├── src-tauri/          # Rust 后端
+│   ├── src/
+│   │   ├── ssh/        # SSH 连接管理
+│   │   ├── agent/      # Agent 运行时 + 工具系统 + 安全沙箱
+│   │   ├── llm/        # LLM Provider 抽象
+│   │   ├── config/     # 配置与持久化
+│   │   └── commands/   # Tauri IPC 命令
+│   └── Cargo.toml
+│
+├── src/                # React 前端
+│   ├── components/
+│   │   ├── terminal/   # 终端组件
+│   │   ├── agent/      # 智能助手面板
+│   │   ├── connection/ # 连接管理
+│   │   └── ui/         # 通用 UI 组件
+│   ├── hooks/          # useSSH, useAgent, useTerminal
+│   ├── stores/         # Zustand 状态管理
+│   └── lib/            # 类型定义 + Tauri IPC 封装
+│
+├── dev.cmd             # 启动脚本（完整应用）
+├── dev-frontend.cmd    # 启动脚本（仅前端预览）
+├── install.cmd         # 依赖安装脚本
+├── AGENTS.md           # 架构设计文档
+└── package.json
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+---
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## 命令参考
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+```bash
+# 开发模式（完整应用）
+dev.cmd
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+# 仅前端预览
+dev-frontend.cmd
 
-## License
-For open source projects, say how it is licensed.
+# 安装依赖
+install.cmd
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+# 手动命令
+pnpm install          # 安装依赖
+pnpm dev              # 启动 Vite dev server
+pnpm build            # 构建前端
+pnpm tauri dev        # 启动 Tauri 开发模式
+pnpm tauri build      # 打包生产版本
+
+# Rust 测试
+cd src-tauri
+cargo test            # 运行单元测试
+cargo check           # 类型检查
+cargo build --release # 发布构建
+```
+n## 系统要求
+
+- **Node.js** 18+ (推荐 LTS)
+- **Rust** 1.77+ (通过 [rustup.rs](https://rustup.rs) 安装)
+- **pnpm** 8+ (自动通过 install.cmd 安装)
+- **Windows 10/11** (需要 WebView2 运行时，通常已预装)
+
+---
+
+## 许可证
+
+MIT
+
+---
+
+## 相关文档
+
+- [AGENTS.md](./AGENTS.md) - 完整架构设计文档
+- [Tauri 文档](https://v2.tauri.app/)
+- [xterm.js 文档](https://xtermjs.org/)

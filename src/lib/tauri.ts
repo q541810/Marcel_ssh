@@ -1,0 +1,114 @@
+import { invoke } from '@tauri-apps/api/core';
+import type { ConnectionConfig, SavedConnection, AppSettings } from './types';
+
+// SSH commands
+
+export async function sshConnect(config: ConnectionConfig): Promise<string> {
+  return invoke<string>('ssh_connect', { config });
+}
+
+export async function sshDisconnect(sessionId: string): Promise<void> {
+  return invoke('ssh_disconnect', { sessionId });
+}
+
+export async function sshSendInput(sessionId: string, data: string): Promise<void> {
+  return invoke('ssh_send_input', { sessionId, data });
+}
+
+export async function sshResize(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke('ssh_resize', { sessionId, cols, rows });
+}
+
+export async function sshListSessions(): Promise<string[]> {
+  return invoke<string[]>('ssh_list_sessions');
+}
+
+// Agent commands
+
+export async function agentStartTask(
+  sessionId: string,
+  prompt: string,
+  mode: string,
+  history: { role: string; content: string }[],
+): Promise<string> {
+  return invoke<string>('agent_start_task', { sessionId, prompt, mode, history });
+}
+
+export async function agentStopTask(taskId: string): Promise<void> {
+  return invoke('agent_stop_task', { taskId });
+}
+
+export async function agentApproveOperation(
+  taskId: string,
+  operationId: string,
+): Promise<void> {
+  return invoke('agent_approve_operation', { taskId, operationId });
+}
+
+export async function agentRejectOperation(
+  taskId: string,
+  operationId: string,
+): Promise<void> {
+  return invoke('agent_reject_operation', { taskId, operationId });
+}
+
+export interface CommandCheckResult {
+  allowed: boolean;
+  requiresConfirmation: boolean;
+  riskLevel: 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
+  reason: string;
+}
+
+/**
+ * Evaluate a command against the current agent-mode settings (server-side).
+ * Useful for "test command" UI in the Settings page or pre-flight checks.
+ */
+export async function agentCheckCommand(
+  command: string,
+  mode: 'chat' | 'agent' | 'auto',
+): Promise<CommandCheckResult> {
+  return invoke<CommandCheckResult>('agent_check_command', { command, mode });
+}
+
+// Config commands
+
+export async function getConnections(): Promise<SavedConnection[]> {
+  return invoke<SavedConnection[]>('config_get_connections');
+}
+
+export async function saveConnection(connection: SavedConnection): Promise<string> {
+  return invoke<string>('config_save_connection', { connection });
+}
+
+export async function deleteConnection(id: string): Promise<void> {
+  return invoke('config_delete_connection', { id });
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>('config_get_settings');
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  return invoke('config_save_settings', { settings });
+}
+
+// Password / keychain commands
+
+export async function savePassword(
+  connectionId: string,
+  password: string,
+): Promise<void> {
+  return invoke('config_save_password', { connectionId, password });
+}
+
+export async function getPassword(connectionId: string): Promise<string | null> {
+  return invoke<string | null>('config_get_password', { connectionId });
+}
+
+export async function deletePassword(connectionId: string): Promise<void> {
+  return invoke('config_delete_password', { connectionId });
+}

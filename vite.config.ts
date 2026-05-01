@@ -1,0 +1,59 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { resolve } from "path";
+
+// https://v2.tauri.app/start/frontend/vite/
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "./src"),
+    },
+  },
+
+  // Prevent Vite from clearing the terminal so Tauri logs remain visible
+  clearScreen: false,
+
+  server: {
+    port: 1420,
+    strictPort: true,
+    // Tauri dev server expects the frontend on localhost
+    host: false,
+    // Optimize dev server performance
+    hmr: {
+      overlay: false,
+    },
+    watch: {
+      // Reduce file watching overhead
+      ignored: ['**/node_modules/**', '**/src-tauri/**'],
+    },
+  },
+
+  // Expose TAURI_* env vars to the client
+  envPrefix: ["TAURI_"],
+
+  build: {
+    // Tauri uses Chromium on Windows/Linux and WebKit on macOS
+    target: process.env.TAURI_PLATFORM === "windows" ? "chrome105" : "safari14",
+    // Produce sourcemaps for debug builds
+    sourcemap: !!process.env.TAURI_DEBUG,
+    // Minify for production
+    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split vendor chunks for caching
+          react: ["react", "react-dom"],
+          xterm: [
+            "@xterm/xterm",
+            "@xterm/addon-fit",
+            "@xterm/addon-web-links",
+            "@xterm/addon-webgl",
+          ],
+        },
+      },
+    },
+  },
+});
