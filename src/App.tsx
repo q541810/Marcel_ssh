@@ -96,34 +96,48 @@ export default function App() {
         {/* Far-left navigation rail (always visible) */}
         <NavRail active={navView} onChange={handleNavChange} />
 
-        {isSettingsView ? (
-          /* Settings view occupies the entire remaining area */
-          <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900">
-            <Settings />
+        {/* Sidebar — content depends on navView (hidden on settings) */}
+        <aside
+          className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
+          style={{
+            width: sidebarOpen && !isSettingsView ? '16rem' : '0rem',
+            borderRightWidth: sidebarOpen && !isSettingsView ? '1px' : '0px',
+            transition: 'width 200ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width 200ms cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
+          <div style={{ width: '16rem', height: '100%' }}>
+            {navView === 'sessions' && <ConnectionList />}
+            {navView === 'mcp' && <McpList />}
+          </div>
+        </aside>
+
+        {/* Center — Terminal area (always mounted, hidden behind settings) */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ display: isSettingsView ? 'none' : 'flex' }}>
+            <Terminal />
           </main>
-        ) : (
-          <>
-            {/* Sidebar — content depends on navView */}
-            {sidebarOpen && (
-              <aside className="w-64 flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden">
-                {navView === 'sessions' && <ConnectionList />}
-                {navView === 'mcp' && <McpList />}
-              </aside>
-            )}
 
-            {/* Center — Terminal area */}
-            <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              <Terminal />
-            </main>
+          {/* Settings view (overlays terminal area) */}
+          {isSettingsView && (
+            <div className="absolute inset-0 flex flex-col min-w-0 overflow-hidden bg-zinc-900">
+              <Settings />
+            </div>
+          )}
+        </div>
 
-            {/* Right panel — Agent */}
-            {agentPanelOpen && (
-              <aside className="w-80 flex-shrink-0 overflow-hidden">
-                <AgentPanel />
-              </aside>
-            )}
-          </>
-        )}
+        {/* Right panel — Agent (hidden on settings) */}
+        <aside
+          className="flex-shrink-0 overflow-hidden border-l border-zinc-800"
+          style={{
+            width: agentPanelOpen && !isSettingsView ? '20rem' : '0rem',
+            borderLeftWidth: agentPanelOpen && !isSettingsView ? '1px' : '0px',
+            transition: 'width 200ms cubic-bezier(0.16, 1, 0.3, 1), border-left-width 200ms cubic-bezier(0.16, 1, 0.3, 1)',
+          }}
+        >
+          <div style={{ width: '20rem', height: '100%' }}>
+            <AgentPanel />
+          </div>
+        </aside>
       </div>
     </div>
   );

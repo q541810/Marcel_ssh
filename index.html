@@ -4,86 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Marcel SSH</title>
-    <style>
-      #loading-screen {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: #18181b;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        z-index: 9999;
-        transition: opacity 0.3s ease-out;
-      }
-      
-      #loading-icon {
-        width: 120px;
-        height: 120px;
-        animation: pulse 2s ease-in-out infinite;
-      }
-      
-      #loading-text {
-        margin-top: 24px;
-        color: #ffffff;
-        font-size: 16px;
-        font-weight: 500;
-        letter-spacing: 0.5px;
-        animation: textPulse 2s ease-in-out infinite;
-      }
-      
-      #loading-dots {
-        display: inline-block;
-        width: 20px;
-        text-align: left;
-      }
-      
-      @keyframes pulse {
-        0%, 100% {
-          opacity: 0.4;
-          transform: scale(0.95);
-        }
-        50% {
-          opacity: 1;
-          transform: scale(1.05);
-        }
-      }
-      
-      @keyframes textPulse {
-        0%, 100% {
-          opacity: 0.5;
-        }
-        50% {
-          opacity: 1;
-        }
-      }
-      
-      /* Hide loading screen once React mounts */
-      .loaded #loading-screen {
-        opacity: 0;
-        pointer-events: none;
-      }
-    </style>
   </head>
   <body class="bg-zinc-900 text-zinc-100">
-    <div id="loading-screen">
-      <img id="loading-icon" src="/loading.png" alt="Loading..." />
-      <div id="loading-text">加载中<span id="loading-dots"></span></div>
-    </div>
     <div id="root"></div>
-    <script>
-      // Animated loading dots
-      let dotCount = 0;
-      setInterval(() => {
-        dotCount = (dotCount + 1) % 4;
-        const dots = '.'.repeat(dotCount);
-        const dotsEl = document.getElementById('loading-dots');
-        if (dotsEl) dotsEl.textContent = dots;
-      }, 500);
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -72,7 +72,7 @@ export default function AgentPanel() {
   const currentModeInfo = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border-l border-zinc-800">
+    <div className="flex flex-col h-full bg-zinc-900">
       {/* Approval Dialog */}
       {pendingApproval && (
         <ApprovalDialog
