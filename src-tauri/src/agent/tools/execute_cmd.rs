@@ -187,26 +187,26 @@ fn is_sudo_command(command: &str) -> bool {
 }
 
 /// Look up the SSH password from keychain using the session's connection_id.
+/// NEVER logs the actual password content.
 async fn lookup_password(ctx: &ToolContext) -> Option<String> {
     let connection_id = ctx.ssh.get_connection_id(&ctx.session_id).await;
     log::info!("execute_command: session={} connection_id={:?}", ctx.session_id, connection_id);
 
     match &connection_id {
         Some(id) => {
-            match keychain::get_password(id) {
-                Ok(Some(pw)) => {
-                    log::info!("execute_command: password found for connection={}", id);
-                    Some(pw)
+            let result = keychain::get_password(id);
+            match &result {
+                Ok(Some(_)) => {
+                    log::info!("execute_command: password available for connection={}", id);
                 }
                 Ok(None) => {
                     log::info!("execute_command: no password stored for connection={}", id);
-                    None
                 }
                 Err(e) => {
                     log::warn!("execute_command: keychain error for connection={}: {}", id, e);
-                    None
                 }
             }
+            result.ok().flatten()
         }
         None => {
             log::debug!("execute_command: no connection_id for session, cannot look up password");
