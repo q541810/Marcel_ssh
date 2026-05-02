@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { APP_NAME } from '@/lib/constants';
 import NavRail, { type NavView } from '@/components/nav/NavRail';
 import ConnectionList from '@/components/connection/ConnectionList';
@@ -10,9 +10,16 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import type { AgentMode } from '@/lib/types';
 
+const AGENT_PANEL_MIN_WIDTH = 260;
+const AGENT_PANEL_MAX_WIDTH = 800;
+const AGENT_PANEL_DEFAULT_WIDTH = 320;
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [agentPanelOpen, setAgentPanelOpen] = useState(true);
+  const [agentPanelWidth, setAgentPanelWidth] = useState(AGENT_PANEL_DEFAULT_WIDTH);
+  const [isResizing, setIsResizing] = useState(false);
+  const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
   // Currently selected nav view. `settings` takes over the whole main area,
   // while `sessions` and `mcp` swap the sidebar contents.
   const [navView, setNavView] = useState<NavView>('sessions');
@@ -49,6 +56,41 @@ export default function App() {
       setSidebarOpen(true);
     }
   };
+
+  // ── Agent panel resize handlers ──
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    resizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
+    setIsResizing(true);
+  }, [agentPanelWidth]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizeStartRef.current) return;
+      const delta = resizeStartRef.current.x - e.clientX;
+      const newWidth = resizeStartRef.current.width + delta;
+      setAgentPanelWidth(Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, newWidth)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      resizeStartRef.current = null;
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizing]);
 
   const isSettingsView = navView === 'settings';
 
@@ -126,18 +168,24 @@ export default function App() {
         </div>
 
         {/* Right panel — Agent (hidden on settings) */}
-        <aside
-          className="flex-shrink-0 overflow-hidden border-l border-zinc-800"
-          style={{
-            width: agentPanelOpen && !isSettingsView ? '20rem' : '0rem',
-            borderLeftWidth: agentPanelOpen && !isSettingsView ? '1px' : '0px',
-            transition: 'width 200ms cubic-bezier(0.16, 1, 0.3, 1), border-left-width 200ms cubic-bezier(0.16, 1, 0.3, 1)',
-          }}
-        >
-          <div style={{ width: '20rem', height: '100%' }}>
-            <AgentPanel />
-          </div>
-        </aside>
+        {agentPanelOpen && !isSettingsView && (
+          <>
+            {/* Resize handle */}
+            <div
+              className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+              onMouseDown={handleResizeMouseDown}
+              style={{ touchAction: 'none' }}
+            />
+            <aside
+              className="overflow-hidden border-l border-zinc-800 flex-shrink-0"
+              style={{
+                width: `${agentPanelWidth}px`,
+              }}
+            >
+              <AgentPanel />
+            </aside>
+          </>
+        )}
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::agent::sandbox::RiskLevel;
+use crate::agent::tools::base64;
 use crate::agent::tools::{
     shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput,
 };
@@ -29,84 +30,6 @@ const MAX_LIST_BYTES: usize = 8_000;
 const MAX_FILE_WRITE_BYTES: usize = 1_000_000;
 
 // ────────────────────────────── helpers ──────────────────────────────
-
-/// Base64-encode bytes (no line wrap). RFC 4648 standard alphabet.
-fn b64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
-    let mut i = 0;
-    while i + 3 <= bytes.len() {
-        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
-        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
-        out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
-        out.push(ALPHA[(n & 0x3f) as usize] as char);
-        i += 3;
-    }
-    let rem = bytes.len() - i;
-    if rem == 1 {
-        let n = (bytes[i] as u32) << 16;
-        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
-        out.push('=');
-        out.push('=');
-    } else if rem == 2 {
-        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8);
-        out.push(ALPHA[((n >> 18) & 0x3f) as usize] as char);
-        out.push(ALPHA[((n >> 12) & 0x3f) as usize] as char);
-        out.push(ALPHA[((n >> 6) & 0x3f) as usize] as char);
-        out.push('=');
-    }
-    out
-}
-
-/// Decode standard-alphabet base64 (RFC 4648). Whitespace is ignored.
-fn b64_decode(s: &str) -> Result<Vec<u8>, AppError> {
-    let mut buf = [0u8; 4];
-    let mut bi = 0;
-    let mut out = Vec::with_capacity(s.len() / 4 * 3);
-    let mut pad = 0;
-    for c in s.bytes() {
-        let v: u8 = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' => {
-                pad += 1;
-                buf[bi] = 0;
-                bi += 1;
-                if bi == 4 {
-                    out.push((buf[0] << 2) | (buf[1] >> 4));
-                    if pad < 2 {
-                        out.push((buf[1] << 4) | (buf[2] >> 2));
-                    }
-                    bi = 0;
-                }
-                continue;
-            }
-            b' ' | b'\n' | b'\r' | b'\t' => continue,
-            _ => return Err(AppError::Agent(format!(
-                "invalid base64 char: 0x{:02x}",
-                c
-            ))),
-        };
-        buf[bi] = v;
-        bi += 1;
-        if bi == 4 {
-            out.push((buf[0] << 2) | (buf[1] >> 4));
-            out.push((buf[1] << 4) | (buf[2] >> 2));
-            out.push((buf[2] << 6) | buf[3]);
-            bi = 0;
-        }
-    }
-    if bi != 0 {
-        return Err(AppError::Agent("truncated base64 input".into()));
-    }
-    Ok(out)
-}
 
 /// Build a portable command that base64-encodes a file's contents to stdout.
 /// Tries GNU `base64 -w0`, falls back to BSD `base64`, then `openssl base64 -A`.
@@ -182,7 +105,7 @@ impl AgentTool for ReadFileTool {
                         "remote returned no data (file missing, empty, or base64 unavailable)",
                     ));
                 }
-                match b64_decode(trimmed) {
+                match base64::b64_decode(trimmed) {
                     Ok(bytes) => {
                         let n = bytes.len();
                         let text = String::from_utf8_lossy(&bytes).into_owned();
@@ -260,7 +183,7 @@ impl AgentTool for WriteFileTool {
         }
 
         let escaped = shell_escape(path);
-        let payload = b64_encode(content.as_bytes());
+        let payload = base64::b64_encode(content.as_bytes());
         // Always check the resulting file size to confirm success.
         let cmd = format!(
             "{write}\n[ -f {p} ] && wc -c < {p}",
@@ -369,7 +292,7 @@ impl AgentTool for EditFileTool {
                 "remote file missing or unreadable",
             ));
         }
-        let current_bytes = match b64_decode(trimmed) {
+        let current_bytes = match base64::b64_decode(trimmed) {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolOutput::fail(
@@ -425,7 +348,7 @@ impl AgentTool for EditFileTool {
         }
 
         // 4. Write back
-        let payload = b64_encode(updated.as_bytes());
+        let payload = base64::b64_encode(updated.as_bytes());
         let cmd = cmd_write_b64(&escaped, &payload);
         match ctx.exec(&cmd).await {
             Ok(_) => Ok(ToolOutput::ok(
@@ -525,8 +448,8 @@ mod tests {
             "中文 🚀 混合内容\n第二行\r\n第三行",
         ];
         for s in cases {
-            let enc = b64_encode(s.as_bytes());
-            let dec = b64_decode(&enc).unwrap();
+            let enc = base64::b64_encode(s.as_bytes());
+            let dec = base64::b64_decode(&enc).unwrap();
             assert_eq!(dec, s.as_bytes(), "roundtrip failed for {:?}", s);
         }
     }
@@ -534,21 +457,21 @@ mod tests {
     #[test]
     fn b64_roundtrip_binary() {
         let bytes: Vec<u8> = (0u8..=255).collect();
-        let enc = b64_encode(&bytes);
-        let dec = b64_decode(&enc).unwrap();
+        let enc = base64::b64_encode(&bytes);
+        let dec = base64::b64_decode(&enc).unwrap();
         assert_eq!(dec, bytes);
     }
 
     #[test]
     fn b64_decode_ignores_whitespace() {
         let enc = "aGVs\nbG8s\nIHdv\ncmxk"; // "hello, world"
-        let dec = b64_decode(enc).unwrap();
+        let dec = base64::b64_decode(enc).unwrap();
         assert_eq!(dec, b"hello, world");
     }
 
     #[test]
     fn b64_decode_rejects_garbage() {
-        assert!(b64_decode("***").is_err());
+        assert!(base64::b64_decode("***").is_err());
     }
 
     #[test]

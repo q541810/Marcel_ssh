@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* xterm.js styles */
 @import "@xterm/xterm/css/xterm.css";
