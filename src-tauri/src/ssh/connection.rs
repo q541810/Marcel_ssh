@@ -359,6 +359,12 @@ impl SshManager {
         self.connections.read().await.keys().cloned().collect()
     }
 
+    /// Get the connection_id associated with a session, if available.
+    pub async fn get_connection_id(&self, session_id: &str) -> Option<String> {
+        let guard = self.connections.read().await;
+        guard.get(session_id).and_then(|c| c.connection_id.clone())
+    }
+
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.

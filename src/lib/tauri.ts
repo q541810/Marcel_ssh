@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ConnectionConfig, SavedConnection, AppSettings } from './types';
+import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage } from './types';
 
 // SSH commands
 
@@ -33,9 +33,10 @@ export async function agentStartTask(
   sessionId: string,
   prompt: string,
   mode: string,
+  conversationId: string,
   history: { role: string; content: string }[],
 ): Promise<string> {
-  return invoke<string>('agent_start_task', { sessionId, prompt, mode, history });
+  return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
 }
 
 export async function agentStopTask(taskId: string): Promise<void> {
@@ -54,6 +55,35 @@ export async function agentRejectOperation(
   operationId: string,
 ): Promise<void> {
   return invoke('agent_reject_operation', { taskId, operationId });
+}
+
+// Conversation management commands
+
+export async function agentCreateConversation(
+  sessionId: string,
+  title?: string,
+): Promise<string> {
+  return invoke<string>('agent_create_conversation', { sessionId, title });
+}
+
+export async function agentListConversations(sessionId: string): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>('agent_list_conversations', { sessionId });
+}
+
+export async function agentListConversationsByConnection(connectionId: string): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>('agent_list_conversations_by_connection', { connectionId });
+}
+
+export async function agentLoadConversation(conversationId: string): Promise<StoredMessage[]> {
+  return invoke<StoredMessage[]>('agent_load_conversation', { conversationId });
+}
+
+export async function agentDeleteConversation(conversationId: string): Promise<void> {
+  return invoke('agent_delete_conversation', { conversationId });
+}
+
+export async function agentDeleteConversationsBySession(sessionId: string): Promise<void> {
+  return invoke('agent_delete_conversations_by_session', { sessionId });
 }
 
 export interface CommandCheckResult {

@@ -14,6 +14,7 @@ use tokio::sync::RwLock as TokioRwLock;
 use tokio::sync::oneshot;
 
 use crate::agent::audit::AuditLog;
+use crate::agent::conversation::ConversationDb;
 use crate::agent::runtime::AgentTask;
 use crate::config::connections::ConnectionStore;
 use crate::config::settings::AppSettings;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
+    pub conversation_db: std::sync::Arc<ConversationDb>,
     /// Application config directory. Used for persisting connections, settings, etc.
     pub config_dir: PathBuf,
     /// Pending approval requests: tool_call_id -> oneshot sender for approval response
@@ -90,12 +92,40 @@ impl AppState {
             config_dir.display()
         );
 
+        let db_path = config_dir.join("conversations.db");
+        let conversation_db = match ConversationDb::new(&db_path) {
+            Ok(db) => {
+                log::info!("✓ 对话数据库已加载: {}", db_path.display());
+                match db.list_conversations("__diagnostic__") {
+                    Ok(count) if !count.is_empty() => {
+                        log::info!("  数据库中有 {} 个会话记录", count.len());
+                    }
+                    _ => {
+                        log::info!("  数据库中暂无会话记录（首次使用）");
+                    }
+                }
+                db
+            }
+            Err(e) => {
+                log::warn!("✗ 无法初始化文件数据库({})：{}", db_path.display(), e);
+                log::warn!("  已回退到内存数据库，重启后数据将丢失！");
+                log::warn!("  请检查目录是否有写入权限: {}", config_dir.display());
+                match ConversationDb::in_memory() {
+                    Ok(db) => db,
+                    Err(e2) => {
+                        panic!("无法初始化内存数据库: {}", e2);
+                    }
+                }
+            }
+        };
+
         Self {
             ssh_manager: SshManager::new(),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
             settings: std::sync::Arc::new(TokioRwLock::new(settings)),
             audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
+            conversation_db: std::sync::Arc::new(conversation_db),
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
         }
@@ -138,6 +168,12 @@ pub fn run() {
             commands::agent::agent_approve_operation,
             commands::agent::agent_reject_operation,
             commands::agent::agent_check_command,
+            commands::agent::agent_create_conversation,
+            commands::agent::agent_list_conversations,
+            commands::agent::agent_load_conversation,
+            commands::agent::agent_delete_conversation,
+            commands::agent::agent_list_conversations_by_connection,
+            commands::agent::agent_delete_conversations_by_session,
             // Config commands
             commands::config::config_get_connections,
             commands::config::config_save_connection,

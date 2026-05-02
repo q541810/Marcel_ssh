@@ -3,7 +3,9 @@ import { useAgentStore } from '@/stores/agentStore';
 import type { AgentMode } from '@/lib/types';
 
 export function useAgent() {
-  const messages = useAgentStore((s) => s.messages);
+  const conversations = useAgentStore((s) => s.conversations);
+  const activeConversationId = useAgentStore((s) => s.activeConversationId);
+  const getCurrentMessages = useAgentStore((s) => s.getCurrentMessages);
   const tasks = useAgentStore((s) => s.tasks);
   const activeTaskId = useAgentStore((s) => s.activeTaskId);
   const mode = useAgentStore((s) => s.mode);
@@ -14,6 +16,13 @@ export function useAgent() {
   const rejectAction = useAgentStore((s) => s.rejectOperation);
   const setModeAction = useAgentStore((s) => s.setMode);
   const setPendingApprovalAction = useAgentStore((s) => s.setPendingApproval);
+  const newConversationAction = useAgentStore((s) => s.newConversation);
+  const switchConversationAction = useAgentStore((s) => s.switchConversation);
+  const loadConversationAction = useAgentStore((s) => s.loadConversation);
+  const deleteConversationAction = useAgentStore((s) => s.deleteConversation);
+  const loadSessionConversationsAction = useAgentStore((s) => s.loadConnectionConversations);
+
+  const messages = getCurrentMessages();
 
   const activeTask = activeTaskId ? tasks[activeTaskId] ?? null : null;
   const isRunning =
@@ -58,6 +67,41 @@ export function useAgent() {
     [setModeAction],
   );
 
+  const newConversation = useCallback(
+    async (sessionId: string, connectionId: string) => {
+      return newConversationAction(sessionId, connectionId);
+    },
+    [newConversationAction],
+  );
+
+  const switchConversation = useCallback(
+    async (conversationId: string) => {
+      return switchConversationAction(conversationId);
+    },
+    [switchConversationAction],
+  );
+
+  const loadConversation = useCallback(
+    async (conversationId: string) => {
+      return loadConversationAction(conversationId);
+    },
+    [loadConversationAction],
+  );
+
+  const deleteConversation = useCallback(
+    async (conversationId: string) => {
+      return deleteConversationAction(conversationId);
+    },
+    [deleteConversationAction],
+  );
+
+  const loadSessionConversations = useCallback(
+    async (sessionId: string) => {
+      return loadSessionConversationsAction(sessionId);
+    },
+    [loadSessionConversationsAction],
+  );
+
   return {
     startTask,
     stopTask,
@@ -69,5 +113,12 @@ export function useAgent() {
     setMode,
     isRunning,
     pendingApproval,
+    conversations,
+    activeConversationId,
+    newConversation,
+    switchConversation,
+    loadConversation,
+    deleteConversation,
+    loadSessionConversations,
   };
 }

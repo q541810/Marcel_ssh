@@ -27,6 +27,7 @@ keyring = { version = "^3", features = ["windows-native", "apple-native", "linux
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls"] }
 futures = "^0.3"
 parking_lot = "^0.12"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [features]
 default = ["custom-protocol"]

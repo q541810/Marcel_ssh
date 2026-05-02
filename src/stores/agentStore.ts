@@ -7,13 +7,17 @@ import type {
   LlmStreamEvent,
   ToolResultPayload,
   ApprovalRequestPayload,
+  AgentConversation,
+  StoredMessage,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 
 interface AgentState {
   tasks: Record<string, AgentTask>;
   activeTaskId: string | null;
-  messages: AgentMessage[];
+  conversations: Record<string, AgentConversation>;
+  messages: Record<string, AgentMessage[]>;
+  activeConversationId: string | null;
   mode: AgentMode;
   pendingApproval: ApprovalRequestPayload | null;
 
@@ -26,22 +30,61 @@ interface AgentState {
   clearMessages: () => void;
   updateTaskStatus: (taskId: string, status: AgentTask['status']) => void;
   setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
+  newConversation: (sessionId: string, connectionId: string) => Promise<string>;
+  switchConversation: (conversationId: string) => Promise<void>;
+  loadConversation: (conversationId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
+  clearConnectionConversations: (connectionId: string) => void;
+  loadConnectionConversations: (connectionId: string) => Promise<void>;
+  getCurrentMessages: () => AgentMessage[];
 }
 
-// Track the current assistant message ID for each task
 const currentAssistantMessageId: Map<string, string> = new Map();
 
 export const useAgentStore = create<AgentState>((set, get) => ({
   tasks: {},
   activeTaskId: null,
-  messages: [],
+  conversations: {},
+  messages: {},
+  activeConversationId: null,
   mode: 'agent',
   pendingApproval: null,
 
   startTask: async (sessionId: string, prompt: string) => {
     const { mode } = get();
+    let conversationId = get().activeConversationId;
 
-    // Push the user message immediately so the UI feels responsive.
+    if (!conversationId) {
+      const newTitle = prompt.slice(0, 30);
+      const newId = await tauri.agentCreateConversation(sessionId, newTitle);
+      conversationId = newId;
+      set((state) => ({
+        conversations: {
+          ...state.conversations,
+          [newId]: {
+            id: newId,
+            connectionId: '',
+            title: newTitle,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        messages: { ...state.messages, [newId]: [] },
+        activeConversationId: newId,
+      }));
+    } else {
+      const conv = get().conversations[conversationId as string];
+      if (conv && conv.title === '新会话') {
+        const newTitle = prompt.slice(0, 30);
+        set((state) => ({
+          conversations: {
+            ...state.conversations,
+            [conversationId as string]: { ...conv, title: newTitle },
+          },
+        }));
+      }
+    }
+
     const userMessage: AgentMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -49,30 +92,34 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       timestamp: new Date().toISOString(),
     };
     set((state) => ({
-      messages: [...state.messages, userMessage],
+      messages: {
+        ...state.messages,
+        [conversationId as string]: [...(state.messages[conversationId as string] || []), userMessage],
+      },
     }));
 
     let taskId: string;
     try {
-      // Convert our message history to the format the backend expects.
-      // Only include user + assistant messages (skip system — backend injects its own).
       const llmHistory = get()
-        .messages.filter((m) => m.role === 'user' || m.role === 'assistant')
+        .messages[conversationId as string]
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
         .map((m) => ({ role: m.role, content: m.content }));
 
-      taskId = await tauri.agentStartTask(sessionId, prompt, mode, llmHistory);
+      taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId as string, llmHistory);
     } catch (err) {
-      // Add a system error message.
       set((state) => ({
-        messages: [
+        messages: {
           ...state.messages,
-          {
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: `启动任务失败：${String(err)}`,
-            timestamp: new Date().toISOString(),
-          },
-        ],
+          [conversationId as string]: [
+            ...(state.messages[conversationId as string] || []),
+            {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `启动任务失败：${String(err)}`,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        },
       }));
       throw err;
     }
@@ -90,9 +137,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       activeTaskId: taskId,
     }));
 
-    // Subscribe to streaming events for this task.
-    // Don't pre-create assistant message - wait for first textDelta
-    void attachStreamListener(taskId);
+    void attachStreamListener(taskId, conversationId as string);
 
     return taskId;
   },
@@ -101,7 +146,6 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     try {
       await tauri.agentStopTask(taskId);
     } finally {
-      // Best-effort cleanup of any active listener for this task
       const fn = streamListeners.get(taskId);
       if (fn) {
         fn();
@@ -128,7 +172,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   addMessage: (message: AgentMessage) => {
-    set((state) => ({ messages: [...state.messages, message] }));
+    const convId = get().activeConversationId;
+    if (!convId) return;
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [convId]: [...state.messages[convId], message],
+      },
+    }));
   },
 
   setMode: (mode: AgentMode) => {
@@ -136,7 +187,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   },
 
   clearMessages: () => {
-    set({ messages: [] });
+    const convId = get().activeConversationId;
+    if (!convId) return;
+    set((state) => ({
+      messages: { ...state.messages, [convId]: [] },
+    }));
   },
 
   updateTaskStatus: (taskId: string, status: AgentTask['status']) => {
@@ -152,13 +207,139 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   setPendingApproval: (approval: ApprovalRequestPayload | null) => {
     set({ pendingApproval: approval });
   },
-}));
 
-/* -------- Stream listener wiring -------- */
+  newConversation: async (sessionId: string, connectionId: string) => {
+    const id = await tauri.agentCreateConversation(sessionId);
+    const now = new Date().toISOString();
+    set((state) => ({
+      conversations: {
+        ...state.conversations,
+        [id]: {
+          id,
+          connectionId,
+          title: '新会话',
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      messages: { ...state.messages, [id]: [] },
+      activeConversationId: id,
+    }));
+    return id;
+  },
+
+  switchConversation: async (conversationId: string) => {
+    const stored = await tauri.agentLoadConversation(conversationId);
+    const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
+      id: m.id,
+      role: m.role as AgentMessage['role'],
+      content: m.content,
+      timestamp: m.timestamp,
+    }));
+    set((state) => ({
+      messages: { ...state.messages, [conversationId]: msgs },
+      activeConversationId: conversationId,
+    }));
+  },
+
+  loadConversation: async (conversationId: string) => {
+    const stored = await tauri.agentLoadConversation(conversationId);
+    const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
+      id: m.id,
+      role: m.role as AgentMessage['role'],
+      content: m.content,
+      timestamp: m.timestamp,
+    }));
+    set((state) => ({
+      messages: { ...state.messages, [conversationId]: msgs },
+      activeConversationId: conversationId,
+    }));
+  },
+
+  deleteConversation: async (conversationId: string) => {
+    await tauri.agentDeleteConversation(conversationId);
+    set((state) => {
+      const { [conversationId]: _, ...conversations } = state.conversations;
+      const { [conversationId]: __, ...messages } = state.messages;
+      return {
+        conversations,
+        messages,
+        activeConversationId:
+          state.activeConversationId === conversationId
+            ? Object.keys(conversations)[0] || null
+            : state.activeConversationId,
+      };
+    });
+  },
+
+  clearConnectionConversations: (connectionId: string) => {
+    const convs = get().conversations;
+    const toRemove = Object.values(convs)
+      .filter((c) => c.connectionId === connectionId)
+      .map((c) => c.id);
+    set((state) => {
+      const conversations = { ...state.conversations };
+      const messages = { ...state.messages };
+      for (const id of toRemove) {
+        delete conversations[id];
+        delete messages[id];
+      }
+      return {
+        conversations,
+        messages,
+        activeConversationId:
+          state.activeConversationId && toRemove.includes(state.activeConversationId)
+            ? Object.keys(conversations)[0] || null
+            : state.activeConversationId,
+      };
+    });
+  },
+
+  loadConnectionConversations: async (connectionId: string) => {
+    const convs = await tauri.agentListConversationsByConnection(connectionId);
+    set((state) => {
+      const existingIds = new Set(Object.keys(state.conversations));
+      const newConversations: Record<string, AgentConversation> = { ...state.conversations };
+      const newMessages = { ...state.messages };
+      for (const conv of convs) {
+        if (!existingIds.has(conv.id)) {
+          newConversations[conv.id] = conv;
+          newMessages[conv.id] = [];
+        }
+      }
+      const firstConvId = convs.length > 0 ? convs[0].id : state.activeConversationId;
+      return {
+        conversations: newConversations,
+        messages: newMessages,
+        activeConversationId: state.activeConversationId || firstConvId || null,
+      };
+    });
+
+    if (convs.length > 0) {
+      const firstConvId = convs[0].id;
+      const stored = await tauri.agentLoadConversation(firstConvId);
+      const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
+        id: m.id,
+        role: m.role as AgentMessage['role'],
+        content: m.content,
+        timestamp: m.timestamp,
+      }));
+      set((state) => ({
+        messages: { ...state.messages, [firstConvId]: msgs },
+      }));
+    }
+  },
+
+  getCurrentMessages: () => {
+    const convId = get().activeConversationId;
+    if (!convId) return [];
+    return get().messages[convId] || [];
+  },
+}));
 
 const streamListeners: Map<string, UnlistenFn> = new Map();
 
-async function attachStreamListener(taskId: string) {
+async function attachStreamListener(taskId: string, conversationId: string) {
   if (streamListeners.has(taskId)) return;
 
   const unlisten = await listen<LlmStreamEvent | ToolResultPayload | ApprovalRequestPayload>(
@@ -168,14 +349,12 @@ async function attachStreamListener(taskId: string) {
       const store = useAgentStore.getState();
       const assistantMessageId = currentAssistantMessageId.get(taskId);
 
-      // Check if this is an approval request
       if ('type' in ev && ev.type === 'approvalRequest') {
         const approval = ev as ApprovalRequestPayload;
         store.setPendingApproval(approval);
         return;
       }
 
-      // Check if this is a tool result event (has toolCallId field)
       if ('toolCallId' in ev) {
         const tr = ev as ToolResultPayload;
         const toolMessage: AgentMessage = {
@@ -191,30 +370,26 @@ async function attachStreamListener(taskId: string) {
             blocked: tr.blocked,
           },
         };
-        
-        // If there's a current assistant message, insert tool message after it
-        // Otherwise just append to the end
+
         useAgentStore.setState((state) => {
+          const convMsgs = state.messages[conversationId] || [];
           if (assistantMessageId) {
-            const assistantIdx = state.messages.findIndex(m => m.id === assistantMessageId);
+            const assistantIdx = convMsgs.findIndex((m) => m.id === assistantMessageId);
             if (assistantIdx !== -1) {
-              const newMessages = [...state.messages];
-              newMessages.splice(assistantIdx + 1, 0, toolMessage);
-              return { messages: newMessages };
+              const newMsgs = [...convMsgs];
+              newMsgs.splice(assistantIdx + 1, 0, toolMessage);
+              return { messages: { ...state.messages, [conversationId]: newMsgs } };
             }
           }
-          return { messages: [...state.messages, toolMessage] };
+          return { messages: { ...state.messages, [conversationId]: [...convMsgs, toolMessage] } };
         });
-        
-        // Clear the current assistant message ID - we'll create a new one on next textDelta
+
         currentAssistantMessageId.delete(taskId);
         return;
       }
 
-      // Otherwise it's a standard stream event
       switch (ev.type) {
         case 'textDelta': {
-          // If we don't have an assistant message yet, create one
           if (!assistantMessageId) {
             const newAssistantMessageId = crypto.randomUUID();
             const newAssistantMessage: AgentMessage = {
@@ -223,24 +398,31 @@ async function attachStreamListener(taskId: string) {
               content: ev.text,
               timestamp: new Date().toISOString(),
             };
-            
+
             useAgentStore.setState((state) => ({
-              messages: [...state.messages, newAssistantMessage],
+              messages: {
+                ...state.messages,
+                [conversationId]: [...(state.messages[conversationId] || []), newAssistantMessage],
+              },
             }));
-            
+
             currentAssistantMessageId.set(taskId, newAssistantMessageId);
           } else {
-            // Append delta to the existing assistant message
-            useAgentStore.setState((state) => ({
-              messages: state.messages.map((m) =>
-                m.id === assistantMessageId
-                  ? { ...m, content: m.content + ev.text }
-                  : m,
-              ),
-            }));
+            useAgentStore.setState((state) => {
+              const convMsgs = state.messages[conversationId] || [];
+              return {
+                messages: {
+                  ...state.messages,
+                  [conversationId]: convMsgs.map((m) =>
+                    m.id === assistantMessageId
+                      ? { ...m, content: m.content + ev.text }
+                      : m,
+                  ),
+                },
+              };
+            });
           }
-          
-          // Mark task as executing on first delta
+
           if (store.tasks[taskId]?.status === 'planning') {
             store.updateTaskStatus(taskId, 'executing');
           }
@@ -248,8 +430,6 @@ async function attachStreamListener(taskId: string) {
         }
         case 'toolCallStart':
         case 'toolCallDelta': {
-          // Tool calls aren't fully wired yet — just log.
-          // Phase 2 will translate these into ApprovalDialog interactions.
           console.debug('[agent] tool event', ev);
           break;
         }
@@ -269,19 +449,25 @@ async function attachStreamListener(taskId: string) {
         }
         case 'error': {
           store.updateTaskStatus(taskId, 'failed');
-          useAgentStore.setState((state) => ({
-            messages: [
-              ...state.messages,
-              {
-                id: crypto.randomUUID(),
-                role: 'system',
-                content: `LLM 错误：${ev.message}`,
-                timestamp: new Date().toISOString(),
+          useAgentStore.setState((state) => {
+            const convMsgs = state.messages[conversationId] || [];
+            return {
+              messages: {
+                ...state.messages,
+                [conversationId]: [
+                  ...convMsgs,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'system',
+                    content: `LLM 错误：${ev.message}`,
+                    timestamp: new Date().toISOString(),
+                  },
+                ],
               },
-            ],
-            activeTaskId:
-              state.activeTaskId === taskId ? null : state.activeTaskId,
-          }));
+              activeTaskId:
+                state.activeTaskId === taskId ? null : state.activeTaskId,
+            };
+          });
           currentAssistantMessageId.delete(taskId);
           const fn = streamListeners.get(taskId);
           if (fn) {

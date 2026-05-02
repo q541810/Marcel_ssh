@@ -33,6 +33,8 @@ export interface Session {
   connectionId: string;
   status: SessionStatus;
   createdAt: string;
+  /** The saved connection config ID (persistent across restarts) */
+  configId?: string;
 }
 
 export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -144,4 +146,23 @@ export interface ApprovalRequestPayload {
   toolName: string;
   arguments: Record<string, unknown>;
   riskLevel: RiskLevel;
+}
+
+// Conversation types
+
+export interface AgentConversation {
+  id: string;
+  connectionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoredMessage {
+  id: string;
+  conversationId: string;
+  role: string;
+  content: string;
+  timestamp: string;
+  createdAt: string;
 }

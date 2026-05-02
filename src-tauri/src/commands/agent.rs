@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
+use crate::agent::conversation::Conversation;
 use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
@@ -41,6 +42,7 @@ pub async fn agent_start_task(
     prompt: String,
     mode: AgentMode,
     history: Vec<LlmMessage>,
+    conversation_id: String,
 ) -> Result<String, AppError> {
     let task_id = Uuid::new_v4().to_string();
 
@@ -111,6 +113,8 @@ pub async fn agent_start_task(
     let app_spawn = app.clone();
     let state_spawn = state.inner().clone();
     let registry_spawn = registry.clone();
+    let conversation_id_spawn = conversation_id.clone();
+    let conv_db_spawn = state.conversation_db.clone();
 
     tokio::spawn(async move {
         run_agent_loop(
@@ -125,6 +129,8 @@ pub async fn agent_start_task(
             app_spawn,
             state_spawn,
             registry_spawn,
+            conversation_id_spawn,
+            conv_db_spawn,
         )
         .await;
     });
@@ -177,6 +183,107 @@ pub async fn agent_reject_operation(
         let _ = tx.send(false);
     }
 
+    Ok(())
+}
+
+/// Create a new AI conversation for the given SSH session.
+#[tauri::command]
+pub async fn agent_create_conversation(
+    state: State<'_, AppState>,
+    session_id: String,
+    title: Option<String>,
+) -> Result<String, AppError> {
+    let connection_id = state
+        .ssh_manager
+        .get_connection_id(&session_id)
+        .await
+        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+
+    let title = title.unwrap_or_else(|| "新会话".to_string());
+    let conversation = state
+        .conversation_db
+        .create_conversation(&connection_id, &title)
+        .map_err(|e| AppError::Agent(format!("Failed to create conversation: {}", e)))?;
+    log::info!("Created conversation: {} (connection={})", conversation.id, connection_id);
+    Ok(conversation.id)
+}
+
+/// List all conversations for a given SSH session.
+#[tauri::command]
+pub async fn agent_list_conversations(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<Conversation>, AppError> {
+    let connection_id = state
+        .ssh_manager
+        .get_connection_id(&session_id)
+        .await
+        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+
+    let conversations = state
+        .conversation_db
+        .list_conversations(&connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
+    Ok(conversations)
+}
+
+/// Load all messages for a conversation.
+#[tauri::command]
+pub async fn agent_load_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Vec<crate::agent::conversation::StoredMessage>, AppError> {
+    let messages = state
+        .conversation_db
+        .load_messages(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to load messages: {}", e)))?;
+    Ok(messages)
+}
+
+/// Delete a single conversation.
+#[tauri::command]
+pub async fn agent_delete_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<(), AppError> {
+    state
+        .conversation_db
+        .delete_conversation(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to delete conversation: {}", e)))?;
+    log::info!("Deleted conversation: {}", conversation_id);
+    Ok(())
+}
+
+/// List all conversations for a given connection config ID (persistent, works without active session).
+#[tauri::command]
+pub async fn agent_list_conversations_by_connection(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<Conversation>, AppError> {
+    let conversations = state
+        .conversation_db
+        .list_conversations(&connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
+    Ok(conversations)
+}
+
+/// Delete all conversations for a given SSH session.
+#[tauri::command]
+pub async fn agent_delete_conversations_by_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), AppError> {
+    let connection_id = state
+        .ssh_manager
+        .get_connection_id(&session_id)
+        .await
+        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+
+    state
+        .conversation_db
+        .delete_conversations_by_connection(&connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to delete conversations by session: {}", e)))?;
+    log::info!("Deleted all conversations for session: {} (connection={})", session_id, connection_id);
     Ok(())
 }
 
@@ -282,8 +389,26 @@ async fn run_agent_loop(
     app: AppHandle,
     state: AppState,
     registry: std::sync::Arc<ToolRegistry>,
+    conversation_id: String,
+    conv_db: std::sync::Arc<crate::agent::conversation::ConversationDb>,
 ) {
     let event_name = format!("agent://stream/{}", task_id);
+
+    // Auto-update conversation title if it's still the default "新会话"
+    for msg in &messages {
+        if msg.role == LlmRole::User && !msg.content.is_empty() {
+            let title = msg.content.chars().take(30).collect::<String>();
+            let _ = conv_db.update_conversation_title(&conversation_id, &title);
+            break;
+        }
+    }
+
+    // Persist user messages from history that are not yet saved
+    for msg in &messages {
+        if msg.role == LlmRole::User && !msg.content.is_empty() {
+            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339());
+        }
+    }
 
     for round in 0..MAX_TOOL_ROUNDS {
         log::info!("Agent {} round {}", task_id, round);
@@ -316,12 +441,21 @@ async fn run_agent_loop(
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
             // No tool calls — final answer. We're done.
-            messages.push(assistant_msg);
+            messages.push(assistant_msg.clone());
+            // Persist assistant message to DB
+            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339());
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
         }
 
         // 3. Add assistant message (with tool_calls) to history
+        // Persist assistant message content (without tool_calls JSON) to DB
+        let assistant_text = if assistant_msg.content.is_empty() {
+            format!("[调用工具: {}]", tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "))
+        } else {
+            assistant_msg.content.clone()
+        };
+        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_text, &Utc::now().to_rfc3339());
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the registry

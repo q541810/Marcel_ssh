@@ -38,6 +38,17 @@ pub struct LlmMessage {
     pub tool_call_id: Option<String>,
 }
 
+impl LlmRole {
+    pub fn to_string(&self) -> &'static str {
+        match self {
+            LlmRole::System => "system",
+            LlmRole::User => "user",
+            LlmRole::Assistant => "assistant",
+            LlmRole::Tool => "tool",
+        }
+    }
+}
+
 impl LlmMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
