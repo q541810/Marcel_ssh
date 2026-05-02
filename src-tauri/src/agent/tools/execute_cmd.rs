@@ -103,19 +103,22 @@ impl AgentTool for ExecuteCommandTool {
 
         // Auto-inject password for sudo commands when running as non-root
         let final_command = if is_sudo_command(command) {
-            if let Some(password) = lookup_password(ctx).await {
-                let rewritten = rewrite_sudo(command, &password);
-                log::info!("execute_command: sudo auto-fill enabled");
-                rewritten
-            } else {
-                log::debug!("execute_command: no password found for sudo auto-fill");
-                command.to_string()
+            match lookup_password(ctx).await {
+                Some(password) => {
+                    let rewritten = rewrite_sudo(command, &password);
+                    log::info!("execute_command: sudo auto-fill enabled for cmd='{}'", command);
+                    rewritten
+                }
+                None => {
+                    log::debug!("execute_command: no password found for sudo auto-fill (session={})", ctx.session_id);
+                    command.to_string()
+                }
             }
         } else {
             command.to_string()
         };
 
-        log::info!("execute_command: risk={:?} cmd={}", risk, command);
+        log::info!("execute_command: risk={:?} cmd={} final={}", risk, command, if final_command != command { "(auto-fill)" } else { "(original)" });
 
         match ctx.exec(&final_command).await {
             Ok(output) => {
@@ -185,14 +188,37 @@ fn is_sudo_command(command: &str) -> bool {
 
 /// Look up the SSH password from keychain using the session's connection_id.
 async fn lookup_password(ctx: &ToolContext) -> Option<String> {
-    let connection_id = ctx.ssh.get_connection_id(&ctx.session_id).await?;
-    keychain::get_password(&connection_id).ok().flatten()
+    let connection_id = ctx.ssh.get_connection_id(&ctx.session_id).await;
+    log::info!("execute_command: session={} connection_id={:?}", ctx.session_id, connection_id);
+
+    match &connection_id {
+        Some(id) => {
+            match keychain::get_password(id) {
+                Ok(Some(pw)) => {
+                    log::info!("execute_command: password found for connection={}", id);
+                    Some(pw)
+                }
+                Ok(None) => {
+                    log::info!("execute_command: no password stored for connection={}", id);
+                    None
+                }
+                Err(e) => {
+                    log::warn!("execute_command: keychain error for connection={}: {}", id, e);
+                    None
+                }
+            }
+        }
+        None => {
+            log::debug!("execute_command: no connection_id for session, cannot look up password");
+            None
+        }
+    }
 }
 
 /// Rewrite a sudo command to auto-fill password via stdin using sudo -S.
 ///
-/// Uses printf to avoid shell interpretation issues with special characters.
-/// The -- after -S tells sudo that the following is the command, not options.
+/// Uses printf with explicit newline to pipe password via stdin.
+/// The -p '' suppresses the password prompt, and -S reads from stdin.
 fn rewrite_sudo(command: &str, password: &str) -> String {
     // Escape single quotes in password for the shell
     let escaped_password = password.replace('\'', "'\\''");
@@ -203,8 +229,10 @@ fn rewrite_sudo(command: &str, password: &str) -> String {
         .strip_prefix("sudo ")
         .unwrap_or(&command.trim()[5..]);
 
+    // Use printf to pipe password to sudo's stdin via -S
+    // The \\n ensures a newline is sent after the password
     format!(
-        "printf '%s\\n' '{}' | sudo -S -- {}",
+        "printf '{}\\n' | sudo -S -p '' -- {}",
         escaped_password, sudo_arg
     )
 }
