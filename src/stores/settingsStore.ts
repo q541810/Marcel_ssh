@@ -10,12 +10,12 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
 
 const DEFAULT_LLM_CONFIG: LlmConfig = {
   providerType: 'openai',
-  apiKey: 'sk-MIVc0NaouDUGx2IGNXMfJCZJFdZyLxa4k9fTLcPZSt61LYOt',
-  model: 'claude-opus-4-7',
-  baseUrl: 'https://192.168.1.49/v1',
+  apiKey: '',
+  model: '',
+  baseUrl: '',
   maxTokens: 4096,
   temperature: 0.1,
-  allowInvalidCerts: true,
+  allowInvalidCerts: false,
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
