@@ -7,9 +7,7 @@
 
 ## 1. 项目定位
 
-Marcel SSH 不是又一个 SSH 客户端。它的核心价值主张是：
-
-- **Agent-First**：内置 AI Agent 能力，可自主理解用户意图、规划操作步骤、在远程服务器上自动执行命令序列。类似 Claude Code 对本地开发环境的操控能力，Marcel SSH 将这种能力延伸到远程 SSH 会话中。
+- **Agent-First**：内置 AI Agent 能力，可自主理解用户意图、规划操作步骤、在远程服务器上自动执行命令序列。
 - **人机协同终端**：用户可在传统手动终端和 Agent 自动模式之间无缝切换。Agent 操作全程可观察、可中断、可回滚。
 - **桌面级体验**：基于 Tauri 构建，提供原生级性能和系统集成，同时保持极小的资源占用。
 
@@ -20,7 +18,6 @@ Marcel SSH 不是又一个 SSH 客户端。它的核心价值主张是：
 | 命令执行 | 手动逐条输入 | Agent 自主规划 + 批量执行 |
 | 错误处理 | 用户自行判断 | Agent 自动识别错误并尝试修复 |
 | 上下文理解 | 无 | Agent 理解会话历史和服务器状态 |
-| 操作模式 | 纯手动 | 手动 / Agent 辅助 / Agent 自主 |
 | 安全审计 | 依赖外部工具 | 内置操作日志与权限沙箱 |
 
 ---
@@ -33,17 +30,17 @@ Marcel SSH 不是又一个 SSH 客户端。它的核心价值主张是：
 Tauri 2.x (Rust 后端 + WebView 前端)
 ├── 后端 (Rust)
 │   ├── tauri             — 应用框架、窗口管理、IPC
-│   ├── russh / ssh2      — SSH 协议实现
+│   ├── russh             — SSH 协议实现
 │   ├── tokio             — 异步运行时
 │   ├── serde / serde_json— 序列化
-│   ├── sqlx / rusqlite   — 本地数据持久化
+│   ├── rusqlite          — 本地数据持久化
 │   └── keyring           — 系统密钥链集成
 │
 ├── 前端 (TypeScript)
-│   ├── React 18+ / Solid — UI 框架（二选一，推荐 Solid 轻量）
+│   ├── React 18          — UI 框架
 │   ├── xterm.js          — 终端模拟器渲染
 │   ├── TailwindCSS 4     — 样式系统
-│   ├── Zustand / Jotai   — 状态管理
+│   ├── Zustand           — 状态管理
 │   └── @tauri-apps/api   — Tauri 前端 API 绑定
 │
 └── Agent 层
@@ -54,9 +51,8 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 
 ### 构建工具
 
-- **前端**：Vite 6+
+- **前端**：Vite 6+, pnpm
 - **后端**：Cargo (Rust 2021 edition)
-- **包管理**：pnpm (前端), cargo (Rust)
 - **测试**：Vitest (前端), `cargo test` (Rust)
 - **Lint**：ESLint + Prettier (前端), clippy + rustfmt (Rust)
 
@@ -102,7 +98,7 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 |------|----|------|
 | `ssh-core` | Rust | SSH 连接建立、认证、通道管理、SFTP |
 | `agent-runtime` | Rust | Agent 生命周期管理、Tool 调度、安全沙箱 |
-| `llm-bridge` | Rust | LLM API 调用抽象、流式响应处理、Token 计费 |
+| `llm-bridge` | Rust | LLM API 调用抽象、流式响应处理 |
 | `session-manager` | Rust | 多会话/多标签管理、会话持久化 |
 | `config-store` | Rust | 连接配置、密钥管理、偏好设置 |
 | `terminal-view` | 前端 | xterm.js 封装、输入输出流绑定 |
@@ -125,25 +121,9 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 
 ### 4.2 Agent 操作模式
 
-```
-┌─────────────────────────────────────────────┐
-│             Agent 操作模式光谱                │
-│                                               │
-│  手动模式 ◄──────────────────► 全自主模式     │
-│                                               │
-│  ┌─────────┐  ┌───────────┐  ┌────────────┐ │
-│  │ Manual  │  │ Copilot   │  │ Autonomous │ │
-│  │         │  │           │  │            │ │
-│  │ 用户手动 │  │ Agent建议  │  │ Agent自主   │ │
-│  │ 操作终端 │  │ 用户确认   │  │ 执行任务链  │ │
-│  │         │  │ 再执行     │  │ 仅汇报结果  │ │
-│  └─────────┘  └───────────┘  └────────────┘ │
-└─────────────────────────────────────────────┘
-```
-
-- **Manual 模式**：传统终端，Agent 仅作为旁观者积累上下文。
-- **Copilot 模式**（默认）：用户用自然语言描述意图，Agent 生成命令计划，逐步确认执行。
-- **Autonomous 模式**：用户设定目标，Agent 自主规划并执行完整操作序列。需要预先配置权限策略。
+- **Chat 模式**：纯对话，AI 仅回答问题，不触发工具调用或命令执行。
+- **Agent 模式**（默认）：AI 可调用工具执行命令，受黑白名单策略控制，中高风险操作需用户确认。
+- **Auto 模式**：全自主模式，AI 无需确认直接执行所有工具调用。
 
 ### 4.3 Tool-Use 架构
 
@@ -156,13 +136,7 @@ pub trait AgentTool: Send + Sync {
     fn name(&self) -> &str;
     /// JSON Schema 描述参数
     fn parameters_schema(&self) -> serde_json::Value;
-    /// 执行工具调用
-    async fn execute(
-        &self,
-        params: serde_json::Value,
-        ctx: &SessionContext,
-    ) -> Result<ToolOutput, AgentError>;
-    /// 该工具的风险等级
+    async fn execute(&self, params: serde_json::Value, ctx: &SessionContext) -> Result<ToolOutput, AgentError>;
     fn risk_level(&self) -> RiskLevel;
 }
 
@@ -190,34 +164,8 @@ pub enum RiskLevel {
 | `process_management` | 查看/管理远程进程 | Moderate |
 | `system_info` | 获取系统信息 | ReadOnly |
 
-### 4.4 安全
+### 4.4 安全策略引擎
 
-```
-┌─────────────────────────────────────────┐
-│            安全策略引擎                   │
-│                                           │
-│  用户请求 ──► 意图解析 ──► 命令生成       │
-│                              │             │
-│                              ▼             │
-│                      ┌──────────────┐     │
-│                      │ 权限检查器    │     │
-│                      │              │     │
-│                      │ • 命令黑名单  │     │
-│                      │ • 路径白名单  │     │
-│                      │ • 风险评估    │     │
-│                      │ • 用户策略    │     │
-│                      └──────┬───────┘     │
-│                             │              │
-│                    ┌────────┴────────┐     │
-│                    ▼                 ▼     │
-│              ┌──────────┐    ┌─────────┐  │
-│              │ 自动放行  │    │ 请求确认 │  │
-│              │ (低风险)  │    │ (高风险) │  │
-│              └──────────┘    └─────────┘  │
-└─────────────────────────────────────────┘
-```
-
-**安全规则**：
 - **命令黑名单**：`rm -rf /`, `mkfs`, `dd if=/dev/zero` 等破坏性命令默认永久禁止。
 - **路径保护**：`/etc/`, `/boot/`, `/sys/` 等系统关键路径默认为只读。
 - **操作速率限制**：Agent 单次任务最大命令数可配置（默认 50）。
@@ -257,97 +205,53 @@ SessionContext {
 ```
 marcel-ssh/
 ├── src-tauri/                    # Rust 后端（Tauri 核心）
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── capabilities/             # Tauri 2 权限声明
 │   ├── src/
-│   │   ├── main.rs               # 入口
-│   │   ├── lib.rs                # 库导出
 │   │   ├── commands/             # Tauri IPC command handlers
-│   │   │   ├── mod.rs
 │   │   │   ├── ssh.rs            # SSH 连接相关命令
 │   │   │   ├── agent.rs          # Agent 操作命令
 │   │   │   ├── config.rs         # 配置管理命令
 │   │   │   └── sftp.rs           # 文件传输命令
 │   │   ├── ssh/                  # SSH 核心实现
-│   │   │   ├── mod.rs
 │   │   │   ├── connection.rs     # 连接建立与管理
 │   │   │   ├── auth.rs           # 认证（密码/密钥/Agent）
 │   │   │   ├── channel.rs        # Shell/Exec 通道
 │   │   │   ├── sftp.rs           # SFTP 实现
 │   │   │   └── pool.rs           # 连接池
 │   │   ├── agent/                # Agent 自动化系统
-│   │   │   ├── mod.rs
 │   │   │   ├── runtime.rs        # Agent 运行时主循环
-│   │   │   ├── planner.rs        # 任务规划器
 │   │   │   ├── executor.rs       # 命令执行器
 │   │   │   ├── tools/            # Tool 实现
-│   │   │   │   ├── mod.rs
-│   │   │   │   ├── execute_cmd.rs
-│   │   │   │   ├── file_ops.rs
-│   │   │   │   ├── search.rs
-│   │   │   │   └── system.rs
 │   │   │   ├── sandbox.rs        # 安全沙箱
 │   │   │   ├── context.rs        # 上下文管理
 │   │   │   └── audit.rs          # 审计日志
 │   │   ├── llm/                  # LLM 接入层
-│   │   │   ├── mod.rs
 │   │   │   ├── provider.rs       # Provider trait + 工厂
 │   │   │   ├── openai.rs         # OpenAI 兼容 API
 │   │   │   ├── anthropic.rs      # Anthropic Claude API
 │   │   │   ├── ollama.rs         # 本地 Ollama
 │   │   │   └── streaming.rs      # SSE 流式处理
 │   │   ├── config/               # 配置与持久化
-│   │   │   ├── mod.rs
 │   │   │   ├── settings.rs       # 应用设置
 │   │   │   ├── connections.rs    # 连接配置存储
 │   │   │   └── keychain.rs       # 密钥链集成
 │   │   └── error.rs              # 统一错误类型
 │   └── tests/                    # Rust 集成测试
 │
-├── src/                          # 前端（TypeScript + React/Solid）
-│   ├── index.html
-│   ├── main.tsx                  # 前端入口
-│   ├── App.tsx                   # 根组件
+├── src/                          # 前端（TypeScript + React）
 │   ├── components/
-│   │   ├── terminal/
-│   │   │   ├── Terminal.tsx       # xterm.js 封装
-│   │   │   ├── TerminalTabs.tsx   # 多标签管理
-│   │   │   └── TerminalToolbar.tsx
-│   │   ├── agent/
-│   │   │   ├── AgentPanel.tsx     # Agent 对话面板
-│   │   │   ├── AgentMessage.tsx   # 消息气泡组件
-│   │   │   ├── ApprovalDialog.tsx # 操作确认对话框
-│   │   │   ├── TaskPlan.tsx       # 任务计划展示
-│   │   │   └── AuditLog.tsx       # 操作日志查看器
-│   │   ├── connection/
-│   │   │   ├── ConnectionList.tsx # 连接列表侧边栏
-│   │   │   ├── ConnectionForm.tsx # 连接编辑表单
-│   │   │   └── QuickConnect.tsx   # 快速连接栏
-│   │   ├── sftp/
-│   │   │   ├── FileExplorer.tsx   # 远程文件浏览器
-│   │   │   └── TransferQueue.tsx  # 传输队列
+│   │   ├── terminal/             # 终端组件
+│   │   ├── agent/                # 智能助手面板
+│   │   ├── connection/           # 连接管理
+│   │   ├── sftp/                 # 文件传输
+│   │   ├── settings/             # 设置页面
 │   │   └── ui/                   # 通用 UI 组件
-│   ├── hooks/                    # 自定义 Hooks
-│   │   ├── useSSH.ts
-│   │   ├── useAgent.ts
-│   │   └── useTerminal.ts
-│   ├── stores/                   # 状态管理
-│   │   ├── connectionStore.ts
-│   │   ├── sessionStore.ts
-│   │   └── agentStore.ts
-│   ├── lib/                      # 工具函数与类型
-│   │   ├── tauri.ts              # Tauri IPC 封装
-│   │   ├── types.ts              # 共享类型定义
-│   │   └── constants.ts
-│   └── styles/                   # 全局样式
+│   ├── hooks/                    # useSSH, useAgent, useTerminal
+│   ├── stores/                   # Zustand 状态管理
+│   └── lib/                      # 类型定义 + Tauri IPC 封装
 │
-├── package.json
-├── pnpm-lock.yaml
-├── vite.config.ts
-├── tsconfig.json
-├── tailwind.config.ts
-├── eslint.config.js
+├── dev.cmd                       # 启动脚本（完整应用）
+├── dev-frontend.cmd              # 启动脚本（仅前端预览）
+├── install.cmd                   # 依赖安装脚本
 ├── AGENTS.md                     # 本文件
 └── README.md
 ```
@@ -399,8 +303,8 @@ async fn ssh_connect(
 - 避免超过 300 行的组件文件，及时拆分。
 
 **状态管理原则**：
-- 局部 UI 状态：`useState` / `useSignal`
-- 跨组件共享状态：Zustand store / Jotai atom
+- 局部 UI 状态：`useState`
+- 跨组件共享状态：Zustand store
 - 服务端状态（SSH 会话等）：通过 Tauri command 查询，结合 store 缓存
 - 禁止在 store 中存储可从其他状态派生的数据
 
@@ -417,7 +321,6 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 **样式规范**：
 - TailwindCSS utility-first，避免自定义 CSS。
 - 终端主题色采用 CSS 变量，支持用户自定义。
-- 响应式布局适配不同窗口尺寸。
 
 ### 6.3 Git 规范
 
@@ -481,47 +384,7 @@ sftp://progress/{transfer_id}    — 文件传输进度
 
 ---
 
-## 8. Agent 任务执行流程
-
-```
-用户输入自然语言指令
-        │
-        ▼
-┌─────────────────┐
-│ 1. 意图解析      │ ← LLM 理解用户目标
-│    + 上下文注入   │ ← 注入服务器环境/历史
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ 2. 任务规划      │ ← LLM 生成步骤计划
-│    Task Plan     │    (展示给用户预览)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐     ┌─────────────┐
-│ 3. 逐步执行      │────►│ 安全检查     │
-│    Tool Calls    │◄────│ 权限审批     │
-└────────┬────────┘     └─────────────┘
-         │
-         │ (每步执行后)
-         ▼
-┌─────────────────┐
-│ 4. 结果分析      │ ← LLM 判断是否成功
-│    + 错误修复    │    失败则自动重试/调整
-└────────┬────────┘
-         │
-         │ (循环直到目标完成或放弃)
-         ▼
-┌─────────────────┐
-│ 5. 任务总结      │ ← 汇报执行结果
-│    + 审计记录    │    写入审计日志
-└─────────────────┘
-```
-
----
-
-## 9. 关键设计决策记录
+## 8. 关键设计决策
 
 ### ADR-001: 为什么选择 Tauri 而非 Electron
 
@@ -550,7 +413,7 @@ sftp://progress/{transfer_id}    — 文件传输进度
 
 ---
 
-## 10. 测试策略
+## 9. 测试策略
 
 | 层 | 测试类型 | 工具 | 覆盖重点 |
 |----|---------|------|---------|
@@ -563,7 +426,7 @@ sftp://progress/{transfer_id}    — 文件传输进度
 
 ---
 
-## 11. 安全考量
+## 10. 安全考量
 
 1. **API Key 存储**：LLM API Key 存储在系统密钥链（macOS Keychain / Windows Credential Manager / Linux Secret Service），绝不明文写入配置文件。
 2. **SSH 密钥**：私钥不经过 WebView 进程，仅在 Rust 侧内存中加载。
@@ -574,7 +437,7 @@ sftp://progress/{transfer_id}    — 文件传输进度
 
 ---
 
-## 12. 性能目标
+## 11. 性能目标
 
 | 指标 | 目标 |
 |------|------|
@@ -588,7 +451,7 @@ sftp://progress/{transfer_id}    — 文件传输进度
 
 ---
 
-## 13. 给 AI Agent 的指示
+## 12. 给 AI Agent 的指示
 
 > 以下内容专门为参与此项目开发的 AI 编码助手编写。
 
@@ -610,3 +473,9 @@ sftp://progress/{transfer_id}    — 文件传输进度
 6. **测试覆盖**：新增 Agent Tool 必须附带单元测试。安全相关变更必须有对应的测试验证策略是否正确执行。
 
 7. **中文注释可接受**：代码注释可以使用中文，但公开 API 文档和类型名必须使用英文。
+
+8. **变更要求** 相关更改必须同步更新本文件（AGENTS.md）
+
+9. 在创建工作环境或构建项目时，必须阅读 `README.md` 获取教程
+
+10. 更改依赖包、更新配置文件、平台支持、构建生产版本等，必须同步更新 `README.md`
