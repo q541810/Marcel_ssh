@@ -170,7 +170,7 @@ impl AgentTool for WebSearchTool {
         }
 
         let combined = sections.join("\n");
-        let output = truncate_output(combined, MAX_OUTPUT_BYTES);
+        let output = truncate_output(format!("{}{}", combined, SEARCH_TIP), MAX_OUTPUT_BYTES);
 
         let summary = if queries.len() == 1 {
             format!("web_search '{}' ({} results)", queries[0], total_results)
@@ -220,6 +220,8 @@ fn format_search_section(query: &str, results: &[SearchResult]) -> String {
     out
 }
 
+const SEARCH_TIP: &str = "\nTip: Use the `http_get` tool with any URL above to read the full page content.";
+
 fn format_results(query: &str, results: &[SearchResult]) -> String {
     let mut out = format!("Search results for: \"{}\"\n{}\n\n", query, "=".repeat(50));
 
@@ -237,7 +239,6 @@ fn format_results(query: &str, results: &[SearchResult]) -> String {
         ));
     }
 
-    out.push_str("\nTip: Use the `http_get` tool with any URL above to read the full page content.");
     out
 }
 
