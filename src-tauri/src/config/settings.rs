@@ -61,7 +61,8 @@ impl Default for AppSettings {
             font_size: 14,
             font_family: "monospace".into(),
             default_agent_mode: "agent".into(),
-            // Ship a working default so users can chat immediately.
+            // LLM config uses environment variables for sensitive fields (API key, base URL)
+            // Users must configure their own LLM provider - no hardcoded credentials
             llm_config: Some(LlmConfig::default()),
             agent_mode_settings: AgentModeSettings {
                 list_mode: CommandListMode::Denylist,
