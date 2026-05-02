@@ -97,7 +97,6 @@ set MARCEL_SSH_LLM_BASE_URL=https://api.openai.com/v1
 |----------|------|------|
 | 密码认证 | ✅ | 适用于大多数服务器 |
 | SSH 密钥 | ✅ | 推荐使用，更安全 |
-| SSH Agent 转发 | ✅ | 适用于跳板机场景 |
 
 #### 密钥格式要求
 
