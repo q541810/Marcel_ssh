@@ -64,7 +64,7 @@ pub(crate) fn b64_decode(s: &str) -> Result<Vec<u8>, AppError> {
             }
             b' ' | b'\n' | b'\r' | b'\t' => continue,
             _ => return Err(AppError::Agent(format!(
-                "invalid base64 char: 0x{:02x}",
+                "invalid base64 character: 0x{:02x}",
                 c
             ))),
         };

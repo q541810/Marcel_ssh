@@ -13,7 +13,6 @@ pub enum AuthMethod {
         key_path: String,
         passphrase: Option<String>,
     },
-    Agent,
 }
 
 impl Drop for AuthMethod {

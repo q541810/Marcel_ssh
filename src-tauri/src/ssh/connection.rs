@@ -137,9 +137,6 @@ impl SshManager {
                     .await
                     .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?
             }
-            AuthMethod::Agent => {
-                return Err(AppError::Ssh("SSH Agent 认证方式暂未实现".into()));
-            }
         };
 
         if !auth_success.success() {

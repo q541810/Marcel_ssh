@@ -122,7 +122,6 @@ export default function ConnectionForm({
         >
           <option value="Password">密码</option>
           <option value="PrivateKey">私钥</option>
-          <option value="Agent">SSH Agent</option>
         </select>
       </div>
 

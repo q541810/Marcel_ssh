@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type {
   AppSettings,
@@ -21,6 +21,14 @@ export default function Settings() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [hasStoredApiKey, setHasStoredApiKey] = useState(false);
+
+  // Check if an API key exists in the keychain
+  useEffect(() => {
+    tauri.getLlmApiKey().then(key => {
+      setHasStoredApiKey(!!key);
+    }).catch(() => {});
+  }, []);
 
   /**
    * Local "draft" editor state — we hold a working copy and only persist on Save.
@@ -262,11 +270,11 @@ export default function Settings() {
           <Field label="API Key">
             <input
               type="password"
-              value={draft.llmConfig?.apiKey ?? ''}
+              value={draft.llmConfig?.apiKey || (hasStoredApiKey ? 'sk-******' : '')}
               onChange={(e) =>
                 updateLlm((l) => ({ ...l, apiKey: e.target.value }))
               }
-              placeholder="sk-..."
+              placeholder="输入 API Key"
               autoComplete="off"
               className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
             />
