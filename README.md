@@ -70,14 +70,14 @@ dev-frontend.cmd
 
 ### 1. LLM Provider 配置
 
-Marcel SSH 的 Agent 功能需要接入 LLM 服务。支持以下 Provider：
+Marcel SSH 的 Agent 功能需要接入 OpenAI 兼容 API 服务。
 
-#### OpenAI
+#### OpenAI 兼容 API
 
 ```bash
 # 方式一：通过环境变量
-set OPENAI_API_KEY=sk-xxx
-set OPENAI_API_BASE=https://api.openai.com/v1
+set MARCEL_SSH_LLM_API_KEY=sk-xxx
+set MARCEL_SSH_LLM_BASE_URL=https://api.openai.com/v1
 
 # 方式二：在应用设置中配置（推荐）
 ```
@@ -87,17 +87,6 @@ set OPENAI_API_BASE=https://api.openai.com/v1
 - `gpt-4o-mini`
 - `gpt-3.5-turbo`
 - 兼容 OpenAI API 的其他服务（如 Azure OpenAI、本地 vLLM）
-
-#### Anthropic Claude
-
-```bash
-set ANTHROPIC_API_KEY=sk-ant-xxx
-```
-
-支持模型：
-- `claude-sonnet-4-20250514`（推荐）
-- `claude-3-5-sonnet-latest`
-- `claude-3-5-haiku-latest`
 
 
 ### 2. SSH 连接配置
@@ -140,23 +129,21 @@ Marcel SSH 支持以下格式的私钥：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `OPENAI_API_KEY` | OpenAI API 密钥 | 无 |
-| `OPENAI_API_BASE` | OpenAI API 基础 URL | `https://api.openai.com/v1` |
-| `ANTHROPIC_API_KEY` | Anthropic API 密钥 | 无 |
+| `MARCEL_SSH_LLM_API_KEY` | LLM API 密钥 | 无 |
+| `MARCEL_SSH_LLM_BASE_URL` | LLM API 基础 URL | 无（使用 OpenAI 默认值） |
+| `MARCEL_SSH_LLM_MODEL` | LLM 模型名 | `gpt-4` |
+| `MARCEL_SSH_LLM_ALLOW_INVALID_CERTS` | 允许无效证书 | `false` |
 | `RUST_LOG` | Rust 日志级别 | `info` |
-| `DEBUG` | 开启前端调试模式 | `false` |
 
 ### 4. Agent 权限策略
 
-Agent 系统默认采用保守的权限策略：
+Agent 系统默认采用保守的权限策略（Agent 模式，默认模式）：
 
 | 操作类型 | 默认行为 | 可配置 |
 |----------|---------|--------|
 | 只读命令 (`ls`, `cat`, `pwd`) | ✅ 自动执行 | - |
 | 低风险操作 (`mkdir`, `touch`) | ⚠️ 确认后执行 | 可设置自动确认 |
-| 文件编辑 | ⚠️ 确认后执行 | - |
-| 服务重启 | ❌ 需明确授权 | - |
-| 危险命令 (`rm -rf`, `mkfs`) | 🚫 永久禁止 | 不可更改 |
+| 危险命令 (`rm`, `mkfs`, `dd`, `shutdown`) | ⚠️ 黑名单中，需用户确认 | 可通过设置调整 |
 
 ---
 

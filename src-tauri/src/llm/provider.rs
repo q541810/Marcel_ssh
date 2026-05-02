@@ -129,8 +129,6 @@ impl Default for LlmConfig {
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
     OpenAI,
-    Anthropic,
-    Ollama,
 }
 
 /// Tool definition passed to the LLM for function calling.
@@ -185,11 +183,11 @@ mod tests {
     }
 
     #[test]
-    fn test_llm_config_deserialization_with_missing_api_key() {
+    fn test_llm_config_deserialization_with_openai() {
         // JSON without apiKey field (as it would be read from file)
         let json = r#"{
-            "providerType": "anthropic",
-            "model": "claude-3",
+            "providerType": "openai",
+            "model": "gpt-4",
             "maxTokens": 2048,
             "temperature": 0.5,
             "allowInvalidCerts": false
@@ -198,8 +196,8 @@ mod tests {
         let config: LlmConfig = serde_json::from_str(json)
             .expect("Failed to deserialize");
 
-        assert_eq!(config.provider_type, ProviderType::Anthropic);
-        assert_eq!(config.model, "claude-3");
+        assert_eq!(config.provider_type, ProviderType::OpenAI);
+        assert_eq!(config.model, "gpt-4");
         assert_eq!(config.max_tokens, 2048);
         // API key should be empty when deserialized from file
         assert_eq!(config.api_key, "");

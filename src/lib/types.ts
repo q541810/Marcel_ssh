@@ -94,7 +94,7 @@ export interface AgentModeSettings {
   confirmEachCommand: boolean;
 }
 
-export type LlmProviderType = 'openai' | 'anthropic' | 'ollama';
+export type LlmProviderType = 'openai';
 
 export interface LlmConfig {
   providerType: LlmProviderType;

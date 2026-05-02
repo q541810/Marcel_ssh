@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
+use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::CommandListMode;
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
@@ -16,7 +17,10 @@ use crate::AppState;
 
 /// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
 /// Prevents runaway loops.
-const MAX_TOOL_ROUNDS: usize = 30;
+const MAX_TOOL_ROUNDS: usize = 50;
+
+/// Approval timeout for any tool call requiring user confirmation.
+const APPROVAL_TIMEOUT_SECS: u64 = 60;
 
 // ──────────────────────── Tauri Commands ────────────────────────
 
@@ -25,8 +29,9 @@ const MAX_TOOL_ROUNDS: usize = 30;
 /// This is the **core** of Marcel SSH's Agent system. It:
 ///   1. Builds a conversation from history + system prompt
 ///   2. Calls the LLM (streaming)
-///   3. If the LLM returns tool_calls → evaluates policy → executes via SSH
-///      → feeds results back → loops until the LLM gives a final text answer
+///   3. If the LLM returns tool_calls → evaluates policy → executes via the
+///      [`ToolRegistry`] → feeds results back → loops until the LLM gives a
+///      final text answer
 ///   4. All progress is pushed as `agent://stream/{taskId}` events
 #[tauri::command]
 pub async fn agent_start_task(
@@ -81,10 +86,22 @@ pub async fn agent_start_task(
         messages.push(LlmMessage::user(prompt.clone()));
     }
 
+    // Build the registry once and reuse it for both tool advertisement
+    // and dispatch. This keeps definitions and execution in sync.
+    let registry = std::sync::Arc::new(ToolRegistry::with_builtins());
+
     // Choose which tools to expose based on mode
     let tools: Vec<ToolDefinition> = match mode {
         AgentMode::Chat => vec![], // No tools in chat mode
-        AgentMode::Agent | AgentMode::Auto => build_tool_definitions(),
+        AgentMode::Agent | AgentMode::Auto => registry
+            .definitions()
+            .into_iter()
+            .map(|d| ToolDefinition {
+                name: d.name,
+                description: d.description,
+                parameters: d.parameters,
+            })
+            .collect(),
     };
 
     // Clone what the spawned task needs
@@ -93,6 +110,7 @@ pub async fn agent_start_task(
     let mode_spawn = mode.clone();
     let app_spawn = app.clone();
     let state_spawn = state.inner().clone();
+    let registry_spawn = registry.clone();
 
     tokio::spawn(async move {
         run_agent_loop(
@@ -106,6 +124,7 @@ pub async fn agent_start_task(
             session_id,
             app_spawn,
             state_spawn,
+            registry_spawn,
         )
         .await;
     });
@@ -138,13 +157,10 @@ pub async fn agent_approve_operation(
     operation_id: String,
 ) -> Result<(), AppError> {
     log::info!("Operation approved: op={}", operation_id);
-    
-    // Find and trigger the pending approval
     let sender = state.pending_approvals.write().remove(&operation_id);
     if let Some(tx) = sender {
         let _ = tx.send(true);
     }
-    
     Ok(())
 }
 
@@ -156,13 +172,11 @@ pub async fn agent_reject_operation(
     operation_id: String,
 ) -> Result<(), AppError> {
     log::info!("Operation rejected: op={}", operation_id);
-    
-    // Find and trigger the pending approval
     let sender = state.pending_approvals.write().remove(&operation_id);
     if let Some(tx) = sender {
         let _ = tx.send(false);
     }
-    
+
     Ok(())
 }
 
@@ -255,6 +269,7 @@ pub async fn agent_check_command(
 
 /// The main agentic loop:
 ///   LLM call → tool_calls? → execute → feed result → repeat
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_loop(
     task_id: String,
     provider: OpenAiProvider,
@@ -266,6 +281,7 @@ async fn run_agent_loop(
     session_id: String,
     app: AppHandle,
     state: AppState,
+    registry: std::sync::Arc<ToolRegistry>,
 ) {
     let event_name = format!("agent://stream/{}", task_id);
 
@@ -308,17 +324,18 @@ async fn run_agent_loop(
         // 3. Add assistant message (with tool_calls) to history
         messages.push(assistant_msg);
 
-        // 4. Execute each tool call
+        // 4. Execute each tool call via the registry
+        let ctx = ToolContext::new(ssh.clone(), session_id.clone());
         for tc in &tool_calls {
-            let exec = execute_tool_call(
+            let exec = dispatch_tool_call(
                 tc,
                 &mode,
                 &agent_settings,
-                &ssh,
-                &session_id,
+                &ctx,
                 &app,
                 &event_name,
                 &state,
+                &registry,
             )
             .await;
 
@@ -328,7 +345,7 @@ async fn run_agent_loop(
                 ToolResultEvent {
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
-                    summary: exec.summary,
+                    summary: exec.summary.clone(),
                     result: exec.output.clone(),
                     success: exec.success,
                     blocked: exec.blocked,
@@ -356,384 +373,228 @@ async fn run_agent_loop(
     );
 }
 
-/// Result of executing a single tool call.
-struct ToolExecResult {
-    /// Short summary for the card (e.g. "$ ls -la /tmp")
+/// Result of executing a single tool call (UI/event view).
+struct DispatchResult {
+    /// Short summary for the UI card.
     summary: String,
-    /// Full output to feed back to the LLM
+    /// Full output to feed back to the LLM.
     output: String,
     success: bool,
     blocked: bool,
 }
 
-/// Execute a single tool call.
-async fn execute_tool_call(
+impl DispatchResult {
+    fn from_tool_output(o: ToolOutput) -> Self {
+        Self {
+            summary: o.summary,
+            output: o.output,
+            success: o.success,
+            blocked: false,
+        }
+    }
+    fn blocked(summary: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            summary: summary.into(),
+            output: format!("BLOCKED: {}", reason.into()),
+            success: false,
+            blocked: true,
+        }
+    }
+    fn unknown(name: &str) -> Self {
+        Self {
+            summary: format!("unknown tool: {}", name),
+            output: format!("Unknown tool: {}", name),
+            success: false,
+            blocked: false,
+        }
+    }
+}
+
+/// Dispatch a single tool call through the registry, applying mode-aware
+/// security policy and (when needed) waiting for user approval.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_tool_call(
     tc: &ToolCall,
     mode: &AgentMode,
     agent_settings: &crate::config::settings::AgentModeSettings,
-    ssh: &SshManagerClone,
-    session_id: &str,
+    ctx: &ToolContext,
     app: &AppHandle,
     event_name: &str,
     state: &AppState,
-) -> ToolExecResult {
-    match tc.name.as_str() {
-        "execute_command" => {
-            let cmd = tc
-                .arguments
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+    registry: &ToolRegistry,
+) -> DispatchResult {
+    // 0. Look up the tool
+    let Some(tool) = registry.get(&tc.name) else {
+        return DispatchResult::unknown(&tc.name);
+    };
 
-            if cmd.is_empty() {
-                return ToolExecResult {
-                    summary: "execute_command (empty)".into(),
-                    output: "Error: missing 'command' argument".into(),
-                    success: false,
-                    blocked: false,
-                };
-            }
+    // 1. Compute the effective risk level for this specific invocation.
+    //    For `execute_command` we look at the command text; otherwise we
+    //    use the tool's declared risk_level.
+    let effective_risk = match tc.name.as_str() {
+        "execute_command" => tc
+            .arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(assess_risk)
+            .unwrap_or_else(|| tool.risk_level()),
+        _ => tool.risk_level(),
+    };
 
-            // ── Security policy check (AGENT mode only) ──
-            if *mode == AgentMode::Agent {
-                let base = cmd
-                    .trim()
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or("");
-                let in_list = agent_settings.command_list.iter().any(|c| c == base);
-
-                // Sandbox always applies
-                let sandbox = Sandbox::default();
-                if let Err(e) = sandbox.check_command(cmd) {
-                    return ToolExecResult {
-                        summary: format!("$ {}", cmd),
-                        output: format!("BLOCKED: 安全沙箱阻止: {}", e),
-                        success: false,
-                        blocked: true,
-                    };
+    // 2. Mode-aware policy gate.
+    //    - CHAT  : no tools allowed (defense-in-depth; the LLM also has no tools)
+    //    - AUTO  : execute everything; only the sandbox can block
+    //    - AGENT : full policy
+    match mode {
+        AgentMode::Chat => {
+            return DispatchResult::blocked(
+                format!("{}", tc.name),
+                "CHAT 模式禁止工具调用".to_string(),
+            );
+        }
+        AgentMode::Auto => {
+            // Sandbox still applies to execute_command in Auto mode
+            // (truly destructive patterns are always rejected).
+            if tc.name == "execute_command" {
+                if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {
+                    let sb = Sandbox::default();
+                    if let Err(e) = sb.check_command(cmd) {
+                        return DispatchResult::blocked(format!("$ {}", cmd), e.to_string());
+                    }
                 }
-
-                // Determine whether this command needs user confirmation
-                let needs_confirm = match agent_settings.list_mode {
-                    // Allowlist: in list → direct execute; not in list → ask user
-                    CommandListMode::Allowlist => {
-                        if in_list { agent_settings.confirm_each_command } else { true }
-                    }
-                    // Denylist: in list → ask user; not in list → direct execute
-                    CommandListMode::Denylist => {
-                        if in_list { true } else { agent_settings.confirm_each_command }
-                    }
-                };
-
-                if needs_confirm {
-                    let risk = assess_risk(cmd);
-
-                    let approval_id = tc.id.clone();
-                    let _ = app.emit(
-                        event_name,
-                        ApprovalRequestEvent {
-                            event_type: "approvalRequest".to_string(),
-                            tool_call_id: approval_id.clone(),
-                            tool_name: tc.name.clone(),
-                            arguments: tc.arguments.clone(),
-                            risk_level: risk,
-                        },
-                    );
-
-                    let (tx, rx) = oneshot::channel();
-                    state.pending_approvals.write().insert(approval_id.clone(), tx);
-
-                    let approved = match tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
-                        rx,
+            }
+        }
+        AgentMode::Agent => {
+            // Apply allow/deny list policy specifically for execute_command.
+            if tc.name == "execute_command" {
+                let cmd = tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
+                let sb = Sandbox::default();
+                if let Err(e) = sb.check_command(cmd) {
+                    return DispatchResult::blocked(format!("$ {}", cmd), e.to_string());
+                }
+                let needs_confirm = command_list_requires_confirm(cmd, agent_settings);
+                if needs_confirm
+                    && !await_user_approval(
+                        tc, effective_risk, app, event_name, state,
                     )
                     .await
-                    {
-                        Ok(Ok(v)) => v,
-                        Ok(Err(_)) => false,
-                        Err(_) => {
-                            state.pending_approvals.write().remove(&approval_id);
-                            return ToolExecResult {
-                                summary: format!("$ {}", cmd),
-                                output: "BLOCKED: 等待用户确认超时".into(),
-                                success: false,
-                                blocked: true,
-                            };
-                        }
-                    };
-
-                    if !approved {
-                        return ToolExecResult {
-                            summary: format!("$ {}", cmd),
-                            output: "BLOCKED: 用户拒绝执行".into(),
-                            success: false,
-                            blocked: true,
-                        };
-                    }
+                {
+                    return DispatchResult::blocked(
+                        format!("$ {}", cmd),
+                        "用户拒绝或确认超时",
+                    );
                 }
-            }
-
-            // Execute the command
-            match ssh.exec_command(session_id, cmd).await {
-                Ok(output) => {
-                    let truncated = if output.len() > 8000 {
-                        format!("{}...\n[输出过长，已截断至 8000 字节，原始 {} 字节]", &output[..8000], output.len())
-                    } else {
-                        output
-                    };
-                    ToolExecResult {
-                        summary: format!("$ {}", cmd),
-                        output: truncated,
-                        success: true,
-                        blocked: false,
-                    }
-                }
-                Err(e) => ToolExecResult {
-                    summary: format!("$ {}", cmd),
-                    output: format!("执行失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
-            }
-        }
-
-        "read_file" => {
-            let path = tc.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            if path.is_empty() {
-                return ToolExecResult {
-                    summary: "read_file (no path)".into(),
-                    output: "Error: missing 'path' argument".into(),
-                    success: false,
-                    blocked: false,
+            } else {
+                // For non-shell tools: gate on declared risk level.
+                // ReadOnly tools never require confirmation. Anything Moderate
+                // or higher requires confirmation when `confirm_each_command`
+                // is enabled (and always for HighRisk / Destructive).
+                let needs_confirm = match effective_risk {
+                    RiskLevel::ReadOnly => false,
+                    RiskLevel::LowRisk => agent_settings.confirm_each_command,
+                    RiskLevel::Moderate => agent_settings.confirm_each_command,
+                    RiskLevel::HighRisk | RiskLevel::Destructive => true,
                 };
-            }
-            let cmd = format!("cat {}", shell_escape(path));
-            match ssh.exec_command(session_id, &cmd).await {
-                Ok(content) => {
-                    let truncated = if content.len() > 16000 {
-                        format!("{}...\n[已截断]", &content[..16000])
-                    } else {
-                        content
-                    };
-                    ToolExecResult {
-                        summary: format!("读取 {}", path),
-                        output: truncated,
-                        success: true,
-                        blocked: false,
-                    }
+                if needs_confirm
+                    && !await_user_approval(
+                        tc, effective_risk, app, event_name, state,
+                    )
+                    .await
+                {
+                    return DispatchResult::blocked(
+                        tc.name.clone(),
+                        "用户拒绝或确认超时",
+                    );
                 }
-                Err(e) => ToolExecResult {
-                    summary: format!("读取 {}", path),
-                    output: format!("读取失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
             }
         }
+    }
 
-        "write_file" => {
-            let path = tc.arguments.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let content = tc.arguments.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            if path.is_empty() {
-                return ToolExecResult {
-                    summary: "write_file (no path)".into(),
-                    output: "Error: missing 'path' argument".into(),
-                    success: false,
-                    blocked: false,
-                };
-            }
-            let lines = content.lines().count();
-            let cmd = format!(
-                "cat > {} << 'MARCEL_EOF'\n{}\nMARCEL_EOF",
-                shell_escape(path), content
-            );
-            match ssh.exec_command(session_id, &cmd).await {
-                Ok(_) => ToolExecResult {
-                    summary: format!("写入 {} (+{} 行)", path, lines),
-                    output: format!("成功写入 {} 字节到 {}", content.len(), path),
-                    success: true,
-                    blocked: false,
-                },
-                Err(e) => ToolExecResult {
-                    summary: format!("写入 {}", path),
-                    output: format!("写入失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
-            }
-        }
-
-        "list_directory" => {
-            let path = tc.arguments.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let cmd = format!("ls -la {}", shell_escape(path));
-            match ssh.exec_command(session_id, &cmd).await {
-                Ok(output) => ToolExecResult {
-                    summary: format!("列出 {}", path),
-                    output,
-                    success: true,
-                    blocked: false,
-                },
-                Err(e) => ToolExecResult {
-                    summary: format!("列出 {}", path),
-                    output: format!("失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
-            }
-        }
-
-        "search_files" => {
-            let pattern = tc.arguments.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
-            let path = tc.arguments.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-            let cmd = format!("grep -rn --include='*' {} {}", shell_escape(pattern), shell_escape(path));
-            match ssh.exec_command(session_id, &cmd).await {
-                Ok(output) => {
-                    let count = output.lines().count();
-                    ToolExecResult {
-                        summary: format!("搜索 '{}' ({} 处匹配)", pattern, count),
-                        output,
-                        success: true,
-                        blocked: false,
-                    }
-                }
-                Err(e) => ToolExecResult {
-                    summary: format!("搜索 '{}'", pattern),
-                    output: format!("搜索失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
-            }
-        }
-
-        "system_info" => {
-            let cmd = "uname -a && echo '---' && uptime && echo '---' && free -h && echo '---' && df -h";
-            match ssh.exec_command(session_id, cmd).await {
-                Ok(output) => ToolExecResult {
-                    summary: "系统信息".into(),
-                    output,
-                    success: true,
-                    blocked: false,
-                },
-                Err(e) => ToolExecResult {
-                    summary: "系统信息".into(),
-                    output: format!("获取失败: {}", e),
-                    success: false,
-                    blocked: false,
-                },
-            }
-        }
-
-        other => ToolExecResult {
-            summary: format!("未知工具: {}", other),
-            output: format!("Unknown tool: {}", other),
+    // 3. Execute the tool through the registry.
+    match tool.execute(tc.arguments.clone(), ctx).await {
+        Ok(out) => DispatchResult::from_tool_output(out),
+        Err(e) => DispatchResult {
+            summary: format!("{} (error)", tc.name),
+            output: format!("tool error: {}", e),
             success: false,
             blocked: false,
         },
     }
 }
 
-/// Simple shell escaping: wrap in single quotes.
-fn shell_escape(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// Return whether `execute_command` needs user approval based on the
+/// allowlist/denylist configuration.
+fn command_list_requires_confirm(
+    cmd: &str,
+    settings: &crate::config::settings::AgentModeSettings,
+) -> bool {
+    let base = cmd
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .rsplit('/')
+        .next()
+        .unwrap_or("");
+    let in_list = settings.command_list.iter().any(|c| c == base);
+    match settings.list_mode {
+        CommandListMode::Allowlist => {
+            if in_list {
+                settings.confirm_each_command
+            } else {
+                true
+            }
+        }
+        CommandListMode::Denylist => {
+            if in_list {
+                true
+            } else {
+                settings.confirm_each_command
+            }
+        }
+    }
 }
 
-// ──────────────────────── Tool Definitions ────────────────────────
+/// Send an approval-request event to the frontend and await the user's
+/// decision (or timeout).
+async fn await_user_approval(
+    tc: &ToolCall,
+    risk: RiskLevel,
+    app: &AppHandle,
+    event_name: &str,
+    state: &AppState,
+) -> bool {
+    let approval_id = tc.id.clone();
+    let _ = app.emit(
+        event_name,
+        ApprovalRequestEvent {
+            event_type: "approvalRequest".to_string(),
+            tool_call_id: approval_id.clone(),
+            tool_name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+            risk_level: risk,
+        },
+    );
 
-fn build_tool_definitions() -> Vec<ToolDefinition> {
-    vec![
-        ToolDefinition {
-            name: "execute_command".into(),
-            description: "Execute a shell command on the remote server. Returns stdout+stderr.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "command": {
-                        "type": "string",
-                        "description": "The shell command to execute"
-                    }
-                },
-                "required": ["command"]
-            }),
-        },
-        ToolDefinition {
-            name: "read_file".into(),
-            description: "Read the contents of a file on the remote server.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the file"
-                    }
-                },
-                "required": ["path"]
-            }),
-        },
-        ToolDefinition {
-            name: "write_file".into(),
-            description: "Write content to a file on the remote server. Creates or overwrites.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the file"
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write"
-                    }
-                },
-                "required": ["path", "content"]
-            }),
-        },
-        ToolDefinition {
-            name: "list_directory".into(),
-            description: "List files and directories at a path.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Absolute path to the directory (default: current directory)"
-                    }
-                },
-                "required": ["path"]
-            }),
-        },
-        ToolDefinition {
-            name: "search_files".into(),
-            description: "Search for a text pattern in files under a directory (grep).".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "pattern": {
-                        "type": "string",
-                        "description": "Text or regex pattern to search for"
-                    },
-                    "path": {
-                        "type": "string",
-                        "description": "Directory to search in (default: current directory)"
-                    }
-                },
-                "required": ["pattern"]
-            }),
-        },
-        ToolDefinition {
-            name: "system_info".into(),
-            description: "Get system information: OS, uptime, memory, disk usage.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {},
-                "required": []
-            }),
-        },
-    ]
+    let (tx, rx) = oneshot::channel();
+    state.pending_approvals.write().insert(approval_id.clone(), tx);
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS),
+        rx,
+    )
+    .await
+    {
+        Ok(Ok(v)) => v,
+        Ok(Err(_)) => false,
+        Err(_) => {
+            state.pending_approvals.write().remove(&approval_id);
+            false
+        }
+    }
 }
+
+// ──────────────────────── System prompt ────────────────────────
 
 fn build_system_prompt(mode: &AgentMode, session_id: &str) -> String {
     let base = format!(
@@ -746,9 +607,11 @@ fn build_system_prompt(mode: &AgentMode, session_id: &str) -> String {
             "{base}\n\nYou are in CHAT mode. Do NOT call any tools. Only answer questions."
         ),
         AgentMode::Agent => format!(
-            "{base}\n\nYou are in AGENT mode. You have tools to execute commands, read/write files, \
-             list directories, and get system info on the remote server. Use them when needed. \
-             Some commands may be blocked by the user's security policy."
+            "{base}\n\nYou are in AGENT mode. You have tools to: execute commands, \
+             read/write/edit files, list directories, search files, upload/download \
+             files, manage processes, and query system info. Use them when needed. \
+             Some tool calls may be blocked or require user approval based on the \
+             user's security policy."
         ),
         AgentMode::Auto => format!(
             "{base}\n\nYou are in AUTO mode. Execute tools freely without asking for confirmation. \

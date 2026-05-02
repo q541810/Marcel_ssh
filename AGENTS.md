@@ -44,7 +44,7 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 │   └── @tauri-apps/api   — Tauri 前端 API 绑定
 │
 └── Agent 层
-    ├── LLM Provider 抽象层 (支持 OpenAI / Anthropic / Ollama 等)
+    ├── OpenAI 兼容 API 接入
     ├── Tool-Use 协议实现
     └── Conversation & Context 管理
 ```
@@ -149,28 +149,28 @@ pub enum RiskLevel {
 }
 ```
 
-**内置 Tools 列表**：
+**内置 Tools 列表**（6 个，在 `commands/agent.rs::build_tool_definitions()` 中定义）：
 
-| Tool 名称 | 功能 | 风险等级 |
-|-----------|------|---------|
-| `execute_command` | 在远程 shell 执行单条命令 | 取决于命令 |
-| `read_file` | 读取远程文件内容 | ReadOnly |
-| `write_file` | 写入/创建远程文件 | Moderate |
-| `edit_file` | 精确编辑远程文件（diff-based） | Moderate |
-| `list_directory` | 列出目录内容 | ReadOnly |
-| `upload_file` | 通过 SFTP 上传本地文件 | LowRisk |
-| `download_file` | 通过 SFTP 下载远程文件 | ReadOnly |
-| `search_files` | 在远程文件系统中搜索 | ReadOnly |
-| `process_management` | 查看/管理远程进程 | Moderate |
-| `system_info` | 获取系统信息 | ReadOnly |
+| Tool 名称 | 功能 | 风险等级 | 实现方式 |
+|-----------|------|---------|---------|
+| `execute_command` | 在远程 shell 执行单条命令 | 取决于命令（动态评估） | `commands/agent.rs` 内联执行 |
+| `read_file` | 读取远程文件（`cat`） | ReadOnly | `commands/agent.rs` 内联执行 |
+| `write_file` | 写入/创建远程文件（heredoc） | Moderate | `commands/agent.rs` 内联执行 |
+| `list_directory` | 列出目录内容（`ls -la`） | ReadOnly | `commands/agent.rs` 内联执行 |
+| `search_files` | 内容搜索（`grep -rn`） | ReadOnly | `commands/agent.rs` 内联执行 |
+| `system_info` | OS / 内存 / 磁盘信息查询 | ReadOnly | `commands/agent.rs` 内联执行 |
+
+> **架构要点**：工具定义在 `commands/agent.rs` 的 `build_tool_definitions()` 中，执行逻辑在 `execute_tool_call()` 中内联实现。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
+> 1. 在 `build_tool_definitions()` 添加 `ToolDefinition`
+> 2. 在 `execute_tool_call()` 添加匹配分支
+> 3. 在本表中登记
 
 ### 4.4 安全策略引擎
 
-- **命令黑名单**：`rm -rf /`, `mkfs`, `dd if=/dev/zero` 等破坏性命令默认永久禁止。
-- **路径保护**：`/etc/`, `/boot/`, `/sys/` 等系统关键路径默认为只读。
-- **操作速率限制**：Agent 单次任务最大命令数可配置（默认 50）。
-- **超时机制**：单条命令默认 30s 超时，整个 Agent 任务默认 10min 超时。
-- **审计日志**：所有 Agent 操作写入本地不可篡改日志，含时间戳、命令、输出、LLM 交互记录。
+- **命令黑名单**：`rm`, `mkfs`, `dd`, `shutdown`, `reboot` 等危险命令默认加入黑名单（Denylist 模式），触发用户确认。
+- **命令速率限制**：Agent 单次任务最大 LLM 交互轮数默认 50 轮。
+- **超时机制**：用户审批超时 60s。
+- **审计日志**：所有 Agent 操作通过 `agent://stream/{task_id}` 事件实时推送至前端。
 
 ### 4.5 上下文管理
 
@@ -209,8 +209,7 @@ marcel-ssh/
 │   │   ├── commands/             # Tauri IPC command handlers
 │   │   │   ├── ssh.rs            # SSH 连接相关命令
 │   │   │   ├── agent.rs          # Agent 操作命令
-│   │   │   ├── config.rs         # 配置管理命令
-│   │   │   └── sftp.rs           # 文件传输命令
+│   │   │   └── config.rs         # 配置管理命令
 │   │   ├── ssh/                  # SSH 核心实现
 │   │   │   ├── connection.rs     # 连接建立与管理
 │   │   │   ├── auth.rs           # 认证（密码/密钥/Agent）
@@ -227,8 +226,6 @@ marcel-ssh/
 │   │   ├── llm/                  # LLM 接入层
 │   │   │   ├── provider.rs       # Provider trait + 工厂
 │   │   │   ├── openai.rs         # OpenAI 兼容 API
-│   │   │   ├── anthropic.rs      # Anthropic Claude API
-│   │   │   ├── ollama.rs         # 本地 Ollama
 │   │   │   └── streaming.rs      # SSE 流式处理
 │   │   ├── config/               # 配置与持久化
 │   │   │   ├── settings.rs       # 应用设置
@@ -356,14 +353,24 @@ docs(agents): update tool-use architecture section
 ssh_connect(config) → SessionId
 ssh_disconnect(session_id) → ()
 ssh_send_input(session_id, data) → ()
-agent_start_task(session_id, prompt, mode) → TaskId
+ssh_resize(session_id, cols, rows) → ()
+ssh_list_sessions() → Vec<String>
+agent_start_task(session_id, prompt, mode, history) → TaskId
 agent_stop_task(task_id) → ()
 agent_approve_operation(task_id, operation_id) → ()
 agent_reject_operation(task_id, operation_id) → ()
-sftp_list_dir(session_id, path) → Vec<FileEntry>
-sftp_upload(session_id, local_path, remote_path) → TransferId
-config_get_connections() → Vec<ConnectionConfig>
-config_save_connection(config) → ConnectionId
+agent_check_command(command, mode) → CommandCheckResult
+config_get_connections() → Vec<SavedConnection>
+config_save_connection(connection) → ConnectionId
+config_delete_connection(id) → ()
+config_save_password(connection_id, password) → ()
+config_get_password(connection_id) → Option<String>
+config_delete_password(connection_id) → ()
+config_save_llm_api_key(api_key) → ()
+config_get_llm_api_key() → Option<String>
+config_delete_llm_api_key() → ()
+config_get_settings() → AppSettings
+config_save_settings(settings) → ()
 ```
 
 ### 7.2 Events（服务端推送）
@@ -373,13 +380,7 @@ config_save_connection(config) → ConnectionId
 ```
 ssh://output/{session_id}        — 终端输出流
 ssh://status/{session_id}        — 连接状态变更
-agent://thinking/{task_id}       — Agent 思考过程（流式）
-agent://tool-call/{task_id}      — Agent 发起工具调用
-agent://approval-needed/{task_id}— 需要用户确认的操作
-agent://task-progress/{task_id}  — 任务进度更新
-agent://task-complete/{task_id}  — 任务完成
-agent://error/{task_id}          — Agent 错误
-sftp://progress/{transfer_id}    — 文件传输进度
+agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具调用/审批请求/错误等）
 ```
 
 ---
@@ -479,3 +480,5 @@ sftp://progress/{transfer_id}    — 文件传输进度
 9. 在创建工作环境或构建项目时，必须阅读 `README.md` 获取教程
 
 10. 更改依赖包、更新配置文件、平台支持、构建生产版本等，必须同步更新 `README.md`
+
+11. 
