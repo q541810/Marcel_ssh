@@ -117,27 +117,19 @@ pub async fn config_get_settings(
 
 /// Save updated application settings. Persists to disk.
 /// 
-/// Note: If the settings include a new LLM API key, it is stored in the
-/// system keychain and then cleared from the in-memory config to avoid
-/// accidental serialization.
+/// Note: The LLM API key is stored in the system keychain for security.
+/// The in-memory settings keep the key for the current session (the key is
+/// excluded from disk serialization via `skip_serializing` in LlmConfig).
 #[tauri::command]
 pub async fn config_save_settings(
     state: State<'_, AppState>,
-    mut settings: AppSettings,
+    settings: AppSettings,
 ) -> Result<(), AppError> {
     // If LLM config has changed, update the keychain
     if let Some(ref new_llm) = settings.llm_config {
         if !new_llm.api_key.is_empty() {
-            // Save to keychain
             keychain::save_llm_api_key(&new_llm.api_key)?;
             log::info!("已将 LLM API Key 保存到密钥链");
-            
-            // Clear from in-memory settings to avoid accidental serialization
-            // The key will be re-loaded from keychain on next app startup
-            settings.llm_config = Some(crate::llm::provider::LlmConfig {
-                api_key: String::new(),
-                ..new_llm.clone()
-            });
         }
     }
     
