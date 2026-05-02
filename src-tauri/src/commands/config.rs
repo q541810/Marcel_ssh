@@ -85,6 +85,27 @@ pub async fn config_delete_password(
     keychain::delete_password(&connection_id)
 }
 
+/// Save the LLM API key to the system keychain.
+#[tauri::command]
+pub async fn config_save_llm_api_key(
+    api_key: String,
+) -> Result<(), AppError> {
+    keychain::save_llm_api_key(&api_key)
+}
+
+/// Retrieve the LLM API key from the system keychain.
+/// Returns `None` if no API key has been saved.
+#[tauri::command]
+pub async fn config_get_llm_api_key() -> Result<Option<String>, AppError> {
+    keychain::get_llm_api_key()
+}
+
+/// Remove the LLM API key from the system keychain.
+#[tauri::command]
+pub async fn config_delete_llm_api_key() -> Result<(), AppError> {
+    keychain::delete_llm_api_key()
+}
+
 /// Get the current application settings.
 #[tauri::command]
 pub async fn config_get_settings(
@@ -95,11 +116,31 @@ pub async fn config_get_settings(
 }
 
 /// Save updated application settings. Persists to disk.
+/// 
+/// Note: If the settings include a new LLM API key, it is stored in the
+/// system keychain and then cleared from the in-memory config to avoid
+/// accidental serialization.
 #[tauri::command]
 pub async fn config_save_settings(
     state: State<'_, AppState>,
-    settings: AppSettings,
+    mut settings: AppSettings,
 ) -> Result<(), AppError> {
+    // If LLM config has changed, update the keychain
+    if let Some(ref new_llm) = settings.llm_config {
+        if !new_llm.api_key.is_empty() {
+            // Save to keychain
+            keychain::save_llm_api_key(&new_llm.api_key)?;
+            log::info!("已将 LLM API Key 保存到密钥链");
+            
+            // Clear from in-memory settings to avoid accidental serialization
+            // The key will be re-loaded from keychain on next app startup
+            settings.llm_config = Some(crate::llm::provider::LlmConfig {
+                api_key: String::new(),
+                ..new_llm.clone()
+            });
+        }
+    }
+    
     let mut current = state.settings.write().await;
     *current = settings;
     let path = AppSettings::default_file(&state.config_dir);

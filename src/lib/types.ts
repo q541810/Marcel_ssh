@@ -98,7 +98,7 @@ export type LlmProviderType = 'openai' | 'anthropic' | 'ollama';
 
 export interface LlmConfig {
   providerType: LlmProviderType;
-  apiKey: string;
+  apiKey?: string;  // Optional - loaded from keychain, not persisted to JSON
   model: string;
   baseUrl?: string | null;
   maxTokens: number;

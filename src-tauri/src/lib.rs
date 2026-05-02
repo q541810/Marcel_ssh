@@ -45,7 +45,7 @@ impl AppState {
             &ConnectionStore::default_file(&config_dir),
         )
         .unwrap_or_else(|e| {
-            log::warn!("无法加载连接配置，使用默认值: {}", e);
+            log::warn!("无法加载连接配置，使用默认值：{}", e);
             ConnectionStore::new()
         });
 
@@ -53,7 +53,7 @@ impl AppState {
             &AppSettings::default_file(&config_dir),
         )
         .unwrap_or_else(|e| {
-            log::warn!("无法加载应用设置，使用默认值: {}", e);
+            log::warn!("无法加载应用设置，使用默认值：{}", e);
             AppSettings::default()
         });
 
@@ -65,6 +65,23 @@ impl AppState {
             log::info!("settings.json 缺少 llmConfig，已填入默认值");
             // Best-effort: persist back so the user can edit it via the Settings UI.
             let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
+        }
+
+        // Load LLM API key from the system keychain (if available)
+        // This is separate from settings.json to avoid storing sensitive data on disk.
+        if let Some(ref mut llm_config) = settings.llm_config {
+            match crate::config::keychain::get_llm_api_key() {
+                Ok(Some(key)) => {
+                    llm_config.api_key = key;
+                    log::info!("已从密钥链加载 LLM API Key");
+                }
+                Ok(None) => {
+                    log::info!("未在密钥链中找到 LLM API Key，用户需在设置中输入");
+                }
+                Err(e) => {
+                    log::warn!("读取密钥链失败：{}", e);
+                }
+            }
         }
 
         log::info!(
@@ -129,6 +146,10 @@ pub fn run() {
             commands::config::config_save_password,
             commands::config::config_get_password,
             commands::config::config_delete_password,
+            // LLM API Key management
+            commands::config::config_save_llm_api_key,
+            commands::config::config_get_llm_api_key,
+            commands::config::config_delete_llm_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

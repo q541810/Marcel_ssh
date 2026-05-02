@@ -112,3 +112,17 @@ export async function getPassword(connectionId: string): Promise<string | null> 
 export async function deletePassword(connectionId: string): Promise<void> {
   return invoke('config_delete_password', { connectionId });
 }
+
+// LLM API Key management
+
+export async function saveLlmApiKey(apiKey: string): Promise<void> {
+  return invoke('config_save_llm_api_key', { apiKey });
+}
+
+export async function getLlmApiKey(): Promise<string | null> {
+  return invoke('config_get_llm_api_key');
+}
+
+export async function deleteLlmApiKey(): Promise<void> {
+  return invoke('config_delete_llm_api_key');
+}
