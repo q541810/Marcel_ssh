@@ -325,7 +325,7 @@ async fn run_agent_loop(
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the registry
-        let ctx = ToolContext::new(ssh.clone(), session_id.clone());
+        let ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
         for tc in &tool_calls {
             let exec = dispatch_tool_call(
                 tc,
@@ -600,7 +600,9 @@ fn build_system_prompt(mode: &AgentMode, session_id: &str) -> String {
     let base = format!(
         "You are Marcel, an AI assistant embedded in an SSH terminal client. \
          The user is connected to SSH session (id={session_id}). \
-         Respond in the same language as the user. Be concise."
+         Respond in the same language as the user. Be concise. \
+         Do NOT use Markdown formatting (no headings, bold, lists with *, etc.). \
+         Use plain text with simple indentation only."
     );
     match mode {
         AgentMode::Chat => format!(
@@ -609,7 +611,7 @@ fn build_system_prompt(mode: &AgentMode, session_id: &str) -> String {
         AgentMode::Agent => format!(
             "{base}\n\nYou are in AGENT mode. You have tools to: execute commands, \
              read/write/edit files, list directories, search files, upload/download \
-             files, manage processes, and query system info. Use them when needed. \
+             files, manage processes, query system info, search the web, and fetch web pages. \
              Some tool calls may be blocked or require user approval based on the \
              user's security policy."
         ),

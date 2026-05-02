@@ -24,6 +24,10 @@ pub struct ConnectionConfig {
     pub port: u16,
     pub username: String,
     pub auth_method: AuthMethod,
+    /// Optional connection ID from the saved config, used by Agent tools
+    /// to look up the stored password for sudo auto-fill.
+    #[serde(default)]
+    pub connection_id: Option<String>,
 }
 
 /// Minimal russh client handler — accepts any server key (TOFU model).
@@ -58,6 +62,7 @@ pub struct SshConnection {
     pub host: String,
     pub port: u16,
     pub username: String,
+    pub connection_id: Option<String>,
     /// Sender to the per-session driver task (for the interactive shell).
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     /// Shared russh Handle — used to open additional exec channels for
@@ -99,6 +104,7 @@ impl SshManager {
         let host = config.host.clone();
         let port = config.port;
         let username = config.username.clone();
+        let connection_id = config.connection_id.clone();
 
         log::info!(
             "SSH connecting to {}@{}:{} (session={})",
@@ -174,6 +180,7 @@ impl SshManager {
             host: host.clone(),
             port,
             username: username.clone(),
+            connection_id,
             cmd_tx,
             handle: shared_handle.clone(),
         });
@@ -458,6 +465,12 @@ impl SshManagerClone {
             }
         }
         Ok(output)
+    }
+
+    /// Get the connection_id associated with a session, if available.
+    pub async fn get_connection_id(&self, session_id: &str) -> Option<String> {
+        let guard = self.connections.read().await;
+        guard.get(session_id).and_then(|c| c.connection_id.clone())
     }
 }
 

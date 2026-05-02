@@ -149,21 +149,29 @@ pub enum RiskLevel {
 }
 ```
 
-**内置 Tools 列表**（6 个，在 `commands/agent.rs::build_tool_definitions()` 中定义）：
+**内置 Tools 列表**（12 个，在 `agent/tools/` 模块和 `commands/agent.rs` 中定义）：
 
 | Tool 名称 | 功能 | 风险等级 | 实现方式 |
 |-----------|------|---------|---------|
-| `execute_command` | 在远程 shell 执行单条命令 | 取决于命令（动态评估） | `commands/agent.rs` 内联执行 |
-| `read_file` | 读取远程文件（`cat`） | ReadOnly | `commands/agent.rs` 内联执行 |
-| `write_file` | 写入/创建远程文件（heredoc） | Moderate | `commands/agent.rs` 内联执行 |
-| `list_directory` | 列出目录内容（`ls -la`） | ReadOnly | `commands/agent.rs` 内联执行 |
-| `search_files` | 内容搜索（`grep -rn`） | ReadOnly | `commands/agent.rs` 内联执行 |
-| `system_info` | OS / 内存 / 磁盘信息查询 | ReadOnly | `commands/agent.rs` 内联执行 |
+| `execute_command` | 在远程 shell 执行单条命令 | 取决于命令（动态评估） | `agent/tools/execute_cmd.rs` |
+| `read_file` | 读取远程文件（`cat`） | ReadOnly | `agent/tools/file_ops.rs` |
+| `write_file` | 写入/创建远程文件（heredoc） | Moderate | `agent/tools/file_ops.rs` |
+| `edit_file` | 编辑远程文件（diff patch） | Moderate | `agent/tools/file_ops.rs` |
+| `list_directory` | 列出目录内容（`ls -la`） | ReadOnly | `agent/tools/file_ops.rs` |
+| `upload_file` | 上传本地文件到远程（SFTP） | Moderate | `agent/tools/sftp_transfer.rs` |
+| `download_file` | 下载远程文件到本地（SFTP） | ReadOnly | `agent/tools/sftp_transfer.rs` |
+| `search_files` | 内容搜索（`grep -rn`） | ReadOnly | `agent/tools/search.rs` |
+| `process_management` | 查看/管理远程进程 | ReadOnly | `agent/tools/process.rs` |
+| `system_info` | OS / 内存 / 磁盘信息查询 | ReadOnly | `agent/tools/system.rs` |
+| `web_search` | 联网搜索互联网信息（返回标题+摘要+链接） | ReadOnly | `agent/tools/web_search.rs` |
+| `http_get` | 获取网页完整内容 | ReadOnly | `agent/tools/http_get.rs` |
 
-> **架构要点**：工具定义在 `commands/agent.rs` 的 `build_tool_definitions()` 中，执行逻辑在 `execute_tool_call()` 中内联实现。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
-> 1. 在 `build_tool_definitions()` 添加 `ToolDefinition`
-> 2. 在 `execute_tool_call()` 添加匹配分支
+> **架构要点**：工具通过 `AgentTool` trait 实现，注册到 `ToolRegistry::with_builtins()` 中。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
+> 1. 在 `agent/tools/<name>.rs` 实现 `AgentTool` trait
+> 2. 在 `mod.rs` 中声明模块并在 `with_builtins()` 注册
 > 3. 在本表中登记
+
+> **联网工具使用模式**：`web_search` 返回搜索结果摘要（标题+链接），**不包含完整页面内容**。如需阅读详细信息，Agent 应使用 `http_get` 工具访问搜索返回的 URL。这种"信息饥饿"设计让 Agent 自然地组合两个工具，同时节省上下文窗口。
 
 ### 4.4 安全策略引擎
 

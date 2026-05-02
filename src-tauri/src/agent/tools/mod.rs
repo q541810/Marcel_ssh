@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tauri::AppHandle;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::error::AppError;
@@ -23,10 +24,12 @@ use crate::ssh::connection::SshManagerClone;
 pub mod base64;
 pub mod execute_cmd;
 pub mod file_ops;
+pub mod http_get;
 pub mod process;
 pub mod search;
 pub mod sftp_transfer;
 pub mod system;
+pub mod web_search;
 
 // ───────────────────────── Public types ─────────────────────────
 
@@ -89,11 +92,12 @@ pub struct ToolInfo {
 pub struct ToolContext {
     pub ssh: SshManagerClone,
     pub session_id: String,
+    pub app_handle: AppHandle,
 }
 
 impl ToolContext {
-    pub fn new(ssh: SshManagerClone, session_id: impl Into<String>) -> Self {
-        Self { ssh, session_id: session_id.into() }
+    pub fn new(ssh: SshManagerClone, session_id: impl Into<String>, app_handle: AppHandle) -> Self {
+        Self { ssh, session_id: session_id.into(), app_handle }
     }
 
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.
@@ -188,7 +192,7 @@ impl ToolRegistry {
         infos
     }
 
-    /// Build a registry pre-populated with all 10 built-in tools.
+    /// Build a registry pre-populated with all 12 built-in tools.
     ///
     /// Built-ins:
     /// - `execute_command`           (execute_cmd)
@@ -198,6 +202,8 @@ impl ToolRegistry {
     /// - `search_files`               (search)
     /// - `process_management`         (process)
     /// - `system_info`                (system)
+    /// - `web_search`                 (web_search)
+    /// - `http_get`                   (http_get)
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
@@ -210,6 +216,8 @@ impl ToolRegistry {
         r.register(Arc::new(search::SearchFilesTool::new()));
         r.register(Arc::new(process::ProcessManagementTool::new()));
         r.register(Arc::new(system::SystemInfoTool::new()));
+        r.register(Arc::new(web_search::WebSearchTool::new()));
+        r.register(Arc::new(http_get::HttpGetTool::new()));
         r
     }
 }
@@ -252,10 +260,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_with_builtins_has_ten_tools() {
+    fn registry_with_builtins_has_twelve_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-        assert_eq!(names.len(), 10, "expected 10 built-in tools, got {:?}", names);
+        assert_eq!(names.len(), 12, "expected 12 built-in tools, got {:?}", names);
         for expected in [
             "execute_command",
             "read_file",
@@ -267,6 +275,8 @@ mod tests {
             "search_files",
             "process_management",
             "system_info",
+            "web_search",
+            "http_get",
         ] {
             assert!(names.iter().any(|n| n == expected), "missing tool: {}", expected);
         }

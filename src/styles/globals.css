@@ -161,3 +161,44 @@ button,
   opacity: 0;
   transition: opacity 200ms ease-out;
 }
+
+/* Tighten Markdown spacing in Agent messages */
+.prose.prose-sm :where(ul, ol):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose.prose-sm :where(li):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}
+
+.prose.prose-sm :where(p):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose.prose-sm :where(ul > li):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  padding-left: 0.5rem;
+}
+
+/* Nested lists — even tighter */
+.prose.prose-sm :where(ul ul, ul ol, ol ul, ol ol):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}
+
+.prose.prose-sm :where(h1, h2, h3, h4):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose.prose-sm :where(blockquote):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.prose.prose-sm :where(pre):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}

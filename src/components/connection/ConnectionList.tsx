@@ -81,6 +81,7 @@ export default function ConnectionList() {
       port: conn.port,
       username: conn.username,
       authMethod,
+      connectionId: conn.id,
     };
     try {
       await connect(config);

@@ -7,6 +7,16 @@ use crate::config::settings::AppSettings;
 use crate::error::AppError;
 use crate::AppState;
 
+/// Check if the given API key looks like a masked placeholder.
+/// Front-end may display "sk-******" or similar to indicate "unchanged".
+fn is_masked_key(key: &str) -> bool {
+    // Common mask patterns
+    key.contains("******") ||
+    key == "sk-" ||
+    key.chars().all(|c| c == '*') ||
+    key.starts_with("sk-") && key.len() <= 10
+}
+
 /// Get all saved connections.
 #[tauri::command]
 pub async fn config_get_connections(
@@ -111,8 +121,16 @@ pub async fn config_delete_llm_api_key() -> Result<(), AppError> {
 pub async fn config_get_settings(
     state: State<'_, AppState>,
 ) -> Result<AppSettings, AppError> {
-    let settings = state.settings.read().await;
-    Ok(settings.clone())
+    let mut settings = state.settings.read().await.clone();
+    // 如果 keychain 中有 API Key，填充到返回的设置中
+    if let Some(ref mut llm) = settings.llm_config {
+        if llm.api_key.is_empty() {
+            if let Ok(Some(key)) = keychain::get_llm_api_key() {
+                llm.api_key = key;
+            }
+        }
+    }
+    Ok(settings)
 }
 
 /// Save updated application settings. Persists to disk.
@@ -128,8 +146,13 @@ pub async fn config_save_settings(
     // If LLM config has changed, update the keychain
     if let Some(ref new_llm) = settings.llm_config {
         if !new_llm.api_key.is_empty() {
-            keychain::save_llm_api_key(&new_llm.api_key)?;
-            log::info!("已将 LLM API Key 保存到密钥链");
+            // 前端可能使用遮罩字符串表示未修改，跳过 keychain 更新
+            if !is_masked_key(&new_llm.api_key) {
+                keychain::save_llm_api_key(&new_llm.api_key)?;
+                log::info!("已将 LLM API Key 保存到密钥链");
+            } else {
+                log::info!("API Key 未修改，跳过密钥链更新");
+            }
         }
     }
     

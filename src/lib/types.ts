@@ -5,6 +5,8 @@ export interface ConnectionConfig {
   port: number;
   username: string;
   authMethod: AuthMethod;
+  /** Saved connection ID, used by Agent tools for password lookup (sudo auto-fill). */
+  connectionId?: string;
 }
 
 export type AuthMethod =

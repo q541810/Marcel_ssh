@@ -51,18 +51,18 @@ impl AgentTool for UploadFileTool {
     fn name(&self) -> &str { "upload_file" }
 
     fn description(&self) -> &str {
-        "Upload a local file to the remote server. Binary-safe. Absolute paths \
-         required on both sides. Limit: 32 MB."
+        "Trigger a file picker dialog on the user's machine, then upload the selected file to the remote server. \
+         Binary-safe. Provide the desired remote path (directory or full file path)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "local_path":  { "type": "string", "description": "Absolute path on the local (agent host) filesystem" },
-                "remote_path": { "type": "string", "description": "Absolute path on the remote server" }
+                "remote_path": { "type": "string", "description": "Absolute path on the remote server (directory or full file path)" },
+                "file_name": { "type": "string", "description": "Optional: desired filename for the remote file. If omitted, uses original name." }
             },
-            "required": ["local_path", "remote_path"]
+            "required": ["remote_path"]
         })
     }
 
@@ -73,25 +73,35 @@ impl AgentTool for UploadFileTool {
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let local_path = params.get("local_path").and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Agent("Missing 'local_path' parameter".into()))?;
         let remote_path = params.get("remote_path").and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'remote_path' parameter".into()))?;
-        if local_path.is_empty() || remote_path.is_empty() {
-            return Ok(ToolOutput::fail("upload_file", "empty path"));
+        if remote_path.is_empty() {
+            return Ok(ToolOutput::fail("upload_file", "empty remote_path"));
         }
 
-        let local = PathBuf::from(local_path);
-        let size = match local_file_size(&local).await {
+        // 弹出系统文件选择对话框
+        use tauri_plugin_dialog::{DialogExt, FilePath};
+        let file_path = ctx.app_handle.dialog().file().blocking_pick_file();
+        let local_path = match file_path {
+            Some(FilePath::Path(p)) => p,
+            Some(FilePath::Url(_)) => {
+                return Ok(ToolOutput::fail("upload_file", "不支持 URL 类型的文件路径"));
+            }
+            None => {
+                return Ok(ToolOutput::fail("upload_file", "用户取消了文件选择"));
+            }
+        };
+
+        let size = match local_file_size(&local_path).await {
             Ok(n) => n,
             Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path),
+                format!("upload {}", local_path.display()),
                 e.to_string(),
             )),
         };
         if size > MAX_TRANSFER_BYTES {
             return Ok(ToolOutput::fail(
-                format!("upload {}", local_path),
+                format!("upload {}", local_path.display()),
                 format!(
                     "file too large: {} bytes (limit {} bytes). Use rsync/scp via execute_command.",
                     size, MAX_TRANSFER_BYTES
@@ -99,16 +109,51 @@ impl AgentTool for UploadFileTool {
             ));
         }
 
-        let bytes = match fs::read(&local).await {
+        let bytes = match fs::read(&local_path).await {
             Ok(b) => b,
             Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path),
+                format!("upload {}", local_path.display()),
                 format!("local read failed: {}", e),
             )),
         };
 
+        // 确定最终远程路径
+        let final_remote = if params.get("file_name").and_then(|v| v.as_str()).map_or(false, |n| !n.is_empty()) {
+            // 如果 remote_path 是目录，追加 filename
+            let dir = if remote_path.ends_with('/') || remote_path.ends_with('\\') {
+                remote_path.to_string()
+            } else {
+                // 判断是否是目录（简单启发：以 / 结尾或无扩展名）
+                let parts: Vec<&str> = remote_path.rsplitn(2, '/').collect();
+                if parts.last().map_or(false, |p| !p.contains('.')) {
+                    format!("{}/", remote_path)
+                } else {
+                    remote_path.to_string()
+                }
+            };
+            let name = params.get("file_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if dir.ends_with('/') {
+                format!("{}{}", dir, name)
+            } else {
+                format!("{}/{}", dir, name)
+            }
+        } else {
+            // 使用原始文件名
+            let file_name = local_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "upload".to_string());
+            if remote_path.ends_with('/') || remote_path.ends_with('\\') {
+                format!("{}{}", remote_path, file_name)
+            } else {
+                format!("{}/{}", remote_path, file_name)
+            }
+        };
+
         let payload = base64::b64_encode(&bytes);
-        let escaped_remote = shell_escape(remote_path);
+        let escaped_remote = shell_escape(&final_remote);
         let cmd = format!(
             "(\
 base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d -A 2>/dev/null > {p}\
@@ -124,17 +169,17 @@ base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d 
                 let ok = remote_size.map_or(false, |n| n == bytes.len() as u64);
                 if ok {
                     Ok(ToolOutput::ok(
-                        format!("upload {} ({} bytes)", remote_path, bytes.len()),
-                        format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path, remote_path),
+                        format!("upload {} ({} bytes)", final_remote, bytes.len()),
+                        format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path.display(), final_remote),
                     )
                     .with_metadata(json!({
-                        "local_path": local_path,
-                        "remote_path": remote_path,
+                        "local_path": local_path.display().to_string(),
+                        "remote_path": final_remote,
                         "bytes": bytes.len(),
                     })))
                 } else {
                     Ok(ToolOutput::fail(
-                        format!("upload {}", remote_path),
+                        format!("upload {}", final_remote),
                         format!(
                             "size mismatch after upload: sent {} bytes, remote reports {:?}",
                             bytes.len(),
@@ -144,7 +189,7 @@ base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d 
                 }
             }
             Err(e) => Ok(ToolOutput::fail(
-                format!("upload {}", remote_path),
+                format!("upload {}", final_remote),
                 format!("transfer failed: {}", e),
             )),
         }
