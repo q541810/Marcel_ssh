@@ -311,21 +311,38 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
 
     set((state) => {
-      const newConversations: Record<string, AgentConversation> = {};
+      // Find conversations that belong to this connection and should be replaced
+      const existingConvIds = new Set(Object.keys(state.conversations));
+      const incomingConvIds = new Set(convs.map((c) => c.id));
+      
+      // Remove old conversations that belong to this connection (identified by connectionId match)
+      const toRemove = Object.values(state.conversations)
+        .filter((c) => c.connectionId === connectionId && !incomingConvIds.has(c.id))
+        .map((c) => c.id);
+
+      const newConversations: Record<string, AgentConversation> = { ...state.conversations };
       const newMessages: Record<string, AgentMessage[]> = { ...state.messages };
 
+      // Remove stale conversations for this connection
+      for (const id of toRemove) {
+        delete newConversations[id];
+        delete newMessages[id];
+      }
+
+      // Add/update conversations for this connection
       for (const conv of convs) {
         newConversations[conv.id] = conv;
         newMessages[conv.id] = loadedMessages[conv.id];
       }
 
-      // Select the most recent conversation
+      // Select the most recent conversation (only if no active one exists)
       const firstConvId = convs.length > 0 ? convs[0].id : null;
+      const isActiveStillValid = state.activeConversationId && newConversations[state.activeConversationId];
 
       return {
         conversations: newConversations,
         messages: newMessages,
-        activeConversationId: firstConvId || state.activeConversationId || null,
+        activeConversationId: isActiveStillValid ? state.activeConversationId : (firstConvId || state.activeConversationId || null),
       };
     });
   },
