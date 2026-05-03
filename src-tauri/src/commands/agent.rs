@@ -8,7 +8,7 @@ use crate::agent::conversation::Conversation;
 use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
-use crate::config::settings::CommandListMode;
+use crate::config::settings::{CommandListMode, AgentModeSettings};
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolCall, ToolDefinition};
@@ -57,11 +57,12 @@ pub async fn agent_start_task(
     state.agent_tasks.write().insert(task_id.clone(), task);
 
     // Snapshot config
-    let (llm_config, agent_settings) = {
+    let (llm_config, agent_settings, sandbox) = {
         let settings = state.settings.read().await;
         (
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
+            Sandbox::default(),
         )
     };
 
@@ -75,7 +76,7 @@ pub async fn agent_start_task(
     let provider = OpenAiProvider::new(llm_config)?;
 
     // Build initial messages
-    let system_prompt = build_system_prompt(&mode, &session_id);
+    let system_prompt = build_system_prompt(&mode, &session_id, &agent_settings, &sandbox);
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
     for msg in &history {
@@ -730,30 +731,117 @@ async fn await_user_approval(
 
 // ──────────────────────── System prompt ────────────────────────
 
-fn build_system_prompt(mode: &AgentMode, session_id: &str) -> String {
-    let base = format!(
-        "You are Marcel, an AI assistant embedded in an SSH terminal client. \
-         The user is connected to SSH session (id={session_id}). \
-         Respond in the same language as the user. Be concise. \
-         Do NOT use Markdown formatting (no headings, bold, lists with *, etc.). \
-         Use plain text with simple indentation only."
+fn build_system_prompt(
+    mode: &AgentMode,
+    session_id: &str,
+    agent_settings: &AgentModeSettings,
+    sandbox: &Sandbox,
+) -> String {
+    let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
+你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
+思考方式\n\
+简洁直接 Concise - 直接、简洁地回答，避免不必要的话。以简洁为重点。\n\n\
+语言\n\
+中文 Chinese - 回答时优先使用中文，始终使用中文作为默认语言。\n\n\
+输出格式\n\
+直接回答问题。不要使用 markdown 代码块格式（如 json ），除非用户明确要求。\n\n\
+重要：你必须用少于 4 行文本（不包括工具使用或代码生成）来回答，除非用户要求详细说明。回答要简洁，避免序言、后记或解释。除非用户询问，否则不要解释你在做什么。\n\n\
+主动性\n\
+你允许主动行动，但只在用户要求时才能这样做。你应该努力在以下两点之间取得平衡：\n\
+- 按要求做正确的事情，包括采取行动和后续行动\n\
+- 不要在未经询问的情况下让用户感到意外的行动\n\
+例如，如果用户询问如何处理某事，你应该先尽力回答他们的问题，而不是立即跳到采取行动。\n\n\
+可用工具\n\
+你拥有以下内置工具来协助用户完成任务：\n\
+- read_file - 读取远程文件内容\n\
+- write_file - 写入/创建远程文件\n\
+- edit_file - 编辑远程文件（diff patch）\n\
+- list_directory - 列出目录内容\n\
+- execute_command - 在远程 shell 执行命令\n\
+- upload_file - 上传本地文件到远程\n\
+- download_file - 下载远程文件到本地\n\
+- search_files - 远程内容搜索\n\
+- process_management - 查看/管理远程进程\n\
+- system_info - 系统信息查询\n\
+- web_search - 联网搜索（返回标题+摘要+链接）\n\
+- http_get - 获取网页完整内容\n\n\
+工具的风险等级和安全策略由系统自动评估，部分操作可能需要用户确认后才能执行。\n\n";
+
+    let policy = sandbox.policy();
+    let blocked_patterns = if policy.blocked_patterns.is_empty() {
+        "无".to_string()
+    } else {
+        policy.blocked_patterns.join("、")
+    };
+    let blocked_base_commands = if policy.blocked_base_commands.is_empty() {
+        "无".to_string()
+    } else {
+        policy.blocked_base_commands.join("、")
+    };
+    let protected_paths = if policy.protected_paths.is_empty() {
+        "无".to_string()
+    } else {
+        policy.protected_paths.join("、")
+    };
+
+    let mode_str = match mode {
+        AgentMode::Chat => "CHAT - 仅对话，不调用工具",
+        AgentMode::Agent => "AGENT - 可调用工具，中高风险需确认",
+        AgentMode::Auto => "AUTO - 全自主执行，无需确认",
+    };
+
+    let list_mode_str = match agent_settings.list_mode {
+        CommandListMode::Allowlist => "白名单（仅列表中的命令允许）",
+        CommandListMode::Denylist => "黑名单（列表中的命令拦截）",
+    };
+
+    let command_list = if agent_settings.command_list.is_empty() {
+        "无".to_string()
+    } else {
+        agent_settings.command_list.join("、")
+    };
+
+    let confirm_label = if agent_settings.confirm_each_command { "是" } else { "否" };
+
+    let policy_section = format!(
+        "安全策略\n\
+当前安全策略由系统配置自动生成：\n\
+- 当前模式：{}\n\
+- 命令列表模式：{}\n\
+- 命令列表内容：{}\n\
+- 每次命令是否确认：{}\n\
+- 每任务最大命令数：{}\n\
+- 命令超时：{}s\n\
+- 任务超时：{}s\n\
+- 拦截的命令模式：{}\n\
+- 拦截的基础命令：{}\n\
+- 保护路径：{}\n\n",
+        mode_str,
+        list_mode_str,
+        command_list,
+        confirm_label,
+        policy.max_commands_per_task,
+        policy.command_timeout_secs,
+        policy.task_timeout_secs,
+        blocked_patterns,
+        blocked_base_commands,
+        protected_paths,
     );
-    match mode {
-        AgentMode::Chat => format!(
-            "{base}\n\nYou are in CHAT mode. Do NOT call any tools. Only answer questions."
-        ),
-        AgentMode::Agent => format!(
-            "{base}\n\nYou are in AGENT mode. You have tools to: execute commands, \
-             read/write/edit files, list directories, search files, upload/download \
-             files, manage processes, query system info, search the web, and fetch web pages. \
-             Some tool calls may be blocked or require user approval based on the \
-             user's security policy."
-        ),
-        AgentMode::Auto => format!(
-            "{base}\n\nYou are in AUTO mode. Execute tools freely without asking for confirmation. \
-             Be efficient but cautious with destructive operations."
-        ),
-    }
+
+    let conventions = "遵循惯例\n\
+在对文件进行更改时，首先理解文件的代码惯例。模仿代码风格，使用现有的库和工具，并遵循现有的模式。\n\
+永远不要假设某个给定的库是可用的，即使它很知名。每当编写使用库或框架的代码时，首先检查这个代码库是否已经使用了该库。\n\
+当创建新组件时，首先查看现有组件是如何编写的；然后考虑框架选择、命名约定、类型和其他惯例。\n\
+当编辑一段代码时，首先查看代码的周围上下文（特别是它的导入），以了解代码对框架和库的选择。\n\
+始终遵循安全最佳实践。永远不要引入暴露或记录密钥的代码。永远不要将密钥提交到仓库。\n\n\
+语气和风格\n\
+你应该简洁、直接、切中要点。当你运行非平凡的 bash 命令时，你应该解释这个命令在做什么以及为什么要运行它。\n\
+记住你的输出将显示在命令行界面上。你的响应不可以使用 markdown。\n\
+重要：你应该最小化输出 tokens，同时保持帮助性、质量和准确性。\n\
+重要：你不应该用不必要的序言或后记来回答，除非用户要求。\n\
+重要：保持你的回复简短，因为它们将显示在命令行界面上。你必须用少于 4 行文字回答（不包括工具使用或代码生成），除非用户要求详细说明。\n\n";
+
+    format!("{}\n{}当前会话：SSH session id={}\n\n{}", base, policy_section, session_id, conventions)
 }
 
 /// Serialized event for tool execution results.
