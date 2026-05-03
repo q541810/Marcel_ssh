@@ -324,10 +324,10 @@ export default function AgentPanel() {
       {historyDrawerOpen && (
         <>
           <div
-            className="absolute inset-0 bg-black/40 z-20"
+            className="absolute inset-0 bg-black/40 z-20 animate-fadeIn"
             onClick={() => setHistoryDrawerOpen(false)}
           />
-          <div className="absolute top-0 right-0 h-full w-72 bg-zinc-900 border-l border-zinc-800 z-30 flex flex-col shadow-2xl">
+          <div className="absolute top-0 right-0 h-full w-72 bg-zinc-900 border-l border-zinc-800 z-30 flex flex-col shadow-2xl animate-slideInRight">
             <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
               <h3 className="text-sm font-semibold text-zinc-200">历史会话</h3>
               <button

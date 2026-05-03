@@ -297,37 +297,37 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadConnectionConversations: async (connectionId: string) => {
     const convs = await tauri.agentListConversationsByConnection(connectionId);
-    set((state) => {
-      const existingIds = new Set(Object.keys(state.conversations));
-      const newConversations: Record<string, AgentConversation> = { ...state.conversations };
-      const newMessages = { ...state.messages };
-      for (const conv of convs) {
-        if (!existingIds.has(conv.id)) {
-          newConversations[conv.id] = conv;
-          newMessages[conv.id] = [];
-        }
-      }
-      const firstConvId = convs.length > 0 ? convs[0].id : state.activeConversationId;
-      return {
-        conversations: newConversations,
-        messages: newMessages,
-        activeConversationId: state.activeConversationId || firstConvId || null,
-      };
-    });
 
-    if (convs.length > 0) {
-      const firstConvId = convs[0].id;
-      const stored = await tauri.agentLoadConversation(firstConvId);
-      const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
+    // Load messages for all conversations
+    const loadedMessages: Record<string, AgentMessage[]> = {};
+    for (const conv of convs) {
+      const stored = await tauri.agentLoadConversation(conv.id);
+      loadedMessages[conv.id] = stored.map((m: StoredMessage) => ({
         id: m.id,
         role: m.role as AgentMessage['role'],
         content: m.content,
         timestamp: m.timestamp,
       }));
-      set((state) => ({
-        messages: { ...state.messages, [firstConvId]: msgs },
-      }));
     }
+
+    set((state) => {
+      const newConversations: Record<string, AgentConversation> = {};
+      const newMessages: Record<string, AgentMessage[]> = { ...state.messages };
+
+      for (const conv of convs) {
+        newConversations[conv.id] = conv;
+        newMessages[conv.id] = loadedMessages[conv.id];
+      }
+
+      // Select the most recent conversation
+      const firstConvId = convs.length > 0 ? convs[0].id : null;
+
+      return {
+        conversations: newConversations,
+        messages: newMessages,
+        activeConversationId: firstConvId || state.activeConversationId || null,
+      };
+    });
   },
 
   getCurrentMessages: () => {
