@@ -134,6 +134,11 @@ export interface TerminalColors {
   brightWhite: string;
 }
 
+export interface ExperimentalSettings {
+  enableWebSearch: boolean;
+  enableHttpFetch: boolean;
+}
+
 export interface AppSettings {
   terminalColors: TerminalColors;
   fontSize: number;
@@ -141,6 +146,7 @@ export interface AppSettings {
   defaultAgentMode: string;
   llmConfig?: LlmConfig | null;
   agentModeSettings: AgentModeSettings;
+  experimentalSettings?: ExperimentalSettings;
 }
 
 // LLM stream events

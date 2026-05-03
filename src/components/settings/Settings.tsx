@@ -6,6 +6,7 @@ import type {
   CommandListMode,
   LlmConfig,
   TerminalColors,
+  ExperimentalSettings,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import type { CommandCheckResult } from '@/lib/tauri';
@@ -507,6 +508,39 @@ export default function Settings() {
                 </div>
               )}
             </div>
+          </Field>
+        </Section>
+
+        {/* Section: Experimental */}
+        <Section
+          title="实验性功能"
+          description="这些功能正在开发中，可能在未来版本中更改或移除。"
+        >
+          <Field label="联网搜索">
+            <Toggle
+              checked={draft.experimentalSettings?.enableWebSearch ?? true}
+              onChange={(checked) => {
+                const current = draft.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true };
+                updateDraft((s) => ({
+                  ...s,
+                  experimentalSettings: { ...current, enableWebSearch: checked },
+                }));
+              }}
+              label="允许 Agent 使用 web_search 工具搜索互联网"
+            />
+          </Field>
+          <Field label="网页获取">
+            <Toggle
+              checked={draft.experimentalSettings?.enableHttpFetch ?? true}
+              onChange={(checked) => {
+                const current = draft.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true };
+                updateDraft((s) => ({
+                  ...s,
+                  experimentalSettings: { ...current, enableHttpFetch: checked },
+                }));
+              }}
+              label="允许 Agent 使用 http_get 工具获取网页内容"
+            />
           </Field>
         </Section>
         </div>
