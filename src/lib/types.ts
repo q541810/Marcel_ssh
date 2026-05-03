@@ -165,4 +165,5 @@ export interface StoredMessage {
   content: string;
   timestamp: string;
   createdAt: string;
+  toolCallsJson?: string | null;
 }

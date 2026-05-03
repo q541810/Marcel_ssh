@@ -9,8 +9,38 @@ import type {
   ApprovalRequestPayload,
   AgentConversation,
   StoredMessage,
+  RiskLevel,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+
+/** Deserialize a StoredMessage into an AgentMessage, reconstructing toolCall info if present. */
+function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
+  const base: AgentMessage = {
+    id: m.id,
+    role: m.role as AgentMessage['role'],
+    content: m.content,
+    timestamp: m.timestamp,
+  };
+
+  // If the message has persisted tool_calls JSON, reconstruct the first toolCall.
+  if (m.toolCallsJson) {
+    try {
+      const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = JSON.parse(m.toolCallsJson);
+      if (toolCalls.length > 0) {
+        base.toolCall = {
+          id: toolCalls[0].id,
+          name: toolCalls[0].name,
+          arguments: toolCalls[0].arguments,
+          riskLevel: 'readonly' as RiskLevel, // risk is re-evaluated at dispatch time
+        };
+      }
+    } catch {
+      // ignore parse error
+    }
+  }
+
+  return base;
+}
 
 interface AgentState {
   tasks: Record<string, AgentTask>;
@@ -230,12 +260,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   switchConversation: async (conversationId: string) => {
     const stored = await tauri.agentLoadConversation(conversationId);
-    const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
-      id: m.id,
-      role: m.role as AgentMessage['role'],
-      content: m.content,
-      timestamp: m.timestamp,
-    }));
+    const msgs: AgentMessage[] = stored.map(storedMessageToAgentMessage);
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
@@ -244,12 +269,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadConversation: async (conversationId: string) => {
     const stored = await tauri.agentLoadConversation(conversationId);
-    const msgs: AgentMessage[] = stored.map((m: StoredMessage) => ({
-      id: m.id,
-      role: m.role as AgentMessage['role'],
-      content: m.content,
-      timestamp: m.timestamp,
-    }));
+    const msgs: AgentMessage[] = stored.map(storedMessageToAgentMessage);
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
@@ -302,12 +322,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const loadedMessages: Record<string, AgentMessage[]> = {};
     for (const conv of convs) {
       const stored = await tauri.agentLoadConversation(conv.id);
-      loadedMessages[conv.id] = stored.map((m: StoredMessage) => ({
-        id: m.id,
-        role: m.role as AgentMessage['role'],
-        content: m.content,
-        timestamp: m.timestamp,
-      }));
+      loadedMessages[conv.id] = stored.map(storedMessageToAgentMessage);
     }
 
     set((state) => {

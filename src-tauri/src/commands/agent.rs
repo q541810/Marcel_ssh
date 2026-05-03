@@ -407,7 +407,7 @@ async fn run_agent_loop(
     // Persist user messages from history that are not yet saved
     for msg in &messages {
         if msg.role == LlmRole::User && !msg.content.is_empty() {
-            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339());
+            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339(), None);
         }
     }
 
@@ -444,19 +444,21 @@ async fn run_agent_loop(
             // No tool calls — final answer. We're done.
             messages.push(assistant_msg.clone());
             // Persist assistant message to DB
-            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339());
+            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
         }
 
         // 3. Add assistant message (with tool_calls) to history
-        // Persist assistant message content (without tool_calls JSON) to DB
+        // Serialize tool_calls to JSON for DB persistence
+        let tool_calls_json = serde_json::to_string(&tool_calls).ok();
+        // Also persist the tool-call summary text for backward-compat display
         let assistant_text = if assistant_msg.content.is_empty() {
             format!("[调用工具: {}]", tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "))
         } else {
             assistant_msg.content.clone()
         };
-        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_text, &Utc::now().to_rfc3339());
+        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_text, &Utc::now().to_rfc3339(), tool_calls_json.as_deref());
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the registry
@@ -740,7 +742,7 @@ fn build_system_prompt(
     let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
 思考方式\n\
-简洁直接 Concise - 直接、简洁地回答，避免不必要的话。以简洁为重点。\n\n\
+简洁直接 Concise - 直接、简洁地回答。以简洁为重点，但尽量不丢失信息。\n\n\
 语言\n\
 中文 Chinese - 回答时优先使用中文，始终使用中文作为默认语言。\n\n\
 输出格式\n\
@@ -750,6 +752,7 @@ fn build_system_prompt(
 你允许主动行动，但只在用户要求时才能这样做。你应该努力在以下两点之间取得平衡：\n\
 - 按要求做正确的事情，包括采取行动和后续行动\n\
 - 不要在未经询问的情况下让用户感到意外的行动\n\
+- 不要直接回答自己拿不准的问题，应当先使用工具 web_search 搜索资料\n\
 例如，如果用户询问如何处理某事，你应该先尽力回答他们的问题，而不是立即跳到采取行动。\n\n\
 可用工具\n\
 你拥有以下内置工具来协助用户完成任务：\n\

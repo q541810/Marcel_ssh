@@ -48,13 +48,23 @@ export default function AgentMessage({ message }: Props) {
       </div>
 
       {/* Content */}
-      <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic">
-        {message.role === 'user' ? (
-          message.content
-        ) : (
-          <Markdown>{message.content}</Markdown>
-        )}
-      </div>
+      {message.role === 'tool' ? (
+        // Tool result messages show result content only
+        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words">
+          {message.content}
+        </div>
+      ) : message.toolCall && message.content.startsWith('[调用工具:') ? (
+        // Historical tool-call message: skip placeholder text, show tool card only
+        null
+      ) : (
+        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic">
+          {message.role === 'user' ? (
+            message.content
+          ) : (
+            <Markdown>{message.content}</Markdown>
+          )}
+        </div>
+      )}
 
       {/* Tool call details */}
       {message.toolCall && (
