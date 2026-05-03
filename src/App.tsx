@@ -170,7 +170,7 @@ export default function App() {
           className="flex overflow-hidden flex-shrink-0"
           style={{
             width: agentPanelOpen && !isSettingsView ? `${agentPanelWidth + 4}px` : '0px',
-            transition: 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
+            transition: isResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
           {/* Resize handle */}
