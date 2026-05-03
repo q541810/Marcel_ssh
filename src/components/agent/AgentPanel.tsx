@@ -200,29 +200,14 @@ export default function AgentPanel() {
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            canInteract
-              ? '描述您想要做的事情...'
-              : '请先连接到服务器...'
-          }
-          disabled={!canInteract}
-          rows={2}
-          className="w-full resize-none rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-        />
-
-        {/* Action row: mode drawer (left) + send/stop (right) */}
-        <div className="flex items-center justify-between gap-2 mt-2">
-          {/* Mode drawer trigger */}
-          <div className="relative" ref={drawerRef}>
+        <div className="flex items-center gap-2">
+          {/* Mode selector */}
+          <div className="relative flex-shrink-0" ref={drawerRef}>
             <button
               type="button"
               onClick={() => setModeDrawerOpen((v) => !v)}
               className={`
-                flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border transition-colors
+                flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium border transition-colors
                 ${
                   modeDrawerOpen
                     ? 'bg-zinc-700 border-zinc-600 text-zinc-100'
@@ -233,7 +218,6 @@ export default function AgentPanel() {
               aria-haspopup="listbox"
               aria-expanded={modeDrawerOpen}
             >
-              <span className="text-zinc-500">模式</span>
               <span className="font-semibold tracking-wider">
                 {currentModeInfo.label}
               </span>
@@ -301,13 +285,28 @@ export default function AgentPanel() {
             )}
           </div>
 
+          {/* Input field */}
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              canInteract
+                ? '描述您想要做的事情...'
+                : '请先连接到服务器...'
+            }
+            disabled={!canInteract}
+            className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+          />
+
           {/* Send / Stop button */}
           <button
             type="button"
             onClick={isRunning ? handleStop : handleSend}
             disabled={!isRunning && (!input.trim() || !canInteract)}
             className={`
-              p-2 rounded-lg transition-all
+              flex-shrink-0 p-2 rounded-lg transition-all
               ${isRunning
                 ? 'bg-red-600 hover:bg-red-500 text-white'
                 : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed'
@@ -316,11 +315,11 @@ export default function AgentPanel() {
             title={isRunning ? '停止' : '发送'}
           >
             {isRunning ? (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
               </svg>
             ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14m-7-7l7 7-7 7" />
               </svg>
             )}
