@@ -171,7 +171,6 @@ pub fn run() {
                 let mut pending = crash_state.pending_crash.write();
                 *pending = Some(crash_info);
             } else {
-                // Mark startup only if no previous crash
                 let handler = crash_state.handler.read();
                 if let Some(h) = handler.as_ref() {
                     h.mark_startup();

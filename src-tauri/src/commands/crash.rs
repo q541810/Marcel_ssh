@@ -29,12 +29,8 @@ impl Default for CrashState {
 
 #[tauri::command]
 pub async fn crash_check_previous(state: State<'_, CrashState>) -> Result<Option<CrashInfo>, AppError> {
-    let handler_lock = state.handler.read();
-    if let Some(handler) = handler_lock.as_ref() {
-        Ok(handler.check_previous_crash())
-    } else {
-        Ok(None)
-    }
+    let pending = state.pending_crash.read();
+    Ok(pending.clone())
 }
 
 #[tauri::command]
