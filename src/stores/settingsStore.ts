@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, TerminalColors } from '@/lib/types';
+import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
@@ -19,7 +20,7 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
-  theme: 'dark',
+  terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
   fontFamily: 'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace',
   defaultAgentMode: 'agent',
@@ -37,20 +38,27 @@ interface SettingsState {
   save: (settings: AppSettings) => Promise<void>;
   /** Patch a subset of fields, persist, and update local state. */
   update: (patch: Partial<AppSettings>) => Promise<void>;
+  /** Preview settings for live updates (not persisted until save) */
+  preview: Partial<AppSettings> | null;
+  /** Update preview settings for live preview */
+  setPreview: (preview: Partial<AppSettings>) => void;
+  /** Clear preview settings */
+  clearPreview: () => void;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
+  preview: null,
 
   load: async () => {
     if (get().loaded) return;
     try {
       const fromDisk = await tauri.getSettings();
-      // Backwards compat: ensure agentModeSettings always present
       const merged: AppSettings = {
         ...DEFAULT_SETTINGS,
         ...fromDisk,
+        terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
       };
@@ -63,12 +71,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   save: async (settings: AppSettings) => {
     await tauri.saveSettings(settings);
-    set({ settings });
+    set({ settings, preview: null });
   },
 
   update: async (patch: Partial<AppSettings>) => {
     const next = { ...get().settings, ...patch };
     await tauri.saveSettings(next);
-    set({ settings: next });
+    set({ settings: next, preview: null });
+  },
+
+  setPreview: (preview: Partial<AppSettings>) => {
+    set({ preview });
+  },
+
+  clearPreview: () => {
+    set({ preview: null });
   },
 }));

@@ -59,6 +59,32 @@ impl ConversationDb {
             source: e,
         })?;
 
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                tool_calls_json TEXT,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conversations_connection ON conversations(connection_id);
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+            ",
+        ).map_err(|e| ConversationError::SchemaError { source: e })?;
+
         // Migration: rename session_id → connection_id if old schema exists
         let needs_migration = {
             let cols: Vec<String> = conn
@@ -98,32 +124,6 @@ impl ConversationDb {
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete: tool_calls_json column added");
         }
-
-        conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                connection_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS messages (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                tool_calls_json TEXT,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_conversations_connection ON conversations(connection_id);
-            CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-            ",
-        ).map_err(|e| ConversationError::SchemaError { source: e })?;
 
         log::info!("Conversation database initialized at: {}", path_str);
 

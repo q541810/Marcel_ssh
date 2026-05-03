@@ -35,7 +35,7 @@ export default function TerminalToolbar() {
             onClick={() => setMode(m.value as AgentMode)}
             title={m.description}
             className={`
-              px-2 py-0.5 rounded text-xs font-medium transition-colors
+              px-2 py-0.5 rounded-lg text-xs font-medium transition-colors
               ${
                 mode === m.value
                   ? 'bg-indigo-600 text-indigo-100'

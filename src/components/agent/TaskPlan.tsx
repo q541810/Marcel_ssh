@@ -14,7 +14,7 @@ export default function TaskPlan({ steps, currentStepIndex }: Props) {
   if (steps.length === 0) return null;
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3">
+    <div className="rounded-xl border border-zinc-700 bg-zinc-800/50 p-3">
       <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
         任务计划
       </h4>

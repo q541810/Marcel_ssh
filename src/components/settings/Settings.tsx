@@ -1,19 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type {
   AppSettings,
   AgentModeSettings,
   CommandListMode,
   LlmConfig,
+  TerminalColors,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import type { CommandCheckResult } from '@/lib/tauri';
+import { TERMINAL_COLOR_PRESETS } from '@/lib/constants';
 import Button from '@/components/ui/Button';
+import Toggle from '@/components/ui/Toggle';
 
 export default function Settings() {
   const settings = useSettingsStore((s) => s.settings);
   const loaded = useSettingsStore((s) => s.loaded);
   const save = useSettingsStore((s) => s.save);
+  const setPreview = useSettingsStore((s) => s.setPreview);
+  const clearPreview = useSettingsStore((s) => s.clearPreview);
 
   const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
@@ -38,10 +43,12 @@ export default function Settings() {
    */
   const [draft, setDraft] = useState<AppSettings | null>(null);
 
-  // Sync draft from store the first time settings load (or when reset)
-  if (loaded && draft === null) {
-    setDraft(settings);
-  }
+  // Sync draft from store the first time settings load
+  useEffect(() => {
+    if (loaded && draft === null) {
+      setDraft(settings);
+    }
+  }, [loaded, draft, settings]);
 
   if (!loaded || !draft) {
     return (
@@ -51,7 +58,7 @@ export default function Settings() {
     );
   }
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings);
+  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(settings);
 
   const updateDraft = (mutator: (s: AppSettings) => AppSettings) => {
     setDraft((cur) => (cur ? mutator(cur) : cur));
@@ -98,6 +105,7 @@ export default function Settings() {
 
   const handleReset = () => {
     setDraft(settings);
+    clearPreview();
   };
 
   const handleAddCommand = () => {
@@ -171,46 +179,39 @@ export default function Settings() {
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 max-w-3xl">
-        {/* Section: Appearance */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-6 py-6">
+          {/* Section: Appearance */}
         <Section title="外观">
-          <Field label="主题">
-            <select
-              value={draft.theme}
-              onChange={(e) => updateDraft((s) => ({ ...s, theme: e.target.value }))}
-              className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="dark">深色</option>
-              <option value="light">浅色</option>
-            </select>
-            <span className="text-xs text-zinc-500">应用到终端</span>
+          <Field label="颜色主题">
+            <ColorThemeSelector
+              value={draft.terminalColors}
+              onChange={(terminalColors) => {
+                updateDraft((s) => ({ ...s, terminalColors }));
+                setPreview({ terminalColors });
+              }}
+            />
           </Field>
           <Field label="字号">
-            <input
-              type="number"
-              min={10}
-              max={32}
+            <FontSizeInput
               value={draft.fontSize}
-              onChange={(e) =>
-                updateDraft((s) => ({
-                  ...s,
-                  fontSize: Math.max(10, Math.min(32, parseInt(e.target.value, 10) || 14)),
-                }))
-              }
-              className="w-24 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              onChange={(fontSize) => {
+                updateDraft((s) => ({ ...s, fontSize }));
+                setPreview({ fontSize });
+              }}
             />
-            <span className="text-xs text-zinc-500">应用到终端</span>
           </Field>
           <Field label="字体">
             <input
               type="text"
               value={draft.fontFamily}
-              onChange={(e) =>
-                updateDraft((s) => ({ ...s, fontFamily: e.target.value }))
-              }
-              className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              onChange={(e) => {
+                const fontFamily = e.target.value;
+                updateDraft((s) => ({ ...s, fontFamily }));
+                setPreview({ fontFamily });
+              }}
+              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
             />
-            <span className="text-xs text-zinc-500">应用到终端</span>
           </Field>
         </Section>
 
@@ -222,7 +223,7 @@ export default function Settings() {
               onChange={(e) =>
                 updateDraft((s) => ({ ...s, defaultAgentMode: e.target.value }))
               }
-              className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
             >
               <option value="chat">CHAT — 纯聊天</option>
               <option value="agent">AGENT — 工具调用 + 黑/白名单</option>
@@ -245,7 +246,7 @@ export default function Settings() {
                   providerType: e.target.value as LlmConfig['providerType'],
                 }))
               }
-              className="rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
             >
               <option value="openai">OpenAI 兼容</option>
               <option value="anthropic" disabled>
@@ -264,7 +265,7 @@ export default function Settings() {
                 updateLlm((l) => ({ ...l, baseUrl: e.target.value }))
               }
               placeholder="https://api.openai.com/v1"
-              className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
             />
           </Field>
           <Field label="API Key">
@@ -276,7 +277,7 @@ export default function Settings() {
               }
               placeholder="输入 API Key"
               autoComplete="off"
-              className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
             />
           </Field>
           <Field label="Model">
@@ -289,7 +290,7 @@ export default function Settings() {
                 }
                 placeholder="claude-opus-4-7"
                 list="llm-model-suggestions"
-                className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
               />
               <datalist id="llm-model-suggestions">
                 <option value="claude-opus-4-7" />
@@ -313,7 +314,7 @@ export default function Settings() {
                   ),
                 }))
               }
-              className="w-24 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
             />
           </Field>
           <Field label="Max Tokens">
@@ -332,26 +333,20 @@ export default function Settings() {
                   ),
                 }))
               }
-              className="w-32 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+              className="w-32 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
             />
           </Field>
           <Field label="TLS">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={draft.llmConfig?.allowInvalidCerts ?? false}
-                onChange={(e) =>
-                  updateLlm((l) => ({
-                    ...l,
-                    allowInvalidCerts: e.target.checked,
-                  }))
-                }
-                className="w-4 h-4 accent-indigo-500"
-              />
-              <span className="text-sm text-zinc-300">
-                允许自签名/无效证书（用于本地或内网 HTTPS 服务器）
-              </span>
-            </label>
+            <Toggle
+              checked={draft.llmConfig?.allowInvalidCerts ?? false}
+              onChange={(checked) =>
+                updateLlm((l) => ({
+                  ...l,
+                  allowInvalidCerts: checked,
+                }))
+              }
+              label="允许自签名/无效证书（用于本地或内网 HTTPS 服务器）"
+            />
           </Field>
         </Section>
 
@@ -361,7 +356,7 @@ export default function Settings() {
           description="仅在 AGENT 模式下生效。CHAT 模式不会执行命令；AUTO 模式不受此处限制。"
         >
           <Field label="列表模式">
-            <div className="flex rounded overflow-hidden border border-zinc-700">
+            <div className="flex rounded-lg overflow-hidden border border-zinc-700">
               <ListModeButton
                 value="denylist"
                 current={agent.listMode}
@@ -370,6 +365,7 @@ export default function Settings() {
                 }
                 label="黑名单"
                 description="只阻止列表中的命令"
+                position="first"
               />
               <ListModeButton
                 value="allowlist"
@@ -379,27 +375,22 @@ export default function Settings() {
                 }
                 label="白名单"
                 description="只允许列表中的命令"
+                position="last"
               />
             </div>
           </Field>
 
           <Field label="逐条确认">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={agent.confirmEachCommand}
-                onChange={(e) =>
-                  updateAgent((a) => ({
-                    ...a,
-                    confirmEachCommand: e.target.checked,
-                  }))
-                }
-                className="w-4 h-4 accent-indigo-500"
-              />
-              <span className="text-sm text-zinc-300">
-                即使通过列表过滤，仍要求用户确认每条命令
-              </span>
-            </label>
+            <Toggle
+              checked={agent.confirmEachCommand}
+              onChange={(checked) =>
+                updateAgent((a) => ({
+                  ...a,
+                  confirmEachCommand: checked,
+                }))
+              }
+              label="即使通过列表过滤，仍要求用户确认每条命令"
+            />
           </Field>
 
           <Field
@@ -419,7 +410,7 @@ export default function Settings() {
                     }
                   }}
                   placeholder="例如：rm 或 sudo"
-                  className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
                 />
                 <Button
                   variant="secondary"
@@ -437,7 +428,7 @@ export default function Settings() {
                   {agent.commandList.map((cmd) => (
                     <span
                       key={cmd}
-                      className="group inline-flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800 border border-zinc-700 text-xs font-mono text-zinc-200"
+                      className="group inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-800 border border-zinc-700 text-xs font-mono text-zinc-200"
                     >
                       {cmd}
                       <button
@@ -479,7 +470,7 @@ export default function Settings() {
                     }
                   }}
                   placeholder="例如：rm -rf /tmp/test"
-                  className="flex-1 rounded bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
                 />
                 <Button
                   variant="secondary"
@@ -494,7 +485,7 @@ export default function Settings() {
               {testResult && (
                 <div
                   className={`
-                    rounded border px-3 py-2 text-sm
+                    rounded-xl border px-3 py-2 text-sm
                     ${
                       testResult.allowed
                         ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
@@ -518,6 +509,7 @@ export default function Settings() {
             </div>
           </Field>
         </Section>
+        </div>
       </div>
     </div>
   );
@@ -542,6 +534,85 @@ function Section({
       )}
       <div className="space-y-3 mt-3">{children}</div>
     </section>
+  );
+}
+
+function FontSizeInput({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [showSlider, setShowSlider] = useState(false);
+  const [inputValue, setInputValue] = useState(String(value));
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setInputValue(String(value));
+  }, [value]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowSlider(false);
+      }
+    }
+    if (showSlider) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showSlider]);
+
+  const handleBlur = () => {
+    const num = parseInt(inputValue, 10);
+    const clamped = Math.max(10, Math.min(32, num || 14));
+    setInputValue(String(clamped));
+    if (clamped !== value) {
+      onChange(clamped);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <input
+        type="number"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onFocus={() => setShowSlider(true)}
+        onBlur={handleBlur}
+        className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      />
+      {showSlider && (
+        <div 
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-3 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-50 w-52 animate-slide-down"
+          style={{ animationDuration: '200ms', animationTimingFunction: 'var(--spring-bounce)' }}
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          <input
+            type="range"
+            min={10}
+            max={32}
+            value={value}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (v !== value) {
+                setInputValue(String(v));
+                onChange(v);
+              }
+            }}
+            className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+          />
+          <div className="flex justify-between text-xs text-zinc-500 mt-1">
+            <span>10</span>
+            <span className="text-indigo-400 font-medium">{value}px</span>
+            <span>32</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -576,28 +647,182 @@ function ListModeButton({
   onClick,
   label,
   description,
+  position,
 }: {
   value: CommandListMode;
   current: CommandListMode;
   onClick: (v: CommandListMode) => void;
   label: string;
   description: string;
+  position?: 'first' | 'last' | 'middle';
 }) {
   const active = value === current;
+  const roundedClass = position === 'first' 
+    ? 'rounded-l-lg' 
+    : position === 'last' 
+      ? 'rounded-r-lg' 
+      : '';
+
   return (
     <button
       onClick={() => onClick(value)}
       title={description}
       className={`
-        px-4 py-2 text-sm transition-colors
+        flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0
+        ${roundedClass}
         ${
           active
             ? 'bg-indigo-600 text-white'
-            : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+            : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
         }
       `}
+      style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
     >
       {label}
     </button>
+  );
+}
+
+const COLOR_FIELDS: { key: keyof TerminalColors; label: string }[] = [
+  { key: 'background', label: '背景' },
+  { key: 'foreground', label: '前景' },
+  { key: 'cursor', label: '光标' },
+  { key: 'selectionBackground', label: '选区' },
+  { key: 'black', label: '黑' },
+  { key: 'red', label: '红' },
+  { key: 'green', label: '绿' },
+  { key: 'yellow', label: '黄' },
+  { key: 'blue', label: '蓝' },
+  { key: 'magenta', label: '品红' },
+  { key: 'cyan', label: '青' },
+  { key: 'white', label: '白' },
+  { key: 'brightBlack', label: '亮黑' },
+  { key: 'brightRed', label: '亮红' },
+  { key: 'brightGreen', label: '亮绿' },
+  { key: 'brightYellow', label: '亮黄' },
+  { key: 'brightBlue', label: '亮蓝' },
+  { key: 'brightMagenta', label: '亮品红' },
+  { key: 'brightCyan', label: '亮青' },
+  { key: 'brightWhite', label: '亮白' },
+];
+
+function ColorThemeSelector({
+  value,
+  onChange,
+}: {
+  value: TerminalColors;
+  onChange: (colors: TerminalColors) => void;
+}) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [customColors, setCustomColors] = useState<TerminalColors>(value);
+
+  useEffect(() => {
+    setCustomColors(value);
+  }, [value]);
+
+  const handlePresetSelect = (preset: TerminalColors) => {
+    onChange(preset);
+    setShowCustom(false);
+  };
+
+  const handleCustomChange = (key: keyof TerminalColors, color: string) => {
+    const newColors = { ...customColors, [key]: color };
+    setCustomColors(newColors);
+    onChange(newColors);
+  };
+
+  const isPresetSelected = (preset: TerminalColors) => {
+    return JSON.stringify(preset) === JSON.stringify(value);
+  };
+
+  return (
+    <div className="flex-1 space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {TERMINAL_COLOR_PRESETS.map((preset) => (
+          <button
+            key={preset.name}
+            onClick={() => handlePresetSelect(preset.colors)}
+            className={`
+              px-3 py-1.5 rounded-lg text-sm transition-all
+              ${isPresetSelected(preset.colors)
+                ? 'bg-indigo-600 text-white ring-2 ring-indigo-400'
+                : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+              }
+            `}
+          >
+            <span className="flex items-center gap-2">
+              <span
+                className="w-4 h-4 rounded border border-zinc-600"
+                style={{ backgroundColor: preset.colors.background }}
+              />
+              {preset.name}
+            </span>
+          </button>
+        ))}
+        <button
+          onClick={() => setShowCustom(!showCustom)}
+          className={`
+            px-3 py-1.5 rounded-lg text-sm transition-all
+            ${showCustom
+              ? 'bg-indigo-600 text-white ring-2 ring-indigo-400'
+              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
+            }
+          `}
+        >
+          自定义
+        </button>
+      </div>
+
+      {showCustom && (
+        <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700 space-y-3">
+          <div className="text-xs text-zinc-400 mb-2">点击颜色块选择颜色，或直接输入十六进制颜色值</div>
+          <div className="grid grid-cols-4 gap-2">
+            {COLOR_FIELDS.map(({ key, label }) => (
+              <div key={key} className="flex items-center gap-2">
+                <label className="text-xs text-zinc-400 w-12">{label}</label>
+                <div className="relative flex-1">
+                  <input
+                    type="color"
+                    value={customColors[key]}
+                    onChange={(e) => handleCustomChange(key, e.target.value)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <div
+                    className="w-full h-6 rounded border border-zinc-600 cursor-pointer"
+                    style={{ backgroundColor: customColors[key] }}
+                  />
+                </div>
+                <input
+                  type="text"
+                  value={customColors[key]}
+                  onChange={(e) => handleCustomChange(key, e.target.value)}
+                  className="w-20 px-2 py-1 text-xs bg-zinc-900 border border-zinc-700 rounded text-zinc-300 font-mono"
+                  placeholder="#000000"
+                />
+              </div>
+            ))}
+          </div>
+          <div className="pt-2 border-t border-zinc-700">
+            <div className="text-xs text-zinc-500 mb-2">预览</div>
+            <div
+              className="p-3 rounded-lg font-mono text-sm"
+              style={{
+                backgroundColor: customColors.background,
+                color: customColors.foreground,
+              }}
+            >
+              <div className="flex gap-2 mb-1">
+                <span style={{ color: customColors.red }}>错误</span>
+                <span style={{ color: customColors.green }}>成功</span>
+                <span style={{ color: customColors.yellow }}>警告</span>
+                <span style={{ color: customColors.blue }}>信息</span>
+              </div>
+              <div style={{ color: customColors.cyan }}>user@host:~$</div>
+              <div>ls -la</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

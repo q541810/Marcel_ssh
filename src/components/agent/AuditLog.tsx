@@ -43,7 +43,7 @@ export default function AuditLog({ entries }: Props) {
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value as RiskLevel | 'all')}
-          className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-200 focus:outline-none"
+          className="text-xs bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-zinc-200 focus:outline-none"
         >
           <option value="all">全部</option>
           <option value="readonly">只读</option>
@@ -64,14 +64,14 @@ export default function AuditLog({ entries }: Props) {
         {filteredEntries.map((entry) => (
           <div
             key={entry.id}
-            className="p-2 rounded bg-zinc-800/50 border border-zinc-700/50 text-xs"
+            className="p-2 rounded-lg bg-zinc-800/50 border border-zinc-700/50 text-xs"
           >
             <div className="flex items-center justify-between mb-1">
               <span className="text-zinc-500">
                 {formatTimestamp(entry.timestamp)}
               </span>
               <span
-                className={`px-1.5 py-0.5 rounded text-xs font-medium ${RISK_LEVEL_COLORS[entry.riskLevel]}`}
+                className={`px-1.5 py-0.5 rounded-lg text-xs font-medium ${RISK_LEVEL_COLORS[entry.riskLevel]}`}
               >
                 {RISK_LEVEL_LABELS[entry.riskLevel]}
               </span>

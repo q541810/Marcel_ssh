@@ -49,7 +49,7 @@ export default function ApprovalDialog({
       />
 
       {/* Dialog */}
-      <div className="relative w-full max-w-md mx-4 rounded-lg bg-zinc-800 border border-zinc-700 shadow-2xl">
+      <div className="relative w-full max-w-md mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-zinc-700">
           <h3 className="text-lg font-semibold text-zinc-100">
@@ -84,7 +84,7 @@ export default function ApprovalDialog({
           {/* Arguments */}
           <div>
             <span className="text-sm text-zinc-400">参数：</span>
-            <pre className="mt-1 p-2 rounded bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40">
+            <pre className="mt-1 p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40">
               {JSON.stringify(toolCall.arguments, null, 2)}
             </pre>
           </div>
@@ -92,11 +92,11 @@ export default function ApprovalDialog({
           {/* Keyboard hints */}
           <div className="text-xs text-zinc-500 flex gap-4">
             <span>
-              <kbd className="px-1 py-0.5 rounded bg-zinc-700 text-zinc-300">Enter</kbd>{' '}
+              <kbd className="px-1 py-0.5 rounded-lg bg-zinc-700 text-zinc-300">Enter</kbd>{' '}
               批准
             </span>
             <span>
-              <kbd className="px-1 py-0.5 rounded bg-zinc-700 text-zinc-300">Esc</kbd>{' '}
+              <kbd className="px-1 py-0.5 rounded-lg bg-zinc-700 text-zinc-300">Esc</kbd>{' '}
               拒绝
             </span>
           </div>

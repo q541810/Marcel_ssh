@@ -72,7 +72,7 @@ export default function ToolCallCard({ message }: Props) {
           {/* Tool name badge */}
           <span
             className={`
-              flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded
+              flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg
               ${
                 tr.blocked
                   ? 'bg-red-900/50 text-red-300'

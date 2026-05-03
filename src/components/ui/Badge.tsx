@@ -25,7 +25,7 @@ export default function Badge({ variant = 'default', size = 'sm', children }: Pr
   return (
     <span
       className={`
-        inline-flex items-center rounded font-medium leading-none whitespace-nowrap
+        inline-flex items-center rounded-lg font-medium leading-none whitespace-nowrap
         ${colorClass}
         ${sizeStyles[size]}
       `}

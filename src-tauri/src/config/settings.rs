@@ -5,9 +5,60 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 use crate::llm::provider::LlmConfig;
 
-/// Agent command list mode — determines whether `commandList` is treated
-/// as an allow-list (only listed commands may run) or a deny-list (listed
-/// commands are blocked, all others may run).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalColors {
+    pub background: String,
+    pub foreground: String,
+    pub cursor: String,
+    pub cursor_accent: String,
+    pub selection_background: String,
+    pub black: String,
+    pub red: String,
+    pub green: String,
+    pub yellow: String,
+    pub blue: String,
+    pub magenta: String,
+    pub cyan: String,
+    pub white: String,
+    pub bright_black: String,
+    pub bright_red: String,
+    pub bright_green: String,
+    pub bright_yellow: String,
+    pub bright_blue: String,
+    pub bright_magenta: String,
+    pub bright_cyan: String,
+    pub bright_white: String,
+}
+
+impl Default for TerminalColors {
+    fn default() -> Self {
+        Self {
+            background: "#18181b".to_string(),
+            foreground: "#e4e4e7".to_string(),
+            cursor: "#a1a1aa".to_string(),
+            cursor_accent: "#18181b".to_string(),
+            selection_background: "#3f3f46".to_string(),
+            black: "#27272a".to_string(),
+            red: "#ef4444".to_string(),
+            green: "#22c55e".to_string(),
+            yellow: "#eab308".to_string(),
+            blue: "#3b82f6".to_string(),
+            magenta: "#a855f7".to_string(),
+            cyan: "#06b6d4".to_string(),
+            white: "#e4e4e7".to_string(),
+            bright_black: "#52525b".to_string(),
+            bright_red: "#f87171".to_string(),
+            bright_green: "#4ade80".to_string(),
+            bright_yellow: "#facc15".to_string(),
+            bright_blue: "#60a5fa".to_string(),
+            bright_magenta: "#c084fc".to_string(),
+            bright_cyan: "#22d3ee".to_string(),
+            bright_white: "#fafafa".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum CommandListMode {
@@ -44,7 +95,8 @@ pub struct AgentModeSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub theme: String,
+    #[serde(default)]
+    pub terminal_colors: TerminalColors,
     pub font_size: u16,
     pub font_family: String,
     pub default_agent_mode: String,
@@ -57,16 +109,13 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            theme: "dark".into(),
+            terminal_colors: TerminalColors::default(),
             font_size: 14,
             font_family: "monospace".into(),
             default_agent_mode: "agent".into(),
-            // LLM config uses environment variables for sensitive fields (API key, base URL)
-            // Users must configure their own LLM provider - no hardcoded credentials
             llm_config: Some(LlmConfig::default()),
             agent_mode_settings: AgentModeSettings {
                 list_mode: CommandListMode::Denylist,
-                // Same dangerous defaults as the Sandbox blocklist
                 command_list: vec![
                     "rm".into(),
                     "mkfs".into(),

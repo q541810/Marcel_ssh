@@ -169,7 +169,7 @@ export default function ConnectionList() {
         </h2>
         <button
           onClick={openNewConnectionForm}
-          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+          className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
           title="新建连接"
           aria-label="新建连接"
         >
@@ -186,7 +186,7 @@ export default function ConnectionList() {
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="搜索连接..."
-          className="w-full rounded bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
         />
       </div>
 
@@ -218,7 +218,7 @@ export default function ConnectionList() {
                   onClick={() => handleConnect(conn)}
                   onContextMenu={(e) => handleContextMenu(e, conn)}
                   className={`
-                    w-full text-left px-2 py-2 rounded text-sm transition-colors
+                    w-full text-left px-2 py-2 rounded-lg text-sm transition-colors
                     ${
                       activeConnectionId === conn.id
                         ? 'bg-indigo-900/30 border border-indigo-700'
@@ -247,7 +247,7 @@ export default function ConnectionList() {
       {/* Context menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 bg-zinc-800 border border-zinc-700 rounded shadow-lg py-1 min-w-32"
+          className="fixed z-50 bg-zinc-800 border border-zinc-700 rounded-xl shadow-lg py-1 min-w-32"
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onClick={(e) => e.stopPropagation()}
         >

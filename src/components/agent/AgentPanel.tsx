@@ -211,7 +211,7 @@ export default function AgentPanel() {
           }
           disabled={!canInteract}
           rows={2}
-          className="w-full resize-none rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+          className="w-full resize-none rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
         />
 
         {/* Action row: mode drawer (left) + send/stop (right) */}
@@ -222,7 +222,7 @@ export default function AgentPanel() {
               type="button"
               onClick={() => setModeDrawerOpen((v) => !v)}
               className={`
-                flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium border transition-colors
+                flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium border transition-colors
                 ${
                   modeDrawerOpen
                     ? 'bg-zinc-700 border-zinc-600 text-zinc-100'
@@ -257,7 +257,7 @@ export default function AgentPanel() {
             {modeDrawerOpen && (
               <div
                 role="listbox"
-                className="absolute bottom-full left-0 mb-2 w-64 rounded-lg border border-zinc-700 bg-zinc-800 shadow-2xl py-1 z-30"
+                className="absolute bottom-full left-0 mb-2 w-64 rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl py-1 z-30"
               >
                 {AGENT_MODES.map((m) => {
                   const active = m.value === mode;

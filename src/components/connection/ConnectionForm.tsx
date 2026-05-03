@@ -118,7 +118,7 @@ export default function ConnectionForm({
         <select
           value={authMethod}
           onChange={(e) => setAuthMethod(e.target.value)}
-          className="w-full rounded bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
         >
           <option value="Password">密码</option>
           <option value="PrivateKey">私钥</option>

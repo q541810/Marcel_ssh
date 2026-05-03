@@ -4,6 +4,89 @@
 /* xterm.js styles */
 @import "@xterm/xterm/css/xterm.css";
 
+/* Spring animation timing functions */
+:root {
+  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --spring-snappy: cubic-bezier(0.68, -0.6, 0.32, 1.6);
+
+  /* Apple-style border radius */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+}
+
+/* Spring keyframes for toggle/button animations */
+@keyframes spring-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes spring-toggle-on {
+  0% {
+    transform: translateX(0);
+  }
+  45% {
+    transform: translateX(calc(100% + 4px));
+  }
+  70% {
+    transform: translateX(calc(100% - 1px));
+  }
+  100% {
+    transform: translateX(calc(100% + 0px));
+  }
+}
+
+@keyframes spring-toggle-off {
+  0% {
+    transform: translateX(calc(100% + 0px));
+  }
+  45% {
+    transform: translateX(-4px);
+  }
+  70% {
+    transform: translateX(1px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+/* Spring utility classes */
+.spring-bounce {
+  animation-timing-function: var(--spring-bounce);
+}
+
+.spring-smooth {
+  animation-timing-function: var(--spring-smooth);
+}
+
+.spring-snappy {
+  animation-timing-function: var(--spring-snappy);
+}
+
+/* Toggle animation classes */
+.animate-toggle-on {
+  animation: spring-toggle-on 400ms var(--spring-bounce) forwards;
+}
+
+.animate-toggle-off {
+  animation: spring-toggle-off 400ms var(--spring-bounce) forwards;
+}
+
+.animate-slide-down {
+  animation: slideDown 200ms var(--spring-bounce) forwards;
+}
+
 /* Global smooth transitions */
 * {
   transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
@@ -59,13 +142,45 @@ body,
   overflow: hidden;
 }
 
+/* Custom scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #52525b;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+/* Smooth scrolling */
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-auto {
+  scroll-behavior: smooth;
+}
+
 /* Smooth animations for common interactions */
 button {
-  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 200ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 button:active {
-  transform: scale(0.98);
+  transform: scale(0.95);
 }
 
 /* Modal and dialog animations */
@@ -114,33 +229,33 @@ button:active {
 /* Apply animations to modals */
 [role="dialog"],
 .modal {
-  animation: scaleIn 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  animation: scaleIn 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 /* Dropdown animations */
 [role="listbox"],
 [role="menu"] {
-  animation: slideDown 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  animation: slideDown 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 /* Smooth hover effects */
 a,
 button,
 [role="button"] {
-  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 200ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
 }
 
 /* Focus ring animations */
 :focus-visible {
   outline: 2px solid #6366f1;
   outline-offset: 2px;
-  transition: outline-offset 150ms ease;
+  transition: outline-offset 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 /* Card hover effects */
 .card,
 [class*="rounded"] {
-  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 /* Smooth opacity changes */

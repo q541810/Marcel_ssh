@@ -14,7 +14,7 @@ export default function McpList() {
         </h2>
         <button
           disabled
-          className="p-1 rounded text-zinc-600 cursor-not-allowed"
+          className="p-1 rounded-lg text-zinc-600 cursor-not-allowed"
           title="新建 MCP（即将推出）"
           aria-label="新建 MCP"
         >

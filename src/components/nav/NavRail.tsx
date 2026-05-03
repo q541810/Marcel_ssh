@@ -66,7 +66,7 @@ function NavButton({
       title={item.label}
       aria-label={item.label}
       className={`
-        relative flex items-center justify-center w-12 h-12 rounded-md transition-colors
+        relative flex items-center justify-center w-12 h-12 rounded-lg transition-colors
         ${
           active
             ? 'bg-zinc-800 text-indigo-400'

@@ -33,7 +33,7 @@ export default function Modal({ open, onClose, title, children }: Props) {
       />
 
       {/* Content */}
-      <div className="relative w-full max-w-lg mx-4 rounded-lg bg-zinc-800 border border-zinc-700 shadow-2xl">
+      <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
         {/* Header */}
         {title && (
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">

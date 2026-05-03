@@ -35,7 +35,7 @@ export default function AgentMessage({ message }: Props) {
 
   return (
     <div
-      className={`rounded-lg border p-3 ${roleStyles[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}
+      className={`rounded-xl border p-3 ${roleStyles[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-1">
@@ -57,7 +57,7 @@ export default function AgentMessage({ message }: Props) {
         // Historical tool-call message: skip placeholder text, show tool card only
         null
       ) : (
-        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic">
+        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic">
           {message.role === 'user' ? (
             message.content
           ) : (
@@ -68,7 +68,7 @@ export default function AgentMessage({ message }: Props) {
 
       {/* Tool call details */}
       {message.toolCall && (
-        <div className="mt-2 p-2 rounded bg-zinc-900/50 border border-zinc-700/50">
+        <div className="mt-2 p-2 rounded-lg bg-zinc-900/50 border border-zinc-700/50">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-mono text-zinc-300">
               {message.toolCall.name}

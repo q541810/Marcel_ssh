@@ -40,13 +40,16 @@ export default function Button({
     <button
       disabled={disabled || loading}
       className={`
-        inline-flex items-center justify-center gap-2 rounded font-medium
-        transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-zinc-900
+        inline-flex items-center justify-center gap-2 rounded-lg font-medium
+        transition-all duration-200
+        focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-zinc-900
         disabled:opacity-50 disabled:cursor-not-allowed
+        active:scale-95
         ${variantStyles[variant]}
         ${sizeStyles[size]}
         ${className}
       `}
+      style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
       {...props}
     >
       {loading && (
