@@ -9,6 +9,8 @@ import Terminal from '@/components/terminal/Terminal';
 import TabBar from '@/components/terminal/TabBar';
 import AgentPanel from '@/components/agent/AgentPanel';
 import WindowControls from '@/components/ui/WindowControls';
+import CrashDialog from '@/components/crash/CrashDialog';
+import { crashCheckPrevious } from '@/lib/tauri';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import type { AgentMode } from '@/lib/types';
@@ -26,6 +28,9 @@ export default function App() {
   // Currently selected nav view. `settings` takes over the whole main area,
   // while `sessions` and `mcp` swap the sidebar contents.
   const [navView, setNavView] = useState<NavView>('sessions');
+  
+  // Crash detection state
+  const [showCrashDialog, setShowCrashDialog] = useState(false);
 
   // Bootstrap: load persisted settings once, then apply defaults derived from them.
   const loadSettings = useSettingsStore((s) => s.load);
@@ -39,6 +44,21 @@ export default function App() {
       console.error('Failed to load settings:', err);
     });
   }, [loadSettings]);
+
+  // Check for previous crash on mount
+  useEffect(() => {
+    const checkCrash = async () => {
+      try {
+        const crashInfo = await crashCheckPrevious();
+        if (crashInfo) {
+          setShowCrashDialog(true);
+        }
+      } catch (err) {
+        console.error('Failed to check crash status:', err);
+      }
+    };
+    checkCrash();
+  }, []);
 
   // Apply default agent mode once settings are loaded from disk.
   useEffect(() => {
@@ -99,6 +119,11 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden">
+      {/* Crash Dialog - shown when previous crash detected */}
+      {showCrashDialog && (
+        <CrashDialog onDismiss={() => setShowCrashDialog(false)} />
+      )}
+      
       {/* Top bar - Custom Title Bar */}
       <header className="flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8">
         {/* Draggable area - left side */}

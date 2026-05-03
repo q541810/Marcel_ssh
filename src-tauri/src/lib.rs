@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod commands;
 pub mod config;
+pub mod crash;
 pub mod error;
 pub mod llm;
 pub mod ssh;
@@ -16,8 +17,10 @@ use tokio::sync::oneshot;
 use crate::agent::audit::AuditLog;
 use crate::agent::conversation::ConversationDb;
 use crate::agent::runtime::AgentTask;
+use crate::commands::crash::CrashState;
 use crate::config::connections::ConnectionStore;
 use crate::config::settings::AppSettings;
+use crate::crash::CrashHandler;
 use crate::ssh::connection::SshManager;
 
 /// Shared application state managed by Tauri.
@@ -151,6 +154,32 @@ pub fn run() {
 
             log::info!("App config directory: {}", config_dir.display());
 
+            // Initialize crash handler
+            let crash_handler = CrashHandler::new(&config_dir);
+            crash_handler.setup_panic_hook();
+            
+            // Check for previous crash
+            let previous_crash = crash_handler.check_previous_crash();
+            let crash_state = CrashState::new();
+            {
+                let mut handler = crash_state.handler.write();
+                *handler = Some(crash_handler);
+            }
+            
+            if let Some(crash_info) = previous_crash {
+                log::warn!("检测到上次崩溃: {:?}", crash_info.crash_type);
+                let mut pending = crash_state.pending_crash.write();
+                *pending = Some(crash_info);
+            } else {
+                // Mark startup only if no previous crash
+                let handler = crash_state.handler.read();
+                if let Some(h) = handler.as_ref() {
+                    h.mark_startup();
+                }
+            }
+            
+            app.manage(crash_state);
+
             let app_state = AppState::new(config_dir);
             app.manage(app_state);
             Ok(())
@@ -187,6 +216,15 @@ pub fn run() {
             commands::config::config_save_llm_api_key,
             commands::config::config_get_llm_api_key,
             commands::config::config_delete_llm_api_key,
+            // Crash handling commands
+            commands::crash::crash_check_previous,
+            commands::crash::crash_get_report,
+            commands::crash::crash_export_report,
+            commands::crash::crash_repair_config,
+            commands::crash::crash_list_backups,
+            commands::crash::crash_restore_backup,
+            commands::crash::crash_dismiss,
+            commands::crash::crash_mark_resolved,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");
