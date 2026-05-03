@@ -9,8 +9,6 @@ import Terminal from '@/components/terminal/Terminal';
 import TabBar from '@/components/terminal/TabBar';
 import AgentPanel from '@/components/agent/AgentPanel';
 import WindowControls from '@/components/ui/WindowControls';
-import CrashDialog from '@/components/crash/CrashDialog';
-import { crashCheckPrevious } from '@/lib/tauri';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import type { AgentMode } from '@/lib/types';
@@ -25,54 +23,28 @@ export default function App() {
   const [agentPanelWidth, setAgentPanelWidth] = useState(AGENT_PANEL_DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
-  // Currently selected nav view. `settings` takes over the whole main area,
-  // while `sessions` and `mcp` swap the sidebar contents.
   const [navView, setNavView] = useState<NavView>('sessions');
-  
-  // Crash detection state
-  const [showCrashDialog, setShowCrashDialog] = useState(false);
 
-  // Bootstrap: load persisted settings once, then apply defaults derived from them.
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const defaultAgentMode = useSettingsStore((s) => s.settings.defaultAgentMode);
   const setAgentMode = useAgentStore((s) => s.setMode);
 
   useEffect(() => {
-    // Load settings asynchronously without blocking render
     loadSettings().catch(err => {
       console.error('Failed to load settings:', err);
     });
   }, [loadSettings]);
 
-  // Check for previous crash on mount
-  useEffect(() => {
-    const checkCrash = async () => {
-      try {
-        const crashInfo = await crashCheckPrevious();
-        if (crashInfo) {
-          setShowCrashDialog(true);
-        }
-      } catch (err) {
-        console.error('Failed to check crash status:', err);
-      }
-    };
-    checkCrash();
-  }, []);
-
-  // Apply default agent mode once settings are loaded from disk.
   useEffect(() => {
     if (!settingsLoaded) return;
     const valid: AgentMode[] = ['chat', 'agent', 'auto'];
     if ((valid as string[]).includes(defaultAgentMode)) {
       setAgentMode(defaultAgentMode as AgentMode);
     }
-    // Intentionally only runs when settings finish loading; we don't want to
-    // override the user's in-session mode changes afterwards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded]);
 
-  // When user picks a sidebar-resident view, ensure the sidebar is visible.
   const handleNavChange = (view: NavView) => {
     setNavView(view);
     if (view === 'sessions' || view === 'mcp') {
@@ -80,7 +52,6 @@ export default function App() {
     }
   };
 
-  // ── Agent panel resize handlers ──
   const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     resizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
@@ -119,14 +90,7 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden">
-      {/* Crash Dialog - shown when previous crash detected */}
-      {showCrashDialog && (
-        <CrashDialog onDismiss={() => setShowCrashDialog(false)} />
-      )}
-      
-      {/* Top bar - Custom Title Bar */}
       <header className="flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8">
-        {/* Draggable area - left side */}
         <div
           className="flex items-center gap-3 px-2 flex-1"
           data-tauri-drag-region
@@ -167,16 +131,12 @@ export default function App() {
           </button>
         </div>
 
-        {/* Window controls - NOT in drag region */}
         <WindowControls />
       </header>
 
-      {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Far-left navigation rail (always visible) */}
         <NavRail active={navView} onChange={handleNavChange} />
 
-        {/* Sidebar — content depends on navView (hidden on settings) */}
         <aside
           className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
           style={{
@@ -191,15 +151,12 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Center — Terminal area (always mounted, hidden behind settings) */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
-          {/* Tab bar — only visible when there are sessions */}
           <TabBar />
           <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ display: isSettingsView ? 'none' : 'flex' }}>
             <Terminal />
           </main>
 
-          {/* Settings view (overlays terminal area) */}
           {isSettingsView && (
             <div className="absolute inset-0 flex flex-col min-w-0 overflow-hidden bg-zinc-900">
               <Settings />
@@ -207,7 +164,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Right panel — Agent (hidden on settings) */}
         <div
           className="flex overflow-hidden flex-shrink-0"
           style={{
@@ -215,7 +171,6 @@ export default function App() {
             transition: isResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
-          {/* Resize handle */}
           <div
             className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
             onMouseDown={handleResizeMouseDown}

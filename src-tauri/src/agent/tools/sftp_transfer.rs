@@ -4,7 +4,7 @@
 //! implemented on top of the already-open SSH exec channel using base64
 //! framing, which is binary-safe and reliable across distros.
 //!
-//! - `upload_file`   : local disk -> base64 in memory -> remote `base64 -d > remote`
+//! - `upload_file`   : local path -> base64 in memory -> remote `base64 -d > remote`
 //! - `download_file` : remote `base64 -w0 remote` -> decode locally -> write to disk
 //!
 //! Size limits keep us out of memory-pressure territory; a 32 MB default
@@ -51,18 +51,19 @@ impl AgentTool for UploadFileTool {
     fn name(&self) -> &str { "upload_file" }
 
     fn description(&self) -> &str {
-        "Trigger a file picker dialog on the user's machine, then upload the selected file to the remote server. \
-         Binary-safe. Provide the desired remote path (directory or full file path)."
+        "Upload a file from the local filesystem to the remote server. \
+         Binary-safe. Provide the local file path and the desired remote path."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
+                "local_path": { "type": "string", "description": "Absolute path to the local file to upload" },
                 "remote_path": { "type": "string", "description": "Absolute path on the remote server (directory or full file path)" },
                 "file_name": { "type": "string", "description": "Optional: desired filename for the remote file. If omitted, uses original name." }
             },
-            "required": ["remote_path"]
+            "required": ["local_path", "remote_path"]
         })
     }
 
@@ -73,35 +74,25 @@ impl AgentTool for UploadFileTool {
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
+        let local_path = params.get("local_path").and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Agent("Missing 'local_path' parameter".into()))?;
         let remote_path = params.get("remote_path").and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'remote_path' parameter".into()))?;
         if remote_path.is_empty() {
             return Ok(ToolOutput::fail("upload_file", "empty remote_path"));
         }
 
-        // 弹出系统文件选择对话框
-        use tauri_plugin_dialog::{DialogExt, FilePath};
-        let file_path = ctx.app_handle.dialog().file().blocking_pick_file();
-        let local_path = match file_path {
-            Some(FilePath::Path(p)) => p,
-            Some(FilePath::Url(_)) => {
-                return Ok(ToolOutput::fail("upload_file", "不支持 URL 类型的文件路径"));
-            }
-            None => {
-                return Ok(ToolOutput::fail("upload_file", "用户取消了文件选择"));
-            }
-        };
-
-        let size = match local_file_size(&local_path).await {
+        let local_path_buf = PathBuf::from(local_path);
+        let size = match local_file_size(&local_path_buf).await {
             Ok(n) => n,
             Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path.display()),
+                format!("upload {}", local_path_buf.display()),
                 e.to_string(),
             )),
         };
         if size > MAX_TRANSFER_BYTES {
             return Ok(ToolOutput::fail(
-                format!("upload {}", local_path.display()),
+                format!("upload {}", local_path_buf.display()),
                 format!(
                     "file too large: {} bytes (limit {} bytes). Use rsync/scp via execute_command.",
                     size, MAX_TRANSFER_BYTES
@@ -109,10 +100,10 @@ impl AgentTool for UploadFileTool {
             ));
         }
 
-        let bytes = match fs::read(&local_path).await {
+        let bytes = match fs::read(&local_path_buf).await {
             Ok(b) => b,
             Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path.display()),
+                format!("upload {}", local_path_buf.display()),
                 format!("local read failed: {}", e),
             )),
         };
@@ -141,7 +132,7 @@ impl AgentTool for UploadFileTool {
             }
         } else {
             // 使用原始文件名
-            let file_name = local_path
+            let file_name = local_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "upload".to_string());
@@ -170,10 +161,10 @@ base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d 
                 if ok {
                     Ok(ToolOutput::ok(
                         format!("upload {} ({} bytes)", final_remote, bytes.len()),
-                        format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path.display(), final_remote),
+                        format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path_buf.display(), final_remote),
                     )
                     .with_metadata(json!({
-                        "local_path": local_path.display().to_string(),
+                        "local_path": local_path_buf.display().to_string(),
                         "remote_path": final_remote,
                         "bytes": bytes.len(),
                     })))
