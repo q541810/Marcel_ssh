@@ -15,6 +15,7 @@ interface TerminalInstance {
   fitAddon: FitAddon;
   container: HTMLDivElement;
   unlistenOutput?: UnlistenFn;
+  onDataDisposable?: { dispose: () => void };
 }
 
 export default function Terminal() {
@@ -59,23 +60,27 @@ export default function Terminal() {
     terminal.loadAddon(webLinksAddon);
     terminal.open(container);
 
-    // Handle input
-    const disposable = terminal.onData((data: string) => {
+    const instance: TerminalInstance = {
+      id: sessionId,
+      terminal,
+      fitAddon,
+      container,
+    };
+
+    const onDataDisposable = terminal.onData((data: string) => {
       sshSendInput(sessionId, data).catch((err) => {
         console.error('Failed to send input:', err);
       });
     });
+    instance.onDataDisposable = onDataDisposable;
 
-    // Handle output
-    let unlistenOutput: UnlistenFn | null = null;
-    const setupListener = async () => {
-      unlistenOutput = await listen<string>(`ssh://output/${sessionId}`, (event) => {
+    void (async () => {
+      const unlistenOutput = await listen<string>(`ssh://output/${sessionId}`, (event) => {
         terminal.write(event.payload);
       });
-    };
-    setupListener();
+      instance.unlistenOutput = unlistenOutput;
+    })();
 
-    // Focus on click
     const handleClick = () => terminal.focus();
     container.addEventListener('mousedown', handleClick);
 
@@ -84,29 +89,19 @@ export default function Terminal() {
       terminal.focus();
     });
 
-    const instance: TerminalInstance = {
-      id: sessionId,
-      terminal,
-      fitAddon,
-      container,
-      unlistenOutput: undefined,
-    };
-
-    // Store unlisten function when ready
-    setupListener().then(() => {
-      instance.unlistenOutput = unlistenOutput ?? undefined;
-    });
-
     return instance;
   };
 
   // Cleanup terminal instance
   const cleanupTerminal = (instance: TerminalInstance) => {
-    instance.terminal.dispose();
-    instance.container.remove();
+    if (instance.onDataDisposable) {
+      instance.onDataDisposable.dispose();
+    }
     if (instance.unlistenOutput) {
       instance.unlistenOutput();
     }
+    instance.terminal.dispose();
+    instance.container.remove();
   };
 
   // Sync terminals with sessions
