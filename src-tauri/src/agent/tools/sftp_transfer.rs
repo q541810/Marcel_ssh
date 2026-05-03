@@ -25,17 +25,31 @@ use crate::error::AppError;
 /// Hard ceiling for a single transfer to prevent runaway memory use.
 const MAX_TRANSFER_BYTES: u64 = 32 * 1024 * 1024;
 
-/// Validate that a local path is absolute and points at a real file (for upload).
-/// Returns the size on success.
-async fn local_file_size(p: &Path) -> Result<u64, AppError> {
+/// Validate a local file path for upload: existence, type, and path-traversal safety.
+async fn validate_local_upload_path(p: &Path) -> Result<(), String> {
+    if !p.exists() {
+        return Err("本地文件不存在".into());
+    }
+    if !p.is_file() {
+        return Err("路径不是文件".into());
+    }
+    // Reject paths containing `..` components to prevent directory traversal.
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err("路径包含非法的父目录引用 (..)".into());
+        }
+    }
+    Ok(())
+}
+
+/// Validate that a local path points at a real, accessible file.
+/// Returns the file size on success.
+async fn local_file_size(p: &Path) -> Result<u64, String> {
     let meta = fs::metadata(p)
         .await
-        .map_err(|e| AppError::Agent(format!("local file inaccessible: {}", e)))?;
+        .map_err(|e| format!("local file inaccessible: {}", e))?;
     if !meta.is_file() {
-        return Err(AppError::Agent(format!(
-            "local path is not a regular file: {}",
-            p.display()
-        )));
+        return Err(format!("local path is not a regular file: {}", p.display()));
     }
     Ok(meta.len())
 }
@@ -83,6 +97,10 @@ impl AgentTool for UploadFileTool {
         }
 
         let local_path_buf = PathBuf::from(local_path);
+        if let Err(e) = validate_local_upload_path(&local_path_buf).await {
+            return Ok(ToolOutput::fail("upload_file", e));
+        }
+
         let size = match local_file_size(&local_path_buf).await {
             Ok(n) => n,
             Err(e) => return Ok(ToolOutput::fail(
