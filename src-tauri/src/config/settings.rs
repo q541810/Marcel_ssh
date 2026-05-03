@@ -91,6 +91,22 @@ pub struct AgentModeSettings {
     pub confirm_each_command: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExperimentalSettings {
+    pub enable_web_search: bool,
+    pub enable_http_fetch: bool,
+}
+
+impl Default for ExperimentalSettings {
+    fn default() -> Self {
+        Self {
+            enable_web_search: true,
+            enable_http_fetch: true,
+        }
+    }
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +120,8 @@ pub struct AppSettings {
     pub llm_config: Option<LlmConfig>,
     #[serde(default)]
     pub agent_mode_settings: AgentModeSettings,
+    #[serde(default)]
+    pub experimental_settings: ExperimentalSettings,
 }
 
 impl Default for AppSettings {
@@ -125,6 +143,7 @@ impl Default for AppSettings {
                 ],
                 confirm_each_command: true,
             },
+            experimental_settings: ExperimentalSettings::default(),
         }
     }
 }

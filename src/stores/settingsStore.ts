@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, TerminalColors } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, TerminalColors, ExperimentalSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
@@ -19,6 +19,11 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   allowInvalidCerts: false,
 };
 
+const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
+  enableWebSearch: true,
+  enableHttpFetch: true,
+};
+
 const DEFAULT_SETTINGS: AppSettings = {
   terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
@@ -26,6 +31,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultAgentMode: 'agent',
   llmConfig: DEFAULT_LLM_CONFIG,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
+  experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
 };
 
 interface SettingsState {
@@ -61,6 +67,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
+        experimentalSettings: fromDisk.experimentalSettings ?? DEFAULT_EXPERIMENTAL_SETTINGS,
       };
       set({ settings: merged, loaded: true });
     } catch (err) {
