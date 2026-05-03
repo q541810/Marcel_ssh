@@ -301,22 +301,30 @@ export default function AgentPanel() {
             )}
           </div>
 
-          {/* Send / Stop buttons */}
-          <div className="flex gap-2">
-            {isRunning && (
-              <Button variant="danger" size="sm" onClick={handleStop}>
-                停止
-              </Button>
+          {/* Send / Stop button */}
+          <button
+            type="button"
+            onClick={isRunning ? handleStop : handleSend}
+            disabled={!isRunning && (!input.trim() || !canInteract)}
+            className={`
+              p-2 rounded-lg transition-all
+              ${isRunning
+                ? 'bg-red-600 hover:bg-red-500 text-white'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed'
+              }
+            `}
+            title={isRunning ? '停止' : '发送'}
+          >
+            {isRunning ? (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14m-7-7l7 7-7 7" />
+              </svg>
             )}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleSend}
-              disabled={!input.trim() || !canInteract || isRunning}
-            >
-              发送
-            </Button>
-          </div>
+          </button>
         </div>
       </div>
 
