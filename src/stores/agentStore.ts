@@ -25,13 +25,18 @@ function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
   // If the message has persisted tool_calls JSON, reconstruct the first toolCall.
   if (m.toolCallsJson) {
     try {
-      const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = JSON.parse(m.toolCallsJson);
-      if (toolCalls.length > 0) {
+      const persistedCalls: Array<{
+        id: string;
+        name: string;
+        arguments: Record<string, unknown>;
+        risk_level: RiskLevel;
+      }> = JSON.parse(m.toolCallsJson);
+      if (persistedCalls.length > 0) {
         base.toolCall = {
-          id: toolCalls[0].id,
-          name: toolCalls[0].name,
-          arguments: toolCalls[0].arguments,
-          riskLevel: 'readonly' as RiskLevel, // risk is re-evaluated at dispatch time
+          id: persistedCalls[0].id,
+          name: persistedCalls[0].name,
+          arguments: persistedCalls[0].arguments,
+          riskLevel: persistedCalls[0].risk_level,
         };
       }
     } catch {

@@ -9,6 +9,20 @@ use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{CommandListMode, AgentModeSettings};
+
+/// 持久化的工具调用元数据，包含工具调用详情和计算的风险等级。
+///
+/// 用于在数据库持久化时保留风险评估结果，避免前端加载历史会话时
+/// 重复计算或硬编码风险等级。`#[serde(flatten)]` 将 `ToolCall` 字段
+/// 展开为扁平 JSON，便于前端直接消费。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedToolCall {
+    /// 原始工具调用数据（id、name、arguments），序列化时展开为扁平字段。
+    #[serde(flatten)]
+    pub tool_call: ToolCall,
+    /// 该工具调用在保存时计算的实际风险等级（由 sandbox 评估）。
+    pub risk_level: RiskLevel,
+}
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolCall, ToolDefinition};
@@ -450,8 +464,33 @@ async fn run_agent_loop(
         }
 
         // 3. Add assistant message (with tool_calls) to history
-        // Serialize tool_calls to JSON for DB persistence
-        let tool_calls_json = serde_json::to_string(&tool_calls).ok();
+        // Compute effective risk for each tool call and persist with metadata.
+        let persisted_calls: Vec<PersistedToolCall> = tool_calls
+            .iter()
+            .map(|tc| {
+                let risk = match tc.name.as_str() {
+                    "execute_command" => tc
+                        .arguments
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .map(assess_risk)
+                        .unwrap_or_else(|| {
+                            registry.get(&tc.name)
+                                .map(|t| t.risk_level())
+                                .unwrap_or(RiskLevel::Moderate)
+                        }),
+                    _ => registry
+                        .get(&tc.name)
+                        .map(|t| t.risk_level())
+                        .unwrap_or(RiskLevel::Moderate),
+                };
+                PersistedToolCall {
+                    tool_call: tc.clone(),
+                    risk_level: risk,
+                }
+            })
+            .collect();
+        let tool_calls_json = serde_json::to_string(&persisted_calls).ok();
         // Also persist the tool-call summary text for backward-compat display
         let assistant_text = if assistant_msg.content.is_empty() {
             format!("[调用工具: {}]", tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "))
