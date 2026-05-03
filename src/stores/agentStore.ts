@@ -126,10 +126,20 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       content: prompt,
       timestamp: new Date().toISOString(),
     };
+    
+    const loadingAssistantId = crypto.randomUUID();
+    const loadingAssistantMessage: AgentMessage = {
+      id: loadingAssistantId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isLoading: true,
+    };
+    
     set((state) => ({
       messages: {
         ...state.messages,
-        [conversationId as string]: [...(state.messages[conversationId as string] || []), userMessage],
+        [conversationId as string]: [...(state.messages[conversationId as string] || []), userMessage, loadingAssistantMessage],
       },
     }));
 
@@ -137,7 +147,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     try {
       const llmHistory = get()
         .messages[conversationId as string]
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isLoading)
         .map((m) => ({ role: m.role, content: m.content }));
 
       taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId as string, llmHistory);
@@ -146,7 +156,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         messages: {
           ...state.messages,
           [conversationId as string]: [
-            ...(state.messages[conversationId as string] || []),
+            ...(state.messages[conversationId as string] || []).filter((m) => m.id !== loadingAssistantId),
             {
               id: crypto.randomUUID(),
               role: 'system',
@@ -172,7 +182,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       activeTaskId: taskId,
     }));
 
-    void attachStreamListener(taskId, conversationId as string);
+    void attachStreamListener(taskId, conversationId as string, loadingAssistantId);
 
     return taskId;
   },
@@ -376,7 +386,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
 const streamListeners: Map<string, UnlistenFn> = new Map();
 
-async function attachStreamListener(taskId: string, conversationId: string) {
+async function attachStreamListener(taskId: string, conversationId: string, loadingAssistantId: string) {
   if (streamListeners.has(taskId)) return;
 
   const unlisten = await listen<LlmStreamEvent | ToolResultPayload | ApprovalRequestPayload>(
@@ -428,22 +438,21 @@ async function attachStreamListener(taskId: string, conversationId: string) {
       switch (ev.type) {
         case 'textDelta': {
           if (!assistantMessageId) {
-            const newAssistantMessageId = crypto.randomUUID();
-            const newAssistantMessage: AgentMessage = {
-              id: newAssistantMessageId,
-              role: 'assistant',
-              content: ev.text,
-              timestamp: new Date().toISOString(),
-            };
+            useAgentStore.setState((state) => {
+              const convMsgs = state.messages[conversationId] || [];
+              return {
+                messages: {
+                  ...state.messages,
+                  [conversationId]: convMsgs.map((m) =>
+                    m.id === loadingAssistantId
+                      ? { ...m, content: ev.text, isLoading: false }
+                      : m,
+                  ),
+                },
+              };
+            });
 
-            useAgentStore.setState((state) => ({
-              messages: {
-                ...state.messages,
-                [conversationId]: [...(state.messages[conversationId] || []), newAssistantMessage],
-              },
-            }));
-
-            currentAssistantMessageId.set(taskId, newAssistantMessageId);
+            currentAssistantMessageId.set(taskId, loadingAssistantId);
           } else {
             useAgentStore.setState((state) => {
               const convMsgs = state.messages[conversationId] || [];
@@ -491,15 +500,16 @@ async function attachStreamListener(taskId: string, conversationId: string) {
             return {
               messages: {
                 ...state.messages,
-                [conversationId]: [
-                  ...convMsgs,
-                  {
-                    id: crypto.randomUUID(),
-                    role: 'system',
-                    content: `LLM 错误：${ev.message}`,
-                    timestamp: new Date().toISOString(),
-                  },
-                ],
+                [conversationId]: convMsgs
+                  .filter((m) => m.id !== loadingAssistantId)
+                  .concat([
+                    {
+                      id: crypto.randomUUID(),
+                      role: 'system',
+                      content: `LLM 错误：${ev.message}`,
+                      timestamp: new Date().toISOString(),
+                    },
+                  ]),
               },
               activeTaskId:
                 state.activeTaskId === taskId ? null : state.activeTaskId,

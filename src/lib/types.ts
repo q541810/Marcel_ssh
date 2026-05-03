@@ -75,6 +75,8 @@ export interface AgentMessage {
     success: boolean;
     blocked: boolean;
   };
+  /** True when waiting for LLM response */
+  isLoading?: boolean;
 }
 
 export interface ToolCallInfo {
