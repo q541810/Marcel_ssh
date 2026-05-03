@@ -200,7 +200,7 @@ export default function AgentPanel() {
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
-        <div className="relative flex items-center rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
+        <div className="agent-input relative flex items-center rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0" ref={drawerRef}>
             <button

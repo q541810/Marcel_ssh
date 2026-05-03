@@ -252,6 +252,12 @@ button,
   transition: outline-offset 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
+/* Disable focus ring for agent panel input */
+.agent-input input:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
 /* Card hover effects */
 .card,
 [class*="rounded"] {
