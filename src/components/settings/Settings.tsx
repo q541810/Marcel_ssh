@@ -183,7 +183,7 @@ export default function Settings() {
         <div className="px-6 py-6">
           {/* Section: Appearance */}
         <Section title="外观">
-          <Field label="颜色主题">
+          <Field label="终端颜色">
             <ColorThemeSelector
               value={draft.terminalColors}
               onChange={(terminalColors) => {
