@@ -16,6 +16,7 @@ use tokio::sync::oneshot;
 use crate::agent::audit::AuditLog;
 use crate::agent::conversation::ConversationDb;
 use crate::agent::runtime::AgentTask;
+use crate::agent::runtime::AgentTaskPlan;
 use crate::config::connections::ConnectionStore;
 use crate::config::settings::AppSettings;
 use crate::ssh::connection::SshManager;
@@ -29,6 +30,7 @@ use crate::ssh::connection::SshManager;
 pub struct AppState {
     pub ssh_manager: SshManager,
     pub agent_tasks: std::sync::Arc<PlRwLock<HashMap<String, AgentTask>>>,
+    pub plans: std::sync::Arc<PlRwLock<HashMap<String, AgentTaskPlan>>>,
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
@@ -122,6 +124,7 @@ impl AppState {
         Self {
             ssh_manager: SshManager::new(),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
             settings: std::sync::Arc::new(TokioRwLock::new(settings)),
             audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),

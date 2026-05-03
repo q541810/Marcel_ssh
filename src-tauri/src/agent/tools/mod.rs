@@ -25,6 +25,7 @@ pub mod base64;
 pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
+pub mod plan;
 pub mod process;
 pub mod search;
 pub mod sftp_transfer;
@@ -192,7 +193,7 @@ impl ToolRegistry {
         infos
     }
 
-    /// Build a registry pre-populated with all 12 built-in tools.
+    /// Build a registry pre-populated with all 14 built-in tools.
     ///
     /// Built-ins:
     /// - `execute_command`           (execute_cmd)
@@ -204,6 +205,8 @@ impl ToolRegistry {
     /// - `system_info`                (system)
     /// - `web_search`                 (web_search)
     /// - `http_get`                   (http_get)
+    /// - `create_plan`                (plan)
+    /// - `update_plan_item`           (plan)
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
@@ -218,6 +221,8 @@ impl ToolRegistry {
         r.register(Arc::new(system::SystemInfoTool::new()));
         r.register(Arc::new(web_search::WebSearchTool::new()));
         r.register(Arc::new(http_get::HttpGetTool::new()));
+        r.register(Arc::new(plan::CreatePlanTool::new()));
+        r.register(Arc::new(plan::UpdatePlanItemTool::new()));
         r
     }
 }
@@ -260,10 +265,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_with_builtins_has_twelve_tools() {
+    fn registry_with_builtins_has_fourteen_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-        assert_eq!(names.len(), 12, "expected 12 built-in tools, got {:?}", names);
+        assert_eq!(names.len(), 14, "expected 14 built-in tools, got {:?}", names);
         for expected in [
             "execute_command",
             "read_file",
@@ -277,6 +282,8 @@ mod tests {
             "system_info",
             "web_search",
             "http_get",
+            "create_plan",
+            "update_plan_item",
         ] {
             assert!(names.iter().any(|n| n == expected), "missing tool: {}", expected);
         }

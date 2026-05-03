@@ -26,6 +26,34 @@ pub enum AgentStatus {
     Cancelled,
 }
 
+/// Status of an individual item in the agent task plan.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum PlanItemStatus {
+    Pending,
+    InProgress,
+    Completed,
+    Failed,
+    Skipped,
+}
+
+/// A single step in the agent task plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanItem {
+    pub id: String,
+    pub title: String,
+    pub status: PlanItemStatus,
+    pub error: Option<String>,
+}
+
+/// The agent task plan — a sequence of steps to fulfill a user request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskPlan {
+    pub task_id: String,
+    pub items: Vec<PlanItem>,
+    pub current_index: usize,
+}
+
 /// Represents a single agent task — one user intent being fulfilled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTask {
@@ -34,6 +62,7 @@ pub struct AgentTask {
     pub prompt: String,
     pub mode: AgentMode,
     pub status: AgentStatus,
+    pub has_plan: bool,
     pub created_at: DateTime<Utc>,
 }
 

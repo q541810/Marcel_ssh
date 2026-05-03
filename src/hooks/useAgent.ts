@@ -31,8 +31,8 @@ export function useAgent() {
     activeTask?.status === 'waiting_approval';
 
   const startTask = useCallback(
-    async (sessionId: string, prompt: string) => {
-      return startTaskAction(sessionId, prompt);
+    async (sessionId: string, prompt: string, connectionId?: string) => {
+      return startTaskAction(sessionId, prompt, connectionId);
     },
     [startTaskAction],
   );
@@ -95,9 +95,9 @@ export function useAgent() {
     [deleteConversationAction],
   );
 
-  const loadSessionConversations = useCallback(
-    async (sessionId: string) => {
-      return loadSessionConversationsAction(sessionId);
+  const loadConnectionConversations = useCallback(
+    async (connectionId: string) => {
+      return loadSessionConversationsAction(connectionId);
     },
     [loadSessionConversationsAction],
   );
@@ -119,6 +119,6 @@ export function useAgent() {
     switchConversation,
     loadConversation,
     deleteConversation,
-    loadSessionConversations,
+    loadConnectionConversations,
   };
 }

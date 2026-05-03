@@ -6,7 +6,7 @@ import type { AgentMode } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
 import ApprovalDialog from './ApprovalDialog';
-import Button from '@/components/ui/Button';
+import PlanList from './PlanList';
 
 export default function AgentPanel() {
   const [input, setInput] = useState('');
@@ -63,7 +63,7 @@ export default function AgentPanel() {
     if (!prompt || !canInteract) return;
     setInput('');
     try {
-      await startTask(activeSessionId!, prompt);
+      await startTask(activeSessionId!, prompt, activeConfigId);
     } catch (err) {
       console.error('Failed to start task:', err);
     }
@@ -197,6 +197,9 @@ export default function AgentPanel() {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* PlanList - todolist rendered between messages and input */}
+      <PlanList />
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">

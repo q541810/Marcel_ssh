@@ -5,8 +5,9 @@ use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::agent::conversation::Conversation;
-use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
+use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, PlanItem, PlanItemStatus};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
+use crate::agent::tools::plan::{PLAN_CREATED_KEY, PLAN_ITEM_UPDATED_KEY};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{CommandListMode, AgentModeSettings};
 
@@ -66,6 +67,7 @@ pub async fn agent_start_task(
         prompt: prompt.clone(),
         mode: mode.clone(),
         status: AgentStatus::Planning,
+        has_plan: false,
         created_at: Utc::now(),
     };
     state.agent_tasks.write().insert(task_id.clone(), task);
@@ -428,6 +430,11 @@ async fn run_agent_loop(
     for round in 0..MAX_TOOL_ROUNDS {
         log::info!("Agent {} round {}", task_id, round);
 
+        // 0. Inject plan context before LLM call
+        if let Some(plan_context) = build_plan_context(&state, &task_id) {
+            messages.push(LlmMessage::user(plan_context));
+        }
+
         // 1. Call LLM (streaming)
         let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
         let app_fwd = app.clone();
@@ -456,9 +463,14 @@ async fn run_agent_loop(
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
             // No tool calls — final answer. We're done.
-            messages.push(assistant_msg.clone());
+            let cleaned_content = strip_thinking_tags(&assistant_msg.content);
+            let cleaned_msg = LlmMessage {
+                content: cleaned_content,
+                ..assistant_msg
+            };
+            messages.push(cleaned_msg.clone());
             // Persist assistant message to DB
-            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
+            let _ = conv_db.save_message(&conversation_id, "assistant", &cleaned_msg.content, &Utc::now().to_rfc3339(), None);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
         }
@@ -503,7 +515,7 @@ async fn run_agent_loop(
         // 4. Execute each tool call via the registry
         let ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
         for tc in &tool_calls {
-            let exec = dispatch_tool_call(
+            let exec = dispatch_tool_call_with_meta(
                 tc,
                 &mode,
                 &agent_settings,
@@ -535,6 +547,19 @@ async fn run_agent_loop(
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
             });
+
+            // 6. Handle plan-related tool outputs
+            if let Some(meta) = exec.metadata {
+                handle_plan_tool_output(
+                    &tc.name,
+                    &tc.id,
+                    &task_id,
+                    &meta,
+                    &app,
+                    &state,
+                )
+                .await;
+            }
         }
 
         // Loop continues — the LLM will see the tool results and decide what to do next
@@ -557,6 +582,7 @@ struct DispatchResult {
     output: String,
     success: bool,
     blocked: bool,
+    metadata: Option<serde_json::Value>,
 }
 
 impl DispatchResult {
@@ -566,6 +592,7 @@ impl DispatchResult {
             output: o.output,
             success: o.success,
             blocked: false,
+            metadata: o.metadata,
         }
     }
     fn blocked(summary: impl Into<String>, reason: impl Into<String>) -> Self {
@@ -574,6 +601,7 @@ impl DispatchResult {
             output: format!("BLOCKED: {}", reason.into()),
             success: false,
             blocked: true,
+            metadata: None,
         }
     }
     fn unknown(name: &str) -> Self {
@@ -582,14 +610,16 @@ impl DispatchResult {
             output: format!("Unknown tool: {}", name),
             success: false,
             blocked: false,
+            metadata: None,
         }
     }
 }
 
 /// Dispatch a single tool call through the registry, applying mode-aware
 /// security policy and (when needed) waiting for user approval.
+/// Returns a `DispatchResult` that includes the tool output metadata.
 #[allow(clippy::too_many_arguments)]
-async fn dispatch_tool_call(
+async fn dispatch_tool_call_with_meta(
     tc: &ToolCall,
     mode: &AgentMode,
     agent_settings: &crate::config::settings::AgentModeSettings,
@@ -694,6 +724,7 @@ async fn dispatch_tool_call(
             output: format!("tool error: {}", e),
             success: false,
             blocked: false,
+            metadata: None,
         },
     }
 }
@@ -768,6 +799,260 @@ async fn await_user_approval(
             false
         }
     }
+}
+
+/// Removes thinking/thought tags from assistant message content.
+/// This is a defense-in-depth measure in case the streaming layer missed any.
+fn strip_thinking_tags(content: &str) -> String {
+    let thinking_start_tags = ["<thinking>", "<Thought>", "<think>"];
+    let thinking_end_tags = ["</thinking>", "</Thought>", "</think>"];
+
+    let mut result = String::new();
+    let mut remaining = content;
+
+    loop {
+        // Find the earliest start tag
+        let mut earliest_start: Option<(usize, usize)> = None;
+        for tag in &thinking_start_tags {
+            if let Some(pos) = remaining.find(tag) {
+                if earliest_start.map_or(true, |(_, epos)| pos < epos) {
+                    earliest_start = Some((pos, pos + tag.len()));
+                }
+            }
+        }
+
+        match earliest_start {
+            Some((start_pos, end_of_tag)) => {
+                // Append everything before the start tag
+                result.push_str(&remaining[..start_pos]);
+                // Find the corresponding end tag after the start position
+                let after_start = &remaining[end_of_tag..];
+                let mut earliest_end = None;
+                for tag in &thinking_end_tags {
+                    if let Some(pos) = after_start.find(tag) {
+                        if earliest_end.map_or(true, |(_, epos)| pos < epos) {
+                            earliest_end = Some((pos, pos + tag.len()));
+                        }
+                    }
+                }
+                match earliest_end {
+                    Some((end_pos, _)) => {
+                        // Skip content between start and end tags, continue after end tag
+                        remaining = &after_start[end_pos..];
+                    }
+                    None => {
+                        // No end tag found — discard the rest
+                        return result;
+                    }
+                }
+            }
+            None => {
+                // No more start tags, append remaining content
+                result.push_str(remaining);
+                return result;
+            }
+        }
+    }
+}
+
+// ──────────────────────── Plan-driven mode ────────────────────────
+
+/// Build a plan context string for injection into the LLM conversation.
+/// Returns `None` if no plan exists or the plan is fully completed.
+fn build_plan_context(state: &AppState, task_id: &str) -> Option<String> {
+    let plans = state.plans.read();
+    let plan = plans.get(task_id)?;
+
+    let all_terminal = plan.items.iter().all(|item| {
+        matches!(item.status, PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped)
+    });
+    if all_terminal {
+        return None;
+    }
+
+    let status_symbol = |s: &PlanItemStatus| -> &str {
+        match s {
+            PlanItemStatus::Completed => "✓",
+            PlanItemStatus::InProgress => "▶",
+            PlanItemStatus::Pending => "○",
+            PlanItemStatus::Failed => "✗",
+            PlanItemStatus::Skipped => "⊘",
+        }
+    };
+
+    let mut lines = Vec::with_capacity(plan.items.len() + 2);
+    lines.push("当前计划:".to_string());
+    for (i, item) in plan.items.iter().enumerate() {
+        let symbol = status_symbol(&item.status);
+        lines.push(format!("[{}] {}. {}", symbol, i + 1, item.title));
+    }
+    lines.push("请先完成当前步骤，然后调用 update_plan_item 标记状态为 \"completed\"、\"failed\" 或 \"skipped\"。".to_string());
+
+    Some(lines.join("\n"))
+}
+
+/// Process plan-related tool output metadata after a tool executes.
+async fn handle_plan_tool_output(
+    tool_name: &str,
+    _tool_call_id: &str,
+    task_id: &str,
+    metadata: &serde_json::Value,
+    app: &AppHandle,
+    state: &AppState,
+) {
+    match tool_name {
+        "create_plan" => {
+            let plan_created = metadata.get(PLAN_CREATED_KEY).and_then(|v| v.as_bool()).unwrap_or(false);
+            if !plan_created {
+                return;
+            }
+
+            let items_json = metadata.get("items").and_then(|v| v.as_array());
+            let Some(items_json) = items_json else { return };
+
+            let mut plan_items = Vec::with_capacity(items_json.len());
+            for item_val in items_json {
+                let id = item_val.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let title = item_val.get("title").and_then(|v| v.as_str()).unwrap_or("未命名步骤").to_string();
+                let status_str = item_val.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+                let status = match status_str {
+                    "pending" => PlanItemStatus::Pending,
+                    "in_progress" => PlanItemStatus::InProgress,
+                    "completed" => PlanItemStatus::Completed,
+                    "failed" => PlanItemStatus::Failed,
+                    "skipped" => PlanItemStatus::Skipped,
+                    _ => PlanItemStatus::Pending,
+                };
+                let error = item_val.get("error").and_then(|v| v.as_str()).map(String::from);
+                plan_items.push(PlanItem { id, title, status, error });
+            }
+
+            let plan = AgentTaskPlan {
+                task_id: task_id.to_string(),
+                items: plan_items.clone(),
+                current_index: 0,
+            };
+
+            state.plans.write().insert(task_id.to_string(), plan);
+
+            if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
+                task.has_plan = true;
+            }
+
+            let event = PlanStreamEvent::PlanCreated { items: plan_items.clone() };
+            let _ = app.emit(&format!("agent://plan/{}", task_id), &event);
+            let _ = app.emit(&format!("agent://stream/{}", task_id), &event);
+
+            log::info!("Plan created for task {} with {} items", task_id, plan_items.len());
+        }
+
+        "update_plan_item" => {
+            let updated = metadata.get(PLAN_ITEM_UPDATED_KEY).and_then(|v| v.as_bool()).unwrap_or(false);
+            if !updated {
+                return;
+            }
+
+            let item_id = metadata.get("item_id").and_then(|v| v.as_str()).unwrap_or("");
+            let status_str = metadata.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let error = metadata.get("error").and_then(|v| v.as_str()).map(String::from);
+
+            let mut plans = state.plans.write();
+            let plan = match plans.get_mut(task_id) {
+                Some(p) => p,
+                None => return,
+            };
+
+            let item_index = plan.items.iter().position(|item| item.id == item_id);
+            let Some(item_index) = item_index else { return };
+            let total = plan.items.len();
+
+            let new_status = match status_str {
+                "completed" => PlanItemStatus::Completed,
+                "failed" => PlanItemStatus::Failed,
+                "skipped" => PlanItemStatus::Skipped,
+                "in_progress" => PlanItemStatus::InProgress,
+                _ => return,
+            };
+
+            let title = plan.items[item_index].title.clone();
+            plan.items[item_index].status = new_status.clone();
+            if let Some(e) = error {
+                plan.items[item_index].error = Some(e);
+            }
+            let error_msg = plan.items[item_index].error.clone();
+            let event_name_stream = format!("agent://stream/{}", task_id);
+            let event_name_plan = format!("agent://plan/{}", task_id);
+
+            match new_status {
+                PlanItemStatus::InProgress => {
+                    let event = PlanStreamEvent::PlanItemStarted {
+                        item_id: item_id.to_string(),
+                        title,
+                        index: item_index,
+                        total,
+                    };
+                    let _ = app.emit(&event_name_stream, &event);
+                    let _ = app.emit(&event_name_plan, &event);
+                }
+                PlanItemStatus::Completed => {
+                    let event = PlanStreamEvent::PlanItemCompleted {
+                        item_id: item_id.to_string(),
+                        title,
+                        index: item_index,
+                        total,
+                    };
+                    let _ = app.emit(&event_name_stream, &event);
+                    let _ = app.emit(&event_name_plan, &event);
+
+                    advance_current_index(plan);
+                }
+                PlanItemStatus::Failed => {
+                    let event = PlanStreamEvent::PlanItemFailed {
+                        item_id: item_id.to_string(),
+                        title,
+                        error: error_msg.unwrap_or_else(|| "未知错误".to_string()),
+                        index: item_index,
+                        total,
+                    };
+                    let _ = app.emit(&event_name_stream, &event);
+                    let _ = app.emit(&event_name_plan, &event);
+                }
+                PlanItemStatus::Skipped => {
+                    advance_current_index(plan);
+                }
+                PlanItemStatus::Pending => {}
+            }
+
+            if is_plan_complete(plan) {
+                let completed = plan.items.iter().filter(|item| matches!(item.status, PlanItemStatus::Completed)).count();
+                let failed = plan.items.iter().filter(|item| matches!(item.status, PlanItemStatus::Failed)).count();
+                let event = PlanStreamEvent::PlanCompleted { completed, total, failed };
+                let _ = app.emit(&event_name_stream, &event);
+                let _ = app.emit(&event_name_plan, &event);
+                log::info!("Plan completed for task {}: {}/{} completed, {} failed", task_id, completed, total, failed);
+            }
+        }
+
+        _ => {}
+    }
+}
+
+/// Advance current_index to the next Pending item.
+fn advance_current_index(plan: &mut AgentTaskPlan) {
+    for i in 0..plan.items.len() {
+        if matches!(plan.items[i].status, PlanItemStatus::Pending) {
+            plan.current_index = i;
+            return;
+        }
+    }
+    plan.current_index = plan.items.len();
+}
+
+/// Check whether all plan items are in a terminal state.
+fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
+    plan.items.iter().all(|item| {
+        matches!(item.status, PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped)
+    })
 }
 
 // ──────────────────────── System prompt ────────────────────────
@@ -911,4 +1196,37 @@ struct ApprovalRequestEvent {
     tool_name: String,
     arguments: serde_json::Value,
     risk_level: RiskLevel,
+}
+
+/// Events emitted during agent planning and step execution.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum PlanStreamEvent {
+    PlanCreated {
+        items: Vec<PlanItem>,
+    },
+    PlanItemStarted {
+        item_id: String,
+        title: String,
+        index: usize,
+        total: usize,
+    },
+    PlanItemCompleted {
+        item_id: String,
+        title: String,
+        index: usize,
+        total: usize,
+    },
+    PlanItemFailed {
+        item_id: String,
+        title: String,
+        error: String,
+        index: usize,
+        total: usize,
+    },
+    PlanCompleted {
+        completed: usize,
+        total: usize,
+        failed: usize,
+    },
 }

@@ -165,6 +165,8 @@ pub enum RiskLevel {
 | `system_info` | OS / 内存 / 磁盘信息查询 | ReadOnly | `agent/tools/system.rs` |
 | `web_search` | 联网搜索互联网信息（返回标题+摘要+链接） | ReadOnly | `agent/tools/web_search.rs` |
 | `http_get` | 获取网页完整内容 | ReadOnly | `agent/tools/http_get.rs` |
+| `create_plan` | 创建结构化任务计划（todolist） | ReadOnly | `agent/tools/plan.rs` |
+| `update_plan_item` | 更新任务计划中步骤的状态 | ReadOnly | `agent/tools/plan.rs` |
 
 > **架构要点**：工具通过 `AgentTool` trait 实现，注册到 `ToolRegistry::with_builtins()` 中。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
 > 1. 在 `agent/tools/<name>.rs` 实现 `AgentTool` trait

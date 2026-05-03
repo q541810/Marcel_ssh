@@ -10,6 +10,9 @@ import type {
   AgentConversation,
   StoredMessage,
   RiskLevel,
+  AgentTaskPlan,
+  PlanItem,
+  PlanStreamEvent,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 
@@ -55,8 +58,9 @@ interface AgentState {
   activeConversationId: string | null;
   mode: AgentMode;
   pendingApproval: ApprovalRequestPayload | null;
+  plans: Record<string, AgentTaskPlan>;
 
-  startTask: (sessionId: string, prompt: string) => Promise<string>;
+  startTask: (sessionId: string, prompt: string, connectionId?: string) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
   approveOperation: (taskId: string, operationId: string) => Promise<void>;
   rejectOperation: (taskId: string, operationId: string) => Promise<void>;
@@ -72,6 +76,9 @@ interface AgentState {
   clearConnectionConversations: (connectionId: string) => void;
   loadConnectionConversations: (connectionId: string) => Promise<void>;
   getCurrentMessages: () => AgentMessage[];
+  setPlan: (taskId: string, plan: AgentTaskPlan) => void;
+  updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => void;
+  getActivePlan: () => AgentTaskPlan | null;
 }
 
 const currentAssistantMessageId: Map<string, string> = new Map();
@@ -84,8 +91,9 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   activeConversationId: null,
   mode: 'agent',
   pendingApproval: null,
+  plans: {},
 
-  startTask: async (sessionId: string, prompt: string) => {
+  startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
     const { mode } = get();
     let conversationId = get().activeConversationId;
 
@@ -98,7 +106,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
           ...state.conversations,
           [newId]: {
             id: newId,
-            connectionId: '',
+            connectionId: connectionId ?? '',
             title: newTitle,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
@@ -183,6 +191,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }));
 
     void attachStreamListener(taskId, conversationId as string, loadingAssistantId);
+    void attachPlanListener(taskId);
 
     return taskId;
   },
@@ -196,7 +205,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         fn();
         streamListeners.delete(taskId);
       }
+      const planFn = planListeners.get(taskId);
+      if (planFn) {
+        planFn();
+        planListeners.delete(taskId);
+      }
       currentAssistantMessageId.delete(taskId);
+      assistantMessageIndex.delete(taskId);
+      inThinkingState.delete(taskId);
       set((state) => {
         const task = state.tasks[taskId];
         if (!task) return state;
@@ -279,6 +295,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
+      activeTaskId: null,
     }));
   },
 
@@ -288,6 +305,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
+      activeTaskId: null,
     }));
   },
 
@@ -382,9 +400,79 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     if (!convId) return [];
     return get().messages[convId] || [];
   },
+
+  setPlan: (taskId: string, plan: AgentTaskPlan) => {
+    set((state) => ({
+      plans: { ...state.plans, [taskId]: plan },
+    }));
+  },
+
+  updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => {
+    set((state) => {
+      const plan = state.plans[taskId];
+      if (!plan) return state;
+      const updatedItems = plan.items.map((item) =>
+        item.id === itemId ? { ...item, status, error: error ?? item.error } : item
+      );
+      return {
+        plans: { ...state.plans, [taskId]: { ...plan, items: updatedItems } },
+      };
+    });
+  },
+
+  getActivePlan: () => {
+    const activeTaskId = get().activeTaskId;
+    if (!activeTaskId) return null;
+    return get().plans[activeTaskId] || null;
+  },
 }));
 
 const streamListeners: Map<string, UnlistenFn> = new Map();
+
+/** Maps taskId to { messageId, messageIndex } for O(1) textDelta updates */
+const assistantMessageIndex: Map<string, { messageId: string; index: number }> = new Map();
+
+/** Maps taskId to whether we're inside a thinking block (defense-in-depth) */
+const inThinkingState: Map<string, boolean> = new Map();
+
+const THINKING_START_TAGS = ['<thinking>', '<Thought>', '<think>'];
+const THINKING_END_TAGS = ['</thinking>', '</Thought>', '</think>'];
+
+function filterThinkingTags(input: string, inThinking: boolean): [string, boolean] {
+  if (!inThinking) {
+    let earliestStart: number | null = null;
+    let earliestIdx = input.length;
+
+    for (const tag of THINKING_START_TAGS) {
+      const pos = input.indexOf(tag);
+      if (pos !== -1 && pos < earliestIdx) {
+        earliestIdx = pos;
+        earliestStart = pos;
+      }
+    }
+
+    if (earliestStart !== null) {
+      return [input.slice(0, earliestStart), true];
+    }
+    return [input, false];
+  } else {
+    let earliestEnd: number | null = null;
+    let earliestIdx = input.length;
+
+    for (const tag of THINKING_END_TAGS) {
+      const pos = input.indexOf(tag);
+      if (pos !== -1 && pos < earliestIdx) {
+        earliestIdx = pos + tag.length;
+        earliestEnd = pos + tag.length;
+      }
+    }
+
+    if (earliestEnd !== null) {
+      return [input.slice(earliestEnd), false];
+    }
+    return ['', true];
+  }
+}
 
 async function attachStreamListener(taskId: string, conversationId: string, loadingAssistantId: string) {
   if (streamListeners.has(taskId)) return;
@@ -420,52 +508,79 @@ async function attachStreamListener(taskId: string, conversationId: string, load
 
         useAgentStore.setState((state) => {
           const convMsgs = state.messages[conversationId] || [];
+          // Clear the loading state on the loading assistant message
+          const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
+          let newMsgs = [...convMsgs];
+
+          // If the loading message has no content, remove it entirely to avoid
+          // displaying an empty assistant bubble before the tool result.
+          if (loadingMsgIdx !== -1 && newMsgs[loadingMsgIdx].content === '') {
+            newMsgs = [...convMsgs.slice(0, loadingMsgIdx), ...convMsgs.slice(loadingMsgIdx + 1)];
+          } else if (loadingMsgIdx !== -1) {
+            newMsgs[loadingMsgIdx] = {
+              ...newMsgs[loadingMsgIdx],
+              isLoading: false,
+            };
+          }
+
+          // Insert tool message after the assistant slot
+          const insertIdx = loadingMsgIdx !== -1 ? loadingMsgIdx : newMsgs.length;
           if (assistantMessageId) {
-            const assistantIdx = convMsgs.findIndex((m) => m.id === assistantMessageId);
+            const assistantIdx = newMsgs.findIndex((m) => m.id === assistantMessageId);
             if (assistantIdx !== -1) {
-              const newMsgs = [...convMsgs];
               newMsgs.splice(assistantIdx + 1, 0, toolMessage);
               return { messages: { ...state.messages, [conversationId]: newMsgs } };
             }
           }
-          return { messages: { ...state.messages, [conversationId]: [...convMsgs, toolMessage] } };
+          return { messages: { ...state.messages, [conversationId]: [...newMsgs, toolMessage] } };
         });
 
         currentAssistantMessageId.delete(taskId);
+        assistantMessageIndex.delete(taskId);
+        inThinkingState.delete(taskId);
         return;
       }
 
       switch (ev.type) {
         case 'textDelta': {
-          if (!assistantMessageId) {
+          let thinking = inThinkingState.get(taskId) ?? false;
+          const [filteredText, newThinking] = filterThinkingTags(ev.text, thinking);
+          inThinkingState.set(taskId, newThinking);
+
+          // Skip update when still inside a thinking block.
+          // When thinking just ended (newThinking === false) but filteredText is empty,
+          // we still update the message to clear isLoading so the user sees the transition.
+          if (newThinking && filteredText.length === 0) return;
+
+          let cached = assistantMessageIndex.get(taskId);
+          if (!cached) {
             useAgentStore.setState((state) => {
               const convMsgs = state.messages[conversationId] || [];
-              return {
-                messages: {
-                  ...state.messages,
-                  [conversationId]: convMsgs.map((m) =>
-                    m.id === loadingAssistantId
-                      ? { ...m, content: ev.text, isLoading: false }
-                      : m,
-                  ),
-                },
+              const idx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
+              if (idx === -1) return state;
+              const newMsgs = [...convMsgs];
+              newMsgs[idx] = {
+                ...newMsgs[idx],
+                content: filteredText,
+                isLoading: false,
               };
+              return { messages: { ...state.messages, [conversationId]: newMsgs } };
             });
-
+            assistantMessageIndex.set(taskId, { messageId: loadingAssistantId, index: 0 });
             currentAssistantMessageId.set(taskId, loadingAssistantId);
+            cached = { messageId: loadingAssistantId, index: 0 };
           } else {
             useAgentStore.setState((state) => {
               const convMsgs = state.messages[conversationId] || [];
-              return {
-                messages: {
-                  ...state.messages,
-                  [conversationId]: convMsgs.map((m) =>
-                    m.id === assistantMessageId
-                      ? { ...m, content: m.content + ev.text }
-                      : m,
-                  ),
-                },
-              };
+              let { index: idx } = cached!;
+              if (idx >= convMsgs.length || convMsgs[idx].id !== cached!.messageId) {
+                idx = convMsgs.findIndex((m) => m.id === cached!.messageId);
+                if (idx === -1) return state;
+                cached!.index = idx;
+              }
+              const newMsgs = [...convMsgs];
+              newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + filteredText };
+              return { messages: { ...state.messages, [conversationId]: newMsgs } };
             });
           }
 
@@ -481,15 +596,34 @@ async function attachStreamListener(taskId: string, conversationId: string, load
         }
         case 'done': {
           store.updateTaskStatus(taskId, 'completed');
-          useAgentStore.setState((state) => ({
-            activeTaskId:
-              state.activeTaskId === taskId ? null : state.activeTaskId,
-          }));
+          useAgentStore.setState((state) => {
+            const convMsgs = state.messages[conversationId] || [];
+            const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
+            let newMsgs = [...convMsgs];
+            // Clean up the loading message: if it has content, clear isLoading;
+            // otherwise remove it entirely.
+            if (loadingMsgIdx !== -1 && newMsgs[loadingMsgIdx].content === '') {
+              newMsgs = [...convMsgs.slice(0, loadingMsgIdx), ...convMsgs.slice(loadingMsgIdx + 1)];
+            } else if (loadingMsgIdx !== -1) {
+              newMsgs[loadingMsgIdx] = { ...newMsgs[loadingMsgIdx], isLoading: false };
+            }
+            return {
+              messages: { ...state.messages, [conversationId]: newMsgs },
+              activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
+            };
+          });
           currentAssistantMessageId.delete(taskId);
+          assistantMessageIndex.delete(taskId);
+          inThinkingState.delete(taskId);
           const fn = streamListeners.get(taskId);
           if (fn) {
             fn();
             streamListeners.delete(taskId);
+          }
+          const planFn = planListeners.get(taskId);
+          if (planFn) {
+            planFn();
+            planListeners.delete(taskId);
           }
           break;
         }
@@ -516,10 +650,17 @@ async function attachStreamListener(taskId: string, conversationId: string, load
             };
           });
           currentAssistantMessageId.delete(taskId);
+          assistantMessageIndex.delete(taskId);
+          inThinkingState.delete(taskId);
           const fn = streamListeners.get(taskId);
           if (fn) {
             fn();
             streamListeners.delete(taskId);
+          }
+          const planFn = planListeners.get(taskId);
+          if (planFn) {
+            planFn();
+            planListeners.delete(taskId);
           }
           break;
         }
@@ -527,4 +668,57 @@ async function attachStreamListener(taskId: string, conversationId: string, load
     },
   );
   streamListeners.set(taskId, unlisten);
+}
+
+const planListeners: Map<string, UnlistenFn> = new Map();
+
+async function attachPlanListener(taskId: string) {
+  if (planListeners.has(taskId)) return;
+
+  const unlisten = await listen<PlanStreamEvent>(
+    `agent://plan/${taskId}`,
+    (event) => {
+      const ev = event.payload;
+      const store = useAgentStore.getState();
+
+      switch (ev.type) {
+        case 'plan-created': {
+          const plan: AgentTaskPlan = {
+            taskId,
+            items: ev.items,
+            currentIndex: 0,
+          };
+          store.setPlan(taskId, plan);
+          break;
+        }
+        case 'plan-item-started': {
+          store.updatePlanItem(taskId, ev.itemId, 'in_progress');
+          break;
+        }
+        case 'plan-item-completed': {
+          store.updatePlanItem(taskId, ev.itemId, 'completed');
+          // Update currentIndex using the latest state
+          const latestPlan = useAgentStore.getState().plans[taskId];
+          if (latestPlan) {
+            const nextIndex = latestPlan.items.findIndex(
+              (item, index) => index > latestPlan.currentIndex && item.status === 'pending'
+            );
+            const newCurrentIndex = nextIndex !== -1 ? nextIndex : latestPlan.currentIndex;
+            store.setPlan(taskId, { ...latestPlan, currentIndex: newCurrentIndex });
+          }
+          break;
+        }
+        case 'plan-item-failed': {
+          store.updatePlanItem(taskId, ev.itemId, 'failed', ev.error);
+          break;
+        }
+        case 'plan-completed': {
+          console.log(`[agent] Plan completed for task ${taskId}: ${ev.completed}/${ev.total}`);
+          break;
+        }
+      }
+    },
+  );
+
+  planListeners.set(taskId, unlisten);
 }

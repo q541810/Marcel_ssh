@@ -7,21 +7,23 @@ interface Props {
   message: AgentMessageType;
 }
 
+const ROLE_STYLES: Record<string, string> = {
+  user: 'bg-indigo-900/30 border-indigo-800',
+  assistant: 'bg-zinc-800 border-zinc-700',
+  system: 'bg-amber-900/20 border-amber-800/50',
+  tool: 'bg-emerald-900/20 border-emerald-800/50',
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  user: '您',
+  assistant: '助手',
+  system: '系统',
+  tool: '工具',
+};
+
+const MARKDOWN_CLASS = 'text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic';
+
 export default function AgentMessage({ message }: Props) {
-  const roleStyles: Record<string, string> = {
-    user: 'bg-indigo-900/30 border-indigo-800',
-    assistant: 'bg-zinc-800 border-zinc-700',
-    system: 'bg-amber-900/20 border-amber-800/50',
-    tool: 'bg-emerald-900/20 border-emerald-800/50',
-  };
-
-  const roleLabels: Record<string, string> = {
-    user: '您',
-    assistant: '助手',
-    system: '系统',
-    tool: '工具',
-  };
-
   const formatTimestamp = (ts: string) => {
     try {
       return new Date(ts).toLocaleTimeString([], {
@@ -35,12 +37,12 @@ export default function AgentMessage({ message }: Props) {
 
   return (
     <div
-      className={`rounded-xl border p-3 ${roleStyles[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}
+      className={`rounded-xl border p-3 ${ROLE_STYLES[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-medium text-zinc-400">
-          {roleLabels[message.role] ?? message.role}
+          {ROLE_LABELS[message.role] ?? message.role}
         </span>
         <span className="text-xs text-zinc-600">
           {formatTimestamp(message.timestamp)}
@@ -57,15 +59,15 @@ export default function AgentMessage({ message }: Props) {
           <span>思考中...</span>
         </div>
       ) : message.role === 'tool' ? (
-        // Tool result messages show result content only
         <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words">
-          {message.content}
+          {message.content || <span className="text-zinc-500 italic">（无输出）</span>}
         </div>
       ) : message.toolCall && message.content.startsWith('[调用工具:') ? (
-        // Historical tool-call message: skip placeholder text, show tool card only
         null
+      ) : !message.content ? (
+        <div className="text-sm text-zinc-500 italic">（无内容）</div>
       ) : (
-        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic">
+        <div className={MARKDOWN_CLASS}>
           {message.role === 'user' ? (
             message.content
           ) : (

@@ -77,6 +77,8 @@ export interface AgentMessage {
   };
   /** True when waiting for LLM response */
   isLoading?: boolean;
+  /** True when the LLM is outputting thinking/reasoning content */
+  isThinking?: boolean;
 }
 
 export interface ToolCallInfo {
@@ -199,3 +201,27 @@ export interface StoredMessage {
   createdAt: string;
   toolCallsJson?: string | null;
 }
+
+// Plan / Todolist types
+
+export type PlanItemStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  status: PlanItemStatus;
+  error?: string | null;
+}
+
+export interface AgentTaskPlan {
+  taskId: string;
+  items: PlanItem[];
+  currentIndex: number;
+}
+
+export type PlanStreamEvent =
+  | { type: 'plan-created'; items: PlanItem[] }
+  | { type: 'plan-item-started'; itemId: string; title: string; index: number; total: number }
+  | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number }
+  | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number }
+  | { type: 'plan-completed'; completed: number; total: number; failed: number };
