@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { APP_NAME } from '@/lib/constants';
 import NavRail, { type NavView } from '@/components/nav/NavRail';
 import ConnectionList from '@/components/connection/ConnectionList';
@@ -100,7 +101,20 @@ export default function App() {
       {/* Top bar - Custom Title Bar */}
       <header className="flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8">
         {/* Draggable area - left side */}
-        <div className="flex items-center gap-3 px-2 flex-1" data-tauri-drag-region>
+        <div
+          className="flex items-center gap-3 px-2 flex-1"
+          data-tauri-drag-region
+          onMouseDown={async (e) => {
+            // Only handle primary-button clicks on the drag region itself (not children)
+            if (e.button !== 0) return;
+            const target = e.target as HTMLElement;
+            if (!target.closest('[data-tauri-drag-region]')) return;
+            const appWindow = getCurrentWindow();
+            if (await appWindow.isMaximized()) {
+              await appWindow.unmaximize();
+            }
+          }}
+        >
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
