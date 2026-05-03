@@ -149,18 +149,7 @@ impl Default for AppSettings {
 }
 
 impl AppSettings {
-    /// Load settings from the given JSON file. Returns defaults if missing.
-    pub fn load_from_path(path: &Path) -> Result<Self, AppError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| AppError::Config(format!("读取设置文件失败: {}", e)))?;
-        if content.trim().is_empty() {
-            return Ok(Self::default());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::Config(format!("解析设置文件失败: {}", e)))
+    
     }
 
     /// Serialize settings to a JSON file. Creates parent directories as needed.

@@ -6,6 +6,7 @@ import ConnectionList from '@/components/connection/ConnectionList';
 import McpList from '@/components/mcp/McpList';
 import Settings from '@/components/settings/Settings';
 import Terminal from '@/components/terminal/Terminal';
+import TabBar from '@/components/terminal/TabBar';
 import AgentPanel from '@/components/agent/AgentPanel';
 import WindowControls from '@/components/ui/WindowControls';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -167,6 +168,8 @@ export default function App() {
 
         {/* Center — Terminal area (always mounted, hidden behind settings) */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          {/* Tab bar — only visible when there are sessions */}
+          <TabBar />
           <main className="flex-1 flex flex-col min-w-0 overflow-hidden" style={{ display: isSettingsView ? 'none' : 'flex' }}>
             <Terminal />
           </main>

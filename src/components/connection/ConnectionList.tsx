@@ -56,7 +56,7 @@ export default function ConnectionList() {
    * is purged and the user is prompted to re-enter.
    */
   const doConnect = async (conn: SavedConnection, password?: string) => {
-    setActiveConnection(conn.id);
+    // Note: we don't setActiveConnection here anymore — each click creates a new session
     let authMethod: ConnectionConfig['authMethod'];
     switch (conn.authMethod) {
       case 'Password':
