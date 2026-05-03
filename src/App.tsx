@@ -106,9 +106,9 @@ export default function App() {
           className="flex items-center gap-3 px-2 flex-1"
           data-tauri-drag-region
           onMouseDown={async (e) => {
-            // Only handle primary-button clicks on the drag region itself (not children)
             if (e.button !== 0) return;
             const target = e.target as HTMLElement;
+            if (target.closest('button')) return;
             if (!target.closest('[data-tauri-drag-region]')) return;
             const appWindow = getCurrentWindow();
             if (await appWindow.isMaximized()) {
