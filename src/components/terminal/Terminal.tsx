@@ -63,7 +63,7 @@ const createCopyOnSelectionHandler = (terminal: XTerm) => {
         void writeText(selection).catch((err) => {
           console.error('Failed to write clipboard:', err);
           if (container) {
-            showClipboardError(container, '复制失败，请重试');
+            showClipboardError(container as HTMLDivElement, '复制失败，请重试');
           }
         });
         terminal.clearSelection();
