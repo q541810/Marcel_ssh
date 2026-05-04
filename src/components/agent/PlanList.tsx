@@ -87,6 +87,8 @@ export default function PlanList() {
   const plan = useAgentStore((s) =>
     s.activeTaskId ? (s.plans[s.activeTaskId] ?? null) : null
   );
+  // Subscribe to plansDirty to force re-render on plan item updates
+  useAgentStore((s) => s.plansDirty);
   const [collapsed, setCollapsed] = useState(false);
 
   if (!plan || plan.items.length === 0) return null;

@@ -25,26 +25,41 @@ function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     timestamp: m.timestamp,
   };
 
-  // If the message has persisted tool_calls JSON, reconstruct the first toolCall.
-  if (m.toolCallsJson) {
-    try {
-      const persistedCalls: Array<{
-        id: string;
-        name: string;
-        arguments: Record<string, unknown>;
-        risk_level: RiskLevel;
-      }> = JSON.parse(m.toolCallsJson);
-      if (persistedCalls.length > 0) {
-        base.toolCall = {
-          id: persistedCalls[0].id,
-          name: persistedCalls[0].name,
-          arguments: persistedCalls[0].arguments,
-          riskLevel: persistedCalls[0].risk_level,
-        };
-      }
-    } catch {
-      // ignore parse error
+  if (!m.toolCallsJson) return base;
+
+  try {
+    const persistedCalls: Array<{
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+      risk_level: RiskLevel;
+    }> = JSON.parse(m.toolCallsJson);
+
+    if (persistedCalls.length === 0) return base;
+
+    if (m.role === 'assistant') {
+      // Assistant message: restore the first tool call invocation metadata
+      base.toolCall = {
+        id: persistedCalls[0].id,
+        name: persistedCalls[0].name,
+        arguments: persistedCalls[0].arguments,
+        riskLevel: persistedCalls[0].risk_level,
+      };
+    } else if (m.role === 'tool') {
+      // Tool result message: restore toolResult so ToolCallCard can render it
+      base.toolResult = {
+        toolName: persistedCalls[0].name,
+        // summary is not persisted separately — reconstruct a short one from content
+        summary: m.content.length > 120
+          ? m.content.slice(0, 120).trimEnd() + '…'
+          : m.content || '(完成)',
+        result: m.content,
+        success: !m.content.startsWith('BLOCKED:') && !m.content.startsWith('tool error:'),
+        blocked: m.content.startsWith('BLOCKED:'),
+      };
     }
+  } catch {
+    // ignore parse error
   }
 
   return base;
@@ -59,6 +74,8 @@ interface AgentState {
   mode: AgentMode;
   pendingApproval: ApprovalRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
+  /** Toggle flag to force-react to plan changes via shallow subscription */
+  plansDirty: boolean;
 
   startTask: (sessionId: string, prompt: string, connectionId?: string) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
@@ -92,6 +109,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   mode: 'agent',
   pendingApproval: null,
   plans: {},
+  plansDirty: false,
 
   startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
     const { mode } = get();
@@ -404,6 +422,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   setPlan: (taskId: string, plan: AgentTaskPlan) => {
     set((state) => ({
       plans: { ...state.plans, [taskId]: plan },
+      plansDirty: !state.plansDirty,
     }));
   },
 
@@ -416,6 +435,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       );
       return {
         plans: { ...state.plans, [taskId]: { ...plan, items: updatedItems } },
+        plansDirty: !state.plansDirty,
       };
     });
   },

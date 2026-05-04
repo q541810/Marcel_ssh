@@ -575,12 +575,12 @@ async fn run_agent_loop(
             // 5. Add tool result as a message for the next LLM round
             messages.push(LlmMessage {
                 role: LlmRole::Tool,
-                content: exec.output,
+                content: exec.output.clone(),
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
             });
 
-            // 6. Handle plan-related tool outputs
+// 6. Handle plan-related tool outputs
             if let Some(meta) = exec.metadata {
                 handle_plan_tool_output(
                     &tc.name,
@@ -592,6 +592,33 @@ async fn run_agent_loop(
                 )
                 .await;
             }
+
+            // 7. Persist tool result to DB for conversation history
+            let tool_call_json = serde_json::to_string(&[PersistedToolCall {
+                tool_call: tc.clone(),
+                risk_level: match tc.name.as_str() {
+                    "execute_command" => tc
+                        .arguments.get("command")
+                        .and_then(|v| v.as_str())
+                        .map(assess_risk)
+                        .unwrap_or_else(|| {
+                            registry.get(&tc.name)
+                                .map(|t| t.risk_level())
+                                .unwrap_or(RiskLevel::Moderate)
+                        }),
+                    _ => registry
+                        .get(&tc.name)
+                        .map(|t| t.risk_level())
+                        .unwrap_or(RiskLevel::Moderate),
+                },
+            }]).ok();
+            let _ = conv_db.save_message(
+                &conversation_id,
+                "tool",
+                &exec.output,
+                &Utc::now().to_rfc3339(),
+                tool_call_json.as_deref(),
+            );
         }
 
         // Loop continues — the LLM will see the tool results and decide what to do next
