@@ -171,10 +171,10 @@ pub async fn skill_add(
     prompt: String,
 ) -> Result<Skill, AppError> {
     if name.trim().is_empty() {
-        return Err(AppError::Config("skill name cannot be empty".into()));
+        return Err(AppError::Config("技能名称不能为空".into()));
     }
     if prompt.trim().is_empty() {
-        return Err(AppError::Config("skill prompt cannot be empty".into()));
+        return Err(AppError::Config("技能提示词不能为空".into()));
     }
     let skill = Skill::new(name, description, prompt);
     let cloned = skill.clone();

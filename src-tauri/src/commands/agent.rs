@@ -1112,7 +1112,7 @@ fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
 // ──────────────────────── System prompt ────────────────────────
 
 fn build_system_prompt(session_id: &str, skill_prompts: &str) -> String {
-    let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
+    let base = " Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
 思考方式\n\
 简洁直接 Concise - 直接、简洁地回答。以简洁为重点，但尽量不丢失信息。\n\n\
@@ -1139,7 +1139,7 @@ fn build_system_prompt(session_id: &str, skill_prompts: &str) -> String {
 - search_files - 远程内容搜索\n\
 - process_management - 查看/管理远程进程\n\
 - system_info - 系统信息查询\n\
-- web_search - 联网搜索（返回标题+摘要+链接）\n\
+- web_search - 联网搜索（返回标题+摘要+链接）比如用户询问“如何在 Ubuntu 上安装 Node.js”，你应该先搜索相关资料，而不是直接回答用户的问题\n\
 - http_get - 获取网页完整内容\n\n\
 工具的风险等级和安全策略由系统自动评估，部分操作可能需要用户确认后才能执行。\n\n";
 

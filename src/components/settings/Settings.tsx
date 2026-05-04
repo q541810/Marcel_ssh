@@ -39,7 +39,7 @@ export default function Settings() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
-  const [hasStoredApiKey, setHasStoredApiKey] = useState(false);
+  const hasStoredApiKey = useSettingsStore((s) => s.hasApiKey);
   const [activeSection, setActiveSection] = useState<string>('settings-appearance');
   const sectionsContainerRef = useRef<HTMLDivElement>(null);
   const isScrollingRef = useRef(false);
@@ -86,13 +86,6 @@ export default function Settings() {
     setTimeout(() => {
       isScrollingRef.current = false;
     }, 500);
-  }, []);
-
-  // Check if an API key exists in the keychain
-  useEffect(() => {
-    tauri.getLlmApiKey().then(key => {
-      setHasStoredApiKey(!!key);
-    }).catch(() => {});
   }, []);
 
   /**

@@ -1,3 +1,4 @@
+use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
@@ -6,6 +7,17 @@ use crate::config::keychain;
 use crate::config::settings::AppSettings;
 use crate::error::AppError;
 use crate::AppState;
+
+/// Response type for `config_get_settings`.
+/// Separates settings from keychain status to avoid serializing secrets.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsResponse {
+    /// Application settings (api_key is excluded from serialization).
+    pub settings: AppSettings,
+    /// True if a key is currently stored in the keychain.
+    pub has_api_key: bool,
+}
 
 /// Check if the given API key looks like a masked placeholder.
 /// Front-end may display "sk-******" or similar to indicate "unchanged".
@@ -120,17 +132,10 @@ pub async fn config_delete_llm_api_key() -> Result<(), AppError> {
 #[tauri::command]
 pub async fn config_get_settings(
     state: State<'_, AppState>,
-) -> Result<AppSettings, AppError> {
-    let mut settings = state.settings.read().await.clone();
-    // 如果 keychain 中有 API Key，填充到返回的设置中
-    if let Some(ref mut llm) = settings.llm_config {
-        if llm.api_key.is_empty() {
-            if let Ok(Some(key)) = keychain::get_llm_api_key() {
-                llm.api_key = key;
-            }
-        }
-    }
-    Ok(settings)
+) -> Result<SettingsResponse, AppError> {
+    let settings = state.settings.read().await.clone();
+    let has_api_key = keychain::get_llm_api_key().ok().flatten().is_some();
+    Ok(SettingsResponse { settings, has_api_key })
 }
 
 /// Save updated application settings. Persists to disk.
@@ -143,21 +148,14 @@ pub async fn config_save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
-    // If LLM config has changed, update the keychain
+    // Only update keychain if the frontend explicitly provides a real API key.
+    // `LlmConfig.api_key` is excluded from serialization, so an empty or masked
+    // value means "leave the key as-is". Use `config_delete_llm_api_key` to
+    // explicitly remove the key.
     if let Some(ref new_llm) = settings.llm_config {
-        if !new_llm.api_key.is_empty() {
-            // 前端可能使用遮罩字符串表示未修改，跳过 keychain 更新
-            if !is_masked_key(&new_llm.api_key) {
-                keychain::save_llm_api_key(&new_llm.api_key)?;
-                log::info!("已将 LLM API Key 保存到密钥链");
-            } else {
-                log::info!("API Key 未修改，跳过密钥链更新");
-            }
-        } else {
-            // API Key is empty — delete from keychain so the user can
-            // effectively remove the key by clearing the input field.
-            keychain::delete_llm_api_key()?;
-            log::info!("已删除 LLM API Key");
+        if !new_llm.api_key.is_empty() && !is_masked_key(&new_llm.api_key) {
+            keychain::save_llm_api_key(&new_llm.api_key)?;
+            log::info!("已将 LLM API Key 保存到密钥链");
         }
     }
     

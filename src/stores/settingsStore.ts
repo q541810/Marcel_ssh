@@ -37,6 +37,8 @@ const DEFAULT_SETTINGS: AppSettings = {
 interface SettingsState {
   settings: AppSettings;
   loaded: boolean;
+  /** True if a key is currently stored in the system keychain. */
+  hasApiKey: boolean;
 
   /** Load settings from disk on app startup. Idempotent unless forced. */
   load: (force?: boolean) => Promise<void>;
@@ -55,12 +57,14 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
+  hasApiKey: false,
   preview: null,
 
   load: async (force = false) => {
     if (get().loaded && !force) return;
     try {
-      const fromDisk = await tauri.getSettings();
+      const resp = await tauri.getSettings();
+      const fromDisk = resp.settings;
       const merged: AppSettings = {
         ...DEFAULT_SETTINGS,
         ...fromDisk,
@@ -69,7 +73,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
         experimentalSettings: fromDisk.experimentalSettings ?? DEFAULT_EXPERIMENTAL_SETTINGS,
       };
-      set({ settings: merged, loaded: true });
+      set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey });
     } catch (err) {
       console.error('加载设置失败:', err);
       set({ loaded: false });
