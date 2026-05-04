@@ -63,33 +63,21 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 ### 3.1 进程模型
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   Tauri 主进程 (Rust)                 │
-│                                                       │
-│  ┌──────────┐  ┌──────────┐  ┌────────────────────┐  │
-│  │ SSH 连接  │  │ Agent    │  │ 系统服务            │  │
-│  │ 管理器   │  │ Runtime  │  │ (密钥/配置/日志)    │  │
-│  └────┬─────┘  └────┬─────┘  └────────┬───────────┘  │
-│       │              │                 │               │
-│       └──────────────┼─────────────────┘               │
-│                      │ IPC (Tauri Commands + Events)   │
-├──────────────────────┼─────────────────────────────────┤
-│                      │                                  │
-│  ┌───────────────────┴──────────────────────────────┐  │
-│  │              WebView 渲染进程 (前端)               │  │
-│  │                                                    │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │  │
-│  │  │ Terminal  │ │ Agent UI │ │ Connection       │  │  │
-│  │  │ (xterm)  │ │ Panel    │ │ Manager UI       │  │  │
-│  │  └──────────┘ └──────────┘ └──────────────────┘  │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-         │                              │
-         ▼                              ▼
-   ┌──────────┐                  ┌──────────────┐
-   │ 远程 SSH  │                  │ LLM Provider │
-   │ 服务器    │                  │ (云端/本地)   │
-   └──────────┘                  └──────────────┘
+Tauri 主进程 (Rust)
+├── SSH 连接管理器
+├── Agent Runtime
+└── 系统服务 (密钥/配置/日志)
+        │
+        │ IPC (Tauri Commands + Events)
+        ▼
+WebView 渲染进程 (前端)
+├── Terminal (xterm.js)
+├── Agent UI Panel
+└── Connection Manager UI
+
+外部连接:
+├── 远程 SSH 服务器
+└── LLM Provider (云端/本地)
 ```
 
 ### 3.2 核心模块划分
@@ -269,11 +257,6 @@ marcel-ssh/
 
 ### 6.1 Rust 后端规范
 
-**错误处理**：
-- 使用 `thiserror` 定义模块级错误枚举，统一在 `error.rs` 中导出。
-- Tauri command 返回 `Result<T, AppError>`，`AppError` 实现 `serde::Serialize`。
-- 禁止在生产代码中使用 `.unwrap()` / `.expect()`（测试代码除外）。
-
 **异步模型**：
 - 所有 SSH 操作和 LLM 调用必须异步（`async fn`）。
 - 使用 `tokio` 作为唯一异步运行时。
@@ -329,25 +312,6 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 - TailwindCSS utility-first，避免自定义 CSS。
 - 终端主题色采用 CSS 变量，支持用户自定义。
 
-### 6.3 Git 规范
-
-**分支策略**：
-- `main`：稳定发布分支
-- `develop`：开发集成分支
-- `feature/<name>`：功能分支
-- `fix/<name>`：修复分支
-
-**Commit Message 格式**（Conventional Commits）：
-```
-<type>(<scope>): <description>
-
-feat(agent): add file editing tool with diff-based patching
-fix(ssh): handle connection timeout on slow networks
-refactor(llm): extract streaming response parser
-docs(agents): update tool-use architecture section
-```
-
-**Scope 列表**：`ssh`, `agent`, `llm`, `terminal`, `sftp`, `config`, `ui`, `build`
 
 ---
 
@@ -448,21 +412,9 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 ---
 
-## 11. 性能目标
 
-| 指标 | 目标 |
-|------|------|
-| 冷启动到可用 | < 2s |
-| SSH 连接建立 | < 3s（网络正常时） |
-| 终端输入延迟 | < 16ms（一帧） |
-| Agent 首次响应 | < 2s（取决于 LLM API） |
-| 内存占用（空闲） | < 80MB |
-| 内存占用（10 会话） | < 200MB |
-| 打包体积 | < 15MB |
 
----
-
-## 12. 给 AI Agent 的指示
+## 11. 给 AI Agent 的指示
 
 > 以下内容专门为参与此项目开发的 AI 编码助手编写。
 
