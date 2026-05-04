@@ -1094,67 +1094,6 @@ fn build_system_prompt(
 - http_get - 获取网页完整内容\n\n\
 工具的风险等级和安全策略由系统自动评估，部分操作可能需要用户确认后才能执行。\n\n";
 
-    let policy = sandbox.policy();
-    let blocked_patterns = if policy.blocked_patterns.is_empty() {
-        "无".to_string()
-    } else {
-        policy.blocked_patterns.join("、")
-    };
-    let blocked_base_commands = if policy.blocked_base_commands.is_empty() {
-        "无".to_string()
-    } else {
-        policy.blocked_base_commands.join("、")
-    };
-    let protected_paths = if policy.protected_paths.is_empty() {
-        "无".to_string()
-    } else {
-        policy.protected_paths.join("、")
-    };
-
-    let mode_str = match mode {
-        AgentMode::Chat => "CHAT - 仅对话，不调用工具",
-        AgentMode::Agent => "AGENT - 可调用工具，中高风险需确认",
-        AgentMode::Auto => "AUTO - 全自主执行，无需确认",
-    };
-
-    let list_mode_str = match agent_settings.list_mode {
-        CommandListMode::Allowlist => "白名单（仅列表中的命令允许）",
-        CommandListMode::Denylist => "黑名单（列表中的命令拦截）",
-    };
-
-    let command_list = if agent_settings.command_list.is_empty() {
-        "无".to_string()
-    } else {
-        agent_settings.command_list.join("、")
-    };
-
-    let confirm_label = if agent_settings.confirm_each_command { "是" } else { "否" };
-
-    let policy_section = format!(
-        "安全策略\n\
-当前安全策略由系统配置自动生成：\n\
-- 当前模式：{}\n\
-- 命令列表模式：{}\n\
-- 命令列表内容：{}\n\
-- 每次命令是否确认：{}\n\
-- 每任务最大命令数：{}\n\
-- 命令超时：{}s\n\
-- 任务超时：{}s\n\
-- 拦截的命令模式：{}\n\
-- 拦截的基础命令：{}\n\
-- 保护路径：{}\n\n",
-        mode_str,
-        list_mode_str,
-        command_list,
-        confirm_label,
-        policy.max_commands_per_task,
-        policy.command_timeout_secs,
-        policy.task_timeout_secs,
-        blocked_patterns,
-        blocked_base_commands,
-        protected_paths,
-    );
-
     let conventions = "遵循惯例\n\
 在对文件进行更改时，首先理解文件的代码惯例。模仿代码风格，使用现有的库和工具，并遵循现有的模式。\n\
 永远不要假设某个给定的库是可用的，即使它很知名。每当编写使用库或框架的代码时，首先检查这个代码库是否已经使用了该库。\n\
@@ -1167,7 +1106,7 @@ fn build_system_prompt(
 重要：你不应该用不必要的序言或后记来回答，除非用户要求。\n\
 重要：保持你的回复简短，因为它们将显示在命令行界面上。你必须用少于 4 行文字回答（不包括工具使用或代码生成），除非用户要求详细说明。\n\n";
 
-    format!("{}\n{}当前会话：SSH session id={}\n\n{}", base, policy_section, session_id, conventions)
+    format!("{}当前会话：SSH session id={}\n\n{}", base, session_id, conventions)
 }
 
 /// Serialized event for tool execution results.

@@ -10,11 +10,11 @@ use crate::AppState;
 /// Check if the given API key looks like a masked placeholder.
 /// Front-end may display "sk-******" or similar to indicate "unchanged".
 fn is_masked_key(key: &str) -> bool {
-    // Common mask patterns
+    // Common mask patterns — only check explicit mask indicators,
+    // never block short real keys (e.g. Ollama local keys like "sk-test123")
     key.contains("******") ||
-    key == "sk-" ||
     key.chars().all(|c| c == '*') ||
-    key.starts_with("sk-") && key.len() <= 10
+    key == "sk-"
 }
 
 /// Get all saved connections.
@@ -153,6 +153,11 @@ pub async fn config_save_settings(
             } else {
                 log::info!("API Key 未修改，跳过密钥链更新");
             }
+        } else {
+            // API Key is empty — delete from keychain so the user can
+            // effectively remove the key by clearing the input field.
+            keychain::delete_llm_api_key()?;
+            log::info!("已删除 LLM API Key");
         }
     }
     

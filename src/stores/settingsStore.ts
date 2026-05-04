@@ -38,8 +38,8 @@ interface SettingsState {
   settings: AppSettings;
   loaded: boolean;
 
-  /** Load settings from disk on app startup. Idempotent. */
-  load: () => Promise<void>;
+  /** Load settings from disk on app startup. Idempotent unless forced. */
+  load: (force?: boolean) => Promise<void>;
   /** Persist a full settings object and update local state. */
   save: (settings: AppSettings) => Promise<void>;
   /** Patch a subset of fields, persist, and update local state. */
@@ -57,8 +57,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loaded: false,
   preview: null,
 
-  load: async () => {
-    if (get().loaded) return;
+  load: async (force = false) => {
+    if (get().loaded && !force) return;
     try {
       const fromDisk = await tauri.getSettings();
       const merged: AppSettings = {
@@ -72,7 +72,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ settings: merged, loaded: true });
     } catch (err) {
       console.error('加载设置失败:', err);
-      set({ loaded: true });
+      set({ loaded: false });
+      throw err;
     }
   },
 
