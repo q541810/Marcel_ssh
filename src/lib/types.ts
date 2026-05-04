@@ -161,11 +161,12 @@ export type LlmStreamEvent =
   | { type: 'done' }
   | { type: 'error'; message: string }
   // Tool result — emitted as a separate event on the same channel
-  | ToolResultPayload
+  | { type: 'toolResult' } & ToolResultPayload
   // Approval request — emitted when user confirmation is needed
   | ApprovalRequestPayload;
 
 export interface ToolResultPayload {
+  type: 'toolResult';
   toolCallId: string;
   toolName: string;
   summary: string;

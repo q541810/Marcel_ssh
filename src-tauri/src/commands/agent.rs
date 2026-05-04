@@ -531,6 +531,7 @@ async fn run_agent_loop(
             let _ = app.emit(
                 &event_name,
                 ToolResultEvent {
+                    event_type: "toolResult".into(),
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
                     summary: exec.summary.clone(),
@@ -1109,10 +1110,12 @@ fn build_system_prompt(
     format!("{}当前会话：SSH session id={}\n\n{}", base, session_id, conventions)
 }
 
-/// Serialized event for tool execution results.
+/// Event containing a tool call result, sent to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ToolResultEvent {
+    #[serde(rename = "type")]
+    event_type: String,
     tool_call_id: String,
     tool_name: String,
     /// Short human-readable summary for the card header.

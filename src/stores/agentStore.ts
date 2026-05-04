@@ -210,9 +210,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         planFn();
         planListeners.delete(taskId);
       }
-      currentAssistantMessageId.delete(taskId);
-      assistantMessageIndex.delete(taskId);
-      inThinkingState.delete(taskId);
+      cleanupStreamState(taskId);
       set((state) => {
         const task = state.tasks[taskId];
         if (!task) return state;
@@ -429,11 +427,31 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
 const streamListeners: Map<string, UnlistenFn> = new Map();
 
-/** Maps taskId to { messageId, messageIndex } for O(1) textDelta updates */
-const assistantMessageIndex: Map<string, { messageId: string; index: number }> = new Map();
+/** Per-task tracking of stream state */
+interface TaskStreamState {
+  /** ID of the current assistant message being written to */
+  assistantMessageId: string | null;
+  /** Index of that message in the conversation array */
+  messageIndex: number;
+  /** Whether we're inside a thinking block */
+  inThinking: boolean;
+  /** Whether the loading message has been cleared */
+  loadingCleared: boolean;
+  /** Count of toolResults received in this round */
+  toolResultCount: number;
+}
 
-/** Maps taskId to whether we're inside a thinking block (defense-in-depth) */
-const inThinkingState: Map<string, boolean> = new Map();
+const taskStreamState: Map<string, TaskStreamState> = new Map();
+
+function getStreamState(taskId: string): TaskStreamState {
+  return taskStreamState.get(taskId) ?? {
+    assistantMessageId: null,
+    messageIndex: -1,
+    inThinking: false,
+    loadingCleared: false,
+    toolResultCount: 0,
+  };
+}
 
 const THINKING_START_TAGS = ['<thinking>', '<Thought>', '<think>'];
 const THINKING_END_TAGS = ['</thinking>', '</Thought>', '</think>'];
@@ -474,6 +492,208 @@ function filterThinkingTags(input: string, inThinking: boolean): [string, boolea
   }
 }
 
+function cleanupStreamState(taskId: string) {
+  taskStreamState.delete(taskId);
+}
+
+/** Insert a tool message after the last assistant/tool message in the array */
+function insertToolMessageAfterAssistant(newMsgs: AgentMessage[], toolMessage: AgentMessage): AgentMessage[] {
+  let insertIdx = newMsgs.length;
+  for (let i = newMsgs.length - 1; i >= 0; i--) {
+    if (newMsgs[i].role === 'assistant' || newMsgs[i].role === 'tool') {
+      insertIdx = i + 1;
+      break;
+    }
+  }
+  newMsgs.splice(insertIdx, 0, toolMessage);
+  return newMsgs;
+}
+
+/** Type guard: check if event is a ToolResultPayload */
+function isToolResultPayload(ev: any): ev is ToolResultPayload {
+  return 'toolCallId' in ev && 'toolName' in ev && 'success' in ev;
+}
+
+/** Type guard: check if event has a specific type field */
+function hasEventType(ev: any, type: string): boolean {
+  return 'type' in ev && ev.type === type;
+}
+
+/** Clear all listeners and stream state for a task */
+function cleanupTaskListeners(taskId: string) {
+  const streamFn = streamListeners.get(taskId);
+  if (streamFn) {
+    streamFn();
+    streamListeners.delete(taskId);
+  }
+  const planFn = planListeners.get(taskId);
+  if (planFn) {
+    planFn();
+    planListeners.delete(taskId);
+  }
+  cleanupStreamState(taskId);
+}
+
+/** Handle toolResult events: create tool message and clear loading */
+function handleToolResult(taskId: string, conversationId: string, loadingAssistantId: string, tr: ToolResultPayload) {
+  const toolMessage: AgentMessage = {
+    id: crypto.randomUUID(),
+    role: 'tool',
+    content: '',
+    timestamp: new Date().toISOString(),
+    toolResult: {
+      toolName: tr.toolName,
+      summary: tr.summary,
+      result: tr.result,
+      success: tr.success,
+      blocked: tr.blocked,
+    },
+  };
+
+  useAgentStore.setState((state) => {
+    const convMsgs = state.messages[conversationId] || [];
+    const newMsgs = [...convMsgs];
+
+    const streamState = getStreamState(taskId);
+
+    // Clear loading on the loading assistant message only once
+    if (!streamState.loadingCleared) {
+      const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
+      if (loadingIdx !== -1) {
+        newMsgs.splice(loadingIdx, 1);
+        streamState.loadingCleared = true;
+      }
+    }
+
+    // Increment tool result count
+    streamState.toolResultCount++;
+
+    insertToolMessageAfterAssistant(newMsgs, toolMessage);
+    
+    // Update stream state
+    taskStreamState.set(taskId, streamState);
+    
+    return { messages: { ...state.messages, [conversationId]: newMsgs } };
+  });
+}
+
+/** Handle textDelta events: append to or create assistant message */
+function handleTextDelta(taskId: string, conversationId: string, loadingAssistantId: string, streamEv: { type: 'textDelta'; text: string }) {
+  const state = getStreamState(taskId);
+  const [filteredText, newThinking] = filterThinkingTags(streamEv.text, state.inThinking);
+
+  // Skip while still inside a thinking block
+  if (state.inThinking && filteredText.length === 0) {
+    taskStreamState.set(taskId, { ...state, inThinking: newThinking });
+    return;
+  }
+
+  taskStreamState.set(taskId, { ...state, inThinking: newThinking });
+
+  if (state.assistantMessageId) {
+    // Append to existing assistant message
+    useAgentStore.setState((state2) => {
+      const convMsgs = state2.messages[conversationId] || [];
+      let { messageIndex: idx } = state;
+      if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
+        idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
+        if (idx === -1) return state2;
+      }
+      const newMsgs = [...convMsgs];
+      newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + filteredText };
+      return { messages: { ...state2.messages, [conversationId]: newMsgs } };
+    });
+  } else {
+    // First text after tool calls — create new assistant message
+    useAgentStore.setState((state2) => {
+      const convMsgs = state2.messages[conversationId] || [];
+      
+      // Remove loading message if it hasn't been cleared yet
+      let newMsgs = [...convMsgs];
+      if (!state.loadingCleared) {
+        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
+        if (loadingIdx !== -1) {
+          newMsgs.splice(loadingIdx, 1);
+          state.loadingCleared = true;
+        }
+      }
+
+      const newMsg: AgentMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: filteredText,
+        timestamp: new Date().toISOString(),
+      };
+      newMsgs.push(newMsg);
+
+      taskStreamState.set(taskId, {
+        assistantMessageId: newMsg.id,
+        messageIndex: newMsgs.length - 1,
+        inThinking: newThinking,
+        loadingCleared: state.loadingCleared,
+        toolResultCount: state.toolResultCount,
+      });
+
+      return { messages: { ...state2.messages, [conversationId]: newMsgs } };
+    });
+  }
+
+  // Update task status from planning to executing
+  const store = useAgentStore.getState();
+  if (store.tasks[taskId]?.status === 'planning') {
+    store.updateTaskStatus(taskId, 'executing');
+  }
+}
+
+/** Handle done events: cleanup and mark task completed */
+function handleDone(taskId: string, conversationId: string, loadingAssistantId: string) {
+  useAgentStore.getState().updateTaskStatus(taskId, 'completed');
+  
+  useAgentStore.setState((state2) => {
+    const convMsgs = state2.messages[conversationId] || [];
+    const newMsgs = convMsgs.filter((m) => {
+      // Remove loading messages
+      if (m.id === loadingAssistantId) return false;
+      // Remove empty assistant messages
+      if (m.role === 'assistant' && m.content === '') return false;
+      return true;
+    });
+    return {
+      messages: { ...state2.messages, [conversationId]: newMsgs },
+      activeTaskId: state2.activeTaskId === taskId ? null : state2.activeTaskId,
+    };
+  });
+  
+  cleanupTaskListeners(taskId);
+}
+
+/** Handle error events: show error message and mark task failed */
+function handleError(taskId: string, conversationId: string, loadingAssistantId: string, errEv: { type: 'error'; message: string }) {
+  useAgentStore.getState().updateTaskStatus(taskId, 'failed');
+  
+  useAgentStore.setState((state2) => {
+    const convMsgs = state2.messages[conversationId] || [];
+    const newMsgs = convMsgs.filter((m) => m.id !== loadingAssistantId);
+    return {
+      messages: {
+        ...state2.messages,
+        [conversationId]: [
+          ...newMsgs,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `LLM 错误：${errEv.message}`,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      },
+      activeTaskId: state2.activeTaskId === taskId ? null : state2.activeTaskId,
+    };
+  });
+  
+  cleanupTaskListeners(taskId);
+}
+
 async function attachStreamListener(taskId: string, conversationId: string, loadingAssistantId: string) {
   if (streamListeners.has(taskId)) return;
 
@@ -481,197 +701,38 @@ async function attachStreamListener(taskId: string, conversationId: string, load
     `agent://stream/${taskId}`,
     (event) => {
       const ev = event.payload;
-      const store = useAgentStore.getState();
-      const assistantMessageId = currentAssistantMessageId.get(taskId);
 
-      if ('type' in ev && ev.type === 'approvalRequest') {
-        const approval = ev as ApprovalRequestPayload;
-        store.setPendingApproval(approval);
+      if (isToolResultPayload(ev)) {
+        handleToolResult(taskId, conversationId, loadingAssistantId, ev);
         return;
       }
 
-      if ('toolCallId' in ev) {
-        const tr = ev as ToolResultPayload;
-        const toolMessage: AgentMessage = {
-          id: crypto.randomUUID(),
-          role: 'tool',
-          content: '',
-          timestamp: new Date().toISOString(),
-          toolResult: {
-            toolName: tr.toolName,
-            summary: tr.summary,
-            result: tr.result,
-            success: tr.success,
-            blocked: tr.blocked,
-          },
-        };
-
-        useAgentStore.setState((state) => {
-          const convMsgs = state.messages[conversationId] || [];
-          // Clear the loading state on the loading assistant message
-          const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
-          let newMsgs = [...convMsgs];
-          if (loadingMsgIdx !== -1) {
-            newMsgs[loadingMsgIdx] = {
-              ...newMsgs[loadingMsgIdx],
-              isLoading: false,
-            };
-          }
-
-          // Insert tool message right after the assistant message (loading or cached)
-          const insertAfterIdx = loadingMsgIdx !== -1
-            ? loadingMsgIdx
-            : (assistantMessageId
-              ? newMsgs.findIndex((m) => m.id === assistantMessageId)
-              : -1);
-
-          if (insertAfterIdx !== -1) {
-            newMsgs.splice(insertAfterIdx + 1, 0, toolMessage);
-          } else {
-            newMsgs.push(toolMessage);
-          }
-          return { messages: { ...state.messages, [conversationId]: newMsgs } };
-        });
-
-        currentAssistantMessageId.delete(taskId);
-        assistantMessageIndex.delete(taskId);
-        inThinkingState.delete(taskId);
+      if (hasEventType(ev, 'approvalRequest')) {
+        useAgentStore.getState().setPendingApproval(ev);
         return;
       }
 
-      switch (ev.type) {
-        case 'textDelta': {
-          let thinking = inThinkingState.get(taskId) ?? false;
-          const [filteredText, newThinking] = filterThinkingTags(ev.text, thinking);
-          inThinkingState.set(taskId, newThinking);
-
-          // Skip update when still inside a thinking block.
-          // When thinking just ended (newThinking === false) but filteredText is empty,
-          // we still update the message to clear isLoading so the user sees the transition.
-          if (newThinking && filteredText.length === 0) return;
-
-          let cached = assistantMessageIndex.get(taskId);
-          if (!cached) {
-            useAgentStore.setState((state) => {
-              const convMsgs = state.messages[conversationId] || [];
-              let idx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
-
-              // If the loading message was already removed (e.g. by a tool result),
-              // append a new assistant message.
-              if (idx === -1) {
-                const newMsg: AgentMessage = {
-                  id: loadingAssistantId,
-                  role: 'assistant',
-                  content: filteredText,
-                  isLoading: false,
-                  timestamp: new Date().toISOString(),
-                };
-                return { messages: { ...state.messages, [conversationId]: [...convMsgs, newMsg] } };
-              }
-
-              const newMsgs = [...convMsgs];
-              newMsgs[idx] = {
-                ...newMsgs[idx],
-                content: filteredText,
-                isLoading: false,
-              };
-              return { messages: { ...state.messages, [conversationId]: newMsgs } };
-            });
-            assistantMessageIndex.set(taskId, { messageId: loadingAssistantId, index: 0 });
-            currentAssistantMessageId.set(taskId, loadingAssistantId);
-            cached = { messageId: loadingAssistantId, index: 0 };
-          } else {
-            useAgentStore.setState((state) => {
-              const convMsgs = state.messages[conversationId] || [];
-              let { index: idx } = cached!;
-              if (idx >= convMsgs.length || convMsgs[idx].id !== cached!.messageId) {
-                idx = convMsgs.findIndex((m) => m.id === cached!.messageId);
-                if (idx === -1) return state;
-                cached!.index = idx;
-              }
-              const newMsgs = [...convMsgs];
-              newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + filteredText };
-              return { messages: { ...state.messages, [conversationId]: newMsgs } };
-            });
-          }
-
-          if (store.tasks[taskId]?.status === 'planning') {
-            store.updateTaskStatus(taskId, 'executing');
-          }
-          break;
-        }
-        case 'toolCallStart':
-        case 'toolCallDelta': {
-          console.debug('[agent] tool event', ev);
-          break;
-        }
-        case 'done': {
-          store.updateTaskStatus(taskId, 'completed');
-          useAgentStore.setState((state) => {
-            const convMsgs = state.messages[conversationId] || [];
-            const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
-            let newMsgs = [...convMsgs];
-            if (loadingMsgIdx !== -1) {
-              newMsgs[loadingMsgIdx] = { ...newMsgs[loadingMsgIdx], isLoading: false };
-            }
-            return {
-              messages: { ...state.messages, [conversationId]: newMsgs },
-              activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
-            };
-          });
-          currentAssistantMessageId.delete(taskId);
-          assistantMessageIndex.delete(taskId);
-          inThinkingState.delete(taskId);
-          const fn = streamListeners.get(taskId);
-          if (fn) {
-            fn();
-            streamListeners.delete(taskId);
-          }
-          const planFn = planListeners.get(taskId);
-          if (planFn) {
-            planFn();
-            planListeners.delete(taskId);
-          }
-          break;
-        }
-        case 'error': {
-          store.updateTaskStatus(taskId, 'failed');
-          useAgentStore.setState((state) => {
-            const convMsgs = state.messages[conversationId] || [];
-            return {
-              messages: {
-                ...state.messages,
-                [conversationId]: convMsgs
-                  .filter((m) => m.id !== loadingAssistantId)
-                  .concat([
-                    {
-                      id: crypto.randomUUID(),
-                      role: 'system',
-                      content: `LLM 错误：${ev.message}`,
-                      timestamp: new Date().toISOString(),
-                    },
-                  ]),
-              },
-              activeTaskId:
-                state.activeTaskId === taskId ? null : state.activeTaskId,
-            };
-          });
-          currentAssistantMessageId.delete(taskId);
-          assistantMessageIndex.delete(taskId);
-          inThinkingState.delete(taskId);
-          const fn = streamListeners.get(taskId);
-          if (fn) {
-            fn();
-            streamListeners.delete(taskId);
-          }
-          const planFn = planListeners.get(taskId);
-          if (planFn) {
-            planFn();
-            planListeners.delete(taskId);
-          }
-          break;
-        }
+      if (hasEventType(ev, 'textDelta')) {
+        handleTextDelta(taskId, conversationId, loadingAssistantId, ev);
+        return;
       }
+
+      if (hasEventType(ev, 'toolCallStart') || hasEventType(ev, 'toolCallDelta')) {
+        console.debug('[agent] tool event', ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'done')) {
+        handleDone(taskId, conversationId, loadingAssistantId);
+        return;
+      }
+
+      if (hasEventType(ev, 'error')) {
+        handleError(taskId, conversationId, loadingAssistantId, ev);
+        return;
+      }
+
+      console.warn('[agent] unknown event type', ev);
     },
   );
   streamListeners.set(taskId, unlisten);
