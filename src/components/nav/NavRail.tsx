@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import Modal from '../ui/Modal';
 
-export type NavView = 'sessions' | 'mcp' | 'settings';
+export type NavView = 'sessions' | 'skills' | 'mcp' | 'settings';
 
 interface Props {
   active: NavView;
@@ -23,6 +23,17 @@ const TOP_ITEMS: NavItem[] = [
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
           d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7M9 21V12h6v9" />
+      </svg>
+    ),
+  },
+  {
+    value: 'skills',
+    label: '技能',
+    icon: (
+      // lightning / bolt icon
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+          d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
       </svg>
     ),
   },

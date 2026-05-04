@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod llm;
+pub mod skills;
 pub mod ssh;
 
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use crate::agent::runtime::AgentTask;
 use crate::agent::runtime::AgentTaskPlan;
 use crate::config::connections::ConnectionStore;
 use crate::config::settings::AppSettings;
+use crate::skills::store::SkillStore;
 use crate::ssh::connection::SshManager;
 
 /// Shared application state managed by Tauri.
@@ -35,6 +37,7 @@ pub struct AppState {
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
     pub conversation_db: std::sync::Arc<ConversationDb>,
+    pub skill_store: std::sync::Arc<TokioRwLock<SkillStore>>,
     /// Application config directory. Used for persisting connections, settings, etc.
     pub config_dir: PathBuf,
     /// Pending approval requests: tool_call_id -> oneshot sender for approval response
@@ -118,20 +121,29 @@ impl AppState {
                         panic!("无法初始化内存数据库: {}", e2);
                     }
                 }
-            }
-        };
-
-        Self {
-            ssh_manager: SshManager::new(),
-            agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
-            settings: std::sync::Arc::new(TokioRwLock::new(settings)),
-            audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
-            conversation_db: std::sync::Arc::new(conversation_db),
-            config_dir,
-            pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
         }
+    };
+
+    let skill_store = SkillStore::load_from_path(
+        &SkillStore::default_file(&config_dir),
+    )
+    .unwrap_or_else(|e| {
+        log::warn!("Failed to load skills, using defaults: {}", e);
+        SkillStore::new()
+    });
+
+    Self {
+        ssh_manager: SshManager::new(),
+        agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+        plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+        connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
+        settings: std::sync::Arc::new(TokioRwLock::new(settings)),
+        audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
+        conversation_db: std::sync::Arc::new(conversation_db),
+        skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
+        config_dir,
+        pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+    }
     }
 }
 
@@ -187,10 +199,16 @@ pub fn run() {
             commands::config::config_save_password,
             commands::config::config_get_password,
             commands::config::config_delete_password,
-            // LLM API Key management
-            commands::config::config_save_llm_api_key,
-            commands::config::config_get_llm_api_key,
-            commands::config::config_delete_llm_api_key,
+        // LLM API Key management
+        commands::config::config_save_llm_api_key,
+        commands::config::config_get_llm_api_key,
+        commands::config::config_delete_llm_api_key,
+        // Skill commands
+        commands::skill::skill_list,
+        commands::skill::skill_add,
+        commands::skill::skill_update,
+        commands::skill::skill_toggle,
+        commands::skill::skill_delete,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

@@ -4,6 +4,7 @@ import { APP_NAME } from '@/lib/constants';
 import NavRail, { type NavView } from '@/components/nav/NavRail';
 import ConnectionList from '@/components/connection/ConnectionList';
 import McpList from '@/components/mcp/McpList';
+import SkillList from '@/components/skill/SkillList';
 import Settings from '@/components/settings/Settings';
 import Terminal from '@/components/terminal/Terminal';
 import TabBar from '@/components/terminal/TabBar';
@@ -47,7 +48,7 @@ export default function App() {
 
   const handleNavChange = (view: NavView) => {
     setNavView(view);
-    if (view === 'sessions' || view === 'mcp') {
+    if (view === 'sessions' || view === 'skills' || view === 'mcp') {
       setSidebarOpen(true);
     }
   };
@@ -147,6 +148,7 @@ export default function App() {
         >
           <div style={{ width: '16rem', height: '100%' }}>
             {navView === 'sessions' && <ConnectionList />}
+            {navView === 'skills' && <SkillList />}
             {navView === 'mcp' && <McpList />}
           </div>
         </aside>

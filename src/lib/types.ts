@@ -226,3 +226,15 @@ export type PlanStreamEvent =
   | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number }
   | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number }
   | { type: 'plan-completed'; completed: number; total: number; failed: number };
+
+// Skill types
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}

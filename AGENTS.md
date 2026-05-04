@@ -89,9 +89,11 @@ WebView 渲染进程 (前端)
 | `llm-bridge` | Rust | LLM API 调用抽象、流式响应处理 |
 | `session-manager` | Rust | 多会话/多标签管理、会话持久化 |
 | `config-store` | Rust | 连接配置、密钥管理、偏好设置 |
+| `skills-store` | Rust | 用户自定义技能（Skill）CRUD 与持久化 |
 | `terminal-view` | 前端 | xterm.js 封装、输入输出流绑定 |
 | `agent-panel` | 前端 | Agent 对话界面、操作审批 UI、执行日志 |
 | `connection-ui` | 前端 | 连接列表、快速连接、分组管理 |
+| `skill-ui` | 前端 | 技能列表、创建/编辑/启用/禁用 |
 
 ---
 
@@ -345,6 +347,11 @@ config_get_llm_api_key() → Option<String>
 config_delete_llm_api_key() → ()
 config_get_settings() → AppSettings
 config_save_settings(settings) → ()
+skill_list() → Vec<Skill>
+skill_add(name, description, prompt) → Skill
+skill_update(id, name?, description?, prompt?) → ()
+skill_toggle(id) → ()
+skill_delete(id) → ()
 ```
 
 ### 7.2 Events（服务端推送）

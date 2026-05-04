@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage, RiskLevel } from './types';
+import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage, RiskLevel, Skill } from './types';
 
 // SSH commands
 
@@ -155,5 +155,36 @@ export async function getLlmApiKey(): Promise<string | null> {
 
 export async function deleteLlmApiKey(): Promise<void> {
   return invoke('config_delete_llm_api_key');
+}
+
+// Skill commands
+
+export async function skillList(): Promise<Skill[]> {
+  return invoke<Skill[]>('skill_list');
+}
+
+export async function skillAdd(
+  name: string,
+  description: string,
+  prompt: string,
+): Promise<Skill> {
+  return invoke<Skill>('skill_add', { name, description, prompt });
+}
+
+export async function skillUpdate(
+  id: string,
+  name?: string,
+  description?: string,
+  prompt?: string,
+): Promise<void> {
+  return invoke('skill_update', { id, name, description, prompt });
+}
+
+export async function skillToggle(id: string): Promise<void> {
+  return invoke('skill_toggle', { id });
+}
+
+export async function skillDelete(id: string): Promise<void> {
+  return invoke('skill_delete', { id });
 }
 

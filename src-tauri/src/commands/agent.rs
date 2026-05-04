@@ -73,13 +73,15 @@ pub async fn agent_start_task(
     };
     state.agent_tasks.write().insert(task_id.clone(), task);
 
-    // Snapshot config
-    let (llm_config, agent_settings, sandbox) = {
+    // Snapshot config + skills
+    let (llm_config, agent_settings, sandbox, skill_prompts) = {
         let settings = state.settings.read().await;
+        let skills = state.skill_store.read().await;
         (
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
             Sandbox::default(),
+            skills.enabled_prompts(),
         )
     };
 
@@ -93,7 +95,7 @@ pub async fn agent_start_task(
     let provider = OpenAiProvider::new(llm_config)?;
 
     // Build initial messages
-    let system_prompt = build_system_prompt(&session_id);
+    let system_prompt = build_system_prompt(&session_id, &skill_prompts);
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
     for msg in &history {
@@ -1109,7 +1111,7 @@ fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
 
 // ──────────────────────── System prompt ────────────────────────
 
-fn build_system_prompt(session_id: &str) -> String {
+fn build_system_prompt(session_id: &str, skill_prompts: &str) -> String {
     let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
 思考方式\n\
@@ -1153,7 +1155,13 @@ fn build_system_prompt(session_id: &str) -> String {
 重要：你不应该用不必要的序言或后记来回答，除非用户要求。\n\
 重要：保持你的回复简短，因为它们将显示在命令行界面上。你必须用少于 4 行文字回答（不包括工具使用或代码生成），除非用户要求详细说明。\n\n";
 
-    format!("{}当前会话：SSH session id={}\n\n{}", base, session_id, conventions)
+    let skills_section = if skill_prompts.is_empty() {
+        String::new()
+    } else {
+        format!("用户自定义技能指令\n以下是用户为本次会话配置的技能，请严格遵循：\n\n{}\n", skill_prompts)
+    };
+
+    format!("{}当前会话：SSH session id={}\n\n{}{}", base, session_id, conventions, skills_section)
 }
 
 /// Event containing a tool call result, sent to the frontend.
