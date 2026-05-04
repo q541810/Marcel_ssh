@@ -1059,10 +1059,10 @@ fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
 // ──────────────────────── System prompt ────────────────────────
 
 fn build_system_prompt(
-    mode: &AgentMode,
+    _mode: &AgentMode,
     session_id: &str,
-    agent_settings: &AgentModeSettings,
-    sandbox: &Sandbox,
+    _agent_settings: &AgentModeSettings,
+    _sandbox: &Sandbox,
 ) -> String {
     let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
