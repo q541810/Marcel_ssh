@@ -5,7 +5,10 @@ import type { AgentMode } from '@/lib/types';
 export function useAgent() {
   const conversations = useAgentStore((s) => s.conversations);
   const activeConversationId = useAgentStore((s) => s.activeConversationId);
-  const getCurrentMessages = useAgentStore((s) => s.getCurrentMessages);
+  // Subscribe to the entire messages map; derive current-conversation slice below.
+  // This keeps the selector returning a stable reference (the map), avoiding
+  // infinite-loop warnings from useSyncExternalStore.
+  const messagesMap = useAgentStore((s) => s.messages);
   const tasks = useAgentStore((s) => s.tasks);
   const activeTaskId = useAgentStore((s) => s.activeTaskId);
   const mode = useAgentStore((s) => s.mode);
@@ -22,9 +25,8 @@ export function useAgent() {
   const deleteConversationAction = useAgentStore((s) => s.deleteConversation);
   const loadSessionConversationsAction = useAgentStore((s) => s.loadConnectionConversations);
 
-  const messages = getCurrentMessages();
-
   const activeTask = activeTaskId ? tasks[activeTaskId] ?? null : null;
+  const messages = activeConversationId ? (messagesMap[activeConversationId] ?? []) : [];
   const isRunning =
     activeTask?.status === 'planning' ||
     activeTask?.status === 'executing' ||

@@ -27,6 +27,30 @@ echo.
 echo  Press Ctrl+C to stop.
 echo.
 
+REM Auto-install dependencies if node_modules is missing or outdated
+if not exist "node_modules\.pnpm" (
+    echo  [INFO] Dependencies missing, installing...
+    call pnpm install
+    echo.
+    if %ERRORLEVEL% neq 0 (
+        echo  [ERROR] Failed to install dependencies. Run: pnpm install
+        pause
+        exit /b 1
+    )
+) else (
+    REM Quick check: verify critical dependency exists
+    if not exist "node_modules\@tauri-apps\cli" (
+        echo  [INFO] Critical dependency missing, installing...
+        call pnpm install
+        echo.
+        if %ERRORLEVEL% neq 0 (
+            echo  [ERROR] Failed to install dependencies. Run: pnpm install
+            pause
+            exit /b 1
+        )
+    )
+)
+
 REM Launch tauri dev (will start Vite + compile Rust + open window)
 node "./node_modules/@tauri-apps/cli/tauri.js" dev
 

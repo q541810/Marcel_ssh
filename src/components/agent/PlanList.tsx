@@ -82,7 +82,11 @@ const STATUS_LABEL: Record<PlanItemStatus, { text: string; className: string } |
 // ────────────────────────── PlanList Component ──────────────────────────
 
 export default function PlanList() {
-  const plan = useAgentStore((s) => s.getActivePlan());
+  // Bug9 fix: subscribe directly to the plan slice instead of calling getActivePlan()
+  // which returns a new object reference on every render and bypasses selector memoization.
+  const plan = useAgentStore((s) =>
+    s.activeTaskId ? (s.plans[s.activeTaskId] ?? null) : null
+  );
   const [collapsed, setCollapsed] = useState(false);
 
   if (!plan || plan.items.length === 0) return null;

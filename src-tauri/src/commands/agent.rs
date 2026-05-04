@@ -10,7 +10,7 @@ use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, Pl
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::plan::{PLAN_CREATED_KEY, PLAN_ITEM_UPDATED_KEY};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
-use crate::config::settings::{CommandListMode, AgentModeSettings};
+use crate::config::settings::CommandListMode;
 
 /// 持久化的工具调用元数据，包含工具调用详情和计算的风险等级。
 ///
@@ -412,24 +412,29 @@ async fn run_agent_loop(
 ) {
     let event_name = format!("agent://stream/{}", task_id);
 
-    // Auto-update conversation title if it's still the default "新会话"
-    for msg in &messages {
-        if msg.role == LlmRole::User && !msg.content.is_empty() {
-            let title = msg.content.chars().take(30).collect::<String>();
-            let _ = conv_db.update_conversation_title(&conversation_id, &title);
-            break;
-        }
+    // Auto-update conversation title from the current prompt (last user message).
+    if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User && !m.content.is_empty()) {
+        let title = msg.content.chars().take(30).collect::<String>();
+        let _ = conv_db.update_conversation_title(&conversation_id, &title);
     }
 
-    // Persist user messages from history that are not yet saved
-    for msg in &messages {
-        if msg.role == LlmRole::User && !msg.content.is_empty() {
+    // Persist only the current prompt (the last user message).
+    // History messages were already persisted in previous tasks.
+    if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User) {
+        if !msg.content.is_empty() {
             let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339(), None);
         }
     }
 
     for round in 0..MAX_TOOL_ROUNDS {
         log::info!("Agent {} round {}", task_id, round);
+
+        // Check if task has been cancelled by the user
+        if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+            log::info!("Agent task {} cancelled, stopping loop", task_id);
+            let _ = app.emit(&event_name, StreamEvent::Done);
+            return;
+        }
 
         // 0. Inject plan context before LLM call
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
@@ -516,6 +521,13 @@ async fn run_agent_loop(
         // 4. Execute each tool call via the registry
         let ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
         for tc in &tool_calls {
+            // Check cancellation before executing each tool call
+            if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+                log::info!("Agent task {} cancelled before tool execution, stopping", task_id);
+                let _ = app.emit(&event_name, StreamEvent::Done);
+                return;
+            }
+
             let exec = dispatch_tool_call_with_meta(
                 tc,
                 &mode,
@@ -527,6 +539,13 @@ async fn run_agent_loop(
                 &registry,
             )
             .await;
+
+            // Check cancellation after tool execution (for long-running tools)
+            if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+                log::info!("Agent task {} cancelled after tool execution, stopping", task_id);
+                let _ = app.emit(&event_name, StreamEvent::Done);
+                return;
+            }
 
             // Emit structured tool result to frontend (for tool call cards)
             let _ = app.emit(
@@ -860,9 +879,9 @@ fn strip_thinking_tags(content: &str) -> String {
                     }
                 }
                 match earliest_end {
-                    Some((end_pos, _)) => {
-                        // Skip content between start and end tags, continue after end tag
-                        remaining = &after_start[end_pos..];
+                    Some((end_pos, end_of_end_tag)) => {
+                        // Skip content between start and end tags, continue AFTER the end tag
+                        remaining = &after_start[end_of_end_tag..];
                     }
                     None => {
                         // No end tag found — discard the rest

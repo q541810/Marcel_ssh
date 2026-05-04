@@ -40,6 +40,13 @@ export default function AgentMessage({ message }: Props) {
     return null;
   }
 
+  // Hide assistant messages that are purely tool-call placeholders (no user-visible text).
+  // These are identified by having a toolCall but empty or placeholder content — the actual
+  // tool output is rendered by ToolCallCard via the 'tool' role message.
+  if (message.role === 'assistant' && message.toolCall && !message.content) {
+    return null;
+  }
+
   return (
     <div
       className={`rounded-xl border p-3 ${ROLE_STYLES[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}
@@ -63,12 +70,6 @@ export default function AgentMessage({ message }: Props) {
           </svg>
           <span>思考中...</span>
         </div>
-      ) : message.role === 'tool' ? (
-        <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words">
-          {message.content || <span className="text-zinc-500 italic">（无输出）</span>}
-        </div>
-      ) : message.toolCall && message.content.startsWith('[调用工具:') ? (
-        null
       ) : !message.content ? (
         <div className="text-sm text-zinc-500 italic">（无内容）</div>
       ) : (

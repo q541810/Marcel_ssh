@@ -90,7 +90,7 @@ export interface ToolCallInfo {
   approved?: boolean;
 }
 
-export type RiskLevel = 'readonly' | 'low_risk' | 'moderate' | 'high_risk' | 'destructive';
+export type RiskLevel = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
 
 // Settings
 

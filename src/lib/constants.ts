@@ -13,19 +13,19 @@ export const AGENT_MODES: { value: AgentMode; label: string; description: string
 ];
 
 export const RISK_LEVEL_COLORS: Record<RiskLevel, string> = {
-  readonly: 'bg-emerald-600 text-emerald-100',
-  low_risk: 'bg-sky-600 text-sky-100',
-  moderate: 'bg-amber-600 text-amber-100',
-  high_risk: 'bg-orange-600 text-orange-100',
-  destructive: 'bg-red-600 text-red-100',
+  ReadOnly: 'bg-emerald-600 text-emerald-100',
+  LowRisk: 'bg-sky-600 text-sky-100',
+  Moderate: 'bg-amber-600 text-amber-100',
+  HighRisk: 'bg-orange-600 text-orange-100',
+  Destructive: 'bg-red-600 text-red-100',
 };
 
 export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {
-  readonly: '只读',
-  low_risk: '低风险',
-  moderate: '中等风险',
-  high_risk: '高风险',
-  destructive: '破坏性',
+  ReadOnly: '只读',
+  LowRisk: '低风险',
+  Moderate: '中等风险',
+  HighRisk: '高风险',
+  Destructive: '破坏性',
 };
 
 export const TERMINAL_COLOR_PRESETS: { name: string; colors: TerminalColors }[] = [

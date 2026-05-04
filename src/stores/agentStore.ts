@@ -217,6 +217,8 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         return {
           tasks: { ...state.tasks, [taskId]: { ...task, status: 'cancelled' } },
           activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
+          // Clear any pending approval when task is stopped
+          pendingApproval: null,
         };
       });
     }
@@ -453,6 +455,12 @@ function getStreamState(taskId: string): TaskStreamState {
   };
 }
 
+/** Safely update taskStreamState by merging with the current state, avoiding stale snapshots */
+function updateStreamState(taskId: string, partial: Partial<TaskStreamState>): void {
+  const current = getStreamState(taskId);
+  taskStreamState.set(taskId, { ...current, ...partial });
+}
+
 const THINKING_START_TAGS = ['<thinking>', '<Thought>', '<think>'];
 const THINKING_END_TAGS = ['</thinking>', '</Thought>', '</think>'];
 
@@ -496,16 +504,12 @@ function cleanupStreamState(taskId: string) {
   taskStreamState.delete(taskId);
 }
 
-/** Insert a tool message after the last assistant/tool message in the array */
+/** Insert a tool message at the end of the array (after the latest user prompt
+ * and any prior assistant/tool messages). The loading assistant message has
+ * already been removed by the caller, so pushing to the end puts the tool
+ * card in the correct chronological position. */
 function insertToolMessageAfterAssistant(newMsgs: AgentMessage[], toolMessage: AgentMessage): AgentMessage[] {
-  let insertIdx = newMsgs.length;
-  for (let i = newMsgs.length - 1; i >= 0; i--) {
-    if (newMsgs[i].role === 'assistant' || newMsgs[i].role === 'tool') {
-      insertIdx = i + 1;
-      break;
-    }
-  }
-  newMsgs.splice(insertIdx, 0, toolMessage);
+  newMsgs.push(toolMessage);
   return newMsgs;
 }
 
@@ -570,7 +574,7 @@ function handleToolResult(taskId: string, conversationId: string, loadingAssista
 
     insertToolMessageAfterAssistant(newMsgs, toolMessage);
     
-    // Update stream state
+    // Update stream state inside setState for consistency
     taskStreamState.set(taskId, streamState);
     
     return { messages: { ...state.messages, [conversationId]: newMsgs } };
@@ -584,11 +588,11 @@ function handleTextDelta(taskId: string, conversationId: string, loadingAssistan
 
   // Skip while still inside a thinking block
   if (state.inThinking && filteredText.length === 0) {
-    taskStreamState.set(taskId, { ...state, inThinking: newThinking });
+    updateStreamState(taskId, { inThinking: newThinking });
     return;
   }
 
-  taskStreamState.set(taskId, { ...state, inThinking: newThinking });
+  updateStreamState(taskId, { inThinking: newThinking });
 
   if (state.assistantMessageId) {
     // Append to existing assistant message
@@ -604,17 +608,20 @@ function handleTextDelta(taskId: string, conversationId: string, loadingAssistan
       return { messages: { ...state2.messages, [conversationId]: newMsgs } };
     });
   } else {
-    // First text after tool calls — create new assistant message
+    // First text — create new assistant message.
+    // Bug4 fix: declare mutable captures outside setState so the closure stays pure.
+    let loadingCleared = state.loadingCleared;
+    let newAssistantId = '';
+    let newMsgIndex = -1;
+
     useAgentStore.setState((state2) => {
       const convMsgs = state2.messages[conversationId] || [];
-      
-      // Remove loading message if it hasn't been cleared yet
       let newMsgs = [...convMsgs];
-      if (!state.loadingCleared) {
+      if (!loadingCleared) {
         const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
         if (loadingIdx !== -1) {
           newMsgs.splice(loadingIdx, 1);
-          state.loadingCleared = true;
+          loadingCleared = true;
         }
       }
 
@@ -625,16 +632,21 @@ function handleTextDelta(taskId: string, conversationId: string, loadingAssistan
         timestamp: new Date().toISOString(),
       };
       newMsgs.push(newMsg);
-
-      taskStreamState.set(taskId, {
-        assistantMessageId: newMsg.id,
-        messageIndex: newMsgs.length - 1,
-        inThinking: newThinking,
-        loadingCleared: state.loadingCleared,
-        toolResultCount: state.toolResultCount,
-      });
+      newAssistantId = newMsg.id;
+      newMsgIndex = newMsgs.length - 1;
 
       return { messages: { ...state2.messages, [conversationId]: newMsgs } };
+    });
+
+    // Bug4 fix: update taskStreamState outside setState to keep the closure pure.
+    // Use fresh state reads to ensure consistency in async context.
+    const finalState = getStreamState(taskId);
+    taskStreamState.set(taskId, {
+      assistantMessageId: newAssistantId,
+      messageIndex: newMsgIndex,
+      inThinking: newThinking,
+      loadingCleared,
+      toolResultCount: finalState.toolResultCount,
     });
   }
 
@@ -661,6 +673,8 @@ function handleDone(taskId: string, conversationId: string, loadingAssistantId: 
     return {
       messages: { ...state2.messages, [conversationId]: newMsgs },
       activeTaskId: state2.activeTaskId === taskId ? null : state2.activeTaskId,
+      // Clear any pending approval when task finishes normally
+      pendingApproval: null,
     };
   });
   
@@ -688,6 +702,8 @@ function handleError(taskId: string, conversationId: string, loadingAssistantId:
         ],
       },
       activeTaskId: state2.activeTaskId === taskId ? null : state2.activeTaskId,
+      // Clear any pending approval when task fails
+      pendingApproval: null,
     };
   });
   

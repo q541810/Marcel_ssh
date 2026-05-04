@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage } from './types';
+import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage, RiskLevel } from './types';
 
 // SSH commands
 
@@ -89,7 +89,7 @@ export async function agentDeleteConversationsBySession(sessionId: string): Prom
 export interface CommandCheckResult {
   allowed: boolean;
   requiresConfirmation: boolean;
-  riskLevel: 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
+  riskLevel: RiskLevel;
   reason: string;
 }
 
