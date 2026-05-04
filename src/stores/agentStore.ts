@@ -511,12 +511,7 @@ async function attachStreamListener(taskId: string, conversationId: string, load
           // Clear the loading state on the loading assistant message
           const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
           let newMsgs = [...convMsgs];
-
-          // If the loading message has no content, remove it entirely to avoid
-          // displaying an empty assistant bubble before the tool result.
-          if (loadingMsgIdx !== -1 && newMsgs[loadingMsgIdx].content === '') {
-            newMsgs = [...convMsgs.slice(0, loadingMsgIdx), ...convMsgs.slice(loadingMsgIdx + 1)];
-          } else if (loadingMsgIdx !== -1) {
+          if (loadingMsgIdx !== -1) {
             newMsgs[loadingMsgIdx] = {
               ...newMsgs[loadingMsgIdx],
               isLoading: false,
@@ -556,8 +551,21 @@ async function attachStreamListener(taskId: string, conversationId: string, load
           if (!cached) {
             useAgentStore.setState((state) => {
               const convMsgs = state.messages[conversationId] || [];
-              const idx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
-              if (idx === -1) return state;
+              let idx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
+
+              // If the loading message was already removed (e.g. by a tool result),
+              // append a new assistant message.
+              if (idx === -1) {
+                const newMsg: AgentMessage = {
+                  id: loadingAssistantId,
+                  role: 'assistant',
+                  content: filteredText,
+                  isLoading: false,
+                  timestamp: new Date().toISOString(),
+                };
+                return { messages: { ...state.messages, [conversationId]: [...convMsgs, newMsg] } };
+              }
+
               const newMsgs = [...convMsgs];
               newMsgs[idx] = {
                 ...newMsgs[idx],
@@ -600,11 +608,7 @@ async function attachStreamListener(taskId: string, conversationId: string, load
             const convMsgs = state.messages[conversationId] || [];
             const loadingMsgIdx = convMsgs.findIndex((m) => m.id === loadingAssistantId);
             let newMsgs = [...convMsgs];
-            // Clean up the loading message: if it has content, clear isLoading;
-            // otherwise remove it entirely.
-            if (loadingMsgIdx !== -1 && newMsgs[loadingMsgIdx].content === '') {
-              newMsgs = [...convMsgs.slice(0, loadingMsgIdx), ...convMsgs.slice(loadingMsgIdx + 1)];
-            } else if (loadingMsgIdx !== -1) {
+            if (loadingMsgIdx !== -1) {
               newMsgs[loadingMsgIdx] = { ...newMsgs[loadingMsgIdx], isLoading: false };
             }
             return {

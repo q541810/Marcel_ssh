@@ -35,6 +35,11 @@ export default function AgentMessage({ message }: Props) {
     }
   };
 
+  // Hide empty, non-loading assistant messages (e.g. placeholder left over from tool calls)
+  if (!message.isLoading && message.content === '' && message.role === 'assistant') {
+    return null;
+  }
+
   return (
     <div
       className={`rounded-xl border p-3 ${ROLE_STYLES[message.role] ?? 'bg-zinc-800 border-zinc-700'}`}

@@ -14,6 +14,7 @@ export default function AgentPanel() {
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const activeConfigId = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
@@ -62,6 +63,10 @@ export default function AgentPanel() {
     const prompt = input.trim();
     if (!prompt || !canInteract) return;
     setInput('');
+    // Reset textarea height after sending
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
     try {
       await startTask(activeSessionId!, prompt, activeConfigId);
     } catch (err) {
@@ -73,6 +78,16 @@ export default function AgentPanel() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    // Auto-resize textarea
+    const textarea = inputRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 72)}px`;
     }
   };
 
@@ -203,9 +218,9 @@ export default function AgentPanel() {
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
-        <div className="agent-input relative flex items-center rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
+        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
           {/* Mode selector (inside input) */}
-          <div className="relative flex-shrink-0" ref={drawerRef}>
+          <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button
               type="button"
               onClick={() => setModeDrawerOpen((v) => !v)}
@@ -289,13 +304,14 @@ export default function AgentPanel() {
           </div>
 
           {/* Divider */}
-          <div className="w-px h-5 bg-zinc-700" />
+          <div className="w-px h-5 bg-zinc-700 self-center" />
 
           {/* Input field */}
-          <input
-            type="text"
+          <textarea
+            ref={inputRef}
+            rows={1}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={
               canInteract
@@ -303,7 +319,7 @@ export default function AgentPanel() {
                 : '请先连接到服务器...'
             }
             disabled={!canInteract}
-            className="flex-1 min-w-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50"
+            className="flex-1 min-w-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[4.5rem] overflow-y-auto leading-relaxed"
           />
 
           {/* Send / Stop button (inside input) */}
@@ -312,7 +328,7 @@ export default function AgentPanel() {
             onClick={isRunning ? handleStop : handleSend}
             disabled={!isRunning && (!input.trim() || !canInteract)}
             className={`
-              flex-shrink-0 p-2 mr-1 rounded-md transition-all
+              flex-shrink-0 p-2 mr-1 self-center rounded-md transition-all
               ${isRunning
                 ? 'bg-red-600 hover:bg-red-500 text-white'
                 : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed'
