@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage, RiskLevel, Skill } from './types';
 
+interface ParsedSkill {
+  name: string;
+  description: string;
+  prompt: string;
+}
+
 // SSH commands
 
 export async function sshConnect(config: ConnectionConfig): Promise<string> {
@@ -186,5 +192,9 @@ export async function skillToggle(id: string): Promise<void> {
 
 export async function skillDelete(id: string): Promise<void> {
   return invoke('skill_delete', { id });
+}
+
+export async function importSkillFile(fileData: string, fileName: string): Promise<ParsedSkill> {
+  return invoke<ParsedSkill>('import_skill_file', { fileData, fileName });
 }
 

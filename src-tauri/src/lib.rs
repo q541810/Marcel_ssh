@@ -209,6 +209,7 @@ pub fn run() {
         commands::skill::skill_update,
         commands::skill::skill_toggle,
         commands::skill::skill_delete,
+        commands::skill::import_skill_file,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

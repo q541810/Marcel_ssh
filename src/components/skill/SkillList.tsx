@@ -1,69 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSkillStore } from '@/stores/skillStore';
 import type { Skill } from '@/lib/types';
-
-// ---------- Helpers: file parsing ----------
-
-interface ParsedSkill {
-  name: string;
-  description: string;
-  prompt: string;
-}
-
-function stripExtension(filename: string): string {
-  const idx = filename.lastIndexOf('.');
-  return idx > 0 ? filename.slice(0, idx) : filename;
-}
-
-/**
- * Parse a single imported file into one or more skills.
- * Supports:
- *  - .json: { name, description?, prompt } OR { skills: [...] } OR an array
- *  - .md / .txt / fallback: filename as name; first `# heading` (if any) overrides;
- *    rest of file is the prompt.
- */
-function parseFile(name: string, content: string): ParsedSkill[] {
-  const lower = name.toLowerCase();
-  const trimmed = content.trim();
-
-  if (lower.endsWith('.json')) {
-    try {
-      const data = JSON.parse(trimmed);
-      const items: unknown[] = Array.isArray(data)
-        ? data
-        : Array.isArray((data as { skills?: unknown[] }).skills)
-        ? (data as { skills: unknown[] }).skills
-        : [data];
-      return items
-        .map((it) => {
-          const o = it as Record<string, unknown>;
-          const skillName = typeof o.name === 'string' && o.name.trim().length > 0
-            ? o.name.trim()
-            : stripExtension(name);
-          const prompt = typeof o.prompt === 'string' ? o.prompt : '';
-          const description = typeof o.description === 'string' ? o.description : '';
-          if (!prompt.trim()) return null;
-          return { name: skillName, description, prompt };
-        })
-        .filter((x): x is ParsedSkill => x !== null);
-    } catch {
-      throw new Error('JSON 解析失败: ' + name);
-    }
-  }
-
-  // Markdown / plain text fallback.
-  let skillName = stripExtension(name);
-  let body = trimmed;
-  const firstLineEnd = body.indexOf('\n');
-  const firstLine = (firstLineEnd === -1 ? body : body.slice(0, firstLineEnd)).trim();
-  const headingMatch = /^#\s+(.+)$/.exec(firstLine);
-  if (headingMatch) {
-    skillName = headingMatch[1].trim();
-    body = firstLineEnd === -1 ? '' : body.slice(firstLineEnd + 1).trim();
-  }
-  if (!body) throw new Error('文件内容为空: ' + name);
-  return [{ name: skillName, description: '', prompt: body }];
-}
+import SkillCreateModal from './SkillCreateModal';
+import * as tauri from '@/lib/tauri';
 
 // ---------- SkillCard ----------
 
@@ -81,7 +20,7 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
       className={
         'group rounded-lg border transition-colors px-2 py-2 ' +
         (skill.enabled
-          ? 'bg-indigo-900/20 border-indigo-700/50'
+          ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
           : 'bg-zinc-800/40 border-transparent hover:border-zinc-700')
       }
     >
@@ -116,7 +55,8 @@ function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
           className='flex-shrink-0 p-1 rounded-md text-zinc-500 hover:text-red-400 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-all'
         >
           <svg className='w-3.5 h-3.5' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3' />
+            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2}
+              d='M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3' />
           </svg>
         </button>
       </div>
@@ -140,8 +80,9 @@ export default function SkillList() {
   const toggleSkill = useSkillStore((s) => s.toggleSkill);
   const deleteSkill = useSkillStore((s) => s.deleteSkill);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
 
@@ -156,31 +97,27 @@ export default function SkillList() {
   );
   const enabledCount = skills.filter((s) => s.enabled).length;
 
-  const handleImport = () => {
-    setImportError(null);
-    fileInputRef.current?.click();
-  };
-
   const onFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setImporting(true);
     setImportError(null);
     const errors: string[] = [];
+
     for (const file of Array.from(files)) {
       try {
-        const text = await file.text();
-        const parsed = parseFile(file.name, text);
-        for (const p of parsed) {
-          await addSkill(p.name, p.description, p.prompt);
-        }
+        const buffer = await file.arrayBuffer();
+        const bytes = Array.from(new Uint8Array(buffer));
+        const base64 = btoa(String.fromCharCode(...bytes));
+        const parsed = await tauri.importSkillFile(base64, file.name);
+        await addSkill(parsed.name, parsed.description, parsed.prompt);
       } catch (err) {
-        errors.push(String(err instanceof Error ? err.message : err));
+        errors.push(file.name + ': ' + String(err instanceof Error ? err.message : err));
       }
     }
+
     if (errors.length > 0) setImportError(errors.join('\n'));
     setImporting(false);
-    // Reset input so the same file can be re-imported later
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -191,25 +128,41 @@ export default function SkillList() {
         <h2 className='text-xs font-semibold text-zinc-400 uppercase tracking-wider'>
           技能
         </h2>
-        <button
-          onClick={handleImport}
-          disabled={importing}
-          className='p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 disabled:opacity-50 transition-colors'
-          title='从文件导入技能'
-          aria-label='从文件导入技能'
-        >
-          <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
-            <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5-5m0 0l5 5m-5-5v12' />
-          </svg>
-        </button>
-        <input
-          ref={fileInputRef}
-          type='file'
-          multiple
-          accept='.md,.txt,.json'
-          onChange={onFilesSelected}
-          className='hidden'
-        />
+        <div className='flex items-center gap-1'>
+          {/* Import .md / .zip */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importing}
+            className='p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 disabled:opacity-50 transition-colors'
+            title='从文件导入'
+            aria-label='从文件导入'
+          >
+            <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2}
+                d='M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5-5m0 0l5 5m-5-5v12' />
+            </svg>
+          </button>
+          <input
+            ref={fileInputRef}
+            type='file'
+            multiple
+            accept='.md,.zip,.skill'
+            onChange={onFilesSelected}
+            className='hidden'
+          />
+          {/* Create new */}
+          <button
+            onClick={() => setCreateOpen(true)}
+            className='p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors'
+            title='新建技能'
+            aria-label='新建技能'
+          >
+            <svg className='w-4 h-4' fill='none' stroke='currentColor' viewBox='0 0 24 24'>
+              <path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2}
+                d='M12 4v16m8-8H4' />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -232,9 +185,7 @@ export default function SkillList() {
           {importError && (
             <div className='mt-1 text-red-400 whitespace-pre-wrap'>{importError}</div>
           )}
-          {error && !importError && (
-            <div className='mt-1 text-red-400'>{error}</div>
-          )}
+          {error && !importError && <div className='mt-1 text-red-400'>{error}</div>}
         </div>
       )}
 
@@ -248,14 +199,13 @@ export default function SkillList() {
           <div className='text-center mt-6 px-3'>
             <p className='text-sm text-zinc-500 mb-3'>暂无技能</p>
             <button
-              onClick={handleImport}
+              onClick={() => setCreateOpen(true)}
               className='text-xs text-indigo-400 hover:text-indigo-300 underline'
             >
-              从文件导入技能
+              创建技能
             </button>
             <p className='text-xs text-zinc-600 mt-3 leading-relaxed'>
-              支持 .md / .txt / .json 文件。<br />
-              JSON 可包含单个对象或 skills 数组。
+              支持 .md / .zip / .skill 文件
             </p>
           </div>
         )}
@@ -275,6 +225,9 @@ export default function SkillList() {
           <p className='text-sm text-zinc-500 text-center mt-4'>无匹配技能</p>
         )}
       </div>
+
+      {/* Create modal */}
+      <SkillCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

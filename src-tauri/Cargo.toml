@@ -30,6 +30,9 @@ futures = "^0.3"
 parking_lot = "^0.12"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rustc_version_runtime = "0.3"
+zip = "^2"
+serde_yaml = "^0.9"
+base64 = "^0.22"
 
 [features]
 default = ["custom-protocol"]

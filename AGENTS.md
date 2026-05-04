@@ -352,6 +352,7 @@ skill_add(name, description, prompt) → Skill
 skill_update(id, name?, description?, prompt?) → ()
 skill_toggle(id) → ()
 skill_delete(id) → ()
+import_skill_file(fileData, fileName) → ParsedSkill  // 解析 .md 文件或 zip/.skill 压缩包中的 YAML frontmatter
 ```
 
 ### 7.2 Events（服务端推送）
