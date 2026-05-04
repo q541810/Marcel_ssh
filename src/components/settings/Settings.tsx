@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type {
   AppSettings,
@@ -14,6 +14,18 @@ import { TERMINAL_COLOR_PRESETS } from '@/lib/constants';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 
+interface SectionNavItem {
+  id: string;
+  label: string;
+}
+
+const SECTION_ITEMS: SectionNavItem[] = [
+  { id: 'settings-appearance', label: '外观' },
+  { id: 'settings-llm', label: 'LLM 配置' },
+  { id: 'settings-command-policy', label: '命令策略' },
+  { id: 'settings-experimental', label: '实验性功能' },
+];
+
 export default function Settings() {
   const settings = useSettingsStore((s) => s.settings);
   const loaded = useSettingsStore((s) => s.loaded);
@@ -28,6 +40,53 @@ export default function Settings() {
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [hasStoredApiKey, setHasStoredApiKey] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>('settings-appearance');
+  const sectionsContainerRef = useRef<HTMLDivElement>(null);
+  const isScrollingRef = useRef(false);
+
+  // Track active section via scroll position
+  useEffect(() => {
+    const container = sectionsContainerRef.current;
+    if (!container) return;
+
+    const updateActiveSection = () => {
+      if (isScrollingRef.current) return;
+      const containerRect = container.getBoundingClientRect();
+      const containerTop = containerRect.top + 80; // offset for header
+
+      let currentId = SECTION_ITEMS[0].id;
+      for (const item of SECTION_ITEMS) {
+        const el = document.getElementById(item.id);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          if (rect.top <= containerTop) {
+            currentId = item.id;
+          }
+        }
+      }
+      if (currentId !== activeSection) {
+        setActiveSection(currentId);
+      }
+    };
+
+    container.addEventListener('scroll', updateActiveSection, { passive: true });
+    updateActiveSection();
+
+    return () => container.removeEventListener('scroll', updateActiveSection);
+  }, [activeSection]);
+
+  const scrollToSection = useCallback((id: string) => {
+    setActiveSection(id);
+    isScrollingRef.current = true;
+    const el = document.getElementById(id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    // Lock scroll tracking during smooth scroll animation
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 500);
+  }, []);
 
   // Check if an API key exists in the keychain
   useEffect(() => {
@@ -179,11 +238,31 @@ export default function Settings() {
         </div>
       </div>
 
+      {/* Section navigation bar */}
+      <nav className="flex items-center gap-1 px-6 py-2 border-b border-zinc-800 bg-zinc-900/50 overflow-x-auto">
+        {SECTION_ITEMS.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => scrollToSection(item.id)}
+            className={`
+              px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors
+              ${
+                activeSection === item.id
+                  ? 'bg-zinc-800 text-indigo-400 font-medium'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }
+            `}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" ref={sectionsContainerRef}>
         <div className="px-6 py-6">
           {/* Section: Appearance */}
-        <Section title="外观">
+        <Section id="settings-appearance" title="外观">
           <Field label="终端颜色">
             <ColorThemeSelector
               value={draft.terminalColors}
@@ -216,25 +295,9 @@ export default function Settings() {
           </Field>
         </Section>
 
-        {/* Section: Agent default mode */}
-        <Section title="智能助手">
-          <Field label="默认模式">
-            <select
-              value={draft.defaultAgentMode}
-              onChange={(e) =>
-                updateDraft((s) => ({ ...s, defaultAgentMode: e.target.value }))
-              }
-              className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="chat">CHAT — 纯聊天</option>
-              <option value="agent">AGENT — 工具调用 + 黑/白名单</option>
-              <option value="auto">AUTO — 完全自主</option>
-            </select>
-          </Field>
-        </Section>
-
         {/* Section: LLM */}
         <Section
+          id="settings-llm"
           title="LLM 配置"
           description="配置 OpenAI 兼容的大语言模型接入。修改后点保存立即生效。"
         >
@@ -353,6 +416,7 @@ export default function Settings() {
 
         {/* Section: AGENT mode command policy */}
         <Section
+          id="settings-command-policy"
           title="AGENT 模式 — 命令执行策略"
           description="仅在 AGENT 模式下生效。CHAT 模式不会执行命令；AUTO 模式不受此处限制。"
         >
@@ -513,6 +577,7 @@ export default function Settings() {
 
         {/* Section: Experimental */}
         <Section
+          id="settings-experimental"
           title="实验性功能"
           description="这些功能正在开发中，可能在未来版本中更改或移除。"
         >
@@ -578,16 +643,18 @@ export default function Settings() {
 /* -- helpers -- */
 
 function Section({
+  id,
   title,
   description,
   children,
 }: {
+  id?: string;
   title: string;
   description?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="mb-8">
+    <section id={id} className="mb-8 scroll-mt-8">
       <h2 className="text-base font-semibold text-zinc-100 mb-1">{title}</h2>
       {description && (
         <p className="text-xs text-zinc-500 mb-3">{description}</p>
