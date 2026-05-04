@@ -39,21 +39,6 @@ const showClipboardError = (message: string) => {
 };
 
 /**
- * Module-level callback for triggering paste confirmation from
- * the imperative context-menu handler into React state.
- */
-let onPasteNeedsConfirm: ((text: string, sessionId: string) => void) | null = null;
-
-/**
- * Trigger the paste confirm dialog (called from non-React context).
- */
-const triggerPasteConfirm = (text: string, sessionId: string) => {
-  if (onPasteNeedsConfirm) {
-    onPasteNeedsConfirm(text, sessionId);
-  }
-};
-
-/**
  * Windows 风格的终端剪贴板快捷键处理器。
  *
  * 行为:
@@ -99,16 +84,6 @@ export default function Terminal() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
-
-  // Connect imperative paste confirm to React state
-  useEffect(() => {
-    onPasteNeedsConfirm = (text: string, sessionId: string) => {
-      setPasteConfirm({ text, sessionId });
-    };
-    return () => {
-      onPasteNeedsConfirm = null;
-    };
-  }, []);
 
   const handlePasteConfirm = useCallback(() => {
     if (pasteConfirm) {
@@ -181,7 +156,7 @@ export default function Terminal() {
         .then((text) => {
           if (!text) return;
           if (text.includes('\n') || text.includes('\r')) {
-            triggerPasteConfirm(text, sessionId);
+            setPasteConfirm({ text, sessionId });
           } else {
             return sshSendInput(sessionId, text);
           }
