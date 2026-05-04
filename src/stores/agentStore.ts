@@ -518,16 +518,19 @@ async function attachStreamListener(taskId: string, conversationId: string, load
             };
           }
 
-          // Insert tool message after the assistant slot
-          const insertIdx = loadingMsgIdx !== -1 ? loadingMsgIdx : newMsgs.length;
-          if (assistantMessageId) {
-            const assistantIdx = newMsgs.findIndex((m) => m.id === assistantMessageId);
-            if (assistantIdx !== -1) {
-              newMsgs.splice(assistantIdx + 1, 0, toolMessage);
-              return { messages: { ...state.messages, [conversationId]: newMsgs } };
-            }
+          // Insert tool message right after the assistant message (loading or cached)
+          const insertAfterIdx = loadingMsgIdx !== -1
+            ? loadingMsgIdx
+            : (assistantMessageId
+              ? newMsgs.findIndex((m) => m.id === assistantMessageId)
+              : -1);
+
+          if (insertAfterIdx !== -1) {
+            newMsgs.splice(insertAfterIdx + 1, 0, toolMessage);
+          } else {
+            newMsgs.push(toolMessage);
           }
-          return { messages: { ...state.messages, [conversationId]: [...newMsgs, toolMessage] } };
+          return { messages: { ...state.messages, [conversationId]: newMsgs } };
         });
 
         currentAssistantMessageId.delete(taskId);
