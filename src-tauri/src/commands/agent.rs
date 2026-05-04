@@ -92,7 +92,7 @@ pub async fn agent_start_task(
     let provider = OpenAiProvider::new(llm_config)?;
 
     // Build initial messages
-    let system_prompt = build_system_prompt(&mode, &session_id, &agent_settings, &sandbox);
+    let system_prompt = build_system_prompt(&session_id);
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
     for msg in &history {
@@ -1058,12 +1058,7 @@ fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
 
 // ──────────────────────── System prompt ────────────────────────
 
-fn build_system_prompt(
-    _mode: &AgentMode,
-    session_id: &str,
-    _agent_settings: &AgentModeSettings,
-    _sandbox: &Sandbox,
-) -> String {
+fn build_system_prompt(session_id: &str) -> String {
     let base = "关于 Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
 思考方式\n\
