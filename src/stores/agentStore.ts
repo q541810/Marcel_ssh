@@ -515,7 +515,7 @@ function isToolResultPayload(ev: any): ev is ToolResultPayload {
 }
 
 /** Type guard: check if event has a specific type field */
-function hasEventType(ev: any, type: string): boolean {
+function hasEventType<T extends string>(ev: any, type: T): ev is { type: T } & Record<string, unknown> {
   return 'type' in ev && ev.type === type;
 }
 

@@ -542,6 +542,32 @@ export default function Settings() {
               label="允许 Agent 使用 http_get 工具获取网页内容"
             />
           </Field>
+          <Field label="通知测试">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={async () => {
+                try {
+                  const { sendNotification, isPermissionGranted, requestPermission } = await import('@tauri-apps/plugin-notification');
+                  let granted = await isPermissionGranted();
+                  if (!granted) {
+                    const permission = await requestPermission();
+                    granted = permission === 'granted';
+                  }
+                  if (granted) {
+                    sendNotification({
+                      title: 'Marcel SSH 测试通知',
+                      body: '这是一条测试消息，通知功能正常工作！',
+                    });
+                  }
+                } catch (err) {
+                  console.error('发送通知失败:', err);
+                }
+              }}
+            >
+              发送测试通知
+            </Button>
+          </Field>
         </Section>
         </div>
       </div>

@@ -15,6 +15,8 @@ fn main() {
         if original_icon_path.exists() {
             fs::copy(&original_icon_path, &temp_icon_path).ok();
         }
+        
+        println!("cargo:rustc-env=ICON_PATH={}", temp_icon_path.display());
     }
     
     tauri_build::build()

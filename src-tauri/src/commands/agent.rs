@@ -1,6 +1,7 @@
 use chrono::Utc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
@@ -783,6 +784,28 @@ async fn await_user_approval(
             risk_level: risk,
         },
     );
+
+    // Send Windows Toast notification
+    let risk_label = match risk {
+        RiskLevel::ReadOnly => "只读",
+        RiskLevel::LowRisk => "低风险",
+        RiskLevel::Moderate => "中风险",
+        RiskLevel::HighRisk => "高风险",
+        RiskLevel::Destructive => "破坏性",
+    };
+    let notification_body = format!(
+        "工具: {}\n风险等级: {}\n点击查看详情",
+        tc.name, risk_label
+    );
+    
+    if let Err(e) = app.notification()
+        .builder()
+        .title("Agent 需要您的批准")
+        .body(&notification_body)
+        .show()
+    {
+        log::warn!("发送通知失败: {}", e);
+    }
 
     let (tx, rx) = oneshot::channel();
     state.pending_approvals.write().insert(approval_id.clone(), tx);
