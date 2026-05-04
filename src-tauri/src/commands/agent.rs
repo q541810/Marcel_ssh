@@ -392,6 +392,15 @@ pub async fn agent_check_command(
 
 // ──────────────────────── Agent Loop ────────────────────────
 
+/// 检查任务是否已被用户取消。
+fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
+    state
+        .agent_tasks
+        .read()
+        .get(task_id)
+        .map_or(false, |t| t.status == AgentStatus::Cancelled)
+}
+
 /// The main agentic loop:
 ///   LLM call → tool_calls? → execute → feed result → repeat
 #[allow(clippy::too_many_arguments)]
@@ -430,7 +439,7 @@ async fn run_agent_loop(
         log::info!("Agent {} round {}", task_id, round);
 
         // Check if task has been cancelled by the user
-        if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+        if is_task_cancelled(&state, &task_id) {
             log::info!("Agent task {} cancelled, stopping loop", task_id);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
@@ -522,7 +531,7 @@ async fn run_agent_loop(
         let ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
         for tc in &tool_calls {
             // Check cancellation before executing each tool call
-            if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+            if is_task_cancelled(&state, &task_id) {
                 log::info!("Agent task {} cancelled before tool execution, stopping", task_id);
                 let _ = app.emit(&event_name, StreamEvent::Done);
                 return;
@@ -541,7 +550,7 @@ async fn run_agent_loop(
             .await;
 
             // Check cancellation after tool execution (for long-running tools)
-            if state.agent_tasks.read().get(&task_id).map_or(false, |t| t.status == AgentStatus::Cancelled) {
+            if is_task_cancelled(&state, &task_id) {
                 log::info!("Agent task {} cancelled after tool execution, stopping", task_id);
                 let _ = app.emit(&event_name, StreamEvent::Done);
                 return;

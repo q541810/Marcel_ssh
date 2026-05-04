@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -16,7 +17,40 @@ interface TerminalInstance {
   container: HTMLDivElement;
   unlistenOutput?: UnlistenFn;
   onDataDisposable?: { dispose: () => void };
+  domListeners: Array<() => void>;
 }
+
+/**
+ * Windows 风格的终端剪贴板快捷键处理器。
+ *
+ * 行为:
+ *  - Ctrl+C 有选区: 复制选中文本到系统剪贴板, 不将 \x03 发送到 SSH。
+ *  - Ctrl+C 无选区: 交由 xterm.js 默认处理 (发送 SIGINT 到远端)。
+ *
+ * 返回 false 告知 xterm.js 忽略该按键事件。
+ */
+const createCopyOnSelectionHandler = (terminal: XTerm) => {
+  return (event: KeyboardEvent): boolean => {
+    if (
+      event.type === 'keydown' &&
+      event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      (event.key === 'c' || event.key === 'C')
+    ) {
+      const selection = terminal.getSelection();
+      if (selection.length > 0) {
+        void writeText(selection).catch((err) => {
+          console.error('Failed to write clipboard:', err);
+        });
+        terminal.clearSelection();
+        return false;
+      }
+    }
+    return true;
+  };
+};
 
 export default function Terminal() {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -65,6 +99,7 @@ export default function Terminal() {
       terminal,
       fitAddon,
       container,
+      domListeners: [],
     };
 
     const onDataDisposable = terminal.onData((data: string) => {
@@ -73,6 +108,27 @@ export default function Terminal() {
       });
     });
     instance.onDataDisposable = onDataDisposable;
+
+    // Windows 风格 Ctrl+C 复制 (仅在有选区时拦截, 否则透传到 SSH)
+    terminal.attachCustomKeyEventHandler(createCopyOnSelectionHandler(terminal));
+
+    // 右键粘贴: 从系统剪贴板读取并写入 SSH 输入流
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      readText()
+        .then((text) => {
+          if (text) {
+            return sshSendInput(sessionId, text);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to paste from clipboard:', err);
+        });
+    };
+    container.addEventListener('contextmenu', handleContextMenu);
+    instance.domListeners.push(() =>
+      container.removeEventListener('contextmenu', handleContextMenu),
+    );
 
     void (async () => {
       const unlistenOutput = await listen<string>(`ssh://output/${sessionId}`, (event) => {
@@ -83,6 +139,9 @@ export default function Terminal() {
 
     const handleClick = () => terminal.focus();
     container.addEventListener('mousedown', handleClick);
+    instance.domListeners.push(() =>
+      container.removeEventListener('mousedown', handleClick),
+    );
 
     requestAnimationFrame(() => {
       fitAddon.fit();
@@ -94,6 +153,14 @@ export default function Terminal() {
 
   // Cleanup terminal instance
   const cleanupTerminal = (instance: TerminalInstance) => {
+    for (const off of instance.domListeners) {
+      try {
+        off();
+      } catch (err) {
+        console.error('Failed to detach listener:', err);
+      }
+    }
+    instance.domListeners.length = 0;
     if (instance.onDataDisposable) {
       instance.onDataDisposable.dispose();
     }

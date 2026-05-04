@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import Modal from '../ui/Modal';
 
 export type NavView = 'sessions' | 'mcp' | 'settings';
 
@@ -37,6 +38,17 @@ const TOP_ITEMS: NavItem[] = [
     ),
   },
 ];
+
+const HELP_ITEM: NavItem = {
+  value: 'settings',
+  label: '帮助',
+  icon: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  ),
+};
 
 const BOTTOM_ITEM: NavItem = {
   value: 'settings',
@@ -84,6 +96,8 @@ function NavButton({
 }
 
 export default function NavRail({ active, onChange }: Props) {
+  const [helpOpen, setHelpOpen] = useState(false);
+
   return (
     <nav className="flex flex-col items-center justify-between w-14 flex-shrink-0 bg-zinc-950 border-r border-zinc-800 py-2">
       <div className="flex flex-col gap-1">
@@ -96,11 +110,34 @@ export default function NavRail({ active, onChange }: Props) {
           />
         ))}
       </div>
-      <NavButton
-        item={BOTTOM_ITEM}
-        active={active === BOTTOM_ITEM.value}
-        onClick={() => onChange(BOTTOM_ITEM.value)}
-      />
+      <div className="flex flex-col gap-1">
+        <NavButton
+          item={HELP_ITEM}
+          active={false}
+          onClick={() => setHelpOpen(true)}
+        />
+        <NavButton
+          item={BOTTOM_ITEM}
+          active={active === BOTTOM_ITEM.value}
+          onClick={() => onChange(BOTTOM_ITEM.value)}
+        />
+      </div>
+      <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="终端使用指南">
+        <div className="px-4 py-3 text-sm text-zinc-300 space-y-2">
+          <p>
+            <span className="text-zinc-100 font-medium">Ctrl+C 正常执行：</span>
+            直接按下 Ctrl+C，按照 SSH 逻辑正常执行命令中断操作。
+          </p>
+          <p>
+            <span className="text-zinc-100 font-medium">Ctrl+C 复制：</span>
+            先用鼠标框选要复制的文字，然后再按 Ctrl+C，按照 Windows 逻辑执行复制操作。
+          </p>
+          <p>
+            <span className="text-zinc-100 font-medium">右键粘贴：</span>
+            在终端区域右键点击，默认执行粘贴操作。
+          </p>
+        </div>
+      </Modal>
     </nav>
   );
 }
