@@ -21,6 +21,24 @@ interface TerminalInstance {
 }
 
 /**
+ * 在终端容器内以 toast 形式展示短暂的错误提示。
+ */
+const showClipboardError = (container: HTMLDivElement, message: string) => {
+  const toast = document.createElement('div');
+  toast.className =
+    'fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-red-900/90 text-red-200 text-sm border border-red-700/60 shadow-lg pointer-events-none transition-opacity duration-300';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  const fadeOut = () => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  };
+
+  setTimeout(fadeOut, 2500);
+};
+
+/**
  * Windows 风格的终端剪贴板快捷键处理器。
  *
  * 行为:
@@ -41,8 +59,12 @@ const createCopyOnSelectionHandler = (terminal: XTerm) => {
     ) {
       const selection = terminal.getSelection();
       if (selection.length > 0) {
+        const container = terminal.element;
         void writeText(selection).catch((err) => {
           console.error('Failed to write clipboard:', err);
+          if (container) {
+            showClipboardError(container, '复制失败，请重试');
+          }
         });
         terminal.clearSelection();
         return false;
@@ -123,6 +145,7 @@ export default function Terminal() {
         })
         .catch((err) => {
           console.error('Failed to paste from clipboard:', err);
+          showClipboardError(container, '粘贴失败，请重试');
         });
     };
     container.addEventListener('contextmenu', handleContextMenu);
