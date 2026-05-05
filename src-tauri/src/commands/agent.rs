@@ -531,12 +531,10 @@ async fn run_agent_loop(
             })
             .collect();
 
-        // Persist assistant message: only the actual text content, no tool_calls_json.
+        // Persist assistant message to DB (even if empty, to maintain conversation history order).
         // The tool result messages (role=tool) carry the complete tool call metadata
         // needed for rendering tool call cards in conversation history.
-        if !assistant_msg.content.is_empty() {
-            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
-        }
+        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the registry
