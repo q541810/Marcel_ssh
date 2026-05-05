@@ -204,11 +204,12 @@ export default function AgentPanel() {
           </div>
         )}
         {messages.map((msg) =>
-          msg.role === 'tool' && msg.toolResult ? (
-            <ToolCallCard key={msg.id} message={msg} />
-          ) : (
-            <AgentMessageItem key={msg.id} message={msg} />
-          ),
+          // Tool result messages rendered as ToolCallCard
+          (msg.role === 'tool' && msg.toolResult) ||
+          // Assistant messages with toolCall info (no visible text) also rendered as ToolCallCard
+          (msg.role === 'assistant' && msg.toolCall)
+            ? <ToolCallCard key={msg.id} message={msg} />
+            : <AgentMessageItem key={msg.id} message={msg} />,
         )}
         <div ref={messagesEndRef} />
       </div>

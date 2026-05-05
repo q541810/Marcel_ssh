@@ -25,38 +25,81 @@ function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     timestamp: m.timestamp,
   };
 
+  // Handle tool role messages without toolCallsJson (legacy data)
+  if (m.role === 'tool' && !m.toolCallsJson) {
+    const content = m.content || '';
+    // Extract tool name from content if possible, or default
+    let toolName = 'execute_command';
+    const toolNameMatch = content.match(/^\[(\w+)\]\s/);
+    if (toolNameMatch) {
+      toolName = toolNameMatch[1];
+    }
+    base.toolResult = {
+      toolName,
+      summary: content.length > 60 ? content.slice(0, 60) + '...' : content || '(done)',
+      result: content,
+      success: !content.startsWith('BLOCKED:') && !content.startsWith('tool error:'),
+      blocked: content.startsWith('BLOCKED:'),
+    };
+    return base;
+  }
+
   if (!m.toolCallsJson) return base;
 
   try {
-    const persistedCalls: Array<{
-      id: string;
-      name: string;
-      arguments: Record<string, unknown>;
-      risk_level: RiskLevel;
-    }> = JSON.parse(m.toolCallsJson);
-
-    if (persistedCalls.length === 0) return base;
+    const raw = JSON.parse(m.toolCallsJson);
 
     if (m.role === 'assistant') {
-      // Assistant message: restore the first tool call invocation metadata
-      base.toolCall = {
-        id: persistedCalls[0].id,
-        name: persistedCalls[0].name,
-        arguments: persistedCalls[0].arguments,
-        riskLevel: persistedCalls[0].risk_level,
-      };
+      // Assistant message: tool_calls_json is PersistedToolCall[] (array with flatten)
+      const persistedCalls: Array<{
+        id: string;
+        name: string;
+        arguments: Record<string, unknown>;
+        risk_level: RiskLevel;
+      }> = Array.isArray(raw) ? raw : [raw];
+
+      if (persistedCalls.length > 0) {
+        base.toolCall = {
+          id: persistedCalls[0].id,
+          name: persistedCalls[0].name,
+          arguments: persistedCalls[0].arguments,
+          riskLevel: persistedCalls[0].risk_level,
+        };
+      }
     } else if (m.role === 'tool') {
-      // Tool result message: restore toolResult so ToolCallCard can render it
-      base.toolResult = {
-        toolName: persistedCalls[0].name,
-        // summary is not persisted separately — reconstruct a short one from content
-        summary: m.content.length > 120
-          ? m.content.slice(0, 120).trimEnd() + '…'
-          : m.content || '(完成)',
-        result: m.content,
-        success: !m.content.startsWith('BLOCKED:') && !m.content.startsWith('tool error:'),
-        blocked: m.content.startsWith('BLOCKED:'),
+      // Tool result: tool_calls_json is a single PersistedToolResult object
+      const tr = raw as {
+        id?: string;
+        name?: string;
+        arguments?: Record<string, unknown>;
+        risk_level?: RiskLevel;
+        summary?: string;
+        success?: boolean;
+        blocked?: boolean;
       };
+
+      // New format: PersistedToolResult with summary/success/blocked
+      if (tr.name) {
+        base.toolResult = {
+          toolName: tr.name,
+          summary: tr.summary || m.content.slice(0, 120) || '(done)',
+          result: m.content,
+          success: tr.success ?? true,
+          blocked: tr.blocked ?? false,
+          arguments: tr.arguments,
+        };
+      }
+      // Legacy format: PersistedToolCall[] array (backward compat)
+      else if (Array.isArray(raw) && raw.length > 0) {
+        base.toolResult = {
+          toolName: raw[0].name,
+          summary: m.content.length > 120 ? m.content.slice(0, 120) + '...' : m.content || '(done)',
+          result: m.content,
+          success: !m.content.startsWith('BLOCKED:') && !m.content.startsWith('tool error:'),
+          blocked: m.content.startsWith('BLOCKED:'),
+          arguments: raw[0].arguments,
+        };
+      }
     }
   } catch {
     // ignore parse error
@@ -571,6 +614,7 @@ function handleToolResult(taskId: string, conversationId: string, loadingAssista
       result: tr.result,
       success: tr.success,
       blocked: tr.blocked,
+      arguments: tr.arguments,
     },
   };
 

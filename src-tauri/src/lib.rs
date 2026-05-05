@@ -112,38 +112,38 @@ impl AppState {
                 db
             }
             Err(e) => {
-                log::warn!("✗ 无法初始化文件数据库({})：{}", db_path.display(), e);
-                log::warn!("  已回退到内存数据库，重启后数据将丢失！");
-                log::warn!("  请检查目录是否有写入权限: {}", config_dir.display());
+                log::warn!("Failed to init file DB ({}): {}", db_path.display(), e);
+                log::warn!("  Falling back to in-memory DB");
+                log::warn!("  Check write permissions: {}", config_dir.display());
                 match ConversationDb::in_memory() {
                     Ok(db) => db,
                     Err(e2) => {
-                        panic!("无法初始化内存数据库: {}", e2);
+                        panic!("Failed to init in-memory DB: {}", e2);
                     }
                 }
+            }
+        };
+
+        let skill_store = SkillStore::load_from_path(
+            &SkillStore::default_file(&config_dir),
+        )
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to load skills, using defaults: {}", e);
+            SkillStore::new()
+        });
+
+        Self {
+            ssh_manager: SshManager::new(),
+            agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
+            settings: std::sync::Arc::new(TokioRwLock::new(settings)),
+            audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
+            conversation_db: std::sync::Arc::new(conversation_db),
+            skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
+            config_dir,
+            pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
         }
-    };
-
-    let skill_store = SkillStore::load_from_path(
-        &SkillStore::default_file(&config_dir),
-    )
-    .unwrap_or_else(|e| {
-        log::warn!("Failed to load skills, using defaults: {}", e);
-        SkillStore::new()
-    });
-
-    Self {
-        ssh_manager: SshManager::new(),
-        agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-        plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-        connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
-        settings: std::sync::Arc::new(TokioRwLock::new(settings)),
-        audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
-        conversation_db: std::sync::Arc::new(conversation_db),
-        skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
-        config_dir,
-        pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-    }
     }
 }
 

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use chrono::Utc;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -14,9 +15,10 @@ use crate::config::settings::CommandListMode;
 
 /// 持久化的工具调用元数据，包含工具调用详情和计算的风险等级。
 ///
-/// 用于在数据库持久化时保留风险评估结果，避免前端加载历史会话时
-/// 重复计算或硬编码风险等级。`#[serde(flatten)]` 将 `ToolCall` 字段
-/// 展开为扁平 JSON，便于前端直接消费。
+/// **废弃**：assistant 消息不再保存 tool_calls_json。此结构体仅保留
+/// 用于解析旧历史数据。新消息通过 `PersistedToolResult`（role=tool）
+/// 保存工具调用完整信息。
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PersistedToolCall {
     /// 原始工具调用数据（id、name、arguments），序列化时展开为扁平字段。
@@ -24,6 +26,18 @@ struct PersistedToolCall {
     pub tool_call: ToolCall,
     /// 该工具调用在保存时计算的实际风险等级（由 sandbox 评估）。
     pub risk_level: RiskLevel,
+}
+
+/// 持久化的工具执行结果元数据（存入 role=tool 的 tool_calls_json）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedToolResult {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+    pub risk_level: RiskLevel,
+    pub summary: String,
+    pub success: bool,
+    pub blocked: bool,
 }
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
@@ -493,8 +507,8 @@ async fn run_agent_loop(
         }
 
         // 3. Add assistant message (with tool_calls) to history
-        // Compute effective risk for each tool call and persist with metadata.
-        let persisted_calls: Vec<PersistedToolCall> = tool_calls
+        // Build risk map once — reused when saving each tool result (step 7).
+        let risk_map: HashMap<String, RiskLevel> = tool_calls
             .iter()
             .map(|tc| {
                 let risk = match tc.name.as_str() {
@@ -513,20 +527,16 @@ async fn run_agent_loop(
                         .map(|t| t.risk_level())
                         .unwrap_or(RiskLevel::Moderate),
                 };
-                PersistedToolCall {
-                    tool_call: tc.clone(),
-                    risk_level: risk,
-                }
+                (tc.id.clone(), risk)
             })
             .collect();
-        let tool_calls_json = serde_json::to_string(&persisted_calls).ok();
-        // Also persist the tool-call summary text for backward-compat display
-        let assistant_text = if assistant_msg.content.is_empty() {
-            format!("[调用工具: {}]", tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "))
-        } else {
-            assistant_msg.content.clone()
-        };
-        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_text, &Utc::now().to_rfc3339(), tool_calls_json.as_deref());
+
+        // Persist assistant message: only the actual text content, no tool_calls_json.
+        // The tool result messages (role=tool) carry the complete tool call metadata
+        // needed for rendering tool call cards in conversation history.
+        if !assistant_msg.content.is_empty() {
+            let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
+        }
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the registry
@@ -565,6 +575,7 @@ async fn run_agent_loop(
                     event_type: "toolResult".into(),
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
                     summary: exec.summary.clone(),
                     result: exec.output.clone(),
                     success: exec.success,
@@ -594,30 +605,29 @@ async fn run_agent_loop(
             }
 
             // 7. Persist tool result to DB for conversation history
-            let tool_call_json = serde_json::to_string(&[PersistedToolCall {
-                tool_call: tc.clone(),
-                risk_level: match tc.name.as_str() {
-                    "execute_command" => tc
-                        .arguments.get("command")
-                        .and_then(|v| v.as_str())
-                        .map(assess_risk)
-                        .unwrap_or_else(|| {
-                            registry.get(&tc.name)
-                                .map(|t| t.risk_level())
-                                .unwrap_or(RiskLevel::Moderate)
-                        }),
-                    _ => registry
-                        .get(&tc.name)
+            // Reuse pre-computed risk from step 3 — no need to recalculate.
+            let effective_risk = risk_map.get(&tc.id)
+                .copied()
+                .unwrap_or_else(|| {
+                    registry.get(&tc.name)
                         .map(|t| t.risk_level())
-                        .unwrap_or(RiskLevel::Moderate),
-                },
-            }]).ok();
+                        .unwrap_or(RiskLevel::Moderate)
+                });
+            let tool_result_json = serde_json::to_string(&PersistedToolResult {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+                risk_level: effective_risk,
+                summary: exec.summary.clone(),
+                success: exec.success,
+                blocked: exec.blocked,
+            }).ok();
             let _ = conv_db.save_message(
                 &conversation_id,
                 "tool",
                 &exec.output,
                 &Utc::now().to_rfc3339(),
-                tool_call_json.as_deref(),
+                tool_result_json.as_deref(),
             );
         }
 
@@ -1199,6 +1209,8 @@ struct ToolResultEvent {
     event_type: String,
     tool_call_id: String,
     tool_name: String,
+    /// Tool call arguments, for display in the tool card.
+    arguments: serde_json::Value,
     /// Short human-readable summary for the card header.
     summary: String,
     /// Full output returned to the LLM (may be long).

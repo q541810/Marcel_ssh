@@ -74,6 +74,8 @@ export interface AgentMessage {
     result: string;
     success: boolean;
     blocked: boolean;
+    /** Tool call arguments, for display in the tool card */
+    arguments?: Record<string, unknown>;
   };
   /** True when waiting for LLM response */
   isLoading?: boolean;
@@ -173,6 +175,7 @@ export interface ToolResultPayload {
   result: string;
   success: boolean;
   blocked: boolean;
+  arguments: Record<string, unknown>;
 }
 
 export interface ApprovalRequestPayload {

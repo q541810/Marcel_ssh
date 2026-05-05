@@ -12,6 +12,7 @@ import AgentPanel from '@/components/agent/AgentPanel';
 import WindowControls from '@/components/ui/WindowControls';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
+import { useSkillStore } from '@/stores/skillStore';
 import type { AgentMode } from '@/lib/types';
 
 const AGENT_PANEL_MIN_WIDTH = 260;
@@ -30,12 +31,16 @@ export default function App() {
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const defaultAgentMode = useSettingsStore((s) => s.settings.defaultAgentMode);
   const setAgentMode = useAgentStore((s) => s.setMode);
+  const fetchSkills = useSkillStore((s) => s.fetchSkills);
 
   useEffect(() => {
     loadSettings().catch(err => {
       console.error('Failed to load settings:', err);
     });
-  }, [loadSettings]);
+    fetchSkills().catch(err => {
+      console.error('Failed to load skills:', err);
+    });
+  }, [loadSettings, fetchSkills]);
 
   useEffect(() => {
     if (!settingsLoaded) return;

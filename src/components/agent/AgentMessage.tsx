@@ -1,6 +1,4 @@
 import type { AgentMessage as AgentMessageType } from '@/lib/types';
-import Badge from '@/components/ui/Badge';
-import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import Markdown from 'react-markdown';
 
 interface Props {
@@ -78,35 +76,6 @@ export default function AgentMessage({ message }: Props) {
             message.content
           ) : (
             <Markdown>{message.content}</Markdown>
-          )}
-        </div>
-      )}
-
-      {/* Tool call details */}
-      {message.toolCall && (
-        <div className="mt-2 p-2 rounded-lg bg-zinc-900/50 border border-zinc-700/50">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-mono text-zinc-300">
-              {message.toolCall.name}
-            </span>
-            <Badge
-              variant={message.toolCall.riskLevel}
-              size="sm"
-            >
-              {RISK_LEVEL_LABELS[message.toolCall.riskLevel]}
-            </Badge>
-            {message.toolCall.approved !== undefined && (
-              <span
-                className={`text-xs ${message.toolCall.approved ? 'text-emerald-400' : 'text-red-400'}`}
-              >
-                {message.toolCall.approved ? '已批准' : '已拒绝'}
-              </span>
-            )}
-          </div>
-          {message.toolCall.result && (
-            <pre className="text-xs text-zinc-400 mt-1 overflow-x-auto max-h-32 overflow-y-auto">
-              {message.toolCall.result}
-            </pre>
           )}
         </div>
       )}

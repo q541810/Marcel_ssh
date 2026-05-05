@@ -45,86 +45,125 @@ const DEFAULT_ICON = (
   </svg>
 );
 
+/** Safely extract a string value from a JSON value (handles both direct strings and {value: "..."}) */
+function asStr(v: unknown): string | undefined {
+  if (typeof v === 'string') return v;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o.value === 'string') return o.value;
+    if (typeof o.text === 'string') return o.text;
+  }
+  return undefined;
+}
+
+/** Extract a short command preview from tool arguments */
+function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
+  if (!args) return '';
+
+  if (toolName === 'execute_command') {
+    const cmd = asStr(args.command);
+    if (cmd) {
+      const preview = cmd.length > 40 ? cmd.slice(0, 40) + '...' : cmd;
+      return `$ ${preview}`;
+    }
+  }
+  if (toolName === 'read_file' || toolName === 'write_file' || toolName === 'edit_file') {
+    const path = asStr(args.path);
+    if (path) return path;
+  }
+  if (toolName === 'list_directory') {
+    const path = asStr(args.path);
+    if (path) return path;
+    return '/';
+  }
+  if (toolName === 'search_files') {
+    const pattern = asStr(args.pattern);
+    const path = asStr(args.path);
+    const preview = `${pattern || ''} ${path || ''}`.trim();
+    if (preview) return preview;
+  }
+  if (toolName === 'web_search') {
+    const query = asStr(args.query);
+    if (query) return query;
+  }
+  if (toolName === 'http_get') {
+    const url = asStr(args.url);
+    if (url) return url;
+  }
+  return '';
+}
+
 export default function ToolCallCard({ message }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const tr = message.toolResult;
-  if (!tr) return null;
 
-  const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
+  // Handle tool result messages (from stored history or live stream)
+  if (message.toolResult) {
+    const tr = message.toolResult;
+    const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
+    const preview = getCommandPreview(tr.toolName, tr.arguments);
 
-  return (
-    <button
-      onClick={() => setExpanded((v) => !v)}
-      className={`
-        group w-full text-left rounded-lg border transition-colors
-        ${
-          tr.blocked
-            ? 'border-red-800/60 bg-red-950/30'
-            : tr.success
-              ? 'border-zinc-700/60 bg-zinc-800/50'
-              : 'border-amber-800/60 bg-amber-950/20'
-        }
-      `}
-    >
-      {/* Header row */}
-      <div className="flex items-center justify-between px-3 py-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Tool name badge */}
-          <span
-            className={`
-              flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg
-              ${
-                tr.blocked
-                  ? 'bg-red-900/50 text-red-300'
-                  : 'bg-zinc-700/80 text-zinc-300'
-              }
-            `}
-          >
-            {icon}
-            <span>{tr.toolName}</span>
-          </span>
-
-          {/* Summary on the right */}
-          <span className="text-sm text-zinc-400 truncate">
-            {tr.summary}
-          </span>
-
-          {tr.blocked && (
-            <span className="flex-shrink-0 text-xs text-red-400 font-medium">
-              已阻止
-            </span>
-          )}
-        </div>
-
-        {/* Expand arrow — visible on hover */}
-        <svg
-          className={`
-            w-4 h-4 flex-shrink-0 text-zinc-500
-            transition-all duration-200
-            opacity-0 group-hover:opacity-100
-            ${expanded ? 'rotate-180' : ''}
-          `}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+    return (
+      <div className={`rounded-lg border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="group w-full text-left"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M19 9l-7 7-7-7"
-          />
-        </svg>
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
+                {icon}
+                <span>{tr.toolName}</span>
+              </span>
+              {preview && (
+                <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
+              )}
+              {tr.blocked && (
+                <span className="flex-shrink-0 text-xs text-red-400 font-medium">已阻止</span>
+              )}
+            </div>
+            <svg
+              className={`w-4 h-4 flex-shrink-0 text-zinc-500 group-hover:text-zinc-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+        {expanded && tr.result && (
+          <div className="border-t border-zinc-700/50 px-3 py-2">
+            <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
+              {tr.result}
+            </pre>
+          </div>
+        )}
       </div>
+    );
+  }
 
-      {/* Expandable result area */}
-      {expanded && (
-        <div className="border-t border-zinc-700/50 px-3 py-2">
-          <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
-            {tr.result || '(无输出)'}
-          </pre>
+  // Handle assistant messages with toolCall (live streaming tool call info)
+  if (message.toolCall) {
+    const tc = message.toolCall;
+    const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
+    const preview = getCommandPreview(tc.name, tc.arguments);
+
+    return (
+      <div className="rounded-lg border border-zinc-700/60 bg-zinc-800/50">
+        <div className="flex items-center justify-between px-3 py-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
+              {icon}
+              <span>{tc.name}</span>
+            </span>
+            {preview && (
+              <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
+            )}
+          </div>
         </div>
-      )}
-    </button>
-  );
+      </div>
+    );
+  }
+
+  return null;
 }
