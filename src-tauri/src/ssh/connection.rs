@@ -7,11 +7,12 @@ use russh::keys::PrivateKeyWithHashAlg;
 use russh::{Channel, ChannelMsg};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::ssh::auth::AuthMethod;
+use crate::ssh::known_hosts::{KnownHostEntry, KnownHostsStore, VerifyOutcome};
 
 /// Configuration for establishing an SSH connection.
 ///
@@ -28,20 +29,63 @@ pub struct ConnectionConfig {
     /// to look up the stored password for sudo auto-fill.
     #[serde(default)]
     pub connection_id: Option<String>,
+    /// User has explicitly opted to trust a new (mismatching) host key. When
+    /// true and the presented key differs from the stored one, the stored
+    /// fingerprint is replaced rather than the connection being rejected.
+    #[serde(default)]
+    pub trust_new_host_key: bool,
 }
 
-/// Minimal russh client handler — accepts any server key (TOFU model).
-struct Client;
+/// russh client handler enforcing TOFU host-key verification.
+struct Client {
+    host: String,
+    port: u16,
+    store: Arc<KnownHostsStore>,
+    trust_new: bool,
+    /// Filled in by `check_server_key` so `connect()` can return a structured
+    /// `HostKeyMismatch` error after the handshake fails.
+    verdict: Arc<TokioMutex<Option<VerifyOutcome>>>,
+}
 
 impl client::Handler for Client {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // TOFU: accept any key for now.
-        Ok(true)
+        let outcome = self.store.verify(&self.host, self.port, server_public_key).await;
+        let (algo, fp) = KnownHostsStore::fingerprint(server_public_key);
+        let now = chrono::Utc::now().to_rfc3339();
+        let entry = KnownHostEntry {
+            algorithm: algo,
+            fingerprint_sha256: fp,
+            first_seen: now.clone(),
+            last_seen: now,
+        };
+
+        let accept = match &outcome {
+            VerifyOutcome::TrustOnFirstUse => {
+                if let Err(e) = self.store.record(&self.host, self.port, entry).await {
+                    log::warn!("记录 known_host 失败: {}", e);
+                }
+                true
+            }
+            VerifyOutcome::Match(_) => true,
+            VerifyOutcome::Mismatch { .. } => {
+                if self.trust_new {
+                    if let Err(e) = self.store.replace(&self.host, self.port, entry).await {
+                        log::warn!("替换 known_host 失败: {}", e);
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        *self.verdict.lock().await = Some(outcome);
+        Ok(accept)
     }
 }
 
@@ -74,13 +118,35 @@ pub struct SshConnection {
 #[derive(Clone)]
 pub struct SshManager {
     connections: Arc<RwLock<HashMap<String, Arc<SshConnection>>>>,
+    known_hosts: Arc<KnownHostsStore>,
 }
 
 impl SshManager {
-    pub fn new() -> Self {
+    /// Construct a manager with an explicit known-hosts store. This is the
+    /// preferred constructor; the application wires it up at startup.
+    pub fn with_known_hosts(known_hosts: Arc<KnownHostsStore>) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
+            known_hosts,
         }
+    }
+
+    /// Convenience constructor used by tests/fallbacks. Creates an in-memory
+    /// (non-persisted) known-hosts store at a temp path that will not survive
+    /// process restarts. **Production code should use `with_known_hosts`.**
+    pub fn new() -> Self {
+        // Best-effort: a path under the system temp dir keyed by PID so
+        // concurrent tests don't collide. If anything fails we fall back to
+        // an in-memory empty store rooted at a path that is unlikely to be
+        // useful — which is fine for the test/fallback case.
+        let path = std::env::temp_dir().join(format!(
+            "marcel-ssh-known-hosts-{}-{}.json",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let store = futures::executor::block_on(KnownHostsStore::load(path))
+            .expect("failed to init in-memory known_hosts store");
+        Self::with_known_hosts(store)
     }
 
     /// Establish a new SSH connection, open a shell channel with a PTY,
@@ -122,9 +188,34 @@ impl SshManager {
         });
 
         // Connect TCP + SSH handshake
-        let mut handle = client::connect(client_config, (host.as_str(), port), Client)
-            .await
-            .map_err(|e| AppError::Ssh(format!("连接失败: {}", e)))?;
+        let verdict = Arc::new(TokioMutex::new(None));
+        let client = Client {
+            host: host.clone(),
+            port,
+            store: self.known_hosts.clone(),
+            trust_new: config.trust_new_host_key,
+            verdict: verdict.clone(),
+        };
+        let mut handle = match client::connect(client_config, (host.as_str(), port), client).await {
+            Ok(h) => h,
+            Err(e) => {
+                // If the handshake failed because of a host-key mismatch,
+                // report a structured error so the frontend can prompt the
+                // user. Otherwise return the generic SSH error.
+                let v = verdict.lock().await.take();
+                if let Some(VerifyOutcome::Mismatch { stored, presented }) = v {
+                    return Err(AppError::HostKeyMismatch {
+                        host: host.clone(),
+                        port,
+                        stored_algorithm: stored.algorithm,
+                        stored_fingerprint: stored.fingerprint_sha256,
+                        presented_algorithm: presented.algorithm,
+                        presented_fingerprint: presented.fingerprint_sha256,
+                    });
+                }
+                return Err(AppError::Ssh(format!("连接失败: {}", e)));
+            }
+        };
 
         // Authenticate
         let auth_success = match &config.auth_method {

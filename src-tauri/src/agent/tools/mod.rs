@@ -94,11 +94,26 @@ pub struct ToolContext {
     pub ssh: SshManagerClone,
     pub session_id: String,
     pub app_handle: AppHandle,
+    /// Optional security policy. When set, tools that run a sandbox
+    /// (e.g. `execute_command`) should honour it instead of falling back
+    /// to [`crate::agent::sandbox::Sandbox::default`].
+    pub policy: Option<Arc<crate::agent::sandbox::SecurityPolicy>>,
 }
 
 impl ToolContext {
     pub fn new(ssh: SshManagerClone, session_id: impl Into<String>, app_handle: AppHandle) -> Self {
-        Self { ssh, session_id: session_id.into(), app_handle }
+        Self {
+            ssh,
+            session_id: session_id.into(),
+            app_handle,
+            policy: None,
+        }
+    }
+
+    /// Attach a security policy to this context (builder-style).
+    pub fn with_policy(mut self, policy: Arc<crate::agent::sandbox::SecurityPolicy>) -> Self {
+        self.policy = Some(policy);
+        self
     }
 
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.

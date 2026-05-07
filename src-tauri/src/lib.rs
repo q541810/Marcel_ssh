@@ -22,6 +22,7 @@ use crate::config::connections::ConnectionStore;
 use crate::config::settings::AppSettings;
 use crate::skills::store::SkillStore;
 use crate::ssh::connection::SshManager;
+use crate::ssh::known_hosts::KnownHostsStore;
 
 /// Shared application state managed by Tauri.
 ///
@@ -47,6 +48,21 @@ pub struct AppState {
 impl AppState {
     /// Create a new AppState, loading any persisted config from `config_dir`.
     pub fn new(config_dir: PathBuf) -> Self {
+        // Load known_hosts (TOFU). If the file is unreadable we fall back to
+        // an empty in-memory store; mismatches will then prompt the user.
+        let known_hosts_path = config_dir.join("known_hosts.json");
+        let known_hosts = futures::executor::block_on(KnownHostsStore::load(known_hosts_path))
+            .unwrap_or_else(|e| {
+                log::error!("无法加载 known_hosts.json，使用空 store: {}", e);
+                // Fallback to a temp-path store so we don't crash. Subsequent
+                // saves will still attempt the original path? No — once
+                // constructed, the path is fixed. This is best-effort.
+                futures::executor::block_on(KnownHostsStore::load(
+                    std::env::temp_dir().join("marcel-ssh-known-hosts-fallback.json"),
+                ))
+                .expect("fallback known_hosts init")
+            });
+
         // Load persisted config (best-effort: log errors and fall back to defaults)
         let connection_store = ConnectionStore::load_from_path(
             &ConnectionStore::default_file(&config_dir),
@@ -133,7 +149,7 @@ impl AppState {
         });
 
         Self {
-            ssh_manager: SshManager::new(),
+            ssh_manager: SshManager::with_known_hosts(known_hosts),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),

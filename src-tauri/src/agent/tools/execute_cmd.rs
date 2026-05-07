@@ -87,7 +87,10 @@ impl AgentTool for ExecuteCommandTool {
 
         // Static safety check. Higher-level policy (allow/deny lists, user
         // approval) is applied by `commands/agent.rs`.
-        let sandbox = Sandbox::default();
+        let sandbox = match ctx.policy.as_ref() {
+            Some(p) => Sandbox::new((**p).clone()),
+            None => Sandbox::default(),
+        };
         if let Err(e) = sandbox.check_command(command) {
             return Ok(ToolOutput::fail(
                 format!("$ {}", command),
@@ -134,56 +137,52 @@ impl AgentTool for ExecuteCommandTool {
     }
 }
 
-/// Check if a command starts with `sudo` (possibly preceded by env vars like `FOO=bar sudo`).
+/// Check if a command starts with `sudo` (possibly preceded by env-var
+/// assignments such as `FOO=bar sudo ...`). Recognises `sudo`, `sudo `
+/// and `sudo\t`. Never panics.
 fn is_sudo_command(command: &str) -> bool {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    // Skip leading environment variable assignments (e.g., "FOO=bar sudo ...")
-    let mut remaining = trimmed;
-    while let Some(eq_pos) = remaining.find('=') {
-        // Check if the part before '=' is a valid variable name
-        let before_eq = &remaining[..eq_pos];
-        if before_eq.is_empty() || !before_eq.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            break;
-        }
-        // Find the end of this assignment (could be space-separated or quoted)
-        let after_eq = &remaining[eq_pos + 1..];
-        let rest = after_eq.trim_start();
-        if let Some(first) = rest.chars().next() {
-            if first == '"' || first == '\'' {
-                // Skip to matching quote
-                let quote = first;
-                if let Some(end_quote) = rest[1..].find(quote) {
-                    remaining = &rest[1 + end_quote + 1..];
-                } else {
-                    break;
-                }
-            } else {
-                // Find next space
-                if let Some(space_pos) = rest.find(' ') {
-                    remaining = &rest[space_pos + 1..];
-                } else {
-                    // Only env var, no sudo after it
-                    break;
-                }
-            }
-        } else {
-            break;
-        }
-        let remaining_trimmed = remaining.trim_start();
-        if remaining_trimmed.starts_with("sudo ") || remaining_trimmed == "sudo" {
+    let mut remaining = command.trim();
+    loop {
+        if remaining == "sudo"
+            || remaining.starts_with("sudo ")
+            || remaining.starts_with("sudo\t")
+        {
             return true;
         }
-        if !remaining_trimmed.starts_with(|c: char| c.is_alphabetic() || c == '_') {
-            break;
+        // Try to peel off a leading `NAME=value` (value may be quoted).
+        let eq_pos = match remaining.find('=') {
+            Some(p) => p,
+            None => return false,
+        };
+        let name = &remaining[..eq_pos];
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || name.chars().next().map_or(true, |c| c.is_ascii_digit())
+        {
+            return false;
         }
+        let after_eq = &remaining[eq_pos + 1..];
+        let advanced = match after_eq.chars().next() {
+            Some('"') | Some('\'') => {
+                let quote = after_eq.chars().next().unwrap();
+                match after_eq[1..].find(quote) {
+                    Some(end) => &after_eq[1 + end + 1..],
+                    None => return false,
+                }
+            }
+            _ => match after_eq.find(|c: char| c == ' ' || c == '\t') {
+                Some(p) => &after_eq[p..],
+                None => return false,
+            },
+        };
+        let next = advanced.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        if next.len() == remaining.len() {
+            return false;
+        }
+        remaining = next;
     }
-
-    // Simple check: first word is "sudo"
-    trimmed.starts_with("sudo ") || trimmed == "sudo"
 }
 
 /// Look up the SSH password from keychain using the session's connection_id.
@@ -215,24 +214,24 @@ async fn lookup_password(ctx: &ToolContext) -> Option<String> {
     }
 }
 
-/// Rewrite a sudo command to auto-fill password via stdin using sudo -S.
+/// Rewrite a sudo command to auto-fill password via stdin using `sudo -S`.
 ///
-/// Uses printf with explicit newline to pipe password via stdin.
-/// The -p '' suppresses the password prompt, and -S reads from stdin.
+/// The password is passed as a `printf` **argument** (not embedded in the
+/// format string), so characters like `%s` in the password stay literal.
+/// Single quotes in the password are escaped for the surrounding shell.
 fn rewrite_sudo(command: &str, password: &str) -> String {
-    // Escape single quotes in password for the shell
     let escaped_password = password.replace('\'', "'\\''");
 
-    // Extract the actual command after "sudo"
-    let sudo_arg = command
-        .trim()
+    // Extract everything after the leading `sudo` token. Works for
+    // "sudo args...", "sudo\targs..." and bare "sudo".
+    let trimmed = command.trim();
+    let sudo_arg = trimmed
         .strip_prefix("sudo ")
-        .unwrap_or(&command.trim()[5..]);
+        .or_else(|| trimmed.strip_prefix("sudo\t"))
+        .unwrap_or("");
 
-    // Use printf to pipe password to sudo's stdin via -S
-    // The \\n ensures a newline is sent after the password
     format!(
-        "printf '{}\\n' | sudo -S -p '' -- {}",
+        "printf '%s\\n' '{}' | sudo -S -p '' -- {}",
         escaped_password, sudo_arg
     )
 }
@@ -263,13 +262,40 @@ mod tests {
     #[test]
     fn rewrite_sudo_basic() {
         let result = rewrite_sudo("sudo apt update", "mypassword");
-        assert!(result.contains("| sudo -S --"));
-        assert!(result.contains("apt update"));
+        assert_eq!(
+            result,
+            "printf '%s\\n' 'mypassword' | sudo -S -p '' -- apt update"
+        );
     }
 
     #[test]
     fn rewrite_sudo_escapes_quotes() {
         let result = rewrite_sudo("sudo ls", "pass'word");
-        assert!(result.contains("'\\''"));
+        assert!(
+            result.contains("'pass'\\''word'"),
+            "expected escaped password in output: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn rewrite_sudo_does_not_panic_on_bare_sudo() {
+        let _ = rewrite_sudo("sudo", "pw");
+        let _ = rewrite_sudo("  sudo  ", "pw");
+    }
+
+    #[test]
+    fn rewrite_sudo_handles_tab_separator() {
+        let result = rewrite_sudo("sudo\tls -l", "pw");
+        assert!(result.contains("-- ls -l"), "got: {}", result);
+    }
+
+    #[test]
+    fn rewrite_sudo_password_with_format_specifier_is_literal() {
+        let result = rewrite_sudo("sudo ls", "ab%scd");
+        // Password must appear literally inside single quotes as a printf
+        // argument, not in the format string.
+        assert!(result.contains("'ab%scd'"), "got: {}", result);
+        assert!(result.starts_with("printf '%s\\n' '"), "got: {}", result);
     }
 }
