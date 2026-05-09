@@ -636,16 +636,13 @@ function handleToolResult(taskId: string, conversationId: string, loadingAssista
     // Increment tool result count
     streamState.toolResultCount++;
 
-    // Reset for next round: the next textDelta must create a NEW assistant
-    // message (after the tool card), not append to the stale one from the
-    // previous round. Without this, Round 2's text gets merged into Round 1's
-    // assistant message, which renders *before* the tool card — causing the
-    // visual ordering bug.
+    insertToolMessageAfterAssistant(newMsgs, toolMessage);
+
+    // A tool result ends the current assistant text segment. The next textDelta
+    // should create a new assistant message after the tool card.
     streamState.assistantMessageId = null;
     streamState.messageIndex = -1;
     streamState.toolResultCount = 0;
-
-    insertToolMessageAfterAssistant(newMsgs, toolMessage);
     
     // Update stream state inside setState for consistency
     taskStreamState.set(taskId, streamState);
@@ -808,11 +805,6 @@ async function attachStreamListener(taskId: string, conversationId: string, load
       }
 
       if (hasEventType(ev, 'toolCallStart') || hasEventType(ev, 'toolCallDelta')) {
-        // Defensive: reset assistant message tracking when a tool call begins,
-        // so a subsequent textDelta (next round) creates a fresh message.
-        if (hasEventType(ev, 'toolCallStart')) {
-          updateStreamState(taskId, { assistantMessageId: null, messageIndex: -1 });
-        }
         console.debug('[agent] tool event', ev);
         return;
       }

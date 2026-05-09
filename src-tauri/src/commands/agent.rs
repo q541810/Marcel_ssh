@@ -1175,8 +1175,7 @@ fn build_system_prompt(session_id: &str, skill_prompts: &str) -> String {
 - process_management - 查看/管理远程进程\n\
 - system_info - 系统信息查询\n\
 - web_search - 联网搜索（返回标题+摘要+链接）比如用户询问“如何在 Ubuntu 上安装 Node.js”，你应该先搜索相关资料，而不是直接回答用户的问题\n\
-- http_get - 获取网页完整内容\n\n\
-工具的风险等级和安全策略由系统自动评估，部分操作可能需要用户确认后才能执行。\n\n";
+- http_get - 获取网页完整内容\n\n";
 
     let conventions = "遵循惯例\n\
 在对文件进行更改时，首先理解文件的代码惯例。模仿代码风格，使用现有的库和工具，并遵循现有的模式。\n\

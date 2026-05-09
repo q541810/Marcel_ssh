@@ -19,6 +19,7 @@ use crate::agent::conversation::ConversationDb;
 use crate::agent::runtime::AgentTask;
 use crate::agent::runtime::AgentTaskPlan;
 use crate::config::connections::ConnectionStore;
+use crate::config::quick_commands::QuickCommandStore;
 use crate::config::settings::AppSettings;
 use crate::skills::store::SkillStore;
 use crate::ssh::connection::SshManager;
@@ -36,6 +37,7 @@ pub struct AppState {
     pub plans: std::sync::Arc<PlRwLock<HashMap<String, AgentTaskPlan>>>,
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
+    pub quick_command_store: std::sync::Arc<TokioRwLock<QuickCommandStore>>,
     pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
     pub conversation_db: std::sync::Arc<ConversationDb>,
     pub skill_store: std::sync::Arc<TokioRwLock<SkillStore>>,
@@ -148,12 +150,21 @@ impl AppState {
             SkillStore::new()
         });
 
+        let quick_command_store = QuickCommandStore::load_from_path(
+            &QuickCommandStore::default_file(&config_dir),
+        )
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to load quick commands, using defaults: {}", e);
+            QuickCommandStore::new()
+        });
+
         Self {
             ssh_manager: SshManager::with_known_hosts(known_hosts),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
             settings: std::sync::Arc::new(TokioRwLock::new(settings)),
+            quick_command_store: std::sync::Arc::new(TokioRwLock::new(quick_command_store)),
             audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
             conversation_db: std::sync::Arc::new(conversation_db),
             skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
@@ -215,6 +226,11 @@ pub fn run() {
             commands::config::config_save_password,
             commands::config::config_get_password,
             commands::config::config_delete_password,
+            // Quick command commands
+            commands::quick_command::quick_command_list,
+            commands::quick_command::quick_command_add,
+            commands::quick_command::quick_command_update,
+            commands::quick_command::quick_command_delete,
         // LLM API Key management
         commands::config::config_save_llm_api_key,
         commands::config::config_get_llm_api_key,

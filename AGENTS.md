@@ -11,7 +11,6 @@
 - **人机协同终端**：用户可在传统手动终端和 Agent 自动模式之间无缝切换。Agent 操作全程可观察、可中断、可回滚。
 - **桌面级体验**：基于 Tauri 构建，提供原生级性能和系统集成，同时保持极小的资源占用。
 
-
 ---
 
 ## 2. 技术栈
@@ -74,18 +73,18 @@ WebView 渲染进程 (前端)
 
 ### 3.2 核心模块划分
 
-| 模块 | 层 | 职责 |
-|------|----|------|
-| `ssh-core` | Rust | SSH 连接建立、认证、通道管理、SFTP |
-| `agent-runtime` | Rust | Agent 生命周期管理、Tool 调度、安全沙箱 |
-| `llm-bridge` | Rust | LLM API 调用抽象、流式响应处理 |
-| `session-manager` | Rust | 多会话/多标签管理、会话持久化 |
-| `config-store` | Rust | 连接配置、密钥管理、偏好设置 |
-| `skills-store` | Rust | 用户自定义技能（Skill）CRUD 与持久化 |
-| `terminal-view` | 前端 | xterm.js 封装、输入输出流绑定 |
-| `agent-panel` | 前端 | Agent 对话界面、操作审批 UI、执行日志 |
-| `connection-ui` | 前端 | 连接列表、快速连接、分组管理 |
-| `skill-ui` | 前端 | 技能列表、创建/编辑/启用/禁用 |
+| 模块                | 层    | 职责                        |
+| ----------------- | ---- | ------------------------- |
+| `ssh-core`        | Rust | SSH 连接建立、认证、通道管理、SFTP     |
+| `agent-runtime`   | Rust | Agent 生命周期管理、Tool 调度、安全沙箱 |
+| `llm-bridge`      | Rust | LLM API 调用抽象、流式响应处理       |
+| `session-manager` | Rust | 多会话/多标签管理、会话持久化           |
+| `config-store`    | Rust | 连接配置、密钥管理、偏好设置            |
+| `skills-store`    | Rust | 用户自定义技能（Skill）CRUD 与持久化   |
+| `terminal-view`   | 前端   | xterm.js 封装、输入输出流绑定       |
+| `agent-panel`     | 前端   | Agent 对话界面、操作审批 UI、执行日志   |
+| `connection-ui`   | 前端   | 连接列表、快速连接、分组管理            |
+| `skill-ui`        | 前端   | 技能列表、创建/编辑/启用/禁用          |
 
 ---
 
@@ -125,30 +124,30 @@ pub enum RiskLevel {
 
 **内置 Tools 列表**（12 个，在 `agent/tools/` 模块和 `commands/agent.rs` 中定义）：
 
-| Tool 名称 | 功能 | 风险等级 | 实现方式 |
-|-----------|------|---------|---------|
-| `execute_command` | 在远程 shell 执行单条命令 | 取决于命令（动态评估） | `agent/tools/execute_cmd.rs` |
-| `read_file` | 读取远程文件（`cat`） | ReadOnly | `agent/tools/file_ops.rs` |
-| `write_file` | 写入/创建远程文件（heredoc） | Moderate | `agent/tools/file_ops.rs` |
-| `edit_file` | 编辑远程文件（diff patch） | Moderate | `agent/tools/file_ops.rs` |
-| `list_directory` | 列出目录内容（`ls -la`） | ReadOnly | `agent/tools/file_ops.rs` |
-| `upload_file` | 上传本地文件到远程（SFTP） | Moderate | `agent/tools/sftp_transfer.rs` |
-| `download_file` | 下载远程文件到本地（SFTP） | ReadOnly | `agent/tools/sftp_transfer.rs` |
-| `search_files` | 内容搜索（`grep -rn`） | ReadOnly | `agent/tools/search.rs` |
-| `process_management` | 查看/管理远程进程 | ReadOnly | `agent/tools/process.rs` |
-| `system_info` | OS / 内存 / 磁盘信息查询 | ReadOnly | `agent/tools/system.rs` |
-| `web_search` | 联网搜索互联网信息（返回标题+摘要+链接） | ReadOnly | `agent/tools/web_search.rs` |
-| `http_get` | 获取网页完整内容 | ReadOnly | `agent/tools/http_get.rs` |
-| `create_plan` | 创建结构化任务计划（todolist） | ReadOnly | `agent/tools/plan.rs` |
-| `update_plan_item` | 更新任务计划中步骤的状态 | ReadOnly | `agent/tools/plan.rs` |
+| Tool 名称              | 功能                    | 风险等级        | 实现方式                           |
+| -------------------- | --------------------- | ----------- | ------------------------------ |
+| `execute_command`    | 在远程 shell 执行单条命令      | 取决于命令（动态评估） | `agent/tools/execute_cmd.rs`   |
+| `read_file`          | 读取远程文件（`cat`）         | ReadOnly    | `agent/tools/file_ops.rs`      |
+| `write_file`         | 写入/创建远程文件（heredoc）    | Moderate    | `agent/tools/file_ops.rs`      |
+| `edit_file`          | 编辑远程文件（diff patch）    | Moderate    | `agent/tools/file_ops.rs`      |
+| `list_directory`     | 列出目录内容（`ls -la`）      | ReadOnly    | `agent/tools/file_ops.rs`      |
+| `upload_file`        | 上传本地文件到远程（SFTP）       | Moderate    | `agent/tools/sftp_transfer.rs` |
+| `download_file`      | 下载远程文件到本地（SFTP）       | ReadOnly    | `agent/tools/sftp_transfer.rs` |
+| `search_files`       | 内容搜索（`grep -rn`）      | ReadOnly    | `agent/tools/search.rs`        |
+| `process_management` | 查看/管理远程进程             | ReadOnly    | `agent/tools/process.rs`       |
+| `system_info`        | OS / 内存 / 磁盘信息查询      | ReadOnly    | `agent/tools/system.rs`        |
+| `web_search`         | 联网搜索互联网信息（返回标题+摘要+链接） | ReadOnly    | `agent/tools/web_search.rs`    |
+| `http_get`           | 获取网页完整内容              | ReadOnly    | `agent/tools/http_get.rs`      |
+| `create_plan`        | 创建结构化任务计划（todolist）   | ReadOnly    | `agent/tools/plan.rs`          |
+| `update_plan_item`   | 更新任务计划中步骤的状态          | ReadOnly    | `agent/tools/plan.rs`          |
 
 > **架构要点**：工具通过 `AgentTool` trait 实现，注册到 `ToolRegistry::with_builtins()` 中。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
+> 
 > 1. 在 `agent/tools/<name>.rs` 实现 `AgentTool` trait
 > 2. 在 `mod.rs` 中声明模块并在 `with_builtins()` 注册
 > 3. 在本表中登记
 
 > **联网工具使用模式**：`web_search` 返回搜索结果摘要（标题+链接），**不包含完整页面内容**。如需阅读详细信息，Agent 应使用 `http_get` 工具访问搜索返回的 URL。这种"信息饥饿"设计让 Agent 自然地组合两个工具，同时节省上下文窗口。
-
 
 ### 4.3 上下文管理
 
@@ -161,15 +160,15 @@ SessionContext {
     shell_type: Shell,         // bash / zsh / fish
     current_directory: Path,
     environment_vars: HashMap,
-    
+
     // 会话历史
     command_history: Vec<CommandRecord>,  // 最近 N 条命令 + 输出
     file_changes: Vec<FileChange>,       // 本次会话修改过的文件
-    
+
     // 用户意图
     current_goal: String,
     task_plan: Vec<TaskStep>,
-    
+
     // 安全上下文
     permission_policy: PermissionPolicy,
     confirmed_operations: Vec<OperationId>,
@@ -187,7 +186,8 @@ marcel-ssh/
 │   │   ├── commands/             # Tauri IPC command handlers
 │   │   │   ├── ssh.rs            # SSH 连接相关命令
 │   │   │   ├── agent.rs          # Agent 操作命令
-│   │   │   └── config.rs         # 配置管理命令
+│   │   │   ├── config.rs         # 配置管理命令
+│   │   │   └── quick_command.rs  # 快捷指令管理命令
 │   │   ├── ssh/                  # SSH 核心实现
 │   │   │   ├── connection.rs     # 连接建立与管理
 │   │   │   ├── auth.rs           # 认证（密码/密钥/Agent）
@@ -208,6 +208,7 @@ marcel-ssh/
 │   │   ├── config/               # 配置与持久化
 │   │   │   ├── settings.rs       # 应用设置
 │   │   │   ├── connections.rs    # 连接配置存储
+│   │   │   ├── quick_commands.rs # 全局/连接级快捷指令存储
 │   │   │   └── keychain.rs       # 密钥链集成
 │   │   └── error.rs              # 统一错误类型
 │   └── tests/                    # Rust 集成测试
@@ -238,17 +239,20 @@ marcel-ssh/
 ### 6.1 Rust 后端规范
 
 **异步模型**：
+
 - 所有 SSH 操作和 LLM 调用必须异步（`async fn`）。
 - 使用 `tokio` 作为唯一异步运行时。
 - 长时间运行的 Agent 任务使用 `tokio::spawn` 在独立 task 中执行，通过 Tauri Event 向前端推送进度。
 
 **命名约定**：
+
 - 模块名：`snake_case`
 - 类型名：`PascalCase`
 - 函数名：`snake_case`
 - Tauri command：`snake_case`，前端调用时自动转换为 `camelCase`
 
 **Tauri Command 模式**：
+
 ```rust
 #[tauri::command]
 async fn ssh_connect(
@@ -260,6 +264,7 @@ async fn ssh_connect(
 ```
 
 **依赖管理**：
+
 - 最小化依赖原则。引入新 crate 需在 PR 中说明必要性。
 - 优先使用 Rust 标准库和 Tauri 内置功能。
 - 密码学相关必须使用经过审计的库（`ring`, `rustls` 等）。
@@ -267,18 +272,21 @@ async fn ssh_connect(
 ### 6.2 前端规范
 
 **组件设计**：
+
 - 使用函数式组件 + Hooks 模式。
 - 组件文件名 `PascalCase.tsx`，每个组件一个文件。
 - Props 类型使用 `interface`，在组件文件内定义。
 - 避免超过 300 行的组件文件，及时拆分。
 
 **状态管理原则**：
+
 - 局部 UI 状态：`useState`
 - 跨组件共享状态：Zustand store
 - 服务端状态（SSH 会话等）：通过 Tauri command 查询，结合 store 缓存
 - 禁止在 store 中存储可从其他状态派生的数据
 
 **Tauri IPC 调用封装**：
+
 ```typescript
 // lib/tauri.ts — 统一封装，带类型安全
 import { invoke } from '@tauri-apps/api/core';
@@ -289,9 +297,9 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 ```
 
 **样式规范**：
+
 - TailwindCSS utility-first，避免自定义 CSS。
 - 终端主题色采用 CSS 变量，支持用户自定义。
-
 
 ---
 
@@ -325,6 +333,10 @@ config_get_llm_api_key() → Option<String>
 config_delete_llm_api_key() → ()
 config_get_settings() → AppSettings
 config_save_settings(settings) → ()
+quick_command_list(session_key?) → Vec<QuickCommand>
+quick_command_add(command) → QuickCommand
+quick_command_update(id, patch) → ()
+quick_command_delete(id) → ()
 skill_list() → Vec<Skill>
 skill_add(name, description, prompt) → Skill
 skill_update(id, name?, description?, prompt?) → ()
@@ -362,12 +374,12 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 当你在此项目中工作时：
 
-
 1. **Tauri IPC 是前后端桥梁**：修改 Rust 侧的 command 签名时，必须同步更新前端的 `lib/tauri.ts` 类型定义。
 
 2. **SSH 操作全部异步**：永远不要阻塞 Tauri 主线程。所有 SSH I/O 必须在 `tokio::spawn` 的 task 中执行。
 
 3. **安全是不可协商的**：
+   
    - 不要跳过安全检查来"简化"代码。
    - 不要在日志中输出密码、密钥或 API Key。
    - 不要将敏感数据序列化到前端。
@@ -381,3 +393,5 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 7. 更改依赖包、更新配置文件、平台支持、构建生产版本等，必须同步更新 `README.md`
 
 8. 本文件是 **绝对权威** 是 **不可违反** 的，必须遵循本文件（除非你把本文件改成符合你需求的样子）
+
+9. 你不能执行任何预计耗时一秒以上的shell命令，但可以要求用户帮你执行

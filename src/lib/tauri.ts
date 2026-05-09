@@ -1,5 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ConnectionConfig, SavedConnection, AppSettings, AgentConversation, StoredMessage, RiskLevel, Skill } from './types';
+import type {
+  ConnectionConfig,
+  SavedConnection,
+  AppSettings,
+  AgentConversation,
+  StoredMessage,
+  RiskLevel,
+  Skill,
+  QuickCommand,
+  QuickCommandInput,
+  QuickCommandPatch,
+} from './types';
 
 interface ParsedSkill {
   name: string;
@@ -149,6 +160,24 @@ export async function deletePassword(connectionId: string): Promise<void> {
   return invoke('config_delete_password', { connectionId });
 }
 
+// Quick command commands
+
+export async function quickCommandList(sessionKey?: string | null): Promise<QuickCommand[]> {
+  return invoke<QuickCommand[]>('quick_command_list', { sessionKey: sessionKey ?? null });
+}
+
+export async function quickCommandAdd(command: QuickCommandInput): Promise<QuickCommand> {
+  return invoke<QuickCommand>('quick_command_add', { command });
+}
+
+export async function quickCommandUpdate(id: string, patch: QuickCommandPatch): Promise<void> {
+  return invoke('quick_command_update', { id, patch });
+}
+
+export async function quickCommandDelete(id: string): Promise<void> {
+  return invoke('quick_command_delete', { id });
+}
+
 // LLM API Key management
 
 export async function saveLlmApiKey(apiKey: string): Promise<void> {
@@ -197,4 +226,3 @@ export async function skillDelete(id: string): Promise<void> {
 export async function importSkillFile(fileData: string, fileName: string): Promise<ParsedSkill> {
   return invoke<ParsedSkill>('import_skill_file', { fileData, fileName });
 }
-

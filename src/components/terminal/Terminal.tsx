@@ -8,6 +8,7 @@ import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import QuickCommandBar from './QuickCommandBar';
 import type { TerminalColors } from '@/lib/types';
 
 interface TerminalInstance {
@@ -82,6 +83,7 @@ export default function Terminal() {
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
 
@@ -301,21 +303,29 @@ export default function Terminal() {
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
-    <div className="relative flex-1 h-full bg-zinc-900">
-      <div ref={wrapperRef} className="absolute inset-0" />
-      {!hasSessions && (
-        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/95 z-10">
-          <div className="text-center">
-            <div className="text-zinc-400 text-lg mb-2">未连接</div>
-            <p className="text-zinc-500 text-sm">
-              从侧边栏选择一个连接或使用快速连接来启动会话。
-            </p>
+    <div className="flex flex-col flex-1 h-full bg-zinc-900">
+      <div className="relative flex-1 min-h-0">
+        <div ref={wrapperRef} className="absolute inset-0" />
+        {!hasSessions && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/95 z-10">
+            <div className="text-center">
+              <div className="text-zinc-400 text-lg mb-2">未连接</div>
+              <p className="text-zinc-500 text-sm">
+                从侧边栏选择一个连接或使用快速连接来启动会话。
+              </p>
+            </div>
           </div>
-        </div>
-      )}
-      {hasSessions && !activeSessionId && (
-        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/90 z-10">
-          <div className="text-zinc-400">请选择一个会话</div>
+        )}
+        {hasSessions && !activeSessionId && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/90 z-10">
+            <div className="text-zinc-400">请选择一个会话</div>
+          </div>
+        )}
+      </div>
+
+      {hasSessions && activeSessionId && activeSession?.status === 'connected' && (
+        <div className="flex flex-shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-900 p-3">
+          <QuickCommandBar sessionId={activeSessionId} sessionKey={activeSession.configId} />
         </div>
       )}
 

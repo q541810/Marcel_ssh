@@ -39,6 +39,37 @@ export interface Session {
 
 export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+// Quick command types
+
+export type QuickCommandScope = 'global' | 'session';
+
+export interface QuickCommand {
+  id: string;
+  scope: QuickCommandScope;
+  sessionKey?: string | null;
+  name: string;
+  commands: string[];
+  intervalMs: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuickCommandInput {
+  scope: QuickCommandScope;
+  sessionKey?: string | null;
+  name: string;
+  commands: string[];
+  intervalMs: number;
+}
+
+export interface QuickCommandPatch {
+  scope?: QuickCommandScope;
+  sessionKey?: string | null;
+  name?: string;
+  commands?: string[];
+  intervalMs?: number;
+}
+
 // Agent types
 
 export type AgentMode = 'chat' | 'agent' | 'auto';

@@ -6,47 +6,36 @@ interface Props {
 }
 
 const TOOL_ICONS: Record<string, JSX.Element> = {
-    execute_command: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-    ),
-    read_file: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-    ),
-    write_file: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-        </svg>
-    ),
-    list_directory: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-        </svg>
-    ),
-    search_files: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-    ),
-    web_search: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10a1 1 0 11-2 0 1 1 0 012 0z" />
-        </svg>
-    ),
-    http_get: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-        </svg>
-    ),
-    system_info: (
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-        </svg>
-    ),
+  execute_command: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+    </svg>
+  ),
+  read_file: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    </svg>
+  ),
+  write_file: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  ),
+  list_directory: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+    </svg>
+  ),
+  search_files: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  ),
+  system_info: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+    </svg>
+  ),
 };
 
 const DEFAULT_ICON = (
@@ -69,72 +58,39 @@ function asStr(v: unknown): string | undefined {
 
 /** Extract a short command preview from tool arguments */
 function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
-    if (!args) return '';
+  if (!args) return '';
 
-    if (toolName === 'execute_command') {
-        const cmd = asStr(args.command);
-        if (cmd) {
-            const preview = cmd.length > 40 ? cmd.slice(0, 40) + '...' : cmd;
-            return `$ ${preview}`;
-        }
+  if (toolName === 'execute_command') {
+    const cmd = asStr(args.command);
+    if (cmd) {
+      const preview = cmd.length > 40 ? cmd.slice(0, 40) + '...' : cmd;
+      return `$ ${preview}`;
     }
-    if (toolName === 'read_file' || toolName === 'write_file' || toolName === 'edit_file') {
-        const path = asStr(args.path);
-        if (path) return path;
-    }
-    if (toolName === 'list_directory') {
-        const path = asStr(args.path);
-        if (path) return path;
-        return '/';
-    }
-    if (toolName === 'search_files') {
-        const pattern = asStr(args.pattern);
-        const path = asStr(args.path);
-        const preview = `${pattern || ''} ${path || ''}`.trim();
-        if (preview) return preview;
-    }
-    if (toolName === 'web_search') {
-        // 首先尝试单个 query 参数
-        const query = asStr(args.query);
-        if (query) {
-            return query.length > 40 ? query.slice(0, 40) + '...' : query;
-        }
-        // 然后尝试 queries 数组参数
-        const queries = args.queries;
-        if (Array.isArray(queries) && queries.length > 0) {
-            // 处理数组元素可能是字符串或对象的情况
-            const firstQuery = queries[0];
-            const firstQueryStr = asStr(firstQuery);
-            if (firstQueryStr) {
-                if (queries.length === 1) {
-                    return firstQueryStr.length > 40 ? firstQueryStr.slice(0, 40) + '...' : firstQueryStr;
-                } else {
-                    return `${firstQueryStr.length > 30 ? firstQueryStr.slice(0, 30) + '...' : firstQueryStr} + ${queries.length - 1} 个查询`;
-                }
-            }
-        }
-    }
-    if (toolName === 'http_get') {
-        // 首先尝试单个 url 参数
-        const url = asStr(args.url);
-        if (url) {
-            return url.length > 40 ? url.slice(0, 40) + '...' : url;
-        }
-        // 然后尝试 urls 数组参数
-        const urls = args.urls;
-        if (Array.isArray(urls) && urls.length > 0) {
-            const firstUrl = urls[0];
-            const firstUrlStr = asStr(firstUrl);
-            if (firstUrlStr) {
-                if (urls.length === 1) {
-                    return firstUrlStr.length > 40 ? firstUrlStr.slice(0, 40) + '...' : firstUrlStr;
-                } else {
-                    return `${firstUrlStr.length > 30 ? firstUrlStr.slice(0, 30) + '...' : firstUrlStr} + ${urls.length - 1} 个 URL`;
-                }
-            }
-        }
-    }
-    return '';
+  }
+  if (toolName === 'read_file' || toolName === 'write_file' || toolName === 'edit_file') {
+    const path = asStr(args.path);
+    if (path) return path;
+  }
+  if (toolName === 'list_directory') {
+    const path = asStr(args.path);
+    if (path) return path;
+    return '/';
+  }
+  if (toolName === 'search_files') {
+    const pattern = asStr(args.pattern);
+    const path = asStr(args.path);
+    const preview = `${pattern || ''} ${path || ''}`.trim();
+    if (preview) return preview;
+  }
+  if (toolName === 'web_search') {
+    const query = asStr(args.query);
+    if (query) return query;
+  }
+  if (toolName === 'http_get') {
+    const url = asStr(args.url);
+    if (url) return url;
+  }
+  return '';
 }
 
 export default function ToolCallCard({ message }: Props) {
