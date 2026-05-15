@@ -83,6 +83,26 @@ pub(crate) fn b64_decode(s: &str) -> Result<Vec<u8>, AppError> {
     Ok(out)
 }
 
+/// Build a portable shell command that base64-encodes a remote file to stdout.
+/// Tries GNU `base64 -w0`, falls back to BSD `base64`, then `openssl base64 -A`.
+pub(crate) fn cmd_encode_file(path_escaped: &str) -> String {
+    format!(
+        "(base64 -w0 {p} 2>/dev/null) || (base64 {p} 2>/dev/null | tr -d '\\n') || (openssl base64 -A -in {p} 2>/dev/null)",
+        p = path_escaped
+    )
+}
+
+/// Build a shell command that decodes a base64 payload into a remote file via here-doc.
+pub(crate) fn cmd_decode_to_file(path_escaped: &str, b64_payload: &str) -> String {
+    format!(
+        "(\
+base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d -A 2>/dev/null > {p}\
+) << 'MARCEL_B64_EOF'\n{payload}\nMARCEL_B64_EOF",
+        p = path_escaped,
+        payload = b64_payload,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

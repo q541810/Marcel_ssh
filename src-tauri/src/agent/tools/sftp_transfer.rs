@@ -457,11 +457,9 @@ impl AgentTool for UploadFileTool {
         let payload = base64::b64_encode(&bytes);
         let escaped_remote = shell_escape(&final_remote);
         let cmd = format!(
-            "(\
-base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d -A 2>/dev/null > {p}\
-) << 'MARCEL_B64_EOF'\n{payload}\nMARCEL_B64_EOF\n[ -f {p} ] && wc -c < {p}",
+            "{decode}\n[ -f {p} ] && wc -c < {p}",
+            decode = base64::cmd_decode_to_file(&escaped_remote, &payload),
             p = escaped_remote,
-            payload = payload,
         );
 
         match ctx.exec(&cmd).await {
@@ -596,10 +594,7 @@ impl AgentTool for DownloadFileTool {
             ));
         }
 
-        let fetch_cmd = format!(
-            "(base64 -w0 {p} 2>/dev/null) || (base64 {p} 2>/dev/null | tr -d '\\n') || (openssl base64 -A -in {p} 2>/dev/null)",
-            p = escaped
-        );
+        let fetch_cmd = base64::cmd_encode_file(&escaped);
         let b64 = match ctx.exec(&fetch_cmd).await {
             Ok(s) => s,
             Err(e) => return Ok(ToolOutput::fail(

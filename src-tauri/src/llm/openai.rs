@@ -7,71 +7,12 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
+use crate::agent::thinking_filter::filter_thinking_tags;
 use crate::error::AppError;
 use crate::llm::provider::{
     LlmConfig, LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition,
 };
 use crate::llm::streaming::StreamEvent;
-
-/// Thinking tag markers used by many LLMs (DeepSeek-R1, Claude, etc.)
-const THINKING_START_TAGS: &[&str] = &["<thinking>", "<Thought>", "<think>"];
-const THINKING_END_TAGS: &[&str] = &["</thinking>", "</Thought>", "</think>"];
-
-/// Filters thinking/thought tags from streaming LLM content.
-/// Returns the filtered text and whether we're now inside a thinking block.
-///
-/// This handles fragmented streaming where tags may be split across chunks:
-/// - When `in_thinking` is false and a start tag is detected, the function
-///   strips everything from the start tag onwards.
-/// - When `in_thinking` is true, all text is suppressed until an end tag is found.
-/// - If a tag is incomplete at the end of the input, it may be output as normal text.
-fn filter_thinking_tags(input: &str, in_thinking: bool) -> (String, bool) {
-    if !in_thinking {
-        // Look for any start tag
-        let mut earliest_start = None;
-        let mut earliest_idx = input.len();
-
-        for tag in THINKING_START_TAGS {
-            if let Some(pos) = input.find(tag) {
-                if pos < earliest_idx {
-                    earliest_idx = pos;
-                    earliest_start = Some(pos);
-                }
-            }
-        }
-
-        if let Some(pos) = earliest_start {
-            // Everything before the start tag is valid text
-            let before = input[..pos].to_string();
-            (before, true)
-        } else {
-            // No start tag found, all text is valid
-            (input.to_string(), false)
-        }
-    } else {
-        // We're inside a thinking block, look for end tags
-        let mut earliest_end = None;
-        let mut earliest_idx = input.len();
-
-        for tag in THINKING_END_TAGS {
-            if let Some(pos) = input.find(tag) {
-                if pos < earliest_idx {
-                    earliest_idx = pos + tag.len();
-                    earliest_end = Some(pos + tag.len());
-                }
-            }
-        }
-
-        if let Some(pos) = earliest_end {
-            // End tag found, text after it is valid
-            let after = input[pos..].to_string();
-            (after, false)
-        } else {
-            // Still inside thinking block, suppress all text
-            (String::new(), true)
-        }
-    }
-}
 
 /// OpenAI / OpenAI-compatible LLM provider with streaming support.
 pub struct OpenAiProvider {

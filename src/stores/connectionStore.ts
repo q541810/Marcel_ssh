@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { withLoading } from './createCrudStore';
 
 interface ConnectionState {
   connections: SavedConnection[];
@@ -20,39 +21,24 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   loading: false,
   error: null,
 
-  fetchConnections: async () => {
-    set({ loading: true, error: null });
-    try {
-      const connections = await tauri.getConnections();
-      set({ connections, loading: false });
-    } catch (err) {
-      set({ error: String(err), loading: false });
-    }
-  },
+  fetchConnections: () => withLoading(set, async () => {
+    const connections = await tauri.getConnections();
+    set({ connections });
+  }),
 
-  addConnection: async (connection: SavedConnection) => {
-    set({ loading: true, error: null });
-    try {
-      await tauri.saveConnection(connection);
-      await get().fetchConnections();
-    } catch (err) {
-      set({ error: String(err), loading: false });
-    }
-  },
+  addConnection: (connection: SavedConnection) => withLoading(set, async () => {
+    await tauri.saveConnection(connection);
+    await get().fetchConnections();
+  }),
 
-  removeConnection: async (id: string) => {
-    set({ loading: true, error: null });
-    try {
-      await tauri.deleteConnection(id);
-      const { activeConnectionId } = get();
-      if (activeConnectionId === id) {
-        set({ activeConnectionId: null });
-      }
-      await get().fetchConnections();
-    } catch (err) {
-      set({ error: String(err), loading: false });
+  removeConnection: (id: string) => withLoading(set, async () => {
+    await tauri.deleteConnection(id);
+    const { activeConnectionId } = get();
+    if (activeConnectionId === id) {
+      set({ activeConnectionId: null });
     }
-  },
+    await get().fetchConnections();
+  }),
 
   setActiveConnection: (id: string | null) => {
     set({ activeConnectionId: id });

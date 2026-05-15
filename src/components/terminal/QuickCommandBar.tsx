@@ -114,13 +114,11 @@ export default function QuickCommandBar({ sessionId, sessionKey }: QuickCommandB
     }
   };
 
-  const handleExecute = async (command: QuickCommand) => {
-    try {
-      await execute(command, sessionId);
-      setOpen(false);
-    } catch (err) {
+  const handleExecute = (command: QuickCommand) => {
+    setOpen(false);
+    execute(command, sessionId).catch((err) => {
       setMessage(`执行失败：${String(err)}`);
-    }
+    });
   };
 
   const handleDelete = async (command: QuickCommand) => {

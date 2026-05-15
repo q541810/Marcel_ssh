@@ -29,31 +29,6 @@ const MAX_READ_BYTES: usize = 16_000;
 const MAX_LIST_BYTES: usize = 8_000;
 const MAX_FILE_WRITE_BYTES: usize = 1_000_000;
 
-// ────────────────────────────── helpers ──────────────────────────────
-
-/// Build a portable command that base64-encodes a file's contents to stdout.
-/// Tries GNU `base64 -w0`, falls back to BSD `base64`, then `openssl base64 -A`.
-fn cmd_read_b64(path_escaped: &str) -> String {
-    format!(
-        "(base64 -w0 {p} 2>/dev/null) || (base64 {p} 2>/dev/null | tr -d '\\n') || (openssl base64 -A -in {p} 2>/dev/null)",
-        p = path_escaped
-    )
-}
-
-/// Build a command that decodes base64 from a here-doc into the target path.
-fn cmd_write_b64(path_escaped: &str, b64_payload: &str) -> String {
-    // We use a here-doc with a unique sentinel and quote the sentinel so the
-    // shell does no expansion on the payload. base64 with `-d` is GNU; BSD
-    // accepts `-D`. We try `-d` first then fall back to `-D` and openssl.
-    format!(
-        "(\
-base64 -d 2>/dev/null > {p} || base64 -D 2>/dev/null > {p} || openssl base64 -d -A 2>/dev/null > {p}\
-) << 'MARCEL_B64_EOF'\n{payload}\nMARCEL_B64_EOF",
-        p = path_escaped,
-        payload = b64_payload,
-    )
-}
-
 // ────────────────────────────── ReadFileTool ──────────────────────────────
 
 pub struct ReadFileTool;
@@ -94,7 +69,7 @@ impl AgentTool for ReadFileTool {
             return Ok(ToolOutput::fail("read_file", "empty path"));
         }
         let escaped = shell_escape(path);
-        let cmd = cmd_read_b64(&escaped);
+        let cmd = base64::cmd_encode_file(&escaped);
 
         match ctx.exec(&cmd).await {
             Ok(b64) => {
@@ -187,7 +162,7 @@ impl AgentTool for WriteFileTool {
         // Always check the resulting file size to confirm success.
         let cmd = format!(
             "{write}\n[ -f {p} ] && wc -c < {p}",
-            write = cmd_write_b64(&escaped, &payload),
+            write = base64::cmd_decode_to_file(&escaped, &payload),
             p = escaped
         );
 
@@ -276,7 +251,7 @@ impl AgentTool for EditFileTool {
 
         // 1. Read current file
         let escaped = shell_escape(path);
-        let raw = match ctx.exec(&cmd_read_b64(&escaped)).await {
+        let raw = match ctx.exec(&base64::cmd_encode_file(&escaped)).await {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolOutput::fail(
@@ -349,7 +324,7 @@ impl AgentTool for EditFileTool {
 
         // 4. Write back
         let payload = base64::b64_encode(updated.as_bytes());
-        let cmd = cmd_write_b64(&escaped, &payload);
+        let cmd = base64::cmd_decode_to_file(&escaped, &payload);
         match ctx.exec(&cmd).await {
             Ok(_) => Ok(ToolOutput::ok(
                 format!("edit {} ({} replacement{})", path, occurrences, if occurrences == 1 { "" } else { "s" }),
@@ -438,47 +413,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn b64_roundtrip_text() {
-        let cases = [
-            "",
-            "a",
-            "ab",
-            "abc",
-            "hello, world",
-            "中文 🚀 混合内容\n第二行\r\n第三行",
-        ];
-        for s in cases {
-            let enc = base64::b64_encode(s.as_bytes());
-            let dec = base64::b64_decode(&enc).unwrap();
-            assert_eq!(dec, s.as_bytes(), "roundtrip failed for {:?}", s);
-        }
-    }
-
-    #[test]
-    fn b64_roundtrip_binary() {
-        let bytes: Vec<u8> = (0u8..=255).collect();
-        let enc = base64::b64_encode(&bytes);
-        let dec = base64::b64_decode(&enc).unwrap();
-        assert_eq!(dec, bytes);
-    }
-
-    #[test]
-    fn b64_decode_ignores_whitespace() {
-        let enc = "aGVs\nbG8s\nIHdv\ncmxk"; // "hello, world"
-        let dec = base64::b64_decode(enc).unwrap();
-        assert_eq!(dec, b"hello, world");
-    }
-
-    #[test]
-    fn b64_decode_rejects_garbage() {
-        assert!(base64::b64_decode("***").is_err());
-    }
-
-    #[test]
     fn cmd_helpers_quote_path() {
-        let c = cmd_read_b64("'/etc/foo bar'");
+        let c = base64::cmd_encode_file("'/etc/foo bar'");
         assert!(c.contains("'/etc/foo bar'"));
-        let w = cmd_write_b64("'/tmp/x'", "AAAA");
+        let w = base64::cmd_decode_to_file("'/tmp/x'", "AAAA");
         assert!(w.contains("MARCEL_B64_EOF"));
         assert!(w.contains("AAAA"));
     }
