@@ -3,7 +3,7 @@ import Toggle from '@/components/ui/Toggle';
 import { Section, Field } from './helpers';
 
 interface LlmSectionProps {
-  llmConfig: LlmConfig | null;
+  llmConfig: LlmConfig | null | undefined;
   updateLlm: (mutator: (l: LlmConfig) => LlmConfig) => void;
   hasStoredApiKey: boolean;
 }
