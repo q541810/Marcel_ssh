@@ -49,3 +49,8 @@ Agent 会自动规划步骤、执行命令，并在需要你确认时暂停等�
 ## 授权
 
 GNU General Public License v3.0
+
+---
+
+## 致谢
+感谢[heibaiya-dev](https://github.com/heibaiya-dev) 在项目初期的贡献，他的工作极大的优化了主界面观感（我真求你了，审查审查你的破代码吧，别再瞎发commit了）
