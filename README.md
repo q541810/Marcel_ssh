@@ -48,4 +48,4 @@ Agent 会自动规划步骤、执行命令，并在需要你确认时暂停等�
 
 ## 授权
 
-MIT
+GNU General Public License v3.0
