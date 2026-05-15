@@ -368,7 +368,33 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 
 
-## 9. 给 AI Agent 的指示
+## 9. 版本管理
+
+当前版本：**0.1.0**
+
+版本号在两个文件中，必须保持同步：
+
+| 文件 | 字段 | 示例 |
+|------|------|------|
+| `src-tauri/tauri.conf.json` | `version` | `"0.1.0"` |
+| `package.json` | `version` | `"0.1.0"` |
+
+### 版本号规则（语义化版本）
+
+- **主版本 (MAJOR)**：不兼容的 API/功能变更（如 Agent 架构大改、SSH 协议变更）
+- **次版本 (MINOR)**：向后兼容的功能新增（如新工具、新设置项）
+- **修订号 (PATCH)**：向后兼容的 bug 修复（如 UI 修复、内存泄漏修复）
+
+### 发布流程
+
+1. 修改 `src-tauri/tauri.conf.json` 和 `package.json` 中的版本号
+2. 提交更改并打 tag：`git tag v0.1.0`
+3. 执行 `pnpm tauri build` 生成安装包
+4. 在 GitHub Release 页面创建 Release，上传产物
+
+---
+
+## 10. 给 AI Agent 的指示
 
 > 以下内容专门为参与此项目开发的 AI 编码助手编写。
 
@@ -393,5 +419,7 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 7. 本文件是 **绝对权威** 是 **不可违反** 的，必须遵循本文件（除非你把本文件改成符合你需求的样子）
 
 8. 你不能执行任何预计耗时一秒以上的shell命令，但可以要求用户帮你执行（或者用户要求你这样做，使用智能体代理时一定要提醒他这个）
+
+9. 修改版本号时必须同时更新 `src-tauri/tauri.conf.json` 和 `package.json`
 
 

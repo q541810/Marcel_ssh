@@ -187,7 +187,15 @@ export default function AgentPanel() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.length === 0 && !activeConversationId && (
+        {!canInteract && (
+          <div className="text-center text-zinc-500 text-sm mt-8">
+            <p>请先连接 SSH 服务器。</p>
+            <p className="mt-1">
+              连接成功后即可使用智能助手。
+            </p>
+          </div>
+        )}
+        {canInteract && messages.length === 0 && !activeConversationId && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>暂无会话。</p>
             <p className="mt-1">

@@ -1,8 +1,8 @@
 # Marcel SSH (玛瑟尔 SSH)
 
 > **AI-Native SSH Terminal with Autonomous Agent — 以 AI Agent 自动化为核心差异化的下一代 SSH 终端工具**
-
 ---
+~~（照着wisdom ssh写的，嘻嘻，只是嫌他太贵给自己弄个平替）~~
 
 ## 快速开始
 
