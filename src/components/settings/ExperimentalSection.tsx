@@ -41,6 +41,19 @@ export function ExperimentalSection({ experimentalSettings, updateDraft }: Exper
           label="允许 Agent 使用 http_get 工具获取网页内容"
         />
       </Field>
+      <Field label="云原神">
+        <Toggle
+          checked={experimentalSettings.enableCloudPage}
+          onChange={(checked) => {
+            const current = experimentalSettings;
+            updateDraft((s) => ({
+              ...s,
+              experimentalSettings: { ...current, enableCloudPage: checked },
+            }));
+          }}
+          label="允许 Agent 打开云原神页面"
+        />
+      </Field>
       <Field label="通知测试">
         <Button
           variant="secondary"

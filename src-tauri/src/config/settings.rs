@@ -1,9 +1,7 @@
-use std::path::{Path, PathBuf};
-
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
 use crate::llm::provider::LlmConfig;
+use super::persist::JsonPersistable;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +94,9 @@ pub struct AgentModeSettings {
 pub struct ExperimentalSettings {
     pub enable_web_search: bool,
     pub enable_http_fetch: bool,
+    /// When enabled, the Agent can open the cloud gaming page in the main UI.
+    #[serde(default)]
+    pub enable_cloud_page: bool,
 }
 
 impl Default for ExperimentalSettings {
@@ -103,6 +104,7 @@ impl Default for ExperimentalSettings {
         Self {
             enable_web_search: true,
             enable_http_fetch: true,
+            enable_cloud_page: false,
         }
     }
 }
@@ -148,37 +150,8 @@ impl Default for AppSettings {
     }
 }
 
-impl AppSettings {
-    /// Load settings from a JSON file. Returns defaults if the file doesn't exist.
-    pub fn load_from_path(path: &Path) -> Result<Self, AppError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| AppError::Config(format!("读取设置文件失败: {}", e)))?;
-        if content.trim().is_empty() {
-            return Ok(Self::default());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::Config(format!("解析设置文件失败: {}", e)))
-    }
-
-    /// Serialize settings to a JSON file. Creates parent directories as needed.
-    pub fn save_to_path(&self, path: &Path) -> Result<(), AppError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Config(format!("创建配置目录失败: {}", e))
-            })?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| AppError::Config(format!("序列化设置失败: {}", e)))?;
-        std::fs::write(path, json)
-            .map_err(|e| AppError::Config(format!("写入设置文件失败: {}", e)))?;
-        Ok(())
-    }
-
-    /// Convenience: build the default settings.json path inside the app config dir.
-    pub fn default_file(config_dir: &Path) -> PathBuf {
-        config_dir.join("settings.json")
+impl JsonPersistable for AppSettings {
+    fn default_filename() -> &'static str {
+        "settings.json"
     }
 }

@@ -19,6 +19,7 @@ use crate::agent::conversation::ConversationDb;
 use crate::agent::runtime::AgentTask;
 use crate::agent::runtime::AgentTaskPlan;
 use crate::config::connections::ConnectionStore;
+use crate::config::persist::JsonPersistable;
 use crate::config::quick_commands::QuickCommandStore;
 use crate::config::settings::AppSettings;
 use crate::skills::store::SkillStore;
@@ -218,23 +219,23 @@ pub fn run() {
             commands::agent::agent_list_conversations_by_connection,
             commands::agent::agent_delete_conversations_by_session,
             // Config commands
-            commands::config::config_get_connections,
-            commands::config::config_save_connection,
-            commands::config::config_delete_connection,
-            commands::config::config_get_settings,
-            commands::config::config_save_settings,
-            commands::config::config_save_password,
-            commands::config::config_get_password,
-            commands::config::config_delete_password,
+            commands::connections::config_get_connections,
+            commands::connections::config_save_connection,
+            commands::connections::config_delete_connection,
+            commands::settings::config_get_settings,
+            commands::settings::config_save_settings,
+            commands::keychain::config_save_password,
+            commands::keychain::config_get_password,
+            commands::keychain::config_delete_password,
             // Quick command commands
             commands::quick_command::quick_command_list,
             commands::quick_command::quick_command_add,
             commands::quick_command::quick_command_update,
             commands::quick_command::quick_command_delete,
         // LLM API Key management
-        commands::config::config_save_llm_api_key,
-        commands::config::config_get_llm_api_key,
-        commands::config::config_delete_llm_api_key,
+        commands::keychain::config_save_llm_api_key,
+        commands::keychain::config_get_llm_api_key,
+        commands::keychain::config_delete_llm_api_key,
         // Skill commands
         commands::skill::skill_list,
         commands::skill::skill_add,

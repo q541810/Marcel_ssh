@@ -22,6 +22,7 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
 const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableWebSearch: true,
   enableHttpFetch: true,
+  enableCloudPage: false,
 };
 
 const DEFAULT_SETTINGS: AppSettings = {

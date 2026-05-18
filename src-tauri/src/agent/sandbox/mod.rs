@@ -92,153 +92,132 @@ impl Sandbox {
             return Err(AppError::Agent("Fork bomb pattern detected".into()));
         }
 
-        let segments = split_command_chain(trimmed).map_err(|e| match e {
-            ParseError::SubshellDetected => AppError::Agent(
-                "Command contains command/process substitution which cannot be \
-                 safely analyzed; use explicit commands instead."
-                    .into(),
-            ),
-            ParseError::UnbalancedQuote => {
-                AppError::Agent("Command has unbalanced quotes".into())
-            }
-            ParseError::ShellWordsError(s) => {
-                AppError::Agent(format!("Failed to parse command: {}", s))
-            }
-        })?;
+        // Shared parsing + baseline risk classification.
+        let (all_segments, all_tokens, base_risk) = parse_and_classify(trimmed)?;
 
-        let mut max_risk = RiskLevel::ReadOnly;
+        // Policy enforcement on parsed segments.
         let has_pipe = contains_top_level_pipe(trimmed);
-        for seg in &segments {
-            let parsed = parse_segment(seg).map_err(|e| match e {
-                ParseError::SubshellDetected => AppError::Agent(
-                    "Command contains command/process substitution".into(),
-                ),
-                ParseError::UnbalancedQuote => {
-                    AppError::Agent("Command has unbalanced quotes".into())
-                }
-                ParseError::ShellWordsError(s) => {
-                    AppError::Agent(format!("Failed to parse command: {}", s))
-                }
-            })?;
-            // Bare shell as pipe sink: `... | bash` etc.
-            if has_pipe && is_bare_shell(&parsed) {
-                return Err(AppError::Agent(
-                    "Piping into a shell interpreter is blocked".into(),
-                ));
+        for (raw_seg, tokens) in all_segments.iter().zip(all_tokens.iter()) {
+            if tokens.is_empty() {
+                continue;
             }
-            let r = self.check_segment(&parsed)?;
-            if r > max_risk {
-                max_risk = r;
+            let base_cmd = tokens[0].as_str();
+            let args = &tokens[1..];
+
+            // 1. Blocked base commands (exact + mkfs.* prefix).
+            for blocked in &self.policy.blocked_base_commands {
+                if base_cmd == blocked {
+                    return Err(AppError::Agent(format!(
+                        "Command '{}' is blocked by security policy",
+                        blocked
+                    )));
+                }
             }
-        }
-        Ok(max_risk)
-    }
-
-    fn check_segment(&self, parsed: &ParsedSegment) -> Result<RiskLevel, AppError> {
-        if parsed.tokens.is_empty() {
-            return Ok(RiskLevel::ReadOnly);
-        }
-
-        // 1. Blocked base commands (exact + mkfs.* prefix).
-        for blocked in &self.policy.blocked_base_commands {
-            if parsed.base_cmd == *blocked {
+            if base_cmd.starts_with("mkfs.") {
                 return Err(AppError::Agent(format!(
                     "Command '{}' is blocked by security policy",
-                    blocked
+                    base_cmd
                 )));
             }
-        }
-        if parsed.base_cmd.starts_with("mkfs.") {
-            return Err(AppError::Agent(format!(
-                "Command '{}' is blocked by security policy",
-                parsed.base_cmd
-            )));
-        }
 
-        // 2. Fork bomb: name() { ... | ... & } ;
-        if is_fork_bomb(&parsed.raw) {
-            return Err(AppError::Agent("Fork bomb pattern detected".into()));
-        }
+            // 2. Fork bomb: name() { ... | ... & } ;
+            // (already checked on raw string above)
 
-        // 3. Embedded eval: shell -c <s>, eval <s>, source/.
-        if let Some((kind, inner)) = &parsed.embedded_eval {
-            if kind == "source" || kind == "." {
-                return Ok(RiskLevel::HighRisk);
+            // 3. Embedded eval: shell -c <s>, eval <s>, source/.
+            if let Ok(parsed) = parse_segment(raw_seg) {
+                if let Some((kind, inner)) = &parsed.embedded_eval {
+                    if kind == "source" || kind == "." {
+                        // HighRisk but not blocked — continue to other segments.
+                    } else if let Some(s) = inner {
+                        // Recursively enforce policy on inner command.
+                        self.check_command(s)?;
+                    }
+                }
+                // Bare shell as pipe sink: `... | bash` etc.
+                if has_pipe && is_bare_shell(&parsed) {
+                    return Err(AppError::Agent(
+                        "Piping into a shell interpreter is blocked".into(),
+                    ));
+                }
             }
-            if let Some(s) = inner {
-                let inner_risk = self.check_command(s)?;
-                return Ok(std::cmp::max(RiskLevel::Moderate, inner_risk));
-            }
-            return Ok(RiskLevel::HighRisk);
-        }
 
-        // 4. rm -r [-f] <dangerous-target>
-        if parsed.base_cmd == "rm" {
-            let (recursive, _force, paths) = analyze_rm_args(&parsed.args);
-            if recursive {
-                for p in &paths {
-                    if is_dangerous_rm_target(p) {
-                        return Err(AppError::Agent(format!(
-                            "Refusing to recursively remove dangerous path: {}",
-                            p
-                        )));
+            // 4. rm -r [-f] <dangerous-target>
+            if base_cmd == "rm" {
+                let (recursive, _force, paths) = analyze_rm_args(args);
+                if recursive {
+                    for p in &paths {
+                        if is_dangerous_rm_target(p) {
+                            return Err(AppError::Agent(format!(
+                                "Refusing to recursively remove dangerous path: {}",
+                                p
+                            )));
+                        }
                     }
                 }
             }
-        }
 
-        // 5. dd of=/dev/...
-        if parsed.base_cmd == "dd" {
-            for a in &parsed.args {
-                if let Some(val) = a.strip_prefix("of=") {
-                    let norm = normalize_path(val);
-                    if norm.starts_with("/dev/") {
-                        return Err(AppError::Agent(
-                            "dd writes to block devices are blocked".into(),
-                        ));
+            // 5. dd of=/dev/...
+            if base_cmd == "dd" {
+                for a in args {
+                    if let Some(val) = a.strip_prefix("of=") {
+                        let norm = normalize_path(val);
+                        if norm.starts_with("/dev/") {
+                            return Err(AppError::Agent(
+                                "dd writes to block devices are blocked".into(),
+                            ));
+                        }
                     }
                 }
             }
-        }
 
-        // 6. blocked_patterns against re-joined tokens.
-        let rejoined = parsed.tokens.join(" ");
-        for pat in &self.policy.blocked_patterns {
-            if pattern_matches(&rejoined, pat) {
-                return Err(AppError::Agent(format!(
-                    "Command blocked by security policy: matches pattern '{}'",
-                    pat
-                )));
+            // 6. blocked_patterns against original segment string.
+            for pat in &self.policy.blocked_patterns {
+                if pattern_matches(raw_seg, pat) {
+                    return Err(AppError::Agent(format!(
+                        "Command blocked by security policy: matches pattern '{}'",
+                        pat
+                    )));
+                }
             }
-        }
-
-        // Compute base risk.
-        let mut base_risk = assess_segment_risk(parsed);
-        if parsed.sudo_wrapped && base_risk < RiskLevel::HighRisk {
-            base_risk = RiskLevel::HighRisk;
         }
 
         // 7. Protected paths in path-like args + redirect targets.
-        let mut candidate_paths: Vec<String> = parsed
-            .args
-            .iter()
-            .filter(|a| looks_like_path(a))
-            .cloned()
-            .collect();
-        candidate_paths.extend(parsed.redirect_targets.iter().cloned());
-        if base_risk >= RiskLevel::LowRisk {
-            for p in &candidate_paths {
-                let norm = normalize_path(p);
-                let np = Path::new(&norm);
-                for prot in &self.policy.protected_paths {
-                    if np.starts_with(prot) {
-                        return Ok(std::cmp::max(base_risk, RiskLevel::HighRisk));
+        // Re-parse for redirect_targets.
+        let segments = split_command_chain(trimmed).unwrap_or_default();
+        let mut final_risk = base_risk;
+        for seg in &segments {
+            if let Ok(parsed) = parse_segment(seg) {
+                let seg_risk = if parsed.sudo_wrapped && final_risk < RiskLevel::HighRisk {
+                    RiskLevel::HighRisk
+                } else {
+                    final_risk
+                };
+
+                let mut candidate_paths: Vec<String> = parsed
+                    .args
+                    .iter()
+                    .filter(|a| looks_like_path(a))
+                    .cloned()
+                    .collect();
+                candidate_paths.extend(parsed.redirect_targets.iter().cloned());
+                if seg_risk >= RiskLevel::LowRisk {
+                    for p in &candidate_paths {
+                        let norm = normalize_path(p);
+                        let np = Path::new(&norm);
+                        for prot in &self.policy.protected_paths {
+                            if np.starts_with(prot) {
+                                final_risk = std::cmp::max(seg_risk, RiskLevel::HighRisk);
+                            }
+                        }
                     }
+                }
+                if seg_risk > final_risk {
+                    final_risk = seg_risk;
                 }
             }
         }
 
-        Ok(base_risk)
+        Ok(final_risk)
     }
 }
 
@@ -248,22 +227,42 @@ impl Default for Sandbox {
     }
 }
 
-/// Free-function risk assessment used by tools needing a quick estimate.
-pub fn assess_risk(cmd: &str) -> RiskLevel {
-    let trimmed = cmd.trim();
-    if trimmed.is_empty() {
-        return RiskLevel::ReadOnly;
-    }
-    let segments = match split_command_chain(trimmed) {
-        Ok(s) => s,
-        Err(_) => return RiskLevel::HighRisk,
-    };
+/// Shared parsing + risk classification for a command string.
+/// Handles split_command_chain, parse_segment, embedded_eval recursion,
+/// assess_segment_risk + sudo elevation. Returns original segments, tokens, and max risk.
+fn parse_and_classify(cmd: &str) -> Result<(Vec<String>, Vec<Vec<String>>, RiskLevel), AppError> {
+    let segments = split_command_chain(cmd).map_err(|e| match e {
+        ParseError::SubshellDetected => AppError::Agent(
+            "Command contains command/process substitution which cannot be \
+             safely analyzed; use explicit commands instead."
+                .into(),
+        ),
+        ParseError::UnbalancedQuote => {
+            AppError::Agent("Command has unbalanced quotes".into())
+        }
+        ParseError::ShellWordsError(s) => {
+            AppError::Agent(format!("Failed to parse command: {}", s))
+        }
+    })?;
+
     let mut max_risk = RiskLevel::ReadOnly;
+    let mut all_segments: Vec<String> = Vec::new();
+    let mut all_tokens: Vec<Vec<String>> = Vec::new();
     for seg in &segments {
-        let parsed = match parse_segment(seg) {
-            Ok(p) => p,
-            Err(_) => return RiskLevel::HighRisk,
-        };
+        let parsed = parse_segment(seg).map_err(|e| match e {
+            ParseError::SubshellDetected => AppError::Agent(
+                "Command contains command/process substitution".into(),
+            ),
+            ParseError::UnbalancedQuote => {
+                AppError::Agent("Command has unbalanced quotes".into())
+            }
+            ParseError::ShellWordsError(s) => {
+                AppError::Agent(format!("Failed to parse command: {}", s))
+            }
+        })?;
+        all_segments.push(seg.to_string());
+        all_tokens.push(parsed.tokens.clone());
+
         let r = if let Some((kind, inner)) = &parsed.embedded_eval {
             if kind == "source" || kind == "." {
                 RiskLevel::HighRisk
@@ -283,7 +282,19 @@ pub fn assess_risk(cmd: &str) -> RiskLevel {
             max_risk = r;
         }
     }
-    max_risk
+    Ok((all_segments, all_tokens, max_risk))
+}
+
+/// Free-function risk assessment used by tools needing a quick estimate.
+pub fn assess_risk(cmd: &str) -> RiskLevel {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return RiskLevel::ReadOnly;
+    }
+    match parse_and_classify(trimmed) {
+        Ok((_, _, risk)) => risk,
+        Err(_) => RiskLevel::HighRisk,
+    }
 }
 
 fn assess_segment_risk(parsed: &ParsedSegment) -> RiskLevel {

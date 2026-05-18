@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
-
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use super::persist::JsonPersistable;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -124,33 +123,11 @@ impl QuickCommandStore {
         self.commands.retain(|cmd| cmd.id != id);
         self.commands.len() < len_before
     }
+}
 
-    pub fn save_to_path(&self, path: &Path) -> Result<(), AppError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError::Config(format!("创建快捷指令配置目录失败: {}", e)))?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| AppError::Config(format!("序列化快捷指令失败: {}", e)))?;
-        std::fs::write(path, json)
-            .map_err(|e| AppError::Config(format!("写入快捷指令配置失败: {}", e)))
-    }
-
-    pub fn load_from_path(path: &Path) -> Result<Self, AppError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| AppError::Config(format!("读取快捷指令配置失败: {}", e)))?;
-        if content.trim().is_empty() {
-            return Ok(Self::new());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::Config(format!("解析快捷指令配置失败: {}", e)))
-    }
-
-    pub fn default_file(config_dir: &Path) -> PathBuf {
-        config_dir.join("quick_commands.json")
+impl JsonPersistable for QuickCommandStore {
+    fn default_filename() -> &'static str {
+        "quick_commands.json"
     }
 }
 

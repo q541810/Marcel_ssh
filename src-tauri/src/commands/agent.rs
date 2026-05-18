@@ -3,7 +3,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
-use crate::agent::agent_loop::run_agent_loop;
+use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::conversation::Conversation;
 use crate::agent::runtime::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
@@ -50,12 +50,13 @@ pub async fn agent_start_task(
     state.agent_tasks.write().insert(task_id.clone(), task);
 
     // Snapshot config + skills
-    let (llm_config, agent_settings, _sandbox, skill_prompts) = {
+    let (llm_config, agent_settings, experimental_settings, _sandbox, skill_prompts) = {
         let settings = state.settings.read().await;
         let skills = state.skill_store.read().await;
         (
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
+            settings.experimental_settings.clone(),
             Sandbox::default(),
             skills.enabled_prompts(),
         )
@@ -84,9 +85,15 @@ pub async fn agent_start_task(
         messages.push(LlmMessage::user(prompt.clone()));
     }
 
-    // Build the registry once and reuse it for both tool advertisement
-    // and dispatch. This keeps definitions and execution in sync.
-    let registry = std::sync::Arc::new(ToolRegistry::with_builtins());
+    // Build the registry: start with built-ins, then conditionally
+    // add experimental tools based on settings.
+    let mut registry = ToolRegistry::with_builtins();
+    if experimental_settings.enable_cloud_page {
+        registry.register(std::sync::Arc::new(
+            crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
+        ));
+    }
+    let registry = std::sync::Arc::new(registry);
 
     // Choose which tools to expose based on mode
     let tools: Vec<ToolDefinition> = match mode {
@@ -103,36 +110,33 @@ pub async fn agent_start_task(
     };
 
     // Clone what the spawned task needs
-    let ssh = state.ssh_manager.clone_inner();
-    let task_id_spawn = task_id.clone();
-    let mode_spawn = mode.clone();
-    let app_spawn = app.clone();
-    let state_spawn = state.inner().clone();
-    let registry_spawn = registry.clone();
-    let conversation_id_spawn = conversation_id.clone();
-    let conv_db_spawn = state.conversation_db.clone();
+    let loop_ctx = LoopContext {
+        ssh: state.ssh_manager.clone(),
+        session_id: session_id.clone(),
+        app: app.clone(),
+        state: state.inner().clone(),
+        registry: registry.clone(),
+        conversation_id: conversation_id.clone(),
+        conv_db: state.conversation_db.clone(),
+    };
+    let task_id_for_log = task_id.clone();
+    let mode_for_log = mode.clone();
 
     tokio::spawn(async move {
         run_agent_loop(
-            task_id_spawn,
+            task_id,
             provider,
             messages,
             tools,
-            mode_spawn,
+            mode,
             agent_settings,
-            ssh,
-            session_id,
-            app_spawn,
-            state_spawn,
-            registry_spawn,
-            conversation_id_spawn,
-            conv_db_spawn,
+            loop_ctx,
         )
         .await;
     });
 
-    log::info!("Agent task started: {} ({:?})", task_id, mode);
-    Ok(task_id)
+    log::info!("Agent task started: {} ({:?})", task_id_for_log, mode_for_log);
+    Ok(task_id_for_log)
 }
 
 /// Stop (cancel) a running agent task.

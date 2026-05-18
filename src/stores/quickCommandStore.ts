@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { QuickCommand, QuickCommandInput, QuickCommandPatch } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
-import { withLoading } from './createCrudStore';
 
 interface QuickCommandState {
   commands: QuickCommand[];
@@ -29,12 +28,16 @@ export const useQuickCommandStore = create<QuickCommandState>((set, get) => ({
   executingId: null,
   lastSessionKey: null,
 
-  load: (sessionKey?: string | null) => {
-    set({ lastSessionKey: sessionKey ?? null });
-    return withLoading(set, async () => {
+  load: async (sessionKey?: string | null) => {
+    set({ lastSessionKey: sessionKey ?? null, loading: true, error: null });
+    try {
       const commands = await tauri.quickCommandList(sessionKey ?? null);
       set({ commands });
-    });
+    } catch (err) {
+      set({ error: String(err) });
+    } finally {
+      set({ loading: false });
+    }
   },
 
   add: async (input: QuickCommandInput) => {

@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import type { Skill } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
-import { withLoading } from './createCrudStore';
 
 interface SkillState {
   skills: Skill[];
@@ -20,20 +19,37 @@ export const useSkillStore = create<SkillState>((set, get) => ({
   loading: false,
   error: null,
 
-  fetchSkills: () => withLoading(set, async () => {
-    const skills = await tauri.skillList();
-    set({ skills });
-  }),
+  fetchSkills: async () => {
+    set({ loading: true, error: null });
+    try {
+      const skills = await tauri.skillList();
+      set({ skills });
+    } catch (err) {
+      set({ error: String(err) });
+    } finally {
+      set({ loading: false });
+    }
+  },
 
-  addSkill: (name, description, prompt) => withLoading(set, async () => {
-    await tauri.skillAdd(name, description, prompt);
-    await get().fetchSkills();
-  }),
+  addSkill: async (name, description, prompt) => {
+    set({ loading: true, error: null });
+    try {
+      await tauri.skillAdd(name, description, prompt);
+      await get().fetchSkills();
+    } catch (err) {
+      set({ error: String(err), loading: false });
+    }
+  },
 
-  updateSkill: (id, name, description, prompt) => withLoading(set, async () => {
-    await tauri.skillUpdate(id, name, description, prompt);
-    await get().fetchSkills();
-  }),
+  updateSkill: async (id, name, description, prompt) => {
+    set({ loading: true, error: null });
+    try {
+      await tauri.skillUpdate(id, name, description, prompt);
+      await get().fetchSkills();
+    } catch (err) {
+      set({ error: String(err), loading: false });
+    }
+  },
 
   toggleSkill: async (id) => {
     // Optimistic update
@@ -55,8 +71,13 @@ export const useSkillStore = create<SkillState>((set, get) => ({
     }
   },
 
-  deleteSkill: (id) => withLoading(set, async () => {
-    await tauri.skillDelete(id);
-    await get().fetchSkills();
-  }),
+  deleteSkill: async (id) => {
+    set({ loading: true, error: null });
+    try {
+      await tauri.skillDelete(id);
+      await get().fetchSkills();
+    } catch (err) {
+      set({ error: String(err), loading: false });
+    }
+  },
 }));

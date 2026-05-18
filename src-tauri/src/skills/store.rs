@@ -1,10 +1,8 @@
-use std::path::{Path, PathBuf};
-
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::error::AppError;
+use crate::config::persist::JsonPersistable;
 
 fn default_true() -> bool {
     true
@@ -56,35 +54,6 @@ pub struct SkillStore {
 impl SkillStore {
     pub fn new() -> Self {
         Self { skills: Vec::new() }
-    }
-
-    pub fn default_file(config_dir: &Path) -> PathBuf {
-        config_dir.join("skills.json")
-    }
-
-    pub fn load_from_path(path: &Path) -> Result<Self, AppError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| AppError::Config(format!("read skills file: {}", e)))?;
-        if content.trim().is_empty() {
-            return Ok(Self::new());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::Config(format!("parse skills file: {}", e)))
-    }
-
-    pub fn save_to_path(&self, path: &Path) -> Result<(), AppError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError::Config(format!("create config dir: {}", e)))?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| AppError::Config(format!("serialize skills: {}", e)))?;
-        std::fs::write(path, json)
-            .map_err(|e| AppError::Config(format!("write skills file: {}", e)))?;
-        Ok(())
     }
 
     pub fn list(&self) -> &[Skill] {
@@ -152,5 +121,11 @@ impl SkillStore {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+}
+
+impl JsonPersistable for SkillStore {
+    fn default_filename() -> &'static str {
+        "skills.json"
     }
 }

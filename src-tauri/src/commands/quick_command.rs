@@ -1,6 +1,7 @@
 use tauri::State;
 use uuid::Uuid;
 
+use crate::config::persist::JsonPersistable;
 use crate::config::quick_commands::{QuickCommand, QuickCommandInput, QuickCommandPatch, QuickCommandStore};
 use crate::error::AppError;
 use crate::AppState;

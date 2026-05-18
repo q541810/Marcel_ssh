@@ -4,6 +4,7 @@ use base64::Engine;
 use tauri::State;
 use zip::ZipArchive;
 
+use crate::config::persist::JsonPersistable;
 use crate::error::AppError;
 use crate::skills::store::{Skill, SkillStore};
 use crate::AppState;

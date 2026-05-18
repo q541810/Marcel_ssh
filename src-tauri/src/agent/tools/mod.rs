@@ -19,12 +19,13 @@ use tauri::AppHandle;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::error::AppError;
-use crate::ssh::connection::SshManagerClone;
+use crate::ssh::connection::SshManager;
 
 pub mod base64;
 pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
+pub mod open_cloud_page;
 pub mod plan;
 pub mod process;
 pub mod search;
@@ -91,7 +92,7 @@ pub struct ToolInfo {
 /// helper methods for running commands on it.
 #[derive(Clone)]
 pub struct ToolContext {
-    pub ssh: SshManagerClone,
+    pub ssh: SshManager,
     pub session_id: String,
     pub app_handle: AppHandle,
     /// Optional security policy. When set, tools that run a sandbox
@@ -101,7 +102,7 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    pub fn new(ssh: SshManagerClone, session_id: impl Into<String>, app_handle: AppHandle) -> Self {
+    pub fn new(ssh: SshManager, session_id: impl Into<String>, app_handle: AppHandle) -> Self {
         Self {
             ssh,
             session_id: session_id.into(),

@@ -1,9 +1,7 @@
-use std::path::{Path, PathBuf};
-
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
+use super::persist::JsonPersistable;
 
 /// A saved SSH connection configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,39 +55,11 @@ impl ConnectionStore {
             c.last_connected = Some(Utc::now());
         }
     }
+}
 
-    /// Serialize the store to a JSON file at the given path.
-    /// Creates parent directories as needed.
-    pub fn save_to_path(&self, path: &Path) -> Result<(), AppError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Config(format!("创建配置目录失败: {}", e))
-            })?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| AppError::Config(format!("序列化连接配置失败: {}", e)))?;
-        std::fs::write(path, json)
-            .map_err(|e| AppError::Config(format!("写入连接配置文件失败: {}", e)))?;
-        Ok(())
-    }
-
-    /// Load the store from a JSON file. Returns an empty store if the file does not exist.
-    pub fn load_from_path(path: &Path) -> Result<Self, AppError> {
-        if !path.exists() {
-            return Ok(Self::new());
-        }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| AppError::Config(format!("读取连接配置文件失败: {}", e)))?;
-        if content.trim().is_empty() {
-            return Ok(Self::new());
-        }
-        serde_json::from_str(&content)
-            .map_err(|e| AppError::Config(format!("解析连接配置失败: {}", e)))
-    }
-
-    /// Convenience: build the default connections.json path inside the app config dir.
-    pub fn default_file(config_dir: &Path) -> PathBuf {
-        config_dir.join("connections.json")
+impl JsonPersistable for ConnectionStore {
+    fn default_filename() -> &'static str {
+        "connections.json"
     }
 }
 

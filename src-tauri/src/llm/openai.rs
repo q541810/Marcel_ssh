@@ -346,7 +346,6 @@ fn build_request_body(
     let mut body = serde_json::json!({
         "model": config.model,
         "messages": messages_json,
-        "max_tokens": config.max_tokens,
         "temperature": config.temperature,
         "stream": stream,
     });

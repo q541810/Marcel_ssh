@@ -174,6 +174,7 @@ export interface TerminalColors {
 export interface ExperimentalSettings {
   enableWebSearch: boolean;
   enableHttpFetch: boolean;
+  enableCloudPage: boolean;
 }
 
 export interface AppSettings {

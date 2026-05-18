@@ -1,11 +1,10 @@
 pub mod agent_loop;
 pub mod audit;
-pub mod context;
 pub mod conversation;
-pub mod executor;
 pub mod plan_handler;
 pub mod runtime;
 pub mod sandbox;
 pub mod system_prompt;
 pub mod thinking_filter;
+pub mod tool_dispatcher;
 pub mod tools;
