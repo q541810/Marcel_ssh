@@ -49,7 +49,7 @@ export function LlmSection({ llmConfig, updateLlm, hasStoredApiKey }: LlmSection
       <Field label="API Key">
         <input
           type="password"
-          value={llmConfig?.apiKey || (hasStoredApiKey ? 'sk-******' : '')}
+          value={llmConfig?.apiKey ?? (hasStoredApiKey ? 'sk-******' : '')}
           onChange={(e) =>
             updateLlm((l) => ({ ...l, apiKey: e.target.value }))
           }

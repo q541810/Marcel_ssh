@@ -19,10 +19,10 @@ pub struct SettingsResponse {
 }
 
 /// Check if the given API key looks like a masked placeholder.
-/// Front-end may display "sk-******" or similar to indicate "unchanged".
+/// Front-end displays "sk-******" when a key exists in the keychain but
+/// is not sent to the frontend (for security).
 fn is_masked_key(key: &str) -> bool {
-    // Common mask patterns — only check explicit mask indicators,
-    // never block short real keys (e.g. Ollama local keys like "sk-test123")
+    key == "sk-******" ||
     key.contains("******") ||
     key.chars().all(|c| c == '*') ||
     key == "sk-"
@@ -60,7 +60,27 @@ pub async fn config_save_settings(
     }
     
     let mut current = state.settings.write().await;
-    *current = settings;
+    // Preserve the in-memory API key when the frontend sends an empty or masked value.
+    // The key is not serialized (skip_serializing), so the frontend always sees ""
+    // or "sk-******". Overwriting the entire settings object would lose the real key
+    // from memory, causing it to be gone on the next restart.
+    if let Some(ref new_llm) = settings.llm_config {
+        if new_llm.api_key.is_empty() || is_masked_key(&new_llm.api_key) {
+            if let Some(ref old_llm) = current.llm_config {
+                let mut final_settings = settings;
+                if let Some(ref mut llm) = final_settings.llm_config {
+                    llm.api_key = old_llm.api_key.clone();
+                }
+                *current = final_settings;
+            } else {
+                *current = settings;
+            }
+        } else {
+            *current = settings;
+        }
+    } else {
+        *current = settings;
+    }
     let path = AppSettings::default_file(&state.config_dir);
     current.save_to_path(&path)?;
     Ok(())
