@@ -6,6 +6,9 @@
 
 ~~（照着wisdom ssh写的，嘻嘻，只是嫌他太贵给自己弄个平替）~~
 
+## 交流群 
+QQ:1101255501
+
 ## 快速开始
 
 1. 前往 [Release 页面](https://github.com/q541810/Marcel_ssh/releases) 下载最新安装包
