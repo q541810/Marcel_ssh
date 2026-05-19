@@ -14,7 +14,6 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   apiKey: '',
   model: '',
   baseUrl: '',
-  maxTokens: 4096,
   temperature: 0.1,
   allowInvalidCerts: false,
 };

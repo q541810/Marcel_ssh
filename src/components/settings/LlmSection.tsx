@@ -95,25 +95,6 @@ export function LlmSection({ llmConfig, updateLlm, hasStoredApiKey }: LlmSection
           className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
         />
       </Field>
-      <Field label="Max Tokens">
-        <input
-          type="number"
-          min={256}
-          max={200000}
-          step={256}
-          value={llmConfig?.maxTokens ?? 4096}
-          onChange={(e) =>
-            updateLlm((l) => ({
-              ...l,
-              maxTokens: Math.max(
-                256,
-                Math.min(200000, parseInt(e.target.value, 10) || 4096),
-              ),
-            }))
-          }
-          className="w-32 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        />
-      </Field>
       <Field label="TLS">
         <Toggle
           checked={llmConfig?.allowInvalidCerts ?? false}

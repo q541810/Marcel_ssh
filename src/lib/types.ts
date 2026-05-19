@@ -142,7 +142,6 @@ export interface LlmConfig {
   apiKey?: string;  // Optional - loaded from keychain, not persisted to JSON
   model: string;
   baseUrl?: string | null;
-  maxTokens: number;
   temperature: number;
   allowInvalidCerts: boolean;
 }

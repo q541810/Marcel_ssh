@@ -91,8 +91,6 @@ pub struct LlmConfig {
     pub api_key: String,
     pub model: String,
     pub base_url: Option<String>,
-    #[serde(default = "default_max_tokens")]
-    pub max_tokens: u32,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
     /// Allow self-signed / invalid TLS certificates. Useful for on-prem
@@ -103,10 +101,6 @@ pub struct LlmConfig {
 
 fn default_provider() -> ProviderType {
     ProviderType::OpenAI
-}
-
-fn default_max_tokens() -> u32 {
-    4096
 }
 
 fn default_temperature() -> f32 {
@@ -124,7 +118,6 @@ impl Default for LlmConfig {
             model: std::env::var("MARCEL_SSH_LLM_MODEL").unwrap_or_else(|_| "gpt-4".to_string()),
             // No default base URL - users must configure their own endpoint
             base_url: std::env::var("MARCEL_SSH_LLM_BASE_URL").ok(),
-            max_tokens: 4096,
             temperature: 0.1,
             // Only allow invalid certs if explicitly set via environment variable
             // This is a security-sensitive setting that should not have a permissive default
@@ -172,7 +165,6 @@ mod tests {
             api_key: "super-secret-key-12345".to_string(),
             model: "gpt-4".to_string(),
             base_url: Some("https://api.openai.com".to_string()),
-            max_tokens: 4096,
             temperature: 0.7,
             allow_invalid_certs: false,
         };
@@ -199,7 +191,6 @@ mod tests {
         let json = r#"{
             "providerType": "openai",
             "model": "gpt-4",
-            "maxTokens": 2048,
             "temperature": 0.5,
             "allowInvalidCerts": false
         }"#;
@@ -209,7 +200,6 @@ mod tests {
 
         assert_eq!(config.provider_type, ProviderType::OpenAI);
         assert_eq!(config.model, "gpt-4");
-        assert_eq!(config.max_tokens, 2048);
         // API key should be empty when deserialized from file
         assert_eq!(config.api_key, "");
     }
