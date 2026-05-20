@@ -73,7 +73,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [setActiveMenuId]);
 
   const visibleCommands = useMemo(() => {
     return commands.filter((command) => command.scope === tab);
