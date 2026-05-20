@@ -24,6 +24,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [menuProcess, setMenuProcess] = useState<ProcessInfo | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [killConfirm, setKillConfirm] = useState<ProcessInfo | null>(null);
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('cpu');
@@ -112,13 +113,14 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       await sshExec(sessionId, `kill -TERM ${proc.pid}`);
       await loadProcesses();
     } catch (err) {
-      setError(`解除失败：${String(err)}`);
+      setError(`终止失败：${String(err)}`);
     }
   };
 
   const handleContextMenu = (e: React.MouseEvent, proc: ProcessInfo) => {
     e.preventDefault();
     setMenuProcess(proc);
+    setMenuPos({ x: e.clientX, y: e.clientY });
   };
 
   const toggleSort = (key: SortKey) => {
@@ -230,9 +232,8 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           ref={menuRef}
           className="fixed z-50 w-36 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
           style={{
-            top: '50%',
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
+            top: menuPos.y,
+            left: menuPos.x,
           }}
         >
           <button
@@ -250,7 +251,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
             }}
             className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
           >
-            解除进程
+            终止进程
           </button>
         </div>
       )}
@@ -258,7 +259,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       {killConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-red-300 mb-2">确认解除进程</h3>
+            <h3 className="text-sm font-semibold text-red-300 mb-2">确认终止进程</h3>
             <p className="text-xs text-zinc-400 mb-1">
               PID: <span className="text-zinc-200">{killConfirm.pid}</span>
             </p>
@@ -278,7 +279,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
                 onClick={() => handleKill(killConfirm)}
                 className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
               >
-                确认解除
+                确认终止
               </button>
             </div>
           </div>
