@@ -8,7 +8,8 @@ import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import QuickCommandBar from './QuickCommandBar';
+import QuickCommandPanel from './QuickCommandPanel';
+import BottomTabBar from './BottomTabBar';
 import type { TerminalColors } from '@/lib/types';
 
 interface TerminalInstance {
@@ -80,6 +81,9 @@ export default function Terminal() {
   const terminalsRef = useRef<Map<string, TerminalInstance>>(new Map());
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ text: string; sessionId: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [animDirection, setAnimDirection] = useState<'enter' | 'exit'>('exit');
+  const prevTabRef = useRef<string | null>(null);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -300,6 +304,16 @@ export default function Terminal() {
     };
   }, []);
 
+  // Track animation direction for enter/exit easing
+  useEffect(() => {
+    if (activeTab === 'quick-command' && prevTabRef.current !== 'quick-command') {
+      setAnimDirection('enter');
+    } else if (activeTab !== 'quick-command' && prevTabRef.current === 'quick-command') {
+      setAnimDirection('exit');
+    }
+    prevTabRef.current = activeTab;
+  }, [activeTab]);
+
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
@@ -324,8 +338,25 @@ export default function Terminal() {
       </div>
 
       {hasSessions && activeSessionId && activeSession?.status === 'connected' && (
-        <div className="flex flex-shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-900 p-3">
-          <QuickCommandBar sessionId={activeSessionId} sessionKey={activeSession.configId} />
+        <div className="flex flex-col flex-shrink-0">
+          <div
+            style={{
+              maxHeight: activeTab === 'quick-command' ? '16rem' : '0',
+              transition: `max-height 200ms ${
+                animDirection === 'enter'
+                  ? 'cubic-bezier(0.4, 0, 1, 1)'
+                  : 'cubic-bezier(0, 0, 0.2, 1)'
+              }`,
+            }}
+            className={`overflow-hidden ${
+              activeTab === 'quick-command' ? 'border-t border-zinc-800' : ''
+            }`}
+          >
+            <div className="h-64 bg-zinc-900">
+              <QuickCommandPanel sessionId={activeSessionId} sessionKey={activeSession.configId} />
+            </div>
+          </div>
+          <BottomTabBar activeTab={activeTab} onTabChange={setActiveTab} />
         </div>
       )}
 
