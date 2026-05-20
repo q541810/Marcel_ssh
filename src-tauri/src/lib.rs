@@ -206,6 +206,7 @@ pub fn run() {
             commands::ssh::ssh_send_input,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_list_sessions,
+            commands::ssh::ssh_exec,
             // Agent commands
             commands::agent::agent_start_task,
             commands::agent::agent_stop_task,

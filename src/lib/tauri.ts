@@ -44,6 +44,10 @@ export async function sshListSessions(): Promise<string[]> {
   return invoke<string[]>('ssh_list_sessions');
 }
 
+export async function sshExec(sessionId: string, command: string): Promise<string> {
+  return invoke<string>('ssh_exec', { sessionId, command });
+}
+
 // Agent commands
 
 export async function agentStartTask(

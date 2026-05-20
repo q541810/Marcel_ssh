@@ -9,6 +9,7 @@ import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import QuickCommandPanel from './QuickCommandPanel';
+import ProcessPanel from './ProcessPanel';
 import BottomTabBar from './BottomTabBar';
 import type { TerminalColors } from '@/lib/types';
 
@@ -82,6 +83,10 @@ export default function Terminal() {
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ text: string; sessionId: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [displayTab, setDisplayTab] = useState<string | null>(null);
+  const [panelHeight, setPanelHeight] = useState(256);
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const panelResizeStartRef = useRef<{ y: number; height: number } | null>(null);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -302,6 +307,51 @@ export default function Terminal() {
     };
   }, []);
 
+  // Panel resize handlers
+  const handlePanelResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    panelResizeStartRef.current = { y: e.clientY, height: panelHeight };
+    setIsResizingPanel(true);
+  }, [panelHeight]);
+
+  useEffect(() => {
+    if (!isResizingPanel) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!panelResizeStartRef.current) return;
+      const delta = panelResizeStartRef.current.y - e.clientY;
+      const newHeight = panelResizeStartRef.current.height + delta;
+      setPanelHeight(Math.min(500, Math.max(100, newHeight)));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingPanel(false);
+      panelResizeStartRef.current = null;
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [isResizingPanel]);
+
+  // Delay content unmount until animation completes
+  useEffect(() => {
+    if (activeTab) {
+      setDisplayTab(activeTab);
+    } else {
+      const timer = setTimeout(() => setDisplayTab(null), 200);
+      return () => clearTimeout(timer);
+    }
+  }, [activeTab]);
+
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
@@ -329,15 +379,25 @@ export default function Terminal() {
         <div className="flex flex-col flex-shrink-0">
           <div
             style={{
-              maxHeight: activeTab === 'quick-command' ? '16rem' : '0',
-              transition: 'max-height 200ms cubic-bezier(0.16, 1, 0.3, 1)',
+              maxHeight: activeTab ? `${panelHeight}px` : '0',
+              transition: isResizingPanel ? 'none' : 'max-height 200ms cubic-bezier(0.16, 1, 0.3, 1)',
             }}
             className={`overflow-hidden ${
-              activeTab === 'quick-command' ? 'border-t border-zinc-800' : ''
+              activeTab ? 'border-t border-zinc-800' : ''
             }`}
           >
-            <div className="h-64 bg-zinc-900">
-              <QuickCommandPanel sessionId={activeSessionId} sessionKey={activeSession.configId} />
+            <div
+              className="h-1 cursor-row-resize hover:bg-indigo-500/50 transition-colors flex-shrink-0"
+              onMouseDown={handlePanelResizeMouseDown}
+              style={{ touchAction: 'none' }}
+            />
+            <div className="bg-zinc-900" style={{ height: `${panelHeight - 4}px` }}>
+              {displayTab === 'quick-command' && (
+                <QuickCommandPanel sessionId={activeSessionId} sessionKey={activeSession.configId} />
+              )}
+              {displayTab === 'process' && (
+                <ProcessPanel sessionId={activeSessionId} />
+              )}
             </div>
           </div>
           <BottomTabBar activeTab={activeTab} onTabChange={setActiveTab} />

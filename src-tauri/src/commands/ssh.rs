@@ -58,3 +58,13 @@ pub async fn ssh_list_sessions(
 ) -> Result<Vec<String>, AppError> {
     Ok(state.ssh_manager.list_sessions().await)
 }
+
+/// Execute a command on a remote SSH session and return the output.
+#[tauri::command]
+pub async fn ssh_exec(
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+) -> Result<String, AppError> {
+    state.ssh_manager.exec_command(&session_id, &command).await
+}
