@@ -82,8 +82,6 @@ export default function Terminal() {
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ text: string; sessionId: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [animDirection, setAnimDirection] = useState<'enter' | 'exit'>('exit');
-  const prevTabRef = useRef<string | null>(null);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -304,16 +302,6 @@ export default function Terminal() {
     };
   }, []);
 
-  // Track animation direction for enter/exit easing
-  useEffect(() => {
-    if (activeTab === 'quick-command' && prevTabRef.current !== 'quick-command') {
-      setAnimDirection('enter');
-    } else if (activeTab !== 'quick-command' && prevTabRef.current === 'quick-command') {
-      setAnimDirection('exit');
-    }
-    prevTabRef.current = activeTab;
-  }, [activeTab]);
-
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
@@ -342,11 +330,7 @@ export default function Terminal() {
           <div
             style={{
               maxHeight: activeTab === 'quick-command' ? '16rem' : '0',
-              transition: `max-height 200ms ${
-                animDirection === 'enter'
-                  ? 'cubic-bezier(0.4, 0, 1, 1)'
-                  : 'cubic-bezier(0, 0, 0.2, 1)'
-              }`,
+              transition: 'max-height 200ms cubic-bezier(0.16, 1, 0.3, 1)',
             }}
             className={`overflow-hidden ${
               activeTab === 'quick-command' ? 'border-t border-zinc-800' : ''
