@@ -18,6 +18,10 @@ QQ:1101255501
 
 ---
 
+## 界面展示
+
+![Marcel SSH 展示图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E5%B1%95%E7%A4%BA%E5%9B%BE.png?raw=true)
+
 ## 核心功能
 
 - **智能助手 (Agent)**：用自然语言描述你想做的事，Agent 自动在远程服务器上执行
