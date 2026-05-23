@@ -11,7 +11,10 @@ src-tauri/target/
 # IDE
 .vscode/
 .idea/
-.trae/
+.trae/*
+!.trae/skills/
+!.trae/skills/release/
+!.trae/skills/release/SKILL.md
 *.swp
 *.swo
 
