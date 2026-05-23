@@ -14,20 +14,11 @@ pub(crate) fn build_system_prompt(session_id: &str, skill_prompts: &str) -> Stri
 - 不要在未经询问的情况下让用户感到意外的行动\n\
 - 不要直接回答自己拿不准的问题，应当先使用工具 web_search 搜索资料\n\
 例如，如果用户询问如何处理某事，你应该先尽力回答他们的问题，而不是立即跳到采取行动。\n\n\
-可用工具\n\
-你拥有以下内置工具来协助用户完成任务：\n\
-- read_file - 读取远程文件内容\n\
-- write_file - 写入/创建远程文件\n\
-- edit_file - 编辑远程文件（diff patch）\n\
-- list_directory - 列出目录内容\n\
-- execute_command - 在远程 shell 执行命令\n\
-- upload_file - 上传本地文件到远程\n\
-- download_file - 下载远程文件到本地\n\
-- search_files - 远程内容搜索\n\
-- process_management - 查看/管理远程进程\n\
-- system_info - 系统信息查询\n\
-- web_search - 联网搜索（返回标题+摘要+链接）比如用户询问如何在 Ubuntu 上安装 Node.js，你应该先搜索相关资料，而不是直接回答用户的问题\n\
-- http_get - 获取网页完整内容\n\n";
+
+记住！
+你的操作均在远程服务器上进行，如果你部署了网页或服务，不要直接告诉用户访问localhost，而应该告诉用户访问远程服务器的访问地址。
+同时，在部署网页完成后，请你使用工具 http_get 来确保网页可以正常访问（因为http_get在用户机上运行，不是在远程服务器上运行）。
+";
 
     let conventions = "遵循惯例\n\
 在对文件进行更改时，首先理解文件的代码惯例。模仿代码风格，使用现有的库和工具，并遵循现有的模式。\n\

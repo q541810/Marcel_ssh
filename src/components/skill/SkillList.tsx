@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSkillStore } from '@/stores/skillStore';
 import type { Skill } from '@/lib/types';
 import SkillCreateModal from './SkillCreateModal';
+import SkillEditModal from './SkillEditModal';
 
 // ---------- SkillCard ----------
 
@@ -9,13 +10,15 @@ interface SkillCardProps {
   skill: Skill;
   onToggle: () => void;
   onDelete: () => void;
+  onContextMenu: (e: React.MouseEvent, skill: Skill) => void;
 }
 
-function SkillCard({ skill, onToggle, onDelete }: SkillCardProps) {
+function SkillCard({ skill, onToggle, onDelete, onContextMenu }: SkillCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div
+      onContextMenu={(e) => onContextMenu(e, skill)}
       className={
         'group rounded-lg border transition-colors px-2 py-2 ' +
         (skill.enabled
@@ -81,6 +84,16 @@ export default function SkillList() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; skill: Skill } | null>(null);
+  const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  useEffect(() => {
+    const handler = () => closeContextMenu();
+    window.addEventListener('click', handler);
+    return () => window.removeEventListener('click', handler);
+  }, [closeContextMenu]);
 
   useEffect(() => {
     fetchSkills();
@@ -164,6 +177,10 @@ export default function SkillList() {
             onDelete={() => {
               if (confirm('确定删除技能 ' + skill.name + ' ?')) deleteSkill(skill.id);
             }}
+            onContextMenu={(e, s) => {
+              e.preventDefault();
+              setContextMenu({ x: e.clientX, y: e.clientY, skill: s });
+            }}
           />
         ))}
 
@@ -174,6 +191,45 @@ export default function SkillList() {
 
       {/* Create modal */}
       <SkillCreateModal open={createOpen} onClose={() => setCreateOpen(false)} />
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-zinc-800 border border-zinc-700 rounded-xl shadow-lg py-1 min-w-28"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              setEditingSkill(contextMenu.skill);
+              closeContextMenu();
+            }}
+            className="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-700"
+          >
+            编辑
+          </button>
+          <hr className="border-zinc-700 my-1" />
+          <button
+            onClick={() => {
+              const s = contextMenu.skill;
+              closeContextMenu();
+              if (confirm(`确定删除技能 "${s.name}" 吗？`)) deleteSkill(s.id);
+            }}
+            className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:bg-zinc-700"
+          >
+            删除
+          </button>
+        </div>
+      )}
+
+      {/* Edit modal */}
+      {editingSkill && (
+        <SkillEditModal
+          skill={editingSkill}
+          open={!!editingSkill}
+          onClose={() => setEditingSkill(null)}
+        />
+      )}
     </div>
   );
 }
