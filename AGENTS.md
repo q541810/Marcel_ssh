@@ -372,12 +372,13 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 当前版本：**0.1.3**
 
-版本号在两个文件中，必须保持同步：
+版本号在以下文件中，必须保持同步：
 
 | 文件                          | 字段        | 示例        |
 | --------------------------- | --------- | --------- |
 | `src-tauri/tauri.conf.json` | `version` | `"0.1.0"` |
 | `package.json`              | `version` | `"0.1.0"` |
+| `latest.json`               | `version` | `"0.1.3"` |
 
 ### 版本号规则（语义化版本）
 
@@ -387,7 +388,7 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 ### 发布流程
 
-1. 修改 `src-tauri/tauri.conf.json` 和 `package.json` 中的版本号
+1. 修改 `src-tauri/tauri.conf.json`、`package.json` 和 `latest.json` 中的版本号
 2. 提交更改并打 tag：`git tag v0.1.0`
 3. 执行 `pnpm tauri build` 生成安装包
 4. 在 GitHub Release 页面创建 Release，上传产物

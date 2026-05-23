@@ -10,6 +10,7 @@ import type {
   QuickCommand,
   QuickCommandInput,
   QuickCommandPatch,
+  UpdateCheckResult,
 } from './types';
 
 interface ParsedSkill {
@@ -229,4 +230,10 @@ export async function skillDelete(id: string): Promise<void> {
 
 export async function importSkillFile(fileData: string, fileName: string): Promise<ParsedSkill> {
   return invoke<ParsedSkill>('import_skill_file', { fileData, fileName });
+}
+
+// Update check
+
+export async function checkUpdate(): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>('check_update');
 }

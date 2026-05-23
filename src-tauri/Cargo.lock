@@ -3192,6 +3192,7 @@ dependencies = [
  "rusqlite",
  "russh",
  "rustc_version_runtime",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

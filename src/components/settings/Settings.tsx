@@ -13,6 +13,7 @@ import { FontSizeInput } from './FontSizeInput';
 import { CommandPolicySection } from './CommandPolicySection';
 import { LlmSection } from './LlmSection';
 import { ExperimentalSection } from './ExperimentalSection';
+import AboutSection from './AboutSection';
 
 interface SectionNavItem {
   id: string;
@@ -24,6 +25,7 @@ const SECTION_ITEMS: SectionNavItem[] = [
   { id: 'settings-llm', label: 'LLM 配置' },
   { id: 'settings-command-policy', label: '命令策略' },
   { id: 'settings-experimental', label: '实验性功能' },
+  { id: 'settings-about', label: '关于' },
 ];
 
 export default function Settings() {
@@ -147,7 +149,7 @@ export default function Settings() {
     clearPreview();
   };
 
-  const experimentalSettings = draft.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true };
+  const experimentalSettings = draft.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true, enableCloudPage: false };
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -251,6 +253,8 @@ export default function Settings() {
             experimentalSettings={experimentalSettings}
             updateDraft={updateDraft}
           />
+
+          <AboutSection />
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ import WindowControls from '@/components/ui/WindowControls';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
+import { checkUpdate } from '@/lib/tauri';
 import type { AgentMode } from '@/lib/types';
 
 const AGENT_PANEL_MIN_WIDTH = 260;
@@ -26,6 +27,7 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
   const [navView, setNavView] = useState<NavView>('sessions');
+  const [updateAvailable, setUpdateAvailable] = useState(false);
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -40,6 +42,9 @@ export default function App() {
     fetchSkills().catch(err => {
       console.error('Failed to load skills:', err);
     });
+    checkUpdate().then(res => {
+      if (res.hasUpdate) setUpdateAvailable(true);
+    }).catch(() => {});
   }, [loadSettings, fetchSkills]);
 
   useEffect(() => {
@@ -141,7 +146,7 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <NavRail active={navView} onChange={handleNavChange} />
+          <NavRail active={navView} onChange={handleNavChange} updateAvailable={updateAvailable} />
 
         <aside
           className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"

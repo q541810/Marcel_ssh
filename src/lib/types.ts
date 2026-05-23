@@ -241,6 +241,14 @@ export interface StoredMessage {
   reasoningContent?: string | null;
 }
 
+// Update check types
+
+export interface UpdateCheckResult {
+  hasUpdate: boolean;
+  latestVersion: string;
+  releaseUrl: string;
+}
+
 // Plan / Todolist types
 
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
