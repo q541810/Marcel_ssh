@@ -151,12 +151,12 @@ export function handleTextDelta(
       return newMsgs;
     });
   } else {
-    let loadingCleared = state.loadingCleared;
-    let newAssistantId = '';
-    let newMsgIndex = -1;
+    const initialLoadingCleared = state.loadingCleared;
 
     handler.updateMessages(conversationId, (convMsgs) => {
       let newMsgs = [...convMsgs];
+      let loadingCleared = initialLoadingCleared;
+
       if (!loadingCleared) {
         const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
         if (loadingIdx !== -1) {
@@ -172,18 +172,15 @@ export function handleTextDelta(
         timestamp: new Date().toISOString(),
       };
       newMsgs.push(newMsg);
-      newAssistantId = newMsg.id;
-      newMsgIndex = newMsgs.length - 1;
+
+      setStreamState(taskId, {
+        assistantMessageId: newMsg.id,
+        messageIndex: newMsgs.length - 1,
+        loadingCleared,
+        toolResultCount: getStreamState(taskId).toolResultCount,
+      });
 
       return newMsgs;
-    });
-
-    const finalState = getStreamState(taskId);
-    setStreamState(taskId, {
-      assistantMessageId: newAssistantId,
-      messageIndex: newMsgIndex,
-      loadingCleared,
-      toolResultCount: finalState.toolResultCount,
     });
   }
 
@@ -235,12 +232,12 @@ export function handleThinkingDelta(
       return newMsgs;
     });
   } else {
-    let loadingCleared = state.loadingCleared;
-    let newAssistantId = '';
-    let newMsgIndex = -1;
+    const initialLoadingCleared = state.loadingCleared;
 
     handler.updateMessages(conversationId, (convMsgs) => {
       let newMsgs = [...convMsgs];
+      let loadingCleared = initialLoadingCleared;
+
       if (!loadingCleared) {
         const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
         if (loadingIdx !== -1) {
@@ -258,18 +255,15 @@ export function handleThinkingDelta(
         timestamp: new Date().toISOString(),
       };
       newMsgs.push(newMsg);
-      newAssistantId = newMsg.id;
-      newMsgIndex = newMsgs.length - 1;
+
+      setStreamState(taskId, {
+        assistantMessageId: newMsg.id,
+        messageIndex: newMsgs.length - 1,
+        loadingCleared,
+        toolResultCount: getStreamState(taskId).toolResultCount,
+      });
 
       return newMsgs;
-    });
-
-    const finalState = getStreamState(taskId);
-    setStreamState(taskId, {
-      assistantMessageId: newAssistantId,
-      messageIndex: newMsgIndex,
-      loadingCleared,
-      toolResultCount: finalState.toolResultCount,
     });
   }
 }
