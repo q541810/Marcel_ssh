@@ -122,7 +122,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       const llmHistory = get()
         .messages[conversationId as string]
         .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isLoading)
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: m.content, reasoningContent: m.reasoningContent }));
 
       taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId as string, llmHistory);
     } catch (err) {

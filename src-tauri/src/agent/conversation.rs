@@ -44,6 +44,9 @@ pub struct StoredMessage {
     pub created_at: chrono::DateTime<Utc>,
     /// JSON-serialized tool_calls metadata (for assistant messages with tool invocations).
     pub tool_calls_json: Option<String>,
+    /// Reasoning/thinking content from the model (DeepSeek thinking mode).
+    /// Must be passed back to the API unchanged in subsequent requests.
+    pub reasoning_content: Option<String>,
 }
 
 pub struct ConversationDb {
@@ -137,6 +140,26 @@ impl ConversationDb {
             log::info!("Migration complete: tool_calls_json column added");
         }
 
+        // Migration: add reasoning_content column if it doesn't exist yet
+        let needs_reasoning_column = {
+            let cols: Vec<String> = conn
+                .prepare("PRAGMA table_info(messages)")
+                .map(|mut stmt| {
+                    stmt.query_map([], |r| r.get::<_, String>(1))
+                        .expect("query_map failed")
+                        .filter_map(|r| r.ok())
+                        .collect::<Vec<String>>()
+                })
+                .unwrap_or_default();
+            !cols.iter().any(|c| c == "reasoning_content")
+        };
+        if needs_reasoning_column {
+            log::info!("Migrating conversation database: adding reasoning_content column");
+            conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: reasoning_content column added");
+        }
+
         log::info!("Conversation database initialized at: {}", path_str);
 
         Ok(Self {
@@ -202,7 +225,7 @@ impl ConversationDb {
     pub fn load_messages(&self, conversation_id: &str) -> RusqliteResult<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json
+            "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content
              FROM messages
              WHERE conversation_id = ?1",
         )?;
@@ -220,6 +243,7 @@ impl ConversationDb {
                         .parse()
                         .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                     tool_calls_json: row.get(6).ok(),
+                    reasoning_content: row.get(7).ok(),
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -234,6 +258,7 @@ impl ConversationDb {
         content: &str,
         timestamp: &str,
         tool_calls_json: Option<&str>,
+        reasoning_content: Option<&str>,
     ) -> RusqliteResult<StoredMessage> {
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
@@ -241,9 +266,9 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            (&id, conversation_id, role, content, timestamp, &now_str, tool_calls_json),
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (&id, conversation_id, role, content, timestamp, &now_str, tool_calls_json, reasoning_content),
         )?;
         drop(conn);
 
@@ -257,6 +282,7 @@ impl ConversationDb {
             timestamp: timestamp.to_string(),
             created_at: now,
             tool_calls_json: tool_calls_json.map(String::from),
+            reasoning_content: reasoning_content.map(String::from),
         })
     }
 
@@ -365,7 +391,7 @@ mod tests {
             .expect("Failed to create conversation");
 
         let msg = db
-            .save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None)
+            .save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None, None)
             .expect("Failed to save message");
         assert!(!msg.id.is_empty());
         assert_eq!(msg.role, "user");
@@ -387,7 +413,7 @@ mod tests {
             .create_conversation("conn_1", "To Delete")
             .expect("Failed to create conversation");
 
-        db.save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None)
+        db.save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None, None)
             .expect("Failed to save message");
 
         db.delete_conversation(&conversation.id)

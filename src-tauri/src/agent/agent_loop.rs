@@ -82,7 +82,7 @@ pub(crate) async fn run_agent_loop(
     // Persist only the current prompt (the last user message).
     if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User) {
         if !msg.content.is_empty() {
-            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339(), None);
+            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339(), None, None);
         }
     }
 
@@ -142,7 +142,7 @@ pub(crate) async fn run_agent_loop(
                 ..assistant_msg
             };
             messages.push(cleaned_msg.clone());
-            let _ = conv_db.save_message(&conversation_id, "assistant", &cleaned_msg.content, &Utc::now().to_rfc3339(), None);
+            let _ = conv_db.save_message(&conversation_id, "assistant", &cleaned_msg.content, &Utc::now().to_rfc3339(), None, cleaned_msg.reasoning_content.as_deref());
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
         }
@@ -171,7 +171,7 @@ pub(crate) async fn run_agent_loop(
             })
             .collect();
 
-        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None);
+        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None, assistant_msg.reasoning_content.as_deref());
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the dispatcher
@@ -211,6 +211,7 @@ pub(crate) async fn run_agent_loop(
                 content: exec.output.clone(),
                 tool_calls: None,
                 tool_call_id: Some(tc.id.clone()),
+                reasoning_content: None,
             });
 
             // 6. Handle plan-related tool outputs
@@ -249,6 +250,7 @@ pub(crate) async fn run_agent_loop(
                 &exec.output,
                 &Utc::now().to_rfc3339(),
                 tool_result_json.as_deref(),
+                None,
             );
         }
     }

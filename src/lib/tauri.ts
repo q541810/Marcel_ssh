@@ -55,7 +55,7 @@ export async function agentStartTask(
   prompt: string,
   mode: string,
   conversationId: string,
-  history: { role: string; content: string }[],
+  history: { role: string; content: string; reasoningContent?: string }[],
 ): Promise<string> {
   return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
 }

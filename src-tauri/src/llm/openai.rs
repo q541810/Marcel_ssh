@@ -105,6 +105,7 @@ impl OpenAiProvider {
         }
 
         let mut accumulated_text = String::new();
+        let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<PartialToolCall> = Vec::new();
         let mut buffer = String::new();
         let mut stream = response.bytes_stream();
@@ -141,6 +142,11 @@ impl OpenAiProvider {
                     Ok(chunk) => {
                         for choice in chunk.choices {
                             if let Some(delta) = choice.delta {
+                                if let Some(ref reasoning) = delta.reasoning_content {
+                                    if !reasoning.is_empty() {
+                                        accumulated_reasoning.push_str(reasoning);
+                                    }
+                                }
                                 if let Some(text) = delta.content {
                                     if !text.is_empty() {
                                         let (filtered, new_in_thinking) =
@@ -229,11 +235,18 @@ impl OpenAiProvider {
             )
         };
 
+        let reasoning = if accumulated_reasoning.is_empty() {
+            None
+        } else {
+            Some(accumulated_reasoning)
+        };
+
         Ok(LlmMessage {
             role: LlmRole::Assistant,
             content: accumulated_text,
             tool_calls: final_tool_calls,
             tool_call_id: None,
+            reasoning_content: reasoning,
         })
     }
 }
@@ -339,6 +352,12 @@ fn build_request_body(
                     serde_json::Value::String(tcid.clone()),
                 );
             }
+            if let Some(rc) = &m.reasoning_content {
+                obj.insert(
+                    "reasoning_content".into(),
+                    serde_json::Value::String(rc.clone()),
+                );
+            }
             serde_json::Value::Object(obj)
         })
         .collect();
@@ -386,6 +405,8 @@ struct ChatDelta {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<DeltaToolCall>>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
