@@ -84,8 +84,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.warn('Disconnect error (session may already be closed):', err);
     } finally {
       if (configId) {
-        const agentStore = (await import('@/stores/agentStore')).useAgentStore;
-        agentStore.getState().clearConnectionConversations(configId);
+        const otherSessionExists = Object.values(get().sessions)
+          .some((s) => s.id !== sessionId && s.configId === configId);
+        if (!otherSessionExists) {
+          const agentStore = (await import('@/stores/agentStore')).useAgentStore;
+          agentStore.getState().clearConnectionConversations(configId);
+        }
       }
 
       set((state) => {
