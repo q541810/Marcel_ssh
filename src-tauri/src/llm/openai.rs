@@ -145,6 +145,8 @@ impl OpenAiProvider {
                                 if let Some(ref reasoning) = delta.reasoning_content {
                                     if !reasoning.is_empty() {
                                         accumulated_reasoning.push_str(reasoning);
+                                        let _ = event_tx
+                                            .send(StreamEvent::ThinkingDelta { text: reasoning.clone() });
                                     }
                                 }
                                 if let Some(text) = delta.content {

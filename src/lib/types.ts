@@ -191,6 +191,7 @@ export interface AppSettings {
 // LLM stream events
 export type LlmStreamEvent =
   | { type: 'textDelta'; text: string }
+  | { type: 'thinkingDelta'; text: string }
   | { type: 'toolCallStart'; id: string; name: string }
   | { type: 'toolCallDelta'; id: string; argumentsDelta: string }
   | { type: 'done' }

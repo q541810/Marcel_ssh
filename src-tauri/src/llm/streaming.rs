@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub enum StreamEvent {
     /// Incremental text delta from the assistant.
     TextDelta { text: String },
+    /// Incremental thinking/reasoning content from the model.
+    ThinkingDelta { text: String },
     /// A new tool call has begun streaming.
     ToolCallStart { id: String, name: String },
     /// Incremental arguments fragment for an in-flight tool call.

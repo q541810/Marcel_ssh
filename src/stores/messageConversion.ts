@@ -221,6 +221,7 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     role: m.role as AgentMessage['role'],
     content: m.content,
     timestamp: m.timestamp,
+    reasoningContent: m.reasoningContent || undefined,
   };
 
   for (const strategy of conversionStrategies) {

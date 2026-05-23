@@ -129,10 +129,25 @@ export function handleTextDelta(
       let { messageIndex: idx } = state;
       if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
         idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
-        if (idx === -1) return convMsgs;
       }
       const newMsgs = [...convMsgs];
-      newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + streamEv.text };
+      if (idx === -1) {
+        // Fallback: target message not found, create new
+        const newMsg: AgentMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: streamEv.text,
+          timestamp: new Date().toISOString(),
+        };
+        newMsgs.push(newMsg);
+        setStreamState(taskId, {
+          ...getStreamState(taskId),
+          assistantMessageId: newMsg.id,
+          messageIndex: newMsgs.length - 1,
+        });
+      } else {
+        newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + streamEv.text };
+      }
       return newMsgs;
     });
   } else {
@@ -177,6 +192,88 @@ export function handleTextDelta(
   }
 }
 
+export function handleThinkingDelta(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  loadingAssistantId: string,
+  streamEv: { type: 'thinkingDelta'; text: string },
+) {
+  const state = getStreamState(taskId);
+
+  if (state.assistantMessageId) {
+    handler.updateMessages(conversationId, (convMsgs) => {
+      let { messageIndex: idx } = state;
+      if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
+        idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
+      }
+      const newMsgs = [...convMsgs];
+      if (idx === -1) {
+        // Fallback: target message not found, create new
+        const newMsg: AgentMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: '',
+          reasoningContent: streamEv.text,
+          isThinking: true,
+          timestamp: new Date().toISOString(),
+        };
+        newMsgs.push(newMsg);
+        setStreamState(taskId, {
+          ...getStreamState(taskId),
+          assistantMessageId: newMsg.id,
+          messageIndex: newMsgs.length - 1,
+        });
+      } else {
+        const msg = newMsgs[idx];
+        newMsgs[idx] = {
+          ...msg,
+          reasoningContent: (msg.reasoningContent || '') + streamEv.text,
+          isThinking: true,
+        };
+      }
+      return newMsgs;
+    });
+  } else {
+    let loadingCleared = state.loadingCleared;
+    let newAssistantId = '';
+    let newMsgIndex = -1;
+
+    handler.updateMessages(conversationId, (convMsgs) => {
+      let newMsgs = [...convMsgs];
+      if (!loadingCleared) {
+        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
+        if (loadingIdx !== -1) {
+          newMsgs.splice(loadingIdx, 1);
+          loadingCleared = true;
+        }
+      }
+
+      const newMsg: AgentMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: '',
+        reasoningContent: streamEv.text,
+        isThinking: true,
+        timestamp: new Date().toISOString(),
+      };
+      newMsgs.push(newMsg);
+      newAssistantId = newMsg.id;
+      newMsgIndex = newMsgs.length - 1;
+
+      return newMsgs;
+    });
+
+    const finalState = getStreamState(taskId);
+    setStreamState(taskId, {
+      assistantMessageId: newAssistantId,
+      messageIndex: newMsgIndex,
+      loadingCleared,
+      toolResultCount: finalState.toolResultCount,
+    });
+  }
+}
+
 export function handleDone(
   handler: StreamHandler,
   taskId: string,
@@ -187,11 +284,19 @@ export function handleDone(
 
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs.filter((m) => {
+      // Remove the loading placeholder
       if (m.id === loadingAssistantId) return false;
-      if (m.role === 'assistant' && m.content === '' && !m.toolCall) return false;
+      // Remove empty assistant messages without content, tool calls, or reasoning
+      if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.reasoningContent) return false;
       return true;
     });
-    return newMsgs;
+    // Clear isThinking and isLoading flags on all assistant messages
+    return newMsgs.map((m) => {
+      if (m.role === 'assistant' && (m.isThinking || m.isLoading)) {
+        return { ...m, isThinking: false, isLoading: false };
+      }
+      return m;
+    });
   });
 
   handler.clearActiveTaskIf(taskId);

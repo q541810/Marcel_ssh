@@ -8,6 +8,7 @@ import type {
 import {
   handleToolResult,
   handleTextDelta,
+  handleThinkingDelta,
   handleDone,
   handleError,
   createDefaultStreamHandler,
@@ -74,6 +75,11 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'textDelta')) {
         handleTextDelta(handler, taskId, conversationId, loadingAssistantId, ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'thinkingDelta')) {
+        handleThinkingDelta(handler, taskId, conversationId, loadingAssistantId, ev);
         return;
       }
 
