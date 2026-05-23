@@ -29,6 +29,7 @@ pub struct ToolCall {
 
 /// A message in the LLM conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LlmMessage {
     pub role: LlmRole,
     pub content: String,

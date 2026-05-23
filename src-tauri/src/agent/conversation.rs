@@ -35,6 +35,7 @@ pub struct Conversation {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StoredMessage {
     pub id: String,
     pub conversation_id: String,
