@@ -27,7 +27,7 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
   const [navView, setNavView] = useState<NavView>('sessions');
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -43,7 +43,7 @@ export default function App() {
       console.error('Failed to load skills:', err);
     });
     checkUpdate().then(res => {
-      if (res.hasUpdate) setUpdateAvailable(true);
+      if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
     }).catch(() => {});
   }, [loadSettings, fetchSkills]);
 
@@ -146,7 +146,7 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-          <NavRail active={navView} onChange={handleNavChange} updateAvailable={updateAvailable} />
+          <NavRail active={navView} onChange={handleNavChange} />
 
         <aside
           className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
@@ -198,6 +198,28 @@ export default function App() {
           </aside>
         </div>
       </div>
+
+      {/* Update toast */}
+      {updateToast && (
+        <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+          <a
+            href={updateToast.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block bg-black text-white rounded-xl shadow-2xl border border-zinc-700 px-4 py-3 hover:bg-zinc-900 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div>
+                <p className="text-sm font-medium text-white">新版本 {updateToast.version} 可用</p>
+                <p className="text-xs text-zinc-400 mt-0.5">点击前往 GitHub 下载</p>
+              </div>
+            </div>
+          </a>
+        </div>
+      )}
     </div>
   );
 }

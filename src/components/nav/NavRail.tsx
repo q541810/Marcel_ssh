@@ -6,7 +6,6 @@ export type NavView = 'sessions' | 'skills' | 'mcp' | 'settings';
 interface Props {
   active: NavView;
   onChange: (view: NavView) => void;
-  updateAvailable?: boolean;
 }
 
 interface NavItem {
@@ -107,7 +106,7 @@ function NavButton({
   );
 }
 
-export default function NavRail({ active, onChange, updateAvailable }: Props) {
+export default function NavRail({ active, onChange }: Props) {
   const [helpOpen, setHelpOpen] = useState(false);
 
   return (
@@ -128,16 +127,11 @@ export default function NavRail({ active, onChange, updateAvailable }: Props) {
           active={false}
           onClick={() => setHelpOpen(true)}
         />
-        <div className="relative">
-          <NavButton
-            item={BOTTOM_ITEM}
-            active={active === BOTTOM_ITEM.value}
-            onClick={() => onChange(BOTTOM_ITEM.value)}
-          />
-          {updateAvailable && (
-            <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-amber-400" />
-          )}
-        </div>
+        <NavButton
+          item={BOTTOM_ITEM}
+          active={active === BOTTOM_ITEM.value}
+          onClick={() => onChange(BOTTOM_ITEM.value)}
+        />
       </div>
       <Modal open={helpOpen} onClose={() => setHelpOpen(false)} title="终端使用指南">
         <div className="px-4 py-3 text-sm text-zinc-300 space-y-2">
