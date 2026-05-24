@@ -456,6 +456,12 @@ impl SshManager {
         guard.get(session_id).and_then(|c| c.connection_id.clone())
     }
 
+    /// Get the host and port for a session.
+    pub async fn get_connection_info(&self, session_id: &str) -> Option<(String, u16)> {
+        let guard = self.connections.read().await;
+        guard.get(session_id).map(|c| (c.host.clone(), c.port))
+    }
+
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.

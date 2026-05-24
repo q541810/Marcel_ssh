@@ -22,6 +22,7 @@ use crate::error::AppError;
 use crate::ssh::connection::SshManager;
 
 pub mod base64;
+pub mod connection_info;
 pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
@@ -240,6 +241,7 @@ impl ToolRegistry {
     /// [`register_skills`] for progressive disclosure.
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
+        r.register(Arc::new(connection_info::ConnectionInfoTool::new()));
         r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
         r.register(Arc::new(file_ops::ReadFileTool::new()));
         r.register(Arc::new(file_ops::WriteFileTool::new()));
@@ -299,8 +301,9 @@ mod tests {
     fn registry_with_builtins_has_fourteen_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-        assert_eq!(names.len(), 14, "expected 14 built-in tools, got {:?}", names);
+        assert_eq!(names.len(), 15, "expected 15 built-in tools, got {:?}", names);
         for expected in [
+            "connection_info",
             "execute_command",
             "read_file",
             "write_file",

@@ -307,7 +307,13 @@ export function handleError(
   handler.updateTaskStatus(taskId, 'failed');
 
   handler.updateMessages(conversationId, (convMsgs) => {
-    const newMsgs = convMsgs.filter((m) => m.id !== loadingAssistantId);
+    const newMsgs = convMsgs
+      .filter((m) => m.id !== loadingAssistantId)
+      .map((m) =>
+        m.role === 'assistant' && (m.isThinking || m.isLoading)
+          ? { ...m, isThinking: false, isLoading: false }
+          : m,
+      );
     return [
       ...newMsgs,
       {

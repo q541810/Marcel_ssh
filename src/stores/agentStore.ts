@@ -170,10 +170,20 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       set((state) => {
         const task = state.tasks[taskId];
         if (!task) return state;
+        // Clear isThinking/isLoading on all assistant messages
+        const messages: Record<string, AgentMessage[]> = {};
+        for (const convId of Object.keys(state.messages)) {
+          messages[convId] = state.messages[convId].map((m) =>
+            m.role === 'assistant' && (m.isThinking || m.isLoading)
+              ? { ...m, isThinking: false, isLoading: false }
+              : m,
+          );
+        }
         return {
           tasks: { ...state.tasks, [taskId]: { ...task, status: 'cancelled' } },
           activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
           pendingApproval: null,
+          messages,
         };
       });
     }
