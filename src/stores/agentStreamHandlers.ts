@@ -146,7 +146,7 @@ export function handleTextDelta(
           messageIndex: newMsgs.length - 1,
         });
       } else {
-        newMsgs[idx] = { ...newMsgs[idx], content: newMsgs[idx].content + streamEv.text };
+        newMsgs[idx] = { ...newMsgs[idx], isThinking: false, content: newMsgs[idx].content + streamEv.text };
       }
       return newMsgs;
     });

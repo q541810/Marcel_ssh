@@ -57,9 +57,17 @@ function asStr(v: unknown): string | undefined {
 }
 
 /** Extract a short command preview from tool arguments */
+function formatToolName(toolName: string): { display: string; isSkill: boolean } {
+  if (toolName.startsWith('skill_')) {
+    return { display: `SKILL ${toolName.slice(6)}`, isSkill: true };
+  }
+  return { display: toolName, isSkill: false };
+}
+
 function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
   if (!args) return '';
 
+  if (toolName.startsWith('skill_')) return '';
   if (toolName === 'execute_command') {
     const cmd = asStr(args.command);
     if (cmd) {
@@ -99,20 +107,31 @@ export default function ToolCallCard({ message }: Props) {
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {
     const tr = message.toolResult;
+    const { display: displayName, isSkill } = formatToolName(tr.toolName);
+    // Skill tools render as thinking-style text, not as cards
+    if (isSkill) {
+      return (
+        <div className="flex justify-start my-1">
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <span>{tr.summary || displayName}</span>
+          </div>
+        </div>
+      );
+    }
     const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tr.toolName, tr.arguments);
 
     return (
-      <div className={`rounded-lg border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
         <button
           onClick={() => setExpanded((v) => !v)}
           className="group w-full text-left"
         >
-          <div className="flex items-center justify-between px-3 py-2">
+          <div className="flex items-center justify-between px-3 py-1.5">
             <div className="flex items-center gap-2 min-w-0">
               <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
                 {icon}
-                <span>{tr.toolName}</span>
+                <span>{displayName}</span>
               </span>
               {preview && (
                 <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
@@ -132,7 +151,7 @@ export default function ToolCallCard({ message }: Props) {
           </div>
         </button>
         {expanded && tr.result && (
-          <div className="border-t border-zinc-700/50 px-3 py-2">
+          <div className="border-t border-zinc-700/50 px-3 py-1.5">
             <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
               {tr.result}
             </pre>
@@ -145,16 +164,27 @@ export default function ToolCallCard({ message }: Props) {
   // Handle assistant messages with toolCall (live streaming tool call info)
   if (message.toolCall) {
     const tc = message.toolCall;
+    const { display: displayName, isSkill } = formatToolName(tc.name);
+    // Skill tools render as thinking-style text, not as cards
+    if (isSkill) {
+      return (
+        <div className="flex justify-start my-1">
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <span>{displayName}</span>
+          </div>
+        </div>
+      );
+    }
     const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tc.name, tc.arguments);
 
     return (
-      <div className="rounded-lg border border-zinc-700/60 bg-zinc-800/50">
-        <div className="flex items-center justify-between px-3 py-2">
+      <div className="rounded-md border border-zinc-700/60 bg-zinc-800/50">
+        <div className="flex items-center justify-between px-3 py-1.5">
           <div className="flex items-center gap-2 min-w-0">
             <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
               {icon}
-              <span>{tc.name}</span>
+              <span>{displayName}</span>
             </span>
             {preview && (
               <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>

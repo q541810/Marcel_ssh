@@ -2,9 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { AGENT_MODES } from '@/lib/constants';
-import type { AgentMode } from '@/lib/types';
+import type { AgentMode, AgentMessage } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
+import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
 import ApprovalDialog from './ApprovalDialog';
 import PlanList from './PlanList';
 
@@ -139,6 +140,60 @@ export default function AgentPanel() {
 
   const currentModeInfo = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
+  // ── Preprocess messages: hide sandwiched thinking, merge exploration tools ──
+  function isToolRelated(msg: AgentMessage): boolean {
+    return !!((msg.role === 'tool' && msg.toolResult) || (msg.role === 'assistant' && msg.toolCall));
+  }
+
+  function isThinkingOnly(msg: AgentMessage): boolean {
+    return msg.role === 'assistant' && !!msg.reasoningContent && !msg.content && !msg.toolCall && !msg.isLoading;
+  }
+
+  function processedMessages(): (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] {
+    const n = messages.length;
+    // First pass: hide thinking-only messages that precede any tool card
+    function nextRelevant(idx: number): AgentMessage | null {
+      let i = idx + 1;
+      while (i < n) {
+        if (!isThinkingOnly(messages[i])) return messages[i];
+        i += 1;
+      }
+      return null;
+    }
+    const filtered: AgentMessage[] = [];
+    for (let i = 0; i < n; i++) {
+      if (isThinkingOnly(messages[i])) {
+        const next = nextRelevant(i);
+        if (next && isToolRelated(next)) {
+          continue;
+        }
+      }
+      filtered.push(messages[i]);
+    }
+    // Second pass: group 4+ consecutive exploration tools
+    const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
+    const m = filtered.length;
+    let i = 0;
+    while (i < m) {
+      if (isExplorationTool(filtered[i])) {
+        let j = i;
+        while (j < m && isExplorationTool(filtered[j])) {
+          j++;
+        }
+        if (j - i >= 4) {
+          result.push({ kind: 'exploration', tools: filtered.slice(i, j) });
+          i = j;
+          continue;
+        }
+      }
+      result.push(filtered[i]);
+      i++;
+    }
+    return result;
+  }
+
+  const renderItems = processedMessages();
+
   return (
     <div className="relative flex flex-col h-full bg-zinc-900">
       {/* Approval Dialog */}
@@ -186,7 +241,7 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 space-y-1">
         {!canInteract && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>请先连接 SSH 服务器。</p>
@@ -211,13 +266,16 @@ export default function AgentPanel() {
             </p>
           </div>
         )}
-        {messages.map((msg) =>
-          // Tool result messages rendered as ToolCallCard
-          (msg.role === 'tool' && msg.toolResult) ||
-          // Assistant messages with toolCall info (no visible text) also rendered as ToolCallCard
-          (msg.role === 'assistant' && msg.toolCall)
-            ? <ToolCallCard key={msg.id} message={msg} />
-            : <AgentMessageItem key={msg.id} message={msg} />,
+        {renderItems.map((item) =>
+          'kind' in item && item.kind === 'exploration'
+            ? <ExplorationGroup key={item.tools[0].id} messages={item.tools} />
+            : (() => {
+                const msg = item as AgentMessage;
+                return (msg.role === 'tool' && msg.toolResult) ||
+                  (msg.role === 'assistant' && msg.toolCall)
+                  ? <ToolCallCard key={msg.id} message={msg} />
+                  : <AgentMessageItem key={msg.id} message={msg} />;
+              })(),
         )}
         <div ref={messagesEndRef} />
       </div>

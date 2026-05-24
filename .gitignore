@@ -25,3 +25,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# 官网
+website/

@@ -50,7 +50,7 @@ pub async fn agent_start_task(
     state.agent_tasks.write().insert(task_id.clone(), task);
 
     // Snapshot config + skills
-    let (llm_config, agent_settings, experimental_settings, _sandbox, skill_prompts) = {
+    let (llm_config, agent_settings, experimental_settings, _sandbox, enabled_skills) = {
         let settings = state.settings.read().await;
         let skills = state.skill_store.read().await;
         (
@@ -58,7 +58,7 @@ pub async fn agent_start_task(
             settings.agent_mode_settings.clone(),
             settings.experimental_settings.clone(),
             Sandbox::default(),
-            skills.enabled_prompts(),
+            skills.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
         )
     };
 
@@ -72,7 +72,7 @@ pub async fn agent_start_task(
     let provider = OpenAiProvider::new(llm_config)?;
 
     // Build initial messages
-    let system_prompt = build_system_prompt(&session_id, &skill_prompts);
+    let system_prompt = build_system_prompt(&session_id, !enabled_skills.is_empty());
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
     for msg in &history {
@@ -85,9 +85,10 @@ pub async fn agent_start_task(
         messages.push(LlmMessage::user(prompt.clone()));
     }
 
-    // Build the registry: start with built-ins, then conditionally
-    // add experimental tools based on settings.
+    // Build the registry: start with built-ins, then register enabled skills
+    // as tools (progressive disclosure), then conditionally add experimental tools.
     let mut registry = ToolRegistry::with_builtins();
+    registry.register_skills(&enabled_skills);
     if experimental_settings.enable_cloud_page {
         registry.register(std::sync::Arc::new(
             crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),

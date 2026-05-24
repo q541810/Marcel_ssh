@@ -30,6 +30,7 @@ pub mod plan;
 pub mod process;
 pub mod search;
 pub mod sftp_transfer;
+pub mod skill;
 pub mod system;
 pub mod web_search;
 
@@ -209,6 +210,17 @@ impl ToolRegistry {
         infos
     }
 
+    /// Register all enabled skills as tools (progressive disclosure).
+    /// Each skill becomes a separate tool that the LLM explicitly calls to
+    /// retrieve its full instructions.
+    pub fn register_skills(&mut self, skills: &[crate::skills::store::Skill]) {
+        for s in skills {
+            if s.enabled {
+                self.register(std::sync::Arc::new(skill::SkillTool::new(s)));
+            }
+        }
+    }
+
     /// Build a registry pre-populated with all 14 built-in tools.
     ///
     /// Built-ins:
@@ -223,6 +235,9 @@ impl ToolRegistry {
     /// - `http_get`                   (http_get)
     /// - `create_plan`                (plan)
     /// - `update_plan_item`           (plan)
+    ///
+    /// Skills are NOT registered here — register them separately via
+    /// [`register_skills`] for progressive disclosure.
     pub fn with_builtins() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
