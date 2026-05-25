@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { AgentMessage as AgentMessageType } from "@/lib/types";
 import Markdown from "react-markdown";
 
 interface Props {
   message: AgentMessageType;
+  autoExpand?: boolean;
 }
 
 const MARKDOWN_CLASS =
@@ -12,8 +13,11 @@ const MARKDOWN_CLASS =
 const THINKING_MARKDOWN_CLASS =
   "text-xs text-zinc-400 whitespace-pre-wrap break-words prose prose-invert prose-xs max-w-none prose-p:my-0.5 prose-code:text-zinc-500 prose-code:bg-zinc-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-zinc-900/50 prose-pre:border prose-pre:border-zinc-800 prose-a:text-zinc-500 prose-headings:my-1 prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0 prose-blockquote:border-l-zinc-700 prose-blockquote:text-zinc-500 prose-blockquote:italic";
 
-export default function AgentMessage({ message }: Props) {
-  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+export default function AgentMessage({ message, autoExpand }: Props) {
+  const [thinkingExpanded, setThinkingExpanded] = useState(autoExpand ?? false);
+  useEffect(() => {
+    setThinkingExpanded(!!autoExpand);
+  }, [autoExpand]);
 
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
@@ -89,7 +93,7 @@ export default function AgentMessage({ message }: Props) {
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
               </svg>
-              <span>{message.isThinking ? "已思考（进行中）" : "已思考"}</span>
+              <span>{message.isThinking ? "思考中" : "思考"}</span>
               {message.isThinking && (
                 <svg
                   className="animate-spin h-3 w-3"

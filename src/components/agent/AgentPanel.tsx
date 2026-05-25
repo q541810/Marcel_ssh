@@ -46,7 +46,7 @@ export default function AgentPanel() {
   const canInteract = !!activeSessionId;
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages]);
 
   useEffect(() => {
@@ -140,59 +140,31 @@ export default function AgentPanel() {
 
   const currentModeInfo = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
-  // ── Preprocess messages: hide sandwiched thinking, merge exploration tools ──
-  function isToolRelated(msg: AgentMessage): boolean {
-    return !!((msg.role === 'tool' && msg.toolResult) || (msg.role === 'assistant' && msg.toolCall));
-  }
-
-  function isThinkingOnly(msg: AgentMessage): boolean {
-    return msg.role === 'assistant' && !!msg.reasoningContent && !msg.content && !msg.toolCall && !msg.isLoading;
-  }
-
+  // ── Preprocess messages: merge consecutive exploration tools ──
   function processedMessages(): (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] {
-    const n = messages.length;
-    // First pass: hide thinking-only messages that precede any tool card
-    function nextRelevant(idx: number): AgentMessage | null {
-      let i = idx + 1;
-      while (i < n) {
-        if (!isThinkingOnly(messages[i])) return messages[i];
-        i += 1;
-      }
-      return null;
-    }
-    const filtered: AgentMessage[] = [];
-    for (let i = 0; i < n; i++) {
-      if (isThinkingOnly(messages[i])) {
-        const next = nextRelevant(i);
-        if (next && isToolRelated(next)) {
-          continue;
-        }
-      }
-      filtered.push(messages[i]);
-    }
-    // Second pass: group 4+ consecutive exploration tools
     const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
-    const m = filtered.length;
+    const n = messages.length;
     let i = 0;
-    while (i < m) {
-      if (isExplorationTool(filtered[i])) {
+    while (i < n) {
+      if (isExplorationTool(messages[i])) {
         let j = i;
-        while (j < m && isExplorationTool(filtered[j])) {
+        while (j < n && isExplorationTool(messages[j])) {
           j++;
         }
         if (j - i >= 4) {
-          result.push({ kind: 'exploration', tools: filtered.slice(i, j) });
+          result.push({ kind: 'exploration', tools: messages.slice(i, j) });
           i = j;
           continue;
         }
       }
-      result.push(filtered[i]);
+      result.push(messages[i]);
       i++;
     }
     return result;
   }
 
   const renderItems = processedMessages();
+  const isThinking = messages.some((m) => m.role === 'assistant' && m.isThinking);
 
   return (
     <div className="relative flex flex-col h-full bg-zinc-900">
@@ -268,13 +240,13 @@ export default function AgentPanel() {
         )}
         {renderItems.map((item) =>
           'kind' in item && item.kind === 'exploration'
-            ? <ExplorationGroup key={item.tools[0].id} messages={item.tools} />
+            ? <ExplorationGroup key={item.tools[0].id} messages={item.tools} autoExpand={isThinking} />
             : (() => {
                 const msg = item as AgentMessage;
                 return (msg.role === 'tool' && msg.toolResult) ||
                   (msg.role === 'assistant' && msg.toolCall)
-                  ? <ToolCallCard key={msg.id} message={msg} />
-                  : <AgentMessageItem key={msg.id} message={msg} />;
+                  ? <ToolCallCard key={msg.id} message={msg} autoExpand={isThinking} />
+                  : <AgentMessageItem key={msg.id} message={msg} autoExpand={!!msg.isThinking} />;
               })(),
         )}
         <div ref={messagesEndRef} />

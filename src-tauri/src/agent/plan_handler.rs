@@ -12,22 +12,32 @@ pub(crate) enum PlanStreamEvent {
     PlanCreated {
         items: Vec<PlanItem>,
     },
+    #[serde(rename_all = "camelCase")]
     PlanItemStarted {
         item_id: String,
         title: String,
         index: usize,
         total: usize,
     },
+    #[serde(rename_all = "camelCase")]
     PlanItemCompleted {
         item_id: String,
         title: String,
         index: usize,
         total: usize,
     },
+    #[serde(rename_all = "camelCase")]
     PlanItemFailed {
         item_id: String,
         title: String,
         error: String,
+        index: usize,
+        total: usize,
+    },
+    #[serde(rename_all = "camelCase")]
+    PlanItemSkipped {
+        item_id: String,
+        title: String,
         index: usize,
         total: usize,
     },
@@ -199,6 +209,14 @@ pub(crate) async fn handle_plan_tool_output(
                     let _ = app.emit(&event_name_plan, &event);
                 }
                 PlanItemStatus::Skipped => {
+                    let event = PlanStreamEvent::PlanItemSkipped {
+                        item_id: item_id.to_string(),
+                        title,
+                        index: item_index,
+                        total,
+                    };
+                    let _ = app.emit(&event_name_stream, &event);
+                    let _ = app.emit(&event_name_plan, &event);
                     advance_current_index(plan);
                 }
                 PlanItemStatus::Pending => {}

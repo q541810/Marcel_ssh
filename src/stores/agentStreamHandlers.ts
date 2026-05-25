@@ -103,6 +103,14 @@ export function handleToolResult(
 
     streamState.toolResultCount++;
 
+    // Clear reasoningContent from the assistant message that triggered this tool call
+    for (let i = newMsgs.length - 1; i >= 0; i--) {
+      if (newMsgs[i].role === 'assistant' && newMsgs[i].reasoningContent) {
+        newMsgs[i] = { ...newMsgs[i], reasoningContent: undefined, isThinking: false };
+        break;
+      }
+    }
+
     insertToolMessageAfterAssistant(newMsgs, toolMessage);
 
     streamState.assistantMessageId = null;

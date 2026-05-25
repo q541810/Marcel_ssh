@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { AgentMessage } from '@/lib/types';
 
 interface Props {
   message: AgentMessage;
+  autoExpand?: boolean;
 }
 
 const TOOL_ICONS: Record<string, JSX.Element> = {
@@ -106,8 +107,14 @@ function getCommandPreview(toolName: string, args: Record<string, unknown> | und
   return '';
 }
 
-export default function ToolCallCard({ message }: Props) {
-  const [expanded, setExpanded] = useState(false);
+export default function ToolCallCard({ message, autoExpand }: Props) {
+  const [expanded, setExpanded] = useState(autoExpand ?? false);
+
+  useEffect(() => {
+    if (!autoExpand) {
+      setExpanded(false);
+    }
+  }, [autoExpand]);
 
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {

@@ -1,6 +1,6 @@
 # Marcel SSH (玛瑟尔 SSH)
 
-> **AI-Native SSH Terminal with Autonomous Agent — 以 AI Agent 自动化为核心差异化的下一代 SSH 终端工具**
+> ** 面相小白的、深度集成ai的 ssh终端工具 **
 
 ---
 
@@ -30,8 +30,8 @@ QQ:1101255501
   - **Chat 模式**：纯对话，不执行任何命令
   - **Agent 模式**（默认）：AI 可执行命令，中高风险操作需你确认
   - **Auto 模式**：全自动，无需逐条确认
-- **安全沙箱**：危险命令（rm -rf、mkfs、shutdown 等）默认被拦截，黑白名单可自定义
-- **原生性能**：Tauri 2 + Rust，打包体积 < 15MB，内存占用 < 80MB
+- **安全筛选**：危险命令（rm -rf、mkfs、shutdown 等）默认被拦截，黑白名单可自定义
+- **原生性能**：Tauri 2 + Rust
 
 ---
 

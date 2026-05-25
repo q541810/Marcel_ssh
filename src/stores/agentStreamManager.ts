@@ -83,8 +83,21 @@ export async function attachStreamListener(taskId: string, conversationId: strin
         return;
       }
 
-      if (hasEventType(ev, 'toolCallStart') || hasEventType(ev, 'toolCallDelta')) {
-        console.debug('[agent] tool event', ev);
+      if (hasEventType(ev, 'toolCallStart')) {
+        handler.updateMessages(conversationId, (convMsgs) => {
+          const newMsgs = [...convMsgs];
+          for (let i = newMsgs.length - 1; i >= 0; i--) {
+            if (newMsgs[i].role === 'assistant' && newMsgs[i].reasoningContent) {
+              newMsgs[i] = { ...newMsgs[i], reasoningContent: undefined, isThinking: false };
+              break;
+            }
+          }
+          return newMsgs;
+        });
+        return;
+      }
+
+      if (hasEventType(ev, 'toolCallDelta')) {
         return;
       }
 
@@ -143,6 +156,10 @@ export async function attachPlanListener(taskId: string) {
         }
         case 'plan-item-failed': {
           handler.updatePlanItem(taskId, ev.itemId, 'failed', ev.error);
+          break;
+        }
+        case 'plan-item-skipped': {
+          handler.updatePlanItem(taskId, ev.itemId, 'skipped');
           break;
         }
         case 'plan-completed': {

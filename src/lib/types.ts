@@ -271,6 +271,7 @@ export type PlanStreamEvent =
   | { type: 'plan-item-started'; itemId: string; title: string; index: number; total: number }
   | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number }
   | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number }
+  | { type: 'plan-item-skipped'; itemId: string; title: string; index: number; total: number }
   | { type: 'plan-completed'; completed: number; total: number; failed: number };
 
 // Skill types
