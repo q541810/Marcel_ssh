@@ -13,6 +13,7 @@ import { FontSizeInput } from './FontSizeInput';
 import { CommandPolicySection } from './CommandPolicySection';
 import { LlmSection } from './LlmSection';
 import { ExperimentalSection } from './ExperimentalSection';
+import { DisplaySection } from './DisplaySection';
 import AboutSection from './AboutSection';
 
 interface SectionNavItem {
@@ -22,6 +23,7 @@ interface SectionNavItem {
 
 const SECTION_ITEMS: SectionNavItem[] = [
   { id: 'settings-appearance', label: '外观' },
+  { id: 'settings-display', label: '显示' },
   { id: 'settings-llm', label: 'LLM 配置' },
   { id: 'settings-command-policy', label: '命令策略' },
   { id: 'settings-experimental', label: '实验性功能' },
@@ -237,6 +239,11 @@ export default function Settings() {
               />
             </Field>
           </Section>
+
+          <DisplaySection
+            settings={draft}
+            updateDraft={updateDraft}
+          />
 
           <LlmSection
             llmConfig={draft.llmConfig}

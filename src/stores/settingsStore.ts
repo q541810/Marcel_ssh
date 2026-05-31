@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fileManagerPath: '/',
   fileManagerShowHidden: false,
   panelHeight: 256,
+  hideThinkingDisplay: false,
 };
 
 interface SettingsState {

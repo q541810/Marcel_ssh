@@ -191,6 +191,8 @@ export interface AppSettings {
   fileManagerPath: string;
   fileManagerShowHidden: boolean;
   panelHeight: number;
+  /** Whether to hide thinking/reasoning content in the UI */
+  hideThinkingDisplay: boolean;
 }
 
 // LLM stream events

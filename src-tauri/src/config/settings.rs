@@ -133,6 +133,11 @@ pub struct AppSettings {
     /// Bottom panel height in pixels
     #[serde(default = "default_panel_height")]
     pub panel_height: u16,
+    /// Whether to hide thinking/reasoning content in the UI.
+    /// Note: This only affects display. The thinking content is still
+    /// processed and returned to the API as required by some models.
+    #[serde(default)]
+    pub hide_thinking_display: bool,
 }
 
 fn default_file_manager_path() -> String { "/".to_string() }
@@ -161,6 +166,7 @@ impl Default for AppSettings {
             file_manager_path: default_file_manager_path(),
             file_manager_show_hidden: false,
             panel_height: default_panel_height(),
+            hide_thinking_display: false,
         }
     }
 }
