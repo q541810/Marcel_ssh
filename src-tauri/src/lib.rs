@@ -50,38 +50,124 @@ pub struct AppState {
 
 impl AppState {
     /// Create a new AppState, loading any persisted config from `config_dir`.
-    pub fn new(config_dir: PathBuf) -> Self {
-        // Load known_hosts (TOFU). If the file is unreadable we fall back to
-        // an empty in-memory store; mismatches will then prompt the user.
+    ///
+    /// All independent stores are loaded in parallel. File I/O is offloaded to
+    /// the blocking thread pool via `tokio::task::spawn_blocking` so the async
+    /// runtime is never stalled. Settings-dependent work (keychain, llm_config
+    /// backfill) runs sequentially after settings are loaded.
+    pub async fn new(config_dir: PathBuf) -> Self {
+        // Pre-compute file paths so each `spawn_blocking` closure can own its
+        // own copy without borrowing `config_dir`.
         let known_hosts_path = config_dir.join("known_hosts.json");
-        let known_hosts = futures::executor::block_on(KnownHostsStore::load(known_hosts_path))
-            .unwrap_or_else(|e| {
+        let connections_file = ConnectionStore::default_file(&config_dir);
+        let settings_file = AppSettings::default_file(&config_dir);
+        let db_path = config_dir.join("conversations.db");
+        let skills_file = SkillStore::default_file(&config_dir);
+        let quick_commands_file = QuickCommandStore::default_file(&config_dir);
+
+        // ── Phase 1: parallel loads (all independent) ──────────────────────
+        let (
+            known_hosts_res,
+            connections_res,
+            settings_res,
+            db_handle,
+            skills_res,
+            qc_res,
+        ) = {
+            // Clone once for the ConversationDb closure which needs both paths.
+            let config_dir_for_db = config_dir.clone();
+
+            tokio::join!(
+                // KnownHostsStore::load is already async.
+                KnownHostsStore::load(known_hosts_path),
+
+                // Sync JSON stores – offload to blocking thread pool.
+                tokio::task::spawn_blocking(move || {
+                    ConnectionStore::load_from_path(&connections_file)
+                }),
+                tokio::task::spawn_blocking(move || {
+                    AppSettings::load_from_path(&settings_file)
+                }),
+
+                // ConversationDb involves SQLite file I/O + schema migration.
+                tokio::task::spawn_blocking(move || -> ConversationDb {
+                    match ConversationDb::new(&db_path) {
+                        Ok(db) => {
+                            log::info!("✓ 对话数据库已加载: {}", db_path.display());
+                            match db.list_conversations("__diagnostic__") {
+                                Ok(count) if !count.is_empty() => {
+                                    log::info!("  数据库中有 {} 个会话记录", count.len());
+                                }
+                                _ => {
+                                    log::info!("  数据库中暂无会话记录（首次使用）");
+                                }
+                            }
+                            db
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to init file DB ({}): {}",
+                                db_path.display(),
+                                e
+                            );
+                            log::warn!("  Falling back to in-memory DB");
+                            log::warn!(
+                                "  Check write permissions: {}",
+                                config_dir_for_db.display()
+                            );
+                            ConversationDb::in_memory()
+                                .expect("Failed to init in-memory DB")
+                        }
+                    }
+                }),
+
+                tokio::task::spawn_blocking(move || {
+                    SkillStore::load_from_path(&skills_file)
+                }),
+                tokio::task::spawn_blocking(move || {
+                    QuickCommandStore::load_from_path(&quick_commands_file)
+                }),
+            )
+        };
+
+        // ── Phase 2: process results with fallbacks ────────────────────────
+
+        // KnownHosts – async fallback on error (can still .await here).
+        let known_hosts = match known_hosts_res {
+            Ok(kh) => kh,
+            Err(e) => {
                 log::error!("无法加载 known_hosts.json，使用空 store: {}", e);
-                // Fallback to a temp-path store so we don't crash. Subsequent
-                // saves will still attempt the original path? No — once
-                // constructed, the path is fixed. This is best-effort.
-                futures::executor::block_on(KnownHostsStore::load(
+                KnownHostsStore::load(
                     std::env::temp_dir().join("marcel-ssh-known-hosts-fallback.json"),
-                ))
+                )
+                .await
                 .expect("fallback known_hosts init")
-            });
+            }
+        };
 
-        // Load persisted config (best-effort: log errors and fall back to defaults)
-        let connection_store = ConnectionStore::load_from_path(
-            &ConnectionStore::default_file(&config_dir),
-        )
-        .unwrap_or_else(|e| {
-            log::warn!("无法加载连接配置，使用默认值：{}", e);
-            ConnectionStore::new()
-        });
+        let connection_store = match connections_res {
+            Ok(Ok(store)) => store,
+            Ok(Err(e)) => {
+                log::warn!("无法加载连接配置，使用默认值：{}", e);
+                ConnectionStore::new()
+            }
+            Err(join_err) => {
+                log::warn!("连接配置加载任务失败：{}", join_err);
+                ConnectionStore::new()
+            }
+        };
 
-        let mut settings = AppSettings::load_from_path(
-            &AppSettings::default_file(&config_dir),
-        )
-        .unwrap_or_else(|e| {
-            log::warn!("无法加载应用设置，使用默认值：{}", e);
-            AppSettings::default()
-        });
+        let mut settings = match settings_res {
+            Ok(Ok(s)) => s,
+            Ok(Err(e)) => {
+                log::warn!("无法加载应用设置，使用默认值：{}", e);
+                AppSettings::default()
+            }
+            Err(join_err) => {
+                log::warn!("应用设置加载任务失败：{}", join_err);
+                AppSettings::default()
+            }
+        };
 
         // Backwards-compat: existing settings files written before LLM support
         // had `llmConfig: null`. Backfill with a working default so users get a
@@ -89,11 +175,12 @@ impl AppState {
         if settings.llm_config.is_none() {
             settings.llm_config = Some(crate::llm::provider::LlmConfig::default());
             log::info!("settings.json 缺少 llmConfig，已填入默认值");
-            // Best-effort: persist back so the user can edit it via the Settings UI.
             let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
         }
 
-        // Load LLM API key from the system keychain (if available)
+        // ── Phase 3: settings-dependent work (sequential) ──────────────────
+
+        // Load LLM API key from the system keychain (if available).
         // This is separate from settings.json to avoid storing sensitive data on disk.
         if let Some(ref mut llm_config) = settings.llm_config {
             match crate::config::keychain::get_llm_api_key() {
@@ -116,48 +203,31 @@ impl AppState {
             config_dir.display()
         );
 
-        let db_path = config_dir.join("conversations.db");
-        let conversation_db = match ConversationDb::new(&db_path) {
-            Ok(db) => {
-                log::info!("✓ 对话数据库已加载: {}", db_path.display());
-                match db.list_conversations("__diagnostic__") {
-                    Ok(count) if !count.is_empty() => {
-                        log::info!("  数据库中有 {} 个会话记录", count.len());
-                    }
-                    _ => {
-                        log::info!("  数据库中暂无会话记录（首次使用）");
-                    }
-                }
-                db
+        let conversation_db = db_handle.expect("对话数据库初始化任务失败");
+
+        let skill_store = match skills_res {
+            Ok(Ok(store)) => store,
+            Ok(Err(e)) => {
+                log::warn!("Failed to load skills, using defaults: {}", e);
+                SkillStore::new()
             }
-            Err(e) => {
-                log::warn!("Failed to init file DB ({}): {}", db_path.display(), e);
-                log::warn!("  Falling back to in-memory DB");
-                log::warn!("  Check write permissions: {}", config_dir.display());
-                match ConversationDb::in_memory() {
-                    Ok(db) => db,
-                    Err(e2) => {
-                        panic!("Failed to init in-memory DB: {}", e2);
-                    }
-                }
+            Err(join_err) => {
+                log::warn!("Skills 加载任务失败：{}", join_err);
+                SkillStore::new()
             }
         };
 
-        let skill_store = SkillStore::load_from_path(
-            &SkillStore::default_file(&config_dir),
-        )
-        .unwrap_or_else(|e| {
-            log::warn!("Failed to load skills, using defaults: {}", e);
-            SkillStore::new()
-        });
-
-        let quick_command_store = QuickCommandStore::load_from_path(
-            &QuickCommandStore::default_file(&config_dir),
-        )
-        .unwrap_or_else(|e| {
-            log::warn!("Failed to load quick commands, using defaults: {}", e);
-            QuickCommandStore::new()
-        });
+        let quick_command_store = match qc_res {
+            Ok(Ok(store)) => store,
+            Ok(Err(e)) => {
+                log::warn!("Failed to load quick commands, using defaults: {}", e);
+                QuickCommandStore::new()
+            }
+            Err(join_err) => {
+                log::warn!("Quick commands 加载任务失败：{}", join_err);
+                QuickCommandStore::new()
+            }
+        };
 
         Self {
             ssh_manager: SshManager::with_known_hosts(known_hosts),
@@ -196,7 +266,19 @@ pub fn run() {
 
             log::info!("App config directory: {}", config_dir.display());
 
-            let app_state = AppState::new(config_dir);
+            // AppState::new is async — create a short-lived runtime to drive
+            // the parallel initialization. Independent stores load via
+            // spawn_blocking (thread pool) while KnownHostsStore::load runs
+            // natively on the async runtime. The runtime is dropped as soon as
+            // the state is ready, so no extra threads linger.
+            let init_rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("Failed to create initialization runtime");
+            let app_state = init_rt.block_on(AppState::new(config_dir));
+            drop(init_rt);
+
             app.manage(app_state);
             Ok(())
         })

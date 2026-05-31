@@ -119,12 +119,12 @@ impl OpenAiProvider {
 
             // SSE: parse complete lines (terminated by \n)
             while let Some(idx) = buffer.find('\n') {
-                let line = buffer[..idx].trim_end_matches('\r').to_string();
+                let line = buffer[..idx].trim_end_matches('\r').to_owned();
                 buffer.drain(..=idx);
 
                 let payload = match line.strip_prefix("data:") {
                     Some(rest) => rest.trim(),
-                    None => continue, // skip non-data lines (event:, id:, retry:, blank)
+                    None => continue,
                 };
 
                 if payload == "[DONE]" {
@@ -306,89 +306,112 @@ struct PartialToolCall {
     arguments_buf: String,
 }
 
+/* ---- Typed request structs — serialize once, zero intermediate Values ---- */
+
+#[derive(Serialize)]
+struct ChatCompletionRequest {
+    model: String,
+    messages: Vec<RequestMessage>,
+    temperature: f32,
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<RequestTool>>,
+}
+
+#[derive(Serialize)]
+struct RequestMessage {
+    role: &'static str,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<RequestToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RequestToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: &'static str,
+    function: RequestToolCallFunction,
+}
+
+#[derive(Serialize)]
+struct RequestToolCallFunction {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Serialize)]
+struct RequestTool {
+    #[serde(rename = "type")]
+    tool_type: &'static str,
+    function: RequestToolDef,
+}
+
+#[derive(Serialize)]
+struct RequestToolDef {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
 fn build_request_body(
     config: &LlmConfig,
     messages: &[LlmMessage],
     tools: &[ToolDefinition],
     stream: bool,
-) -> serde_json::Value {
-    let messages_json: Vec<serde_json::Value> = messages
+) -> ChatCompletionRequest {
+    let messages = messages
         .iter()
-        .map(|m| {
-            let mut obj = serde_json::Map::new();
-            let role_str = match m.role {
-                LlmRole::System => "system",
-                LlmRole::User => "user",
-                LlmRole::Assistant => "assistant",
-                LlmRole::Tool => "tool",
-            };
-            obj.insert("role".into(), serde_json::Value::String(role_str.into()));
-            obj.insert(
-                "content".into(),
-                serde_json::Value::String(m.content.clone()),
-            );
-            if let Some(tcs) = &m.tool_calls {
-                // OpenAI API requires tool_calls in a specific format:
-                //   { id, type: "function", function: { name, arguments: "<json-string>" } }
-                // Our ToolCall stores `arguments` as serde_json::Value, so we
-                // need to re-serialize it to a JSON *string*.
-                let formatted: Vec<serde_json::Value> = tcs
-                    .iter()
-                    .map(|tc| {
-                        serde_json::json!({
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": serde_json::to_string(&tc.arguments)
-                                    .unwrap_or_else(|_| "{}".into()),
-                            }
-                        })
+        .map(|m| RequestMessage {
+            role: m.role.to_string(),
+            content: m.content.clone(),
+            tool_calls: m.tool_calls.as_ref().map(|tcs| {
+                tcs.iter()
+                    .map(|tc| RequestToolCall {
+                        id: tc.id.clone(),
+                        call_type: "function",
+                        function: RequestToolCallFunction {
+                            name: tc.name.clone(),
+                            arguments: serde_json::to_string(&tc.arguments)
+                                .unwrap_or_else(|_| "{}".into()),
+                        },
                     })
-                    .collect();
-                obj.insert("tool_calls".into(), serde_json::Value::Array(formatted));
-            }
-            if let Some(tcid) = &m.tool_call_id {
-                obj.insert(
-                    "tool_call_id".into(),
-                    serde_json::Value::String(tcid.clone()),
-                );
-            }
-            if let Some(rc) = &m.reasoning_content {
-                obj.insert(
-                    "reasoning_content".into(),
-                    serde_json::Value::String(rc.clone()),
-                );
-            }
-            serde_json::Value::Object(obj)
+                    .collect()
+            }),
+            tool_call_id: m.tool_call_id.clone(),
+            reasoning_content: m.reasoning_content.clone(),
         })
         .collect();
 
-    let mut body = serde_json::json!({
-        "model": config.model,
-        "messages": messages_json,
-        "temperature": config.temperature,
-        "stream": stream,
-    });
-
-    if !tools.is_empty() {
-        let tools_json: Vec<serde_json::Value> = tools
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    }
+    let tools = if tools.is_empty() {
+        None
+    } else {
+        Some(
+            tools
+                .iter()
+                .map(|t| RequestTool {
+                    tool_type: "function",
+                    function: RequestToolDef {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        parameters: t.parameters.clone(),
+                    },
                 })
-            })
-            .collect();
-        body["tools"] = serde_json::Value::Array(tools_json);
-    }
+                .collect(),
+        )
+    };
 
-    body
+    ChatCompletionRequest {
+        model: config.model.clone(),
+        messages,
+        temperature: config.temperature,
+        stream,
+        tools,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -411,7 +434,7 @@ struct ChatDelta {
     reasoning_content: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 struct DeltaToolCall {
     #[serde(default)]
     index: Option<u32>,
@@ -421,7 +444,7 @@ struct DeltaToolCall {
     function: Option<DeltaFunction>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 struct DeltaFunction {
     #[serde(default)]
     name: Option<String>,

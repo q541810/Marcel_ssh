@@ -322,12 +322,18 @@ impl SshManager {
                 msg = channel.wait() => {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
-                            let text = String::from_utf8_lossy(&data).to_string();
+                            let text = match std::str::from_utf8(&data) {
+                                Ok(s) => s.to_owned(),
+                                Err(_) => String::from_utf8_lossy(&data).into_owned(),
+                            };
                             let _ = app.emit(&event_name, text);
                         }
                         Some(ChannelMsg::ExtendedData { data, .. }) => {
                             // stderr — forward to same stream
-                            let text = String::from_utf8_lossy(&data).to_string();
+                            let text = match std::str::from_utf8(&data) {
+                                Ok(s) => s.to_owned(),
+                                Err(_) => String::from_utf8_lossy(&data).into_owned(),
+                            };
                             let _ = app.emit(&event_name, text);
                         }
                         Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {

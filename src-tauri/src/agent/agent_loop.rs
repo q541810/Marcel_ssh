@@ -140,8 +140,8 @@ pub(crate) async fn run_agent_loop(
                 content: cleaned_content,
                 ..assistant_msg
             };
-            messages.push(cleaned_msg.clone());
             let _ = conv_db.save_message(&conversation_id, "assistant", &cleaned_msg.content, &Utc::now().to_rfc3339(), None, cleaned_msg.reasoning_content.as_deref());
+            messages.push(cleaned_msg);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
         }
@@ -152,14 +152,14 @@ pub(crate) async fn run_agent_loop(
 
         // 4. Execute each tool call via the dispatcher
         let tool_ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
-        for tc in &tool_calls {
+        for tc in tool_calls {
             if is_task_cancelled(&state, &task_id) {
                 log::info!("Agent task {} cancelled before tool execution, stopping", task_id);
                 let _ = app.emit(&event_name, StreamEvent::Done);
                 return;
             }
 
-            let exec = dispatcher.dispatch(tc, &tool_ctx, &event_name).await;
+            let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name).await;
 
             if is_task_cancelled(&state, &task_id) {
                 log::info!("Agent task {} cancelled after tool execution, stopping", task_id);
@@ -167,6 +167,7 @@ pub(crate) async fn run_agent_loop(
                 return;
             }
 
+            // Emit result to frontend (requires owned strings for serialization).
             let _ = app.emit(
                 &event_name,
                 ToolResultEvent {
@@ -181,16 +182,7 @@ pub(crate) async fn run_agent_loop(
                 },
             );
 
-            // 5. Add tool result as a message for the next LLM round
-            messages.push(LlmMessage {
-                role: LlmRole::Tool,
-                content: exec.output.clone(),
-                tool_calls: None,
-                tool_call_id: Some(tc.id.clone()),
-                reasoning_content: None,
-            });
-
-            // 6. Handle plan-related tool outputs
+            // Handle plan-related tool outputs (borrows tc fields).
             if let Some(meta) = exec.metadata {
                 handle_plan_tool_output(
                     &tc.name,
@@ -203,24 +195,37 @@ pub(crate) async fn run_agent_loop(
                 .await;
             }
 
-            // 7. Persist tool result to DB for conversation history
+            // Persist tool result — move remaining tc fields to avoid redundant clones.
             let tool_result_json = serde_json::to_string(&PersistedToolResult {
                 id: tc.id.clone(),
-                name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
+                name: tc.name,
+                arguments: tc.arguments,
                 risk_level: exec.risk_level,
-                summary: exec.summary.clone(),
+                summary: exec.summary,
                 success: exec.success,
                 blocked: exec.blocked,
             }).ok();
+
+            // Build tool message — move exec.output into content.
+            let tool_msg = LlmMessage {
+                role: LlmRole::Tool,
+                content: exec.output,
+                tool_calls: None,
+                tool_call_id: Some(tc.id),
+                reasoning_content: None,
+            };
+
+            // Save to conversation DB (borrows tool_msg.content, no extra clone).
             let _ = conv_db.save_message(
                 &conversation_id,
                 "tool",
-                &exec.output,
+                &tool_msg.content,
                 &Utc::now().to_rfc3339(),
                 tool_result_json.as_deref(),
                 None,
             );
+
+            messages.push(tool_msg);
         }
     }
 
