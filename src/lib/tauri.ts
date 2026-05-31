@@ -232,6 +232,12 @@ export async function importSkillFile(fileData: string, fileName: string): Promi
   return invoke<ParsedSkill>('import_skill_file', { fileData, fileName });
 }
 
+// App lifecycle
+
+export async function appReady(): Promise<void> {
+  return invoke('app_ready');
+}
+
 // Update check
 
 export async function checkUpdate(): Promise<UpdateCheckResult> {

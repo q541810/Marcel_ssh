@@ -187,7 +187,6 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            // Determine config directory (e.g. %APPDATA%\com.marcel.ssh on Windows)
             let config_dir = app
                 .path()
                 .app_config_dir()
@@ -200,14 +199,13 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            // SSH commands
+            commands::app_ready,
             commands::ssh::ssh_connect,
             commands::ssh::ssh_disconnect,
             commands::ssh::ssh_send_input,
             commands::ssh::ssh_resize,
             commands::ssh::ssh_list_sessions,
             commands::ssh::ssh_exec,
-            // Agent commands
             commands::agent::agent_start_task,
             commands::agent::agent_stop_task,
             commands::agent::agent_approve_operation,
@@ -219,7 +217,6 @@ pub fn run() {
             commands::agent::agent_delete_conversation,
             commands::agent::agent_list_conversations_by_connection,
             commands::agent::agent_delete_conversations_by_session,
-            // Config commands
             commands::connections::config_get_connections,
             commands::connections::config_save_connection,
             commands::connections::config_delete_connection,
@@ -228,23 +225,20 @@ pub fn run() {
             commands::keychain::config_save_password,
             commands::keychain::config_get_password,
             commands::keychain::config_delete_password,
-            // Quick command commands
             commands::quick_command::quick_command_list,
             commands::quick_command::quick_command_add,
             commands::quick_command::quick_command_update,
             commands::quick_command::quick_command_delete,
-        // LLM API Key management
-        commands::keychain::config_save_llm_api_key,
-        commands::keychain::config_get_llm_api_key,
-        commands::keychain::config_delete_llm_api_key,
-        // Skill commands
-        commands::skill::skill_list,
-        commands::skill::skill_add,
-        commands::skill::skill_update,
-        commands::skill::skill_toggle,
-        commands::skill::skill_delete,
-        commands::skill::import_skill_file,
-        commands::update::check_update,
+            commands::keychain::config_save_llm_api_key,
+            commands::keychain::config_get_llm_api_key,
+            commands::keychain::config_delete_llm_api_key,
+            commands::skill::skill_list,
+            commands::skill::skill_add,
+            commands::skill::skill_update,
+            commands::skill::skill_toggle,
+            commands::skill::skill_delete,
+            commands::skill::import_skill_file,
+            commands::update::check_update,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

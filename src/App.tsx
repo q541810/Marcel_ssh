@@ -1,11 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { APP_NAME } from '@/lib/constants';
 import NavRail, { type NavView } from '@/components/nav/NavRail';
 import ConnectionList from '@/components/connection/ConnectionList';
-import McpList from '@/components/mcp/McpList';
-import SkillList from '@/components/skill/SkillList';
-import Settings from '@/components/settings/Settings';
 import Terminal from '@/components/terminal/Terminal';
 import TabBar from '@/components/terminal/TabBar';
 import AgentPanel from '@/components/agent/AgentPanel';
@@ -13,8 +10,12 @@ import WindowControls from '@/components/ui/WindowControls';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
-import { checkUpdate } from '@/lib/tauri';
+import { appReady, checkUpdate } from '@/lib/tauri';
 import type { AgentMode } from '@/lib/types';
+
+const SkillList = lazy(() => import('@/components/skill/SkillList'));
+const McpList = lazy(() => import('@/components/mcp/McpList'));
+const Settings = lazy(() => import('@/components/settings/Settings'));
 
 const AGENT_PANEL_MIN_WIDTH = 260;
 const AGENT_PANEL_MAX_WIDTH = 800;
@@ -34,6 +35,10 @@ export default function App() {
   const defaultAgentMode = useSettingsStore((s) => s.settings.defaultAgentMode);
   const setAgentMode = useAgentStore((s) => s.setMode);
   const fetchSkills = useSkillStore((s) => s.fetchSkills);
+
+  useEffect(() => {
+    appReady().catch(console.error);
+  }, []);
 
   useEffect(() => {
     loadSettings().catch(err => {
@@ -158,8 +163,8 @@ export default function App() {
         >
           <div style={{ width: '16rem', height: '100%' }}>
             {navView === 'sessions' && <ConnectionList />}
-            {navView === 'skills' && <SkillList />}
-            {navView === 'mcp' && <McpList />}
+            {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
+            {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
           </div>
         </aside>
 
@@ -171,7 +176,7 @@ export default function App() {
 
           {isSettingsView && (
             <div className="absolute inset-0 flex flex-col min-w-0 overflow-hidden bg-zinc-900">
-              <Settings />
+              <Suspense fallback={<div className="flex-1 bg-zinc-900" />}><Settings /></Suspense>
             </div>
           )}
         </div>

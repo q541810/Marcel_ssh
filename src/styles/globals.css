@@ -87,8 +87,13 @@
   animation: slideDown 200ms var(--spring-bounce) forwards;
 }
 
-/* Global smooth transitions */
-* {
+/* Smooth transitions only where needed — avoid universal selector performance hit */
+button,
+a,
+[role="button"],
+[role="tab"],
+[role="option"],
+select {
   transition-property: background-color, border-color, color, fill, stroke, opacity, box-shadow, transform;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
@@ -97,7 +102,6 @@
 /* Disable transitions for specific elements */
 input,
 textarea,
-select,
 [data-no-transition] {
   transition: none;
 }
@@ -132,7 +136,7 @@ select,
   -webkit-app-region: no-drag;
 }
 
-/* Ensure full height */
+/* Ensure full height and dark background (render-blocking CSS prevents white flash) */
 html,
 body,
 #root {
@@ -140,6 +144,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
+  background-color: #18181b;
 }
 
 /* Custom scrollbar styles */
@@ -162,7 +167,7 @@ body,
 }
 
 /* Firefox scrollbar */
-* {
+html {
   scrollbar-width: thin;
   scrollbar-color: #3f3f46 transparent;
 }
