@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::agent::runtime::{AgentTaskPlan, PlanItem, PlanItemStatus};
+use crate::agent::task::{AgentTaskPlan, PlanItem, PlanItemStatus};
 use crate::agent::tools::plan::{PLAN_CREATED_KEY, PLAN_ITEM_UPDATED_KEY};
 use crate::AppState;
 

@@ -16,8 +16,8 @@ use tokio::sync::oneshot;
 
 use crate::agent::audit::AuditLog;
 use crate::agent::conversation::ConversationDb;
-use crate::agent::runtime::AgentTask;
-use crate::agent::runtime::AgentTaskPlan;
+use crate::agent::task::AgentTask;
+use crate::agent::task::AgentTaskPlan;
 use crate::config::connections::ConnectionStore;
 use crate::config::persist::JsonPersistable;
 use crate::config::quick_commands::QuickCommandStore;
@@ -208,17 +208,17 @@ pub fn run() {
             commands::ssh::ssh_resize,
             commands::ssh::ssh_list_sessions,
             commands::ssh::ssh_exec,
-            commands::agent::agent_start_task,
-            commands::agent::agent_stop_task,
-            commands::agent::agent_approve_operation,
-            commands::agent::agent_reject_operation,
-            commands::agent::agent_check_command,
-            commands::agent::agent_create_conversation,
-            commands::agent::agent_list_conversations,
-            commands::agent::agent_load_conversation,
-            commands::agent::agent_delete_conversation,
-            commands::agent::agent_list_conversations_by_connection,
-            commands::agent::agent_delete_conversations_by_session,
+            commands::agent_lifecycle::agent_start_task,
+            commands::agent_lifecycle::agent_stop_task,
+            commands::agent_lifecycle::agent_approve_operation,
+            commands::agent_lifecycle::agent_reject_operation,
+            commands::agent_policy::agent_check_command,
+            commands::agent_conversation::agent_create_conversation,
+            commands::agent_conversation::agent_list_conversations,
+            commands::agent_conversation::agent_load_conversation,
+            commands::agent_conversation::agent_delete_conversation,
+            commands::agent_conversation::agent_list_conversations_by_connection,
+            commands::agent_conversation::agent_delete_conversations_by_session,
             commands::connections::config_get_connections,
             commands::connections::config_save_connection,
             commands::connections::config_delete_connection,

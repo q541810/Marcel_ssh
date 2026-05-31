@@ -65,32 +65,3 @@ pub struct AgentTask {
     pub has_plan: bool,
     pub created_at: DateTime<Utc>,
 }
-
-/// The agent runtime manages the execution of agent tasks.
-pub struct AgentRuntime {
-    pub task_id: String,
-    pub session_id: String,
-    pub status: AgentStatus,
-}
-
-impl AgentRuntime {
-    pub fn new(task_id: String, session_id: String) -> Self {
-        Self {
-            task_id,
-            session_id,
-            status: AgentStatus::Idle,
-        }
-    }
-
-    /// Start executing a task. In Phase 1 this will drive the LLM loop.
-    pub fn start_task(&mut self) {
-        self.status = AgentStatus::Planning;
-        // Stub: real implementation will spawn a tokio task
-        // that drives the plan-execute-observe loop.
-    }
-
-    /// Stop (cancel) the current task.
-    pub fn stop_task(&mut self) {
-        self.status = AgentStatus::Cancelled;
-    }
-}

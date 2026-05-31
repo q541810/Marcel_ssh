@@ -3,7 +3,7 @@ use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{oneshot};
 
-use crate::agent::runtime::AgentMode;
+use crate::agent::task::AgentMode;
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
@@ -44,25 +44,28 @@ pub(crate) struct DispatchResult {
     pub success: bool,
     pub blocked: bool,
     pub metadata: Option<serde_json::Value>,
+    pub risk_level: RiskLevel,
 }
 
 impl DispatchResult {
-    fn from_tool_output(o: ToolOutput) -> Self {
+    fn from_tool_output(o: ToolOutput, risk_level: RiskLevel) -> Self {
         Self {
             summary: o.summary,
             output: o.output,
             success: o.success,
             blocked: false,
             metadata: o.metadata,
+            risk_level,
         }
     }
-    fn blocked(summary: impl Into<String>, reason: impl Into<String>) -> Self {
+    fn blocked(summary: impl Into<String>, reason: impl Into<String>, risk_level: RiskLevel) -> Self {
         Self {
             summary: summary.into(),
             output: format!("BLOCKED: {}", reason.into()),
             success: false,
             blocked: true,
             metadata: None,
+            risk_level,
         }
     }
     fn unknown(name: &str) -> Self {
@@ -72,6 +75,7 @@ impl DispatchResult {
             success: false,
             blocked: false,
             metadata: None,
+            risk_level: RiskLevel::Moderate,
         }
     }
 }
@@ -127,6 +131,7 @@ impl ToolDispatcher {
                 return DispatchResult::blocked(
                     format!("{}", tc.name),
                     "CHAT 模式禁止工具调用".to_string(),
+                    effective_risk,
                 );
             }
             AgentMode::Auto => {
@@ -134,7 +139,7 @@ impl ToolDispatcher {
                     if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {
                         let sb = Sandbox::default();
                         if let Err(e) = sb.check_command(cmd) {
-                            return DispatchResult::blocked(format!("$ {}", cmd), e.to_string());
+                            return DispatchResult::blocked(format!("$ {}", cmd), e.to_string(), effective_risk);
                         }
                     }
                 }
@@ -144,7 +149,7 @@ impl ToolDispatcher {
                     let cmd = tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
                     let sb = Sandbox::default();
                     if let Err(e) = sb.check_command(cmd) {
-                        return DispatchResult::blocked(format!("$ {}", cmd), e.to_string());
+                        return DispatchResult::blocked(format!("$ {}", cmd), e.to_string(), effective_risk);
                     }
                     let needs_confirm = command_list_requires_confirm(cmd, &self.agent_settings);
                     if needs_confirm
@@ -153,6 +158,7 @@ impl ToolDispatcher {
                         return DispatchResult::blocked(
                             format!("$ {}", cmd),
                             "用户拒绝或确认超时",
+                            effective_risk,
                         );
                     }
                 } else {
@@ -168,6 +174,7 @@ impl ToolDispatcher {
                         return DispatchResult::blocked(
                             tc.name.clone(),
                             "用户拒绝或确认超时",
+                            effective_risk,
                         );
                     }
                 }
@@ -175,13 +182,14 @@ impl ToolDispatcher {
         }
 
         match tool.execute(tc.arguments.clone(), ctx).await {
-            Ok(out) => DispatchResult::from_tool_output(out),
+            Ok(out) => DispatchResult::from_tool_output(out, effective_risk),
             Err(e) => DispatchResult {
                 summary: format!("{} (error)", tc.name),
                 output: format!("tool error: {}", e),
                 success: false,
                 blocked: false,
                 metadata: None,
+                risk_level: effective_risk,
             },
         }
     }

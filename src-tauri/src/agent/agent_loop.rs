@@ -1,10 +1,9 @@
-use std::collections::HashMap;
 use chrono::Utc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
-use crate::agent::runtime::{AgentMode, AgentStatus};
+use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::thinking_filter::strip_thinking_tags;
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
@@ -148,29 +147,6 @@ pub(crate) async fn run_agent_loop(
         }
 
         // 3. Add assistant message (with tool_calls) to history
-        let risk_map: HashMap<String, crate::agent::sandbox::RiskLevel> = tool_calls
-            .iter()
-            .map(|tc| {
-                let risk = match tc.name.as_str() {
-                    "execute_command" => tc
-                        .arguments
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .map(crate::agent::sandbox::assess_risk)
-                        .unwrap_or_else(|| {
-                            registry.get(&tc.name)
-                                .map(|t| t.risk_level())
-                                .unwrap_or(crate::agent::sandbox::RiskLevel::Moderate)
-                        }),
-                    _ => registry
-                        .get(&tc.name)
-                        .map(|t| t.risk_level())
-                        .unwrap_or(crate::agent::sandbox::RiskLevel::Moderate),
-                };
-                (tc.id.clone(), risk)
-            })
-            .collect();
-
         let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None, assistant_msg.reasoning_content.as_deref());
         messages.push(assistant_msg);
 
@@ -228,18 +204,11 @@ pub(crate) async fn run_agent_loop(
             }
 
             // 7. Persist tool result to DB for conversation history
-            let effective_risk = risk_map.get(&tc.id)
-                .copied()
-                .unwrap_or_else(|| {
-                    registry.get(&tc.name)
-                        .map(|t| t.risk_level())
-                        .unwrap_or(crate::agent::sandbox::RiskLevel::Moderate)
-                });
             let tool_result_json = serde_json::to_string(&PersistedToolResult {
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 arguments: tc.arguments.clone(),
-                risk_level: effective_risk,
+                risk_level: exec.risk_level,
                 summary: exec.summary.clone(),
                 success: exec.success,
                 blocked: exec.blocked,
