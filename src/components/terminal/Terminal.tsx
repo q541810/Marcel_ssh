@@ -10,6 +10,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
+import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import type { TerminalColors } from '@/lib/types';
 
@@ -84,7 +85,6 @@ export default function Terminal() {
   const [pasteConfirm, setPasteConfirm] = useState<{ text: string; sessionId: string } | null>(null);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [displayTab, setDisplayTab] = useState<string | null>(null);
-  const [panelHeight, setPanelHeight] = useState(256);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const panelResizeStartRef = useRef<{ y: number; height: number } | null>(null);
 
@@ -93,6 +93,7 @@ export default function Terminal() {
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
+  const [panelHeight, setPanelHeight] = useState(storeSettings.panelHeight ?? 256);
 
   const handlePasteConfirm = useCallback(() => {
     if (pasteConfirm) {
@@ -342,6 +343,13 @@ export default function Terminal() {
     };
   }, [isResizingPanel]);
 
+  // Save panel height when resize ends
+  useEffect(() => {
+    if (!isResizingPanel && panelResizeStartRef.current === null && panelHeight !== (storeSettings.panelHeight ?? 256)) {
+      useSettingsStore.getState().update({ panelHeight });
+    }
+  }, [isResizingPanel, panelHeight, storeSettings.panelHeight]);
+
   // Delay content unmount until animation completes
   useEffect(() => {
     if (activeTab) {
@@ -397,6 +405,9 @@ export default function Terminal() {
               )}
               {displayTab === 'process' && (
                 <ProcessPanel sessionId={activeSessionId} />
+              )}
+              {displayTab === 'file-manager' && (
+                <FileManagerPanel sessionId={activeSessionId} />
               )}
             </div>
           </div>

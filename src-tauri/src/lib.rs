@@ -186,6 +186,8 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -239,6 +241,13 @@ pub fn run() {
             commands::skill::skill_delete,
             commands::skill::import_skill_file,
             commands::update::check_update,
+            commands::sftp::sftp_list_dir,
+            commands::sftp::sftp_upload,
+            commands::sftp::sftp_download,
+            commands::sftp::sftp_mkdir,
+            commands::sftp::sftp_remove,
+            commands::sftp::sftp_rename,
+            commands::sftp::sftp_upload_folder,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

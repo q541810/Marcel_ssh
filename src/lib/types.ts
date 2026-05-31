@@ -112,6 +112,8 @@ export interface AgentMessage {
   isLoading?: boolean;
   /** True when the LLM is outputting thinking/reasoning content */
   isThinking?: boolean;
+  /** Tool call is currently executing, show loading spinner */
+  isExecuting?: boolean;
   /** Reasoning/thinking content from the model (DeepSeek thinking mode). Passed back to API. */
   reasoningContent?: string;
 }
@@ -186,6 +188,9 @@ export interface AppSettings {
   llmConfig?: LlmConfig | null;
   agentModeSettings: AgentModeSettings;
   experimentalSettings?: ExperimentalSettings;
+  fileManagerPath: string;
+  fileManagerShowHidden: boolean;
+  panelHeight: number;
 }
 
 // LLM stream events
@@ -273,6 +278,23 @@ export type PlanStreamEvent =
   | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number }
   | { type: 'plan-item-skipped'; itemId: string; title: string; index: number; total: number }
   | { type: 'plan-completed'; completed: number; total: number; failed: number };
+
+// File manager types
+
+export type FileType = 'file' | 'directory' | 'symlink' | 'pipe' | 'socket' | 'block' | 'character' | 'unknown';
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  type: FileType;
+  size: number;
+  permissions: string;
+  owner: string;
+  group: string;
+  modifiedAt: string;
+  isHidden: boolean;
+  linkTarget?: string;
+}
 
 // Skill types
 

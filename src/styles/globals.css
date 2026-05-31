@@ -293,6 +293,11 @@ button,
 }
 
 /* Tighten Markdown spacing in Agent messages */
+.prose.prose-sm :where(p):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
 .prose.prose-sm :where(ul, ol):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
   margin-top: 0.25rem;
   margin-bottom: 0.25rem;
@@ -303,9 +308,9 @@ button,
   margin-bottom: 0.125rem;
 }
 
-.prose.prose-sm :where(p):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
-  margin-top: 0.25rem;
-  margin-bottom: 0.25rem;
+.prose.prose-sm :where(li p):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
 .prose.prose-sm :where(ul > li):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
@@ -331,6 +336,11 @@ button,
 .prose.prose-sm :where(pre):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
   margin-top: 0.25rem;
   margin-bottom: 0.25rem;
+}
+
+.prose.prose-sm :where(hr):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
 /* Drawer animations */

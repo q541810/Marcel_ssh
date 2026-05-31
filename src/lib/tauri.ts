@@ -243,3 +243,42 @@ export async function appReady(): Promise<void> {
 export async function checkUpdate(): Promise<UpdateCheckResult> {
   return invoke<UpdateCheckResult>('check_update');
 }
+
+// SFTP commands
+
+export interface SftpFileEntry {
+  name: string;
+  is_dir: boolean;
+  is_file: boolean;
+  is_symlink: boolean;
+  size: number;
+  mode: number;
+}
+
+export async function sftpListDir(sessionId: string, path: string): Promise<SftpFileEntry[]> {
+  return invoke<SftpFileEntry[]>('sftp_list_dir', { sessionId, path });
+}
+
+export async function sftpUpload(sessionId: string, remotePath: string, data: number[]): Promise<void> {
+  return invoke('sftp_upload', { sessionId, remotePath, data });
+}
+
+export async function sftpDownload(sessionId: string, remotePath: string): Promise<number[]> {
+  return invoke<number[]>('sftp_download', { sessionId, remotePath });
+}
+
+export async function sftpMkdir(sessionId: string, path: string): Promise<void> {
+  return invoke('sftp_mkdir', { sessionId, path });
+}
+
+export async function sftpRemove(sessionId: string, path: string, isDir: boolean): Promise<void> {
+  return invoke('sftp_remove', { sessionId, path, isDir });
+}
+
+export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+  return invoke('sftp_rename', { sessionId, oldPath, newPath });
+}
+
+export async function sftpUploadFolder(sessionId: string, remotePath: string, archiveData: number[]): Promise<string> {
+  return invoke<string>('sftp_upload_folder', { sessionId, remotePath, archiveData });
+}

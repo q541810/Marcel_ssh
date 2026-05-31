@@ -7,6 +7,7 @@ import type {
 } from '@/lib/types';
 import {
   handleToolResult,
+  handleToolCallStart,
   handleTextDelta,
   handleThinkingDelta,
   handleDone,
@@ -84,16 +85,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       }
 
       if (hasEventType(ev, 'toolCallStart')) {
-        handler.updateMessages(conversationId, (convMsgs) => {
-          const newMsgs = [...convMsgs];
-          for (let i = newMsgs.length - 1; i >= 0; i--) {
-            if (newMsgs[i].role === 'assistant' && newMsgs[i].reasoningContent) {
-              newMsgs[i] = { ...newMsgs[i], reasoningContent: undefined, isThinking: false };
-              break;
-            }
-          }
-          return newMsgs;
-        });
+        handleToolCallStart(handler, taskId, conversationId, ev);
         return;
       }
 

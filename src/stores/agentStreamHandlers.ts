@@ -34,6 +34,54 @@ function insertToolMessageAfterAssistant(newMsgs: AgentMessage[], toolMessage: A
 }
 
 // ---------------------------------------------------------------------------
+// Tool call start handler — creates an in-progress tool message immediately
+// ---------------------------------------------------------------------------
+
+export function handleToolCallStart(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'toolCallStart'; id: string; name: string },
+) {
+  const messageId = crypto.randomUUID();
+  const toolMessage: AgentMessage = {
+    id: messageId,
+    role: 'tool',
+    content: '',
+    timestamp: new Date().toISOString(),
+    isExecuting: true,
+    toolResult: {
+      toolName: ev.name,
+      summary: '',
+      result: '',
+      success: true,
+      blocked: false,
+    },
+  };
+
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const newMsgs = [...convMsgs];
+
+    // Clear reasoningContent from the last assistant message (same as before)
+    for (let i = newMsgs.length - 1; i >= 0; i--) {
+      if (newMsgs[i].role === 'assistant' && newMsgs[i].reasoningContent) {
+        newMsgs[i] = { ...newMsgs[i], reasoningContent: undefined, isThinking: false };
+        break;
+      }
+    }
+
+    newMsgs.push(toolMessage);
+
+    // Register the mapping so handleToolResult can find it later
+    const streamState = getStreamState(taskId);
+    streamState.pendingToolCalls.set(ev.id, messageId);
+    setStreamState(taskId, streamState);
+
+    return newMsgs;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Per-task stream state tracking
 // ---------------------------------------------------------------------------
 
@@ -42,6 +90,7 @@ interface TaskStreamState {
   messageIndex: number;
   loadingCleared: boolean;
   toolResultCount: number;
+  pendingToolCalls: Map<string, string>; // toolCallId → message.id
 }
 
 const taskStreamState: Map<string, TaskStreamState> = new Map();
@@ -52,6 +101,7 @@ export function getStreamState(taskId: string): TaskStreamState {
     messageIndex: -1,
     loadingCleared: false,
     toolResultCount: 0,
+    pendingToolCalls: new Map(),
   };
 }
 
@@ -74,21 +124,6 @@ export function handleToolResult(
   loadingAssistantId: string,
   tr: ToolResultPayload,
 ) {
-  const toolMessage: AgentMessage = {
-    id: crypto.randomUUID(),
-    role: 'tool',
-    content: '',
-    timestamp: new Date().toISOString(),
-    toolResult: {
-      toolName: tr.toolName,
-      summary: tr.summary,
-      result: tr.result,
-      success: tr.success,
-      blocked: tr.blocked,
-      arguments: tr.arguments,
-    },
-  };
-
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = [...convMsgs];
     const streamState = getStreamState(taskId);
@@ -111,7 +146,49 @@ export function handleToolResult(
       }
     }
 
-    insertToolMessageAfterAssistant(newMsgs, toolMessage);
+    // Try to find the in-progress tool message created by handleToolCallStart
+    const pendingMsgId = streamState.pendingToolCalls.get(tr.toolCallId);
+    if (pendingMsgId) {
+      const pendingIdx = newMsgs.findIndex((m) => m.id === pendingMsgId);
+      if (pendingIdx !== -1) {
+        newMsgs[pendingIdx] = {
+          ...newMsgs[pendingIdx],
+          isExecuting: false,
+          toolResult: {
+            toolName: tr.toolName,
+            summary: tr.summary,
+            result: tr.result,
+            success: tr.success,
+            blocked: tr.blocked,
+            arguments: tr.arguments,
+          },
+        };
+        streamState.pendingToolCalls.delete(tr.toolCallId);
+        streamState.assistantMessageId = null;
+        streamState.messageIndex = -1;
+        streamState.toolResultCount = 0;
+        setStreamState(taskId, streamState);
+        return newMsgs;
+      }
+    }
+
+    // Fallback: create a new tool message (no matching in-progress message found)
+    const toolMessage: AgentMessage = {
+      id: crypto.randomUUID(),
+      role: 'tool',
+      content: '',
+      timestamp: new Date().toISOString(),
+      toolResult: {
+        toolName: tr.toolName,
+        summary: tr.summary,
+        result: tr.result,
+        success: tr.success,
+        blocked: tr.blocked,
+        arguments: tr.arguments,
+      },
+    };
+
+    newMsgs.push(toolMessage);
 
     streamState.assistantMessageId = null;
     streamState.messageIndex = -1;
@@ -186,6 +263,7 @@ export function handleTextDelta(
         messageIndex: newMsgs.length - 1,
         loadingCleared,
         toolResultCount: getStreamState(taskId).toolResultCount,
+        pendingToolCalls: getStreamState(taskId).pendingToolCalls,
       });
 
       return newMsgs;
@@ -269,6 +347,7 @@ export function handleThinkingDelta(
         messageIndex: newMsgs.length - 1,
         loadingCleared,
         toolResultCount: getStreamState(taskId).toolResultCount,
+        pendingToolCalls: getStreamState(taskId).pendingToolCalls,
       });
 
       return newMsgs;
@@ -290,6 +369,8 @@ export function handleDone(
       if (m.id === loadingAssistantId) return false;
       // Remove empty assistant messages without content, tool calls, or reasoning
       if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.reasoningContent) return false;
+      // Remove tool messages that are still executing (tool call never completed)
+      if (m.role === 'tool' && m.isExecuting) return false;
       return true;
     });
     // Clear isThinking and isLoading flags on all assistant messages
@@ -317,6 +398,7 @@ export function handleError(
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs
       .filter((m) => m.id !== loadingAssistantId)
+      .filter((m) => !(m.role === 'tool' && m.isExecuting))
       .map((m) =>
         m.role === 'assistant' && (m.isThinking || m.isLoading)
           ? { ...m, isThinking: false, isLoading: false }

@@ -509,6 +509,40 @@ impl SshManager {
         Ok(output)
     }
 
+    /// Open an SFTP session on a dedicated subsystem channel.
+    /// Returns a `SftpSession` that can be used for file operations.
+    pub async fn open_sftp(
+        &self,
+        session_id: &str,
+    ) -> Result<russh_sftp::client::SftpSession, AppError> {
+        let conn = {
+            let guard = self.connections.read().await;
+            guard.get(session_id).cloned()
+        };
+        let conn = conn.ok_or_else(|| {
+            AppError::Ssh(format!("会话不存在: {}", session_id))
+        })?;
+
+        let channel = conn
+            .handle
+            .lock()
+            .await
+            .channel_open_session()
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开 SFTP 通道失败: {}", e)))?;
+
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| AppError::Ssh(format!("请求 SFTP 子系统失败: {}", e)))?;
+
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| AppError::Ssh(format!("初始化 SFTP 会话失败: {}", e)))?;
+
+        Ok(sftp)
+    }
+
 }
 
 impl Default for SshManager {

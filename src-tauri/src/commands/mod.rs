@@ -3,6 +3,7 @@ pub mod connections;
 pub mod keychain;
 pub mod quick_command;
 pub mod settings;
+pub mod sftp;
 pub mod skill;
 pub mod ssh;
 pub mod update;

@@ -1,27 +1,16 @@
 //! File-system tools (read / write / edit / list).
 //!
-//! Implementation strategy
-//! -----------------------
-//! Reading and writing arbitrary file contents over `cat`/heredoc is fragile:
-//! shells choke on embedded EOF markers, NULs, CRs, and 8-bit data. Instead
-//! we wrap the payload with **base64**, which is universally supported and
-//! transparent to the shell. `base64`/`openssl base64` are part of every
-//! mainstream Linux distribution; we fall back across both.
-//!
-//! - `read_file`  : `base64 -w0 <path>` -> decode locally
-//! - `write_file` : encode locally -> `base64 -d > <path>`
-//! - `edit_file`  : read, locate `old_content`, replace, write back
-//! - `list_directory` : `ls -la --color=never <path>`
-//!
-//! All tools shell-escape their path arguments via [`shell_escape`].
+//! Uses the SFTP subsystem protocol for binary-safe file operations.
+//! Falls back to base64-over-exec if SFTP is unavailable.
 
 use async_trait::async_trait;
+use russh_sftp::protocol::OpenFlags;
 use serde_json::json;
+use tokio::io::AsyncWriteExt;
 
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::tools::base64;
 use crate::agent::tools::{
-    shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput,
+    truncate_output, AgentTool, ToolContext, ToolOutput,
 };
 use crate::error::AppError;
 
@@ -68,40 +57,31 @@ impl AgentTool for ReadFileTool {
         if path.is_empty() {
             return Ok(ToolOutput::fail("read_file", "empty path"));
         }
-        let escaped = shell_escape(path);
-        let cmd = base64::cmd_encode_file(&escaped);
 
-        match ctx.exec(&cmd).await {
-            Ok(b64) => {
-                let trimmed = b64.trim();
-                if trimmed.is_empty() {
-                    return Ok(ToolOutput::fail(
+        let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                match sftp.read(path).await {
+                    Ok(data) => data,
+                    Err(e) => return Ok(ToolOutput::fail(
                         format!("read {}", path),
-                        "remote returned no data (file missing, empty, or base64 unavailable)",
-                    ));
-                }
-                match base64::b64_decode(trimmed) {
-                    Ok(bytes) => {
-                        let n = bytes.len();
-                        let text = String::from_utf8_lossy(&bytes).into_owned();
-                        let body = truncate_output(text, MAX_READ_BYTES);
-                        Ok(ToolOutput::ok(
-                            format!("read {} ({} bytes)", path, n),
-                            body,
-                        )
-                        .with_metadata(json!({ "path": path, "bytes": n })))
-                    }
-                    Err(e) => Ok(ToolOutput::fail(
-                        format!("read {}", path),
-                        format!("decode error: {}", e),
+                        format!("SFTP read failed: {}", e),
                     )),
                 }
             }
-            Err(e) => Ok(ToolOutput::fail(
+            Err(e) => return Ok(ToolOutput::fail(
                 format!("read {}", path),
-                format!("read failed: {}", e),
+                format!("SFTP unavailable: {}", e),
             )),
-        }
+        };
+
+        let n = bytes.len();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let body = truncate_output(text, MAX_READ_BYTES);
+        Ok(ToolOutput::ok(
+            format!("read {} ({} bytes)", path, n),
+            body,
+        )
+        .with_metadata(json!({ "path": path, "bytes": n })))
     }
 }
 
@@ -157,38 +137,50 @@ impl AgentTool for WriteFileTool {
             ));
         }
 
-        let escaped = shell_escape(path);
-        let payload = base64::b64_encode(content.as_bytes());
-        // Always check the resulting file size to confirm success.
-        let cmd = format!(
-            "{write}\n[ -f {p} ] && wc -c < {p}",
-            write = base64::cmd_decode_to_file(&escaped, &payload),
-            p = escaped
-        );
+        let bytes = content.as_bytes();
 
-        match ctx.exec(&cmd).await {
-            Ok(out) => {
-                // Best-effort: parse the trailing wc number if present.
-                let last_line = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
-                let written: Option<u64> = last_line.trim().parse().ok();
-                let lines = content.lines().count();
-                let summary = format!("write {} ({} lines)", path, lines);
-                let body = match written {
-                    Some(n) => format!("wrote {} bytes to {}", n, path),
-                    None => format!(
-                        "wrote {} bytes to {} (size verification unavailable)",
-                        content.len(), path
-                    ),
-                };
-                Ok(ToolOutput::ok(summary, body).with_metadata(json!({
-                    "path": path,
-                    "bytes_sent": content.len(),
-                    "bytes_written": written,
-                })))
+        match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                let write_result = async {
+                    let mut file = sftp
+                        .open_with_flags(
+                            path,
+                            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                        )
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
+
+                    file.write_all(bytes)
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
+
+                    file.flush()
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
+
+                    Ok::<(), AppError>(())
+                }
+                .await;
+
+                match write_result {
+                    Ok(()) => {
+                        let lines = content.lines().count();
+                        let summary = format!("write {} ({} lines)", path, lines);
+                        let body = format!("wrote {} bytes to {}", bytes.len(), path);
+                        Ok(ToolOutput::ok(summary, body).with_metadata(json!({
+                            "path": path,
+                            "bytes_sent": bytes.len(),
+                        })))
+                    }
+                    Err(e) => Ok(ToolOutput::fail(
+                        format!("write {}", path),
+                        format!("write failed: {}", e),
+                    )),
+                }
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("write {}", path),
-                format!("write failed: {}", e),
+                format!("SFTP unavailable: {}", e),
             )),
         }
     }
@@ -249,33 +241,23 @@ impl AgentTool for EditFileTool {
             ));
         }
 
-        // 1. Read current file
-        let escaped = shell_escape(path);
-        let raw = match ctx.exec(&base64::cmd_encode_file(&escaped)).await {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("edit {}", path),
-                    format!("read failed: {}", e),
-                ));
+        // 1. Read current file via SFTP
+        let current_bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                match sftp.read(path).await {
+                    Ok(data) => data,
+                    Err(e) => return Ok(ToolOutput::fail(
+                        format!("edit {}", path),
+                        format!("SFTP read failed: {}", e),
+                    )),
+                }
             }
-        };
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Ok(ToolOutput::fail(
+            Err(e) => return Ok(ToolOutput::fail(
                 format!("edit {}", path),
-                "remote file missing or unreadable",
-            ));
-        }
-        let current_bytes = match base64::b64_decode(trimmed) {
-            Ok(b) => b,
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("edit {}", path),
-                    format!("decode error: {}", e),
-                ));
-            }
+                format!("SFTP unavailable: {}", e),
+            )),
         };
+
         let current = match String::from_utf8(current_bytes) {
             Ok(s) => s,
             Err(_) => {
@@ -322,11 +304,33 @@ impl AgentTool for EditFileTool {
             ));
         }
 
-        // 4. Write back
-        let payload = base64::b64_encode(updated.as_bytes());
-        let cmd = base64::cmd_decode_to_file(&escaped, &payload);
-        match ctx.exec(&cmd).await {
-            Ok(_) => Ok(ToolOutput::ok(
+        // 4. Write back via SFTP
+        let write_result = async {
+            let sftp = ctx.ssh.open_sftp(&ctx.session_id).await
+                .map_err(|e| AppError::Ssh(format!("SFTP unavailable: {}", e)))?;
+
+            let mut file = sftp
+                .open_with_flags(
+                    path,
+                    OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                )
+                .await
+                .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
+
+            file.write_all(updated.as_bytes())
+                .await
+                .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
+
+            file.flush()
+                .await
+                .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
+
+            Ok::<(), AppError>(())
+        }
+        .await;
+
+        match write_result {
+            Ok(()) => Ok(ToolOutput::ok(
                 format!("edit {} ({} replacement{})", path, occurrences, if occurrences == 1 { "" } else { "s" }),
                 format!(
                     "replaced {} occurrence(s) in {} ({} -> {} bytes)",
@@ -382,15 +386,38 @@ impl AgentTool for ListDirectoryTool {
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
         let path = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-        let escaped = shell_escape(path);
-        // --color=never may not exist on BSD; fall back gracefully.
-        let cmd = format!(
-            "ls -la --color=never {p} 2>/dev/null || ls -la {p}",
-            p = escaped
-        );
-        match ctx.exec(&cmd).await {
-            Ok(output) => {
-                let entries = output.lines().count();
+
+        match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                let mut output = String::new();
+                let mut entries = 0;
+
+                match sftp.read_dir(path).await {
+                    Ok(mut dir) => {
+                        while let Some(entry) = dir.next() {
+                            let metadata = entry.metadata();
+                            let name = entry.file_name();
+                            let size = metadata.len();
+                            let permissions = metadata.permissions.unwrap_or(0);
+                            let is_dir = metadata.is_dir();
+                            let is_link = metadata.is_symlink();
+
+                            let type_char = if is_dir { 'd' } else if is_link { 'l' } else { '-' };
+                            let perms_str = format_permissions(permissions);
+
+                            output.push_str(&format!(
+                                "{} {} {:>8} {}\n",
+                                type_char, perms_str, size, name
+                            ));
+                            entries += 1;
+                        }
+                    }
+                    Err(e) => return Ok(ToolOutput::fail(
+                        format!("list {}", path),
+                        format!("SFTP list failed: {}", e),
+                    )),
+                }
+
                 let body = truncate_output(output, MAX_LIST_BYTES);
                 Ok(ToolOutput::ok(
                     format!("list {} ({} entries)", path, entries),
@@ -400,10 +427,31 @@ impl AgentTool for ListDirectoryTool {
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("list {}", path),
-                format!("list failed: {}", e),
+                format!("SFTP unavailable: {}", e),
             )),
         }
     }
+}
+
+fn format_permissions(mode: u32) -> String {
+    let is_dir = (mode & 0o170000) == 0o040000;
+    let is_link = (mode & 0o170000) == 0o120000;
+    let type_char = if is_dir { 'd' } else if is_link { 'l' } else { '-' };
+    let perms = [
+        if mode & 0o400 != 0 { 'r' } else { '-' },
+        if mode & 0o200 != 0 { 'w' } else { '-' },
+        if mode & 0o100 != 0 { 'x' } else { '-' },
+        if mode & 0o040 != 0 { 'r' } else { '-' },
+        if mode & 0o020 != 0 { 'w' } else { '-' },
+        if mode & 0o010 != 0 { 'x' } else { '-' },
+        if mode & 0o004 != 0 { 'r' } else { '-' },
+        if mode & 0o002 != 0 { 'w' } else { '-' },
+        if mode & 0o001 != 0 { 'x' } else { '-' },
+    ];
+    let mut result = String::with_capacity(10);
+    result.push(type_char);
+    result.extend(perms.iter());
+    result
 }
 
 // ────────────────────────────── tests ──────────────────────────────

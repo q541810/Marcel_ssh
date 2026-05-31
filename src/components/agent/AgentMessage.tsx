@@ -8,7 +8,7 @@ interface Props {
 }
 
 const MARKDOWN_CLASS =
-  "text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-1 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic";
+  "text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic";
 
 const THINKING_MARKDOWN_CLASS =
   "text-xs text-zinc-400 whitespace-pre-wrap break-words prose prose-invert prose-xs max-w-none prose-p:my-0.5 prose-code:text-zinc-500 prose-code:bg-zinc-900/50 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-zinc-900/50 prose-pre:border prose-pre:border-zinc-800 prose-a:text-zinc-500 prose-headings:my-1 prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0 prose-blockquote:border-l-zinc-700 prose-blockquote:text-zinc-500 prose-blockquote:italic";
@@ -71,7 +71,7 @@ export default function AgentMessage({ message, autoExpand }: Props) {
       <div className="max-w-[90%]">
         {/* Thinking / Reasoning foldable */}
         {hasReasoning && (
-          <div className="mb-2">
+          <div className="mb-0.5">
             <button
               type="button"
               onClick={() => setThinkingExpanded((v) => !v)}

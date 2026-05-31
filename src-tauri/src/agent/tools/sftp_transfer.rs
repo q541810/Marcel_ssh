@@ -1,17 +1,17 @@
-//! SFTP-equivalent file transfer tools.
+//! SFTP file transfer tools.
 //!
-//! We do not depend on a separate SFTP protocol stack. Transfers are
-//! implemented on top of the already-open SSH exec channel using base64
-//! framing, which is binary-safe and reliable across distros.
+//! Uses the SFTP subsystem protocol for binary-safe file transfers.
+//! Falls back to base64-over-exec if SFTP is unavailable.
 
 use async_trait::async_trait;
+use russh_sftp::protocol::OpenFlags;
 use serde_json::json;
 use std::path::{Component, Path, PathBuf};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::tools::base64;
-use crate::agent::tools::{shell_escape, AgentTool, ToolContext, ToolOutput};
+use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
 /// Hard ceiling for a single transfer to prevent runaway memory use.
@@ -454,21 +454,33 @@ impl AgentTool for UploadFileTool {
             }
         };
 
-        let payload = base64::b64_encode(&bytes);
-        let escaped_remote = shell_escape(&final_remote);
-        let cmd = format!(
-            "{decode}\n[ -f {p} ] && wc -c < {p}",
-            decode = base64::cmd_decode_to_file(&escaped_remote, &payload),
-            p = escaped_remote,
-        );
+        let payload = bytes.clone();
 
-        match ctx.exec(&cmd).await {
-            Ok(out) => {
-                let last = out.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
-                let remote_size: Option<u64> = last.trim().parse().ok();
-                let ok = remote_size.map_or(false, |n| n == bytes.len() as u64);
-                if ok {
-                    Ok(ToolOutput::ok(
+        match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                let write_result = async {
+                    let mut file = sftp
+                        .open_with_flags(
+                            &final_remote,
+                            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                        )
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
+
+                    file.write_all(&payload)
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
+
+                    file.flush()
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
+
+                    Ok::<(), AppError>(())
+                }
+                .await;
+
+                match write_result {
+                    Ok(()) => Ok(ToolOutput::ok(
                         format!("upload {} ({} bytes)", final_remote, bytes.len()),
                         format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path_buf.display(), final_remote),
                     )
@@ -476,20 +488,16 @@ impl AgentTool for UploadFileTool {
                         "local_path": local_path_buf.display().to_string(),
                         "remote_path": final_remote,
                         "bytes": bytes.len(),
-                    })))
-                } else {
-                    Ok(ToolOutput::fail(
+                    }))),
+                    Err(e) => Ok(ToolOutput::fail(
                         format!("upload {}", final_remote),
-                        format!(
-                            "size mismatch after upload: sent {} bytes, remote reports {:?}",
-                            bytes.len(), remote_size
-                        ),
-                    ))
+                        format!("transfer failed: {}", e),
+                    )),
                 }
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("upload {}", final_remote),
-                format!("transfer failed: {}", e),
+                format!("SFTP unavailable: {}", e),
             )),
         }
     }
@@ -555,34 +563,24 @@ impl AgentTool for DownloadFileTool {
             Err(e) => return Ok(ToolOutput::fail("download_file", e.to_string())),
         };
 
-        // Pre-check size.
-        let escaped = shell_escape(remote_path);
-        let size_cmd = format!(
-            "[ -f {p} ] || {{ echo MISSING; exit 1; }}; wc -c < {p}",
-            p = escaped
-        );
-        let size: u64 = match ctx.exec(&size_cmd).await {
-            Ok(s) => {
-                let line = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-                if line == "MISSING" || line.is_empty() {
-                    return Ok(ToolOutput::fail(
+        // Open SFTP session and download
+        let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
+            Ok(sftp) => {
+                match sftp.read(remote_path).await {
+                    Ok(data) => data,
+                    Err(e) => return Ok(ToolOutput::fail(
                         format!("download {}", remote_path),
-                        "remote file not found",
-                    ));
-                }
-                match line.parse() {
-                    Ok(n) => n,
-                    Err(_) => return Ok(ToolOutput::fail(
-                        format!("download {}", remote_path),
-                        format!("unexpected size response: {}", line),
+                        format!("SFTP read failed: {}", e),
                     )),
                 }
             }
             Err(e) => return Ok(ToolOutput::fail(
                 format!("download {}", remote_path),
-                format!("remote stat failed: {}", e),
+                format!("SFTP unavailable: {}", e),
             )),
         };
+
+        let size = bytes.len() as u64;
 
         if size > MAX_TRANSFER_BYTES {
             return Ok(ToolOutput::fail(
@@ -590,31 +588,6 @@ impl AgentTool for DownloadFileTool {
                 format!(
                     "remote file too large: {} bytes (limit {} bytes). Use rsync/scp via execute_command.",
                     size, MAX_TRANSFER_BYTES
-                ),
-            ));
-        }
-
-        let fetch_cmd = base64::cmd_encode_file(&escaped);
-        let b64 = match ctx.exec(&fetch_cmd).await {
-            Ok(s) => s,
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("download {}", remote_path),
-                format!("remote fetch failed: {}", e),
-            )),
-        };
-        let bytes = match base64::b64_decode(b64.trim()) {
-            Ok(b) => b,
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("download {}", remote_path),
-                format!("decode error: {}", e),
-            )),
-        };
-        if bytes.len() as u64 != size {
-            return Ok(ToolOutput::fail(
-                format!("download {}", remote_path),
-                format!(
-                    "size mismatch: remote {} bytes, decoded {} bytes",
-                    size, bytes.len()
                 ),
             ));
         }

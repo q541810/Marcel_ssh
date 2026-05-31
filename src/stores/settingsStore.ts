@@ -32,6 +32,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   llmConfig: DEFAULT_LLM_CONFIG,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
+  fileManagerPath: '/',
+  fileManagerShowHidden: false,
+  panelHeight: 256,
 };
 
 interface SettingsState {

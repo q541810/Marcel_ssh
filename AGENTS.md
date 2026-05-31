@@ -218,7 +218,10 @@ marcel-ssh/
 │   │   ├── terminal/             # 终端组件
 │   │   ├── agent/                # 智能助手面板
 │   │   ├── connection/           # 连接管理
-│   │   ├── sftp/                 # 文件传输
+│   │   ├── sftp/                 # 文件管理
+│   │   │   ├── FileManagerPanel.tsx  # 文件管理面板（浏览/上传/下载/删除/重命名）
+│   │   │   ├── FileExplorer.tsx  # 文件浏览器（占位符）
+│   │   │   └── TransferQueue.tsx # 传输队列（占位符）
 │   │   ├── settings/             # 设置页面
 │   │   └── ui/                   # 通用 UI 组件
 │   ├── hooks/                    # useSSH, useAgent, useTerminal

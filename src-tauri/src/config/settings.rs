@@ -124,7 +124,19 @@ pub struct AppSettings {
     pub agent_mode_settings: AgentModeSettings,
     #[serde(default)]
     pub experimental_settings: ExperimentalSettings,
+    /// File manager last browsed path
+    #[serde(default = "default_file_manager_path")]
+    pub file_manager_path: String,
+    /// File manager show hidden files
+    #[serde(default)]
+    pub file_manager_show_hidden: bool,
+    /// Bottom panel height in pixels
+    #[serde(default = "default_panel_height")]
+    pub panel_height: u16,
 }
+
+fn default_file_manager_path() -> String { "/".to_string() }
+fn default_panel_height() -> u16 { 256 }
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -146,6 +158,9 @@ impl Default for AppSettings {
                 confirm_each_command: true,
             },
             experimental_settings: ExperimentalSettings::default(),
+            file_manager_path: default_file_manager_path(),
+            file_manager_show_hidden: false,
+            panel_height: default_panel_height(),
         }
     }
 }
