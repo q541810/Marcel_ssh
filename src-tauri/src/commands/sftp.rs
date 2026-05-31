@@ -3,6 +3,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
 
+use crate::agent::tools::shell_escape;
 use crate::error::AppError;
 use crate::AppState;
 
@@ -114,7 +115,7 @@ pub async fn sftp_remove(
         // SFTP remove_dir only works on empty directories, use rm -rf for recursive deletion
         state.ssh_manager.exec_command(
             &session_id,
-            &format!("rm -rf \"{}\"", path),
+            &format!("rm -rf {}", shell_escape(&path)),
         ).await?;
     } else {
         let sftp = state.ssh_manager.open_sftp(&session_id).await?;
@@ -174,8 +175,8 @@ pub async fn sftp_upload_folder(
 
     // Try unzip first, fallback to python3 if unzip is not available
     let exec_cmd = format!(
-        "mkdir -p \"{dir}\" && (unzip -o \"{tmp}\" -d \"{dir}\" 2>&1 || python3 -c \"import zipfile; zipfile.ZipFile('{tmp}').extractall('{dir}')\" 2>&1) && rm -f \"{tmp}\" && echo OK",
-        dir = remote_path, tmp = tmp_path
+        "mkdir -p {dir} && (unzip -o {tmp} -d {dir} 2>&1 || python3 -c \"import zipfile; zipfile.ZipFile({tmp}).extractall({dir})\" 2>&1) && rm -f {tmp} && echo OK",
+        dir = shell_escape(&remote_path), tmp = shell_escape(&tmp_path)
     );
     let output = state.ssh_manager.exec_command(&session_id, &exec_cmd).await?;
 

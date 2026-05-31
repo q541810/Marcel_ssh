@@ -183,7 +183,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     const items: { name: string; data: Uint8Array }[] = [];
     const dirEntries = await readDir(dirPath);
     for (const entry of dirEntries) {
-      const fullPath = dirPath === entry.name ? entry.name : `${dirPath}/${entry.name}`;
+      const fullPath = `${dirPath}/${entry.name}`;
       const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
       if (entry.isDirectory) {
         const subItems = await collectFiles(fullPath, relativePath);
