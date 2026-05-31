@@ -10,6 +10,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
+import FileManagePanel from './FileManagePanel';
 import BottomTabBar from './BottomTabBar';
 import type { TerminalColors } from '@/lib/types';
 
@@ -394,6 +395,9 @@ export default function Terminal() {
             <div className="bg-zinc-900" style={{ height: `${panelHeight - 4}px` }}>
               {displayTab === 'quick-command' && (
                 <QuickCommandPanel sessionId={activeSessionId} sessionKey={activeSession.configId} />
+              )}
+              {displayTab === 'file-manage' && (
+                <FileManagePanel sessionId={activeSessionId} />
               )}
               {displayTab === 'process' && (
                 <ProcessPanel sessionId={activeSessionId} />
