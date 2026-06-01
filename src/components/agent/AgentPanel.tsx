@@ -210,7 +210,7 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-1">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1">
         {!canInteract && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>请先连接 SSH 服务器。</p>
@@ -242,8 +242,14 @@ export default function AgentPanel() {
                 const msg = item as AgentMessage;
                 return (msg.role === 'tool' && msg.toolResult) ||
                   (msg.role === 'assistant' && msg.toolCall)
-                  ? <ToolCallCard key={msg.id} message={msg} autoExpand={isThinking} />
-                  : <AgentMessageItem key={msg.id} message={msg} autoExpand={!!msg.isThinking} />;
+                  ? (
+                <div className="flex justify-start">
+                  <div className="max-w-[85%]">
+                    <ToolCallCard key={msg.id} message={msg} autoExpand={isThinking} />
+                  </div>
+                </div>
+              )
+              : <AgentMessageItem key={msg.id} message={msg} autoExpand={!!msg.isThinking} />;
               })(),
         )}
         <div ref={messagesEndRef} />

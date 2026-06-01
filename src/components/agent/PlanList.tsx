@@ -145,7 +145,7 @@ export default function PlanList() {
 
       {/* Steps list (collapsible) */}
       {!collapsed && (
-        <div className="px-2 pb-2 space-y-0.5 max-h-48 overflow-y-auto">
+        <div className="px-2 pb-2 space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden">
           {plan.items.map((item, index) => (
             <StepItem key={item.id} item={item} index={index + 1} />
           ))}
