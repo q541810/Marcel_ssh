@@ -35,13 +35,24 @@ export default function Terminal() {
   const [displayTab, setDisplayTab] = useState<string | null>(null);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const panelResizeStartRef = useRef<{ y: number; height: number } | null>(null);
+  const hasResizedRef = useRef(false);
+  const initialSyncDoneRef = useRef(false);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
   const preview = useSettingsStore((s) => s.preview);
   const [panelHeight, setPanelHeight] = useState(storeSettings.panelHeight ?? 256);
+
+  // Sync panelHeight from store after initial load
+  useEffect(() => {
+    if (!initialSyncDoneRef.current && settingsLoaded) {
+      initialSyncDoneRef.current = true;
+      setPanelHeight(storeSettings.panelHeight ?? 256);
+    }
+  }, [settingsLoaded, storeSettings.panelHeight]);
 
   const { handleCopy } = useClipboardHandler();
 
@@ -263,6 +274,7 @@ export default function Terminal() {
     e.preventDefault();
     panelResizeStartRef.current = { y: e.clientY, height: panelHeight };
     setIsResizingPanel(true);
+    hasResizedRef.current = true;
   }, [panelHeight]);
 
   useEffect(() => {
@@ -293,12 +305,12 @@ export default function Terminal() {
     };
   }, [isResizingPanel]);
 
-  // Save panel height when resize ends
+  // Save panel height when user has manually resized
   useEffect(() => {
-    if (!isResizingPanel && panelResizeStartRef.current === null && panelHeight !== (storeSettings.panelHeight ?? 256)) {
+    if (!isResizingPanel && panelResizeStartRef.current === null && hasResizedRef.current) {
       useSettingsStore.getState().update({ panelHeight });
     }
-  }, [isResizingPanel, panelHeight, storeSettings.panelHeight]);
+  }, [isResizingPanel, panelHeight]);
 
   // Delay content unmount until animation completes
   useEffect(() => {
