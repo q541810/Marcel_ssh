@@ -232,3 +232,25 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
 
   return base;
 }
+
+/**
+ * Post-process loaded messages to strip reasoningContent from assistant messages
+ * that are immediately followed by a tool card.
+ *
+ * This mirrors the live-streaming behaviour where handleToolCallStart clears the
+ * thinking before a tool executes.  Old DB rows (written before the fix) may still
+ * carry reasoning_content for these intermediate assistant messages; this function
+ * cleans them up so the UI matches what streaming would have shown.
+ */
+export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessage[] {
+  return messages.map((msg, i) => {
+    if (msg.role !== 'assistant' || !msg.reasoningContent) return msg;
+    const next = messages[i + 1];
+    if (!next) return msg;
+    const nextIsTool =
+      (next.role === 'tool' && !!next.toolResult) ||
+      (next.role === 'assistant' && !!next.toolCall);
+    if (!nextIsTool) return msg;
+    return { ...msg, reasoningContent: undefined, isThinking: false };
+  });
+}

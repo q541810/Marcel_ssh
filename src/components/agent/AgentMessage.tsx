@@ -24,15 +24,16 @@ export default function AgentMessage({ message, autoExpand }: Props) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const isTool = message.role === "tool";
+  const hasReasoning = !!message.reasoningContent && !hideThinkingDisplay;
 
-  // Hide empty assistant messages without loading, tool calls, or reasoning
+  // Hide empty assistant messages without loading, tool calls, or visible reasoning
   if (
     !isUser &&
     !isSystem &&
     !isTool &&
     !message.isLoading &&
-    message.content === "" &&
-    !message.reasoningContent &&
+    !message.content &&
+    !hasReasoning &&
     !message.toolCall
   ) {
     return null;
@@ -66,8 +67,6 @@ export default function AgentMessage({ message, autoExpand }: Props) {
   }
 
   // ─── Assistant message ───
-  const hasReasoning = !!message.reasoningContent && !hideThinkingDisplay;
-
   return (
     <div className="flex justify-start my-1">
       <div className="max-w-[90%]">

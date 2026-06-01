@@ -10,7 +10,7 @@ import type {
   PlanItem,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
-import { storedMessageToAgentMessage } from './messageConversion';
+import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import { attachStreamListener, attachPlanListener, cleanupTaskListeners } from './agentStreamManager';
 
 interface AgentState {
@@ -251,12 +251,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       messages: { ...state.messages, [id]: [] },
       activeConversationId: id,
     }));
+    // 重新加载列表，确保新会话按 updated_at 排在最前面
+    await get().loadConnectionConversations(connectionId);
     return id;
   },
 
   switchConversation: async (conversationId: string) => {
     const stored = await tauri.agentLoadConversation(conversationId);
-    const msgs: AgentMessage[] = stored.map(storedMessageToAgentMessage);
+    const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
@@ -266,7 +268,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   loadConversation: async (conversationId: string) => {
     const stored = await tauri.agentLoadConversation(conversationId);
-    const msgs: AgentMessage[] = stored.map(storedMessageToAgentMessage);
+    const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
@@ -320,7 +322,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     const loadedMessages: Record<string, AgentMessage[]> = {};
     for (const conv of convs) {
       const stored = await tauri.agentLoadConversation(conv.id);
-      loadedMessages[conv.id] = stored.map(storedMessageToAgentMessage);
+      loadedMessages[conv.id] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
     }
 
     set((state) => {

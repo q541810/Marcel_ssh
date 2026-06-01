@@ -146,8 +146,12 @@ pub(crate) async fn run_agent_loop(
             return;
         }
 
-        // 3. Add assistant message (with tool_calls) to history
-        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None, assistant_msg.reasoning_content.as_deref());
+        // 3. Add assistant message (with tool_calls) to history.
+        //    Do NOT persist reasoning_content here — the thinking that preceded
+        //    this tool call is ephemeral and should not survive a reload.
+        //    (The live-streaming frontend clears it via handleToolCallStart;
+        //    persisting None keeps the DB consistent with that behaviour.)
+        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None, None);
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the dispatcher
