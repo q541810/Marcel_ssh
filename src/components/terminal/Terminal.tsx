@@ -52,7 +52,7 @@ export default function Terminal() {
       initialSyncDoneRef.current = true;
       setPanelHeight(storeSettings.panelHeight ?? 256);
     }
-  }, [settingsLoaded, storeSettings.panelHeight]);
+  }, [settingsLoaded, storeSettings.panelHeight, setPanelHeight]);
 
   const { handleCopy } = useClipboardHandler();
 
