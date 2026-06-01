@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
-import { readFile, readDir, writeFile } from '@tauri-apps/plugin-fs';
-import { zipSync } from 'fflate';
+import { readFile, writeFile } from '@tauri-apps/plugin-fs';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   sftpListDir,
@@ -10,37 +9,14 @@ import {
   sftpMkdir,
   sftpRemove,
   sftpRename,
-  sftpUploadFolder,
-  type SftpFileEntry,
 } from '@/lib/tauri';
+import type { SftpFileEntry } from '@/lib/types';
+import { formatSize, modeToString } from '@/lib/sftp-helpers';
+import PathBreadcrumb from './PathBreadcrumb';
+import { useSftpUpload } from '@/hooks/useSftpUpload';
 
 interface FileManagerPanelProps {
   sessionId: string;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes === 0) return '-';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
-
-function modeToString(mode: number): string {
-  const isDir = (mode & 0o170000) === 0o040000;
-  const isLink = (mode & 0o170000) === 0o120000;
-  const chars = isDir ? 'd' : isLink ? 'l' : '-';
-  const perms = [
-    mode & 0o400 ? 'r' : '-',
-    mode & 0o200 ? 'w' : '-',
-    mode & 0o100 ? 'x' : '-',
-    mode & 0o040 ? 'r' : '-',
-    mode & 0o020 ? 'w' : '-',
-    mode & 0o010 ? 'x' : '-',
-    mode & 0o004 ? 'r' : '-',
-    mode & 0o002 ? 'w' : '-',
-    mode & 0o001 ? 'x' : '-',
-  ].join('');
-  return chars + perms;
 }
 
 export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
@@ -59,9 +35,6 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   const [renameValue, setRenameValue] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
-  const [editingPath, setEditingPath] = useState(false);
-  const [editPathValue, setEditPathValue] = useState('');
-  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadDirectory = useCallback(async (path: string) => {
@@ -179,64 +152,14 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     }
   };
 
-  const collectFiles = async (dirPath: string, basePath: string): Promise<{ name: string; data: Uint8Array }[]> => {
-    const items: { name: string; data: Uint8Array }[] = [];
-    const dirEntries = await readDir(dirPath);
-    for (const entry of dirEntries) {
-      const fullPath = `${dirPath}/${entry.name}`;
-      const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      if (entry.isDirectory) {
-        const subItems = await collectFiles(fullPath, relativePath);
-        items.push(...subItems);
-      } else if (entry.isFile) {
-        const data = await readFile(fullPath);
-        items.push({ name: relativePath, data });
-      }
-    }
-    return items;
-  };
+  const { uploadFolder: doUploadFolder, uploadStatus } = useSftpUpload(sessionId, currentPath);
 
   const handleUploadFolder = async () => {
     setMenuEntry(null);
     try {
-      const folderPath = await open({
-        directory: true,
-        title: '选择文件夹',
-      });
-      if (!folderPath) return;
-
-      const path = Array.isArray(folderPath) ? folderPath[0] : folderPath;
-      const folderName = path.split(/[/\\]/).pop() || 'upload';
-
-      setUploadStatus('正在读取文件...');
-      const files = await collectFiles(path, '');
-      if (files.length === 0) {
-        setUploadStatus(null);
-        return;
-      }
-
-      setUploadStatus(`正在压缩 ${files.length} 个文件...`);
-      const fileMap: Record<string, Uint8Array> = {};
-      for (const f of files) {
-        fileMap[f.name] = f.data;
-      }
-      const zipped = zipSync(fileMap, { level: 6 });
-
-      const MAX_SIZE = 32 * 1024 * 1024;
-      if (zipped.length > MAX_SIZE) {
-        setUploadStatus(null);
-        setError(`压缩包过大 (${formatSize(zipped.length)})，最大支持 32MB`);
-        return;
-      }
-
-      setUploadStatus(`正在上传 ${formatSize(zipped.length)}...`);
-      const remotePath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`;
-      await sftpUploadFolder(sessionId, remotePath, Array.from(zipped));
-
-      setUploadStatus(null);
+      await doUploadFolder();
       await loadDirectory(currentPath);
     } catch (err) {
-      setUploadStatus(null);
       setError(`上传文件夹失败：${String(err)}`);
     }
   };
@@ -299,8 +222,6 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     }
   };
 
-  const pathParts = currentPath.split('/').filter(Boolean);
-
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 flex-shrink-0">
@@ -326,54 +247,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
-        {editingPath ? (
-          <input
-            type="text"
-            value={editPathValue}
-            onChange={(e) => setEditPathValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                const p = editPathValue.trim() || '/';
-                setEditingPath(false);
-                navigateTo(p);
-              }
-              if (e.key === 'Escape') setEditingPath(false);
-            }}
-            onBlur={() => {
-              const p = editPathValue.trim() || '/';
-              setEditingPath(false);
-              if (p !== currentPath) navigateTo(p);
-            }}
-            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-0.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 font-mono"
-            autoFocus
-          />
-        ) : (
-          <div
-            className="flex-1 flex items-center gap-0.5 text-xs text-zinc-400 overflow-x-auto whitespace-nowrap cursor-text rounded-md px-2 py-0.5 hover:bg-zinc-800 transition-colors"
-            onClick={() => {
-              setEditPathValue(currentPath);
-              setEditingPath(true);
-            }}
-            title="点击编辑路径"
-          >
-            <span className="text-zinc-400">/</span>
-            {pathParts.map((part, i) => (
-              <span key={i} className="flex items-center">
-                <span className="text-zinc-600">&gt;</span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigateTo('/' + pathParts.slice(0, i + 1).join('/'));
-                  }}
-                  className="hover:text-indigo-400 transition-colors px-1"
-                >
-                  {part}
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <PathBreadcrumb currentPath={currentPath} onNavigate={navigateTo} />
         <button
           type="button"
           onClick={() => setShowNewFolder(true)}

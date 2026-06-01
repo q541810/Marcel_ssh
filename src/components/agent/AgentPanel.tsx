@@ -23,15 +23,14 @@ export default function AgentPanel() {
   });
   const {
     messages,
-    startTask,
-    stopTask,
-    activeTask,
+    sendPrompt,
+    stopActiveTask,
     mode,
     setMode,
     isRunning,
     pendingApproval,
-    approve,
-    reject,
+    approveCurrent,
+    rejectCurrent,
     conversations,
     activeConversationId,
     newConversation,
@@ -69,7 +68,7 @@ export default function AgentPanel() {
       inputRef.current.style.height = 'auto';
     }
     try {
-      await startTask(activeSessionId!, prompt, activeConfigId);
+      await sendPrompt(activeSessionId!, prompt, activeConfigId);
     } catch (err) {
       console.error('Failed to start task:', err);
     }
@@ -93,20 +92,18 @@ export default function AgentPanel() {
   };
 
   const handleStop = () => {
-    if (activeTask) {
-      stopTask(activeTask.id);
-    }
+    stopActiveTask();
   };
 
   const handleApprove = async () => {
-    if (pendingApproval && activeTask) {
-      await approve(activeTask.id, pendingApproval.toolCallId);
+    if (pendingApproval) {
+      await approveCurrent(pendingApproval.toolCallId);
     }
   };
 
   const handleReject = async () => {
-    if (pendingApproval && activeTask) {
-      await reject(activeTask.id, pendingApproval.toolCallId);
+    if (pendingApproval) {
+      await rejectCurrent(pendingApproval.toolCallId);
     }
   };
 

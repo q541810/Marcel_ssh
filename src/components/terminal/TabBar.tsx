@@ -1,10 +1,12 @@
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 
 export default function TabBar() {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const disconnect = useSessionStore((s) => s.disconnect);
+  const { onDisconnected } = useSessionLifecycle();
 
   const sessionList = Object.values(sessions);
 
@@ -54,7 +56,12 @@ export default function TabBar() {
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  disconnect(session.id);
+                  const configId = session.configId;
+                  disconnect(session.id).then(() => {
+                    if (configId) {
+                      onDisconnected(configId);
+                    }
+                  });
                 }}
                 className="
                   opacity-0 group-hover:opacity-100

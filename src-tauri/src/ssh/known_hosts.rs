@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -202,47 +201,10 @@ impl KnownHostsStore {
 
     /// Atomic write: tmp + fsync + rename.
     fn persist_locked(path: &Path, file: &KnownHostsFile) -> Result<(), AppError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| AppError::Config(format!("create config dir: {}", e)))?;
-        }
-        let json = serde_json::to_vec_pretty(file)
+        let json = serde_json::to_string_pretty(file)
             .map_err(|e| AppError::Config(format!("serialize known_hosts: {}", e)))?;
-        // Build `<path>.tmp` by appending, not by replacing the extension.
-        // `Path::with_extension` would drop the original extension on paths
-        // that lack a recognizable one (it also behaves surprisingly for
-        // multi-dot names), so we append explicitly.
-        let mut tmp_name = path
-            .file_name()
-            .map(|n| n.to_os_string())
-            .unwrap_or_else(|| std::ffi::OsString::from("known_hosts"));
-        tmp_name.push(".tmp");
-        let tmp = path.with_file_name(tmp_name);
-        let write_res = (|| -> std::io::Result<()> {
-            let mut f = fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&tmp)?;
-            f.write_all(&json)?;
-            f.sync_all()?;
-            Ok(())
-        })();
-        if let Err(e) = write_res {
-            let _ = fs::remove_file(&tmp);
-            return Err(AppError::Config(format!("write tmp known_hosts: {}", e)));
-        }
-        if let Err(e) = fs::rename(&tmp, path) {
-            let _ = fs::remove_file(&tmp);
-            return Err(AppError::Config(format!("rename known_hosts: {}", e)));
-        }
-        #[cfg(unix)]
-        if let Some(parent) = path.parent() {
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
-        }
-        Ok(())
+        crate::config::persist::atomic_write(path, &json)
+            .map_err(|e| AppError::Config(format!("write known_hosts: {}", e)))
     }
 }
 

@@ -1,10 +1,10 @@
-use chrono::Utc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
+use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::task::{AgentMode, AgentStatus};
-use crate::agent::thinking_filter::strip_thinking_tags;
+use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
@@ -72,23 +72,16 @@ pub(crate) async fn run_agent_loop(
         conv_db,
     } = ctx;
 
-    // Auto-update conversation title from the current prompt (last user message).
-    if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User && !m.content.is_empty()) {
-        let title = msg.content.chars().take(30).collect::<String>();
-        let _ = conv_db.update_conversation_title(&conversation_id, &title);
-    }
+    let persister = ConversationPersister::new(conv_db, conversation_id.clone());
 
-    // Persist only the current prompt (the last user message).
-    if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User) {
-        if !msg.content.is_empty() {
-            let _ = conv_db.save_message(&conversation_id, "user", &msg.content, &Utc::now().to_rfc3339(), None, None);
-        }
-    }
+    persister.update_title_from_last_user_msg(&messages);
+    persister.save_last_user_msg(&messages);
 
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
         mode.clone(),
         agent_settings,
+        task_id.clone(),
         app.clone(),
         state.clone(),
         registry.clone(),
@@ -113,8 +106,24 @@ pub(crate) async fn run_agent_loop(
         let app_fwd = app.clone();
         let evn = event_name.clone();
         let forwarder = tokio::spawn(async move {
+            let mut in_thinking = false;
             while let Some(ev) = rx.recv().await {
-                let _ = app_fwd.emit(&evn, ev);
+                match ev {
+                    StreamEvent::TextDelta { ref text } => {
+                        let (filtered, new_in_thinking) =
+                            filter_thinking_tags(text, in_thinking);
+                        in_thinking = new_in_thinking;
+                        if !filtered.is_empty() && !in_thinking {
+                            let _ = app_fwd.emit(
+                                &evn,
+                                StreamEvent::TextDelta { text: filtered },
+                            );
+                        }
+                    }
+                    other => {
+                        let _ = app_fwd.emit(&evn, other);
+                    }
+                }
             }
         });
 
@@ -140,7 +149,7 @@ pub(crate) async fn run_agent_loop(
                 content: cleaned_content,
                 ..assistant_msg
             };
-            let _ = conv_db.save_message(&conversation_id, "assistant", &cleaned_msg.content, &Utc::now().to_rfc3339(), None, cleaned_msg.reasoning_content.as_deref());
+            let _ = persister.save_msg("assistant", &cleaned_msg.content, None, cleaned_msg.reasoning_content.as_deref());
             messages.push(cleaned_msg);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
@@ -151,7 +160,7 @@ pub(crate) async fn run_agent_loop(
         //    this tool call is ephemeral and should not survive a reload.
         //    (The live-streaming frontend clears it via handleToolCallStart;
         //    persisting None keeps the DB consistent with that behaviour.)
-        let _ = conv_db.save_message(&conversation_id, "assistant", &assistant_msg.content, &Utc::now().to_rfc3339(), None, None);
+        let _ = persister.save_msg("assistant", &assistant_msg.content, None, None);
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the dispatcher
@@ -220,11 +229,9 @@ pub(crate) async fn run_agent_loop(
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).
-            let _ = conv_db.save_message(
-                &conversation_id,
+            let _ = persister.save_msg(
                 "tool",
                 &tool_msg.content,
-                &Utc::now().to_rfc3339(),
                 tool_result_json.as_deref(),
                 None,
             );

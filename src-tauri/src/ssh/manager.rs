@@ -2,17 +2,20 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use russh::client::{self, Msg};
+use russh::client::{self};
 use russh::keys::PrivateKeyWithHashAlg;
-use russh::{Channel, ChannelMsg};
-use serde::Deserialize;
+use russh::ChannelMsg;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
 
 use crate::error::AppError;
 use crate::ssh::auth::AuthMethod;
-use crate::ssh::known_hosts::{KnownHostEntry, KnownHostsStore, VerifyOutcome};
+use crate::ssh::known_hosts::{KnownHostsStore, VerifyOutcome};
+
+use super::client::Client;
+use super::session::{self, SessionCommand, SshConnection};
 
 /// Configuration for establishing an SSH connection.
 ///
@@ -34,84 +37,6 @@ pub struct ConnectionConfig {
     /// fingerprint is replaced rather than the connection being rejected.
     #[serde(default)]
     pub trust_new_host_key: bool,
-}
-
-/// russh client handler enforcing TOFU host-key verification.
-struct Client {
-    host: String,
-    port: u16,
-    store: Arc<KnownHostsStore>,
-    trust_new: bool,
-    /// Filled in by `check_server_key` so `connect()` can return a structured
-    /// `HostKeyMismatch` error after the handshake fails.
-    verdict: Arc<TokioMutex<Option<VerifyOutcome>>>,
-}
-
-impl client::Handler for Client {
-    type Error = russh::Error;
-
-    async fn check_server_key(
-        &mut self,
-        server_public_key: &russh::keys::ssh_key::PublicKey,
-    ) -> Result<bool, Self::Error> {
-        let outcome = self.store.verify(&self.host, self.port, server_public_key).await;
-        let (algo, fp) = KnownHostsStore::fingerprint(server_public_key);
-        let now = chrono::Utc::now().to_rfc3339();
-        let entry = KnownHostEntry {
-            algorithm: algo,
-            fingerprint_sha256: fp,
-            first_seen: now.clone(),
-            last_seen: now,
-        };
-
-        let accept = match &outcome {
-            VerifyOutcome::TrustOnFirstUse => {
-                if let Err(e) = self.store.record(&self.host, self.port, entry).await {
-                    log::warn!("记录 known_host 失败: {}", e);
-                }
-                true
-            }
-            VerifyOutcome::Match(_) => true,
-            VerifyOutcome::Mismatch { .. } => {
-                if self.trust_new {
-                    if let Err(e) = self.store.replace(&self.host, self.port, entry).await {
-                        log::warn!("替换 known_host 失败: {}", e);
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-        };
-
-        *self.verdict.lock().await = Some(outcome);
-        Ok(accept)
-    }
-}
-
-/// Commands sent to the per-session driver task.
-enum SessionCommand {
-    Input(Vec<u8>),
-    Resize { cols: u32, rows: u32 },
-    Disconnect,
-}
-
-/// An active SSH session. The session is owned by a single driver task that
-/// services both incoming channel data and outgoing user commands. The manager
-/// communicates with the driver task via an mpsc channel — this avoids any
-/// locking on the russh `Channel`, which cannot be used concurrently for both
-/// reads and writes.
-pub struct SshConnection {
-    pub id: String,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub connection_id: Option<String>,
-    /// Sender to the per-session driver task (for the interactive shell).
-    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
-    /// Shared russh Handle — used to open additional exec channels for
-    /// Agent tool calls (separate from the interactive PTY channel).
-    handle: Arc<tokio::sync::Mutex<client::Handle<Client>>>,
 }
 
 /// Manages multiple SSH connections indexed by session ID.
@@ -264,7 +189,7 @@ impl SshManager {
         // We need the handle both for the interactive driver task and for
         // opening exec channels (agent tool calls). Wrap in Arc<Mutex> so
         // both can use it without move conflicts.
-        let shared_handle = Arc::new(tokio::sync::Mutex::new(handle));
+        let shared_handle = Arc::new(TokioMutex::new(handle));
 
         let connection = Arc::new(SshConnection {
             id: session_id.clone(),
@@ -292,7 +217,7 @@ impl SshManager {
         let app_clone = app.clone();
         let manager_connections = self.connections.clone();
         tokio::spawn(async move {
-            Self::drive_session(sid.clone(), channel, shared_handle.clone(), cmd_rx, app_clone.clone()).await;
+            session::drive_session(sid.clone(), channel, shared_handle.clone(), cmd_rx, app_clone.clone()).await;
             // Cleanup
             manager_connections.write().await.remove(&sid);
             let _ = app_clone.emit(
@@ -303,91 +228,6 @@ impl SshManager {
         });
 
         Ok(session_id)
-    }
-
-    /// Drive a single SSH session: multiplex incoming channel messages
-    /// and outgoing user commands on the same task. This guarantees there is
-    /// exactly one owner of the channel and avoids any locking deadlocks.
-    async fn drive_session(
-        session_id: String,
-        mut channel: Channel<Msg>,
-        handle: Arc<tokio::sync::Mutex<client::Handle<Client>>>,
-        mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
-        app: AppHandle,
-    ) {
-        let event_name = format!("ssh://output/{}", session_id);
-        loop {
-            tokio::select! {
-                // Incoming data from the SSH server
-                msg = channel.wait() => {
-                    match msg {
-                        Some(ChannelMsg::Data { data }) => {
-                            let text = match std::str::from_utf8(&data) {
-                                Ok(s) => s.to_owned(),
-                                Err(_) => String::from_utf8_lossy(&data).into_owned(),
-                            };
-                            let _ = app.emit(&event_name, text);
-                        }
-                        Some(ChannelMsg::ExtendedData { data, .. }) => {
-                            // stderr — forward to same stream
-                            let text = match std::str::from_utf8(&data) {
-                                Ok(s) => s.to_owned(),
-                                Err(_) => String::from_utf8_lossy(&data).into_owned(),
-                            };
-                            let _ = app.emit(&event_name, text);
-                        }
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
-                            log::info!("SSH session {} closed by remote", session_id);
-                            break;
-                        }
-                        Some(ChannelMsg::ExitStatus { exit_status }) => {
-                            log::info!(
-                                "SSH session {} shell exited with status {}",
-                                session_id,
-                                exit_status
-                            );
-                        }
-                        Some(_) => { /* ignore other messages */ }
-                        None => {
-                            // Channel ended
-                            break;
-                        }
-                    }
-                }
-
-                // Outgoing commands from the user
-                cmd = cmd_rx.recv() => {
-                    match cmd {
-                        Some(SessionCommand::Input(data)) => {
-                            if let Err(e) = channel.data(&data[..]).await {
-                                log::warn!("写入 SSH 通道失败: {:?}", e);
-                                break;
-                            }
-                        }
-                        Some(SessionCommand::Resize { cols, rows }) => {
-                            if let Err(e) = channel.window_change(cols, rows, 0, 0).await {
-                                log::warn!("调整窗口大小失败: {:?}", e);
-                            }
-                        }
-                        Some(SessionCommand::Disconnect) => {
-                            log::info!("SSH session {} disconnect requested", session_id);
-                            let _ = channel.eof().await;
-                            let _ = channel.close().await;
-                            break;
-                        }
-                        None => {
-                            // All senders dropped — connection was force-removed
-                            log::info!("SSH session {} command channel closed", session_id);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        // Best-effort: close the underlying SSH session
-        let _ = handle.lock().await
-            .disconnect(russh::Disconnect::ByApplication, "client disconnect", "")
-            .await;
     }
 
     /// Send input data to the session's shell channel.
@@ -558,7 +398,7 @@ impl Default for SshManager {
 }
 
 /// Status updates sent via `ssh://status/{session_id}` event.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SshStatus {
     Connected,

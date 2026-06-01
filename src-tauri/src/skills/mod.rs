@@ -4,6 +4,7 @@
 /// 用户可在「技能」面板中创建、编辑、启用/禁用技能。
 /// 已启用的技能会在每次 Agent 任务启动时自动注入到对话上下文。
 
+pub mod parser;
 pub mod store;
 
 pub use store::{Skill, SkillStore};

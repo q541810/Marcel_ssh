@@ -82,14 +82,7 @@ pub async fn agent_start_task(
 
     // Build the registry: start with built-ins, then register enabled skills
     // as tools (progressive disclosure), then conditionally add experimental tools.
-    let mut registry = ToolRegistry::with_builtins();
-    registry.register_skills(&enabled_skills);
-    if experimental_settings.enable_cloud_page {
-        registry.register(std::sync::Arc::new(
-            crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
-        ));
-    }
-    let registry = std::sync::Arc::new(registry);
+    let registry = ToolRegistry::build_for_mode(&enabled_skills, &experimental_settings);
 
     // Choose which tools to expose based on mode
     let tools: Vec<ToolDefinition> = match mode {
@@ -155,11 +148,11 @@ pub async fn agent_stop_task(
 #[tauri::command]
 pub async fn agent_approve_operation(
     state: State<'_, AppState>,
-    _task_id: String,
+    task_id: String,
     operation_id: String,
 ) -> Result<(), AppError> {
-    log::info!("Operation approved: op={}", operation_id);
-    let sender = state.pending_approvals.write().remove(&operation_id);
+    log::info!("Operation approved: task={}, op={}", task_id, operation_id);
+    let sender = state.pending_approvals.write().remove(&(task_id, operation_id));
     if let Some(tx) = sender {
         let _ = tx.send(true);
     }
@@ -170,11 +163,11 @@ pub async fn agent_approve_operation(
 #[tauri::command]
 pub async fn agent_reject_operation(
     state: State<'_, AppState>,
-    _task_id: String,
+    task_id: String,
     operation_id: String,
 ) -> Result<(), AppError> {
-    log::info!("Operation rejected: op={}", operation_id);
-    let sender = state.pending_approvals.write().remove(&operation_id);
+    log::info!("Operation rejected: task={}, op={}", task_id, operation_id);
+    let sender = state.pending_approvals.write().remove(&(task_id, operation_id));
     if let Some(tx) = sender {
         let _ = tx.send(false);
     }

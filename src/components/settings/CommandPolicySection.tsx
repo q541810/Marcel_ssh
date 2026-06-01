@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import type { AgentModeSettings, CommandListMode } from '@/lib/types';
+import type { AgentModeSettings, CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
-import type { CommandCheckResult } from '@/lib/tauri';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Section, Field } from './helpers';

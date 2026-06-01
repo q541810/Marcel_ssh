@@ -1,8 +1,6 @@
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
-use tauri_plugin_notification::NotificationExt;
-use tokio::sync::{oneshot};
 
+use crate::agent::approval::ApprovalManager;
 use crate::agent::task::AgentMode;
 use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
@@ -23,18 +21,6 @@ pub(crate) struct ToolResultEvent {
     pub result: String,
     pub success: bool,
     pub blocked: bool,
-}
-
-/// Event requesting user approval for a tool call.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ApprovalRequestEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub arguments: serde_json::Value,
-    pub risk_level: RiskLevel,
 }
 
 /// Result of executing a single tool call (UI/event view).
@@ -84,8 +70,8 @@ impl DispatchResult {
 pub(crate) struct ToolDispatcher {
     mode: AgentMode,
     agent_settings: AgentModeSettings,
-    app: AppHandle,
-    state: AppState,
+    task_id: String,
+    approval: ApprovalManager,
     registry: std::sync::Arc<ToolRegistry>,
 }
 
@@ -93,15 +79,19 @@ impl ToolDispatcher {
     pub fn new(
         mode: AgentMode,
         agent_settings: AgentModeSettings,
-        app: AppHandle,
+        task_id: String,
+        app: tauri::AppHandle,
         state: AppState,
         registry: std::sync::Arc<ToolRegistry>,
     ) -> Self {
         Self {
             mode,
             agent_settings,
-            app,
-            state,
+            task_id,
+            approval: ApprovalManager::new(
+                app,
+                state.pending_approvals.clone(),
+            ),
             registry,
         }
     }
@@ -153,7 +143,14 @@ impl ToolDispatcher {
                     }
                     let needs_confirm = command_list_requires_confirm(cmd, &self.agent_settings);
                     if needs_confirm
-                        && !self.await_user_approval(tc, effective_risk, event_name).await
+                        && !self.approval.request_approval(
+                            event_name,
+                            self.task_id.clone(),
+                            tc.id.clone(),
+                            &tc.name,
+                            tc.arguments.clone(),
+                            effective_risk,
+                        ).await
                     {
                         return DispatchResult::blocked(
                             format!("$ {}", cmd),
@@ -169,7 +166,14 @@ impl ToolDispatcher {
                         RiskLevel::HighRisk | RiskLevel::Destructive => true,
                     };
                     if needs_confirm
-                        && !self.await_user_approval(tc, effective_risk, event_name).await
+                        && !self.approval.request_approval(
+                            event_name,
+                            self.task_id.clone(),
+                            tc.id.clone(),
+                            &tc.name,
+                            tc.arguments.clone(),
+                            effective_risk,
+                        ).await
                     {
                         return DispatchResult::blocked(
                             tc.name.clone(),
@@ -191,63 +195,6 @@ impl ToolDispatcher {
                 metadata: None,
                 risk_level: effective_risk,
             },
-        }
-    }
-
-    async fn await_user_approval(
-        &self,
-        tc: &ToolCall,
-        risk: RiskLevel,
-        event_name: &str,
-    ) -> bool {
-        let approval_id = tc.id.clone();
-        let _ = self.app.emit(
-            event_name,
-            ApprovalRequestEvent {
-                event_type: "approvalRequest".to_string(),
-                tool_call_id: approval_id.clone(),
-                tool_name: tc.name.clone(),
-                arguments: tc.arguments.clone(),
-                risk_level: risk,
-            },
-        );
-
-        let risk_label = match risk {
-            RiskLevel::ReadOnly => "只读",
-            RiskLevel::LowRisk => "低风险",
-            RiskLevel::Moderate => "中风险",
-            RiskLevel::HighRisk => "高风险",
-            RiskLevel::Destructive => "破坏性",
-        };
-        let notification_body = format!(
-            "工具: {}\n风险等级: {}\n点击查看详情",
-            tc.name, risk_label
-        );
-
-        if let Err(e) = self.app.notification()
-            .builder()
-            .title("Agent 需要您的批准")
-            .body(&notification_body)
-            .show()
-        {
-            log::warn!("发送通知失败: {}", e);
-        }
-
-        let (tx, rx) = oneshot::channel();
-        self.state.pending_approvals.write().insert(approval_id.clone(), tx);
-
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            rx,
-        )
-        .await
-        {
-            Ok(Ok(v)) => v,
-            Ok(Err(_)) => false,
-            Err(_) => {
-                self.state.pending_approvals.write().remove(&approval_id);
-                false
-            }
         }
     }
 }

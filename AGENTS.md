@@ -49,197 +49,7 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 
 ---
 
-## 3. 系统架构
-
-### 3.1 进程模型
-
-```
-Tauri 主进程 (Rust)
-├── SSH 连接管理器
-├── Agent Runtime
-└── 系统服务 (密钥/配置/日志)
-        │
-        │ IPC (Tauri Commands + Events)
-        ▼
-WebView 渲染进程 (前端)
-├── Terminal (xterm.js)
-├── Agent UI Panel
-└── Connection Manager UI
-
-外部连接:
-├── 远程 SSH 服务器
-└── LLM Provider (云端/本地)
-```
-
-### 3.2 核心模块划分
-
-| 模块                | 层    | 职责                        |
-| ----------------- | ---- | ------------------------- |
-| `ssh-core`        | Rust | SSH 连接建立、认证、通道管理、SFTP     |
-| `agent-runtime`   | Rust | Agent 生命周期管理、Tool 调度、安全沙箱 |
-| `llm-bridge`      | Rust | LLM API 调用抽象、流式响应处理       |
-| `session-manager` | Rust | 多会话/多标签管理、会话持久化           |
-| `config-store`    | Rust | 连接配置、密钥管理、偏好设置            |
-| `skills-store`    | Rust | 用户自定义技能（Skill）CRUD 与持久化   |
-| `terminal-view`   | 前端   | xterm.js 封装、输入输出流绑定       |
-| `agent-panel`     | 前端   | Agent 对话界面、操作审批 UI、执行日志   |
-| `connection-ui`   | 前端   | 连接列表、快速连接、分组管理            |
-| `skill-ui`        | 前端   | 技能列表、创建/编辑/启用/禁用          |
-
----
-
-## 4. Agent 自动化系统（核心差异化）
-
-这是 Marcel SSH 的灵魂。Agent 系统的设计原则：
-
-### 4.1 Agent 操作模式
-
-- **Chat 模式**：纯对话，AI 仅回答问题，不触发工具调用或命令执行。
-- **Agent 模式**（默认）：AI 可调用工具执行命令，受黑白名单策略控制，中高风险操作需用户确认。
-- **Auto 模式**：全自主模式，AI 无需确认直接执行所有工具调用。
-
-### 4.2 Tool-Use 架构
-
-Agent 通过一组预定义的 **Tools** 与远程服务器交互：
-
-```rust
-// 核心 Tool 定义示例（Rust 侧）
-pub trait AgentTool: Send + Sync {
-    /// 工具名称，供 LLM 引用
-    fn name(&self) -> &str;
-    /// JSON Schema 描述参数
-    fn parameters_schema(&self) -> serde_json::Value;
-    async fn execute(&self, params: serde_json::Value, ctx: &SessionContext) -> Result<ToolOutput, AgentError>;
-    fn risk_level(&self) -> RiskLevel;
-}
-
-pub enum RiskLevel {
-    ReadOnly,      // ls, cat, pwd — 无需确认
-    LowRisk,       // mkdir, touch — 简单确认
-    Moderate,      // 文件编辑、服务重启 — 详细确认
-    HighRisk,      // rm -rf, 权限变更 — 强制确认 + 二次验证
-    Destructive,   // 格式化磁盘等 — 默认禁止，需手动解锁
-}
-```
-
-**内置 Tools 列表**（12 个，在 `agent/tools/` 模块和 `commands/agent.rs` 中定义）：
-
-| Tool 名称              | 功能                    | 风险等级        | 实现方式                           |
-| -------------------- | --------------------- | ----------- | ------------------------------ |
-| `execute_command`    | 在远程 shell 执行单条命令      | 取决于命令（动态评估） | `agent/tools/execute_cmd.rs`   |
-| `read_file`          | 读取远程文件（`cat`）         | ReadOnly    | `agent/tools/file_ops.rs`      |
-| `write_file`         | 写入/创建远程文件（heredoc）    | Moderate    | `agent/tools/file_ops.rs`      |
-| `edit_file`          | 编辑远程文件（diff patch）    | Moderate    | `agent/tools/file_ops.rs`      |
-| `list_directory`     | 列出目录内容（`ls -la`）      | ReadOnly    | `agent/tools/file_ops.rs`      |
-| `upload_file`        | 上传本地文件到远程（SFTP）       | Moderate    | `agent/tools/sftp_transfer.rs` |
-| `download_file`      | 下载远程文件到本地（SFTP）       | ReadOnly    | `agent/tools/sftp_transfer.rs` |
-| `search_files`       | 内容搜索（`grep -rn`）      | ReadOnly    | `agent/tools/search.rs`        |
-| `process_management` | 查看/管理远程进程             | ReadOnly    | `agent/tools/process.rs`       |
-| `system_info`        | OS / 内存 / 磁盘信息查询      | ReadOnly    | `agent/tools/system.rs`        |
-| `web_search`         | 联网搜索互联网信息（返回标题+摘要+链接） | ReadOnly    | `agent/tools/web_search.rs`    |
-| `http_get`           | 获取网页完整内容              | ReadOnly    | `agent/tools/http_get.rs`      |
-| `create_plan`        | 创建结构化任务计划（todolist）   | ReadOnly    | `agent/tools/plan.rs`          |
-| `update_plan_item`   | 更新任务计划中步骤的状态          | ReadOnly    | `agent/tools/plan.rs`          |
-
-> **架构要点**：工具通过 `AgentTool` trait 实现，注册到 `ToolRegistry::with_builtins()` 中。Agent 循环 `run_agent_loop()` 负责 LLM 调用、工具派发、安全策略检查和结果反馈。新增工具需：
-> 
-> 1. 在 `agent/tools/<name>.rs` 实现 `AgentTool` trait
-> 2. 在 `mod.rs` 中声明模块并在 `with_builtins()` 注册
-> 3. 在本表中登记
-
-> **联网工具使用模式**：`web_search` 返回搜索结果摘要（标题+链接），**不包含完整页面内容**。如需阅读详细信息，Agent 应使用 `http_get` 工具访问搜索返回的 URL。这种"信息饥饿"设计让 Agent 自然地组合两个工具，同时节省上下文窗口。
-
-### 4.3 上下文管理
-
-Agent 维护以下上下文，用于每次 LLM 调用：
-
-```
-SessionContext {
-    // 服务器环境快照
-    os_info: String,           // uname -a
-    shell_type: Shell,         // bash / zsh / fish
-    current_directory: Path,
-    environment_vars: HashMap,
-
-    // 会话历史
-    command_history: Vec<CommandRecord>,  // 最近 N 条命令 + 输出
-    file_changes: Vec<FileChange>,       // 本次会话修改过的文件
-
-    // 用户意图
-    current_goal: String,
-    task_plan: Vec<TaskStep>,
-
-    // 安全上下文
-    permission_policy: PermissionPolicy,
-    confirmed_operations: Vec<OperationId>,
-}
-```
-
----
-
-## 5. 项目目录结构
-
-```
-marcel-ssh/
-├── src-tauri/                    # Rust 后端（Tauri 核心）
-│   ├── src/
-│   │   ├── commands/             # Tauri IPC command handlers
-│   │   │   ├── ssh.rs            # SSH 连接相关命令
-│   │   │   ├── agent.rs          # Agent 操作命令
-│   │   │   ├── config.rs         # 配置管理命令
-│   │   │   └── quick_command.rs  # 快捷指令管理命令
-│   │   ├── ssh/                  # SSH 核心实现
-│   │   │   ├── connection.rs     # 连接建立与管理
-│   │   │   ├── auth.rs           # 认证（密码/密钥/Agent）
-│   │   │   ├── channel.rs        # Shell/Exec 通道
-│   │   │   ├── sftp.rs           # SFTP 实现
-│   │   │   └── pool.rs           # 连接池
-│   │   ├── agent/                # Agent 自动化系统
-│   │   │   ├── runtime.rs        # Agent 运行时主循环
-│   │   │   ├── executor.rs       # 命令执行器
-│   │   │   ├── tools/            # Tool 实现
-│   │   │   ├── sandbox.rs        # 安全沙箱
-│   │   │   ├── context.rs        # 上下文管理
-│   │   │   └── audit.rs          # 审计日志
-│   │   ├── llm/                  # LLM 接入层
-│   │   │   ├── provider.rs       # Provider trait + 工厂
-│   │   │   ├── openai.rs         # OpenAI 兼容 API
-│   │   │   └── streaming.rs      # SSE 流式处理
-│   │   ├── config/               # 配置与持久化
-│   │   │   ├── settings.rs       # 应用设置
-│   │   │   ├── connections.rs    # 连接配置存储
-│   │   │   ├── quick_commands.rs # 全局/连接级快捷指令存储
-│   │   │   └── keychain.rs       # 密钥链集成
-│   │   └── error.rs              # 统一错误类型
-│   └── tests/                    # Rust 集成测试
-│
-├── src/                          # 前端（TypeScript + React）
-│   ├── components/
-│   │   ├── terminal/             # 终端组件
-│   │   ├── agent/                # 智能助手面板
-│   │   ├── connection/           # 连接管理
-│   │   ├── sftp/                 # 文件管理
-│   │   │   ├── FileManagerPanel.tsx  # 文件管理面板（浏览/上传/下载/删除/重命名）
-│   │   │   ├── FileExplorer.tsx  # 文件浏览器（占位符）
-│   │   │   └── TransferQueue.tsx # 传输队列（占位符）
-│   │   ├── settings/             # 设置页面
-│   │   └── ui/                   # 通用 UI 组件
-│   ├── hooks/                    # useSSH, useAgent, useTerminal
-│   ├── stores/                   # Zustand 状态管理
-│   └── lib/                      # 类型定义 + Tauri IPC 封装
-│
-├── dev.cmd                       # 启动脚本（完整应用）
-├── dev-frontend.cmd              # 启动脚本（仅前端预览）
-├── install.cmd                   # 依赖安装脚本
-├── AGENTS.md                     # 本文件
-└── README.md
-```
-
----
-
-## 6. 开发规范
-
-### 6.1 Rust 后端规范
+### Rust 后端规范
 
 **异步模型**：
 
@@ -272,7 +82,7 @@ async fn ssh_connect(
 - 优先使用 Rust 标准库和 Tauri 内置功能。
 - 密码学相关必须使用经过审计的库（`ring`, `rustls` 等）。
 
-### 6.2 前端规范
+### 前端规范
 
 **组件设计**：
 
@@ -306,61 +116,14 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 
 ---
 
-## 7. IPC 通信协议
+## IPC 通信协议
 
 前端与 Rust 后端通过 Tauri 的 command/event 机制通信。
 
-### 7.1 Commands（请求-响应）
-
-用于用户主动触发的操作：
-
-```
-ssh_connect(config) → SessionId
-ssh_disconnect(session_id) → ()
-ssh_send_input(session_id, data) → ()
-ssh_resize(session_id, cols, rows) → ()
-ssh_list_sessions() → Vec<String>
-agent_start_task(session_id, prompt, mode, history) → TaskId
-agent_stop_task(task_id) → ()
-agent_approve_operation(task_id, operation_id) → ()
-agent_reject_operation(task_id, operation_id) → ()
-agent_check_command(command, mode) → CommandCheckResult
-config_get_connections() → Vec<SavedConnection>
-config_save_connection(connection) → ConnectionId
-config_delete_connection(id) → ()
-config_save_password(connection_id, password) → ()
-config_get_password(connection_id) → Option<String>
-config_delete_password(connection_id) → ()
-config_save_llm_api_key(api_key) → ()
-config_get_llm_api_key() → Option<String>
-config_delete_llm_api_key() → ()
-config_get_settings() → AppSettings
-config_save_settings(settings) → ()
-quick_command_list(session_key?) → Vec<QuickCommand>
-quick_command_add(command) → QuickCommand
-quick_command_update(id, patch) → ()
-quick_command_delete(id) → ()
-skill_list() → Vec<Skill>
-skill_add(name, description, prompt) → Skill
-skill_update(id, name?, description?, prompt?) → ()
-skill_toggle(id) → ()
-skill_delete(id) → ()
-import_skill_file(fileData, fileName) → ParsedSkill  // 解析 .md 文件或 zip/.skill 压缩包中的 YAML frontmatter
-```
-
-### 7.2 Events（服务端推送）
-
-用于实时数据流和状态变更通知：
-
-```
-ssh://output/{session_id}        — 终端输出流
-ssh://status/{session_id}        — 连接状态变更
-agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具调用/审批请求/错误等）
-```
-
 ---
 
-## 8. 安全考量
+
+## 安全考量
 
 1. **API Key 存储**：LLM API Key 存储在系统密钥链（macOS Keychain / Windows Credential Manager / Linux Secret Service），绝不明文写入配置文件。
 2. **SSH 密钥**：私钥不经过 WebView 进程，仅在 Rust 侧内存中加载。
@@ -369,7 +132,7 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 ---
 
-## 9. 在编写/修改任何代码前，你必须遵守以下硬性约束：
+## 在编写/修改任何代码前，你必须遵守以下硬性约束：
 1. 全局兼容性检查：新增或修改的代码必须与项目中已有所有功能在同一个运行时上下文中兼容共存。如果存在潜在冲突（如变量/函数重名、状态污染、副作用干扰其他功能），必须先指出冲突点并提出重构方案。
 2. 禁止局部短视实现：不允许仅为了“当前调用能跑通”而写死临时逻辑、硬编码、破坏原有接口契约、或绕过已有模块。每次改动必须考虑未来扩展与可维护性。
 3. 技术债影响评估：在你输出代码之前，必须显式列出本次改动可能产生的技术债（例如：重复逻辑、耦合增加、测试覆盖率下降、文档过时）。如果无法避免，需说明最少债务方案。
@@ -378,9 +141,7 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 ---
 
-## 10. 给 AI Agent 的指示
-
-> 以下内容专门为参与此项目开发的 AI 编码助手编写。
+## 其他代码规范
 
 当你在此项目中工作时：
 
@@ -397,4 +158,6 @@ agent://stream/{task_id}         — Agent 统一流式事件（含文本/工具
 
 5. 修改或创建skill时，必须同步更新.opencode和.trae中的skill
 
-6. 如果你创建一个未来可能会多次被使用或可能会增添功能的东西，你要把它当做一个长期可维护的模块写，而不是一个功能
+6. 在增加任何功能前，你必须明白你写的是一个"manager"还是一个"纯功能"并且和用户说明。需要"了解"并协调多个子功能，复杂度高，设计时要考虑对其他功能的适配和可扩展性，而纯功能是一个独立的功能模块。比如给终端添加标签页功能，就是个manager，而给终端添加复制粘贴板功能，就是个纯功能。
+
+7. 无论是功能还是manager都必须可以主动适配其他东西的变更，不要认为你以后写新东西的时候能想起来改他

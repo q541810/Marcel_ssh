@@ -7,7 +7,6 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::agent::thinking_filter::filter_thinking_tags;
 use crate::error::AppError;
 use crate::llm::provider::{
     LlmConfig, LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition,
@@ -109,7 +108,6 @@ impl OpenAiProvider {
         let mut tool_calls: Vec<PartialToolCall> = Vec::new();
         let mut buffer = String::new();
         let mut stream = response.bytes_stream();
-        let mut in_thinking = false;
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk
@@ -151,14 +149,9 @@ impl OpenAiProvider {
                                 }
                                 if let Some(text) = delta.content {
                                     if !text.is_empty() {
-                                        let (filtered, new_in_thinking) =
-                                            filter_thinking_tags(&text, in_thinking);
-                                        in_thinking = new_in_thinking;
-                                        if !filtered.is_empty() && !in_thinking {
-                                            accumulated_text.push_str(&filtered);
-                                            let _ = event_tx
-                                                .send(StreamEvent::TextDelta { text: filtered });
-                                        }
+                                        accumulated_text.push_str(&text);
+                                        let _ = event_tx
+                                            .send(StreamEvent::TextDelta { text });
                                     }
                                 }
                                 if let Some(tcs) = delta.tool_calls {

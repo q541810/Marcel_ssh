@@ -5,6 +5,7 @@ pub mod error;
 pub mod llm;
 pub mod skills;
 pub mod ssh;
+pub mod util;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,8 +45,8 @@ pub struct AppState {
     pub skill_store: std::sync::Arc<TokioRwLock<SkillStore>>,
     /// Application config directory. Used for persisting connections, settings, etc.
     pub config_dir: PathBuf,
-    /// Pending approval requests: tool_call_id -> oneshot sender for approval response
-    pub pending_approvals: std::sync::Arc<PlRwLock<HashMap<String, oneshot::Sender<bool>>>>,
+    /// Pending approval requests: (task_id, operation_id) -> oneshot sender for approval response
+    pub pending_approvals: std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
 }
 
 impl AppState {

@@ -3,120 +3,126 @@ import { useAgentStore } from '@/stores/agentStore';
 import type { AgentMode } from '@/lib/types';
 
 export function useAgent() {
-  const conversations = useAgentStore((s) => s.conversations);
-  const activeConversationId = useAgentStore((s) => s.activeConversationId);
-  // Subscribe to the entire messages map; derive current-conversation slice below.
-  // This keeps the selector returning a stable reference (the map), avoiding
-  // infinite-loop warnings from useSyncExternalStore.
-  const messagesMap = useAgentStore((s) => s.messages);
-  const tasks = useAgentStore((s) => s.tasks);
-  const activeTaskId = useAgentStore((s) => s.activeTaskId);
-  const mode = useAgentStore((s) => s.mode);
-  const pendingApproval = useAgentStore((s) => s.pendingApproval);
-  const startTaskAction = useAgentStore((s) => s.startTask);
-  const stopTaskAction = useAgentStore((s) => s.stopTask);
-  const approveAction = useAgentStore((s) => s.approveOperation);
-  const rejectAction = useAgentStore((s) => s.rejectOperation);
-  const setModeAction = useAgentStore((s) => s.setMode);
-  const setPendingApprovalAction = useAgentStore((s) => s.setPendingApproval);
-  const newConversationAction = useAgentStore((s) => s.newConversation);
-  const switchConversationAction = useAgentStore((s) => s.switchConversation);
-  const loadConversationAction = useAgentStore((s) => s.loadConversation);
-  const deleteConversationAction = useAgentStore((s) => s.deleteConversation);
-  const loadSessionConversationsAction = useAgentStore((s) => s.loadConnectionConversations);
+  const store = useAgentStore((s) => ({
+    conversations: s.conversations,
+    activeConversationId: s.activeConversationId,
+    messagesMap: s.messages,
+    tasks: s.tasks,
+    activeTaskId: s.activeTaskId,
+    mode: s.mode,
+    pendingApproval: s.pendingApproval,
+    startTask: s.startTask,
+    stopTask: s.stopTask,
+    approveOperation: s.approveOperation,
+    rejectOperation: s.rejectOperation,
+    setMode: s.setMode,
+    setPendingApproval: s.setPendingApproval,
+    newConversation: s.newConversation,
+    switchConversation: s.switchConversation,
+    loadConversation: s.loadConversation,
+    deleteConversation: s.deleteConversation,
+    loadConnectionConversations: s.loadConnectionConversations,
+  }));
 
-  const activeTask = activeTaskId ? tasks[activeTaskId] ?? null : null;
-  const messages = activeConversationId ? (messagesMap[activeConversationId] ?? []) : [];
+  const activeTask = store.activeTaskId ? (store.tasks[store.activeTaskId] ?? null) : null;
+
+  const messages = store.activeConversationId
+    ? (store.messagesMap[store.activeConversationId] ?? [])
+    : [];
+
   const isRunning =
     activeTask?.status === 'planning' ||
     activeTask?.status === 'executing' ||
     activeTask?.status === 'waiting_approval';
 
-  const startTask = useCallback(
+  const sendPrompt = useCallback(
     async (sessionId: string, prompt: string, connectionId?: string) => {
-      return startTaskAction(sessionId, prompt, connectionId);
+      return store.startTask(sessionId, prompt, connectionId);
     },
-    [startTaskAction],
+    [store.startTask],
   );
 
-  const stopTask = useCallback(
-    async (taskId: string) => {
-      return stopTaskAction(taskId);
+  const stopActiveTask = useCallback(async () => {
+    if (activeTask) {
+      return store.stopTask(activeTask.id);
+    }
+  }, [activeTask, store.stopTask]);
+
+  const approveCurrent = useCallback(
+    async (operationId: string) => {
+      store.setPendingApproval(null);
+      if (activeTask) {
+        return store.approveOperation(activeTask.id, operationId);
+      }
     },
-    [stopTaskAction],
+    [activeTask, store.approveOperation, store.setPendingApproval],
   );
 
-  const approve = useCallback(
-    async (taskId: string, operationId: string) => {
-      setPendingApprovalAction(null);
-      return approveAction(taskId, operationId);
+  const rejectCurrent = useCallback(
+    async (operationId: string) => {
+      store.setPendingApproval(null);
+      if (activeTask) {
+        return store.rejectOperation(activeTask.id, operationId);
+      }
     },
-    [approveAction, setPendingApprovalAction],
-  );
-
-  const reject = useCallback(
-    async (taskId: string, operationId: string) => {
-      setPendingApprovalAction(null);
-      return rejectAction(taskId, operationId);
-    },
-    [rejectAction, setPendingApprovalAction],
+    [activeTask, store.rejectOperation, store.setPendingApproval],
   );
 
   const setMode = useCallback(
     (newMode: AgentMode) => {
-      setModeAction(newMode);
+      store.setMode(newMode);
     },
-    [setModeAction],
+    [store.setMode],
   );
 
   const newConversation = useCallback(
     async (sessionId: string, connectionId: string) => {
-      return newConversationAction(sessionId, connectionId);
+      return store.newConversation(sessionId, connectionId);
     },
-    [newConversationAction],
+    [store.newConversation],
   );
 
   const switchConversation = useCallback(
     async (conversationId: string) => {
-      return switchConversationAction(conversationId);
+      return store.switchConversation(conversationId);
     },
-    [switchConversationAction],
+    [store.switchConversation],
   );
 
   const loadConversation = useCallback(
     async (conversationId: string) => {
-      return loadConversationAction(conversationId);
+      return store.loadConversation(conversationId);
     },
-    [loadConversationAction],
+    [store.loadConversation],
   );
 
   const deleteConversation = useCallback(
     async (conversationId: string) => {
-      return deleteConversationAction(conversationId);
+      return store.deleteConversation(conversationId);
     },
-    [deleteConversationAction],
+    [store.deleteConversation],
   );
 
   const loadConnectionConversations = useCallback(
     async (connectionId: string) => {
-      return loadSessionConversationsAction(connectionId);
+      return store.loadConnectionConversations(connectionId);
     },
-    [loadSessionConversationsAction],
+    [store.loadConnectionConversations],
   );
 
   return {
-    startTask,
-    stopTask,
-    approve,
-    reject,
     messages,
     activeTask,
-    mode,
-    setMode,
     isRunning,
-    pendingApproval,
-    conversations,
-    activeConversationId,
+    pendingApproval: store.pendingApproval,
+    mode: store.mode,
+    conversations: store.conversations,
+    activeConversationId: store.activeConversationId,
+    sendPrompt,
+    stopActiveTask,
+    approveCurrent,
+    rejectCurrent,
+    setMode,
     newConversation,
     switchConversation,
     loadConversation,

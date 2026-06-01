@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::error::AppError;
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
@@ -11,7 +13,7 @@ pub struct UpdateCheckResult {
 #[tauri::command]
 pub async fn check_update(
     app: tauri::AppHandle,
-) -> Result<UpdateCheckResult, String> {
+) -> Result<UpdateCheckResult, AppError> {
     let current_version = app
         .package_info()
         .version
@@ -21,12 +23,12 @@ pub async fn check_update(
         "https://raw.githubusercontent.com/q541810/Marcel_ssh/main/latest.json",
     )
     .await
-    .map_err(|e| format!("无法检查更新: {}", e))?;
+    .map_err(|e| AppError::Update(format!("无法检查更新: {}", e)))?;
 
     let latest: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("解析更新信息失败: {}", e))?;
+        .map_err(|e| AppError::Update(format!("解析更新信息失败: {}", e)))?;
 
     let latest_version = latest
         .get("version")

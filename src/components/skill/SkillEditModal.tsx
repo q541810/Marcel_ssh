@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
+import SkillFormFields from './SkillFormFields';
 import { useSkillStore } from '@/stores/skillStore';
 import type { Skill } from '@/lib/types';
 
@@ -8,11 +9,6 @@ interface Props {
   open: boolean;
   onClose: () => void;
 }
-
-const PLACEHOLDER_NAME = '为该技能起一个简短、易识别的名称（例如 codemap）';
-const PLACEHOLDER_DESC = '该技能应该在何时使用？例如：当用户询问项目结构或文件关系时';
-const PLACEHOLDER_PROMPT =
-  'Commands:\n  -\nWhen to Use:\n  -\nOutput Interpretation:\n  -\nExamples:\n  -';
 
 export default function SkillEditModal({ skill, open, onClose }: Props) {
   const updateSkill = useSkillStore((s) => s.updateSkill);
@@ -47,10 +43,6 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
     }
   };
 
-  const inputCls =
-    'w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 ' +
-    'placeholder-zinc-500 focus:outline-none focus:border-indigo-500 resize-none';
-
   return (
     <Modal open={open} onClose={handleClose} title='编辑技能'>
       <div className='px-4 pb-4 space-y-4'>
@@ -60,44 +52,14 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
           </div>
         )}
 
-        <div className='space-y-4'>
-          <div>
-            <label className='block text-xs text-zinc-400 mb-1'>
-              <span className='text-red-400'>*</span> 技能名称
-            </label>
-            <input
-              type='text'
-              className={inputCls}
-              placeholder={PLACEHOLDER_NAME}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className='block text-xs text-zinc-400 mb-1'>
-              <span className='text-red-400'>*</span> 描述
-            </label>
-            <textarea
-              className={inputCls + ' min-h-20'}
-              placeholder={PLACEHOLDER_DESC}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label className='block text-xs text-zinc-400 mb-1'>
-              <span className='text-red-400'>*</span> 指令
-            </label>
-            <textarea
-              className={inputCls + ' min-h-40 font-mono'}
-              placeholder={PLACEHOLDER_PROMPT}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-          </div>
-        </div>
+        <SkillFormFields
+          name={name}
+          description={description}
+          prompt={prompt}
+          onNameChange={setName}
+          onDescriptionChange={setDescription}
+          onPromptChange={setPrompt}
+        />
 
         <div className='flex justify-end gap-2 pt-2'>
           <button

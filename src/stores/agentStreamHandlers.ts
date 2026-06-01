@@ -3,10 +3,7 @@ import type {
   ToolResultPayload,
   ApprovalRequestPayload,
   AgentTaskPlan,
-  AgentStatus,
-  PlanItemStatus,
 } from '@/lib/types';
-import { useAgentStore } from './agentStore';
 
 // ---------------------------------------------------------------------------
 // StreamHandler interface
@@ -419,50 +416,4 @@ export function handleError(
   handler.setPendingApproval(null);
 }
 
-// ---------------------------------------------------------------------------
-// Default StreamHandler backed by useAgentStore
-// ---------------------------------------------------------------------------
 
-export function createDefaultStreamHandler(): StreamHandler {
-  return {
-    updateMessages(conversationId, updater) {
-      useAgentStore.setState((state: { messages: Record<string, AgentMessage[]> }) => ({
-        messages: { ...state.messages, [conversationId]: updater(state.messages[conversationId] || []) },
-      }));
-    },
-
-    updateTaskStatus(taskId, status) {
-      useAgentStore.getState().updateTaskStatus(taskId, status as AgentStatus);
-    },
-
-    setPendingApproval(approval) {
-      useAgentStore.getState().setPendingApproval(approval);
-    },
-
-    getTaskStatus(taskId) {
-      return useAgentStore.getState().tasks[taskId]?.status;
-    },
-
-    getMessages(conversationId) {
-      return useAgentStore.getState().messages[conversationId] || [];
-    },
-
-    clearActiveTaskIf(taskId) {
-      useAgentStore.setState((state: { activeTaskId: string | null }) => ({
-        activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
-      }));
-    },
-
-    setPlan(taskId, plan) {
-      useAgentStore.getState().setPlan(taskId, plan);
-    },
-
-    updatePlanItem(taskId, itemId, status, error) {
-      useAgentStore.getState().updatePlanItem(taskId, itemId, status as PlanItemStatus, error);
-    },
-
-    getPlan(taskId) {
-      return useAgentStore.getState().plans[taskId];
-    },
-  };
-}

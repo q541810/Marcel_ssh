@@ -240,3 +240,15 @@ export const TERMINAL_COLOR_PRESETS: { name: string; colors: TerminalColors }[] 
 ];
 
 export const DEFAULT_TERMINAL_COLORS = TERMINAL_COLOR_PRESETS[0].colors;
+
+export interface BottomTab {
+  id: string;
+  icon: string;
+  label: string;
+}
+
+export const BOTTOM_TABS: BottomTab[] = [
+  { id: 'quick-command', icon: 'M13 10V3L4 14h7v7l9-11h-7z', label: '快捷指令' },
+  { id: 'process', icon: 'M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z', label: '进程管理' },
+  { id: 'file-manager', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', label: '文件管理' },
+];

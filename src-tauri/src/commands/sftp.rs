@@ -3,7 +3,7 @@ use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
 
-use crate::agent::tools::shell_escape;
+use crate::util::shell_escape;
 use crate::error::AppError;
 use crate::AppState;
 
@@ -173,11 +173,7 @@ pub async fn sftp_upload_folder(
     drop(file);
     drop(sftp);
 
-    // Try unzip first, fallback to python3 if unzip is not available
-    let exec_cmd = format!(
-        "mkdir -p {dir} && (unzip -o {tmp} -d {dir} 2>&1 || python3 -c \"import zipfile; zipfile.ZipFile({tmp}).extractall({dir})\" 2>&1) && rm -f {tmp} && echo OK",
-        dir = shell_escape(&remote_path), tmp = shell_escape(&tmp_path)
-    );
+    let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_path, &remote_path);
     let output = state.ssh_manager.exec_command(&session_id, &exec_cmd).await?;
 
     if output.contains("OK") {

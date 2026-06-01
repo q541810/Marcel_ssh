@@ -12,9 +12,10 @@ import {
   handleThinkingDelta,
   handleDone,
   handleError,
-  createDefaultStreamHandler,
+  type StreamHandler,
   cleanupStreamState,
 } from './agentStreamHandlers';
+import { createDefaultStreamHandler } from './storeStreamAdapter';
 
 // ---------------------------------------------------------------------------
 // Listener maps
@@ -22,6 +23,7 @@ import {
 
 const streamListeners: Map<string, UnlistenFn> = new Map();
 const planListeners: Map<string, UnlistenFn> = new Map();
+const streamHandlers: Map<string, StreamHandler> = new Map();
 
 // ---------------------------------------------------------------------------
 // Type guards
@@ -51,6 +53,7 @@ export function cleanupTaskListeners(taskId: string) {
     planFn();
     planListeners.delete(taskId);
   }
+  streamHandlers.delete(taskId);
   cleanupStreamState(taskId);
 }
 
@@ -58,6 +61,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
   if (streamListeners.has(taskId)) return;
 
   const handler = createDefaultStreamHandler();
+  streamHandlers.set(taskId, handler);
 
   const unlisten = await listen<LlmStreamEvent | ToolResultPayload | ApprovalRequestPayload>(
     `agent://stream/${taskId}`,
@@ -114,7 +118,8 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 export async function attachPlanListener(taskId: string) {
   if (planListeners.has(taskId)) return;
 
-  const handler = createDefaultStreamHandler();
+  const handler = streamHandlers.get(taskId);
+  if (!handler) return;
 
   const unlisten = await listen<PlanStreamEvent>(
     `agent://plan/${taskId}`,

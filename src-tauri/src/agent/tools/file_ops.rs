@@ -459,6 +459,7 @@ fn format_permissions(mode: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tools::base64;
 
     #[test]
     fn cmd_helpers_quote_path() {

@@ -11,13 +11,10 @@ import type {
   QuickCommandInput,
   QuickCommandPatch,
   UpdateCheckResult,
+  ParsedSkill,
+  CommandCheckResult,
+  SftpFileEntry,
 } from './types';
-
-interface ParsedSkill {
-  name: string;
-  description: string;
-  prompt: string;
-}
 
 // SSH commands
 
@@ -47,6 +44,13 @@ export async function sshListSessions(): Promise<string[]> {
 
 export async function sshExec(sessionId: string, command: string): Promise<string> {
   return invoke<string>('ssh_exec', { sessionId, command });
+}
+
+export async function sshListProcesses(sessionId: string): Promise<string> {
+  return invoke<string>('ssh_exec', {
+    sessionId,
+    command: 'ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers 2>/dev/null || ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers',
+  });
 }
 
 // Agent commands
@@ -108,17 +112,6 @@ export async function agentDeleteConversationsBySession(sessionId: string): Prom
   return invoke('agent_delete_conversations_by_session', { sessionId });
 }
 
-export interface CommandCheckResult {
-  allowed: boolean;
-  requiresConfirmation: boolean;
-  riskLevel: RiskLevel;
-  reason: string;
-}
-
-/**
- * Evaluate a command against the current agent-mode settings (server-side).
- * Useful for "test command" UI in the Settings page or pre-flight checks.
- */
 export async function agentCheckCommand(
   command: string,
   mode: 'chat' | 'agent' | 'auto',
@@ -245,15 +238,6 @@ export async function checkUpdate(): Promise<UpdateCheckResult> {
 }
 
 // SFTP commands
-
-export interface SftpFileEntry {
-  name: string;
-  is_dir: boolean;
-  is_file: boolean;
-  is_symlink: boolean;
-  size: number;
-  mode: number;
-}
 
 export async function sftpListDir(sessionId: string, path: string): Promise<SftpFileEntry[]> {
   return invoke<SftpFileEntry[]>('sftp_list_dir', { sessionId, path });

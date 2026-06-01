@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
+import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import type { SavedConnection, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import Modal from '@/components/ui/Modal';
 import ConnectionForm from './ConnectionForm';
-import PasswordPrompt from './PasswordPrompt';
 
 export default function ConnectionList() {
   const connections = useConnectionStore((s) => s.connections);
@@ -16,6 +17,7 @@ export default function ConnectionList() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const setActiveConnection = useConnectionStore((s) => s.setActiveConnection);
   const connect = useSessionStore((s) => s.connect);
+  const { onConnected } = useSessionLifecycle();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<{
@@ -26,8 +28,7 @@ export default function ConnectionList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingConnection, setEditingConnection] =
     useState<SavedConnection | undefined>(undefined);
-  const [pendingPasswordConn, setPendingPasswordConn] =
-    useState<SavedConnection | null>(null);
+  const { prompt: promptPassword, Prompt: PasswordPromptEl } = useConnectWithPassword();
 
   useEffect(() => {
     fetchConnections();
@@ -56,12 +57,11 @@ export default function ConnectionList() {
    * is purged and the user is prompted to re-enter.
    */
   const doConnect = async (conn: SavedConnection, password?: string) => {
-    // Note: we don't setActiveConnection here anymore — each click creates a new session
     let authMethod: ConnectionConfig['authMethod'];
     switch (conn.authMethod) {
       case 'Password':
         if (!password) {
-          setPendingPasswordConn(conn);
+          promptForPassword(conn);
           return;
         }
         authMethod = { type: 'Password', password };
@@ -85,19 +85,38 @@ export default function ConnectionList() {
     };
     try {
       await connect(config);
+      if (config.connectionId) {
+        onConnected(config.connectionId);
+      }
     } catch (err) {
       console.error('连接失败:', err);
-      // If we used a saved password and it failed, clear it so we re-prompt
       if (password && conn.authMethod === 'Password') {
         try {
           await tauri.deletePassword(conn.id);
         } catch {
           /* ignore */
         }
-        // Re-prompt
-        setPendingPasswordConn(conn);
+        promptForPassword(conn);
       }
     }
+  };
+
+  const promptForPassword = (conn: SavedConnection) => {
+    promptPassword({
+      title: 'SSH 密码',
+      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
+      allowRemember: true,
+      onSubmit: async (password, remember) => {
+        if (remember) {
+          try {
+            await tauri.savePassword(conn.id, password);
+          } catch (err) {
+            console.warn('保存密码到密钥链失败:', err);
+          }
+        }
+        await doConnect(conn, password);
+      },
+    });
   };
 
   /**
@@ -115,25 +134,10 @@ export default function ConnectionList() {
       } catch (err) {
         console.warn('读取已保存密码失败:', err);
       }
-      // No saved password — prompt
-      setPendingPasswordConn(connection);
+      promptForPassword(connection);
       return;
     }
     await doConnect(connection);
-  };
-
-  const handlePasswordSubmit = async (password: string, remember: boolean) => {
-    if (!pendingPasswordConn) return;
-    const conn = pendingPasswordConn;
-    setPendingPasswordConn(null);
-    if (remember) {
-      try {
-        await tauri.savePassword(conn.id, password);
-      } catch (err) {
-        console.warn('保存密码到密钥链失败:', err);
-      }
-    }
-    await doConnect(conn, password);
   };
 
   const handleContextMenu = (e: React.MouseEvent, connection: SavedConnection) => {
@@ -300,19 +304,8 @@ export default function ConnectionList() {
         />
       </Modal>
 
-      {/* Password prompt for Password-auth connections */}
-      <PasswordPrompt
-        open={!!pendingPasswordConn}
-        title="SSH 密码"
-        description={
-          pendingPasswordConn
-            ? `连接到 ${pendingPasswordConn.username}@${pendingPasswordConn.host}:${pendingPasswordConn.port}`
-            : undefined
-        }
-        allowRemember
-        onSubmit={handlePasswordSubmit}
-        onCancel={() => setPendingPasswordConn(null)}
-      />
+      {/* Password prompt */}
+      {PasswordPromptEl}
     </div>
   );
 }

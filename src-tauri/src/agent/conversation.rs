@@ -102,19 +102,9 @@ impl ConversationDb {
         ).map_err(|e| ConversationError::SchemaError { source: e })?;
 
         // Migration: rename session_id → connection_id if old schema exists
-        let needs_migration = {
-            let cols: Vec<String> = conn
-                .prepare("PRAGMA table_info(conversations)")
-                .map(|mut stmt| {
-                    stmt.query_map([], |r| r.get::<_, String>(1))
-                        .expect("query_map failed")
-                        .filter_map(|r| r.ok())
-                        .collect::<Vec<String>>()
-                })
-                .unwrap_or_default();
-            cols.iter().any(|c| c == "session_id") && !cols.iter().any(|c| c == "connection_id")
-        };
-        if needs_migration {
+        if column_exists(&conn, "conversations", "session_id")
+            && !column_exists(&conn, "conversations", "connection_id")
+        {
             log::info!("Migrating conversation database: renaming session_id → connection_id");
             conn.execute("ALTER TABLE conversations RENAME COLUMN session_id TO connection_id", [])
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
@@ -122,19 +112,7 @@ impl ConversationDb {
         }
 
         // Migration: add tool_calls_json column if it doesn't exist yet
-        let needs_tool_calls_column = {
-            let cols: Vec<String> = conn
-                .prepare("PRAGMA table_info(messages)")
-                .map(|mut stmt| {
-                    stmt.query_map([], |r| r.get::<_, String>(1))
-                        .expect("query_map failed")
-                        .filter_map(|r| r.ok())
-                        .collect::<Vec<String>>()
-                })
-                .unwrap_or_default();
-            !cols.iter().any(|c| c == "tool_calls_json")
-        };
-        if needs_tool_calls_column {
+        if !column_exists(&conn, "messages", "tool_calls_json") {
             log::info!("Migrating conversation database: adding tool_calls_json column");
             conn.execute("ALTER TABLE messages ADD COLUMN tool_calls_json TEXT", [])
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
@@ -142,19 +120,7 @@ impl ConversationDb {
         }
 
         // Migration: add reasoning_content column if it doesn't exist yet
-        let needs_reasoning_column = {
-            let cols: Vec<String> = conn
-                .prepare("PRAGMA table_info(messages)")
-                .map(|mut stmt| {
-                    stmt.query_map([], |r| r.get::<_, String>(1))
-                        .expect("query_map failed")
-                        .filter_map(|r| r.ok())
-                        .collect::<Vec<String>>()
-                })
-                .unwrap_or_default();
-            !cols.iter().any(|c| c == "reasoning_content")
-        };
-        if needs_reasoning_column {
+        if !column_exists(&conn, "messages", "reasoning_content") {
             log::info!("Migrating conversation database: adding reasoning_content column");
             conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT", [])
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
@@ -345,6 +311,20 @@ impl ConversationDb {
     pub fn in_memory() -> Result<Self, ConversationError> {
         Self::new(":memory:")
     }
+}
+
+fn column_exists(conn: &rusqlite::Connection, table: &str, column: &str) -> bool {
+    conn.prepare(&format!("PRAGMA table_info({})", table))
+        .and_then(|mut stmt| {
+            let rows: Vec<String> = stmt
+                .query_map([], |row| row.get(1))
+                .map_err(|e| e)?
+                .filter_map(|r| r.ok())
+                .collect();
+            Ok(rows)
+        })
+        .map(|rows| rows.iter().any(|c| c == column))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

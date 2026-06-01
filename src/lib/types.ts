@@ -256,6 +256,13 @@ export interface UpdateCheckResult {
   releaseUrl: string;
 }
 
+export interface CommandCheckResult {
+  allowed: boolean;
+  requiresConfirmation: boolean;
+  riskLevel: RiskLevel;
+  reason: string;
+}
+
 // Plan / Todolist types
 
 export type PlanItemStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
@@ -298,7 +305,22 @@ export interface FileEntry {
   linkTarget?: string;
 }
 
+export interface SftpFileEntry {
+  name: string;
+  is_dir: boolean;
+  is_file: boolean;
+  is_symlink: boolean;
+  size: number;
+  mode: number;
+}
+
 // Skill types
+
+export interface ParsedSkill {
+  name: string;
+  description: string;
+  prompt: string;
+}
 
 export interface Skill {
   id: string;

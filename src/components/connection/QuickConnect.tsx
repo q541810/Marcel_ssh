@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { DEFAULT_PORT } from '@/lib/constants';
 import type { ConnectionConfig } from '@/lib/types';
-import PasswordPrompt from './PasswordPrompt';
 
 interface ParsedTarget {
   host: string;
@@ -13,8 +13,8 @@ interface ParsedTarget {
 export default function QuickConnect() {
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
-  const [pendingTarget, setPendingTarget] = useState<ParsedTarget | null>(null);
   const connect = useSessionStore((s) => s.connect);
+  const { prompt: promptPassword, Prompt: PasswordPromptEl } = useConnectWithPassword();
 
   const parseConnectionString = (str: string): ParsedTarget | null => {
     // Format: user@host:port or user@host
@@ -40,22 +40,22 @@ export default function QuickConnect() {
       setError('格式：user@host 或 user@host:port');
       return;
     }
-    setPendingTarget(target);
-  };
-
-  const handlePasswordSubmit = async (password: string, _remember: boolean) => {
-    if (!pendingTarget) return;
-    const config: ConnectionConfig = {
-      ...pendingTarget,
-      authMethod: { type: 'Password', password },
-    };
-    setPendingTarget(null);
-    try {
-      await connect(config);
-      setInput('');
-    } catch (err) {
-      setError(String(err));
-    }
+    promptPassword({
+      title: 'SSH 认证',
+      description: `连接到 ${target.username}@${target.host}:${target.port}`,
+      onSubmit: async (password) => {
+        const config: ConnectionConfig = {
+          ...target,
+          authMethod: { type: 'Password', password },
+        };
+        try {
+          await connect(config);
+          setInput('');
+        } catch (err) {
+          setError(String(err));
+        }
+      },
+    });
   };
 
   return (
@@ -87,17 +87,7 @@ export default function QuickConnect() {
         </button>
       </form>
 
-      <PasswordPrompt
-        open={!!pendingTarget}
-        title="SSH 认证"
-        description={
-          pendingTarget
-            ? `连接到 ${pendingTarget.username}@${pendingTarget.host}:${pendingTarget.port}`
-            : undefined
-        }
-        onSubmit={handlePasswordSubmit}
-        onCancel={() => setPendingTarget(null)}
-      />
+      {PasswordPromptEl}
     </>
   );
 }

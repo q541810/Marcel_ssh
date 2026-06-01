@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -12,6 +12,8 @@ import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
+import PasteConfirmDialog from './PasteConfirmDialog';
+import { useClipboardHandler } from '@/hooks/useClipboardHandler';
 import type { TerminalColors } from '@/lib/types';
 
 interface TerminalInstance {
@@ -23,60 +25,6 @@ interface TerminalInstance {
   onDataDisposable?: { dispose: () => void };
   domListeners: Array<() => void>;
 }
-
-/**
- * 在终端容器内以 toast 形式展示短暂的错误提示。
- */
-const showClipboardError = (message: string) => {
-  const toast = document.createElement('div');
-  toast.className =
-    'fixed bottom-8 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-red-900/90 text-red-200 text-sm border border-red-700/60 shadow-lg pointer-events-none transition-opacity duration-300';
-  toast.textContent = message;
-  document.body.appendChild(toast);
-
-  const fadeOut = () => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  };
-
-  setTimeout(fadeOut, 2500);
-};
-
-/**
- * Windows 风格的终端剪贴板快捷键处理器。
- *
- * 行为:
- *  - Ctrl+C 有选区: 复制选中文本到系统剪贴板, 不将 \x03 发送到 SSH。
- *  - Ctrl+C 无选区: 交由 xterm.js 默认处理 (发送 SIGINT 到远端)。
- *
- * 返回 false 告知 xterm.js 忽略该按键事件。
- */
-const createCopyOnSelectionHandler = (terminal: XTerm) => {
-  return (event: KeyboardEvent): boolean => {
-    if (
-      event.type === 'keydown' &&
-      event.ctrlKey &&
-      !event.shiftKey &&
-      !event.altKey &&
-      !event.metaKey &&
-      (event.key === 'c' || event.key === 'C')
-    ) {
-      const selection = terminal.getSelection();
-      if (selection.length > 0) {
-        const container = terminal.element;
-        void writeText(selection).catch((err) => {
-          console.error('Failed to write clipboard:', err);
-          if (container) {
-            showClipboardError('复制失败，请重试');
-          }
-        });
-        terminal.clearSelection();
-        return false;
-      }
-    }
-    return true;
-  };
-};
 
 export default function Terminal() {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -95,19 +43,7 @@ export default function Terminal() {
   const preview = useSettingsStore((s) => s.preview);
   const [panelHeight, setPanelHeight] = useState(storeSettings.panelHeight ?? 256);
 
-  const handlePasteConfirm = useCallback(() => {
-    if (pasteConfirm) {
-      sshSendInput(pasteConfirm.sessionId, pasteConfirm.text).catch((err) => {
-        console.error('Failed to paste from clipboard:', err);
-        showClipboardError('粘贴失败，请重试');
-      });
-      setPasteConfirm(null);
-    }
-  }, [pasteConfirm]);
-
-  const handlePasteCancel = useCallback(() => {
-    setPasteConfirm(null);
-  }, []);
+  const { handleCopy } = useClipboardHandler();
 
   const fontSize = preview?.fontSize ?? storeSettings.fontSize;
   const fontFamily = preview?.fontFamily ?? storeSettings.fontFamily;
@@ -157,7 +93,22 @@ export default function Terminal() {
     instance.onDataDisposable = onDataDisposable;
 
     // Windows 风格 Ctrl+C 复制 (仅在有选区时拦截, 否则透传到 SSH)
-    terminal.attachCustomKeyEventHandler(createCopyOnSelectionHandler(terminal));
+    terminal.attachCustomKeyEventHandler((event: KeyboardEvent): boolean => {
+      if (
+        event.type === 'keydown' &&
+        event.ctrlKey &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        (event.key === 'c' || event.key === 'C')
+      ) {
+        if (terminal.hasSelection()) {
+          handleCopy(terminal);
+          return false;
+        }
+      }
+      return true;
+    });
 
     // 右键粘贴: 从系统剪贴板读取并写入 SSH 输入流
     const handleContextMenu = (e: MouseEvent) => {
@@ -173,7 +124,6 @@ export default function Terminal() {
         })
         .catch((err) => {
           console.error('Failed to paste from clipboard:', err);
-          showClipboardError('粘贴失败，请重试');
         });
     };
     container.addEventListener('contextmenu', handleContextMenu);
@@ -417,58 +367,17 @@ export default function Terminal() {
 
       {/* Paste confirmation dialog for multi-line content */}
       {pasteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-          <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
-            {/* Header with warning */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                </svg>
-                <h2 className="text-lg font-semibold text-amber-300">安全提示</h2>
-              </div>
-              <button
-                onClick={handlePasteCancel}
-                className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
-                aria-label="关闭"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Warning message */}
-            <div className="px-4 pt-3 pb-2">
-              <p className="text-sm text-zinc-200 font-medium">
-                您粘贴的内容中含有回车，可能会意外执行某些命令。
-              </p>
-            </div>
-
-            {/* Content preview */}
-            <div className="px-4 pb-3">
-              <pre className="p-3 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-48 whitespace-pre-wrap break-all">
-                {pasteConfirm.text}
-              </pre>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex justify-end gap-2 px-4 pb-4 border-t border-zinc-700 pt-3">
-              <button
-                onClick={handlePasteCancel}
-                className="px-4 py-1.5 rounded-lg text-sm text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
-              >
-                取消
-              </button>
-              <button
-                onClick={handlePasteConfirm}
-                className="px-4 py-1.5 rounded-lg text-sm text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
-              >
-                确认粘贴
-              </button>
-            </div>
-          </div>
-        </div>
+        <PasteConfirmDialog
+          text={pasteConfirm.text}
+          sessionId={pasteConfirm.sessionId}
+          onConfirm={(sessionId, text) => {
+            sshSendInput(sessionId, text).catch((err) => {
+              console.error('Failed to paste from clipboard:', err);
+            });
+            setPasteConfirm(null);
+          }}
+          onCancel={() => setPasteConfirm(null)}
+        />
       )}
     </div>
   );

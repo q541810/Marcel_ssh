@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { sshExec } from '@/lib/tauri';
+import { sshExec, sshListProcesses } from '@/lib/tauri';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
 interface ProcessInfo {
@@ -35,7 +35,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
     setLoading(true);
     setError(null);
     try {
-      const output = await sshExec(sessionId, 'ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers 2>/dev/null || ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers');
+      const output = await sshListProcesses(sessionId);
       const lines = output.split('\n').filter((l) => l.trim());
       const parsed: ProcessInfo[] = lines.map((line) => {
         const parts = line.trim().split(/\s+/);

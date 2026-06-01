@@ -50,18 +50,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return { sessions: updated, activeSessionId: sessionId };
       });
 
-      void (async () => {
-        try {
-          const configId = config.connectionId;
-          if (configId) {
-            const agentStore = (await import('@/stores/agentStore')).useAgentStore;
-            await agentStore.getState().loadConnectionConversations(configId);
-          }
-        } catch (err) {
-          console.warn('Failed to load connection conversations:', err);
-        }
-      })();
-
       return sessionId;
     } catch (err) {
       set((state) => {
@@ -77,21 +65,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   disconnect: async (sessionId: string) => {
-    const configId = get().sessions[sessionId]?.configId;
     try {
       await tauri.sshDisconnect(sessionId);
     } catch (err) {
       console.warn('Disconnect error (session may already be closed):', err);
     } finally {
-      if (configId) {
-        const otherSessionExists = Object.values(get().sessions)
-          .some((s) => s.id !== sessionId && s.configId === configId);
-        if (!otherSessionExists) {
-          const agentStore = (await import('@/stores/agentStore')).useAgentStore;
-          agentStore.getState().clearConnectionConversations(configId);
-        }
-      }
-
       set((state) => {
         const updated = { ...state.sessions };
         delete updated[sessionId];

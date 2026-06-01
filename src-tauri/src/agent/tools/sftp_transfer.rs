@@ -669,6 +669,7 @@ impl AgentTool for DownloadFileTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tools::base64;
     use tempfile::TempDir;
 
     #[test]
