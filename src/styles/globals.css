@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
+@import 'highlight.js/styles/github-dark.css';
 
 /* xterm.js styles */
 @import "@xterm/xterm/css/xterm.css";

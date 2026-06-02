@@ -16,6 +16,8 @@ import PasteConfirmDialog from './PasteConfirmDialog';
 import { useClipboardHandler } from '@/hooks/useClipboardHandler';
 import type { TerminalColors } from '@/lib/types';
 
+const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
+
 interface TerminalInstance {
   id: string;
   terminal: XTerm;
@@ -40,8 +42,6 @@ export default function Terminal() {
   const panelRatioRef = useRef(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
-  const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
-
   const savePanelRatio = useCallback((ratio: number) => {
     panelRatioRef.current = ratio;
     try { localStorage.setItem(PANEL_RATIO_KEY, String(ratio)); } catch {}
@@ -60,7 +60,7 @@ export default function Terminal() {
       const v = localStorage.getItem(PANEL_RATIO_KEY);
       if (v) panelRatioRef.current = parseFloat(v) || 0;
     } catch {}
-  }, [PANEL_RATIO_KEY]);
+  }, []);
 
   useEffect(() => {
     const el = terminalRootRef.current;
