@@ -170,10 +170,10 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
             )}
           </div>
         </button>
-        {expanded && tr.result && (
+        {expanded && (
           <div className="border-t border-zinc-700/50 px-3 py-1.5">
             <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
-              {tr.result}
+              {tr.result || 'no output'}
             </pre>
           </div>
         )}
