@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense, useRef, useCallback } from 'react';
 import NavRail, { type NavView } from '@/components/nav/NavRail';
 import ConnectionList from '@/components/connection/ConnectionList';
 import Terminal from '@/components/terminal/Terminal';
@@ -20,15 +20,62 @@ const Settings = lazy(() => import('@/components/settings/Settings'));
 const AGENT_PANEL_MIN_WIDTH = 260;
 const AGENT_PANEL_MAX_WIDTH = 800;
 const AGENT_PANEL_DEFAULT_WIDTH = 320;
+const AGENT_RATIO_KEY = 'marcel:agentPanelWidthRatio';
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [agentPanelOpen, setAgentPanelOpen] = useState(true);
   const [navView, setNavView] = useState<NavView>('sessions');
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
+  const mainRowRef = useRef<HTMLDivElement>(null);
+  const agentRatioRef = useRef(0);
+  const [containerWidth, setContainerWidth] = useState(0);
 
-  const { width: agentPanelWidth, isResizing, startResize: handleResizeMouseDown } =
-    useResizablePanel(AGENT_PANEL_MIN_WIDTH, AGENT_PANEL_MAX_WIDTH, AGENT_PANEL_DEFAULT_WIDTH);
+  const saveAgentRatio = useCallback((ratio: number) => {
+    agentRatioRef.current = ratio;
+    try { localStorage.setItem(AGENT_RATIO_KEY, String(ratio)); } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(AGENT_RATIO_KEY);
+      if (v) agentRatioRef.current = parseFloat(v) || 0;
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const el = mainRowRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const handleAgentWidthChange = useCallback((w: number) => {
+    if (containerWidth > 0) {
+      saveAgentRatio(w / containerWidth);
+    }
+  }, [containerWidth, saveAgentRatio]);
+
+  const { width: agentPanelWidth, isResizing, startResize: handleResizeMouseDown, setWidth: setAgentWidth } =
+    useResizablePanel({
+      minWidth: AGENT_PANEL_MIN_WIDTH,
+      maxWidth: AGENT_PANEL_MAX_WIDTH,
+      initialWidth: AGENT_PANEL_DEFAULT_WIDTH,
+      onChange: handleAgentWidthChange,
+    });
+
+  useEffect(() => {
+    if (containerWidth <= 0 || !agentPanelOpen) return;
+    if (agentRatioRef.current > 0) {
+      const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * containerWidth)));
+      setAgentWidth(w);
+    } else if (agentPanelWidth > 0) {
+      agentRatioRef.current = agentPanelWidth / containerWidth;
+    }
+  }, [containerWidth, agentPanelOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -77,7 +124,7 @@ export default function App() {
         onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
           <NavRail active={navView} onChange={handleNavChange} />
 
         <aside

@@ -1,9 +1,23 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-export function useResizablePanel(minWidth: number, maxWidth: number, initialWidth: number) {
+interface UseResizablePanelOptions {
+  initialWidth: number;
+  minWidth: number;
+  maxWidth: number;
+  onChange?: (width: number) => void;
+}
+
+export function useResizablePanel({
+  initialWidth,
+  minWidth,
+  maxWidth,
+  onChange,
+}: UseResizablePanelOptions) {
   const [width, setWidth] = useState(initialWidth);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -17,8 +31,9 @@ export function useResizablePanel(minWidth: number, maxWidth: number, initialWid
     const handleMouseMove = (e: MouseEvent) => {
       if (!resizeStartRef.current) return;
       const delta = resizeStartRef.current.x - e.clientX;
-      const newWidth = resizeStartRef.current.width + delta;
-      setWidth(Math.min(maxWidth, Math.max(minWidth, newWidth)));
+      const newWidth = Math.min(maxWidth, Math.max(minWidth, resizeStartRef.current.width + delta));
+      setWidth(newWidth);
+      onChangeRef.current?.(newWidth);
     };
 
     const handleMouseUp = () => {

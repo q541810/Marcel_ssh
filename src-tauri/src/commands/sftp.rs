@@ -213,6 +213,13 @@ pub async fn sftp_read_file(
         .await
         .map_err(|e| AppError::Ssh(format!("读取文件失败: {}", e)))?;
 
+    if data.len() > MAX_EDITOR_FILE_SIZE as usize {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，编辑器限制为 2 MB",
+            data.len() as f64 / 1_048_576.0
+        )));
+    }
+
     // strip BOM if present
     let bytes = if data.starts_with(b"\xEF\xBB\xBF") {
         &data[3..]

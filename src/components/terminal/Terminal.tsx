@@ -36,7 +36,16 @@ export default function Terminal() {
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const panelResizeStartRef = useRef<{ y: number; height: number } | null>(null);
   const hasResizedRef = useRef(false);
-  const initialSyncDoneRef = useRef(false);
+  const terminalRootRef = useRef<HTMLDivElement>(null);
+  const panelRatioRef = useRef(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+
+  const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
+
+  const savePanelRatio = useCallback((ratio: number) => {
+    panelRatioRef.current = ratio;
+    try { localStorage.setItem(PANEL_RATIO_KEY, String(ratio)); } catch {}
+  }, []);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -46,13 +55,45 @@ export default function Terminal() {
   const preview = useSettingsStore((s) => s.preview);
   const [panelHeight, setPanelHeight] = useState(storeSettings.panelHeight ?? 256);
 
-  // Sync panelHeight from store after initial load
   useEffect(() => {
-    if (!initialSyncDoneRef.current && settingsLoaded) {
-      initialSyncDoneRef.current = true;
-      setPanelHeight(storeSettings.panelHeight ?? 256);
+    try {
+      const v = localStorage.getItem(PANEL_RATIO_KEY);
+      if (v) panelRatioRef.current = parseFloat(v) || 0;
+    } catch {}
+  }, [PANEL_RATIO_KEY]);
+
+  useEffect(() => {
+    const el = terminalRootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setContainerHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const ratioInitDoneRef = useRef(false);
+
+  useEffect(() => {
+    if (containerHeight <= 0 || !settingsLoaded || ratioInitDoneRef.current) return;
+    ratioInitDoneRef.current = true;
+
+    if (panelRatioRef.current > 0) {
+      const px = Math.min(500, Math.max(100, Math.round(panelRatioRef.current * containerHeight)));
+      setPanelHeight(px);
+    } else {
+      const storePx = storeSettings.panelHeight ?? 256;
+      panelRatioRef.current = storePx / containerHeight;
+      savePanelRatio(panelRatioRef.current);
+      setPanelHeight(storePx);
     }
-  }, [settingsLoaded, storeSettings.panelHeight, setPanelHeight]);
+  }, [containerHeight, settingsLoaded, storeSettings.panelHeight, savePanelRatio]);
+
+  useEffect(() => {
+    if (containerHeight <= 0 || !ratioInitDoneRef.current) return;
+    const px = Math.min(500, Math.max(100, Math.round(panelRatioRef.current * containerHeight)));
+    setPanelHeight(px);
+  }, [containerHeight]);
 
   const { handleCopy } = useClipboardHandler();
 
@@ -283,8 +324,11 @@ export default function Terminal() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!panelResizeStartRef.current) return;
       const delta = panelResizeStartRef.current.y - e.clientY;
-      const newHeight = panelResizeStartRef.current.height + delta;
-      setPanelHeight(Math.min(500, Math.max(100, newHeight)));
+      const newHeight = Math.min(500, Math.max(100, panelResizeStartRef.current.height + delta));
+      setPanelHeight(newHeight);
+      if (containerHeight > 0) {
+        savePanelRatio(newHeight / containerHeight);
+      }
     };
 
     const handleMouseUp = () => {
@@ -303,7 +347,7 @@ export default function Terminal() {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-  }, [isResizingPanel]);
+  }, [isResizingPanel, containerHeight, savePanelRatio]);
 
   // Save panel height when user has manually resized
   useEffect(() => {
@@ -325,7 +369,7 @@ export default function Terminal() {
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
-    <div className="flex flex-col flex-1 h-full bg-zinc-900">
+    <div ref={terminalRootRef} className="flex flex-col flex-1 h-full bg-zinc-900">
       <div className="relative flex-1 min-h-0">
         <div ref={wrapperRef} className="absolute inset-0" />
         {!hasSessions && (
