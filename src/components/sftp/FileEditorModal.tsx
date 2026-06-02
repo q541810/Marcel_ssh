@@ -147,6 +147,7 @@ export default function FileEditorModal({
             languageExtension,
             EditorState.tabSize.of(2),
             EditorView.lineWrapping,
+            EditorView.theme({ "&": { height: "100%" } }),
           ],
         }),
         parent: editorContainerRef.current,
@@ -256,7 +257,7 @@ export default function FileEditorModal({
         </div>
 
         {/* Body */}
-        <div className="flex-1 min-h-0 overflow-hidden relative">
+        <div className="flex-1 min-h-0 flex flex-col relative">
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center bg-zinc-900 z-10">
               <div className="flex items-center gap-2 text-sm text-zinc-400">
@@ -285,7 +286,7 @@ export default function FileEditorModal({
             </div>
           )}
 
-          <div ref={editorContainerRef} className="h-full w-full" />
+          <div ref={editorContainerRef} className="flex-1 min-h-0" />
         </div>
 
         {/* Footer */}
