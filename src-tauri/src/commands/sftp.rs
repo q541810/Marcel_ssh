@@ -182,3 +182,79 @@ pub async fn sftp_upload_folder(
         Err(AppError::Ssh(format!("解压失败: {}", output.trim())))
     }
 }
+
+const MAX_EDITOR_FILE_SIZE: u64 = 2 * 1024 * 1024;
+
+#[tauri::command]
+pub async fn sftp_read_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<String, AppError> {
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+    let metadata = sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取文件信息失败: {}", e)))?;
+
+    if metadata.is_dir() {
+        return Err(AppError::Ssh("无法编辑目录".into()));
+    }
+
+    if metadata.len() > MAX_EDITOR_FILE_SIZE {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，编辑器限制为 2 MB",
+            metadata.len() as f64 / 1_048_576.0
+        )));
+    }
+
+    let data = sftp
+        .read(&path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取文件失败: {}", e)))?;
+
+    if data.len() > MAX_EDITOR_FILE_SIZE as usize {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，编辑器限制为 2 MB",
+            data.len() as f64 / 1_048_576.0
+        )));
+    }
+
+    // strip BOM if present
+    let bytes = if data.starts_with(b"\xEF\xBB\xBF") {
+        &data[3..]
+    } else {
+        &data[..]
+    };
+
+    String::from_utf8(bytes.to_vec())
+        .map_err(|_| AppError::Ssh("无法解码文件，可能为二进制文件或使用了不支持的编码".into()))
+}
+
+#[tauri::command]
+pub async fn sftp_write_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    content: String,
+) -> Result<(), AppError> {
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    let mut file = sftp
+        .open_with_flags(
+            &path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    tokio::io::AsyncWriteExt::write_all(&mut file, content.as_bytes())
+        .await
+        .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+
+    file.flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+
+    Ok(())
+}

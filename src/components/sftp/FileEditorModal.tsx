@@ -1,0 +1,367 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from '@codemirror/view';
+import { EditorState, type Extension } from '@codemirror/state';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { searchKeymap } from '@codemirror/search';
+import { sftpReadFile, sftpWriteFile } from '@/lib/tauri';
+import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
+
+interface FileEditorModalProps {
+  open: boolean;
+  sessionId: string;
+  filePath: string;
+  fileName: string;
+  fileSize: number;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+const LANGUAGE_LOADERS: Record<string, () => Promise<Extension>> = {
+  '.json': () => import('@codemirror/lang-json').then((m) => m.json()),
+  '.yaml': () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
+  '.yml': () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
+  '.xml': () => import('@codemirror/lang-xml').then((m) => m.xml()),
+  '.html': () => import('@codemirror/lang-html').then((m) => m.html()),
+  '.htm': () => import('@codemirror/lang-html').then((m) => m.html()),
+  '.css': () => import('@codemirror/lang-css').then((m) => m.css()),
+  '.js': () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
+  '.jsx': () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true })),
+  '.ts': () => import('@codemirror/lang-javascript').then((m) => m.javascript({ typescript: true })),
+  '.tsx': () => import('@codemirror/lang-javascript').then((m) => m.javascript({ jsx: true, typescript: true })),
+  '.py': () => import('@codemirror/lang-python').then((m) => m.python()),
+  '.md': () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
+  '.sql': () => import('@codemirror/lang-sql').then((m) => m.sql()),
+  '.sh': () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
+  '.bash': () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
+};
+
+function getFileExtension(fileName: string): string {
+  const idx = fileName.lastIndexOf('.');
+  return idx >= 0 ? fileName.slice(idx).toLowerCase() : '';
+}
+
+export default function FileEditorModal({
+  open,
+  sessionId,
+  filePath,
+  fileName,
+  fileSize,
+  onClose,
+  onSaved,
+}: FileEditorModalProps) {
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const originalContentRef = useRef<string>('');
+  const saveRef = useRef<() => Promise<void>>(async () => {});
+
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedIndicator, setSavedIndicator] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [lineCount, setLineCount] = useState(0);
+
+  const handleSave = useCallback(async () => {
+    if (!viewRef.current) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const content = viewRef.current.state.doc.toString();
+      await sftpWriteFile(sessionId, filePath, content);
+      originalContentRef.current = content;
+      setSavedIndicator(true);
+      setTimeout(() => setSavedIndicator(false), 2000);
+      onSaved();
+    } catch (err) {
+      setError(`保存失败：${getErrorMessage(err)}`);
+    } finally {
+      setSaving(false);
+    }
+  }, [sessionId, filePath, onSaved]);
+
+  saveRef.current = handleSave;
+
+  const isDirty = useCallback(() => {
+    if (!viewRef.current) return false;
+    return viewRef.current.state.doc.toString() !== originalContentRef.current;
+  }, []);
+
+  const updateLineCount = useCallback(() => {
+    if (viewRef.current) {
+      setLineCount(viewRef.current.state.doc.lines);
+    }
+  }, []);
+
+  const destroyEditor = useCallback(() => {
+    if (viewRef.current) {
+      viewRef.current.destroy();
+      viewRef.current = null;
+    }
+  }, []);
+
+  const createEditor = useCallback(
+    async (content: string) => {
+      if (!editorContainerRef.current) return;
+
+      destroyEditor();
+
+      const ext = getFileExtension(fileName);
+      const loader = LANGUAGE_LOADERS[ext];
+
+      const languageExtension = loader ? await loader().catch(() => []) : [];
+
+      const updateListener = EditorView.updateListener.of(() => {
+        updateLineCount();
+      });
+
+      const view = new EditorView({
+        state: EditorState.create({
+          doc: content,
+          extensions: [
+            lineNumbers(),
+            highlightActiveLineGutter(),
+            highlightSpecialChars(),
+            history(),
+            drawSelection(),
+            dropCursor(),
+            rectangularSelection(),
+            crosshairCursor(),
+            highlightActiveLine(),
+            keymap.of([
+              ...defaultKeymap,
+              ...historyKeymap,
+              ...searchKeymap,
+              indentWithTab,
+              {
+                key: 'Mod-s',
+                run: () => {
+                  saveRef.current();
+                  return true;
+                },
+                preventDefault: true,
+              },
+            ]),
+            oneDark,
+            updateListener,
+            languageExtension,
+            EditorState.tabSize.of(2),
+            EditorView.lineWrapping,
+          ],
+        }),
+        parent: editorContainerRef.current,
+      });
+
+      viewRef.current = view;
+      setLineCount(view.state.doc.lines);
+    },
+    [fileName, destroyEditor, updateLineCount],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      setShowCloseConfirm(false);
+      setSavedIndicator(false);
+
+      try {
+        const text = await sftpReadFile(sessionId, filePath);
+        if (cancelled) return;
+        originalContentRef.current = text;
+        await createEditor(text);
+      } catch (err) {
+        if (cancelled) return;
+        setError(getErrorMessage(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      destroyEditor();
+    };
+  }, [open, sessionId, filePath, createEditor, destroyEditor]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && open) {
+        if (isDirty()) {
+          setShowCloseConfirm(true);
+        } else {
+          onClose();
+        }
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose, isDirty]);
+
+  const handleClose = useCallback(() => {
+    if (isDirty()) {
+      setShowCloseConfirm(true);
+    } else {
+      onClose();
+    }
+  }, [isDirty, onClose]);
+
+  const handleCloseWithoutSaving = useCallback(() => {
+    setShowCloseConfirm(false);
+    onClose();
+  }, [onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
+
+      <div className="relative w-full max-w-5xl mx-4 h-[85vh] rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <svg className="w-4 h-4 text-zinc-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            <h2 className="text-sm font-medium text-zinc-200 truncate">{filePath}</h2>
+          </div>
+          <button
+            onClick={handleClose}
+            className="text-zinc-400 hover:text-zinc-200 text-xl leading-none p-1"
+            aria-label="关闭"
+          >
+            &times;
+          </button>
+        </div>
+
+        {/* Info bar */}
+        <div className="flex items-center gap-4 px-4 py-1.5 border-b border-zinc-700/50 bg-zinc-800/50 flex-shrink-0">
+          <span className="text-xs text-zinc-500">
+            大小: <span className="text-zinc-400">{formatSize(fileSize)}</span>
+          </span>
+          <span className="text-xs text-zinc-500">
+            行数: <span className="text-zinc-400">{loading ? '-' : lineCount}</span>
+          </span>
+          <span className="text-xs text-zinc-500">
+            编码: <span className="text-zinc-400">UTF-8</span>
+          </span>
+          {savedIndicator && (
+            <span className="text-xs text-green-400 ml-auto">已保存</span>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-hidden relative">
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-zinc-900 z-10">
+              <div className="flex items-center gap-2 text-sm text-zinc-400">
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                正在加载文件...
+              </div>
+            </div>
+          )}
+
+          {error && !loading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 z-10 gap-3">
+              <svg className="w-10 h-10 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <p className="text-sm text-red-300 px-6 text-center">{error}</p>
+              <button
+                type="button"
+                onClick={onClose}
+                className="mt-2 px-4 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+              >
+                关闭
+              </button>
+            </div>
+          )}
+
+          <div ref={editorContainerRef} className="h-full w-full" />
+        </div>
+
+        {/* Footer */}
+        {!error && (
+          <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-zinc-700 flex-shrink-0">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {saving ? (
+                <>
+                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  保存中...
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                  </svg>
+                  保存 (Ctrl+S)
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Close confirmation dialog */}
+        {showCloseConfirm && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+              <h3 className="text-sm font-semibold text-zinc-200 mb-2">未保存的修改</h3>
+              <p className="text-xs text-zinc-400 mb-4">
+                文件有未保存的修改，是否在关闭前保存？
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleCloseWithoutSaving}
+                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+                >
+                  放弃
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCloseConfirm(false);
+                    handleSave().then(() => onClose());
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCloseConfirm(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

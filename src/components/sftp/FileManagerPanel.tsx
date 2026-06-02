@@ -11,9 +11,10 @@ import {
   sftpRename,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
-import { formatSize, modeToString } from '@/lib/sftp-helpers';
+import { formatSize, modeToString, getErrorMessage } from '@/lib/sftp-helpers';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
+import FileEditorModal from './FileEditorModal';
 
 interface FileManagerPanelProps {
   sessionId: string;
@@ -35,6 +36,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   const [renameValue, setRenameValue] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadDirectory = useCallback(async (path: string) => {
@@ -44,7 +46,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       const items = await sftpListDir(sessionId, path);
       setEntries(items);
     } catch (err) {
-      setError(`加载失败：${String(err)}`);
+      setError(`加载失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -99,6 +101,9 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     if (entry.is_dir) {
       const path = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
       navigateTo(path);
+    } else if (entry.is_file) {
+      const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+      setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
     }
   };
 
@@ -122,7 +127,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       const data = await sftpDownload(sessionId, entryPath);
       await writeFile(savePath, new Uint8Array(data));
     } catch (err) {
-      setError(`下载失败：${String(err)}`);
+      setError(`下载失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -146,7 +151,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await sftpUpload(sessionId, remotePath, Array.from(data));
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`上传失败：${String(err)}`);
+      setError(`上传失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -160,7 +165,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await doUploadFolder();
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`上传文件夹失败：${String(err)}`);
+      setError(`上传文件夹失败：${getErrorMessage(err)}`);
     }
   };
 
@@ -173,7 +178,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await sftpRemove(sessionId, entryPath, entry.is_dir);
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`删除失败：${String(err)}`);
+      setError(`删除失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -190,7 +195,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await sftpRename(sessionId, oldPath, newPath);
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`重命名失败：${String(err)}`);
+      setError(`重命名失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -205,7 +210,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await sftpMkdir(sessionId, folderPath);
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`创建文件夹失败：${String(err)}`);
+      setError(`创建文件夹失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -414,13 +419,26 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
             </button>
           )}
           {!menuEntry.is_dir && (
-            <button
-              type="button"
-              onClick={() => handleDownload(menuEntry)}
-              className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-            >
-              下载
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                  setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
+                  setMenuEntry(null);
+                }}
+                className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDownload(menuEntry)}
+                className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+              >
+                下载
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -517,6 +535,21 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {editorFile && (
+        <FileEditorModal
+          open={!!editorFile}
+          sessionId={sessionId}
+          filePath={editorFile.path}
+          fileName={editorFile.name}
+          fileSize={editorFile.size}
+          onClose={() => setEditorFile(null)}
+          onSaved={() => {
+            setEditorFile(null);
+            loadDirectory(currentPath);
+          }}
+        />
       )}
     </div>
   );

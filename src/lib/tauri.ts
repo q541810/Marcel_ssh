@@ -266,3 +266,11 @@ export async function sftpRename(sessionId: string, oldPath: string, newPath: st
 export async function sftpUploadFolder(sessionId: string, remotePath: string, archiveData: number[]): Promise<string> {
   return invoke<string>('sftp_upload_folder', { sessionId, remotePath, archiveData });
 }
+
+export async function sftpReadFile(sessionId: string, path: string): Promise<string> {
+  return invoke<string>('sftp_read_file', { sessionId, path });
+}
+
+export async function sftpWriteFile(sessionId: string, path: string, content: string): Promise<void> {
+  return invoke('sftp_write_file', { sessionId, path, content });
+}

@@ -1,44 +1,71 @@
 # AGENTS.md — Marcel SSH (玛瑟尔 SSH)
 
-> **AI-Native SSH Client with Autonomous Agent Operations**
 > 以 Agent 自动化操作为核心差异化的下一代 SSH 终端工具。
 
 ---
 
-## 1. 项目定位
-
-- **Agent-First**：内置 AI Agent 能力，可自主理解用户意图、规划操作步骤、在远程服务器上自动执行命令序列。
-- **人机协同终端**：用户可在传统手动终端和 Agent 自动模式之间无缝切换。Agent 操作全程可观察、可中断、可回滚。
-- **桌面级体验**：基于 Tauri 构建，提供原生级性能和系统集成，同时保持极小的资源占用。
-
----
-
-## 2. 技术栈
 
 ### 核心框架
 
-```
 Tauri 2.x (Rust 后端 + WebView 前端)
 ├── 后端 (Rust)
-│   ├── tauri             — 应用框架、窗口管理、IPC
-│   ├── russh             — SSH 协议实现
-│   ├── tokio             — 异步运行时
-│   ├── serde / serde_json— 序列化
-│   ├── rusqlite          — 本地数据持久化
-│   └── keyring           — 系统密钥链集成
+│   ├── tauri — 应用框架、窗口管理、IPC
+│   │   └── src-tauri/src/lib.rs (AppState, command注册)
+│   ├── russh — SSH 协议实现
+│   │   └── src-tauri/src/ssh/ (client, session, auth, manager)
+│   ├── tokio — 异步运行时
+│   ├── serde / serde_json — 序列化
+│   ├── rusqlite — 对话持久化
+│   │   └── src-tauri/src/agent/conversation.rs, conversation_persister.rs
+│   └── keyring — 系统密钥链
+│   └── src-tauri/src/config/keychain.rs
 │
 ├── 前端 (TypeScript)
-│   ├── React 18          — UI 框架
-│   ├── xterm.js          — 终端模拟器渲染
-│   ├── TailwindCSS 4     — 样式系统
-│   ├── Zustand           — 状态管理
-│   └── @tauri-apps/api   — Tauri 前端 API 绑定
+│   ├── React 18 — UI 框架
+│   │   └── src/App.tsx (根组件), src/main.tsx (入口)
+│   ├── xterm.js — 终端渲染
+│   │   └── src/components/terminal/Terminal.tsx
+│   ├── TailwindCSS 4 — 样式
+│   │   └── src/styles/globals.css
+│   ├── Zustand — 状态管理
+│   │   ├── src/stores/sessionStore.ts (SSH会话)
+│   │   ├── src/stores/connectionStore.ts (连接配置)
+│   │   ├── src/stores/settingsStore.ts (应用设置)
+│   │   ├── src/stores/taskStore.ts (Agent任务)
+│   │   ├── src/stores/conversationStore.ts (Agent对话)
+│   │   ├── src/stores/agentStore.ts (task+conversation组合)
+│   │   ├── src/stores/agentStreamManager.ts + agentStreamHandlers.ts + storeStreamAdapter.ts (Agent流处理)
+│   │   ├── src/stores/skillStore.ts (技能)
+│   │   ├── src/stores/quickCommandStore.ts (快捷命令)
+│   │   └── src/stores/messageConversion.ts (消息格式转换)
+│   ├── @tauri-apps/api — IPC 封装
+│   │   └── src/lib/tauri.ts (所有invoke调用)
+│   ├── 类型定义
+│   │   └── src/lib/types.ts
+│   ├── 自定义Hooks
+│   │   ├── src/hooks/useAgent.ts (Agent交互)
+│   │   ├── src/hooks/useSessionLifecycle.ts (会话生命周期)
+│   │   └── src/hooks/useClipboardHandler.ts (剪贴板)
+│   └── UI组件
+│       ├── src/components/agent/ (Agent面板、消息、审批)
+│       ├── src/components/terminal/ (终端、标签页、快捷命令)
+│       ├── src/components/connection/ (连接列表、表单)
+│       ├── src/components/settings/ (设置页)
+│       ├── src/components/sftp/ (文件管理器)
+│       ├── src/components/skill/ (技能管理)
+│       ├── src/components/nav/ (导航栏)
+│       ├── src/components/layout/ (窗口控制)
+│       └── src/components/ui/ (通用UI基础组件)
 │
 └── Agent 层
     ├── OpenAI 兼容 API 接入
+    │   └── src-tauri/src/llm/ (openai, streaming, provider)
     ├── Tool-Use 协议实现
-    └── Conversation & Context 管理
-```
+    │   └── src-tauri/src/agent/ (agent_loop, tool_dispatcher, tools/)
+    ├── 安全沙箱
+    │   └── src-tauri/src/agent/sandbox/ (checker, policy, risk_model)
+    └── Tauri Commands
+        └── src-tauri/src/commands/ (ssh, agent_lifecycle, connections, settings, sftp, skill...)
 
 ### 构建工具
 
@@ -142,22 +169,15 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 ---
 
 ## 其他代码规范
-
-当你在此项目中工作时：
-
-1. **Tauri IPC 是前后端桥梁**：修改 Rust 侧的 command 签名时，必须同步更新前端的 `lib/tauri.ts` 类型定义。
-
-2. **SSH 操作全部异步**：永远不要阻塞 Tauri 主线程。所有 SSH I/O 必须在 `tokio::spawn` 的 task 中执行。
-
-3. **安全是不可协商的**：
+1. **安全是不可协商的**：
    - 不要跳过安全检查来"简化"代码。
    - 不要在日志中输出密码、密钥或 API Key。
    - 不要将敏感数据序列化到前端。
 
-4. **变更要求** 相关更改必须同步更新本文件（AGENTS.md）
+2. **变更要求** 相关更改必须同步更新本文件（AGENTS.md）
 
-5. 修改或创建skill时，必须同步更新.opencode和.trae中的skill
+3. 修改或创建skill时，必须同步更新.opencode和.trae中的skill
 
-6. 在增加任何功能前，你必须明白你写的是一个"manager"还是一个"纯功能"并且和用户说明。需要"了解"并协调多个子功能，复杂度高，设计时要考虑对其他功能的适配和可扩展性，而纯功能是一个独立的功能模块。比如给终端添加标签页功能，就是个manager，而给终端添加复制粘贴板功能，就是个纯功能。
+4. 在增加任何功能前，你必须明白你写的是一个"manager"还是一个"纯功能"并且和我说。需要"了解"并协调多个子功能，复杂度高，设计时要考虑对其他功能的适配和可扩展性，而纯功能是一个独立的功能模块。比如给终端添加标签页功能，就是个manager，而给终端添加复制粘贴板功能，就是个纯功能。
 
-7. 无论是功能还是manager都必须可以主动适配其他东西的变更，不要认为你以后写新东西的时候能想起来改他
+5. 无论是功能还是manager都必须可以主动适配其他东西的变更，不要认为你以后写新东西的时候能想起来改他
