@@ -157,6 +157,7 @@ export function handleToolResult(
             result: tr.result,
             success: tr.success,
             blocked: tr.blocked,
+            wasTimeout: tr.wasTimeout,
             arguments: tr.arguments,
           },
         };
@@ -181,6 +182,7 @@ export function handleToolResult(
         result: tr.result,
         success: tr.success,
         blocked: tr.blocked,
+        wasTimeout: tr.wasTimeout,
         arguments: tr.arguments,
       },
     };

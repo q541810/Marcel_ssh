@@ -21,6 +21,7 @@ pub(crate) struct ToolResultEvent {
     pub result: String,
     pub success: bool,
     pub blocked: bool,
+    pub was_timeout: bool,
 }
 
 /// Result of executing a single tool call (UI/event view).
@@ -29,17 +30,25 @@ pub(crate) struct DispatchResult {
     pub output: String,
     pub success: bool,
     pub blocked: bool,
+    pub was_timeout: bool,
     pub metadata: Option<serde_json::Value>,
     pub risk_level: RiskLevel,
 }
 
 impl DispatchResult {
     fn from_tool_output(o: ToolOutput, risk_level: RiskLevel) -> Self {
+        let was_timeout = o
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("was_timeout"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         Self {
             summary: o.summary,
             output: o.output,
             success: o.success,
             blocked: false,
+            was_timeout,
             metadata: o.metadata,
             risk_level,
         }
@@ -50,6 +59,7 @@ impl DispatchResult {
             output: format!("BLOCKED: {}", reason.into()),
             success: false,
             blocked: true,
+            was_timeout: false,
             metadata: None,
             risk_level,
         }
@@ -60,6 +70,7 @@ impl DispatchResult {
             output: format!("Unknown tool: {}", name),
             success: false,
             blocked: false,
+            was_timeout: false,
             metadata: None,
             risk_level: RiskLevel::Moderate,
         }
@@ -192,6 +203,7 @@ impl ToolDispatcher {
                 output: format!("tool error: {}", e),
                 success: false,
                 blocked: false,
+                was_timeout: false,
                 metadata: None,
                 risk_level: effective_risk,
             },

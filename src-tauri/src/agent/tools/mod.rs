@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,17 @@ impl ToolContext {
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.
     pub async fn exec(&self, command: &str) -> Result<String, AppError> {
         self.ssh.exec_command(&self.session_id, command).await
+    }
+
+    /// Run a command with a timeout. Returns (output, was_timeout).
+    pub async fn exec_timed(
+        &self,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<(String, bool), AppError> {
+        self.ssh
+            .exec_command_timed(&self.session_id, command, timeout)
+            .await
     }
 }
 

@@ -192,6 +192,7 @@ pub(crate) async fn run_agent_loop(
                     result: exec.output.clone(),
                     success: exec.success,
                     blocked: exec.blocked,
+                    was_timeout: exec.was_timeout,
                 },
             );
 

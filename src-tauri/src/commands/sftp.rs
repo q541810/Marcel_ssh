@@ -1,7 +1,8 @@
 use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
-use tauri::State;
-use tokio::io::AsyncWriteExt;
+use serde_json::json;
+use tauri::{AppHandle, Emitter, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::util::shell_escape;
 use crate::error::AppError;
@@ -255,6 +256,73 @@ pub async fn sftp_write_file(
     file.flush()
         .await
         .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_download_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    download_id: String,
+) -> Result<(), AppError> {
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    let metadata = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("获取文件信息失败: {}", e)))?;
+
+    if !metadata.is_regular() {
+        return Err(AppError::Ssh("只能下载普通文件".into()));
+    }
+
+    let total = metadata.len();
+
+    let mut remote = sftp
+        .open_with_flags(&remote_path, OpenFlags::READ)
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    let mut local = tokio::fs::File::create(&local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
+
+    let mut buf = vec![0u8; 65536];
+    let mut written: u64 = 0;
+
+    loop {
+        let n = remote
+            .read(&mut buf)
+            .await
+            .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
+
+        if n == 0 {
+            break;
+        }
+
+        local
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+
+        written += n as u64;
+
+        let _ = app.emit(
+            "sftp-download-progress",
+            json!({ "downloadId": &download_id, "written": written, "total": total }),
+        );
+    }
+
+    local
+        .flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+
+    let _ = app.emit("sftp-download-done", json!({ "downloadId": &download_id }));
 
     Ok(())
 }

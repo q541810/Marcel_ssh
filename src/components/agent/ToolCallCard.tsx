@@ -135,7 +135,7 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
     const isExecuting = message.isExecuting;
 
     return (
-      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : tr.wasTimeout ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
         <button
           onClick={() => !isExecuting && setExpanded((v) => !v)}
           className="group w-full text-left"
@@ -151,6 +151,9 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
               )}
               {tr.blocked && (
                 <span className="flex-shrink-0 text-xs text-red-400 font-medium">已阻止</span>
+              )}
+              {tr.wasTimeout && (
+                <span className="flex-shrink-0 text-xs text-amber-400 font-medium">超时</span>
               )}
             </div>
             {isExecuting ? (
@@ -197,6 +200,9 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
     }
     const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tc.name, tc.arguments);
+    const timeoutSecs = tc.name === 'execute_command'
+      ? (typeof tc.arguments?.timeout_secs === 'number' ? tc.arguments.timeout_secs as number : 60)
+      : 0;
 
     return (
       <div className="rounded-md border border-zinc-700/60 bg-zinc-800/50">
@@ -208,6 +214,14 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
             </span>
             {preview && (
               <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
+            )}
+            {timeoutSecs > 60 && (
+              <span className="flex items-center gap-1 flex-shrink-0 text-xs text-amber-400">
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {timeoutSecs}s
+              </span>
             )}
           </div>
         </div>

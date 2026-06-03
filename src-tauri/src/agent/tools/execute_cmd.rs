@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use serde_json::json;
+use std::time::Duration;
 
 use crate::agent::sandbox::{self, RiskLevel, Sandbox};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
@@ -56,6 +57,13 @@ impl AgentTool for ExecuteCommandTool {
                 "command": {
                     "type": "string",
                     "description": "Shell command line to execute (run via the user's login shell)."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Optional command timeout in seconds (10-180, default 60). Increase for long-running commands like large file downloads or compilations.",
+                    "minimum": 10,
+                    "maximum": 180,
+                    "default": 60
                 }
             },
             "required": ["command"]
@@ -123,11 +131,25 @@ impl AgentTool for ExecuteCommandTool {
 
         log::info!("execute_command: risk={:?} cmd={} final={}", risk, command, if final_command != command { "(auto-fill)" } else { "(original)" });
 
-        match ctx.exec(&final_command).await {
-            Ok(output) => {
-                let truncated = truncate_output(output, MAX_OUTPUT_BYTES);
+        let timeout_secs = params
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60)
+            .clamp(10, 180);
+
+        let timeout = Duration::from_secs(timeout_secs);
+
+        match ctx.exec_timed(&final_command, timeout).await {
+            Ok((output, was_timeout)) => {
+                let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
+                if was_timeout {
+                    truncated.push_str(&format!(
+                        "\n\n[命令在 {} 秒后超时自动终止]",
+                        timeout_secs
+                    ));
+                }
                 Ok(ToolOutput::ok(format!("$ {}", command), truncated)
-                    .with_metadata(json!({ "risk": format!("{:?}", risk) })))
+                    .with_metadata(json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout })))
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("$ {}", command),

@@ -105,6 +105,7 @@ export interface AgentMessage {
     result: string;
     success: boolean;
     blocked: boolean;
+    wasTimeout?: boolean;
     /** Tool call arguments, for display in the tool card */
     arguments?: Record<string, unknown>;
   };
@@ -216,6 +217,7 @@ export interface ToolResultPayload {
   result: string;
   success: boolean;
   blocked: boolean;
+  wasTimeout?: boolean;
   arguments: Record<string, unknown>;
 }
 

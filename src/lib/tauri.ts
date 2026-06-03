@@ -274,3 +274,7 @@ export async function sftpReadFile(sessionId: string, path: string): Promise<str
 export async function sftpWriteFile(sessionId: string, path: string, content: string): Promise<void> {
   return invoke('sftp_write_file', { sessionId, path, content });
 }
+
+export async function sftpDownloadStream(sessionId: string, remotePath: string, localPath: string, downloadId: string): Promise<void> {
+  return invoke('sftp_download_stream', { sessionId, remotePath, localPath, downloadId });
+}

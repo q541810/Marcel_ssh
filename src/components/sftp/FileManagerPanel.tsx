@@ -1,11 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
-import { open, save } from '@tauri-apps/plugin-dialog';
-import { readFile, writeFile } from '@tauri-apps/plugin-fs';
+import { open } from '@tauri-apps/plugin-dialog';
+import { readFile } from '@tauri-apps/plugin-fs';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   sftpListDir,
   sftpUpload,
-  sftpDownload,
   sftpMkdir,
   sftpRemove,
   sftpRename,
@@ -14,6 +13,7 @@ import type { SftpFileEntry } from '@/lib/types';
 import { formatSize, modeToString, getErrorMessage } from '@/lib/sftp-helpers';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
+import { useSftpDownload } from '@/hooks/useSftpDownload';
 import FileEditorModal from './FileEditorModal';
 
 interface FileManagerPanelProps {
@@ -113,24 +113,10 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     setMenuPos({ x: e.clientX, y: e.clientY });
   };
 
-  const handleDownload = async (entry: SftpFileEntry) => {
+  const handleDownload = (entry: SftpFileEntry) => {
     setMenuEntry(null);
-    try {
-      const savePath = await save({
-        defaultPath: entry.name,
-        title: '保存文件',
-      });
-      if (!savePath) return;
-
-      setLoading(true);
-      const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-      const data = await sftpDownload(sessionId, entryPath);
-      await writeFile(savePath, new Uint8Array(data));
-    } catch (err) {
-      setError(`下载失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    startDownload(entry, entryPath);
   };
 
   const handleUpload = async () => {
@@ -158,6 +144,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   };
 
   const { uploadFolder: doUploadFolder, uploadStatus } = useSftpUpload(sessionId, currentPath);
+  const { downloadState, startDownload } = useSftpDownload(sessionId);
 
   const handleUploadFolder = async () => {
     setMenuEntry(null);
@@ -346,6 +333,40 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
           <span className="text-xs text-indigo-300">{uploadStatus}</span>
+        </div>
+      )}
+
+      {downloadState && (
+        <div className="flex flex-col gap-1 border-b border-zinc-800 px-3 py-2 bg-emerald-500/10">
+          <div className="flex items-center gap-2">
+            {downloadState.status === 'downloading' && (
+              <svg className="w-3.5 h-3.5 text-emerald-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            )}
+            {downloadState.status === 'done' && (
+              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+            {downloadState.status === 'error' && (
+              <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+            <span className={`text-xs ${downloadState.status === 'error' ? 'text-red-300' : 'text-emerald-300'}`}>
+              {downloadState.statusText}
+            </span>
+          </div>
+          {downloadState.status === 'downloading' && downloadState.total > 0 && (
+            <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all duration-200"
+                style={{ width: `${Math.round((downloadState.written * 100) / downloadState.total)}%` }}
+              />
+            </div>
+          )}
         </div>
       )}
 

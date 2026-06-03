@@ -355,6 +355,71 @@ impl SshManager {
         Ok(output)
     }
 
+    /// Execute a command with a timeout. Returns (output, was_timeout).
+    /// If the timeout fires, the channel is closed and partial output is returned.
+    pub async fn exec_command_timed(
+        &self,
+        session_id: &str,
+        command: &str,
+        timeout: Duration,
+    ) -> Result<(String, bool), AppError> {
+        let conn = {
+            let guard = self.connections.read().await;
+            guard.get(session_id).cloned()
+        };
+        let conn = conn
+            .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+
+        let mut channel = conn
+            .handle
+            .lock()
+            .await
+            .channel_open_session()
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开 exec 通道失败: {}", e)))?;
+
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
+
+        let mut output = String::new();
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+
+        loop {
+            tokio::select! {
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            output.push_str(&String::from_utf8_lossy(&data));
+                        }
+                        Some(ChannelMsg::ExtendedData { data, .. }) => {
+                            output.push_str(&String::from_utf8_lossy(&data));
+                        }
+                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
+                            break;
+                        }
+                        Some(ChannelMsg::ExitStatus { .. }) => {}
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+                _ = &mut deadline => {
+                    // Attempt to close the SSH channel gracefully
+                    let close_timeout = tokio::time::sleep(Duration::from_secs(2));
+                    tokio::pin!(close_timeout);
+                    tokio::select! {
+                        _ = channel.eof() => {}
+                        _ = &mut close_timeout => {}
+                    }
+                    return Ok((output, true));
+                }
+            }
+        }
+        Ok((output, false))
+    }
+
     /// Open an SFTP session on a dedicated subsystem channel.
     /// Returns a `SftpSession` that can be used for file operations.
     pub async fn open_sftp(
