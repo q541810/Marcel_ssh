@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
-use crate::agent::sandbox::Sandbox;
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::tools::ToolRegistry;
 use crate::error::AppError;
@@ -45,14 +44,13 @@ pub async fn agent_start_task(
     state.agent_tasks.write().insert(task_id.clone(), task);
 
     // Snapshot config + skills
-    let (llm_config, agent_settings, experimental_settings, _sandbox, enabled_skills) = {
+    let (llm_config, agent_settings, experimental_settings, enabled_skills) = {
         let settings = state.settings.read().await;
         let skills = state.skill_store.read().await;
         (
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
             settings.experimental_settings.clone(),
-            Sandbox::default(),
             skills.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
         )
     };

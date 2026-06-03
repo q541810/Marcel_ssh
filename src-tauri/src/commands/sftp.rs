@@ -291,36 +291,54 @@ pub async fn sftp_download_stream(
         .await
         .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
 
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; 131072];
     let mut written: u64 = 0;
 
-    loop {
-        let n = remote
-            .read(&mut buf)
-            .await
-            .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
+    let result: Result<(), AppError> = async {
+        loop {
+            let n = remote
+                .read(&mut buf)
+                .await
+                .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
 
-        if n == 0 {
-            break;
+            if n == 0 {
+                break;
+            }
+
+            local
+                .write_all(&buf[..n])
+                .await
+                .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+
+            written += n as u64;
+
+            let _ = app.emit(
+                "sftp-download-progress",
+                json!({ "downloadId": &download_id, "written": written, "total": total }),
+            );
         }
 
         local
-            .write_all(&buf[..n])
+            .flush()
             .await
-            .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+            .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
 
-        written += n as u64;
+        Ok(())
+    }
+    .await;
 
-        let _ = app.emit(
-            "sftp-download-progress",
-            json!({ "downloadId": &download_id, "written": written, "total": total }),
-        );
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&local_path).await;
+        return result;
     }
 
-    local
-        .flush()
-        .await
-        .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+    if written != total {
+        let _ = tokio::fs::remove_file(&local_path).await;
+        return Err(AppError::Ssh(format!(
+            "下载不完整：预期 {} 字节，实际写入 {} 字节",
+            total, written
+        )));
+    }
 
     let _ = app.emit("sftp-download-done", json!({ "downloadId": &download_id }));
 

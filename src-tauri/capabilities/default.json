@@ -33,14 +33,8 @@
       ]
     },
     "fs:allow-read",
-    "fs:allow-write",
     "fs:allow-read-file",
-    "fs:allow-write-file",
     "fs:allow-exists",
-    "fs:allow-mkdir",
-    "fs:allow-remove",
-    "fs:allow-rename",
-    "fs:allow-copy-file",
     "fs:allow-stat",
     "fs:allow-read-dir"
   ]

@@ -75,6 +75,7 @@ export default function FileEditorModal({
       onSaved();
     } catch (err) {
       setError(`保存失败：${getErrorMessage(err)}`);
+      throw err;
     } finally {
       setSaving(false);
     }
@@ -343,9 +344,14 @@ export default function FileEditorModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     setShowCloseConfirm(false);
-                    handleSave().then(() => onClose());
+                    try {
+                      await handleSave();
+                      onClose();
+                    } catch {
+                      // 保存失败，保持编辑器打开，错误信息已由 handleSave 设置
+                    }
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
                 >

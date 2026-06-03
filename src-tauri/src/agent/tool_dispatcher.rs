@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::agent::approval::ApprovalManager;
 use crate::agent::task::AgentMode;
-use crate::agent::sandbox::{assess_risk, RiskLevel, Sandbox};
+use crate::agent::sandbox::{assess_risk, RiskLevel};
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
 use crate::llm::provider::ToolCall;
@@ -136,22 +136,11 @@ impl ToolDispatcher {
                 );
             }
             AgentMode::Auto => {
-                if tc.name == "execute_command" {
-                    if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {
-                        let sb = Sandbox::default();
-                        if let Err(e) = sb.check_command(cmd) {
-                            return DispatchResult::blocked(format!("$ {}", cmd), e.to_string(), effective_risk);
-                        }
-                    }
-                }
+                // 沙箱检查已在 execute_cmd 工具内部完成，dispatcher 不再重复
             }
             AgentMode::Agent => {
                 if tc.name == "execute_command" {
                     let cmd = tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                    let sb = Sandbox::default();
-                    if let Err(e) = sb.check_command(cmd) {
-                        return DispatchResult::blocked(format!("$ {}", cmd), e.to_string(), effective_risk);
-                    }
                     let needs_confirm = command_list_requires_confirm(cmd, &self.agent_settings);
                     if needs_confirm
                         && !self.approval.request_approval(
