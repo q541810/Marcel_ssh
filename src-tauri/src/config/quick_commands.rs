@@ -171,3 +171,164 @@ fn normalized_session_key(session_key: Option<String>) -> Option<String> {
         .map(|key| key.trim().to_string())
         .filter(|key| !key.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> QuickCommandStore {
+        QuickCommandStore::new()
+    }
+
+    fn valid_global_input() -> QuickCommandInput {
+        QuickCommandInput {
+            scope: QuickCommandScope::Global,
+            session_key: None,
+            name: "My Command".into(),
+            commands: vec!["echo hello".into(), "date".into()],
+            interval_ms: 1000,
+        }
+    }
+
+    fn valid_session_input() -> QuickCommandInput {
+        QuickCommandInput {
+            scope: QuickCommandScope::Session,
+            session_key: Some("conn-123".into()),
+            name: "Session Cmd".into(),
+            commands: vec!["ls -la".into()],
+            interval_ms: 0,
+        }
+    }
+
+    #[test]
+    fn add_global_command() {
+        let mut s = store();
+        let cmd = s.add("id-1".into(), valid_global_input()).unwrap();
+        assert_eq!(cmd.name, "My Command");
+        assert_eq!(cmd.scope, QuickCommandScope::Global);
+        assert_eq!(cmd.commands.len(), 2);
+        assert!(cmd.session_key.is_none());
+    }
+
+    #[test]
+    fn add_session_command() {
+        let mut s = store();
+        let cmd = s.add("id-2".into(), valid_session_input()).unwrap();
+        assert_eq!(cmd.scope, QuickCommandScope::Session);
+        assert_eq!(cmd.session_key.as_deref(), Some("conn-123"));
+    }
+
+    #[test]
+    fn add_rejects_empty_name() {
+        let mut s = store();
+        let input = QuickCommandInput { name: "   ".into(), ..valid_global_input() };
+        assert!(s.add("id".into(), input).is_err());
+    }
+
+    #[test]
+    fn add_rejects_empty_commands() {
+        let mut s = store();
+        let input = QuickCommandInput { commands: vec![], ..valid_global_input() };
+        assert!(s.add("id".into(), input).is_err());
+    }
+
+    #[test]
+    fn add_session_scope_requires_session_key() {
+        let mut s = store();
+        let input = QuickCommandInput {
+            scope: QuickCommandScope::Session,
+            session_key: None,
+            ..valid_global_input()
+        };
+        assert!(s.add("id".into(), input).is_err());
+    }
+
+    #[test]
+    fn update_existing_command() {
+        let mut s = store();
+        s.add("id-1".into(), valid_global_input()).unwrap();
+
+        let patch = QuickCommandPatch {
+            name: Some("Updated".into()),
+            scope: None,
+            session_key: None,
+            commands: None,
+            interval_ms: None,
+        };
+        s.update("id-1", patch).unwrap();
+        let list = s.list_for_session(None);
+        assert_eq!(list[0].name, "Updated");
+    }
+
+    #[test]
+    fn update_nonexistent_returns_error() {
+        let mut s = store();
+        let patch = QuickCommandPatch {
+            name: Some("X".into()),
+            scope: None,
+            session_key: None,
+            commands: None,
+            interval_ms: None,
+        };
+        assert!(s.update("nonexistent", patch).is_err());
+    }
+
+    #[test]
+    fn update_clears_session_key_when_scope_changed_to_global() {
+        let mut s = store();
+        s.add("id-1".into(), valid_session_input()).unwrap();
+
+        let patch = QuickCommandPatch {
+            scope: Some(QuickCommandScope::Global),
+            session_key: Some(None),
+            name: None,
+            commands: None,
+            interval_ms: None,
+        };
+        s.update("id-1", patch).unwrap();
+        let list = s.list_for_session(None);
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn remove_existing() {
+        let mut s = store();
+        s.add("id-1".into(), valid_global_input()).unwrap();
+        assert!(s.remove("id-1"));
+        assert!(s.list_for_session(None).is_empty());
+    }
+
+    #[test]
+    fn remove_nonexistent_returns_false() {
+        let mut s = store();
+        assert!(!s.remove("nonexistent"));
+    }
+
+    #[test]
+    fn list_for_session_filters_correctly() {
+        let mut s = store();
+        s.add("g1".into(), QuickCommandInput {
+            scope: QuickCommandScope::Global,
+            name: "Global".into(),
+            commands: vec!["g".into()],
+            session_key: None,
+            interval_ms: 0,
+        }).unwrap();
+        s.add("s1".into(), QuickCommandInput {
+            scope: QuickCommandScope::Session,
+            name: "Session A".into(),
+            commands: vec!["sa".into()],
+            session_key: Some("conn-a".into()),
+            interval_ms: 0,
+        }).unwrap();
+
+        let for_a = s.list_for_session(Some("conn-a"));
+        assert_eq!(for_a.len(), 2); // global + session
+
+        let for_b = s.list_for_session(Some("conn-b"));
+        assert_eq!(for_b.len(), 1); // global only
+
+        let none = s.list_for_session(None);
+        assert_eq!(none.len(), 1); // global only
+    }
+}

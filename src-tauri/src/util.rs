@@ -40,7 +40,10 @@ pub(crate) fn validate_sftp_remote_path(path: &str) -> Result<String, AppError> 
             return Err(AppError::Ssh("不允许路径穿越 (..)".into()));
         }
     }
-    let normalized = path.replace("//", "/");
+    let mut normalized = path.to_string();
+    while normalized.contains("//") {
+        normalized = normalized.replace("//", "/");
+    }
     Ok(normalized)
 }
 
@@ -63,6 +66,8 @@ pub(crate) fn validate_local_path(path: &str) -> Result<String, AppError> {
 mod tests {
     use super::*;
 
+    // ──────────── shell_escape / truncate_output (existing) ────────────
+
     #[test]
     fn shell_escape_handles_quotes() {
         assert_eq!(shell_escape("foo"), "'foo'");
@@ -79,5 +84,82 @@ mod tests {
 
         let short = "hello".to_string();
         assert_eq!(truncate_output(short.clone(), 100), short);
+    }
+
+    #[test]
+    fn truncate_output_non_ascii_boundary() {
+        let s = "αααααααααα"; // 10 × 2-byte chars = 20 bytes
+        let out = truncate_output(s.to_string(), 5);
+        assert!(out.contains("truncated"));
+        assert!(out.starts_with("αα"));
+    }
+
+    // ──────────── validate_sftp_remote_path ────────────
+
+    #[test]
+    fn validate_sftp_remote_path_accepts_valid_absolute() {
+        assert_eq!(validate_sftp_remote_path("/home/user").unwrap(), "/home/user");
+        assert_eq!(validate_sftp_remote_path("/").unwrap(), "/");
+        assert_eq!(validate_sftp_remote_path("/var/log/nginx").unwrap(), "/var/log/nginx");
+    }
+
+    #[test]
+    fn validate_sftp_remote_path_rejects_empty() {
+        assert!(validate_sftp_remote_path("").is_err());
+    }
+
+    #[test]
+    fn validate_sftp_remote_path_rejects_relative() {
+        assert!(validate_sftp_remote_path("home/user").is_err());
+        assert!(validate_sftp_remote_path("../etc").is_err());
+    }
+
+    #[test]
+    fn validate_sftp_remote_path_rejects_parent_component() {
+        assert!(validate_sftp_remote_path("/etc/../passwd").is_err());
+        assert!(validate_sftp_remote_path("/../root").is_err());
+    }
+
+    #[test]
+    fn validate_sftp_remote_path_rejects_null_byte() {
+        assert!(validate_sftp_remote_path("/etc/passwd\0hidden").is_err());
+    }
+
+    #[test]
+    fn validate_sftp_remote_path_normalizes_double_slash() {
+        assert_eq!(
+            validate_sftp_remote_path("//home//user//").unwrap(),
+            "/home/user/"
+        );
+        assert_eq!(validate_sftp_remote_path("/a//b///c").unwrap(), "/a/b/c");
+    }
+
+    // ──────────── validate_local_path ────────────
+
+    #[test]
+    fn validate_local_path_accepts_valid() {
+        assert!(validate_local_path("/home/user/file.txt").is_ok());
+        assert!(validate_local_path("C:\\Users\\file.txt").is_ok());
+        assert!(validate_local_path("./relative/path").is_ok());
+    }
+
+    #[test]
+    fn validate_local_path_rejects_empty() {
+        assert!(validate_local_path("").is_err());
+    }
+
+    #[test]
+    fn validate_local_path_rejects_null_byte() {
+        assert!(validate_local_path("/tmp/test\0secret").is_err());
+    }
+
+    #[test]
+    fn validate_local_path_rejects_parent_unix() {
+        assert!(validate_local_path("/etc/../passwd").is_err());
+    }
+
+    #[test]
+    fn validate_local_path_rejects_parent_windows() {
+        assert!(validate_local_path("C:\\Users\\..\\secret").is_err());
     }
 }

@@ -245,3 +245,240 @@ pub fn contains_top_level_pipe(input: &str) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ──────────── looks_like_path ────────────
+
+    #[test]
+    fn looks_like_path_absolute() {
+        assert!(looks_like_path("/etc/passwd"));
+        assert!(looks_like_path("/"));
+    }
+
+    #[test]
+    fn looks_like_path_home() {
+        assert!(looks_like_path("~/"));
+        assert!(looks_like_path("~"));
+        assert!(looks_like_path("$HOME"));
+    }
+
+    #[test]
+    fn looks_like_path_relative_false() {
+        assert!(!looks_like_path("file.txt"));
+        assert!(!looks_like_path("../etc"));
+    }
+
+    // ──────────── analyze_rm_args ────────────
+
+    #[test]
+    fn analyze_rm_recursive_force_paths() {
+        let args: Vec<String> = vec!["-rf".into(), "/tmp".into(), "/var/cache".into()];
+        let (r, f, paths) = analyze_rm_args(&args);
+        assert!(r);
+        assert!(f);
+        assert_eq!(paths, vec!["/tmp", "/var/cache"]);
+    }
+
+    #[test]
+    fn analyze_rm_long_flags() {
+        let args: Vec<String> = vec!["--recursive".into(), "--force".into(), "/tmp".into()];
+        let (r, f, _) = analyze_rm_args(&args);
+        assert!(r);
+        assert!(f);
+    }
+
+    #[test]
+    fn analyze_rm_double_dash_terminates_flags() {
+        let args: Vec<String> = vec!["-r".into(), "--".into(), "-f".into()];
+        let (r, _, paths) = analyze_rm_args(&args);
+        assert!(r);
+        assert_eq!(paths, vec!["-f"]);
+    }
+
+    #[test]
+    fn analyze_rm_no_flags() {
+        let args: Vec<String> = vec!["/tmp/file".into()];
+        let (r, f, _) = analyze_rm_args(&args);
+        assert!(!r);
+        assert!(!f);
+    }
+
+    // ──────────── is_dangerous_rm_target ────────────
+
+    #[test]
+    fn dangerous_rm_root_and_glob() {
+        assert!(is_dangerous_rm_target("/"));
+        assert!(is_dangerous_rm_target("/*"));
+        assert!(is_dangerous_rm_target("/.*"));
+    }
+
+    #[test]
+    fn dangerous_rm_home() {
+        assert!(is_dangerous_rm_target("~"));
+        assert!(is_dangerous_rm_target("$HOME"));
+        assert!(is_dangerous_rm_target("~/"));
+        assert!(is_dangerous_rm_target("$HOME/"));
+    }
+
+    #[test]
+    fn dangerous_rm_system_dirs() {
+        assert!(is_dangerous_rm_target("/etc"));
+        assert!(is_dangerous_rm_target("/usr"));
+        assert!(is_dangerous_rm_target("/boot"));
+        assert!(is_dangerous_rm_target("/dev"));
+        assert!(is_dangerous_rm_target("/proc"));
+    }
+
+    #[test]
+    fn dangerous_rm_home_user_specific() {
+        assert!(is_dangerous_rm_target("/home"));
+        assert!(is_dangerous_rm_target("/home/user"));
+        assert!(!is_dangerous_rm_target("/home/user/proj"));
+    }
+
+    #[test]
+    fn safe_rm_targets() {
+        assert!(!is_dangerous_rm_target("/tmp/build"));
+        assert!(!is_dangerous_rm_target("/home/user/project/dist"));
+    }
+
+    // ──────────── normalize_path ────────────
+
+    #[test]
+    fn normalize_handles_double_slash() {
+        assert_eq!(normalize_path("//home//user"), "/home/user");
+    }
+
+    #[test]
+    fn normalize_resolves_dot() {
+        assert_eq!(normalize_path("/home/./user"), "/home/user");
+    }
+
+    #[test]
+    fn normalize_resolves_dotdot() {
+        assert_eq!(normalize_path("/home/user/../other"), "/home/other");
+    }
+
+    #[test]
+    fn normalize_preserves_home_prefix() {
+        assert_eq!(normalize_path("~/a/b"), "~/a/b");
+        assert_eq!(normalize_path("$HOME/a"), "$HOME/a");
+    }
+
+    #[test]
+    fn normalize_empty() {
+        assert_eq!(normalize_path(""), "");
+    }
+
+    #[test]
+    fn normalize_tilde_and_dollar_home_bare() {
+        assert_eq!(normalize_path("~"), "~");
+        assert_eq!(normalize_path("$HOME"), "$HOME");
+    }
+
+    // ──────────── pattern_matches ────────────
+
+    #[test]
+    fn pattern_matches_slash_pattern_root_only() {
+        assert!(pattern_matches("rm -rf /", "rm -rf /"));
+        assert!(!pattern_matches("rm -rf /tmp/build", "rm -rf /"));
+    }
+
+    #[test]
+    fn pattern_matches_non_slash_substring() {
+        assert!(pattern_matches("rm -rf /etc/hosts", "/etc"));
+        assert!(!pattern_matches("cat /myetc/data", "/etc"));
+    }
+
+    // ──────────── is_fork_bomb ────────────
+
+    #[test]
+    fn fork_bomb_classic() {
+        assert!(is_fork_bomb(":(){ :|:& };:"));
+    }
+
+    #[test]
+    fn fork_bomb_no_paren() {
+        assert!(!is_fork_bomb("echo hello"));
+    }
+
+    #[test]
+    fn fork_bomb_missing_pipe() {
+        assert!(!is_fork_bomb("f(){ echo hi & }; f"));
+    }
+
+    #[test]
+    fn fork_bomb_spaces_variant() {
+        assert!(is_fork_bomb("x  (  )  {  x  |  x  &  }  ;  x"));
+    }
+
+    // ──────────── is_bare_shell ────────────
+
+    #[test]
+    fn bare_shell_no_args() {
+        let seg = crate::agent::sandbox::parser::ParsedSegment {
+            raw: "bash".into(),
+            tokens: vec!["bash".into()],
+            base_cmd: "bash".into(),
+            args: vec![],
+            embedded_eval: None,
+            redirect_targets: vec![],
+            sudo_wrapped: false,
+        };
+        assert!(is_bare_shell(&seg));
+    }
+
+    #[test]
+    fn shell_with_dash_c_is_not_bare() {
+        let seg = crate::agent::sandbox::parser::ParsedSegment {
+            raw: "bash -c 'echo hi'".into(),
+            tokens: vec!["bash".into(), "-c".into(), "echo hi".into()],
+            base_cmd: "bash".into(),
+            args: vec!["-c".into(), "echo hi".into()],
+            embedded_eval: None,
+            redirect_targets: vec![],
+            sudo_wrapped: false,
+        };
+        assert!(!is_bare_shell(&seg));
+    }
+
+    #[test]
+    fn shell_with_script_path_is_not_bare() {
+        let seg = crate::agent::sandbox::parser::ParsedSegment {
+            raw: "bash script.sh".into(),
+            tokens: vec!["bash".into(), "script.sh".into()],
+            base_cmd: "bash".into(),
+            args: vec!["script.sh".into()],
+            embedded_eval: None,
+            redirect_targets: vec![],
+            sudo_wrapped: false,
+        };
+        assert!(!is_bare_shell(&seg));
+    }
+
+    // ──────────── contains_top_level_pipe ────────────
+
+    #[test]
+    fn pipe_detected() {
+        assert!(contains_top_level_pipe("cat file | grep x"));
+    }
+
+    #[test]
+    fn logical_or_not_pipe() {
+        assert!(!contains_top_level_pipe("true || false"));
+    }
+
+    #[test]
+    fn pipe_inside_quotes_ignored() {
+        assert!(!contains_top_level_pipe("echo \"a|b\""));
+        assert!(!contains_top_level_pipe("echo 'a|b'"));
+    }
+
+    #[test]
+    fn escaped_pipe_ignored() {
+        assert!(!contains_top_level_pipe("echo \\| grep"));
+    }
+}

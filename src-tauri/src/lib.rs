@@ -334,6 +334,7 @@ pub fn run() {
             commands::sftp::sftp_read_file,
             commands::sftp::sftp_write_file,
             commands::sftp::sftp_download_stream,
+            commands::sftp::sftp_upload_stream,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

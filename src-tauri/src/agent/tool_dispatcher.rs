@@ -227,3 +227,83 @@ fn command_list_requires_confirm(cmd: &str, settings: &AgentModeSettings) -> boo
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_settings() -> AgentModeSettings {
+        AgentModeSettings {
+            list_mode: CommandListMode::Denylist,
+            command_list: vec!["rm".into(), "mkfs".into(), "dd".into()],
+            confirm_each_command: false,
+        }
+    }
+
+    #[test]
+    fn denylist_in_list_always_confirms() {
+        let s = default_settings();
+        assert!(command_list_requires_confirm("rm -rf /tmp", &s));
+        assert!(command_list_requires_confirm("mkfs /dev/sda", &s));
+        assert!(command_list_requires_confirm("dd if=/dev/zero of=img", &s));
+    }
+
+    #[test]
+    fn denylist_not_in_list_respects_confirm_flag() {
+        let s = default_settings();
+        assert!(!command_list_requires_confirm("ls -la", &s));
+
+        let mut s2 = default_settings();
+        s2.confirm_each_command = true;
+        assert!(command_list_requires_confirm("ls -la", &s2));
+    }
+
+    #[test]
+    fn allowlist_in_list_respects_confirm_flag() {
+        let s = AgentModeSettings {
+            list_mode: CommandListMode::Allowlist,
+            command_list: vec!["ls".into(), "cat".into()],
+            confirm_each_command: false,
+        };
+        assert!(!command_list_requires_confirm("ls -la", &s));
+
+        let mut s2 = s.clone();
+        s2.confirm_each_command = true;
+        assert!(command_list_requires_confirm("ls -la", &s2));
+    }
+
+    #[test]
+    fn allowlist_not_in_list_always_confirms() {
+        let s = AgentModeSettings {
+            list_mode: CommandListMode::Allowlist,
+            command_list: vec!["ls".into()],
+            confirm_each_command: false,
+        };
+        assert!(command_list_requires_confirm("rm -rf /tmp", &s));
+    }
+
+    #[test]
+    fn strips_path_prefix_from_base_command() {
+        let s = default_settings();
+        assert!(command_list_requires_confirm("/bin/rm -rf /tmp", &s));
+        assert!(command_list_requires_confirm("/usr/bin/mkfs -t ext4", &s));
+    }
+
+    #[test]
+    fn handles_empty_and_whitespace() {
+        let s = default_settings();
+        assert!(!command_list_requires_confirm("", &s));
+        assert!(!command_list_requires_confirm("   ", &s));
+    }
+
+    #[test]
+    fn confirm_each_command_true_overrides() {
+        let s = AgentModeSettings {
+            list_mode: CommandListMode::Denylist,
+            command_list: vec![],
+            confirm_each_command: true,
+        };
+        assert!(command_list_requires_confirm("echo hello", &s));
+        assert!(command_list_requires_confirm("git status", &s));
+    }
+}

@@ -329,4 +329,57 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tool_output_ok_builder() {
+        let o = ToolOutput::ok("summary", "full output");
+        assert!(o.success);
+        assert_eq!(o.summary, "summary");
+        assert_eq!(o.output, "full output");
+        assert!(o.metadata.is_none());
+    }
+
+    #[test]
+    fn tool_output_fail_builder() {
+        let o = ToolOutput::fail("error summary", "error detail");
+        assert!(!o.success);
+        assert_eq!(o.summary, "error summary");
+        assert_eq!(o.output, "error detail");
+    }
+
+    #[test]
+    fn tool_output_with_metadata() {
+        let meta = serde_json::json!({ "risk": "LowRisk", "was_timeout": true });
+        let o = ToolOutput::ok("ok", "out").with_metadata(meta.clone());
+        assert_eq!(o.metadata, Some(meta));
+    }
+
+    #[test]
+    fn registry_definitions_sorted_by_name() {
+        let r = ToolRegistry::with_builtins();
+        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted, "definitions must be sorted alphabetically");
+    }
+
+    #[test]
+    fn registry_register_overwrites_by_name() {
+        struct DummyTool;
+        #[async_trait]
+        impl AgentTool for DummyTool {
+            fn name(&self) -> &str { "execute_command" }
+            fn description(&self) -> &str { "dummy" }
+            fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({}) }
+            fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+            async fn execute(&self, _: serde_json::Value, _: &ToolContext) -> Result<ToolOutput, AppError> {
+                Ok(ToolOutput::ok("dummy", "dummy"))
+            }
+        }
+        let mut r = ToolRegistry::with_builtins();
+        let old_desc = r.get("execute_command").unwrap().description().to_string();
+        r.register(Arc::new(DummyTool));
+        assert_eq!(r.get("execute_command").unwrap().description(), "dummy");
+        assert_ne!(old_desc, "dummy");
+    }
+
 }

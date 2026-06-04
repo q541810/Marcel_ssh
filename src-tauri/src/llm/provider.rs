@@ -90,7 +90,7 @@ impl LlmMessage {
 /// 
 /// Note: `api_key` is excluded from serialization to prevent it from being
 /// written to disk. It should be stored securely in the system keychain.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfig {
     #[serde(default = "default_provider")]

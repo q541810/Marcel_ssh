@@ -9,6 +9,7 @@ use crate::error::AppError;
 use crate::AppState;
 
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
+const MAX_STREAM_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
@@ -385,6 +386,105 @@ pub async fn sftp_download_stream(
     }
 
     let _ = app.emit("sftp-download-done", json!({ "downloadId": &download_id }));
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn sftp_upload_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    upload_id: String,
+) -> Result<(), AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
+    let local_path = validate_local_path(&local_path)?;
+
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    let local_meta = tokio::fs::metadata(&local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("无法读取本地文件信息: {}", e)))?;
+
+    if local_meta.is_dir() {
+        return Err(AppError::Ssh("请使用文件夹上传功能上传目录".into()));
+    }
+
+    let total = local_meta.len();
+    if total > MAX_STREAM_UPLOAD_BYTES {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，单文件上传限制为 2 GB",
+            total as f64 / 1_048_576.0
+        )));
+    }
+
+    if sftp.metadata(&remote_path).await.is_ok() {
+        return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+    }
+
+    let mut remote_file = sftp
+        .open_with_flags(
+            &remote_path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    let mut local_file = tokio::fs::File::open(&local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
+
+    let mut buf = vec![0u8; 131072];
+    let mut written: u64 = 0;
+
+    let result: Result<(), AppError> = async {
+        loop {
+            let n = local_file
+                .read(&mut buf)
+                .await
+                .map_err(|e| AppError::Ssh(format!("读取本地文件失败: {}", e)))?;
+
+            if n == 0 {
+                break;
+            }
+
+            tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n])
+                .await
+                .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+
+            written += n as u64;
+
+            let _ = app.emit(
+                "sftp-upload-progress",
+                json!({ "uploadId": &upload_id, "written": written, "total": total }),
+            );
+        }
+
+        remote_file
+            .flush()
+            .await
+            .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() {
+        let _ = sftp.remove_file(&remote_path).await;
+        return result;
+    }
+
+    if written != total {
+        let _ = sftp.remove_file(&remote_path).await;
+        return Err(AppError::Ssh(format!(
+            "上传不完整：预期 {} 字节，实际上传 {} 字节",
+            total, written
+        )));
+    }
+
+    let _ = app.emit("sftp-upload-done", json!({ "uploadId": &upload_id }));
 
     Ok(())
 }

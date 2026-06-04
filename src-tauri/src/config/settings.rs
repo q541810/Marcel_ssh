@@ -75,7 +75,7 @@ impl Default for CommandListMode {
 }
 
 /// Settings for the AGENT mode's command-execution policy.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentModeSettings {
     /// Whether `commandList` acts as allowlist or denylist.
@@ -110,7 +110,7 @@ impl Default for ExperimentalSettings {
 }
 
 /// Application-wide settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
@@ -174,5 +174,70 @@ impl Default for AppSettings {
 impl JsonPersistable for AppSettings {
     fn default_filename() -> &'static str {
         "settings.json"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_settings_default_roundtrip_json() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed, settings);
+    }
+
+    #[test]
+    fn terminal_colors_default_has_all_fields() {
+        let c = TerminalColors::default();
+        assert!(!c.background.is_empty());
+        assert!(!c.foreground.is_empty());
+        assert!(!c.cursor.is_empty());
+        assert!(c.background.starts_with('#'));
+    }
+
+    #[test]
+    fn agent_mode_settings_default_is_denylist() {
+        let s = AgentModeSettings::default();
+        assert_eq!(s.list_mode, CommandListMode::Denylist);
+        assert!(s.command_list.is_empty());
+    }
+
+    #[test]
+    fn app_settings_default_has_command_list() {
+        let s = AppSettings::default();
+        assert!(!s.agent_mode_settings.command_list.is_empty());
+        assert!(s.agent_mode_settings.command_list.contains(&"rm".to_string()));
+        assert!(s.agent_mode_settings.command_list.contains(&"mkfs".to_string()));
+        assert!(s.agent_mode_settings.command_list.contains(&"dd".to_string()));
+        assert!(s.agent_mode_settings.command_list.contains(&"shutdown".to_string()));
+        assert!(s.agent_mode_settings.command_list.contains(&"reboot".to_string()));
+    }
+
+    #[test]
+    fn experimental_settings_default_enables_web_and_http() {
+        let s = ExperimentalSettings::default();
+        assert!(s.enable_web_search);
+        assert!(s.enable_http_fetch);
+        assert!(!s.enable_cloud_page);
+    }
+
+    #[test]
+    fn command_list_mode_default_is_denylist() {
+        assert_eq!(CommandListMode::default(), CommandListMode::Denylist);
+    }
+
+    #[test]
+    fn app_settings_default_values() {
+        let s = AppSettings::default();
+        assert_eq!(s.font_size, 14);
+        assert_eq!(s.font_family, "monospace");
+        assert_eq!(s.default_agent_mode, "agent");
+        assert_eq!(s.panel_height, 256);
+        assert_eq!(s.file_manager_path, "/");
+        assert!(!s.file_manager_show_hidden);
+        assert!(!s.hide_thinking_display);
     }
 }

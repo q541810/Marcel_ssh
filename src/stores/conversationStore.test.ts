@@ -1,0 +1,116 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { useConversationStore } from '@/stores/conversationStore';
+import type { AgentMessage } from '@/lib/types';
+
+describe('conversationStore', () => {
+  beforeEach(() => {
+    useConversationStore.setState({
+      conversations: {},
+      messages: {},
+      activeConversationId: null,
+    });
+  });
+
+  function makeMessage(overrides: Partial<AgentMessage> = {}): AgentMessage {
+    return {
+      id: crypto.randomUUID ? crypto.randomUUID() : 'msg-' + Date.now(),
+      role: 'user',
+      content: 'hello',
+      timestamp: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  it('has correct initial state', () => {
+    const state = useConversationStore.getState();
+    expect(state.activeConversationId).toBeNull();
+    expect(Object.keys(state.conversations)).toHaveLength(0);
+    expect(Object.keys(state.messages)).toHaveLength(0);
+  });
+
+  it('addMessage does nothing without active conversation', () => {
+    useConversationStore.getState().addMessage(makeMessage());
+    expect(Object.keys(useConversationStore.getState().messages)).toHaveLength(0);
+  });
+
+  it('addMessage appends to active conversation', () => {
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: { 'conv-1': [] },
+    });
+
+    useConversationStore.getState().addMessage(makeMessage({ content: 'first' }));
+    useConversationStore.getState().addMessage(makeMessage({ content: 'second' }));
+
+    const msgs = useConversationStore.getState().messages['conv-1'];
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toBe('first');
+    expect(msgs[1].content).toBe('second');
+  });
+
+  it('clearMessages clears active conversation messages', () => {
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: { 'conv-1': [makeMessage(), makeMessage()], 'conv-2': [makeMessage()] },
+    });
+
+    useConversationStore.getState().clearMessages();
+
+    expect(useConversationStore.getState().messages['conv-1']).toHaveLength(0);
+    expect(useConversationStore.getState().messages['conv-2']).toHaveLength(1);
+  });
+
+  it('getCurrentMessages returns active messages', () => {
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: { 'conv-1': [makeMessage({ content: 'a' }), makeMessage({ content: 'b' })] },
+    });
+
+    expect(useConversationStore.getState().getCurrentMessages()).toHaveLength(2);
+  });
+
+  it('getCurrentMessages returns empty when no active conversation', () => {
+    expect(useConversationStore.getState().getCurrentMessages()).toEqual([]);
+  });
+
+  it('clearConnectionConversations removes matching conversations', () => {
+    useConversationStore.setState({
+      conversations: {
+        'c1': { id: 'c1', connectionId: 'conn-a', title: 'A1', createdAt: '', updatedAt: '' },
+        'c2': { id: 'c2', connectionId: 'conn-a', title: 'A2', createdAt: '', updatedAt: '' },
+        'c3': { id: 'c3', connectionId: 'conn-b', title: 'B1', createdAt: '', updatedAt: '' },
+      },
+      messages: {
+        'c1': [makeMessage()],
+        'c2': [makeMessage()],
+        'c3': [makeMessage()],
+      },
+      activeConversationId: 'c2',
+    });
+
+    useConversationStore.getState().clearConnectionConversations('conn-a');
+
+    const state = useConversationStore.getState();
+    expect(Object.keys(state.conversations)).toHaveLength(1);
+    expect(state.conversations['c3']).toBeDefined();
+    expect(state.messages['c3']).toBeDefined();
+    expect(state.messages['c1']).toBeUndefined();
+    expect(state.messages['c2']).toBeUndefined();
+  });
+
+  it('clearConnectionConversations resets active when removed', () => {
+    useConversationStore.setState({
+      conversations: {
+        'c1': { id: 'c1', connectionId: 'conn-a', title: 'A', createdAt: '', updatedAt: '' },
+        'c2': { id: 'c2', connectionId: 'conn-a', title: 'B', createdAt: '', updatedAt: '' },
+      },
+      messages: { 'c1': [], 'c2': [] },
+      activeConversationId: 'c1',
+    });
+
+    useConversationStore.getState().clearConnectionConversations('conn-a');
+
+    // Active was c1 which got removed; should be null since nothing left
+    expect(useConversationStore.getState().activeConversationId).toBeNull();
+  });
+});
