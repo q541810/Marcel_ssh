@@ -413,7 +413,7 @@ export default function Terminal() {
                 <ProcessPanel sessionId={activeSessionId} />
               )}
               {displayTab === 'file-manager' && (
-                <FileManagerPanel sessionId={activeSessionId} />
+                <FileManagerPanel key={activeSessionId} sessionId={activeSessionId} />
               )}
             </div>
           </div>

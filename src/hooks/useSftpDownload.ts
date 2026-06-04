@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { sftpDownloadStream } from '@/lib/tauri';
@@ -26,11 +26,20 @@ interface DonePayload {
 export function useSftpDownload(sessionId: string) {
   const [downloadState, setDownloadState] = useState<DownloadState | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTimer = useCallback(() => {
+    if (timeoutRef.current !== null) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
 
   const cleanup = useCallback(() => {
     unlistenRef.current?.();
     unlistenRef.current = null;
-  }, []);
+    clearTimer();
+  }, [clearTimer]);
 
   const startDownload = useCallback(
     async (entry: SftpFileEntry, remotePath: string) => {
@@ -74,7 +83,8 @@ export function useSftpDownload(sessionId: string) {
             total: fileSize,
             statusText: `${entry.name} 下载完成`,
           });
-          setTimeout(() => setDownloadState(null), 3000);
+          clearTimer();
+          timeoutRef.current = setTimeout(() => setDownloadState(null), 3000);
           cleanup();
         },
       );
@@ -102,12 +112,19 @@ export function useSftpDownload(sessionId: string) {
           total: fileSize,
           statusText: `下载失败：${getErrorMessage(err)}`,
         });
-        setTimeout(() => setDownloadState(null), 4000);
+        clearTimer();
+        timeoutRef.current = setTimeout(() => setDownloadState(null), 4000);
         cleanup();
       }
     },
     [sessionId, cleanup],
   );
+
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
 
   return { downloadState, startDownload };
 }

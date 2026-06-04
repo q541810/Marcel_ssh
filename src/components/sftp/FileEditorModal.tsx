@@ -7,6 +7,9 @@ import { searchKeymap } from '@codemirror/search';
 import { sftpReadFile, sftpWriteFile } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 
+import { StreamLanguage } from '@codemirror/language';
+import { shell } from '@codemirror/legacy-modes/mode/shell';
+
 interface FileEditorModalProps {
   open: boolean;
   sessionId: string;
@@ -32,8 +35,9 @@ const LANGUAGE_LOADERS: Record<string, () => Promise<Extension>> = {
   '.py': () => import('@codemirror/lang-python').then((m) => m.python()),
   '.md': () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
   '.sql': () => import('@codemirror/lang-sql').then((m) => m.sql()),
-  '.sh': () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
-  '.bash': () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
+  '.sh': () => Promise.resolve(StreamLanguage.define(shell)),
+  '.bash': () => Promise.resolve(StreamLanguage.define(shell)),
+  '.zsh': () => Promise.resolve(StreamLanguage.define(shell)),
 };
 
 function getFileExtension(fileName: string): string {
@@ -75,7 +79,6 @@ export default function FileEditorModal({
       onSaved();
     } catch (err) {
       setError(`保存失败：${getErrorMessage(err)}`);
-      throw err;
     } finally {
       setSaving(false);
     }
@@ -257,6 +260,16 @@ export default function FileEditorModal({
           )}
         </div>
 
+        {error && (
+          <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0">
+            <span>{error}</span>
+            <div className="flex gap-2">
+              <button onClick={handleSave} disabled={saving} className="text-red-400 hover:text-red-200">重试</button>
+              <button onClick={() => setError(null)} className="text-red-400 hover:text-red-200">✕</button>
+            </div>
+          </div>
+        )}
+
         {/* Body */}
         <div className="flex-1 min-h-0 flex flex-col relative">
           {loading && (
@@ -271,60 +284,42 @@ export default function FileEditorModal({
             </div>
           )}
 
-          {error && !loading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 z-10 gap-3">
-              <svg className="w-10 h-10 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
-              <p className="text-sm text-red-300 px-6 text-center">{error}</p>
-              <button
-                type="button"
-                onClick={onClose}
-                className="mt-2 px-4 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
-              >
-                关闭
-              </button>
-            </div>
-          )}
-
           <div ref={editorContainerRef} className="flex-1 min-h-0" />
         </div>
 
         {/* Footer */}
-        {!error && (
-          <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-zinc-700 flex-shrink-0">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {saving ? (
-                <>
-                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                  </svg>
-                  保存中...
-                </>
-              ) : (
-                <>
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                  </svg>
-                  保存 (Ctrl+S)
-                </>
-              )}
-            </button>
-          </div>
-        )}
+        <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-zinc-700 flex-shrink-0">
+          <button
+            type="button"
+            onClick={handleClose}
+            className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {saving ? (
+              <>
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                </svg>
+                保存中...
+              </>
+            ) : (
+              <>
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
+                </svg>
+                保存 (Ctrl+S)
+              </>
+            )}
+          </button>
+        </div>
 
         {/* Close confirmation dialog */}
         {showCloseConfirm && (
@@ -346,12 +341,8 @@ export default function FileEditorModal({
                   type="button"
                   onClick={async () => {
                     setShowCloseConfirm(false);
-                    try {
-                      await handleSave();
-                      onClose();
-                    } catch {
-                      // 保存失败，保持编辑器打开，错误信息已由 handleSave 设置
-                    }
+                    await handleSave();
+                    onClose();
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
                 >

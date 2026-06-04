@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile, readDir } from '@tauri-apps/plugin-fs';
-import { zipSync } from 'fflate';
+import { zip } from 'fflate';
 import { sftpUploadFolder } from '@/lib/tauri';
 import { formatSize } from '@/lib/sftp-helpers';
 
@@ -48,7 +48,12 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
       for (const f of files) {
         fileMap[f.name] = f.data;
       }
-      const zipped = zipSync(fileMap, { level: 6 });
+      const zipped = await new Promise<Uint8Array>((resolve, reject) => {
+        zip(fileMap, { level: 6 }, (err, data) => {
+          if (err) reject(err);
+          else resolve(data);
+        });
+      });
 
       const MAX_SIZE = 32 * 1024 * 1024;
       if (zipped.length > MAX_SIZE) {

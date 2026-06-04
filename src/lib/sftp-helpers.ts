@@ -27,7 +27,20 @@ export function getErrorMessage(err: unknown): string {
   if (typeof err === 'string') return err;
   if (err && typeof err === 'object') {
     const obj = err as Record<string, unknown>;
-    if (typeof obj.message === 'string') return obj.message;
+    if (typeof obj.message === 'string') {
+      const msg = obj.message;
+      if (typeof obj.code === 'number') {
+        const sftpCodes: Record<number, string> = {
+          2: '文件或目录不存在',
+          3: '权限不足',
+          4: '操作失败',
+          5: '错误的文件句柄',
+        };
+        const hint = sftpCodes[obj.code];
+        return hint ? `${msg}（${hint}）` : msg;
+      }
+      return msg;
+    }
   }
   try {
     return JSON.stringify(err);

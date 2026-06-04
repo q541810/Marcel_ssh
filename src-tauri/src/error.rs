@@ -4,6 +4,8 @@ use serde::Serialize;
 pub enum AppError {
     #[error("SSH error: {0}")]
     Ssh(String),
+    #[error("SFTP error (code {code}): {message}")]
+    Sftp { message: String, code: u32 },
     #[error("Agent error: {0}")]
     Agent(String),
     #[error("LLM error: {0}")]
@@ -70,6 +72,7 @@ impl Serialize for AppError {
             other => {
                 let kind = match other {
                     AppError::Ssh(_) => "Ssh",
+                    AppError::Sftp { .. } => "Sftp",
                     AppError::Agent(_) => "Agent",
                     AppError::Llm(_) => "Llm",
                     AppError::Config(_) => "Config",
@@ -82,6 +85,9 @@ impl Serialize for AppError {
                 };
                 m.serialize_entry("kind", kind)?;
                 m.serialize_entry("message", &other.to_string())?;
+                if let AppError::Sftp { code, .. } = other {
+                    m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
+                }
             }
         }
         m.end()

@@ -4,9 +4,11 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::util::shell_escape;
+use crate::util::{validate_sftp_remote_path, validate_local_path};
 use crate::error::AppError;
 use crate::AppState;
+
+const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
@@ -24,6 +26,7 @@ pub async fn sftp_list_dir(
     session_id: String,
     path: String,
 ) -> Result<Vec<FileEntry>, AppError> {
+    let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
     let mut entries = Vec::new();
 
@@ -53,7 +56,19 @@ pub async fn sftp_upload(
     remote_path: String,
     data: Vec<u8>,
 ) -> Result<(), AppError> {
+    if data.len() > MAX_UPLOAD_BYTES {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，单文件上传限制为 32 MB",
+            data.len() as f64 / 1_048_576.0
+        )));
+    }
+
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    if sftp.metadata(&remote_path).await.is_ok() {
+        return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+    }
 
     let mut file = sftp
         .open_with_flags(
@@ -80,6 +95,7 @@ pub async fn sftp_download(
     session_id: String,
     remote_path: String,
 ) -> Result<Vec<u8>, AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     let data = sftp
@@ -96,6 +112,7 @@ pub async fn sftp_mkdir(
     session_id: String,
     path: String,
 ) -> Result<(), AppError> {
+    let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     sftp.create_dir(&path)
@@ -105,27 +122,40 @@ pub async fn sftp_mkdir(
     Ok(())
 }
 
+async fn sftp_remove_recursive(
+    sftp: &russh_sftp::client::SftpSession,
+    path: &str,
+) -> Result<(), AppError> {
+    let metadata = sftp.metadata(path).await
+        .map_err(|e| AppError::Ssh(format!("获取文件信息失败: {}", e)))?;
+    if metadata.is_dir() {
+        let mut dir = sftp.read_dir(path).await
+            .map_err(|e| AppError::Ssh(format!("读取目录失败: {}", e)))?;
+        while let Some(entry) = dir.next() {
+            let name = entry.file_name();
+            if name == "." || name == ".." { continue; }
+            let child = format!("{}/{}", path.trim_end_matches('/'), name);
+            Box::pin(sftp_remove_recursive(sftp, &child)).await?;
+        }
+        sftp.remove_dir(path).await
+            .map_err(|e| AppError::Ssh(format!("删除目录失败: {}", e)))?;
+    } else {
+        sftp.remove_file(path).await
+            .map_err(|e| AppError::Ssh(format!("删除文件失败: {}", e)))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn sftp_remove(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
-    is_dir: bool,
+    _is_dir: bool,
 ) -> Result<(), AppError> {
-    if is_dir {
-        // SFTP remove_dir only works on empty directories, use rm -rf for recursive deletion
-        state.ssh_manager.exec_command(
-            &session_id,
-            &format!("rm -rf {}", shell_escape(&path)),
-        ).await?;
-    } else {
-        let sftp = state.ssh_manager.open_sftp(&session_id).await?;
-        sftp.remove_file(&path)
-            .await
-            .map_err(|e| AppError::Ssh(format!("删除文件失败: {}", e)))?;
-    }
-
-    Ok(())
+    let path = validate_sftp_remote_path(&path)?;
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+    sftp_remove_recursive(&sftp, &path).await
 }
 
 #[tauri::command]
@@ -135,6 +165,8 @@ pub async fn sftp_rename(
     old_path: String,
     new_path: String,
 ) -> Result<(), AppError> {
+    let old_path = validate_sftp_remote_path(&old_path)?;
+    let new_path = validate_sftp_remote_path(&new_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     sftp.rename(&old_path, &new_path)
@@ -151,6 +183,14 @@ pub async fn sftp_upload_folder(
     remote_path: String,
     archive_data: Vec<u8>,
 ) -> Result<String, AppError> {
+    if archive_data.len() > MAX_UPLOAD_BYTES {
+        return Err(AppError::Ssh(format!(
+            "文件夹过大 ({} MB)，单次上传限制为 32 MB",
+            archive_data.len() as f64 / 1_048_576.0
+        )));
+    }
+
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     let tmp_path = format!("/tmp/marcel-upload-{}.zip", uuid::Uuid::new_v4());
@@ -192,6 +232,7 @@ pub async fn sftp_read_file(
     session_id: String,
     path: String,
 ) -> Result<String, AppError> {
+    let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
     let metadata = sftp
         .metadata(&path)
@@ -239,6 +280,7 @@ pub async fn sftp_write_file(
     path: String,
     content: String,
 ) -> Result<(), AppError> {
+    let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     let mut file = sftp
@@ -269,6 +311,8 @@ pub async fn sftp_download_stream(
     local_path: String,
     download_id: String,
 ) -> Result<(), AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
+    let local_path = validate_local_path(&local_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     let metadata = sftp
