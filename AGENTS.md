@@ -1,6 +1,6 @@
 # AGENTS.md — Marcel SSH (玛瑟尔 SSH)
 
-> 以 Agent 自动化操作为核心差异化的下一代 SSH 终端工具。
+> 以 Agent 自动化操作为核心差异化的下一代AI SSH 终端工具。
 
 ---
 
