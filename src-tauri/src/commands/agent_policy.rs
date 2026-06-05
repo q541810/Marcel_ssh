@@ -17,7 +17,10 @@ pub struct CommandCheckResult {
     pub reason: String,
 }
 
-/// Evaluate a command against the current agent-mode settings.
+/// 仅用于 Agent 审批流的风险预估（allowlist/denylist），**不替代完整沙箱**。
+/// 实际命令执行时的完整沙箱审查在 `agent/tools/execute_cmd.rs` 中完成
+/// （`Sandbox::check_command()` 包含 fork bomb 检测、blocked commands/patterns、
+/// protected paths、dd 阻断等）。
 #[tauri::command]
 pub async fn agent_check_command(
     state: State<'_, AppState>,

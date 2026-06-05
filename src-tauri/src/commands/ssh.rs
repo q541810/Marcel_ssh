@@ -59,7 +59,14 @@ pub async fn ssh_list_sessions(
     Ok(state.ssh_manager.list_sessions().await)
 }
 
-/// Execute a command on a remote SSH session and return the output.
+/// 在远程 SSH 会话上执行命令并返回输出。
+///
+/// 这是**用户主动触发**的命令（由 ProcessPanel 调用，用于进程管理），无需沙箱检查，原因：
+///   - 沙箱是为面向 LLM 的 Agent 命令（`execute_command` tool）设计的，LLM 输出不可信。
+///   - `ssh_exec` 由用户通过终端 UI 组件调用——该用户本身已通过 `ssh_send_input`
+///     拥有完整的交互式 shell。如果 WebView 被攻破，`ssh_send_input` 同样危险。
+///   - 在此加沙箱会导致用户自定义的黑名单（如屏蔽 `kill`）悄悄破坏 ProcessPanel 功能。
+///   - 面向 LLM 的真正沙箱入口：`agent/tools/execute_cmd.rs` → `Sandbox::check_command()`。
 #[tauri::command]
 pub async fn ssh_exec(
     state: State<'_, AppState>,
