@@ -144,17 +144,17 @@ pub async fn sftp_mkdir(
 async fn sftp_remove_recursive(
     sftp: &russh_sftp::client::SftpSession,
     path: &str,
+    is_dir: bool,
 ) -> Result<(), AppError> {
-    let metadata = sftp.metadata(path).await
-        .map_err(|e| AppError::Ssh(format!("获取文件信息失败: {}", e)))?;
-    if metadata.is_dir() {
+    if is_dir {
         let mut dir = sftp.read_dir(path).await
             .map_err(|e| AppError::Ssh(format!("读取目录失败: {}", e)))?;
         while let Some(entry) = dir.next() {
             let name = entry.file_name();
             if name == "." || name == ".." { continue; }
             let child = format!("{}/{}", path.trim_end_matches('/'), name);
-            Box::pin(sftp_remove_recursive(sftp, &child)).await?;
+            let child_is_dir = entry.metadata().is_dir();
+            Box::pin(sftp_remove_recursive(sftp, &child, child_is_dir)).await?;
         }
         sftp.remove_dir(path).await
             .map_err(|e| AppError::Ssh(format!("删除目录失败: {}", e)))?;
@@ -170,11 +170,11 @@ pub async fn sftp_remove(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
-    _is_dir: bool,
+    is_dir: bool,
 ) -> Result<(), AppError> {
     let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
-    sftp_remove_recursive(&sftp, &path).await
+    sftp_remove_recursive(&sftp, &path, is_dir).await
 }
 
 #[tauri::command]

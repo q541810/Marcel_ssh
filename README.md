@@ -70,6 +70,8 @@ Agent 会自动规划步骤、执行命令，并在需要你确认时暂停等�
 
 请先阅读 [Contributors_read.md](Contributors_read.md)，了解贡献者需要遵守的规则和建议
 
+~~呃，你问我为什么全是warn？能跑就行啦！挑啥！~~
+
 ---
 
 ## 授权
