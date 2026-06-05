@@ -10,6 +10,7 @@ use crate::AppState;
 
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STREAM_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
@@ -98,6 +99,23 @@ pub async fn sftp_download(
 ) -> Result<Vec<u8>, AppError> {
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    let metadata = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("获取文件信息失败: {}", e)))?;
+
+    if metadata.is_dir() {
+        return Err(AppError::Ssh("不能下载目录，请使用文件管理器下载".into()));
+    }
+
+    if metadata.len() > MAX_DOWNLOAD_BYTES {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，单文件下载限制为 {} MB，请使用流式下载功能",
+            metadata.len() as f64 / 1_048_576.0,
+            MAX_DOWNLOAD_BYTES as f64 / 1_048_576.0
+        )));
+    }
 
     let data = sftp
         .read(&remote_path)
@@ -218,7 +236,7 @@ pub async fn sftp_upload_folder(
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_path, &remote_path);
     let output = state.ssh_manager.exec_command(&session_id, &exec_cmd).await?;
 
-    if output.contains("OK") {
+    if output.trim().contains("OK") {
         Ok(format!("文件夹已上传并解压到 {}", remote_path))
     } else {
         Err(AppError::Ssh(format!("解压失败: {}", output.trim())))

@@ -4,11 +4,12 @@ import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode } from '@/lib/types';
 
 export default function TerminalToolbar() {
-  const getActiveSession = useSessionStore((s) => s.getActiveSession);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const sessions = useSessionStore((s) => s.sessions);
   const mode = useAgentStore((s) => s.mode);
   const setMode = useAgentStore((s) => s.setMode);
 
-  const activeSession = getActiveSession();
+  const activeSession = activeSessionId ? sessions[activeSessionId] ?? null : null;
 
   return (
     <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-850 border-b border-zinc-800 bg-zinc-900/50">

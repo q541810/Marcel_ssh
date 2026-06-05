@@ -48,6 +48,9 @@ pub(crate) struct LoopContext {
     pub registry: std::sync::Arc<ToolRegistry>,
     pub conversation_id: String,
     pub conv_db: std::sync::Arc<ConversationDb>,
+    /// Watch channel receiver for cancellation signals.
+    /// When the value changes to `true`, the LLM call in progress should be aborted.
+    pub cancel_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 /// The main agentic loop:
@@ -70,6 +73,7 @@ pub(crate) async fn run_agent_loop(
         registry,
         conversation_id,
         conv_db,
+        mut cancel_rx,
     } = ctx;
 
     let persister = ConversationPersister::new(conv_db, conversation_id.clone());
@@ -101,7 +105,7 @@ pub(crate) async fn run_agent_loop(
             messages.push(LlmMessage::user(plan_context));
         }
 
-        // 1. Call LLM (streaming)
+        // 1. Call LLM (streaming) — with cancellation support
         let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
         let app_fwd = app.clone();
         let evn = event_name.clone();
@@ -127,7 +131,16 @@ pub(crate) async fn run_agent_loop(
             }
         });
 
-        let result = provider.chat_stream(&messages, &tools, tx).await;
+        let result = tokio::select! {
+            r = provider.chat_stream(&messages, &tools, tx) => r,
+            _ = cancel_rx.changed() => {
+                // Cancelled during LLM call
+                log::info!("Agent task {} cancelled during LLM call", task_id);
+                let _ = forwarder.await;
+                let _ = app.emit(&event_name, StreamEvent::Done);
+                return;
+            }
+        };
         let _ = forwarder.await;
 
         let assistant_msg = match result {

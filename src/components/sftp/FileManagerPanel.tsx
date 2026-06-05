@@ -9,6 +9,7 @@ import {
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import { formatSize, modeToString, getErrorMessage } from '@/lib/sftp-helpers';
+import { MAX_EDITOR_FILE_SIZE, BINARY_EXTENSIONS } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
@@ -104,6 +105,15 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       const path = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
       navigateTo(path);
     } else if (entry.is_file) {
+      const ext = entry.name.lastIndexOf('.') >= 0 ? entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase() : '';
+      if (BINARY_EXTENSIONS.has(ext)) {
+        setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+        return;
+      }
+      if (entry.size > MAX_EDITOR_FILE_SIZE) {
+        setError(`文件过大 (${formatSize(entry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+        return;
+      }
       const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
       setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
     }
@@ -482,6 +492,17 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
               <button
                 type="button"
                 onClick={() => {
+                  const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
+                  if (BINARY_EXTENSIONS.has(ext)) {
+                    setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+                    setMenuEntry(null);
+                    return;
+                  }
+                  if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
+                    setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+                    setMenuEntry(null);
+                    return;
+                  }
                   const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
                   setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
                   setMenuEntry(null);

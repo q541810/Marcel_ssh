@@ -47,6 +47,9 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Pending approval requests: (task_id, operation_id) -> oneshot sender for approval response
     pub pending_approvals: std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
+    /// Cancellation signals for running agent tasks: task_id -> watch sender.
+    /// Setting the value to `true` signals the agent loop to abort the current LLM call.
+    pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
 }
 
 impl AppState {
@@ -242,6 +245,7 @@ impl AppState {
             skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
         }
     }
 }

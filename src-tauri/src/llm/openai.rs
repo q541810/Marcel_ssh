@@ -107,6 +107,7 @@ impl OpenAiProvider {
         let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<PartialToolCall> = Vec::new();
         let mut buffer = String::new();
+        let mut consecutive_parse_errors: u32 = 0;
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
@@ -138,6 +139,7 @@ impl OpenAiProvider {
 
                 match serde_json::from_str::<ChatChunk>(payload) {
                     Ok(chunk) => {
+                        consecutive_parse_errors = 0;
                         for choice in chunk.choices {
                             if let Some(delta) = choice.delta {
                                 if let Some(ref reasoning) = delta.reasoning_content {
@@ -198,7 +200,17 @@ impl OpenAiProvider {
                         }
                     }
                     Err(e) => {
+                        consecutive_parse_errors += 1;
                         log::warn!("无法解析 SSE 数据: {} | 原文: {}", e, payload);
+                        if consecutive_parse_errors >= 3 {
+                            let _ = event_tx.send(StreamEvent::Error {
+                                message: format!("LLM 流式响应连续解析失败 ({} 次)，请重试", consecutive_parse_errors),
+                            });
+                            return Err(AppError::Llm(format!(
+                                "LLM 流式响应连续解析失败 ({} 次): 最近错误: {}",
+                                consecutive_parse_errors, e
+                            )));
+                        }
                     }
                 }
             }

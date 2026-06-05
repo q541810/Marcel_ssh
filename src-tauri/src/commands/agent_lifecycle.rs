@@ -97,6 +97,9 @@ pub async fn agent_start_task(
     };
 
     // Clone what the spawned task needs
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    state.cancel_senders.write().insert(task_id.clone(), cancel_tx);
+
     let loop_ctx = LoopContext {
         ssh: state.ssh_manager.clone(),
         session_id: session_id.clone(),
@@ -105,9 +108,12 @@ pub async fn agent_start_task(
         registry: registry.clone(),
         conversation_id: conversation_id.clone(),
         conv_db: state.conversation_db.clone(),
+        cancel_rx,
     };
     let task_id_for_log = task_id.clone();
     let mode_for_log = mode.clone();
+    let state_for_cleanup = state.inner().clone();
+    let task_id_for_cleanup = task_id_for_log.clone();
 
     tokio::spawn(async move {
         run_agent_loop(
@@ -120,6 +126,9 @@ pub async fn agent_start_task(
             loop_ctx,
         )
         .await;
+
+        // Clean up cancellation sender after the loop finishes
+        state_for_cleanup.cancel_senders.write().remove(&task_id_for_cleanup);
     });
 
     log::info!("Agent task started: {} ({:?})", task_id_for_log, mode_for_log);
@@ -136,6 +145,10 @@ pub async fn agent_stop_task(
     match tasks.get_mut(&task_id) {
         Some(task) => {
             task.status = AgentStatus::Cancelled;
+            // Send cancellation signal to abort in-progress LLM call
+            if let Some(cancel_tx) = state.cancel_senders.write().remove(&task_id) {
+                let _ = cancel_tx.send(true);
+            }
             Ok(())
         }
         None => Err(AppError::Agent(format!("Task not found: {}", task_id))),

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,7 +22,7 @@ use super::session::{self, SessionCommand, SshConnection};
 ///
 /// Note: Only `Deserialize` is implemented to avoid sending passwords back to
 /// the frontend via IPC. This type is only ever constructed from frontend input.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
     pub host: String,
@@ -37,6 +38,19 @@ pub struct ConnectionConfig {
     /// fingerprint is replaced rather than the connection being rejected.
     #[serde(default)]
     pub trust_new_host_key: bool,
+}
+
+impl fmt::Debug for ConnectionConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ConnectionConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_method", &self.auth_method)
+            .field("connection_id", &self.connection_id)
+            .field("trust_new_host_key", &self.trust_new_host_key)
+            .finish()
+    }
 }
 
 /// Manages multiple SSH connections indexed by session ID.

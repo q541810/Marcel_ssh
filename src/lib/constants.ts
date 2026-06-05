@@ -2,6 +2,21 @@ import type { AgentMode, RiskLevel, TerminalColors } from './types';
 
 export const APP_NAME = 'Marcel SSH';
 
+/** Maximum file size (in bytes) that can be opened in the remote file editor. */
+export const MAX_EDITOR_FILE_SIZE = 2 * 1024 * 1024;
+
+/** File extensions that should not be opened in the text editor (binary formats). */
+export const BINARY_EXTENSIONS = new Set([
+  '.gz', '.zip', '.tar', '.tgz', '.bz2', '.xz', '.zst', '.7z', '.rar',
+  '.exe', '.dll', '.so', '.dylib', '.o', '.a', '.lib',
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.tiff', '.tif',
+  '.mp3', '.mp4', '.avi', '.mov', '.mkv', '.flv', '.wav', '.flac', '.ogg', '.wma',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.iso', '.dmg', '.deb', '.rpm', '.msi',
+  '.sqlite', '.db', '.woff', '.woff2', '.eot', '.ttf', '.otf',
+  '.class', '.jar', '.war', '.pyc', '.pyd',
+]);
+
 export const DEFAULT_PORT = 22;
 export const DEFAULT_FONT_SIZE = 14;
 export const DEFAULT_FONT_FAMILY = 'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace';
