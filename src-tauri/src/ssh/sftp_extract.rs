@@ -11,5 +11,7 @@
 pub(crate) fn build_extract_cmd(archive_path: &str, target_dir: &str) -> String {
     let dir = crate::util::shell_escape(target_dir);
     let tmp = crate::util::shell_escape(archive_path);
-    format!("mkdir -p {dir} && unzip -o -q {tmp} -d {dir} && rm -f {tmp} && echo OK")
+    // On success: mkdir → unzip → rm tmp → echo OK → exit 0
+    // On failure: the || branch always runs rm -f to clean up the temp file
+    format!("mkdir -p {dir} && unzip -o -q {tmp} -d {dir} && rm -f {tmp} && echo OK || (rm -f {tmp}; exit 1)")
 }
