@@ -632,7 +632,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
                 <button
                   type="button"
                   onClick={() => handleQuickDelete(deleteConfirm)}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-orange-600 hover:bg-orange-500"
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
                 >
                   快速删除（打包成rm）
                 </button>
