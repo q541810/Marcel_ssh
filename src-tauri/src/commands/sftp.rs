@@ -4,7 +4,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::util::{validate_sftp_remote_path, validate_local_path};
+use crate::util::{shell_escape, validate_sftp_remote_path, validate_local_path};
 use crate::error::AppError;
 use crate::AppState;
 
@@ -175,6 +175,22 @@ pub async fn sftp_remove(
     let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
     sftp_remove_recursive(&sftp, &path, is_dir).await
+}
+
+#[tauri::command]
+pub async fn sftp_remove_via_shell(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    is_dir: bool,
+) -> Result<(), AppError> {
+    let path = validate_sftp_remote_path(&path)?;
+    if !is_dir {
+        return Err(AppError::Ssh("快速删除仅支持目录".into()));
+    }
+    let command = format!("rm -rf -- {}", shell_escape(&path));
+    state.ssh_manager.exec_command(&session_id, &command).await?;
+    Ok(())
 }
 
 #[tauri::command]

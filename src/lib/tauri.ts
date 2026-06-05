@@ -259,6 +259,10 @@ export async function sftpRemove(sessionId: string, path: string, isDir: boolean
   return invoke('sftp_remove', { sessionId, path, isDir });
 }
 
+export async function sftpRemoveViaShell(sessionId: string, path: string, isDir: boolean): Promise<void> {
+  return invoke('sftp_remove_via_shell', { sessionId, path, isDir });
+}
+
 export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
   return invoke('sftp_rename', { sessionId, oldPath, newPath });
 }

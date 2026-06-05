@@ -5,6 +5,7 @@ import {
   sftpListDir,
   sftpMkdir,
   sftpRemove,
+  sftpRemoveViaShell,
   sftpRename,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
@@ -174,6 +175,21 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
       await loadDirectory(currentPath);
     } catch (err) {
       setError(`删除失败：${getErrorMessage(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleQuickDelete = async (entry: SftpFileEntry) => {
+    setDeleteConfirm(null);
+    setMenuEntry(null);
+    try {
+      setLoading(true);
+      const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+      await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
+      await loadDirectory(currentPath);
+    } catch (err) {
+      setError(`快速删除失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -612,6 +628,15 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
               >
                 确认删除
               </button>
+              {deleteConfirm.is_dir && (
+                <button
+                  type="button"
+                  onClick={() => handleQuickDelete(deleteConfirm)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-orange-600 hover:bg-orange-500"
+                >
+                  快速删除（打包成rm）
+                </button>
+              )}
             </div>
           </div>
         </div>
