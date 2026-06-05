@@ -8,6 +8,7 @@ interface SessionState {
   activeSessionId: string | null;
 
   connect: (config: ConnectionConfig) => Promise<string>;
+  connectWithSavedPassword: (connectionId: string, connLabel: string) => Promise<string>;
   disconnect: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
   getActiveSession: () => Session | null;
@@ -36,6 +37,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     try {
       const sessionId = await tauri.sshConnect(config);
+
+      void attachSessionStatusListener(sessionId);
+
+      set((state) => {
+        const updated = { ...state.sessions };
+        delete updated[tempId];
+        updated[sessionId] = {
+          ...session,
+          id: sessionId,
+          status: 'connected',
+        };
+        return { sessions: updated, activeSessionId: sessionId };
+      });
+
+      return sessionId;
+    } catch (err) {
+      set((state) => {
+        const updated = { ...state.sessions };
+        const existing = updated[tempId];
+        if (existing) {
+          updated[tempId] = { ...existing, status: 'error' };
+        }
+        return { sessions: updated };
+      });
+      throw err;
+    }
+  },
+
+  connectWithSavedPassword: async (connectionId: string, connLabel: string) => {
+    const tempId = crypto.randomUUID();
+    const session: Session = {
+      id: tempId,
+      connectionId: connLabel,
+      status: 'connecting',
+      createdAt: new Date().toISOString(),
+      configId: connectionId,
+    };
+
+    set((state) => ({
+      sessions: { ...state.sessions, [tempId]: session },
+      activeSessionId: tempId,
+    }));
+
+    try {
+      const sessionId = await tauri.connectWithSavedPassword(connectionId);
 
       void attachSessionStatusListener(sessionId);
 

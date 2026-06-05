@@ -150,8 +150,12 @@ export async function savePassword(
   return invoke('config_save_password', { connectionId, password });
 }
 
-export async function getPassword(connectionId: string): Promise<string | null> {
-  return invoke<string | null>('config_get_password', { connectionId });
+export async function hasPassword(connectionId: string): Promise<boolean> {
+  return invoke<boolean>('config_has_password', { connectionId });
+}
+
+export async function connectWithSavedPassword(connectionId: string): Promise<string> {
+  return invoke<string>('ssh_connect_with_saved_password', { connectionId });
 }
 
 export async function deletePassword(connectionId: string): Promise<void> {
@@ -180,10 +184,6 @@ export async function quickCommandDelete(id: string): Promise<void> {
 
 export async function saveLlmApiKey(apiKey: string): Promise<void> {
   return invoke('config_save_llm_api_key', { apiKey });
-}
-
-export async function getLlmApiKey(): Promise<string | null> {
-  return invoke('config_get_llm_api_key');
 }
 
 export async function deleteLlmApiKey(): Promise<void> {

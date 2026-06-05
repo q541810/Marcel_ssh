@@ -1,6 +1,8 @@
 use tauri::{AppHandle, State};
 
+use crate::config::keychain;
 use crate::error::AppError;
+use crate::ssh::auth::AuthMethod;
 use crate::ssh::connection::ConnectionConfig;
 use crate::AppState;
 
@@ -74,4 +76,35 @@ pub async fn ssh_exec(
     command: String,
 ) -> Result<String, AppError> {
     state.ssh_manager.exec_command(&session_id, &command).await
+}
+
+/// 使用已保存的密码连接 SSH。密码在 Rust 侧从系统密钥链读取，不经过前端。
+/// 安全：密码永远不会暴露给 WebView。
+#[tauri::command]
+pub async fn ssh_connect_with_saved_password(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<String, AppError> {
+    let saved = {
+        let store = state.connection_store.read().await;
+        store
+            .get_by_id(&connection_id)
+            .ok_or_else(|| AppError::Config(format!("未找到连接: {}", connection_id)))?
+            .clone()
+    };
+
+    let password = keychain::get_password(&connection_id)?
+        .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+
+    let config = ConnectionConfig {
+        host: saved.host,
+        port: saved.port,
+        username: saved.username,
+        auth_method: AuthMethod::Password { password },
+        connection_id: Some(connection_id),
+        trust_new_host_key: false,
+    };
+
+    state.ssh_manager.connect(config, app).await
 }

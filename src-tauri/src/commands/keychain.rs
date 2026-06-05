@@ -10,13 +10,18 @@ pub async fn config_save_password(
     keychain::save_password(&connection_id, &password)
 }
 
-/// Retrieve a previously stored password for a connection.
-/// Returns `None` if no password has been saved.
+/// Check whether a password has been saved for a connection.
+/// Does NOT return the password itself — only a boolean.
+/// 安全：不将密码返回给前端，只返回是否已保存。
 #[tauri::command]
-pub async fn config_get_password(
+pub async fn config_has_password(
     connection_id: String,
-) -> Result<Option<String>, AppError> {
-    keychain::get_password(&connection_id)
+) -> Result<bool, AppError> {
+    match keychain::get_password(&connection_id) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Remove a stored password from the keychain without deleting the connection.
@@ -35,12 +40,8 @@ pub async fn config_save_llm_api_key(
     keychain::save_llm_api_key(&api_key)
 }
 
-/// Retrieve the LLM API key from the system keychain.
-/// Returns `None` if no API key has been saved.
-#[tauri::command]
-pub async fn config_get_llm_api_key() -> Result<Option<String>, AppError> {
-    keychain::get_llm_api_key()
-}
+// config_get_llm_api_key 已移除。前端通过 SettingsResponse.has_api_key (bool) 判断是否有 API Key，
+// 避免将原始 API Key 返回给 WebView。
 
 /// Remove the LLM API key from the system keychain.
 #[tauri::command]

@@ -17,6 +17,7 @@ export default function ConnectionList() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const setActiveConnection = useConnectionStore((s) => s.setActiveConnection);
   const connect = useSessionStore((s) => s.connect);
+  const connectWithSavedPassword = useSessionStore((s) => s.connectWithSavedPassword);
   const { onConnected } = useSessionLifecycle();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -121,18 +122,31 @@ export default function ConnectionList() {
 
   /**
    * Click handler for a saved connection. For password-auth connections,
-   * tries to load a saved password from the OS keychain first.
+   * checks if a password is saved in the OS keychain. If so, connects via
+   * a Rust-side command that reads the password from the keychain without
+   * exposing it to the WebView. Otherwise prompts the user.
    */
   const handleConnect = async (connection: SavedConnection) => {
     if (connection.authMethod === 'Password') {
       try {
-        const saved = await tauri.getPassword(connection.id);
-        if (saved) {
-          await doConnect(connection, saved);
+        const stored = await tauri.hasPassword(connection.id);
+        if (stored) {
+          const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+          try {
+            await connectWithSavedPassword(connection.id, connLabel);
+          } catch (err) {
+            console.warn('连接失败:', err);
+            try { await tauri.deletePassword(connection.id); } catch { /* ignore */ }
+            promptForPassword(connection);
+            return;
+          }
+          if (connection.id) {
+            onConnected(connection.id);
+          }
           return;
         }
       } catch (err) {
-        console.warn('读取已保存密码失败:', err);
+        console.warn('检查已保存密码失败:', err);
       }
       promptForPassword(connection);
       return;
