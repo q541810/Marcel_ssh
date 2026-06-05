@@ -1,6 +1,6 @@
 ---
 name: release
-description: Marcel SSH 发布与发布工作流。更新版本号、构建、打标签、创建 GitHub Release、上传安装包。当用户说 "release"、"publish"、"发版"、"打包"、"build release" 或提到 version bump（版本升级）时使用。
+description: Marcel SSH 发布与发布工作流。更新版本号、构建、打标签、创建 GitHub Release、上传安装包。当用户说 "release"、"publish"、"发版"、"打包"、"build release"、"调整版本号" 或提到 version bump（版本升级）时使用。
 ---
 
 # Marcel SSH 发布流程

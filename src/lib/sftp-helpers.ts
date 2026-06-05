@@ -1,3 +1,5 @@
+import { getErrorMessage as baseGetErrorMessage } from './errors';
+
 export function formatSize(bytes: number): string {
   if (bytes === 0) return '-';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -22,8 +24,6 @@ export function modeToString(mode: number): string {
   ].join('');
   return chars + perms;
 }
-
-import { getErrorMessage as baseGetErrorMessage } from './errors';
 
 export function getErrorMessage(err: unknown): string {
   if (err && typeof err === 'object') {
