@@ -1,6 +1,6 @@
 ---
 name: release
-description: Marcel SSH release & publishing workflow. Bump versions, build, tag, create GitHub Release, upload installers. Use when user says "release", "publish", "发版", "打包", "build release", or mentions version bump.
+description: Marcel SSH 发布与发布工作流。更新版本号、构建、打标签、创建 GitHub Release、上传安装包。当用户说 "release"、"publish"、"发版"、"打包"、"build release" 或提到 version bump（版本升级）时使用。
 ---
 
 # Marcel SSH 发布流程
@@ -44,7 +44,11 @@ pnpm tauri build
 - `src-tauri/target/release/bundle/nsis/Marcel SSH_{version}_x64-setup.exe`
 - `src-tauri/target/release/bundle/msi/Marcel SSH_{version}_x64_zh-CN.msi`
 
-### 4. 提交并打 tag
+### 4. 拟定release描述
+先阅读commit记录，再查看release记录，模仿之前的release描述风格，根据commit记录确定当前版本的描述后告知用户。
+
+### 5. 提交并打 tag
+在用户确认4中你告知他的release描述后，提交并打 tag。
 
 ```bash
 git add -A
@@ -54,12 +58,12 @@ git push origin main
 git push origin v{version}
 ```
 
-### 5. 创建 GitHub Release
+### 6. 创建 GitHub Release
 
 ```bash
 gh release create v{version} --title "v{version}" --notes "<changelog>"
 ```
 
-### 6. 上传安装包到 Release Assets
+### 7. 上传安装包到 Release Assets
 
 将 `pnpm tauri build` 产出的 exe 和 msi 上传到刚创建的 Release 页面。

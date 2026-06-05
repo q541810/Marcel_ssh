@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { QuickCommand, QuickCommandInput, QuickCommandPatch } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 
 interface QuickCommandState {
   commands: QuickCommand[];
@@ -34,7 +35,7 @@ export const useQuickCommandStore = create<QuickCommandState>((set, get) => ({
       const commands = await tauri.quickCommandList(sessionKey ?? null);
       set({ commands });
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: getErrorMessage(err) });
     } finally {
       set({ loading: false });
     }
@@ -73,7 +74,7 @@ export const useQuickCommandStore = create<QuickCommandState>((set, get) => ({
         }
       }
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: getErrorMessage(err) });
       throw err;
     } finally {
       set({ executingId: null });

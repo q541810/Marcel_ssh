@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 
 interface ConnectionState {
   connections: SavedConnection[];
@@ -26,7 +27,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       const connections = await tauri.getConnections();
       set({ connections });
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: getErrorMessage(err) });
     } finally {
       set({ loading: false });
     }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AgentModeSettings, CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Section, Field } from './helpers';
@@ -88,7 +89,7 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
         allowed: false,
         requiresConfirmation: false,
         riskLevel: 'Moderate',
-        reason: `测试失败：${String(err)}`,
+        reason: `测试失败：${getErrorMessage(err)}`,
       });
     } finally {
       setTesting(false);

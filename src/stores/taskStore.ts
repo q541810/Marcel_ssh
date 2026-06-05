@@ -8,6 +8,7 @@ import type {
   PlanItem,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import { attachStreamListener, attachPlanListener, cleanupTaskListeners } from './agentStreamManager';
 import { useConversationStore } from './conversationStore';
 
@@ -117,7 +118,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             {
               id: crypto.randomUUID(),
               role: 'system',
-              content: `启动任务失败：${String(err)}`,
+              content: `启动任务失败：${getErrorMessage(err)}`,
               timestamp: new Date().toISOString(),
             },
           ],

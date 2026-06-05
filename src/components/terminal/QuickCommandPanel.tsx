@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import type { QuickCommand, QuickCommandInput, QuickCommandScope } from '@/lib/types';
 import { useQuickCommandStore } from '@/stores/quickCommandStore';
+import { getErrorMessage } from '@/lib/errors';
 
 interface QuickCommandPanelProps {
   sessionId: string;
@@ -56,7 +57,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
   const execute = useQuickCommandStore((s) => s.execute);
 
   useEffect(() => {
-    load(sessionKey).catch((err) => setMessage(`加载失败：${String(err)}`));
+    load(sessionKey).catch((err) => setMessage(`加载失败：${getErrorMessage(err)}`));
   }, [sessionKey, load]);
 
   useEffect(() => {
@@ -120,14 +121,14 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
       setTab(payload.scope);
       setMessage(null);
     } catch (err) {
-      setMessage(`保存失败：${String(err)}`);
+      setMessage(`保存失败：${getErrorMessage(err)}`);
     }
   };
 
   const handleExecute = (command: QuickCommand) => {
     setActiveMenuId(null);
     execute(command, sessionId).catch((err) => {
-      setMessage(`执行失败：${String(err)}`);
+      setMessage(`执行失败：${getErrorMessage(err)}`);
     });
   };
 
@@ -138,7 +139,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
       await remove(command.id);
       setMessage(null);
     } catch (err) {
-      setMessage(`删除失败：${String(err)}`);
+      setMessage(`删除失败：${getErrorMessage(err)}`);
     }
   };
 

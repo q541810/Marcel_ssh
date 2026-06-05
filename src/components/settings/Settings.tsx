@@ -6,6 +6,7 @@ import type {
   LlmConfig,
 } from '@/lib/types';
 import Button from '@/components/ui/Button';
+import { getErrorMessage } from '@/lib/errors';
 import { Section, Field } from './helpers';
 export { Section, Field } from './helpers';
 import { ColorThemeSelector } from './ColorThemeSelector';
@@ -140,7 +141,7 @@ export default function Settings() {
       setSavedNotice('设置已保存');
       setTimeout(() => setSavedNotice(null), 2000);
     } catch (err) {
-      setSavedNotice(`保存失败：${String(err)}`);
+      setSavedNotice(`保存失败：${getErrorMessage(err)}`);
     } finally {
       setSaving(false);
     }

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { sshExec, sshListProcesses } from '@/lib/tauri';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { getErrorMessage } from '@/lib/errors';
 
 interface ProcessInfo {
   pid: string;
@@ -54,7 +55,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       }).filter(Boolean) as ProcessInfo[];
       setProcesses(parsed);
     } catch (err) {
-      setError(`加载失败：${String(err)}`);
+      setError(`加载失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
@@ -113,7 +114,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       await sshExec(sessionId, `kill -TERM ${proc.pid}`);
       await loadProcesses();
     } catch (err) {
-      setError(`终止失败：${String(err)}`);
+      setError(`终止失败：${getErrorMessage(err)}`);
     }
   };
 

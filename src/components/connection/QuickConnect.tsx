@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { DEFAULT_PORT } from '@/lib/constants';
+import { getErrorMessage } from '@/lib/errors';
 import type { ConnectionConfig } from '@/lib/types';
 
 interface ParsedTarget {
@@ -52,7 +53,7 @@ export default function QuickConnect() {
           await connect(config);
           setInput('');
         } catch (err) {
-          setError(String(err));
+          setError(getErrorMessage(err));
         }
       },
     });

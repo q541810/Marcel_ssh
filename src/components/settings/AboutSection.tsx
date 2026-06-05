@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
 import { checkUpdate } from '@/lib/tauri';
 import type { UpdateCheckResult } from '@/lib/types';
+import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import { Section } from './helpers';
 
@@ -25,7 +26,7 @@ export default function AboutSection() {
       const res = await checkUpdate();
       setResult(res);
     } catch (err) {
-      setError(String(err));
+      setError(getErrorMessage(err));
     } finally {
       setChecking(false);
     }

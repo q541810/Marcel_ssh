@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Skill } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 
 interface SkillState {
   skills: Skill[];
@@ -25,7 +26,7 @@ export const useSkillStore = create<SkillState>((set, get) => ({
       const skills = await tauri.skillList();
       set({ skills });
     } catch (err) {
-      set({ error: String(err) });
+      set({ error: getErrorMessage(err) });
     } finally {
       set({ loading: false });
     }
@@ -66,7 +67,7 @@ export const useSkillStore = create<SkillState>((set, get) => ({
         skills: state.skills.map((s) =>
           s.id === id ? { ...s, enabled: !s.enabled } : s
         ),
-        error: String(err),
+        error: getErrorMessage(err),
       }));
     }
   },
