@@ -6,11 +6,11 @@ import type { AppSettings } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import { SearchRegistryProvider, useSearchRegistry } from './helpers';
 import { SettingsActionsProvider } from './SettingsActionsContext';
-import { AppearanceSection } from './AppearanceSection';
-import { DisplaySection } from './DisplaySection';
-import { LlmSection } from './LlmSection';
-import { CommandPolicySection } from './CommandPolicySection';
-import { ExperimentalSection } from './ExperimentalSection';
+import { TerminalAppearanceSection } from './TerminalAppearanceSection';
+import { ConversationDisplaySection } from './ConversationDisplaySection';
+import { ModelServiceSection } from './ModelServiceSection';
+import { AgentPolicySection } from './AgentPolicySection';
+import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
 import AboutSection from './AboutSection';
 
@@ -229,11 +229,11 @@ function SettingsContent({
           <div className="text-zinc-500 text-center py-12">未找到匹配的设置项</div>
         )}
 
-        <div hidden={!visibleSections.includes('settings-appearance')}><AppearanceSection /></div>
-        <div hidden={!visibleSections.includes('settings-display')}><DisplaySection /></div>
-        <div hidden={!visibleSections.includes('settings-llm')}><LlmSection /></div>
-        <div hidden={!visibleSections.includes('settings-command-policy')}><CommandPolicySection /></div>
-        <div hidden={!visibleSections.includes('settings-experimental')}><ExperimentalSection /></div>
+        <div hidden={!visibleSections.includes('settings-appearance')}><TerminalAppearanceSection /></div>
+        <div hidden={!visibleSections.includes('settings-display')}><ConversationDisplaySection /></div>
+        <div hidden={!visibleSections.includes('settings-llm')}><ModelServiceSection /></div>
+        <div hidden={!visibleSections.includes('settings-command-policy')}><AgentPolicySection /></div>
+        <div hidden={!visibleSections.includes('settings-experimental')}><ToolCapabilitiesSection /></div>
         <div hidden={!visibleSections.includes('settings-transfer')}><TransferSection /></div>
         <div hidden={!visibleSections.includes('settings-about')}><AboutSection /></div>
       </div>

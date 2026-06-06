@@ -4,7 +4,7 @@ import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
-export function ExperimentalSection() {
+export function ToolCapabilitiesSection() {
   const { settings, update } = useSettingsActions();
 
   const experimental = settings.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true, enableCloudPage: false };

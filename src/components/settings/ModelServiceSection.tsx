@@ -4,7 +4,7 @@ import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
-export function LlmSection() {
+export function ModelServiceSection() {
   const { settings, update } = useSettingsActions();
   const hasApiKey = useSettingsStore((s) => s.hasApiKey);
 

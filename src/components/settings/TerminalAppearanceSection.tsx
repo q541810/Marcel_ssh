@@ -3,7 +3,7 @@ import { useSettingsActions } from './SettingsActionsContext';
 import { ColorThemeSelector } from './ColorThemeSelector';
 import { FontSizeInput } from './FontSizeInput';
 
-export function AppearanceSection() {
+export function TerminalAppearanceSection() {
   const { settings, update, setPreview } = useSettingsActions();
 
   return (

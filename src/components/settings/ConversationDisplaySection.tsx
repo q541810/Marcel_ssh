@@ -2,7 +2,7 @@ import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
-export function DisplaySection() {
+export function ConversationDisplaySection() {
   const { settings, update } = useSettingsActions();
 
   return (

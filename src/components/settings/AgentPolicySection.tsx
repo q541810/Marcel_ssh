@@ -40,7 +40,7 @@ function ListModeButton({
   );
 }
 
-export function CommandPolicySection() {
+export function AgentPolicySection() {
   const { settings, update } = useSettingsActions();
   const agent = settings.agentModeSettings;
 
