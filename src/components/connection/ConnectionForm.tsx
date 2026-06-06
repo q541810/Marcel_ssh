@@ -72,10 +72,6 @@ export default function ConnectionForm({
 
   return (
     <div className="p-4 space-y-4">
-      <h3 className="text-lg font-semibold text-zinc-100">
-        {connection ? '编辑连接' : '新建连接'}
-      </h3>
-
       <Input
         label="名称"
         value={name}
