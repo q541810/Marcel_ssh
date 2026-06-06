@@ -3,6 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { sftpUploadFolderStream, sftpUploadStream } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
+import { formatFolderUploadStatus, type FolderStatusPayload } from './sftpUploadStatus';
 
 interface ProgressPayload {
   uploadId: string;
@@ -13,17 +14,6 @@ interface ProgressPayload {
 interface DonePayload {
   uploadId: string;
 }
-
-interface FolderStatusPayload {
-  uploadId: string;
-  phase: 'zipping' | 'uploading' | 'extracting';
-}
-
-const PHASE_LABELS: Record<string, string> = {
-  zipping: '正在压缩文件...',
-  uploading: '正在上传',
-  extracting: '正在解压...',
-};
 
 export interface UploadState {
   status: 'uploading' | 'done' | 'error';
@@ -142,7 +132,12 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
         (event) => {
           if (event.payload.uploadId !== uploadId) return;
           setFolderStatus(
-            `${PHASE_LABELS.uploading} ${formatSize(event.payload.written)} / ${formatSize(event.payload.total)}`,
+            formatFolderUploadStatus({
+              uploadId,
+              phase: 'uploading',
+              written: event.payload.written,
+              total: event.payload.total,
+            }),
           );
         },
       );
@@ -151,7 +146,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
         'sftp-folder-upload-status',
         (event) => {
           if (event.payload.uploadId !== uploadId) return;
-          setFolderStatus(PHASE_LABELS[event.payload.phase] || event.payload.phase);
+          setFolderStatus(formatFolderUploadStatus(event.payload));
         },
       );
 
@@ -164,7 +159,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
       );
 
       try {
-        setFolderStatus(PHASE_LABELS.zipping);
+        setFolderStatus(formatFolderUploadStatus({ uploadId, phase: 'checking', percent: 0 }));
         const targetPath = remotePath === '/' ? `/${folderName}` : `${remotePath}/${folderName}`;
         await sftpUploadFolderStream(sessionId, path, targetPath, uploadId);
       } finally {

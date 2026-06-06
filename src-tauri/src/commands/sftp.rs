@@ -5,8 +5,8 @@ use std::path::Path;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::util::{shell_escape, validate_sftp_remote_path, validate_local_path};
 use crate::error::AppError;
+use crate::util::{shell_escape, validate_local_path, validate_sftp_remote_path};
 use crate::AppState;
 
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
@@ -33,9 +33,10 @@ pub async fn sftp_list_dir(
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
     let mut entries = Vec::new();
 
-    let mut dir = sftp.read_dir(&path).await.map_err(|e| {
-        AppError::Ssh(format!("读取目录失败: {}", e))
-    })?;
+    let mut dir = sftp
+        .read_dir(&path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取目录失败: {}", e)))?;
 
     while let Some(entry) = dir.next() {
         let metadata = entry.metadata();
@@ -70,7 +71,9 @@ pub async fn sftp_upload(
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     if sftp.metadata(&remote_path).await.is_ok() {
-        return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+        return Err(AppError::Ssh(
+            "远程文件已存在，请先删除或重命名再上传".into(),
+        ));
     }
 
     let mut file = sftp
@@ -148,19 +151,25 @@ async fn sftp_remove_recursive(
     is_dir: bool,
 ) -> Result<(), AppError> {
     if is_dir {
-        let mut dir = sftp.read_dir(path).await
+        let mut dir = sftp
+            .read_dir(path)
+            .await
             .map_err(|e| AppError::Ssh(format!("读取目录失败: {}", e)))?;
         while let Some(entry) = dir.next() {
             let name = entry.file_name();
-            if name == "." || name == ".." { continue; }
+            if name == "." || name == ".." {
+                continue;
+            }
             let child = format!("{}/{}", path.trim_end_matches('/'), name);
             let child_is_dir = entry.metadata().is_dir();
             Box::pin(sftp_remove_recursive(sftp, &child, child_is_dir)).await?;
         }
-        sftp.remove_dir(path).await
+        sftp.remove_dir(path)
+            .await
             .map_err(|e| AppError::Ssh(format!("删除目录失败: {}", e)))?;
     } else {
-        sftp.remove_file(path).await
+        sftp.remove_file(path)
+            .await
             .map_err(|e| AppError::Ssh(format!("删除文件失败: {}", e)))?;
     }
     Ok(())
@@ -190,7 +199,10 @@ pub async fn sftp_remove_via_shell(
         return Err(AppError::Ssh("快速删除仅支持目录".into()));
     }
     let command = format!("rm -rf -- {}", shell_escape(&path));
-    state.ssh_manager.exec_command(&session_id, &command).await?;
+    state
+        .ssh_manager
+        .exec_command(&session_id, &command)
+        .await?;
     Ok(())
 }
 
@@ -251,7 +263,10 @@ pub async fn sftp_upload_folder(
     drop(sftp);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_path, &remote_path);
-    let output = state.ssh_manager.exec_command(&session_id, &exec_cmd).await?;
+    let output = state
+        .ssh_manager
+        .exec_command(&session_id, &exec_cmd)
+        .await?;
 
     if output.trim().contains("OK") {
         Ok(format!("文件夹已上传并解压到 {}", remote_path))
@@ -456,7 +471,9 @@ pub async fn sftp_upload_stream(
     }
 
     if sftp.metadata(&remote_path).await.is_ok() {
-        return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+        return Err(AppError::Ssh(
+            "远程文件已存在，请先删除或重命名再上传".into(),
+        ));
     }
 
     let mut remote_file = sftp
@@ -524,17 +541,57 @@ pub async fn sftp_upload_stream(
     Ok(())
 }
 
-fn zip_local_folder(local_path: &Path, compression_level: i64) -> Result<std::path::PathBuf, AppError> {
+fn folder_upload_percent(phase: &str, written: u64, total: u64) -> u8 {
+    let ratio = if total > 0 {
+        (written.min(total) as f64 / total as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    match phase {
+        "checking" => 5,
+        "zipping" => (5.0 + ratio * 30.0).round() as u8,
+        "uploading" => (35.0 + ratio * 50.0).round() as u8,
+        "extracting" => 90,
+        _ => 0,
+    }
+}
+
+fn emit_folder_upload_status(
+    app: &AppHandle,
+    upload_id: &str,
+    phase: &str,
+    written: u64,
+    total: u64,
+) {
+    let _ = app.emit(
+        "sftp-folder-upload-status",
+        json!({
+            "uploadId": upload_id,
+            "phase": phase,
+            "written": written,
+            "total": total,
+            "percent": folder_upload_percent(phase, written, total),
+        }),
+    );
+}
+
+fn zip_local_folder<F>(
+    local_path: &Path,
+    compression_level: i64,
+    mut on_progress: F,
+) -> Result<std::path::PathBuf, AppError>
+where
+    F: FnMut(u64, u64),
+{
     let tmp_dir = std::env::temp_dir().join("marcel-ssh-zip");
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| {
-        AppError::Ssh(format!("创建临时目录失败: {}", e))
-    })?;
+    std::fs::create_dir_all(&tmp_dir)
+        .map_err(|e| AppError::Ssh(format!("创建临时目录失败: {}", e)))?;
 
     let zip_path = tmp_dir.join(format!("{}.zip", uuid::Uuid::new_v4()));
 
-    let zip_file = std::fs::File::create(&zip_path).map_err(|e| {
-        AppError::Ssh(format!("创建本地zip文件失败: {}", e))
-    })?;
+    let zip_file = std::fs::File::create(&zip_path)
+        .map_err(|e| AppError::Ssh(format!("创建本地zip文件失败: {}", e)))?;
     let mut zip_writer = zip::ZipWriter::new(zip_file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -551,9 +608,7 @@ fn zip_local_folder(local_path: &Path, compression_level: i64) -> Result<std::pa
 
     for (rel_path, full_path) in &entries {
         if full_path.is_dir() {
-            if let Err(e) = zip_writer
-                .add_directory_from_path(Path::new(&rel_path), options)
-            {
+            if let Err(e) = zip_writer.add_directory_from_path(Path::new(&rel_path), options) {
                 let _ = std::fs::remove_file(&zip_path);
                 return Err(AppError::Ssh(format!("zip添加目录失败: {}", e)));
             }
@@ -581,12 +636,8 @@ fn zip_local_folder(local_path: &Path, compression_level: i64) -> Result<std::pa
             }
         }
         processed += 1;
-        log::debug!(
-            "zip打包进度: {}/{} ({})",
-            processed,
-            total_files,
-            rel_path
-        );
+        on_progress(processed as u64, total_files as u64);
+        log::debug!("zip打包进度: {}/{} ({})", processed, total_files, rel_path);
     }
 
     if let Err(e) = zip_writer.finish() {
@@ -597,19 +648,39 @@ fn zip_local_folder(local_path: &Path, compression_level: i64) -> Result<std::pa
     Ok(zip_path)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::folder_upload_percent;
+
+    #[test]
+    fn maps_folder_upload_phases_to_overall_percent() {
+        assert_eq!(folder_upload_percent("checking", 0, 0), 5);
+        assert_eq!(folder_upload_percent("zipping", 0, 10), 5);
+        assert_eq!(folder_upload_percent("zipping", 5, 10), 20);
+        assert_eq!(folder_upload_percent("zipping", 10, 10), 35);
+        assert_eq!(folder_upload_percent("uploading", 0, 100), 35);
+        assert_eq!(folder_upload_percent("uploading", 50, 100), 60);
+        assert_eq!(folder_upload_percent("uploading", 100, 100), 85);
+        assert_eq!(folder_upload_percent("extracting", 0, 0), 90);
+    }
+
+    #[test]
+    fn clamps_folder_upload_progress_ratio() {
+        assert_eq!(folder_upload_percent("uploading", 150, 100), 85);
+        assert_eq!(folder_upload_percent("unknown", 0, 0), 0);
+    }
+}
+
 fn collect_dir_entries(
     dir: &Path,
     prefix: &str,
     entries: &mut Vec<(String, std::path::PathBuf)>,
 ) -> Result<(), AppError> {
-    let dir_entries = std::fs::read_dir(dir).map_err(|e| {
-        AppError::Ssh(format!("读取本地目录失败 {}: {}", dir.display(), e))
-    })?;
+    let dir_entries = std::fs::read_dir(dir)
+        .map_err(|e| AppError::Ssh(format!("读取本地目录失败 {}: {}", dir.display(), e)))?;
 
     for entry in dir_entries {
-        let entry = entry.map_err(|e| {
-            AppError::Ssh(format!("读取目录条目失败: {}", e))
-        })?;
+        let entry = entry.map_err(|e| AppError::Ssh(format!("读取目录条目失败: {}", e)))?;
         let name = entry.file_name().to_string_lossy().to_string();
         let full_path = entry.path();
         let rel_path = if prefix.is_empty() {
@@ -618,9 +689,9 @@ fn collect_dir_entries(
             format!("{}/{}", prefix, name)
         };
 
-        let file_type = entry.file_type().map_err(|e| {
-            AppError::Ssh(format!("获取文件类型失败: {}", e))
-        })?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| AppError::Ssh(format!("获取文件类型失败: {}", e)))?;
 
         if file_type.is_dir() {
             entries.push((format!("{}/", rel_path), full_path.clone()));
@@ -650,10 +721,20 @@ pub async fn sftp_upload_folder_stream(
         return Err(AppError::Ssh("本地路径不是目录".into()));
     }
 
-    let _ = app.emit(
-        "sftp-folder-upload-status",
-        json!({ "uploadId": &upload_id, "phase": "zipping" }),
-    );
+    emit_folder_upload_status(&app, &upload_id, "checking", 0, 1);
+
+    let check_cmd = crate::ssh::sftp_extract::build_unzip_check_cmd();
+    let check_output = state
+        .ssh_manager
+        .exec_command(&session_id, check_cmd)
+        .await?;
+    if !crate::ssh::sftp_extract::has_unzip(&check_output) {
+        return Err(AppError::Ssh(
+            "远端服务器缺少 unzip，无法解压文件夹上传包。请安装 unzip 后重试。".into(),
+        ));
+    }
+
+    emit_folder_upload_status(&app, &upload_id, "zipping", 0, 1);
 
     let compression_level = state
         .settings
@@ -663,8 +744,16 @@ pub async fn sftp_upload_folder_stream(
         .clamp(0, 9);
 
     let local_path_owned = local_path.clone();
+    let zip_app = app.clone();
+    let zip_upload_id = upload_id.clone();
     let zip_path = tokio::task::spawn_blocking(move || {
-        zip_local_folder(Path::new(&local_path_owned), compression_level)
+        zip_local_folder(
+            Path::new(&local_path_owned),
+            compression_level,
+            |written, total| {
+                emit_folder_upload_status(&zip_app, &zip_upload_id, "zipping", written, total);
+            },
+        )
     })
     .await
     .map_err(|e| AppError::Ssh(format!("zip打包任务失败: {}", e)))??;
@@ -683,10 +772,7 @@ pub async fn sftp_upload_folder_stream(
         )));
     }
 
-    let _ = app.emit(
-        "sftp-folder-upload-status",
-        json!({ "uploadId": &upload_id, "phase": "uploading" }),
-    );
+    emit_folder_upload_status(&app, &upload_id, "uploading", 0, total);
 
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
@@ -703,12 +789,10 @@ pub async fn sftp_upload_folder_stream(
             AppError::Ssh(format!("创建远程临时文件失败: {}", e))
         })?;
 
-    let mut local_file = tokio::fs::File::open(&zip_path)
-        .await
-        .map_err(|e| {
-            let _ = tokio::fs::remove_file(&zip_path);
-            AppError::Ssh(format!("打开本地zip文件失败: {}", e))
-        })?;
+    let mut local_file = tokio::fs::File::open(&zip_path).await.map_err(|e| {
+        let _ = tokio::fs::remove_file(&zip_path);
+        AppError::Ssh(format!("打开本地zip文件失败: {}", e))
+    })?;
 
     let mut buf = vec![0u8; 131072];
     let mut written: u64 = 0;
@@ -734,6 +818,7 @@ pub async fn sftp_upload_folder_stream(
                 "sftp-upload-progress",
                 json!({ "uploadId": &upload_id, "written": written, "total": total }),
             );
+            emit_folder_upload_status(&app, &upload_id, "uploading", written, total);
         }
 
         remote_file
@@ -761,13 +846,13 @@ pub async fn sftp_upload_folder_stream(
         )));
     }
 
-    let _ = app.emit(
-        "sftp-folder-upload-status",
-        json!({ "uploadId": &upload_id, "phase": "extracting" }),
-    );
+    emit_folder_upload_status(&app, &upload_id, "extracting", 0, 1);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_remote, &remote_path);
-    let output = state.ssh_manager.exec_command(&session_id, &exec_cmd).await?;
+    let output = state
+        .ssh_manager
+        .exec_command(&session_id, &exec_cmd)
+        .await?;
 
     if !output.trim().contains("OK") {
         return Err(AppError::Ssh(format!("解压失败: {}", output.trim())));
