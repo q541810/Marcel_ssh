@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod llm;
+pub mod notification;
 pub mod skills;
 pub mod ssh;
 pub mod util;

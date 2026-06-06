@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::llm::provider::LlmConfig;
 use super::persist::JsonPersistable;
+use crate::llm::provider::LlmConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +109,32 @@ impl Default for ExperimentalSettings {
     }
 }
 
+/// Notification preferences.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationSettings {
+    #[serde(default = "default_true")]
+    pub agent_approval: bool,
+    #[serde(default = "default_true")]
+    pub agent_task_done: bool,
+    #[serde(default = "default_true")]
+    pub agent_task_failed: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            agent_approval: true,
+            agent_task_done: true,
+            agent_task_failed: true,
+        }
+    }
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -141,11 +167,20 @@ pub struct AppSettings {
     /// processed and returned to the API as required by some models.
     #[serde(default)]
     pub hide_thinking_display: bool,
+    /// Notification preferences.
+    #[serde(default)]
+    pub notification_settings: NotificationSettings,
 }
 
-fn default_file_manager_path() -> String { "/".to_string() }
-fn default_folder_upload_compression_level() -> i64 { 6 }
-fn default_panel_height() -> u16 { 256 }
+fn default_file_manager_path() -> String {
+    "/".to_string()
+}
+fn default_folder_upload_compression_level() -> i64 {
+    6
+}
+fn default_panel_height() -> u16 {
+    256
+}
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -172,6 +207,7 @@ impl Default for AppSettings {
             folder_upload_compression_level: default_folder_upload_compression_level(),
             panel_height: default_panel_height(),
             hide_thinking_display: false,
+            notification_settings: NotificationSettings::default(),
         }
     }
 }
@@ -214,11 +250,26 @@ mod tests {
     fn app_settings_default_has_command_list() {
         let s = AppSettings::default();
         assert!(!s.agent_mode_settings.command_list.is_empty());
-        assert!(s.agent_mode_settings.command_list.contains(&"rm".to_string()));
-        assert!(s.agent_mode_settings.command_list.contains(&"mkfs".to_string()));
-        assert!(s.agent_mode_settings.command_list.contains(&"dd".to_string()));
-        assert!(s.agent_mode_settings.command_list.contains(&"shutdown".to_string()));
-        assert!(s.agent_mode_settings.command_list.contains(&"reboot".to_string()));
+        assert!(s
+            .agent_mode_settings
+            .command_list
+            .contains(&"rm".to_string()));
+        assert!(s
+            .agent_mode_settings
+            .command_list
+            .contains(&"mkfs".to_string()));
+        assert!(s
+            .agent_mode_settings
+            .command_list
+            .contains(&"dd".to_string()));
+        assert!(s
+            .agent_mode_settings
+            .command_list
+            .contains(&"shutdown".to_string()));
+        assert!(s
+            .agent_mode_settings
+            .command_list
+            .contains(&"reboot".to_string()));
     }
 
     #[test]

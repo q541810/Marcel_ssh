@@ -181,6 +181,12 @@ export interface ExperimentalSettings {
   enableCloudPage: boolean;
 }
 
+export interface NotificationSettings {
+  agentApproval: boolean;
+  agentTaskDone: boolean;
+  agentTaskFailed: boolean;
+}
+
 export interface AppSettings {
   terminalColors: TerminalColors;
   fontSize: number;
@@ -195,6 +201,7 @@ export interface AppSettings {
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
+  notificationSettings: NotificationSettings;
 }
 
 // LLM stream events

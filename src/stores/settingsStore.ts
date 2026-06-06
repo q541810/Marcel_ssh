@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
@@ -24,6 +24,12 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableCloudPage: false,
 };
 
+const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  agentApproval: true,
+  agentTaskDone: true,
+  agentTaskFailed: true,
+};
+
 const DEFAULT_SETTINGS: AppSettings = {
   terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
@@ -37,6 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,
+  notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
 };
 
 interface SettingsState {

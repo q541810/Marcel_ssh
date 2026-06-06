@@ -25,7 +25,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'agent',
     label: 'Agent',
     icon: <Bot className="w-4 h-4" />,
-    sections: ['settings-command-policy'],
+    sections: ['settings-command-policy', 'settings-notification'],
   },
   {
     id: 'tools',
@@ -50,7 +50,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   interface: ['settings-appearance', 'settings-display'],
   model: ['settings-llm'],
-  agent: ['settings-command-policy'],
+  agent: ['settings-command-policy', 'settings-notification'],
   tools: ['settings-experimental'],
   transfer: ['settings-transfer'],
   about: ['settings-about'],

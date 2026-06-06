@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::RwLock as PlRwLock;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter};
-use tauri_plugin_notification::NotificationExt;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
 
 use crate::agent::sandbox::RiskLevel;
+use crate::notification::{send_notification, NotificationKind};
 
 /// Event requesting user approval for a tool call.
 #[derive(Debug, Clone, Serialize)]
@@ -70,13 +70,16 @@ impl ApprovalManager {
             tool_name, risk_label
         );
 
-        if let Err(e) = self.app.notification()
-            .builder()
-            .title("Agent 需要您的批准")
-            .body(&notification_body)
-            .show()
         {
-            log::warn!("发送通知失败: {}", e);
+            let state = self.app.state::<crate::AppState>();
+            let ns = state.settings.blocking_read().notification_settings.clone();
+            send_notification(
+                &self.app,
+                NotificationKind::AgentApproval,
+                &ns,
+                "Agent 需要您的批准",
+                &notification_body,
+            );
         }
 
         let (tx, rx) = oneshot::channel();

@@ -12,6 +12,7 @@ use crate::config::settings::AgentModeSettings;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
+use crate::notification::{send_notification, NotificationKind};
 use crate::ssh::connection::SshManager;
 use crate::AppState;
 
@@ -144,12 +145,24 @@ pub(crate) async fn run_agent_loop(
         let assistant_msg = match result {
             Ok(msg) => msg,
             Err(e) => {
+                let err_msg = e.to_string();
                 let _ = app.emit(
                     &event_name,
                     StreamEvent::Error {
-                        message: e.to_string(),
+                        message: err_msg.clone(),
                     },
                 );
+                {
+                    let ns = state.settings.read().await.notification_settings.clone();
+                    let body = format!("错误信息: {}", err_msg.lines().next().unwrap_or(&err_msg));
+                    send_notification(
+                        &app,
+                        NotificationKind::AgentTaskFailed,
+                        &ns,
+                        "Agent 任务失败",
+                        &body,
+                    );
+                }
                 return;
             }
         };
@@ -170,6 +183,16 @@ pub(crate) async fn run_agent_loop(
             );
             messages.push(cleaned_msg);
             let _ = app.emit(&event_name, StreamEvent::Done);
+            {
+                let ns = state.settings.read().await.notification_settings.clone();
+                send_notification(
+                    &app,
+                    NotificationKind::AgentTaskDone,
+                    &ns,
+                    "Agent 任务完成",
+                    "您的 Agent 任务已成功完成",
+                );
+            }
             return;
         }
 
@@ -256,12 +279,23 @@ pub(crate) async fn run_agent_loop(
     }
 
     // Exceeded max rounds
+    let msg = format!("Agent 达到最大执行轮数 ({MAX_TOOL_ROUNDS})，已停止");
     let _ = app.emit(
         &event_name,
         StreamEvent::Error {
-            message: format!("Agent 达到最大执行轮数 ({MAX_TOOL_ROUNDS})，已停止"),
+            message: msg.clone(),
         },
     );
+    {
+        let ns = state.settings.read().await.notification_settings.clone();
+        send_notification(
+            &app,
+            NotificationKind::AgentTaskFailed,
+            &ns,
+            "Agent 任务失败",
+            &msg,
+        );
+    }
 }
 
 #[cfg(test)]
