@@ -21,6 +21,7 @@ const AGENT_PANEL_MIN_WIDTH = 260;
 const AGENT_PANEL_MAX_WIDTH = 800;
 const AGENT_PANEL_DEFAULT_WIDTH = 320;
 const AGENT_RATIO_KEY = 'marcel:agentPanelWidthRatio';
+const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -29,6 +30,7 @@ export default function App() {
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const mainRowRef = useRef<HTMLDivElement>(null);
   const agentRatioRef = useRef(0);
+  const preSettingsPanelsRef = useRef<{ sidebarOpen: boolean; agentPanelOpen: boolean } | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
   const saveAgentRatio = useCallback((ratio: number) => {
@@ -109,6 +111,25 @@ export default function App() {
   }, [settingsLoaded]);
 
   const handleNavChange = (view: NavView) => {
+    if (view === navView) return;
+
+    if (view === 'settings') {
+      preSettingsPanelsRef.current = { sidebarOpen, agentPanelOpen };
+      setNavView(view);
+      setSidebarOpen(false);
+      setAgentPanelOpen(false);
+      return;
+    }
+
+    if (navView === 'settings') {
+      const previous = preSettingsPanelsRef.current;
+      if (previous) {
+        setSidebarOpen(previous.sidebarOpen);
+        setAgentPanelOpen(previous.agentPanelOpen);
+        preSettingsPanelsRef.current = null;
+      }
+    }
+
     setNavView(view);
     if (view === 'sessions' || view === 'skills' || view === 'mcp') {
       setSidebarOpen(true);
@@ -116,6 +137,8 @@ export default function App() {
   };
 
   const isSettingsView = navView === 'settings';
+  const effectiveSidebarOpen = sidebarOpen && !isSettingsView;
+  const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden">
@@ -127,57 +150,57 @@ export default function App() {
       <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
         <NavRail active={navView} onChange={handleNavChange} />
 
-        {isSettingsView ? (
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900">
-            <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
-              <Settings />
-            </Suspense>
+        <aside
+          className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
+          style={{
+            width: effectiveSidebarOpen ? '16rem' : '0rem',
+            borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
+            transition: `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
+          }}
+        >
+          <div style={{ width: '16rem', height: '100%' }}>
+            {navView === 'sessions' && <ConnectionList />}
+            {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
+            {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
           </div>
-        ) : (
-          <>
-            <aside
-              className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
-              style={{
-                width: sidebarOpen ? '16rem' : '0rem',
-                borderRightWidth: sidebarOpen ? '1px' : '0px',
-                transition: 'width 200ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width 200ms cubic-bezier(0.16, 1, 0.3, 1)',
-              }}
-            >
-              <div style={{ width: '16rem', height: '100%' }}>
-                {navView === 'sessions' && <ConnectionList />}
-                {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
-                {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
-              </div>
-            </aside>
+        </aside>
 
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          {isSettingsView ? (
+            <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
+              <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
+                <Settings />
+              </Suspense>
+            </div>
+          ) : (
+            <>
               <TabBar />
               <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
                 <Terminal />
               </main>
-            </div>
+            </>
+          )}
+        </div>
 
-            <div
-              className="flex overflow-hidden flex-shrink-0"
-              style={{
-                width: agentPanelOpen ? `${agentPanelWidth + 4}px` : '0px',
-                transition: isResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
-              }}
-            >
-              <div
-                className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-                onMouseDown={handleResizeMouseDown}
-                style={{ touchAction: 'none' }}
-              />
-              <aside
-                className="overflow-hidden border-l border-zinc-800 flex-shrink-0"
-                style={{ width: `${agentPanelWidth}px` }}
-              >
-                <AgentPanel />
-              </aside>
-            </div>
-          </>
-        )}
+        <div
+          className="flex overflow-hidden flex-shrink-0"
+          style={{
+            width: effectiveAgentPanelOpen ? `${agentPanelWidth + 4}px` : '0px',
+            transition: isResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
+          }}
+        >
+          <div
+            className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+            onMouseDown={handleResizeMouseDown}
+            style={{ touchAction: 'none' }}
+          />
+          <aside
+            className="overflow-hidden border-l border-zinc-800 flex-shrink-0"
+            style={{ width: `${agentPanelWidth}px` }}
+          >
+            <AgentPanel />
+          </aside>
+        </div>
       </div>
 
       {updateToast && (

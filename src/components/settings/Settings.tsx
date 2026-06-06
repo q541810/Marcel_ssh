@@ -72,7 +72,7 @@ export default function Settings() {
   return (
     <SearchRegistryProvider>
       <SettingsActionsProvider value={{ settings: draft, update: updateDraft, setPreview, saving, saveError }}>
-        <div className="flex h-full">
+        <div className="settings-shell flex h-full">
           <SettingsSidebar
             activeCategory={activeCategory}
             onChange={setActiveCategory}
