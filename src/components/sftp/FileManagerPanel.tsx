@@ -22,7 +22,7 @@ interface FileManagerPanelProps {
 
 export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   const storeSettings = useSettingsStore((s) => s.settings);
-  const [currentPath, setCurrentPath] = useState('/');
+  const [currentPath, setCurrentPath] = useState(storeSettings.fileManagerPath ?? '/');
   const [history, setHistory] = useState<string[]>(['/']);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
@@ -83,6 +83,7 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     });
     setHistoryIndex((prev) => prev + 1);
     setCurrentPath(path);
+    useSettingsStore.getState().update({ fileManagerPath: path });
   }, [historyIndex]);
 
   const handleGoBack = useCallback(() => {

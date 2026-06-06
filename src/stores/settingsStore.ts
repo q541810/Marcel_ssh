@@ -33,6 +33,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
   fileManagerShowHidden: false,
+  fileManagerPath: '/',
   panelHeight: 256,
   hideThinkingDisplay: false,
 };
