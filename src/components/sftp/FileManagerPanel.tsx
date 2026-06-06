@@ -57,6 +57,10 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   }, [currentPath, loadDirectory]);
 
   useEffect(() => {
+    useSettingsStore.getState().update({ fileManagerPath: currentPath });
+  }, [currentPath]);
+
+  useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuEntry(null);
@@ -83,7 +87,6 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
     });
     setHistoryIndex((prev) => prev + 1);
     setCurrentPath(path);
-    useSettingsStore.getState().update({ fileManagerPath: path });
   }, [historyIndex]);
 
   const handleGoBack = useCallback(() => {
