@@ -54,11 +54,23 @@ function LeftSidebar({
   onChange,
   searchQuery,
   onSearchChange,
+  dirty,
+  saving,
+  saveError,
+  savedNotice,
+  onSave,
+  onReset,
 }: {
   activeCategory: string;
   onChange: (id: string) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  dirty: boolean;
+  saving: boolean;
+  saveError: string | null;
+  savedNotice: string | null;
+  onSave: () => void;
+  onReset: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -107,6 +119,48 @@ function LeftSidebar({
           </button>
         ))}
       </nav>
+      {/* Footer: save actions pinned to bottom */}
+      {!searchQuery && (
+        <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
+          {(saving || savedNotice || saveError || dirty) && (
+            <div className="text-xs">
+              {saving && (
+                <div className="flex items-center gap-1.5 text-zinc-400">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  保存中...
+                </div>
+              )}
+              {savedNotice && (
+                <div className="flex items-center gap-1.5 text-emerald-400">
+                  <Check className="w-3 h-3" />
+                  {savedNotice}
+                </div>
+              )}
+              {saveError && (
+                <div className="flex items-center gap-1.5 text-red-400">
+                  <AlertCircle className="w-3 h-3" />
+                  {saveError}
+                </div>
+              )}
+              {!saving && !savedNotice && !saveError && dirty && (
+                <span className="text-amber-400">有未保存的更改</span>
+              )}
+            </div>
+          )}
+          <div className="flex gap-2">
+            {dirty && (
+              <Button variant="ghost" size="sm" className="flex-1" onClick={onReset} disabled={saving}>
+                <Undo2 className="w-3.5 h-3.5" />
+                撤销
+              </Button>
+            )}
+            <Button variant="primary" className="flex-1" onClick={onSave} disabled={!dirty} loading={saving}>
+              <Save className="w-4 h-4" />
+              保存
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -116,21 +170,9 @@ function LeftSidebar({
 function SettingsContent({
   activeCategory,
   searchQuery,
-  dirty,
-  saving,
-  saveError,
-  savedNotice,
-  onSave,
-  onReset,
 }: {
   activeCategory: string;
   searchQuery: string;
-  dirty: boolean;
-  saving: boolean;
-  saveError: string | null;
-  savedNotice: string | null;
-  onSave: () => void;
-  onReset: () => void;
 }) {
   const { items } = useSearchRegistry();
 
@@ -157,59 +199,20 @@ function SettingsContent({
   return (
     <div className="flex-1 overflow-y-auto bg-zinc-900">
       <div className="max-w-3xl mx-auto px-8 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold text-zinc-100">
-            {isSearching ? `搜索：${searchQuery}` : CATEGORIES.find((c) => c.id === activeCategory)?.label}
-          </h1>
-          {!isSearching && (
-            <div className="flex items-center gap-3">
-              {saving && (
-                <div className="flex items-center gap-1.5 text-sm text-zinc-400">
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  保存中...
-                </div>
-              )}
-              {savedNotice && (
-                <div className="flex items-center gap-1.5 text-sm text-emerald-400">
-                  <Check className="w-4 h-4" />
-                  {savedNotice}
-                </div>
-              )}
-              {saveError && (
-                <div className="flex items-center gap-1.5 text-sm text-red-400">
-                  <AlertCircle className="w-4 h-4" />
-                  {saveError}
-                </div>
-              )}
-              {dirty && !saving && !savedNotice && (
-                <span className="text-xs text-amber-400">有未保存的更改</span>
-              )}
-              {dirty && (
-                <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}>
-                  <Undo2 className="w-3.5 h-3.5" />
-                  撤销
-                </Button>
-              )}
-              <Button variant="primary" size="sm" onClick={onSave} disabled={!dirty} loading={saving}>
-                <Save className="w-3.5 h-3.5" />
-                保存
-              </Button>
-            </div>
-          )}
-        </div>
+        <h1 className="text-2xl font-bold text-zinc-100 mb-6">
+          {isSearching ? `搜索：${searchQuery}` : CATEGORIES.find((c) => c.id === activeCategory)?.label}
+        </h1>
 
-        {/* Sections */}
         {visibleSections.length === 0 && isSearching && (
           <div className="text-zinc-500 text-center py-12">未找到匹配的设置项</div>
         )}
 
-        {visibleSections.includes('settings-appearance') && <AppearanceSection />}
-        {visibleSections.includes('settings-display') && <DisplaySection />}
-        {visibleSections.includes('settings-llm') && <LlmSection />}
-        {visibleSections.includes('settings-command-policy') && <CommandPolicySection />}
-        {visibleSections.includes('settings-experimental') && <ExperimentalSection />}
-        {visibleSections.includes('settings-about') && <AboutSection />}
+        <div hidden={!visibleSections.includes('settings-appearance')}><AppearanceSection /></div>
+        <div hidden={!visibleSections.includes('settings-display')}><DisplaySection /></div>
+        <div hidden={!visibleSections.includes('settings-llm')}><LlmSection /></div>
+        <div hidden={!visibleSections.includes('settings-command-policy')}><CommandPolicySection /></div>
+        <div hidden={!visibleSections.includes('settings-experimental')}><ExperimentalSection /></div>
+        <div hidden={!visibleSections.includes('settings-about')}><AboutSection /></div>
       </div>
     </div>
   );
@@ -290,16 +293,16 @@ export default function Settings() {
             onChange={setActiveCategory}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-          />
-          <SettingsContent
-            activeCategory={activeCategory}
-            searchQuery={searchQuery}
             dirty={dirty}
             saving={saving}
             saveError={saveError}
             savedNotice={savedNotice}
             onSave={handleSave}
             onReset={handleReset}
+          />
+          <SettingsContent
+            activeCategory={activeCategory}
+            searchQuery={searchQuery}
           />
         </div>
       </SettingsActionsProvider>
