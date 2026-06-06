@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getErrorMessage } from '@/lib/errors';
-import { Search, Sliders, Bot, Info, Save, Undo2, Loader2, Check, AlertCircle } from 'lucide-react';
+import { Search, Sliders, Bot, Info, Save, Undo2, Loader2, Check, AlertCircle, UploadCloud } from 'lucide-react';
 import type { AppSettings } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import { SearchRegistryProvider, useSearchRegistry } from './helpers';
@@ -11,6 +11,7 @@ import { DisplaySection } from './DisplaySection';
 import { LlmSection } from './LlmSection';
 import { CommandPolicySection } from './CommandPolicySection';
 import { ExperimentalSection } from './ExperimentalSection';
+import { TransferSection } from './TransferSection';
 import AboutSection from './AboutSection';
 
 interface Category {
@@ -34,6 +35,12 @@ const CATEGORIES: Category[] = [
     sections: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
   },
   {
+    id: 'transfer',
+    label: '文件传输',
+    icon: <UploadCloud className="w-4 h-4" />,
+    sections: ['settings-transfer'],
+  },
+  {
     id: 'about',
     label: '关于',
     icon: <Info className="w-4 h-4" />,
@@ -44,6 +51,7 @@ const CATEGORIES: Category[] = [
 const CATEGORY_SECTIONS: Record<string, string[]> = {
   general: ['settings-appearance', 'settings-display'],
   agent: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
+  transfer: ['settings-transfer'],
   about: ['settings-about'],
 };
 
@@ -212,6 +220,7 @@ function SettingsContent({
         <div hidden={!visibleSections.includes('settings-llm')}><LlmSection /></div>
         <div hidden={!visibleSections.includes('settings-command-policy')}><CommandPolicySection /></div>
         <div hidden={!visibleSections.includes('settings-experimental')}><ExperimentalSection /></div>
+        <div hidden={!visibleSections.includes('settings-transfer')}><TransferSection /></div>
         <div hidden={!visibleSections.includes('settings-about')}><AboutSection /></div>
       </div>
     </div>

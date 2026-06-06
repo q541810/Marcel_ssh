@@ -524,7 +524,7 @@ pub async fn sftp_upload_stream(
     Ok(())
 }
 
-fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppError> {
+fn zip_local_folder(local_path: &Path, compression_level: i64) -> Result<std::path::PathBuf, AppError> {
     let tmp_dir = std::env::temp_dir().join("marcel-ssh-zip");
     std::fs::create_dir_all(&tmp_dir).map_err(|e| {
         AppError::Ssh(format!("创建临时目录失败: {}", e))
@@ -537,7 +537,8 @@ fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppError> {
     })?;
     let mut zip_writer = zip::ZipWriter::new(zip_file);
     let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(compression_level));
 
     let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
     if let Err(e) = collect_dir_entries(local_path, "", &mut entries) {
@@ -654,9 +655,16 @@ pub async fn sftp_upload_folder_stream(
         json!({ "uploadId": &upload_id, "phase": "zipping" }),
     );
 
+    let compression_level = state
+        .settings
+        .read()
+        .await
+        .folder_upload_compression_level
+        .clamp(0, 9);
+
     let local_path_owned = local_path.clone();
     let zip_path = tokio::task::spawn_blocking(move || {
-        zip_local_folder(Path::new(&local_path_owned))
+        zip_local_folder(Path::new(&local_path_owned), compression_level)
     })
     .await
     .map_err(|e| AppError::Ssh(format!("zip打包任务失败: {}", e)))??;

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, TerminalColors, ExperimentalSettings } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
   fileManagerShowHidden: false,
   fileManagerPath: '/',
+  folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,
 };

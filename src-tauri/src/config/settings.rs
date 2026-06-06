@@ -130,6 +130,9 @@ pub struct AppSettings {
     /// File manager show hidden files
     #[serde(default)]
     pub file_manager_show_hidden: bool,
+    /// Zip compression level for folder uploads (0 fastest/largest, 9 slowest/smallest).
+    #[serde(default = "default_folder_upload_compression_level")]
+    pub folder_upload_compression_level: i64,
     /// Bottom panel height in pixels
     #[serde(default = "default_panel_height")]
     pub panel_height: u16,
@@ -141,6 +144,7 @@ pub struct AppSettings {
 }
 
 fn default_file_manager_path() -> String { "/".to_string() }
+fn default_folder_upload_compression_level() -> i64 { 6 }
 fn default_panel_height() -> u16 { 256 }
 
 impl Default for AppSettings {
@@ -165,6 +169,7 @@ impl Default for AppSettings {
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),
             file_manager_show_hidden: false,
+            folder_upload_compression_level: default_folder_upload_compression_level(),
             panel_height: default_panel_height(),
             hide_thinking_display: false,
         }
@@ -238,6 +243,7 @@ mod tests {
         assert_eq!(s.panel_height, 256);
         assert_eq!(s.file_manager_path, "/");
         assert!(!s.file_manager_show_hidden);
+        assert_eq!(s.folder_upload_compression_level, 6);
         assert!(!s.hide_thinking_display);
     }
 }

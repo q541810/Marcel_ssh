@@ -191,6 +191,7 @@ export interface AppSettings {
   experimentalSettings?: ExperimentalSettings;
   fileManagerPath: string;
   fileManagerShowHidden: boolean;
+  folderUploadCompressionLevel: number;
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
