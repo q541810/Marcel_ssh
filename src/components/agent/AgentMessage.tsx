@@ -4,6 +4,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { openExternalLink } from "@/lib/externalLinks";
 
 interface Props {
   message: AgentMessageType;
@@ -156,7 +157,24 @@ export default function AgentMessage({ message, autoExpand }: Props) {
           )
         ) : (
           <div className={MARKDOWN_CLASS}>
-            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{
+                a: ({ href, children, ...props }) => (
+                  <a
+                    {...props}
+                    href={href}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      if (href) openExternalLink(href);
+                    }}
+                  >
+                    {children}
+                  </a>
+                ),
+              }}
+            >
               {message.content}
             </Markdown>
           </div>

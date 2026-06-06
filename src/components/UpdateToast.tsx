@@ -1,3 +1,5 @@
+import { openExternalLink } from '@/lib/externalLinks';
+
 interface Props {
   version: string;
   url: string;
@@ -9,10 +11,9 @@ export default function UpdateToast({ version, url, onDismiss }: Props) {
     <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
       <div className="bg-black text-white rounded-xl shadow-2xl border border-zinc-700 px-4 py-3">
         <div className="flex items-start gap-3">
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={() => openExternalLink(url)}
             className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-80 transition-opacity"
           >
             <svg className="w-5 h-5 flex-shrink-0 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
@@ -22,7 +23,7 @@ export default function UpdateToast({ version, url, onDismiss }: Props) {
               <p className="text-sm font-medium text-white">新版本 {version} 可用</p>
               <p className="text-xs text-zinc-400 mt-0.5">点击前往 GitHub 下载</p>
             </div>
-          </a>
+          </button>
           <button
             onClick={onDismiss}
             className="flex-shrink-0 p-0.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"

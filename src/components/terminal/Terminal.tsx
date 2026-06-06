@@ -6,6 +6,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { openExternalLink } from '@/lib/externalLinks';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import QuickCommandPanel from './QuickCommandPanel';
@@ -14,7 +15,6 @@ import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import PasteConfirmDialog from './PasteConfirmDialog';
 import { useClipboardHandler } from '@/hooks/useClipboardHandler';
-import type { TerminalColors } from '@/lib/types';
 
 const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
 
@@ -44,7 +44,9 @@ export default function Terminal() {
 
   const savePanelRatio = useCallback((ratio: number) => {
     panelRatioRef.current = ratio;
-    try { localStorage.setItem(PANEL_RATIO_KEY, String(ratio)); } catch {}
+    try { localStorage.setItem(PANEL_RATIO_KEY, String(ratio)); } catch {
+      // localStorage can be unavailable in restricted WebView contexts.
+    }
   }, []);
 
   const sessions = useSessionStore((s) => s.sessions);
@@ -59,7 +61,9 @@ export default function Terminal() {
     try {
       const v = localStorage.getItem(PANEL_RATIO_KEY);
       if (v) panelRatioRef.current = parseFloat(v) || 0;
-    } catch {}
+    } catch {
+      // Keep the terminal usable even if localStorage is unavailable.
+    }
   }, []);
 
   useEffect(() => {
@@ -123,7 +127,7 @@ export default function Terminal() {
     });
 
     const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
+    const webLinksAddon = new WebLinksAddon((_event, uri) => openExternalLink(uri));
 
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(webLinksAddon);

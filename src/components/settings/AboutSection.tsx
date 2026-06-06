@@ -3,6 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { checkUpdate } from '@/lib/tauri';
 import type { UpdateCheckResult } from '@/lib/types';
 import { getErrorMessage } from '@/lib/errors';
+import { openExternalLink } from '@/lib/externalLinks';
 import Button from '@/components/ui/Button';
 import { Card, SettingItem } from './helpers';
 
@@ -55,9 +56,7 @@ export default function AboutSection() {
             <p className="text-sm text-zinc-200">
               新版本 <span className="text-indigo-400 font-medium">{result.latestVersion}</span> 可用！
             </p>
-            <a href={result.releaseUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
-              <Button variant="primary">去下载</Button>
-            </a>
+            <Button variant="primary" onClick={() => openExternalLink(result.releaseUrl)}>去下载</Button>
           </div>
         )}
       </SettingItem>
