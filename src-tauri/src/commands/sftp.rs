@@ -524,9 +524,9 @@ pub async fn sftp_upload_stream(
     Ok(())
 }
 
-async fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppError> {
+fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppError> {
     let tmp_dir = std::env::temp_dir().join("marcel-ssh-zip");
-    tokio::fs::create_dir_all(&tmp_dir).await.map_err(|e| {
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| {
         AppError::Ssh(format!("创建临时目录失败: {}", e))
     })?;
 
@@ -540,26 +540,44 @@ async fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppEr
         .compression_method(zip::CompressionMethod::Deflated);
 
     let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
-    collect_dir_entries(local_path, "", &mut entries)?;
+    if let Err(e) = collect_dir_entries(local_path, "", &mut entries) {
+        let _ = std::fs::remove_file(&zip_path);
+        return Err(e);
+    }
 
     let total_files = entries.len();
     let mut processed: usize = 0;
 
     for (rel_path, full_path) in &entries {
         if full_path.is_dir() {
-            zip_writer
+            if let Err(e) = zip_writer
                 .add_directory_from_path(Path::new(&rel_path), options)
-                .map_err(|e| AppError::Ssh(format!("zip添加目录失败: {}", e)))?;
+            {
+                let _ = std::fs::remove_file(&zip_path);
+                return Err(AppError::Ssh(format!("zip添加目录失败: {}", e)));
+            }
         } else {
-            let mut file = std::fs::File::open(full_path).map_err(|e| {
-                AppError::Ssh(format!("打开本地文件失败 {}: {}", full_path.display(), e))
-            })?;
-            zip_writer
-                .start_file_from_path(Path::new(&rel_path), options)
-                .map_err(|e| AppError::Ssh(format!("zip添加文件失败: {}", e)))?;
-            std::io::copy(&mut file, &mut zip_writer).map_err(|e| {
-                AppError::Ssh(format!("zip写入文件失败: {}", e))
-            })?;
+            let file_result = std::fs::File::open(full_path);
+            match file_result {
+                Ok(mut file) => {
+                    if let Err(e) = zip_writer.start_file_from_path(Path::new(&rel_path), options) {
+                        let _ = std::fs::remove_file(&zip_path);
+                        return Err(AppError::Ssh(format!("zip添加文件失败: {}", e)));
+                    }
+                    if let Err(e) = std::io::copy(&mut file, &mut zip_writer) {
+                        let _ = std::fs::remove_file(&zip_path);
+                        return Err(AppError::Ssh(format!("zip写入文件失败: {}", e)));
+                    }
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&zip_path);
+                    return Err(AppError::Ssh(format!(
+                        "打开本地文件失败 {}: {}",
+                        full_path.display(),
+                        e
+                    )));
+                }
+            }
         }
         processed += 1;
         log::debug!(
@@ -570,9 +588,10 @@ async fn zip_local_folder(local_path: &Path) -> Result<std::path::PathBuf, AppEr
         );
     }
 
-    zip_writer.finish().map_err(|e| {
-        AppError::Ssh(format!("zip打包完成失败: {}", e))
-    })?;
+    if let Err(e) = zip_writer.finish() {
+        let _ = std::fs::remove_file(&zip_path);
+        return Err(AppError::Ssh(format!("zip打包完成失败: {}", e)));
+    }
 
     Ok(zip_path)
 }
@@ -635,11 +654,17 @@ pub async fn sftp_upload_folder_stream(
         json!({ "uploadId": &upload_id, "phase": "zipping" }),
     );
 
-    let zip_path = zip_local_folder(local).await?;
+    let local_path_owned = local_path.clone();
+    let zip_path = tokio::task::spawn_blocking(move || {
+        zip_local_folder(Path::new(&local_path_owned))
+    })
+    .await
+    .map_err(|e| AppError::Ssh(format!("zip打包任务失败: {}", e)))??;
 
-    let zip_meta = tokio::fs::metadata(&zip_path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("读取zip文件信息失败: {}", e)))?;
+    let zip_meta = tokio::fs::metadata(&zip_path).await.map_err(|e| {
+        let _ = std::fs::remove_file(&zip_path);
+        AppError::Ssh(format!("读取zip文件信息失败: {}", e))
+    })?;
     let total = zip_meta.len();
 
     if total > MAX_STREAM_UPLOAD_BYTES {
