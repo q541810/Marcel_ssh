@@ -33,7 +33,7 @@ export default function AboutSection() {
   }, []);
 
   return (
-    <Card id="settings-about" title="关于">
+    <Card id="settings-about" title="应用信息">
       <SettingItem id="about-name" label="应用名称" sectionId="settings-about">
         <span className="text-sm text-zinc-300">{APP_NAME_STR}</span>
       </SettingItem>

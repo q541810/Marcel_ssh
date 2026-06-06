@@ -14,22 +14,22 @@ export function ExperimentalSection() {
   };
 
   return (
-    <Card id="settings-experimental" title="实验性功能" description="这些功能正在开发中，可能在未来版本中更改或移除">
-      <SettingItem id="exp-websearch" label="联网搜索" description="允许 Agent 使用 web_search 工具搜索互联网" sectionId="settings-experimental" keywords={['web', 'search', '搜索']}>
+    <Card id="settings-experimental" title="Agent 工具" description="控制 Agent 可调用的工具能力和系统集成">
+      <SettingItem id="exp-websearch" label="联网搜索" description="允许 Agent 使用 web_search 工具搜索互联网" sectionId="settings-experimental" keywords={['web', 'search', '搜索', '工具能力', 'Agent 工具']}>
         <Toggle
           checked={experimental.enableWebSearch}
           onChange={(checked) => updateExperimental({ enableWebSearch: checked })}
           label="启用联网搜索"
         />
       </SettingItem>
-      <SettingItem id="exp-httpfetch" label="网页获取" description="允许 Agent 使用 http_get 工具获取网页内容" sectionId="settings-experimental" keywords={['http', 'fetch', '网页']}>
+      <SettingItem id="exp-httpfetch" label="网页获取" description="允许 Agent 使用 http_get 工具获取网页内容" sectionId="settings-experimental" keywords={['http', 'fetch', '网页', '工具能力', 'Agent 工具']}>
         <Toggle
           checked={experimental.enableHttpFetch}
           onChange={(checked) => updateExperimental({ enableHttpFetch: checked })}
           label="启用网页获取"
         />
       </SettingItem>
-      <SettingItem id="exp-cloudpage" label="云原神" description="允许 Agent 打开云原神页面" sectionId="settings-experimental" keywords={['cloud', 'genshin', '云原神']}>
+      <SettingItem id="exp-cloudpage" label="云原神" description="允许 Agent 打开云原神页面" sectionId="settings-experimental" keywords={['cloud', 'genshin', '云原神', '工具能力', 'Agent 工具']}>
         <Toggle
           checked={experimental.enableCloudPage}
           onChange={(checked) => updateExperimental({ enableCloudPage: checked })}

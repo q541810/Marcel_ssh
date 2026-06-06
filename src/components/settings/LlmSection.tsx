@@ -22,8 +22,8 @@ export function LlmSection() {
   };
 
   return (
-    <Card id="settings-llm" title="LLM 配置" description="配置 OpenAI 兼容的大语言模型接入">
-      <SettingItem id="llm-provider" label="Provider" description="选择 LLM 提供商" sectionId="settings-llm" keywords={['provider', '模型提供商']}>
+    <Card id="settings-llm" title="模型服务" description="配置 OpenAI 兼容的大语言模型接入">
+      <SettingItem id="llm-provider" label="Provider" description="选择 LLM 提供商" sectionId="settings-llm" keywords={['provider', '模型提供商', '模型服务']}>
         <select
           value={llmConfig.providerType}
           onChange={(e) => updateLlm({ providerType: e.target.value as LlmConfig['providerType'] })}
@@ -34,7 +34,7 @@ export function LlmSection() {
           <option value="ollama" disabled>Ollama (暂未实现)</option>
         </select>
       </SettingItem>
-      <SettingItem id="llm-baseurl" label="Base URL" description="API 基础地址" sectionId="settings-llm" keywords={['url', '地址']}>
+      <SettingItem id="llm-baseurl" label="Base URL" description="API 基础地址" sectionId="settings-llm" keywords={['url', '地址', '模型服务']}>
         <input
           type="text"
           value={llmConfig.baseUrl ?? ''}
@@ -43,7 +43,7 @@ export function LlmSection() {
           className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
         />
       </SettingItem>
-      <SettingItem id="llm-apikey" label="API Key" description="API 密钥" sectionId="settings-llm" keywords={['key', '密钥', 'token']}>
+      <SettingItem id="llm-apikey" label="API Key" description="API 密钥" sectionId="settings-llm" keywords={['key', '密钥', 'token', '模型服务']}>
         <input
           type="password"
           value={llmConfig.apiKey ?? (hasApiKey ? 'sk-******' : '')}
@@ -53,7 +53,7 @@ export function LlmSection() {
           className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
         />
       </SettingItem>
-      <SettingItem id="llm-model" label="Model" description="模型名称" sectionId="settings-llm" keywords={['model', '模型']}>
+      <SettingItem id="llm-model" label="Model" description="模型名称" sectionId="settings-llm" keywords={['model', '模型', '模型服务']}>
         <div className="flex-1 flex gap-2 items-center">
           <input
             type="text"

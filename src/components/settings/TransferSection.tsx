@@ -20,7 +20,7 @@ export function TransferSection() {
         label="文件夹压缩等级"
         description="保存后对新的文件夹上传生效；等级越高压缩包越小，但打包更慢。"
         sectionId="settings-transfer"
-        keywords={['zip', 'compression', '压缩', '上传', '文件夹', 'folder upload']}
+        keywords={['zip', 'compression', '压缩', '上传', '文件夹', 'folder upload', '文件传输', 'SFTP']}
       >
         <select
           value={currentLevel}

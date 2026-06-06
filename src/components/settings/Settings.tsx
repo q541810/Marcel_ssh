@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getErrorMessage } from '@/lib/errors';
-import { Search, Sliders, Bot, Info, Save, Undo2, Loader2, Check, AlertCircle, UploadCloud } from 'lucide-react';
+import { Search, Monitor, Cpu, Bot, Wrench, Info, Save, Undo2, Loader2, Check, AlertCircle, UploadCloud } from 'lucide-react';
 import type { AppSettings } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import { SearchRegistryProvider, useSearchRegistry } from './helpers';
@@ -23,16 +23,28 @@ interface Category {
 
 const CATEGORIES: Category[] = [
   {
-    id: 'general',
-    label: '通用',
-    icon: <Sliders className="w-4 h-4" />,
+    id: 'interface',
+    label: '界面',
+    icon: <Monitor className="w-4 h-4" />,
     sections: ['settings-appearance', 'settings-display'],
+  },
+  {
+    id: 'model',
+    label: '模型',
+    icon: <Cpu className="w-4 h-4" />,
+    sections: ['settings-llm'],
   },
   {
     id: 'agent',
     label: 'Agent',
     icon: <Bot className="w-4 h-4" />,
-    sections: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
+    sections: ['settings-command-policy'],
+  },
+  {
+    id: 'tools',
+    label: '工具能力',
+    icon: <Wrench className="w-4 h-4" />,
+    sections: ['settings-experimental'],
   },
   {
     id: 'transfer',
@@ -49,8 +61,10 @@ const CATEGORIES: Category[] = [
 ];
 
 const CATEGORY_SECTIONS: Record<string, string[]> = {
-  general: ['settings-appearance', 'settings-display'],
-  agent: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
+  interface: ['settings-appearance', 'settings-display'],
+  model: ['settings-llm'],
+  agent: ['settings-command-policy'],
+  tools: ['settings-experimental'],
   transfer: ['settings-transfer'],
   about: ['settings-about'],
 };
@@ -236,7 +250,7 @@ export default function Settings() {
   const storeSetPreview = useSettingsStore((s) => s.setPreview);
   const storeClearPreview = useSettingsStore((s) => s.clearPreview);
 
-  const [activeCategory, setActiveCategory] = useState('general');
+  const [activeCategory, setActiveCategory] = useState('interface');
   const [searchQuery, setSearchQuery] = useState('');
 
   const [draft, setDraft] = useState<AppSettings | null>(null);

@@ -7,13 +7,13 @@ export function AppearanceSection() {
   const { settings, update, setPreview } = useSettingsActions();
 
   return (
-    <Card id="settings-appearance" title="外观">
+    <Card id="settings-appearance" title="终端外观" description="调整终端的配色和字体表现">
       <SettingItem
         id="terminal-colors"
         label="终端颜色"
         description="选择终端配色方案"
         sectionId="settings-appearance"
-        keywords={['theme', 'color', 'scheme', '配色']}
+        keywords={['theme', 'color', 'scheme', '配色', '界面', '终端外观']}
       >
         <ColorThemeSelector
           value={settings.terminalColors}
@@ -28,7 +28,7 @@ export function AppearanceSection() {
         label="字号"
         description="终端字体大小"
         sectionId="settings-appearance"
-        keywords={['font', 'size', '字体大小']}
+        keywords={['font', 'size', '字体大小', '界面', '终端外观']}
       >
         <FontSizeInput
           value={settings.fontSize}
@@ -43,7 +43,7 @@ export function AppearanceSection() {
         label="字体"
         description="终端字体族"
         sectionId="settings-appearance"
-        keywords={['font', 'family', 'typeface', '字体']}
+        keywords={['font', 'family', 'typeface', '字体', '界面', '终端外观']}
       >
         <input
           type="text"

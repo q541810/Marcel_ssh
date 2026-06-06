@@ -89,8 +89,8 @@ export function CommandPolicySection() {
   };
 
   return (
-    <Card id="settings-command-policy" title="命令策略" description="Agent 模式下的命令执行规则">
-      <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单']}>
+    <Card id="settings-command-policy" title="命令执行策略" description="控制 Agent 模式下的命令安全边界">
+      <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单', '命令执行策略', 'Agent']}>
         <div className="flex rounded-lg overflow-hidden border border-zinc-700">
           <ListModeButton
             value="denylist"
@@ -110,7 +110,7 @@ export function CommandPolicySection() {
           />
         </div>
       </SettingItem>
-      <SettingItem id="cmd-confirm" label="逐条确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认']}>
+      <SettingItem id="cmd-confirm" label="逐条确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
         <Toggle
           checked={agent.confirmEachCommand}
           onChange={(checked) => updateAgent({ confirmEachCommand: checked })}
@@ -122,7 +122,7 @@ export function CommandPolicySection() {
         label={agent.listMode === 'allowlist' ? '允许的命令' : '禁止的命令'}
         description="按基础命令名匹配（不含路径或参数）"
         sectionId="settings-command-policy"
-        keywords={['command', 'list', '命令列表']}
+        keywords={['command', 'list', '命令列表', '命令执行策略', 'Agent']}
       >
         <div className="flex-1 space-y-2 min-w-0 w-80">
           <div className="flex gap-2">
@@ -166,7 +166,7 @@ export function CommandPolicySection() {
           )}
         </div>
       </SettingItem>
-      <SettingItem id="cmd-test" label="测试命令" description="验证命令是否会被允许" sectionId="settings-command-policy" keywords={['test', '验证']}>
+      <SettingItem id="cmd-test" label="测试命令" description="验证命令是否会被允许" sectionId="settings-command-policy" keywords={['test', '验证', '命令执行策略', 'Agent']}>
         <div className="flex-1 space-y-2 min-w-0 w-80">
           <p className="text-xs text-zinc-500">
             输入一条命令，查看在 AGENT 模式下是否会被允许。使用的是{' '}
