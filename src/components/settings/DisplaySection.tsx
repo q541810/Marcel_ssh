@@ -1,11 +1,9 @@
-import { useSettingsStore } from '@/stores/settingsStore';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
 export function DisplaySection() {
-  const settings = useSettingsStore((s) => s.settings);
-  const { update } = useSettingsActions();
+  const { settings, update } = useSettingsActions();
 
   return (
     <Card id="settings-display" title="显示" description="自定义界面显示方式">

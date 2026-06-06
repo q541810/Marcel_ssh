@@ -5,9 +5,8 @@ import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
 export function LlmSection() {
-  const settings = useSettingsStore((s) => s.settings);
+  const { settings, update } = useSettingsActions();
   const hasApiKey = useSettingsStore((s) => s.hasApiKey);
-  const { update } = useSettingsActions();
 
   const llmConfig: LlmConfig = settings.llmConfig ?? {
     providerType: 'openai',

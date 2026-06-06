@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useSettingsStore } from '@/stores/settingsStore';
-import type { AgentModeSettings, CommandListMode, CommandCheckResult } from '@/lib/types';
+import type { CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
@@ -42,12 +41,10 @@ function ListModeButton({
 }
 
 export function CommandPolicySection() {
-  const settings = useSettingsStore((s) => s.settings);
-  const { update } = useSettingsActions();
-
+  const { settings, update } = useSettingsActions();
   const agent = settings.agentModeSettings;
 
-  const updateAgent = (patch: Partial<AgentModeSettings>) => {
+  const updateAgent = (patch: Partial<typeof agent>) => {
     update({ agentModeSettings: { ...agent, ...patch } });
   };
 
@@ -59,7 +56,11 @@ export function CommandPolicySection() {
   const handleAddCommand = () => {
     const v = newCommand.trim();
     if (!v) return;
-    updateAgent({ commandList: agent.commandList.includes(v) ? agent.commandList : [...agent.commandList, v] });
+    if (agent.commandList.includes(v)) {
+      setNewCommand('');
+      return;
+    }
+    updateAgent({ commandList: [...agent.commandList, v] });
     setNewCommand('');
   };
 
@@ -169,7 +170,7 @@ export function CommandPolicySection() {
         <div className="flex-1 space-y-2 min-w-0 w-80">
           <p className="text-xs text-zinc-500">
             输入一条命令，查看在 AGENT 模式下是否会被允许。使用的是{' '}
-            <span className="text-amber-400">已保存</span>的规则。
+            <span className="text-amber-400">草稿</span>中的规则（未保存也生效）。
           </p>
           <div className="flex gap-2">
             <input

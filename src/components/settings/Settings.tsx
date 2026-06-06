@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getErrorMessage } from '@/lib/errors';
-import { Search, Sliders, Bot, Info, Loader2, Check, AlertCircle } from 'lucide-react';
+import { Search, Sliders, Bot, Info, Save, Undo2, Loader2, Check, AlertCircle } from 'lucide-react';
 import type { AppSettings } from '@/lib/types';
+import Button from '@/components/ui/Button';
 import { SearchRegistryProvider, useSearchRegistry } from './helpers';
 import { SettingsActionsProvider } from './SettingsActionsContext';
 import { AppearanceSection } from './AppearanceSection';
@@ -115,13 +116,21 @@ function LeftSidebar({
 function SettingsContent({
   activeCategory,
   searchQuery,
-  updating,
-  updateError,
+  dirty,
+  saving,
+  saveError,
+  savedNotice,
+  onSave,
+  onReset,
 }: {
   activeCategory: string;
   searchQuery: string;
-  updating: boolean;
-  updateError: string | null;
+  dirty: boolean;
+  saving: boolean;
+  saveError: string | null;
+  savedNotice: string | null;
+  onSave: () => void;
+  onReset: () => void;
 }) {
   const { items } = useSearchRegistry();
 
@@ -153,26 +162,41 @@ function SettingsContent({
           <h1 className="text-2xl font-bold text-zinc-100">
             {isSearching ? `搜索：${searchQuery}` : CATEGORIES.find((c) => c.id === activeCategory)?.label}
           </h1>
-          <div className="flex items-center gap-2 text-sm">
-            {updating && (
-              <>
-                <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
-                <span className="text-zinc-400">保存中...</span>
-              </>
-            )}
-            {!updating && !updateError && (
-              <>
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span className="text-emerald-400">已保存</span>
-              </>
-            )}
-            {updateError && (
-              <>
-                <AlertCircle className="w-4 h-4 text-red-400" />
-                <span className="text-red-400">{updateError}</span>
-              </>
-            )}
-          </div>
+          {!isSearching && (
+            <div className="flex items-center gap-3">
+              {saving && (
+                <div className="flex items-center gap-1.5 text-sm text-zinc-400">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  保存中...
+                </div>
+              )}
+              {savedNotice && (
+                <div className="flex items-center gap-1.5 text-sm text-emerald-400">
+                  <Check className="w-4 h-4" />
+                  {savedNotice}
+                </div>
+              )}
+              {saveError && (
+                <div className="flex items-center gap-1.5 text-sm text-red-400">
+                  <AlertCircle className="w-4 h-4" />
+                  {saveError}
+                </div>
+              )}
+              {dirty && !saving && !savedNotice && (
+                <span className="text-xs text-amber-400">有未保存的更改</span>
+              )}
+              {dirty && (
+                <Button variant="ghost" size="sm" onClick={onReset} disabled={saving}>
+                  <Undo2 className="w-3.5 h-3.5" />
+                  撤销
+                </Button>
+              )}
+              <Button variant="primary" size="sm" onClick={onSave} disabled={!dirty} loading={saving}>
+                <Save className="w-3.5 h-3.5" />
+                保存
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Sections */}
@@ -194,35 +218,23 @@ function SettingsContent({
 /* ───── Main Settings Component ───── */
 
 export default function Settings() {
+  const storeSettings = useSettingsStore((s) => s.settings);
   const loaded = useSettingsStore((s) => s.loaded);
+  const storeSave = useSettingsStore((s) => s.save);
+  const storeSetPreview = useSettingsStore((s) => s.setPreview);
+  const storeClearPreview = useSettingsStore((s) => s.clearPreview);
+
   const [activeCategory, setActiveCategory] = useState('general');
   const [searchQuery, setSearchQuery] = useState('');
-  const storeUpdate = useSettingsStore((s) => s.update);
-  const storeSetPreview = useSettingsStore((s) => s.setPreview);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [updating, setUpdating] = useState(false);
-  const [updateError, setUpdateError] = useState<string | null>(null);
 
-  // Debounced update with immediate UI feedback
-  const update = useCallback(
-    (patch: Partial<AppSettings>) => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-      setUpdating(true);
-      setUpdateError(null);
-      debounceRef.current = setTimeout(async () => {
-        try {
-          await storeUpdate(patch);
-        } catch (err) {
-          setUpdateError(getErrorMessage(err));
-        } finally {
-          setUpdating(false);
-        }
-      }, 300);
-    },
-    [storeUpdate]
-  );
+  const [draft, setDraft] = useState<AppSettings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+
+  const updateDraft = useCallback((patch: Partial<AppSettings>) => {
+    setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
 
   const setPreview = useCallback(
     (preview: Partial<AppSettings>) => {
@@ -232,14 +244,12 @@ export default function Settings() {
   );
 
   useEffect(() => {
-    return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
-    };
-  }, []);
+    if (loaded && draft === null) {
+      setDraft(storeSettings);
+    }
+  }, [loaded, draft, storeSettings]);
 
-  if (!loaded) {
+  if (!loaded || !draft) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-400">
         加载设置中...
@@ -247,9 +257,33 @@ export default function Settings() {
     );
   }
 
+  const dirty = JSON.stringify(draft) !== JSON.stringify(storeSettings);
+
+  const handleSave = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setSaveError(null);
+    setSavedNotice(null);
+    try {
+      await storeSave(draft);
+      setSavedNotice('已保存');
+      setTimeout(() => setSavedNotice(null), 2000);
+    } catch (err) {
+      setSaveError(getErrorMessage(err));
+      setTimeout(() => setSaveError(null), 3000);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = () => {
+    setDraft(storeSettings);
+    storeClearPreview();
+  };
+
   return (
     <SearchRegistryProvider>
-      <SettingsActionsProvider value={{ update, setPreview, updating, updateError }}>
+      <SettingsActionsProvider value={{ settings: draft, update: updateDraft, setPreview, saving, saveError }}>
         <div className="flex h-full">
           <LeftSidebar
             activeCategory={activeCategory}
@@ -260,8 +294,12 @@ export default function Settings() {
           <SettingsContent
             activeCategory={activeCategory}
             searchQuery={searchQuery}
-            updating={updating}
-            updateError={updateError}
+            dirty={dirty}
+            saving={saving}
+            saveError={saveError}
+            savedNotice={savedNotice}
+            onSave={handleSave}
+            onReset={handleReset}
           />
         </div>
       </SettingsActionsProvider>

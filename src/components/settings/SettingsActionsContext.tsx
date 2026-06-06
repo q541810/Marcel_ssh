@@ -2,10 +2,11 @@ import { createContext, useContext } from 'react';
 import type { AppSettings } from '@/lib/types';
 
 interface SettingsActionsContextValue {
+  settings: AppSettings;
   update: (patch: Partial<AppSettings>) => void;
   setPreview: (preview: Partial<AppSettings>) => void;
-  updating: boolean;
-  updateError: string | null;
+  saving: boolean;
+  saveError: string | null;
 }
 
 const SettingsActionsContext = createContext<SettingsActionsContextValue | null>(null);

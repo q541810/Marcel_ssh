@@ -1,4 +1,3 @@
-import { useSettingsStore } from '@/stores/settingsStore';
 import type { ExperimentalSettings } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
@@ -6,8 +5,7 @@ import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
 export function ExperimentalSection() {
-  const settings = useSettingsStore((s) => s.settings);
-  const { update } = useSettingsActions();
+  const { settings, update } = useSettingsActions();
 
   const experimental = settings.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true, enableCloudPage: false };
 

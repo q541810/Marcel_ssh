@@ -1,12 +1,10 @@
-import { useSettingsStore } from '@/stores/settingsStore';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { ColorThemeSelector } from './ColorThemeSelector';
 import { FontSizeInput } from './FontSizeInput';
 
 export function AppearanceSection() {
-  const settings = useSettingsStore((s) => s.settings);
-  const { update, setPreview } = useSettingsActions();
+  const { settings, update, setPreview } = useSettingsActions();
 
   return (
     <Card id="settings-appearance" title="外观">
