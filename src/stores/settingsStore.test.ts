@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { useSettingsStore } from '@/stores/settingsStore';
+
+vi.mock('@/lib/tauri', () => ({
+  getSettings: vi.fn(),
+  saveSettings: vi.fn(),
+}));
 
 describe('settingsStore', () => {
   beforeEach(() => {
@@ -17,6 +22,8 @@ describe('settingsStore', () => {
     expect(s.defaultAgentMode).toBe('agent');
     expect(s.panelHeight).toBe(256);
     expect(s.fileManagerShowHidden).toBe(false);
+    expect(s.fileManagerPath).toBe('/');
+    expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
   });
 
@@ -29,6 +36,7 @@ describe('settingsStore', () => {
 
   it('default experimental settings are correct', () => {
     const es = useSettingsStore.getState().settings.experimentalSettings;
+    expect(es).toBeDefined();
     expect(es.enableWebSearch).toBe(true);
     expect(es.enableHttpFetch).toBe(true);
     expect(es.enableCloudPage).toBe(false);
