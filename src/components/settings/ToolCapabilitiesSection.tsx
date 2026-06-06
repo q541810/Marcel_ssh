@@ -19,21 +19,18 @@ export function ToolCapabilitiesSection() {
         <Toggle
           checked={experimental.enableWebSearch}
           onChange={(checked) => updateExperimental({ enableWebSearch: checked })}
-          label="启用联网搜索"
         />
       </SettingItem>
       <SettingItem id="exp-httpfetch" label="网页获取" description="允许 Agent 使用 http_get 工具获取网页内容" sectionId="settings-experimental" keywords={['http', 'fetch', '网页', '工具能力', 'Agent 工具']}>
         <Toggle
           checked={experimental.enableHttpFetch}
           onChange={(checked) => updateExperimental({ enableHttpFetch: checked })}
-          label="启用网页获取"
         />
       </SettingItem>
       <SettingItem id="exp-cloudpage" label="云原神" description="允许 Agent 打开云原神页面" sectionId="settings-experimental" keywords={['cloud', 'genshin', '云原神', '工具能力', 'Agent 工具']}>
         <Toggle
           checked={experimental.enableCloudPage}
           onChange={(checked) => updateExperimental({ enableCloudPage: checked })}
-          label="启用云原神"
         />
       </SettingItem>
       <SettingItem id="exp-notification" label="通知测试" description="测试系统通知功能是否正常" sectionId="settings-experimental" keywords={['notification', '通知']}>
