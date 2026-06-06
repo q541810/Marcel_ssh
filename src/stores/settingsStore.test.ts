@@ -37,9 +37,9 @@ describe('settingsStore', () => {
   it('default experimental settings are correct', () => {
     const es = useSettingsStore.getState().settings.experimentalSettings;
     expect(es).toBeDefined();
-    expect(es.enableWebSearch).toBe(true);
-    expect(es.enableHttpFetch).toBe(true);
-    expect(es.enableCloudPage).toBe(false);
+    expect(es?.enableWebSearch).toBe(true);
+    expect(es?.enableHttpFetch).toBe(true);
+    expect(es?.enableCloudPage).toBe(false);
   });
 
   it('default terminal colors are defined', () => {

@@ -1,9 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import {
   handleToolCallStart,
   handleToolResult,
-  handleTextDelta,
-  handleThinkingDelta,
   handleDone,
   handleError,
   getStreamState,
@@ -11,18 +9,18 @@ import {
   setStreamState,
   type StreamHandler,
 } from '@/stores/agentStreamHandlers';
-import type { AgentMessage, ToolResultPayload } from '@/lib/types';
+import type { AgentMessage, AgentTaskPlan, ToolResultPayload } from '@/lib/types';
 
 function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandler & {
   _messages: Record<string, AgentMessage[]>;
   _taskStatuses: Record<string, string>;
   _pendingApprovals: unknown[];
-  _plans: Record<string, unknown>;
+  _plans: Record<string, AgentTaskPlan>;
 } {
   const msgs = { ...messages };
   const taskStatuses: Record<string, string> = {};
-  let pendingApproval: unknown = null;
-  const plans: Record<string, unknown> = {};
+  let _pendingApproval: unknown = null;
+  const plans: Record<string, AgentTaskPlan> = {};
 
   return {
     _messages: msgs,
@@ -36,7 +34,7 @@ function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandl
       taskStatuses[taskId] = status;
     },
     setPendingApproval(approval: unknown | null) {
-      pendingApproval = approval;
+      _pendingApproval = approval;
     },
     getTaskStatus(taskId: string) {
       return taskStatuses[taskId];
@@ -45,7 +43,7 @@ function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandl
       return msgs[convId] || [];
     },
     clearActiveTaskIf(_taskId: string) {},
-    setPlan(taskId: string, plan: unknown) {
+    setPlan(taskId: string, plan: AgentTaskPlan) {
       plans[taskId] = plan;
     },
     updatePlanItem(_taskId: string, _itemId: string, _status: string, _error?: string) {},
@@ -59,7 +57,10 @@ const taskId = 'task-1';
 const convId = 'conv-1';
 
 function makeToolResult(overrides: Partial<ToolResultPayload> = {}): ToolResultPayload {
+  const { type: _type, ...rest } = overrides;
+
   return {
+    type: 'toolResult',
     toolCallId: 'tc-1',
     toolName: 'execute_command',
     summary: '$ ls',
@@ -67,7 +68,7 @@ function makeToolResult(overrides: Partial<ToolResultPayload> = {}): ToolResultP
     success: true,
     blocked: false,
     arguments: { command: 'ls' },
-    ...overrides,
+    ...rest,
   };
 }
 

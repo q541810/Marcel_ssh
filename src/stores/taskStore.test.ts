@@ -56,8 +56,8 @@ describe('taskStore', () => {
 
   it('setPendingApproval updates approval', () => {
     const approval = {
-      taskId: 't1',
-      operationId: 'op1',
+      type: 'approvalRequest' as const,
+      toolCallId: 'op1',
       toolName: 'execute_command',
       arguments: { command: 'ls' },
       riskLevel: 'LowRisk' as const,
@@ -71,8 +71,9 @@ describe('taskStore', () => {
 
   it('setPlan stores plan', () => {
     const plan: AgentTaskPlan = {
-      id: 'plan-1',
-      items: [{ id: 'item-1', description: 'Do thing', status: 'pending' }],
+      taskId: 'task-1',
+      currentIndex: 0,
+      items: [{ id: 'item-1', title: 'Do thing', status: 'pending' }],
     };
     useTaskStore.getState().setPlan('task-1', plan);
     const stored = useTaskStore.getState().plans['task-1'];
@@ -82,10 +83,11 @@ describe('taskStore', () => {
 
   it('updatePlanItem updates item status', () => {
     const plan: AgentTaskPlan = {
-      id: 'plan-1',
+      taskId: 'task-1',
+      currentIndex: 0,
       items: [
-        { id: 'item-1', description: 'Step 1', status: 'pending' },
-        { id: 'item-2', description: 'Step 2', status: 'pending' },
+        { id: 'item-1', title: 'Step 1', status: 'pending' },
+        { id: 'item-2', title: 'Step 2', status: 'pending' },
       ],
     };
     useTaskStore.getState().setPlan('task-1', plan);
@@ -98,8 +100,9 @@ describe('taskStore', () => {
 
   it('updatePlanItem sets error', () => {
     const plan: AgentTaskPlan = {
-      id: 'plan-1',
-      items: [{ id: 'item-1', description: 'Step', status: 'pending' }],
+      taskId: 'task-1',
+      currentIndex: 0,
+      items: [{ id: 'item-1', title: 'Step', status: 'pending' }],
     };
     useTaskStore.getState().setPlan('task-1', plan);
 
@@ -111,13 +114,14 @@ describe('taskStore', () => {
 
   it('getActivePlan returns plan for active task', () => {
     const plan: AgentTaskPlan = {
-      id: 'plan-1',
-      items: [{ id: 'item-1', description: 'Step', status: 'pending' }],
+      taskId: 'task-1',
+      currentIndex: 0,
+      items: [{ id: 'item-1', title: 'Step', status: 'pending' }],
     };
     useTaskStore.setState({ activeTaskId: 'task-1' });
     useTaskStore.getState().setPlan('task-1', plan);
 
-    expect(useTaskStore.getState().getActivePlan()?.id).toBe('plan-1');
+    expect(useTaskStore.getState().getActivePlan()?.taskId).toBe('task-1');
   });
 
   it('getActivePlan returns null when no active task', () => {
