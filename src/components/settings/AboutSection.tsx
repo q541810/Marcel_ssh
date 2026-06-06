@@ -4,7 +4,7 @@ import { checkUpdate } from '@/lib/tauri';
 import type { UpdateCheckResult } from '@/lib/types';
 import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
-import { Section } from './helpers';
+import { Card, SettingItem } from './helpers';
 
 const APP_NAME_STR = 'Marcel SSH';
 
@@ -33,47 +33,34 @@ export default function AboutSection() {
   }, []);
 
   return (
-    <Section id="settings-about" title="关于">
-      <div className="space-y-4">
-        <div className="text-sm text-zinc-400 space-y-1">
-          <p>
-            <span className="text-zinc-300">应用名称：</span>{APP_NAME_STR}
-          </p>
-          <p>
-            <span className="text-zinc-300">当前版本：</span>{appVersion}
-          </p>
-        </div>
-
+    <Card id="settings-about" title="关于">
+      <SettingItem id="about-name" label="应用名称" sectionId="settings-about">
+        <span className="text-sm text-zinc-300">{APP_NAME_STR}</span>
+      </SettingItem>
+      <SettingItem id="about-version" label="当前版本" sectionId="settings-about">
+        <span className="text-sm text-zinc-300">{appVersion}</span>
+      </SettingItem>
+      <SettingItem id="about-update" label="检查更新" description="查看是否有新版本可用" sectionId="settings-about" keywords={['update', 'version', '升级']}>
         <div className="flex items-center gap-3">
           <Button variant="secondary" onClick={handleCheck} loading={checking}>
             检查更新
           </Button>
-
           {result && !result.hasUpdate && (
             <span className="text-sm text-emerald-400">已是最新版本</span>
           )}
-
-          {error && (
-            <span className="text-sm text-red-400">{error}</span>
-          )}
+          {error && <span className="text-sm text-red-400">{error}</span>}
         </div>
-
         {result && result.hasUpdate && (
-          <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
+          <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
             <p className="text-sm text-zinc-200">
               新版本 <span className="text-indigo-400 font-medium">{result.latestVersion}</span> 可用！
             </p>
-            <a
-              href={result.releaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block"
-            >
+            <a href={result.releaseUrl} target="_blank" rel="noopener noreferrer" className="inline-block">
               <Button variant="primary">去下载</Button>
             </a>
           </div>
         )}
-      </div>
-    </Section>
+      </SettingItem>
+    </Card>
   );
 }

@@ -1,101 +1,245 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
-import type {
-  AppSettings,
-  AgentModeSettings,
-  LlmConfig,
-} from '@/lib/types';
-import Button from '@/components/ui/Button';
 import { getErrorMessage } from '@/lib/errors';
-import { Section, Field } from './helpers';
-export { Section, Field } from './helpers';
-import { ColorThemeSelector } from './ColorThemeSelector';
-import { FontSizeInput } from './FontSizeInput';
-import { CommandPolicySection } from './CommandPolicySection';
-import { LlmSection } from './LlmSection';
-import { ExperimentalSection } from './ExperimentalSection';
+import { Search, Sliders, Bot, Info, Loader2, Check, AlertCircle } from 'lucide-react';
+import type { AppSettings } from '@/lib/types';
+import { SearchRegistryProvider, useSearchRegistry } from './helpers';
+import { SettingsActionsProvider } from './SettingsActionsContext';
+import { AppearanceSection } from './AppearanceSection';
 import { DisplaySection } from './DisplaySection';
+import { LlmSection } from './LlmSection';
+import { CommandPolicySection } from './CommandPolicySection';
+import { ExperimentalSection } from './ExperimentalSection';
 import AboutSection from './AboutSection';
 
-interface SectionNavItem {
+interface Category {
   id: string;
   label: string;
+  icon: React.ReactNode;
+  sections: string[];
 }
 
-const SECTION_ITEMS: SectionNavItem[] = [
-  { id: 'settings-appearance', label: '外观' },
-  { id: 'settings-display', label: '显示' },
-  { id: 'settings-llm', label: 'LLM 配置' },
-  { id: 'settings-command-policy', label: '命令策略' },
-  { id: 'settings-experimental', label: '实验性功能' },
-  { id: 'settings-about', label: '关于' },
+const CATEGORIES: Category[] = [
+  {
+    id: 'general',
+    label: '通用',
+    icon: <Sliders className="w-4 h-4" />,
+    sections: ['settings-appearance', 'settings-display'],
+  },
+  {
+    id: 'agent',
+    label: 'Agent',
+    icon: <Bot className="w-4 h-4" />,
+    sections: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
+  },
+  {
+    id: 'about',
+    label: '关于',
+    icon: <Info className="w-4 h-4" />,
+    sections: ['settings-about'],
+  },
 ];
 
-export default function Settings() {
-  const settings = useSettingsStore((s) => s.settings);
-  const loaded = useSettingsStore((s) => s.loaded);
-  const save = useSettingsStore((s) => s.save);
-  const setPreview = useSettingsStore((s) => s.setPreview);
-  const clearPreview = useSettingsStore((s) => s.clearPreview);
+const CATEGORY_SECTIONS: Record<string, string[]> = {
+  general: ['settings-appearance', 'settings-display'],
+  agent: ['settings-llm', 'settings-command-policy', 'settings-experimental'],
+  about: ['settings-about'],
+};
 
-  const [saving, setSaving] = useState(false);
-  const [savedNotice, setSavedNotice] = useState<string | null>(null);
-  const hasStoredApiKey = useSettingsStore((s) => s.hasApiKey);
-  const [activeSection, setActiveSection] = useState<string>('settings-appearance');
-  const sectionsContainerRef = useRef<HTMLDivElement>(null);
-  const isScrollingRef = useRef(false);
+/* ───── Left Sidebar ───── */
+
+function LeftSidebar({
+  activeCategory,
+  onChange,
+  searchQuery,
+  onSearchChange,
+}: {
+  activeCategory: string;
+  onChange: (id: string) => void;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const container = sectionsContainerRef.current;
-    if (!container) return;
-
-    const updateActiveSection = () => {
-      if (isScrollingRef.current) return;
-      const containerRect = container.getBoundingClientRect();
-      const containerTop = containerRect.top + 80;
-
-      let currentId = SECTION_ITEMS[0].id;
-      for (const item of SECTION_ITEMS) {
-        const el = document.getElementById(item.id);
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          if (rect.top <= containerTop) {
-            currentId = item.id;
-          }
-        }
-      }
-      if (currentId !== activeSection) {
-        setActiveSection(currentId);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === 'f') {
+        e.preventDefault();
+        inputRef.current?.focus();
       }
     };
-
-    container.addEventListener('scroll', updateActiveSection, { passive: true });
-    updateActiveSection();
-
-    return () => container.removeEventListener('scroll', updateActiveSection);
-  }, [activeSection]);
-
-  const scrollToSection = useCallback((id: string) => {
-    setActiveSection(id);
-    isScrollingRef.current = true;
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    setTimeout(() => {
-      isScrollingRef.current = false;
-    }, 500);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const [draft, setDraft] = useState<AppSettings | null>(null);
+  return (
+    <div className="w-64 flex-shrink-0 bg-zinc-950 border-r border-zinc-800 flex flex-col">
+      <div className="p-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Ctrl+F 搜索"
+            className="w-full pl-9 pr-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          />
+        </div>
+      </div>
+      <nav className="flex-1 px-2 space-y-1 overflow-y-auto">
+        {CATEGORIES.map((cat) => (
+          <button
+            key={cat.id}
+            onClick={() => {
+              onChange(cat.id);
+              onSearchChange('');
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+              activeCategory === cat.id && !searchQuery
+                ? 'bg-zinc-800 text-zinc-100'
+                : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+            }`}
+          >
+            {cat.icon}
+            <span>{cat.label}</span>
+          </button>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+/* ───── Content Area ───── */
+
+function SettingsContent({
+  activeCategory,
+  searchQuery,
+  updating,
+  updateError,
+}: {
+  activeCategory: string;
+  searchQuery: string;
+  updating: boolean;
+  updateError: string | null;
+}) {
+  const { items } = useSearchRegistry();
+
+  const visibleSections = useMemo(() => {
+    if (!searchQuery.trim()) {
+      return CATEGORY_SECTIONS[activeCategory] || [];
+    }
+
+    const query = searchQuery.toLowerCase();
+    const matching = new Set<string>();
+
+    for (const item of items) {
+      const text = `${item.label} ${item.description || ''} ${(item.keywords || []).join(' ')}`.toLowerCase();
+      if (text.includes(query)) {
+        matching.add(item.sectionId);
+      }
+    }
+
+    return Array.from(matching);
+  }, [activeCategory, searchQuery, items]);
+
+  const isSearching = searchQuery.trim().length > 0;
+
+  return (
+    <div className="flex-1 overflow-y-auto bg-zinc-900">
+      <div className="max-w-3xl mx-auto px-8 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-bold text-zinc-100">
+            {isSearching ? `搜索：${searchQuery}` : CATEGORIES.find((c) => c.id === activeCategory)?.label}
+          </h1>
+          <div className="flex items-center gap-2 text-sm">
+            {updating && (
+              <>
+                <Loader2 className="w-4 h-4 text-zinc-400 animate-spin" />
+                <span className="text-zinc-400">保存中...</span>
+              </>
+            )}
+            {!updating && !updateError && (
+              <>
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-400">已保存</span>
+              </>
+            )}
+            {updateError && (
+              <>
+                <AlertCircle className="w-4 h-4 text-red-400" />
+                <span className="text-red-400">{updateError}</span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Sections */}
+        {visibleSections.length === 0 && isSearching && (
+          <div className="text-zinc-500 text-center py-12">未找到匹配的设置项</div>
+        )}
+
+        {visibleSections.includes('settings-appearance') && <AppearanceSection />}
+        {visibleSections.includes('settings-display') && <DisplaySection />}
+        {visibleSections.includes('settings-llm') && <LlmSection />}
+        {visibleSections.includes('settings-command-policy') && <CommandPolicySection />}
+        {visibleSections.includes('settings-experimental') && <ExperimentalSection />}
+        {visibleSections.includes('settings-about') && <AboutSection />}
+      </div>
+    </div>
+  );
+}
+
+/* ───── Main Settings Component ───── */
+
+export default function Settings() {
+  const loaded = useSettingsStore((s) => s.loaded);
+  const [activeCategory, setActiveCategory] = useState('general');
+  const [searchQuery, setSearchQuery] = useState('');
+  const storeUpdate = useSettingsStore((s) => s.update);
+  const storeSetPreview = useSettingsStore((s) => s.setPreview);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  // Debounced update with immediate UI feedback
+  const update = useCallback(
+    (patch: Partial<AppSettings>) => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      setUpdating(true);
+      setUpdateError(null);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          await storeUpdate(patch);
+        } catch (err) {
+          setUpdateError(getErrorMessage(err));
+        } finally {
+          setUpdating(false);
+        }
+      }, 300);
+    },
+    [storeUpdate]
+  );
+
+  const setPreview = useCallback(
+    (preview: Partial<AppSettings>) => {
+      storeSetPreview(preview);
+    },
+    [storeSetPreview]
+  );
 
   useEffect(() => {
-    if (loaded && draft === null) {
-      setDraft(settings);
-    }
-  }, [loaded, draft, settings]);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, []);
 
-  if (!loaded || !draft) {
+  if (!loaded) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-400">
         加载设置中...
@@ -103,168 +247,24 @@ export default function Settings() {
     );
   }
 
-  const dirty = draft !== null && JSON.stringify(draft) !== JSON.stringify(settings);
-
-  const updateDraft = (mutator: (s: AppSettings) => AppSettings) => {
-    setDraft((cur) => (cur ? mutator(cur) : cur));
-  };
-
-  const updateAgent = (mutator: (a: AgentModeSettings) => AgentModeSettings) => {
-    updateDraft((s) => ({
-      ...s,
-      agentModeSettings: mutator(s.agentModeSettings),
-    }));
-  };
-
-  const updateLlm = (mutator: (l: LlmConfig) => LlmConfig) => {
-    updateDraft((s) => ({
-      ...s,
-      llmConfig: s.llmConfig
-        ? mutator(s.llmConfig)
-        : mutator({
-            providerType: 'openai',
-            apiKey: '',
-            model: '',
-            baseUrl: '',
-            temperature: 0.1,
-            allowInvalidCerts: false,
-          }),
-    }));
-  };
-
-  const handleSave = async () => {
-    if (!draft) return;
-    setSaving(true);
-    setSavedNotice(null);
-    try {
-      await save(draft);
-      setSavedNotice('设置已保存');
-      setTimeout(() => setSavedNotice(null), 2000);
-    } catch (err) {
-      setSavedNotice(`保存失败：${getErrorMessage(err)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleReset = () => {
-    setDraft(settings);
-    clearPreview();
-  };
-
-  const experimentalSettings = draft.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true, enableCloudPage: false };
-
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Page header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/50">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-xl font-bold text-zinc-100">设置</h1>
-          {dirty && (
-            <span className="text-xs text-amber-400">有未保存的更改</span>
-          )}
+    <SearchRegistryProvider>
+      <SettingsActionsProvider value={{ update, setPreview, updating, updateError }}>
+        <div className="flex h-full">
+          <LeftSidebar
+            activeCategory={activeCategory}
+            onChange={setActiveCategory}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+          />
+          <SettingsContent
+            activeCategory={activeCategory}
+            searchQuery={searchQuery}
+            updating={updating}
+            updateError={updateError}
+          />
         </div>
-        <div className="flex items-center gap-3">
-          {savedNotice && (
-            <span className="text-sm text-emerald-400">{savedNotice}</span>
-          )}
-          {dirty && (
-            <Button variant="ghost" onClick={handleReset} disabled={saving}>
-              撤销
-            </Button>
-          )}
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            loading={saving}
-            disabled={!dirty}
-          >
-            保存
-          </Button>
-        </div>
-      </div>
-
-      {/* Section navigation bar */}
-      <nav className="flex items-center gap-1 px-6 py-2 border-b border-zinc-800 bg-zinc-900/50 overflow-x-auto">
-        {SECTION_ITEMS.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => scrollToSection(item.id)}
-            className={`
-              px-3 py-1.5 rounded-lg text-sm whitespace-nowrap transition-colors
-              ${
-                activeSection === item.id
-                  ? 'bg-zinc-800 text-indigo-400 font-medium'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }
-            `}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
-
-      {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto" ref={sectionsContainerRef}>
-        <div className="px-6 py-6">
-          {/* Section: Appearance */}
-          <Section id="settings-appearance" title="外观">
-            <Field label="终端颜色">
-              <ColorThemeSelector
-                value={draft.terminalColors}
-                onChange={(terminalColors) => {
-                  updateDraft((s) => ({ ...s, terminalColors }));
-                  setPreview({ terminalColors });
-                }}
-              />
-            </Field>
-            <Field label="字号">
-              <FontSizeInput
-                value={draft.fontSize}
-                onChange={(fontSize) => {
-                  updateDraft((s) => ({ ...s, fontSize }));
-                  setPreview({ fontSize });
-                }}
-              />
-            </Field>
-            <Field label="字体">
-              <input
-                type="text"
-                value={draft.fontFamily}
-                onChange={(e) => {
-                  const fontFamily = e.target.value;
-                  updateDraft((s) => ({ ...s, fontFamily }));
-                  setPreview({ fontFamily });
-                }}
-                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-              />
-            </Field>
-          </Section>
-
-          <DisplaySection
-            settings={draft}
-            updateDraft={updateDraft}
-          />
-
-          <LlmSection
-            llmConfig={draft.llmConfig}
-            updateLlm={updateLlm}
-            hasStoredApiKey={hasStoredApiKey}
-          />
-
-          <CommandPolicySection
-            agent={draft.agentModeSettings}
-            updateAgent={updateAgent}
-          />
-
-          <ExperimentalSection
-            experimentalSettings={experimentalSettings}
-            updateDraft={updateDraft}
-          />
-
-          <AboutSection />
-        </div>
-      </div>
-    </div>
+      </SettingsActionsProvider>
+    </SearchRegistryProvider>
   );
 }

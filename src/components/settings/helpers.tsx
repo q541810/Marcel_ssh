@@ -1,3 +1,110 @@
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+
+// ───── Search Registry ─────
+
+export interface SearchItem {
+  id: string;
+  label: string;
+  description?: string;
+  keywords?: string[];
+  sectionId: string;
+}
+
+interface SearchRegistryContextValue {
+  items: SearchItem[];
+  register: (item: SearchItem) => void;
+  unregister: (id: string) => void;
+}
+
+const SearchRegistryContext = createContext<SearchRegistryContextValue | null>(null);
+
+export function SearchRegistryProvider({ children }: { children: React.ReactNode }) {
+  const [items, setItems] = useState<SearchItem[]>([]);
+
+  const register = useCallback((item: SearchItem) => {
+    setItems((prev) => {
+      const filtered = prev.filter((i) => i.id !== item.id);
+      return [...filtered, item];
+    });
+  }, []);
+
+  const unregister = useCallback((id: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+  }, []);
+
+  return (
+    <SearchRegistryContext.Provider value={{ items, register, unregister }}>
+      {children}
+    </SearchRegistryContext.Provider>
+  );
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useSearchRegistry() {
+  const ctx = useContext(SearchRegistryContext);
+  if (!ctx) throw new Error('useSearchRegistry must be used within SearchRegistryProvider');
+  return ctx;
+}
+
+// ───── New UI Components ─────
+
+export function Card({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id?: string;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div id={id} className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden mb-6">
+      <div className="px-6 py-4 border-b border-zinc-800">
+        <h3 className="text-base font-semibold text-zinc-100">{title}</h3>
+        {description && <p className="text-xs text-zinc-500 mt-1">{description}</p>}
+      </div>
+      <div className="divide-y divide-zinc-800">{children}</div>
+    </div>
+  );
+}
+
+export function SettingItem({
+  id,
+  label,
+  description,
+  keywords,
+  children,
+  sectionId,
+}: {
+  id: string;
+  label: string;
+  description?: string;
+  keywords?: string[];
+  children: React.ReactNode;
+  sectionId: string;
+}) {
+  const { register, unregister } = useSearchRegistry();
+
+  useEffect(() => {
+    register({ id, label, description, keywords, sectionId });
+    return () => unregister(id);
+  }, [id, label, description, keywords, sectionId, register, unregister]);
+
+  return (
+    <div className="px-6 py-4 flex items-start gap-6">
+      <div className="w-40 flex-shrink-0">
+        <div className="text-sm font-medium text-zinc-200">{label}</div>
+        {description && <div className="text-xs text-zinc-500 mt-0.5">{description}</div>}
+      </div>
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}
+
+// ───── Legacy Components (deprecated, kept for backward compatibility) ─────
+
 export function Section({
   id,
   title,
@@ -12,9 +119,7 @@ export function Section({
   return (
     <section id={id} className="mb-8 scroll-mt-8">
       <h2 className="text-base font-semibold text-zinc-100 mb-1">{title}</h2>
-      {description && (
-        <p className="text-xs text-zinc-500 mb-3">{description}</p>
-      )}
+      {description && <p className="text-xs text-zinc-500 mb-3">{description}</p>}
       <div className="space-y-3 mt-3">{children}</div>
     </section>
   );
@@ -30,14 +135,8 @@ export function Field({
   alignTop?: boolean;
 }) {
   return (
-    <div
-      className={`flex gap-4 ${alignTop ? 'items-start' : 'items-center'}`}
-    >
-      <label
-        className={`w-32 flex-shrink-0 text-sm text-zinc-300 ${
-          alignTop ? 'pt-1.5' : ''
-        }`}
-      >
+    <div className={`flex gap-4 ${alignTop ? 'items-start' : 'items-center'}`}>
+      <label className={`w-32 flex-shrink-0 text-sm text-zinc-300 ${alignTop ? 'pt-1.5' : ''}`}>
         {label}
       </label>
       <div className="flex-1 flex items-center gap-2 min-w-0">{children}</div>

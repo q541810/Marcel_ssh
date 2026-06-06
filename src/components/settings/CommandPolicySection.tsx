@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentModeSettings, CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
-import { Section, Field } from './helpers';
+import { Card, SettingItem } from './helpers';
+import { useSettingsActions } from './SettingsActionsContext';
 
 function ListModeButton({
   value,
@@ -22,25 +24,16 @@ function ListModeButton({
   position?: 'first' | 'last' | 'middle';
 }) {
   const active = value === current;
-  const roundedClass = position === 'first' 
-    ? 'rounded-l-lg' 
-    : position === 'last' 
-      ? 'rounded-r-lg' 
-      : '';
+  const roundedClass =
+    position === 'first' ? 'rounded-l-lg' : position === 'last' ? 'rounded-r-lg' : '';
 
   return (
     <button
       onClick={() => onClick(value)}
       title={description}
-      className={`
-        flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0
-        ${roundedClass}
-        ${
-          active
-            ? 'bg-indigo-600 text-white'
-            : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
-        }
-      `}
+      className={`flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0 ${roundedClass} ${
+        active ? 'bg-indigo-600 text-white' : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
+      }`}
       style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
     >
       {label}
@@ -48,12 +41,16 @@ function ListModeButton({
   );
 }
 
-interface CommandPolicySectionProps {
-  agent: AgentModeSettings;
-  updateAgent: (mutator: (a: AgentModeSettings) => AgentModeSettings) => void;
-}
+export function CommandPolicySection() {
+  const settings = useSettingsStore((s) => s.settings);
+  const { update } = useSettingsActions();
 
-export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectionProps) {
+  const agent = settings.agentModeSettings;
+
+  const updateAgent = (patch: Partial<AgentModeSettings>) => {
+    update({ agentModeSettings: { ...agent, ...patch } });
+  };
+
   const [newCommand, setNewCommand] = useState('');
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
@@ -62,18 +59,12 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
   const handleAddCommand = () => {
     const v = newCommand.trim();
     if (!v) return;
-    updateAgent((a) => {
-      if (a.commandList.includes(v)) return a;
-      return { ...a, commandList: [...a.commandList, v] };
-    });
+    updateAgent({ commandList: agent.commandList.includes(v) ? agent.commandList : [...agent.commandList, v] });
     setNewCommand('');
   };
 
   const handleRemoveCommand = (cmd: string) => {
-    updateAgent((a) => ({
-      ...a,
-      commandList: a.commandList.filter((c) => c !== cmd),
-    }));
+    updateAgent({ commandList: agent.commandList.filter((c) => c !== cmd) });
   };
 
   const runTest = async () => {
@@ -97,19 +88,13 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
   };
 
   return (
-    <Section
-      id="settings-command-policy"
-      title="AGENT 模式 — 命令执行策略"
-      description="仅在 AGENT 模式下生效。CHAT 模式不会执行命令；AUTO 模式不受此处限制。"
-    >
-      <Field label="列表模式">
+    <Card id="settings-command-policy" title="命令策略" description="Agent 模式下的命令执行规则">
+      <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单']}>
         <div className="flex rounded-lg overflow-hidden border border-zinc-700">
           <ListModeButton
             value="denylist"
             current={agent.listMode}
-            onClick={(v) =>
-              updateAgent((a) => ({ ...a, listMode: v }))
-            }
+            onClick={(v) => updateAgent({ listMode: v })}
             label="黑名单"
             description="只阻止列表中的命令"
             position="first"
@@ -117,34 +102,28 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
           <ListModeButton
             value="allowlist"
             current={agent.listMode}
-            onClick={(v) =>
-              updateAgent((a) => ({ ...a, listMode: v }))
-            }
+            onClick={(v) => updateAgent({ listMode: v })}
             label="白名单"
             description="只允许列表中的命令"
             position="last"
           />
         </div>
-      </Field>
-
-      <Field label="逐条确认">
+      </SettingItem>
+      <SettingItem id="cmd-confirm" label="逐条确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认']}>
         <Toggle
           checked={agent.confirmEachCommand}
-          onChange={(checked) =>
-            updateAgent((a) => ({
-              ...a,
-              confirmEachCommand: checked,
-            }))
-          }
+          onChange={(checked) => updateAgent({ confirmEachCommand: checked })}
           label="即使通过列表过滤，仍要求用户确认每条命令"
         />
-      </Field>
-
-      <Field
+      </SettingItem>
+      <SettingItem
+        id="cmd-list"
         label={agent.listMode === 'allowlist' ? '允许的命令' : '禁止的命令'}
-        alignTop
+        description="按基础命令名匹配（不含路径或参数）"
+        sectionId="settings-command-policy"
+        keywords={['command', 'list', '命令列表']}
       >
-        <div className="flex-1 space-y-2 min-w-0">
+        <div className="flex-1 space-y-2 min-w-0 w-80">
           <div className="flex gap-2">
             <input
               type="text"
@@ -159,12 +138,7 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
               placeholder="例如：rm 或 sudo"
               className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
             />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleAddCommand}
-              disabled={!newCommand.trim()}
-            >
+            <Button variant="secondary" size="sm" onClick={handleAddCommand} disabled={!newCommand.trim()}>
               添加
             </Button>
           </div>
@@ -189,19 +163,13 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
               ))}
             </div>
           )}
-          <p className="text-xs text-zinc-500">
-            按基础命令名匹配（不含路径或参数）。例如填{' '}
-            <code className="text-zinc-400">rm</code> 会匹配{' '}
-            <code className="text-zinc-400">rm -rf /tmp</code>。
-          </p>
         </div>
-      </Field>
-
-      <Field label="测试命令" alignTop>
-        <div className="flex-1 space-y-2 min-w-0">
+      </SettingItem>
+      <SettingItem id="cmd-test" label="测试命令" description="验证命令是否会被允许" sectionId="settings-command-policy" keywords={['test', '验证']}>
+        <div className="flex-1 space-y-2 min-w-0 w-80">
           <p className="text-xs text-zinc-500">
             输入一条命令，查看在 AGENT 模式下是否会被允许。使用的是{' '}
-            <span className="text-amber-400">已保存</span>的规则（请先点保存）。
+            <span className="text-amber-400">已保存</span>的规则。
           </p>
           <div className="flex gap-2">
             <input
@@ -217,33 +185,22 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
               placeholder="例如：rm -rf /tmp/test"
               className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
             />
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={runTest}
-              loading={testing}
-              disabled={!testCommand.trim()}
-            >
+            <Button variant="secondary" size="sm" onClick={runTest} loading={testing} disabled={!testCommand.trim()}>
               测试
             </Button>
           </div>
           {testResult && (
             <div
-              className={`
-                rounded-xl border px-3 py-2 text-sm
-                ${
-                  testResult.allowed
-                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
-                    : 'bg-red-950/40 border-red-800 text-red-200'
-                }
-              `}
+              className={`rounded-xl border px-3 py-2 text-sm ${
+                testResult.allowed
+                  ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
+                  : 'bg-red-950/40 border-red-800 text-red-200'
+              }`}
             >
               <div className="font-medium">
                 {testResult.allowed ? '允许' : '阻止'}
                 {testResult.allowed && testResult.requiresConfirmation && (
-                  <span className="ml-2 text-xs text-amber-300">
-                    （需要用户确认）
-                  </span>
+                  <span className="ml-2 text-xs text-amber-300">（需要用户确认）</span>
                 )}
               </div>
               <div className="text-xs opacity-80 mt-0.5">
@@ -252,7 +209,7 @@ export function CommandPolicySection({ agent, updateAgent }: CommandPolicySectio
             </div>
           )}
         </div>
-      </Field>
-    </Section>
+      </SettingItem>
+    </Card>
   );
 }

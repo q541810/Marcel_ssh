@@ -1,60 +1,44 @@
-import type { ExperimentalSettings, AppSettings } from '@/lib/types';
+import { useSettingsStore } from '@/stores/settingsStore';
+import type { ExperimentalSettings } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
-import { Section, Field } from './helpers';
+import { Card, SettingItem } from './helpers';
+import { useSettingsActions } from './SettingsActionsContext';
 
-interface ExperimentalSectionProps {
-  experimentalSettings: ExperimentalSettings;
-  updateDraft: (mutator: (s: AppSettings) => AppSettings) => void;
-}
+export function ExperimentalSection() {
+  const settings = useSettingsStore((s) => s.settings);
+  const { update } = useSettingsActions();
 
-export function ExperimentalSection({ experimentalSettings, updateDraft }: ExperimentalSectionProps) {
+  const experimental = settings.experimentalSettings ?? { enableWebSearch: true, enableHttpFetch: true, enableCloudPage: false };
+
+  const updateExperimental = (patch: Partial<ExperimentalSettings>) => {
+    update({ experimentalSettings: { ...experimental, ...patch } });
+  };
+
   return (
-    <Section
-      id="settings-experimental"
-      title="实验性功能"
-      description="这些功能正在开发中，可能在未来版本中更改或移除。"
-    >
-      <Field label="联网搜索">
+    <Card id="settings-experimental" title="实验性功能" description="这些功能正在开发中，可能在未来版本中更改或移除">
+      <SettingItem id="exp-websearch" label="联网搜索" description="允许 Agent 使用 web_search 工具搜索互联网" sectionId="settings-experimental" keywords={['web', 'search', '搜索']}>
         <Toggle
-          checked={experimentalSettings.enableWebSearch}
-          onChange={(checked) => {
-            const current = experimentalSettings;
-            updateDraft((s) => ({
-              ...s,
-              experimentalSettings: { ...current, enableWebSearch: checked },
-            }));
-          }}
-          label="允许 Agent 使用 web_search 工具搜索互联网"
+          checked={experimental.enableWebSearch}
+          onChange={(checked) => updateExperimental({ enableWebSearch: checked })}
+          label="启用联网搜索"
         />
-      </Field>
-      <Field label="网页获取">
+      </SettingItem>
+      <SettingItem id="exp-httpfetch" label="网页获取" description="允许 Agent 使用 http_get 工具获取网页内容" sectionId="settings-experimental" keywords={['http', 'fetch', '网页']}>
         <Toggle
-          checked={experimentalSettings.enableHttpFetch}
-          onChange={(checked) => {
-            const current = experimentalSettings;
-            updateDraft((s) => ({
-              ...s,
-              experimentalSettings: { ...current, enableHttpFetch: checked },
-            }));
-          }}
-          label="允许 Agent 使用 http_get 工具获取网页内容"
+          checked={experimental.enableHttpFetch}
+          onChange={(checked) => updateExperimental({ enableHttpFetch: checked })}
+          label="启用网页获取"
         />
-      </Field>
-      <Field label="云原神">
+      </SettingItem>
+      <SettingItem id="exp-cloudpage" label="云原神" description="允许 Agent 打开云原神页面" sectionId="settings-experimental" keywords={['cloud', 'genshin', '云原神']}>
         <Toggle
-          checked={experimentalSettings.enableCloudPage}
-          onChange={(checked) => {
-            const current = experimentalSettings;
-            updateDraft((s) => ({
-              ...s,
-              experimentalSettings: { ...current, enableCloudPage: checked },
-            }));
-          }}
-          label="允许 Agent 打开云原神页面"
+          checked={experimental.enableCloudPage}
+          onChange={(checked) => updateExperimental({ enableCloudPage: checked })}
+          label="启用云原神"
         />
-      </Field>
-      <Field label="通知测试">
+      </SettingItem>
+      <SettingItem id="exp-notification" label="通知测试" description="测试系统通知功能是否正常" sectionId="settings-experimental" keywords={['notification', '通知']}>
         <Button
           variant="secondary"
           size="sm"
@@ -79,7 +63,7 @@ export function ExperimentalSection({ experimentalSettings, updateDraft }: Exper
         >
           发送测试通知
         </Button>
-      </Field>
-    </Section>
+      </SettingItem>
+    </Card>
   );
 }
