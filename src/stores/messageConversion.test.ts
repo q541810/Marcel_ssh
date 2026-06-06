@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { storedMessageToAgentMessage } from './messageConversion';
-import type { StoredMessage, AgentMessage } from '@/lib/types';
+import type { StoredMessage } from '@/lib/types';
 
 describe('storedMessageToAgentMessage', () => {
   // Helper to create base StoredMessage
@@ -230,6 +230,47 @@ describe('storedMessageToAgentMessage', () => {
 
       expect(result.toolResult!.blocked).toBe(true);
       expect(result.toolResult!.success).toBe(false);
+    });
+
+    it('should preserve timeout status from persisted tool result', () => {
+      const toolResult = {
+        id: 'call-1',
+        name: 'execute_command',
+        arguments: { command: 'sleep 999' },
+        risk_level: 'LowRisk',
+        summary: '$ sleep 999',
+        success: true,
+        blocked: false,
+        was_timeout: true,
+      };
+      const stored = createStoredMessage({
+        role: 'tool',
+        content: '命令执行在 60 秒后超时，已停止等待输出',
+        toolCallsJson: JSON.stringify(toolResult),
+      });
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.toolResult!.wasTimeout).toBe(true);
+    });
+
+    it('should keep old persisted tool results without timeout as non-timeout', () => {
+      const toolResult = {
+        id: 'call-1',
+        name: 'execute_command',
+        arguments: { command: 'ls' },
+        risk_level: 'LowRisk',
+        summary: '$ ls',
+        success: true,
+        blocked: false,
+      };
+      const stored = createStoredMessage({
+        role: 'tool',
+        content: 'ok',
+        toolCallsJson: JSON.stringify(toolResult),
+      });
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.toolResult!.wasTimeout).toBeUndefined();
     });
   });
 

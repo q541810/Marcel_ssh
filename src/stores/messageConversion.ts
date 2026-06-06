@@ -158,6 +158,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       summary?: string;
       success?: boolean;
       blocked?: boolean;
+      was_timeout?: boolean;
     },
     message: StoredMessage,
     base: AgentMessage
@@ -168,6 +169,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       result: message.content,
       success: tr.success ?? true,
       blocked: tr.blocked ?? false,
+      wasTimeout: tr.was_timeout,
       arguments: tr.arguments,
     };
     return base;

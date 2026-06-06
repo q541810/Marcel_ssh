@@ -3,11 +3,11 @@ use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
 use crate::agent::conversation_persister::ConversationPersister;
+use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
-use crate::agent::tools::{ToolContext, ToolRegistry};
-use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
+use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
@@ -25,6 +25,8 @@ pub(crate) struct PersistedToolResult {
     pub summary: String,
     pub success: bool,
     pub blocked: bool,
+    #[serde(default)]
+    pub was_timeout: bool,
 }
 
 /// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
@@ -114,14 +116,10 @@ pub(crate) async fn run_agent_loop(
             while let Some(ev) = rx.recv().await {
                 match ev {
                     StreamEvent::TextDelta { ref text } => {
-                        let (filtered, new_in_thinking) =
-                            filter_thinking_tags(text, in_thinking);
+                        let (filtered, new_in_thinking) = filter_thinking_tags(text, in_thinking);
                         in_thinking = new_in_thinking;
                         if !filtered.is_empty() && !in_thinking {
-                            let _ = app_fwd.emit(
-                                &evn,
-                                StreamEvent::TextDelta { text: filtered },
-                            );
+                            let _ = app_fwd.emit(&evn, StreamEvent::TextDelta { text: filtered });
                         }
                     }
                     other => {
@@ -148,7 +146,9 @@ pub(crate) async fn run_agent_loop(
             Err(e) => {
                 let _ = app.emit(
                     &event_name,
-                    StreamEvent::Error { message: e.to_string() },
+                    StreamEvent::Error {
+                        message: e.to_string(),
+                    },
                 );
                 return;
             }
@@ -162,7 +162,12 @@ pub(crate) async fn run_agent_loop(
                 content: cleaned_content,
                 ..assistant_msg
             };
-            let _ = persister.save_msg("assistant", &cleaned_msg.content, None, cleaned_msg.reasoning_content.as_deref());
+            let _ = persister.save_msg(
+                "assistant",
+                &cleaned_msg.content,
+                None,
+                cleaned_msg.reasoning_content.as_deref(),
+            );
             messages.push(cleaned_msg);
             let _ = app.emit(&event_name, StreamEvent::Done);
             return;
@@ -180,7 +185,10 @@ pub(crate) async fn run_agent_loop(
         let tool_ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
         for tc in tool_calls {
             if is_task_cancelled(&state, &task_id) {
-                log::info!("Agent task {} cancelled before tool execution, stopping", task_id);
+                log::info!(
+                    "Agent task {} cancelled before tool execution, stopping",
+                    task_id
+                );
                 let _ = app.emit(&event_name, StreamEvent::Done);
                 return;
             }
@@ -188,7 +196,10 @@ pub(crate) async fn run_agent_loop(
             let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name).await;
 
             if is_task_cancelled(&state, &task_id) {
-                log::info!("Agent task {} cancelled after tool execution, stopping", task_id);
+                log::info!(
+                    "Agent task {} cancelled after tool execution, stopping",
+                    task_id
+                );
                 let _ = app.emit(&event_name, StreamEvent::Done);
                 return;
             }
@@ -211,15 +222,7 @@ pub(crate) async fn run_agent_loop(
 
             // Handle plan-related tool outputs (borrows tc fields).
             if let Some(meta) = exec.metadata {
-                handle_plan_tool_output(
-                    &tc.name,
-                    &tc.id,
-                    &task_id,
-                    &meta,
-                    &app,
-                    &state,
-                )
-                .await;
+                handle_plan_tool_output(&tc.name, &tc.id, &task_id, &meta, &app, &state).await;
             }
 
             // Persist tool result — move remaining tc fields to avoid redundant clones.
@@ -231,7 +234,9 @@ pub(crate) async fn run_agent_loop(
                 summary: exec.summary,
                 success: exec.success,
                 blocked: exec.blocked,
-            }).ok();
+                was_timeout: exec.was_timeout,
+            })
+            .ok();
 
             // Build tool message — move exec.output into content.
             let tool_msg = LlmMessage {
@@ -243,12 +248,8 @@ pub(crate) async fn run_agent_loop(
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).
-            let _ = persister.save_msg(
-                "tool",
-                &tool_msg.content,
-                tool_result_json.as_deref(),
-                None,
-            );
+            let _ =
+                persister.save_msg("tool", &tool_msg.content, tool_result_json.as_deref(), None);
 
             messages.push(tool_msg);
         }
@@ -261,4 +262,26 @@ pub(crate) async fn run_agent_loop(
             message: format!("Agent 达到最大执行轮数 ({MAX_TOOL_ROUNDS})，已停止"),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PersistedToolResult;
+
+    #[test]
+    fn persisted_tool_result_defaults_missing_timeout_to_false() {
+        let raw = r#"{
+            "id": "call-1",
+            "name": "execute_command",
+            "arguments": {"command": "ls"},
+            "risk_level": "LowRisk",
+            "summary": "$ ls",
+            "success": true,
+            "blocked": false
+        }"#;
+
+        let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
+
+        assert!(!result.was_timeout);
+    }
 }

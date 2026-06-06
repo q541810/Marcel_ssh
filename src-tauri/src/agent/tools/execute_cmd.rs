@@ -87,10 +87,7 @@ impl AgentTool for ExecuteCommandTool {
             .trim();
 
         if command.is_empty() {
-            return Ok(ToolOutput::fail(
-                "execute_command",
-                "Error: empty command",
-            ));
+            return Ok(ToolOutput::fail("execute_command", "Error: empty command"));
         }
 
         // Static safety check. Higher-level policy (allow/deny lists, user
@@ -117,11 +114,17 @@ impl AgentTool for ExecuteCommandTool {
             match lookup_password(ctx).await {
                 Some(password) => {
                     let rewritten = rewrite_sudo(command, &password);
-                    log::info!("execute_command: sudo auto-fill enabled for cmd='{}'", command);
+                    log::info!(
+                        "execute_command: sudo auto-fill enabled for cmd='{}'",
+                        command
+                    );
                     rewritten
                 }
                 None => {
-                    log::debug!("execute_command: no password found for sudo auto-fill (session={})", ctx.session_id);
+                    log::debug!(
+                        "execute_command: no password found for sudo auto-fill (session={})",
+                        ctx.session_id
+                    );
                     command.to_string()
                 }
             }
@@ -129,13 +132,18 @@ impl AgentTool for ExecuteCommandTool {
             command.to_string()
         };
 
-        log::info!("execute_command: risk={:?} cmd={} final={}", risk, command, if final_command != command { "(auto-fill)" } else { "(original)" });
+        log::info!(
+            "execute_command: risk={:?} cmd={} final={}",
+            risk,
+            command,
+            if final_command != command {
+                "(auto-fill)"
+            } else {
+                "(original)"
+            }
+        );
 
-        let timeout_secs = params
-            .get("timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(60)
-            .clamp(10, 180);
+        let timeout_secs = command_timeout_secs(&params, ctx.policy.as_deref());
 
         let timeout = Duration::from_secs(timeout_secs);
 
@@ -144,12 +152,15 @@ impl AgentTool for ExecuteCommandTool {
                 let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
                 if was_timeout {
                     truncated.push_str(&format!(
-                        "\n\n[命令在 {} 秒后超时自动终止]",
+                        "\n\n[命令执行在 {} 秒后超时，已停止等待输出；远端进程可能仍在运行]",
                         timeout_secs
                     ));
                 }
-                Ok(ToolOutput::ok(format!("$ {}", command), truncated)
-                    .with_metadata(json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout })))
+                Ok(
+                    ToolOutput::ok(format!("$ {}", command), truncated).with_metadata(
+                        json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout }),
+                    ),
+                )
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("$ {}", command),
@@ -159,15 +170,25 @@ impl AgentTool for ExecuteCommandTool {
     }
 }
 
+fn command_timeout_secs(
+    params: &serde_json::Value,
+    policy: Option<&crate::agent::sandbox::SecurityPolicy>,
+) -> u64 {
+    let default_timeout = policy.map(|p| p.command_timeout_secs).unwrap_or(60);
+    params
+        .get("timeout_secs")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(default_timeout)
+        .clamp(10, 180)
+}
+
 /// Check if a command starts with `sudo` (possibly preceded by env-var
 /// assignments such as `FOO=bar sudo ...`). Recognises `sudo`, `sudo `
 /// and `sudo\t`. Never panics.
 fn is_sudo_command(command: &str) -> bool {
     let mut remaining = command.trim();
     loop {
-        if remaining == "sudo"
-            || remaining.starts_with("sudo ")
-            || remaining.starts_with("sudo\t")
+        if remaining == "sudo" || remaining.starts_with("sudo ") || remaining.starts_with("sudo\t")
         {
             return true;
         }
@@ -178,9 +199,7 @@ fn is_sudo_command(command: &str) -> bool {
         };
         let name = &remaining[..eq_pos];
         if name.is_empty()
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             || name.chars().next().map_or(true, |c| c.is_ascii_digit())
         {
             return false;
@@ -211,7 +230,11 @@ fn is_sudo_command(command: &str) -> bool {
 /// NEVER logs the actual password content.
 async fn lookup_password(ctx: &ToolContext) -> Option<String> {
     let connection_id = ctx.ssh.get_connection_id(&ctx.session_id).await;
-    log::info!("execute_command: session={} connection_id={:?}", ctx.session_id, connection_id);
+    log::info!(
+        "execute_command: session={} connection_id={:?}",
+        ctx.session_id,
+        connection_id
+    );
 
     match &connection_id {
         Some(id) => {
@@ -224,7 +247,11 @@ async fn lookup_password(ctx: &ToolContext) -> Option<String> {
                     log::info!("execute_command: no password stored for connection={}", id);
                 }
                 Err(e) => {
-                    log::warn!("execute_command: keychain error for connection={}: {}", id, e);
+                    log::warn!(
+                        "execute_command: keychain error for connection={}: {}",
+                        id,
+                        e
+                    );
                 }
             }
             result.ok().flatten()
@@ -319,5 +346,39 @@ mod tests {
         // argument, not in the format string.
         assert!(result.contains("'ab%scd'"), "got: {}", result);
         assert!(result.starts_with("printf '%s\\n' '"), "got: {}", result);
+    }
+
+    #[test]
+    fn command_timeout_uses_policy_default_when_not_requested() {
+        let mut policy = crate::agent::sandbox::SecurityPolicy::default();
+        policy.command_timeout_secs = 45;
+
+        assert_eq!(
+            command_timeout_secs(&serde_json::json!({}), Some(&policy)),
+            45
+        );
+    }
+
+    #[test]
+    fn command_timeout_clamps_requested_value() {
+        assert_eq!(
+            command_timeout_secs(&serde_json::json!({ "timeout_secs": 5 }), None),
+            10
+        );
+        assert_eq!(
+            command_timeout_secs(&serde_json::json!({ "timeout_secs": 240 }), None),
+            180
+        );
+    }
+
+    #[test]
+    fn command_timeout_uses_requested_value_over_policy_default() {
+        let mut policy = crate::agent::sandbox::SecurityPolicy::default();
+        policy.command_timeout_secs = 30;
+
+        assert_eq!(
+            command_timeout_secs(&serde_json::json!({ "timeout_secs": 90 }), Some(&policy)),
+            90
+        );
     }
 }

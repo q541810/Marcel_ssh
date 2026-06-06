@@ -163,7 +163,10 @@ impl SshManager {
                 .authenticate_password(&username, password)
                 .await
                 .map_err(|e| AppError::Ssh(format!("密码认证错误: {}", e)))?,
-            AuthMethod::PrivateKey { key_path, passphrase } => {
+            AuthMethod::PrivateKey {
+                key_path,
+                passphrase,
+            } => {
                 let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
                     .map_err(|e| AppError::Ssh(format!("加载私钥失败: {}", e)))?;
                 handle
@@ -232,13 +235,17 @@ impl SshManager {
         let app_clone = app.clone();
         let manager_connections = self.connections.clone();
         tokio::spawn(async move {
-            session::drive_session(sid.clone(), channel, shared_handle.clone(), cmd_rx, app_clone.clone()).await;
+            session::drive_session(
+                sid.clone(),
+                channel,
+                shared_handle.clone(),
+                cmd_rx,
+                app_clone.clone(),
+            )
+            .await;
             // Cleanup
             manager_connections.write().await.remove(&sid);
-            let _ = app_clone.emit(
-                &format!("ssh://status/{}", sid),
-                SshStatus::Disconnected,
-            );
+            let _ = app_clone.emit(&format!("ssh://status/{}", sid), SshStatus::Disconnected);
             log::info!("SSH session {} cleaned up", sid);
         });
 
@@ -246,18 +253,12 @@ impl SshManager {
     }
 
     /// Send input data to the session's shell channel.
-    pub async fn send_input(
-        &self,
-        session_id: &str,
-        data: &[u8],
-    ) -> Result<(), AppError> {
+    pub async fn send_input(&self, session_id: &str, data: &[u8]) -> Result<(), AppError> {
         let conn = {
             let guard = self.connections.read().await;
             guard.get(session_id).cloned()
         };
-        let conn = conn.ok_or_else(|| {
-            AppError::Ssh(format!("会话不存在: {}", session_id))
-        })?;
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
         conn.cmd_tx
             .send(SessionCommand::Input(data.to_vec()))
             .map_err(|_| AppError::Ssh("会话已断开".into()))?;
@@ -265,19 +266,12 @@ impl SshManager {
     }
 
     /// Resize the PTY associated with a session.
-    pub async fn resize(
-        &self,
-        session_id: &str,
-        cols: u32,
-        rows: u32,
-    ) -> Result<(), AppError> {
+    pub async fn resize(&self, session_id: &str, cols: u32, rows: u32) -> Result<(), AppError> {
         let conn = {
             let guard = self.connections.read().await;
             guard.get(session_id).cloned()
         };
-        let conn = conn.ok_or_else(|| {
-            AppError::Ssh(format!("会话不存在: {}", session_id))
-        })?;
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
         conn.cmd_tx
             .send(SessionCommand::Resize { cols, rows })
             .map_err(|_| AppError::Ssh("会话已断开".into()))?;
@@ -326,18 +320,12 @@ impl SshManager {
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.
-    pub async fn exec_command(
-        &self,
-        session_id: &str,
-        command: &str,
-    ) -> Result<String, AppError> {
+    pub async fn exec_command(&self, session_id: &str, command: &str) -> Result<String, AppError> {
         let conn = {
             let guard = self.connections.read().await;
             guard.get(session_id).cloned()
         };
-        let conn = conn.ok_or_else(|| {
-            AppError::Ssh(format!("会话不存在: {}", session_id))
-        })?;
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
         let mut channel = conn
             .handle
@@ -382,8 +370,7 @@ impl SshManager {
             let guard = self.connections.read().await;
             guard.get(session_id).cloned()
         };
-        let conn = conn
-            .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
         let mut channel = conn
             .handle
@@ -421,11 +408,21 @@ impl SshManager {
                     }
                 }
                 _ = &mut deadline => {
-                    // Attempt to close the SSH channel gracefully
+                    // Best-effort channel shutdown. This stops waiting for the
+                    // exec channel, but does not guarantee the remote process is killed.
                     let close_timeout = tokio::time::sleep(Duration::from_secs(2));
                     tokio::pin!(close_timeout);
                     tokio::select! {
-                        _ = channel.eof() => {}
+                        _ = async {
+                            let _ = channel.eof().await;
+                            let _ = channel.close().await;
+                            loop {
+                                match channel.wait().await {
+                                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                                    Some(_) => {}
+                                }
+                            }
+                        } => {}
                         _ = &mut close_timeout => {}
                     }
                     return Ok((output, true));
@@ -445,9 +442,7 @@ impl SshManager {
             let guard = self.connections.read().await;
             guard.get(session_id).cloned()
         };
-        let conn = conn.ok_or_else(|| {
-            AppError::Ssh(format!("会话不存在: {}", session_id))
-        })?;
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
         let channel = conn
             .handle
@@ -468,7 +463,6 @@ impl SshManager {
 
         Ok(sftp)
     }
-
 }
 
 impl Default for SshManager {

@@ -9,6 +9,7 @@ description: Marcel SSH 发布与发布工作流。更新版本号、构建、�
 
 - [ ] 所有代码已合入 `main` 分支
 - [ ] 自测通过（`cargo test` + `pnpm tsc --noEmit`）
+- [ ] **注意**：`pnpm tsc --noEmit` 会扫描 `*.test.ts` 文件。如果测试夹具的类型定义落后于 `src/lib/types.ts`，构建会失败。必须先修正测试文件的类型错误，不要跳过类型检查。
 
 ## 步骤
 
@@ -25,8 +26,11 @@ gh release list
 | 文件 | 字段 |
 |------|------|
 | `src-tauri/tauri.conf.json` | `version` |
+| `src-tauri/Cargo.toml` | `version` (package section) |
 | `package.json` | `version` |
 | `latest.json` | `version` |
+
+> 改完 `Cargo.toml` 后 `Cargo.lock` 会自动更新，这是预期行为，一并提交。
 
 #### 版本号规则（语义化版本）
 
@@ -60,10 +64,24 @@ git push origin v{version}
 
 ### 6. 创建 GitHub Release
 
+先将 release 描述写入临时文件（避免 PowerShell 吞换行），再用 `--notes-file` 创建 Release。
+
 ```bash
-gh release create v{version} --title "v{version}" --notes "<changelog>"
+# 将 changelog 写入文件（PowerShell 用 Set-Content，bash 用 cat）
+Set-Content -LiteralPath release-notes.md -Value @"<changelog>"@
+```
+
+```bash
+gh release create v{version} --title "v{version}" --notes-file release-notes.md
+```
+
+创建完成后删除临时文件：
+```bash
+Remove-Item -LiteralPath release-notes.md
 ```
 
 ### 7. 上传安装包到 Release Assets
 
-将 `pnpm tauri build` 产出的 exe 和 msi 上传到刚创建的 Release 页面。
+```bash
+gh release upload v{version} "src-tauri\target\release\bundle\msi\Marcel SSH_{version}_x64_zh-CN.msi" "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe" --clobber
+```
