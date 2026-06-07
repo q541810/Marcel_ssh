@@ -141,7 +141,14 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 - TailwindCSS utility-first，避免自定义 CSS。
 - 终端主题色采用 CSS 变量，支持用户自定义。
 
----
+**关于页 Logo 长按交互（"八音盒"彩蛋）**：
+
+- 资源：`public/bh.mp3`（由 `APP_MUSIC_BOX_AUDIO` 引用），常量定义于 `src/lib/constants.ts`。
+- 行为：长按 logo 期间以 `APP_MUSIC_BOX_FORWARD_DEG_PER_SEC` 角速度正向旋转（"上发条"）；松开后切换为反向旋转并循环播放 `bh.mp3`，反向旋转一周耗时 = 音频时长 × `APP_MUSIC_BOX_ROTATION_DURATION_MULTIPLIER`（默认 2.1）。
+- 终止路径（必须全部覆盖）：① 组件 unmount；② 区段被 `<div hidden>` 隐藏（通过 `IntersectionObserver` 监听 `logoContainerRef` 的父节点）；③ 用户松开时音频尚未加载（`audioDuration === 0`）；④ `<audio>` 触发 `error` 事件；⑤ 播放期间再次按下 logo（先完整停止再开始新一轮）。
+- 旋转角度用 `useRef` 持有并直接写入 `style.transform`（不触发 React 重渲染），用 `requestAnimationFrame` 驱动。
+- 指针事件使用 `setPointerCapture` 确保拖出 logo 边界时仍能收到 `pointerup`。
+- 修改此交互时：常量在 `constants.ts`、行为在 `AboutSection.tsx`，更新本节描述即可。
 
 ## IPC 通信协议
 

@@ -5,6 +5,21 @@ export const APP_NAME = 'Marcel SSH';
 /** 应用 logo 静态资源路径，引用 public/app-logo.png（与 src-tauri/icons/icon.png 同源）。 */
 export const APP_LOGO = '/app-logo.png';
 
+/**
+ * 关于页 logo 长按交互触发的"八音盒"循环音频，引用 public/bh.mp3。
+ * 旋转一周所需时长 = 该音频时长 × APP_MUSIC_BOX_ROTATION_DURATION_MULTIPLIER。
+ */
+export const APP_MUSIC_BOX_AUDIO = '/bh.mp3';
+
+/** 八音盒反向旋转一周 = 音频时长 × 该倍率（2.1 倍）。 */
+export const APP_MUSIC_BOX_ROTATION_DURATION_MULTIPLIER = 2.1;
+
+/** 长按 logo 期间的正向旋转角速度（度/秒），属于"上发条"阶段。 */
+export const APP_MUSIC_BOX_FORWARD_DEG_PER_SEC = 60;
+
+/** 反向旋转一周的总角度（度）。 */
+export const APP_MUSIC_BOX_REVERSE_TOTAL_DEG = 360;
+
 /** Maximum file size (in bytes) that can be opened in the remote file editor. */
 export const MAX_EDITOR_FILE_SIZE = 2 * 1024 * 1024;
 
