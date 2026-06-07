@@ -39,6 +39,7 @@ struct FetchedPage {
     source_bytes: usize,
     markdown_bytes: usize,
     redirected: bool,
+    http_error: bool,
 }
 
 struct PageChunk {
@@ -184,9 +185,11 @@ impl AgentTool for HttpGetTool {
             }
         }
 
-        // Fetch all URLs concurrently. Batch mode keeps one chunk per page, while
-        // paginated reads are intentionally restricted to single-url mode.
-        let per_page_limit = chunk_size.saturating_div(urls_to_fetch.len().max(1));
+        // Batch mode treats chunk_size as a per-page limit. The final combined
+        // output still has a safety cap to avoid flooding the model context.
+        let combined_output_limit = chunk_size
+            .saturating_mul(urls_to_fetch.len().max(1))
+            .min(96_000);
         let fetches: Vec<_> = urls_to_fetch
             .iter()
             .map(|u| fetch_page(u, format))
@@ -206,15 +209,15 @@ impl AgentTool for HttpGetTool {
             let domain = extract_domain(url);
             match result {
                 Ok(page) => {
-                    success_count += 1;
+                    if page.http_error {
+                        fail_count += 1;
+                    } else {
+                        success_count += 1;
+                    }
                     total_source_bytes += page.source_bytes;
                     total_content_bytes += page.markdown_bytes;
                     let page_offset = if urls_to_fetch.len() == 1 { offset } else { 0 };
-                    let page_chunk_size = if urls_to_fetch.len() == 1 {
-                        chunk_size
-                    } else {
-                        per_page_limit.max(2000)
-                    };
+                    let page_chunk_size = chunk_size;
                     let chunk = make_chunk(&page.content, page_offset, page_chunk_size);
                     pages_metadata.push(page_metadata(page, &chunk));
                     if urls_to_fetch.len() > 1 {
@@ -250,7 +253,7 @@ impl AgentTool for HttpGetTool {
         }
 
         let combined = sections.join("\n\n");
-        let output = truncate_output(combined, MAX_OUTPUT_BYTES.min(chunk_size));
+        let output = truncate_output(combined, combined_output_limit);
 
         let hint = "\n\n---\nTip: This page may contain links. Use `http_get` again with any URL to get its full content.";
         let final_output = format!("{}{}", output, hint);
@@ -271,7 +274,7 @@ impl AgentTool for HttpGetTool {
             )
         };
 
-        Ok(ToolOutput::ok(summary, final_output).with_metadata(json!({
+        let metadata = json!({
             "urls_fetched": urls_to_fetch.len(),
             "success": success_count,
             "failed": fail_count,
@@ -282,7 +285,13 @@ impl AgentTool for HttpGetTool {
                 OutputFormat::Text => "text",
             },
             "pages": pages_metadata
-        })))
+        });
+
+        if success_count == 0 && fail_count > 0 {
+            Ok(ToolOutput::fail(summary, final_output).with_metadata(metadata))
+        } else {
+            Ok(ToolOutput::ok(summary, final_output).with_metadata(metadata))
+        }
     }
 }
 
@@ -313,13 +322,6 @@ async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppE
         .unwrap_or("")
         .to_string();
 
-    if !status.is_success() {
-        return Err(AppError::Agent(format!(
-            "HTTP error: {} ({}) at {}",
-            status, status_text, final_url
-        )));
-    }
-
     let body = resp
         .text()
         .await
@@ -339,6 +341,7 @@ async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppE
     let content = cleanup_markdown(&content);
     let markdown_bytes = content.len();
     let redirected = normalize_url_for_compare(url) != normalize_url_for_compare(&final_url);
+    let http_error = !status.is_success();
 
     Ok(FetchedPage {
         requested_url: url.to_string(),
@@ -351,6 +354,7 @@ async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppE
         source_bytes,
         markdown_bytes,
         redirected,
+        http_error,
     })
 }
 
@@ -409,16 +413,7 @@ fn readable_selectors() -> &'static [&'static str] {
         "[role=main]",
         "#main",
         "#content",
-        ".main",
-        ".content",
-        ".article",
-        ".product-detail",
-        ".product-details",
-        ".product-specs",
-        ".specs",
-        ".specifications",
-        "[class*=spec]",
-        "[id*=spec]",
+        "body",
     ]
 }
 
@@ -544,6 +539,11 @@ fn format_page_output(page: &FetchedPage, chunk: &PageChunk, include_metadata: b
         if page.redirected {
             out.push_str("Warning: requested URL redirected; content is from Final URL.\n");
         }
+        if page.http_error {
+            out.push_str(
+                "Warning: HTTP status is not successful; showing returned error page content.\n",
+            );
+        }
         out.push_str(&format!("Status: {} {}\n", page.status, page.status_text));
         if !page.content_type.is_empty() {
             out.push_str(&format!("Content-Type: {}\n", page.content_type));
@@ -588,6 +588,7 @@ fn page_metadata(page: &FetchedPage, chunk: &PageChunk) -> serde_json::Value {
         "source_bytes": page.source_bytes,
         "markdown_bytes": page.markdown_bytes,
         "redirected": page.redirected,
+        "http_error": page.http_error,
         "offset": chunk.offset,
         "chunk_size": chunk.chunk_size,
         "next_offset": chunk.next_offset,
@@ -833,6 +834,7 @@ mod tests {
             source_bytes: 100,
             markdown_bytes: 6,
             redirected: true,
+            http_error: false,
         };
         let chunk = make_chunk(&page.content, 0, 3);
         let output = format_page_output(&page, &chunk, true);
@@ -843,6 +845,29 @@ mod tests {
         assert!(output.contains("Title: Docs"));
         assert!(output.contains("requested URL redirected"));
         assert!(output.contains("next offset 3"));
+    }
+
+    #[test]
+    fn format_page_output_marks_http_error_but_keeps_content() {
+        let page = FetchedPage {
+            requested_url: "https://example.com/missing".to_string(),
+            final_url: "https://example.com/missing".to_string(),
+            status: 404,
+            status_text: "Not Found".to_string(),
+            content_type: "text/html".to_string(),
+            title: Some("Not Found".to_string()),
+            content: "# Not Found\n\nThe page is missing.".to_string(),
+            source_bytes: 128,
+            markdown_bytes: 32,
+            redirected: false,
+            http_error: true,
+        };
+        let chunk = make_chunk(&page.content, 0, 2000);
+        let output = format_page_output(&page, &chunk, true);
+
+        assert!(output.contains("Status: 404 Not Found"), "{output}");
+        assert!(output.contains("HTTP status is not successful"), "{output}");
+        assert!(output.contains("The page is missing."), "{output}");
     }
 
     #[test]
@@ -888,6 +913,32 @@ mod tests {
 
         assert!(readable.contains("Real Article"), "{readable}");
         assert!(!readable.contains("Support"), "{readable}");
+    }
+
+    #[test]
+    fn extract_readable_html_keeps_full_body_when_no_main_exists() {
+        let html = r#"
+            <html><body>
+                <div class="toc">Table of contents</div>
+                <section id="middle-specs">Middle section that should not become the only returned content.</section>
+                <section id="end">Final section should still be present in fallback body extraction.</section>
+            </body></html>
+        "#;
+
+        let readable = extract_readable_html(html);
+
+        assert!(readable.contains("Table of contents"), "{readable}");
+        assert!(readable.contains("Middle section"), "{readable}");
+        assert!(readable.contains("Final section"), "{readable}");
+    }
+
+    #[test]
+    fn make_chunk_uses_requested_size_per_page() {
+        let content = "a".repeat(25_000);
+        let chunk = make_chunk(&content, 0, 20_000);
+
+        assert_eq!(chunk.content.len(), 20_000);
+        assert_eq!(chunk.next_offset, Some(20_000));
     }
 
     #[test]

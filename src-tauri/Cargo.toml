@@ -28,7 +28,7 @@ russh = { version = "0.60", default-features = false, features = ["flate2", "rin
 russh-sftp = "2.1"
 zeroize = { version = "^1", features = ["derive"] }
 keyring = { version = "^3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
-reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls"] }
+reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "gzip", "brotli", "deflate"] }
 futures = "^0.3"
 html2md = "^0.2"
 parking_lot = "^0.12"
