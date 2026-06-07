@@ -36,6 +36,7 @@
       "icons/128x128@2x.png",
       "icons/icon.png"
     ],
+    "createUpdaterArtifacts": true,
     "windows": {
       "wix": {
         "language": "zh-CN",
@@ -46,6 +47,21 @@
         "installMode": "currentUser",
         "installerIcon": "icons/icon.ico",
         "headerImage": "icons/nsis-header.bmp"
+      }
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "",
+      "license": "",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null,
+      "bundleName": "Marcel SSH"
+    },
+    "linux": {
+      "deb": {
+        "depends": []
       }
     }
   }
