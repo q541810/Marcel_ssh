@@ -109,4 +109,88 @@ mod tests {
         }));
         assert_eq!(text, "hello\nworld");
     }
+
+    #[test]
+    fn request_serializes_correctly() {
+        let req = JsonRpcRequest::new(1, "tools/list", None);
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 1);
+        assert_eq!(json["method"], "tools/list");
+        assert!(json.get("params").is_none());
+    }
+
+    #[test]
+    fn request_serializes_with_params() {
+        let req = JsonRpcRequest::new(2, "tools/call", Some(serde_json::json!({"name": "read"})));
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["params"]["name"], "read");
+    }
+
+    #[test]
+    fn response_deserializes_success() {
+        let resp: JsonRpcResponse = serde_json::from_value(serde_json::json!({
+            "id": 1,
+            "result": { "tools": [] }
+        })).unwrap();
+        assert_eq!(resp.id, Some(1));
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn response_deserializes_error() {
+        let resp: JsonRpcResponse = serde_json::from_value(serde_json::json!({
+            "id": null,
+            "error": { "code": -32600, "message": "Invalid Request" }
+        })).unwrap();
+        assert!(resp.result.is_none());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32600);
+        assert!(err.message.contains("Invalid"));
+    }
+
+    #[test]
+    fn notification_serializes_without_id() {
+        let notif = JsonRpcNotification::new("notifications/initialized", None);
+        let json = serde_json::to_value(&notif).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert!(json.get("id").is_none());
+        assert_eq!(json["method"], "notifications/initialized");
+    }
+
+    #[test]
+    fn tool_info_defaults() {
+        let ti: McpToolInfo = serde_json::from_value(serde_json::json!({
+            "name": "empty"
+        })).unwrap();
+        assert_eq!(ti.name, "empty");
+        assert_eq!(ti.description, "");
+        assert_eq!(ti.input_schema, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn parse_tools_list_empty() {
+        let tools = parse_tools_list(serde_json::json!({ "tools": [] })).unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn flatten_no_content_falls_back_to_string() {
+        let text = flatten_tool_call_result(serde_json::json!({ "status": "ok" }));
+        assert!(text.contains("ok"));
+    }
+
+    #[test]
+    fn flatten_mixed_content_items() {
+        let text = flatten_tool_call_result(serde_json::json!({
+            "content": [
+                { "type": "text", "text": "a" },
+                { "type": "image", "data": "x" },
+                { "type": "text", "text": "b" }
+            ]
+        }));
+        assert!(text.contains("a"));
+        assert!(text.contains("b"));
+    }
 }

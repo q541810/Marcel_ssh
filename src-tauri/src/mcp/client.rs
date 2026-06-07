@@ -110,3 +110,40 @@ fn build_headers(headers: &HashMap<String, String>) -> reqwest::header::HeaderMa
     }
     map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_headers_valid() {
+        let mut h = HashMap::new();
+        h.insert("Authorization".into(), "Bearer token".into());
+        h.insert("X-Custom".into(), "value".into());
+        let headers = build_headers(&h);
+        assert_eq!(headers.get("Authorization").unwrap(), "Bearer token");
+        assert_eq!(headers.get("X-Custom").unwrap(), "value");
+    }
+
+    #[test]
+    fn build_headers_empty() {
+        let headers = build_headers(&HashMap::new());
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn build_headers_skips_invalid_name() {
+        let mut h = HashMap::new();
+        h.insert("Bad Header".into(), "val".into());
+        let headers = build_headers(&h);
+        assert!(headers.get("Bad Header").is_none());
+    }
+
+    #[test]
+    fn build_headers_skips_invalid_value() {
+        let mut h = HashMap::new();
+        h.insert("X-Custom".into(), "invisible \0 char".into());
+        let headers = build_headers(&h);
+        assert!(headers.get("X-Custom").is_none());
+    }
+}

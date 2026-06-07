@@ -79,19 +79,18 @@ export const useMcpStore = create<McpState>((set, get) => ({
       await tauri.mcpToggleServer(id);
       await get().fetchServers();
     } catch (err) {
-      set({ error: getErrorMessage(err) });
       await get().fetchServers();
+      set({ error: getErrorMessage(err) });
     }
   },
 
   refreshTools: async (id) => {
-    set({ error: null });
     try {
       await tauri.mcpRefreshTools(id);
       await get().fetchServers();
     } catch (err) {
-      set({ error: getErrorMessage(err) });
       await get().fetchServers();
+      set({ error: getErrorMessage(err) });
     }
   },
 }));

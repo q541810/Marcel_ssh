@@ -19,7 +19,7 @@ interface ParsedMcpEntry {
   headers: Record<string, string>;
 }
 
-function parseMcpJson(text: string): ParsedMcpEntry | null {
+export function parseMcpJson(text: string): ParsedMcpEntry | null {
   try {
     const obj = JSON.parse(text);
     const servers = obj.mcpServers;
@@ -41,11 +41,11 @@ function parseMcpJson(text: string): ParsedMcpEntry | null {
   }
 }
 
-function headersToText(h: Record<string, string>): string {
+export function headersToText(h: Record<string, string>): string {
   return Object.entries(h).map(([k, v]) => `${k}: ${v}`).join('\n');
 }
 
-function textToHeaders(text: string): Record<string, string> {
+export function textToHeaders(text: string): Record<string, string> {
   const result: Record<string, string> = {};
   for (const line of text.split('\n')) {
     const trimmed = line.trim();
