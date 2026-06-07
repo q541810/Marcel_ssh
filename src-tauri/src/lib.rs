@@ -306,12 +306,17 @@ pub fn run() {
                 let servers = mcp_store.read().await;
                 let enabled: Vec<_> = servers.list().iter().filter(|s| s.enabled).cloned().collect();
                 drop(servers);
+                let mut set = tokio::task::JoinSet::new();
                 for server in enabled {
-                    match mcp_manager.refresh_tools(&server).await {
-                        Ok(tools) => log::info!("MCP [{}] 发现 {} 个工具", server.name, tools.len()),
-                        Err(err) => log::warn!("MCP [{}] 刷新失败: {}", err, server.name),
-                    }
+                    let mgr = mcp_manager.clone();
+                    set.spawn(async move {
+                        match mgr.refresh_tools(&server).await {
+                            Ok(tools) => log::info!("MCP [{}] 发现 {} 个工具", server.name, tools.len()),
+                            Err(err) => log::warn!("MCP [{}] 刷新失败: {}", err, server.name),
+                        }
+                    });
                 }
+                while let Some(_) = set.join_next().await {}
             });
 
             Ok(())

@@ -83,10 +83,19 @@ pub async fn agent_start_task(
         AgentMode::Agent | AgentMode::Auto => {
             let mut registry =
                 ToolRegistry::build_mut_for_mode(&enabled_skills, &experimental_settings);
+            let mut set = tokio::task::JoinSet::new();
             for server in enabled_mcp_servers {
-                match state.mcp_manager.refresh_tools(&server).await {
-                    Ok(tools) => register_mcp_tools(&mut registry, &server, tools),
-                    Err(err) => log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err),
+                let mgr = state.mcp_manager.clone();
+                set.spawn(async move {
+                    let result = mgr.refresh_tools(&server).await;
+                    (server, result)
+                });
+            }
+            while let Some(result) = set.join_next().await {
+                match result {
+                    Ok((server, Ok(tools))) => register_mcp_tools(&mut registry, &server, tools),
+                    Ok((server, Err(err))) => log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err),
+                    Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
                 }
             }
             Arc::new(registry)
