@@ -1,4 +1,6 @@
-![Marcel SSH 标题上图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E6%A0%87%E7%AD%BE%E5%9B%BE.png?raw=true)
+<p align="center">
+  <img src="https://github.com/q541810/Marcel_ssh/blob/main/image/%E6%A0%87%E7%AD%BE%E5%9B%BE.png?raw=true" alt="Marcel SSH" width="520" />
+</p>
 
 <h1 align="center">Marcel SSH</h1>
 
@@ -22,10 +24,6 @@ QQ:1101255501
 （想要体验最新内容请自行拉取仓库后运行dev.cmd或打包成安装包使用，并在有新commit后pull）
 
 ---
-
-## 界面展示
-
-![Marcel SSH 展示图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E5%B1%95%E7%A4%BA%E5%9B%BE.png?raw=true)
 
 ## 核心功能
 
@@ -68,6 +66,12 @@ Agent 会自动规划步骤、执行命令，并在需要你确认时暂停等�
 - **API Key** 存储在系统密钥链中，不会明文保存到配置文件
 - **危险命令** 默认被黑名单拦截（rm -rf /、mkfs、dd、shutdown、reboot 等），名单可配置
 - **下载路径** 被限制在沙箱目录内，系统路径不可写入
+
+---
+
+## 界面展示
+
+![Marcel SSH 展示图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E5%B1%95%E7%A4%BA%E5%9B%BE.png?raw=true)
 
 ---
 
