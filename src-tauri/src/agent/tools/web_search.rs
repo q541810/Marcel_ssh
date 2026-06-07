@@ -123,6 +123,7 @@ impl AgentTool for WebSearchTool {
         let mut total_results = 0;
         let mut success_count = 0;
         let mut fail_count = 0;
+        let mut metadata_results = Vec::new();
 
         for (query, result) in queries.iter().zip(results.iter()) {
             match result {
@@ -130,22 +131,17 @@ impl AgentTool for WebSearchTool {
                     total_results += items.len();
                     if !items.is_empty() {
                         success_count += 1;
-                        if queries.len() > 1 {
-                            sections.push(format_search_section(query, items));
-                        } else {
-                            sections.push(format_results(query, items));
-                        }
+                        sections.push(format_results_for_query(query, items));
+                        metadata_results.extend(search_result_metadata(query, items));
                     } else {
                         fail_count += 1;
-                        if queries.len() > 1 {
-                            sections.push(format!("Query: \"{}\"\nNo results found\n", query));
-                        }
+                        sections.push(format_empty_query_section(query));
                     }
                 }
                 Err(e) => {
                     fail_count += 1;
                     if queries.len() > 1 {
-                        sections.push(format!("Query: \"{}\"\nError: {}\n", query, e));
+                        sections.push(format_error_query_section(query, e));
                     } else {
                         return Ok(ToolOutput::fail(
                             format!("web_search '{}'", query),
@@ -182,7 +178,8 @@ impl AgentTool for WebSearchTool {
             "queries": queries.len(),
             "success": success_count,
             "failed": fail_count,
-            "total_results": total_results
+            "total_results": total_results,
+            "results": metadata_results
         })))
     }
 }
@@ -193,52 +190,50 @@ struct SearchResult {
     snippet: String,
 }
 
-fn format_search_section(query: &str, results: &[SearchResult]) -> String {
-    let mut out = format!(
-        "=== Search: \"{}\" ({} results) ===\n\n",
-        query,
-        results.len()
-    );
+fn format_results_for_query(query: &str, results: &[SearchResult]) -> String {
+    let mut out = format!("## Query: {}\n\n", query);
 
     for (i, r) in results.iter().enumerate() {
         out.push_str(&format!(
-            "  {}. {}\n     {}\n     URL: {}\n\n",
+            "{}. **{}**\n   URL: {}\n   Snippet: {}\n\n",
             i + 1,
             r.title,
+            r.url,
             if r.snippet.is_empty() {
                 "(no snippet)".to_string()
             } else {
                 r.snippet.clone()
-            },
-            r.url,
+            }
         ));
     }
 
     out
+}
+
+fn format_empty_query_section(query: &str) -> String {
+    format!("## Query: {}\n\nNo results found\n", query)
+}
+
+fn format_error_query_section(query: &str, error: &AppError) -> String {
+    format!("## Query: {}\n\nError: {}\n", query, error)
+}
+
+fn search_result_metadata(query: &str, results: &[SearchResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .map(|r| {
+            json!({
+                "query": query,
+                "title": &r.title,
+                "url": &r.url,
+                "snippet": &r.snippet
+            })
+        })
+        .collect()
 }
 
 const SEARCH_TIP: &str =
     "\nTip: Use the `http_get` tool with any URL above to read the full page content.";
-
-fn format_results(query: &str, results: &[SearchResult]) -> String {
-    let mut out = format!("Search results for: \"{}\"\n{}\n\n", query, "=".repeat(50));
-
-    for (i, r) in results.iter().enumerate() {
-        out.push_str(&format!(
-            "{}. {}\n   {}\n   URL: {}\n\n",
-            i + 1,
-            r.title,
-            if r.snippet.is_empty() {
-                "(no snippet)".to_string()
-            } else {
-                r.snippet.clone()
-            },
-            r.url,
-        ));
-    }
-
-    out
-}
 
 async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult>, AppError> {
     let client = Client::builder()
@@ -462,5 +457,55 @@ mod tests {
     fn extract_href_finds_link() {
         let tag = r#"<a href="https://example.com" class="foo">"#;
         assert_eq!(extract_href(tag), Some("https://example.com".to_string()));
+    }
+
+    #[test]
+    fn format_results_for_query_groups_with_markdown_heading() {
+        let results = vec![SearchResult {
+            title: "Async Rust Guide".to_string(),
+            url: "https://example.com/rust".to_string(),
+            snippet: "Learn async Rust.".to_string(),
+        }];
+
+        let output = format_results_for_query("Rust async", &results);
+
+        assert!(output.contains("## Query: Rust async"), "{output}");
+        assert!(output.contains("1. **Async Rust Guide**"), "{output}");
+        assert!(output.contains("URL: https://example.com/rust"), "{output}");
+        assert!(output.contains("Snippet: Learn async Rust."), "{output}");
+    }
+
+    #[test]
+    fn search_result_metadata_includes_query_for_each_result() {
+        let results = vec![SearchResult {
+            title: "Tokio Tutorial".to_string(),
+            url: "https://tokio.rs".to_string(),
+            snippet: "Runtime tutorial.".to_string(),
+        }];
+
+        let metadata = search_result_metadata("Rust runtime", &results);
+
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0]["query"], "Rust runtime");
+        assert_eq!(metadata[0]["title"], "Tokio Tutorial");
+        assert_eq!(metadata[0]["url"], "https://tokio.rs");
+        assert_eq!(metadata[0]["snippet"], "Runtime tutorial.");
+    }
+
+    #[test]
+    fn empty_query_section_is_grouped() {
+        let output = format_empty_query_section("missing topic");
+
+        assert!(output.contains("## Query: missing topic"), "{output}");
+        assert!(output.contains("No results found"), "{output}");
+    }
+
+    #[test]
+    fn error_query_section_is_grouped() {
+        let error = AppError::Agent("network failed".to_string());
+        let output = format_error_query_section("bad query", &error);
+
+        assert!(output.contains("## Query: bad query"), "{output}");
+        assert!(output.contains("network failed"), "{output}");
     }
 }
