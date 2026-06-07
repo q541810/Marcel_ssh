@@ -17,4 +17,11 @@ pub enum StreamEvent {
     Done,
     /// Stream terminated with an error.
     Error { message: String },
+    /// LLM call is being retried after a transient error.
+    Retrying {
+        attempt: u32,
+        max_attempts: u32,
+        delay_secs: f32,
+        last_error: String,
+    },
 }

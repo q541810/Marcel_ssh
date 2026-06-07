@@ -153,6 +153,8 @@ export interface AgentMessage {
   isThinking?: boolean;
   /** Tool call is currently executing, show loading spinner */
   isExecuting?: boolean;
+  /** Whether this system message is a retrying indicator (auto-removed on success) */
+  isRetrying?: boolean;
   /** Reasoning/thinking content from the model (DeepSeek thinking mode). Passed back to API. */
   reasoningContent?: string;
 }
@@ -187,6 +189,9 @@ export interface LlmConfig {
   baseUrl?: string | null;
   temperature: number;
   allowInvalidCerts: boolean;
+  maxRetries: number;
+  retryDelaySecs: number;
+  retryHttpStatuses: string;
 }
 
 export interface TerminalColors {
@@ -250,6 +255,7 @@ export type LlmStreamEvent =
   | { type: 'toolCallDelta'; id: string; argumentsDelta: string }
   | { type: 'done' }
   | { type: 'error'; message: string }
+  | { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string }
   // Tool result — emitted as a separate event on the same channel
   | { type: 'toolResult' } & ToolResultPayload
   // Approval request — emitted when user confirmation is needed

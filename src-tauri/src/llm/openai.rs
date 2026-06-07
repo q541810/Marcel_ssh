@@ -58,13 +58,55 @@ impl OpenAiProvider {
         Ok(headers)
     }
 
-    /// Stream a chat completion. Decoded SSE events are pushed to `event_tx`.
+    /// Stream a chat completion with automatic retry on transient errors.
+    /// Decoded SSE events are pushed to `event_tx`.
     /// Returns the assembled final assistant message after the stream completes.
     pub async fn chat_stream(
         &self,
         messages: &[LlmMessage],
         tools: &[ToolDefinition],
         event_tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Result<LlmMessage, AppError> {
+        let max_retries = self.config.max_retries;
+        let retry_conditions = parse_retry_conditions(&self.config.retry_http_statuses);
+        let delay = Duration::from_secs_f32(self.config.retry_delay_secs);
+
+        let mut attempt: u32 = 0;
+        loop {
+            attempt += 1;
+            match self.chat_stream_inner(messages, tools, &event_tx).await {
+                Ok(msg) => return Ok(msg),
+                Err(e) => {
+                    let max_attempts = max_retries + 1;
+                    if attempt >= max_attempts || !is_retryable(&e, &retry_conditions) {
+                        return Err(e);
+                    }
+                    let err_msg = format!("{}", e);
+                    log::warn!(
+                        "LLM 请求失败 (尝试 {}/{}): {}，{}s 后重试",
+                        attempt,
+                        max_attempts,
+                        err_msg,
+                        delay.as_secs_f32(),
+                    );
+                    let _ = event_tx.send(StreamEvent::Retrying {
+                        attempt,
+                        max_attempts,
+                        delay_secs: delay.as_secs_f32(),
+                        last_error: err_msg,
+                    });
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+
+    /// Inner implementation: single HTTP request + SSE parsing, no retry.
+    async fn chat_stream_inner(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[ToolDefinition],
+        event_tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
 
@@ -323,7 +365,264 @@ fn format_reqwest_error(err: &reqwest::Error) -> String {
     parts.join(" | ")
 }
 
-/* ----------------- Internal request/response types ----------------- */
+/// A single entry in the retry conditions list: either a single status code or a range.
+#[derive(Debug, Clone)]
+enum RetryCondition {
+    Code(u16),
+    Range(u16, u16),
+}
+
+/// Parse a comma-separated list of HTTP status codes/ranges.
+/// Examples: "429" → [Code(429)], "500-599" → [Range(500,599)], "408, 429, 500-599" → mixed.
+/// Whitespace is ignored. Invalid entries are silently skipped.
+fn parse_retry_conditions(input: &str) -> Vec<RetryCondition> {
+    let mut conditions = Vec::new();
+    for entry in input.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if let Some((lo, hi)) = entry.split_once('-') {
+            if let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u16>(), hi.trim().parse::<u16>()) {
+                conditions.push(RetryCondition::Range(lo, hi));
+            }
+        } else if let Ok(code) = entry.parse::<u16>() {
+            conditions.push(RetryCondition::Code(code));
+        }
+    }
+    conditions
+}
+
+/// Validate the retry conditions string. Returns an error message on invalid format.
+pub(crate) fn validate_retry_conditions(input: &str) -> Result<(), String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    for entry in trimmed.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if entry.contains('-') {
+            let parts: Vec<&str> = entry.splitn(2, '-').collect();
+            if parts.len() != 2 {
+                return Err(format!("无效范围: \"{}\"（使用格式 lo-hi）", entry));
+            }
+            let lo: u16 = parts[0].trim().parse().map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
+            let hi: u16 = parts[1].trim().parse().map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
+            if lo < 100 || lo > 599 || hi < 100 || hi > 599 {
+                return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
+            }
+            if hi < lo {
+                return Err(format!("范围需从小到大: \"{}\"", entry));
+            }
+        } else {
+            let code: u16 = entry.parse().map_err(|_| format!("无效状态码: \"{}\"", entry))?;
+            if code < 100 || code > 599 {
+                return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check if a given HTTP status code matches any retry condition.
+fn status_matches_conditions(status: u16, conditions: &[RetryCondition]) -> bool {
+    conditions.iter().any(|c| match c {
+        RetryCondition::Code(c) => status == *c,
+        RetryCondition::Range(lo, hi) => status >= *lo && status <= *hi,
+    })
+}
+
+/// Determine whether an LLM error is retryable based on the configured conditions.
+/// - Network/timeout errors: always retryable.
+/// - HTTP errors: retryable if the status code matches the configured conditions.
+/// - Other errors (parse failures, etc.): not retryable.
+fn is_retryable(err: &AppError, conditions: &[RetryCondition]) -> bool {
+    match err {
+        AppError::Llm(msg) => {
+            // Extract HTTP status from error messages like "LLM 返回错误 429: ..."
+            // or "LLM HTTP 429: ..."
+            if let Some(status) = extract_http_status(msg) {
+                status_matches_conditions(status, conditions)
+            } else {
+                // Connection/timeout errors contain keywords like "超时" or "连接失败"
+                msg.contains("超时") || msg.contains("连接失败") || msg.contains("网络不可达")
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Try to extract an HTTP status code from an error message.
+/// Looks for patterns like "429" or "500" following "error" or "HTTP".
+fn extract_http_status(msg: &str) -> Option<u16> {
+    // Pattern: "LLM 返回错误 429:" or "LLM HTTP 429:"
+    for prefix in &["错误 ", "HTTP ", "错误"] {
+        if let Some(pos) = msg.find(prefix) {
+            let after = &msg[pos + prefix.len()..];
+            let code_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let Ok(code) = code_str.parse::<u16>() {
+                if (100..=599).contains(&code) {
+                    return Some(code);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    #[test]
+    fn parse_single_code() {
+        let conditions = parse_retry_conditions("429");
+        assert!(status_matches_conditions(429, &conditions));
+        assert!(!status_matches_conditions(430, &conditions));
+    }
+
+    #[test]
+    fn parse_range() {
+        let conditions = parse_retry_conditions("500-599");
+        assert!(status_matches_conditions(500, &conditions));
+        assert!(status_matches_conditions(550, &conditions));
+        assert!(status_matches_conditions(599, &conditions));
+        assert!(!status_matches_conditions(499, &conditions));
+        assert!(!status_matches_conditions(600, &conditions));
+    }
+
+    #[test]
+    fn parse_mixed() {
+        let conditions = parse_retry_conditions("408, 429, 500-599");
+        assert!(status_matches_conditions(408, &conditions));
+        assert!(status_matches_conditions(429, &conditions));
+        assert!(status_matches_conditions(502, &conditions));
+        assert!(!status_matches_conditions(400, &conditions));
+        assert!(!status_matches_conditions(401, &conditions));
+    }
+
+    #[test]
+    fn parse_empty_string() {
+        let conditions = parse_retry_conditions("");
+        assert!(conditions.is_empty());
+    }
+
+    #[test]
+    fn parse_whitespace_only() {
+        let conditions = parse_retry_conditions("  ,  ,  ");
+        assert!(conditions.is_empty());
+    }
+
+    #[test]
+    fn parse_invalid_entries_ignored() {
+        let conditions = parse_retry_conditions("429, abc, 500-599");
+        assert_eq!(conditions.len(), 2);
+        assert!(status_matches_conditions(429, &conditions));
+        assert!(status_matches_conditions(500, &conditions));
+    }
+
+    #[test]
+    fn is_retryable_http_status_match() {
+        let conditions = parse_retry_conditions("429, 500-599");
+        let err = AppError::Llm("LLM 返回错误 429: rate limited".into());
+        assert!(is_retryable(&err, &conditions));
+    }
+
+    #[test]
+    fn is_retryable_http_status_no_match() {
+        let conditions = parse_retry_conditions("429, 500-599");
+        let err = AppError::Llm("LLM 返回错误 401: unauthorized".into());
+        assert!(!is_retryable(&err, &conditions));
+    }
+
+    #[test]
+    fn is_retryable_timeout_always() {
+        let conditions = parse_retry_conditions("");
+        let err = AppError::Llm("LLM 请求失败: [超时]".into());
+        assert!(is_retryable(&err, &conditions));
+    }
+
+    #[test]
+    fn is_retryable_connection_failed() {
+        let conditions = parse_retry_conditions("");
+        let err = AppError::Llm("LLM 请求失败: [连接失败]".into());
+        assert!(is_retryable(&err, &conditions));
+    }
+
+    #[test]
+    fn extract_status_from_various_formats() {
+        assert_eq!(extract_http_status("LLM 返回错误 429: rate limit"), Some(429));
+        assert_eq!(extract_http_status("LLM HTTP 502: bad gateway"), Some(502));
+        assert_eq!(extract_http_status("some error without status"), None);
+    }
+
+    // ── validate_retry_conditions tests ──
+
+    #[test]
+    fn validate_empty_ok() {
+        assert!(validate_retry_conditions("").is_ok());
+        assert!(validate_retry_conditions("   ").is_ok());
+    }
+
+    #[test]
+    fn validate_single_code() {
+        assert!(validate_retry_conditions("429").is_ok());
+        assert!(validate_retry_conditions("500").is_ok());
+    }
+
+    #[test]
+    fn validate_range() {
+        assert!(validate_retry_conditions("500-599").is_ok());
+    }
+
+    #[test]
+    fn validate_mixed() {
+        assert!(validate_retry_conditions("408, 429, 500-599").is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_non_numeric() {
+        assert!(validate_retry_conditions("abc").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_code_below_100() {
+        assert!(validate_retry_conditions("99").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_code_above_599() {
+        assert!(validate_retry_conditions("600").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_hi_less_than_lo() {
+        assert!(validate_retry_conditions("500-400").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_range_hi_above_599() {
+        assert!(validate_retry_conditions("500-600").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_range_lo_below_100() {
+        assert!(validate_retry_conditions("99-500").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_malformed_range() {
+        assert!(validate_retry_conditions("500--599").is_err());
+    }
+
+    #[test]
+    fn validate_mixed_valid_and_invalid_rejects() {
+        assert!(validate_retry_conditions("429, abc").is_err());
+    }
+}
 
 #[derive(Default)]
 struct PartialToolCall {

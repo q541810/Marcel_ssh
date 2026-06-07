@@ -4,6 +4,7 @@ import { AgentPolicySection } from './AgentPolicySection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
 import { ModelServiceSection } from './ModelServiceSection';
+import { ModelRetrySection } from './ModelRetrySection';
 import { NotificationSection } from './NotificationSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
@@ -52,6 +53,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
         <div hidden={!visibleSections.includes('settings-appearance')}><TerminalAppearanceSection /></div>
         <div hidden={!visibleSections.includes('settings-display')}><ConversationDisplaySection /></div>
         <div hidden={!visibleSections.includes('settings-llm')}><ModelServiceSection /></div>
+        <div hidden={!visibleSections.includes('settings-llm-retry')}><ModelRetrySection /></div>
         <div hidden={!visibleSections.includes('settings-command-policy')}><AgentPolicySection /></div>
         <div hidden={!visibleSections.includes('settings-notification')}><NotificationSection /></div>
         <div hidden={!visibleSections.includes('settings-experimental')}><ToolCapabilitiesSection /></div>

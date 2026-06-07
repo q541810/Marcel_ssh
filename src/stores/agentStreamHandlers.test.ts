@@ -4,6 +4,7 @@ import {
   handleToolResult,
   handleDone,
   handleError,
+  handleRetrying,
   getStreamState,
   cleanupStreamState,
   setStreamState,
@@ -237,6 +238,99 @@ describe('agentStreamHandlers', () => {
       expect(handler._taskStatuses[taskId]).toBe('failed');
       const msgs = handler._messages[convId];
       expect(msgs.some((m) => m.role === 'system' && m.content.includes('something broke'))).toBe(true);
+    });
+
+    it('removes retrying messages when error arrives', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      // First, add a retrying message
+      handleRetrying(handler, taskId, convId, {
+        type: 'retrying',
+        attempt: 2,
+        maxAttempts: 4,
+        delaySecs: 5,
+        lastError: 'timeout',
+      });
+      expect(handler._messages[convId].some((m) => m.isRetrying)).toBe(true);
+
+      // Then handleError — retrying messages should be cleared
+      handleError(handler, taskId, convId, 'loading-err', {
+        type: 'error',
+        message: 'final error',
+      });
+      expect(handler._messages[convId].some((m) => m.isRetrying)).toBe(false);
+    });
+  });
+
+  describe('handleRetrying', () => {
+    it('adds a system retrying message and clears previous ones', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      handleRetrying(handler, taskId, convId, {
+        type: 'retrying',
+        attempt: 2,
+        maxAttempts: 4,
+        delaySecs: 5,
+        lastError: 'LLM 返回错误 429: rate limit',
+      });
+
+      const msgs = handler._messages[convId];
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].role).toBe('system');
+      expect(msgs[0].isRetrying).toBe(true);
+      expect(msgs[0].content).toContain('正在重试 (2/4)');
+      expect(msgs[0].content).toContain('等待 5s');
+    });
+
+    it('does not alter other messages in the conversation', () => {
+      const handler = mockHandler({
+        [convId]: [
+          {
+            id: 'user-1',
+            role: 'user',
+            content: 'hello',
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      });
+
+      handleRetrying(handler, taskId, convId, {
+        type: 'retrying',
+        attempt: 1,
+        maxAttempts: 2,
+        delaySecs: 3,
+        lastError: 'timeout',
+      });
+
+      const msgs = handler._messages[convId];
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0].role).toBe('user');
+      expect(msgs[0].content).toBe('hello');
+      expect(msgs[1].role).toBe('system');
+      expect(msgs[1].isRetrying).toBe(true);
+    });
+
+    it('deduplicates: only keeps one retrying message', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      handleRetrying(handler, taskId, convId, {
+        type: 'retrying',
+        attempt: 1,
+        maxAttempts: 3,
+        delaySecs: 5,
+        lastError: 'timeout',
+      });
+      handleRetrying(handler, taskId, convId, {
+        type: 'retrying',
+        attempt: 2,
+        maxAttempts: 3,
+        delaySecs: 5,
+        lastError: 'LLM 返回错误 502: bad gateway',
+      });
+
+      const msgs = handler._messages[convId];
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].content).toContain('正在重试 (2/3)');
     });
   });
 });

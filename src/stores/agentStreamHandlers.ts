@@ -398,6 +398,7 @@ export function handleError(
     const newMsgs = convMsgs
       .filter((m) => m.id !== loadingAssistantId)
       .filter((m) => !(m.role === 'tool' && m.isExecuting))
+      .filter((m) => !(m.role === 'system' && m.isRetrying))
       .map((m) =>
         m.role === 'assistant' && (m.isThinking || m.isLoading)
           ? { ...m, isThinking: false, isLoading: false }
@@ -416,6 +417,28 @@ export function handleError(
 
   handler.clearActiveTaskIf(taskId);
   handler.setPendingApproval(null);
+}
+
+export function handleRetrying(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string },
+) {
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const newMsgs = convMsgs
+      .filter((m) => !(m.role === 'system' && m.isRetrying));
+    return [
+      ...newMsgs,
+      {
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: `正在重试 (${ev.attempt}/${ev.maxAttempts})，等待 ${ev.delaySecs}s...`,
+        timestamp: new Date().toISOString(),
+        isRetrying: true,
+      },
+    ];
+  });
 }
 
 
