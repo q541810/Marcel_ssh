@@ -1,5 +1,8 @@
-# Marcel SSH (玛瑟尔 SSH)   
-### -面向小白的、深度集成ai的 ssh终端工具
+<h1 align="center">Marcel SSH</h1>
+
+<p align="center">
+  <strong>面向小白的、深度集成ai的AI SSH终端工具</strong>
+</p>
 
 ---
 
