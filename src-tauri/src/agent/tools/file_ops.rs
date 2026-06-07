@@ -1,7 +1,6 @@
 //! File-system tools (read / write / edit / list).
 //!
 //! Uses the SFTP subsystem protocol for binary-safe file operations.
-//! Falls back to base64-over-exec if SFTP is unavailable.
 
 use async_trait::async_trait;
 use russh_sftp::protocol::OpenFlags;
@@ -15,6 +14,47 @@ use crate::error::AppError;
 const MAX_READ_BYTES: usize = 16_000;
 const MAX_LIST_BYTES: usize = 8_000;
 const MAX_FILE_WRITE_BYTES: usize = 1_000_000;
+const DEFAULT_READ_MAX_LINES: usize = 200;
+const MAX_READ_MAX_LINES: usize = 2_000;
+const DEFAULT_LIST_LIMIT: usize = 200;
+const MAX_LIST_LIMIT: usize = 2_000;
+
+struct ReadView {
+    body: String,
+    total_lines: usize,
+    start_line: usize,
+    end_line: usize,
+    returned_lines: usize,
+    next_line: Option<usize>,
+    truncated: bool,
+    lossy_utf8: bool,
+}
+
+#[derive(Clone)]
+struct DirectoryEntryView {
+    name: String,
+    kind: String,
+    size: u64,
+    permissions: u32,
+    permissions_text: String,
+}
+
+struct DirectoryView {
+    body: String,
+    total_entries: usize,
+    returned_entries: usize,
+    offset: usize,
+    limit: usize,
+    next_offset: Option<usize>,
+    entries: Vec<DirectoryEntryView>,
+}
+
+#[derive(Clone, Copy)]
+enum DirectorySortBy {
+    Name,
+    Size,
+    Type,
+}
 
 // ────────────────────────────── ReadFileTool ──────────────────────────────
 
@@ -38,16 +78,19 @@ impl AgentTool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file from the remote server. Binary-safe (transferred via base64). \
-         Output is returned as UTF-8; non-UTF-8 bytes are replaced. Long files \
-         are truncated."
+        "Read a text file from the remote server with line numbers and pagination. \
+         Use start_line and max_lines to continue through long files. Non-UTF-8 \
+         bytes are replaced and reported in metadata."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute path to the file" }
+                "path": { "type": "string", "description": "Absolute path to the file" },
+                "start_line": { "type": "integer", "description": "1-based first line to return (default: 1)", "default": 1 },
+                "max_lines": { "type": "integer", "description": "Maximum lines to return (default: 200, max: 2000)", "default": 200 },
+                "show_line_numbers": { "type": "boolean", "description": "Prefix each returned line with its line number (default: true)", "default": true }
             },
             "required": ["path"]
         })
@@ -69,6 +112,20 @@ impl AgentTool for ReadFileTool {
         if path.is_empty() {
             return Ok(ToolOutput::fail("read_file", "empty path"));
         }
+        let start_line = params
+            .get("start_line")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1) as usize;
+        let max_lines = params
+            .get("max_lines")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(DEFAULT_READ_MAX_LINES as u64)
+            .clamp(1, MAX_READ_MAX_LINES as u64) as usize;
+        let show_line_numbers = params
+            .get("show_line_numbers")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
             Ok(sftp) => match sftp.read(path).await {
@@ -89,10 +146,25 @@ impl AgentTool for ReadFileTool {
         };
 
         let n = bytes.len();
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        let body = truncate_output(text, MAX_READ_BYTES);
-        Ok(ToolOutput::ok(format!("read {} ({} bytes)", path, n), body)
-            .with_metadata(json!({ "path": path, "bytes": n })))
+        let read_view = build_read_view(&bytes, start_line, max_lines, show_line_numbers);
+        let summary = format!(
+            "read {} (lines {}-{} of {}, {} bytes)",
+            path, read_view.start_line, read_view.end_line, read_view.total_lines, n
+        );
+        Ok(
+            ToolOutput::ok(summary, read_view.body).with_metadata(json!({
+                "path": path,
+                "bytes": n,
+                "total_lines": read_view.total_lines,
+                "start_line": read_view.start_line,
+                "end_line": read_view.end_line,
+                "returned_lines": read_view.returned_lines,
+                "next_line": read_view.next_line,
+                "truncated": read_view.truncated,
+                "lossy_utf8": read_view.lossy_utf8,
+                "show_line_numbers": show_line_numbers
+            })),
+        )
     }
 }
 
@@ -433,14 +505,18 @@ impl AgentTool for ListDirectoryTool {
     }
 
     fn description(&self) -> &str {
-        "List the contents of a directory on the remote server (long format, no color)."
+        "List a remote directory with pagination, sorting, and structured metadata. \
+         Defaults to the current directory and returns directories first by name."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute path to the directory (default: '.')" }
+                "path": { "type": "string", "description": "Directory path; absolute paths are preferred, default: '.'", "default": "." },
+                "offset": { "type": "integer", "description": "Number of sorted entries to skip (default: 0)", "default": 0 },
+                "limit": { "type": "integer", "description": "Maximum entries to return (default: 200, max: 2000)", "default": 200 },
+                "sort_by": { "type": "string", "enum": ["name", "size", "type"], "description": "Sort entries by name, size, or type (default: name)", "default": "name" }
             },
             "required": []
         })
@@ -456,11 +532,17 @@ impl AgentTool for ListDirectoryTool {
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
         let path = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+        let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(DEFAULT_LIST_LIMIT as u64)
+            .clamp(1, MAX_LIST_LIMIT as u64) as usize;
+        let sort_by = parse_directory_sort_by(params.get("sort_by").and_then(|v| v.as_str()));
 
         match ctx.ssh.open_sftp(&ctx.session_id).await {
             Ok(sftp) => {
-                let mut output = String::new();
-                let mut entries = 0;
+                let mut entries = Vec::new();
 
                 match sftp.read_dir(path).await {
                     Ok(mut dir) => {
@@ -472,20 +554,20 @@ impl AgentTool for ListDirectoryTool {
                             let is_dir = metadata.is_dir();
                             let is_link = metadata.is_symlink();
 
-                            let type_char = if is_dir {
-                                'd'
+                            let kind = if is_dir {
+                                "directory"
                             } else if is_link {
-                                'l'
+                                "symlink"
                             } else {
-                                '-'
+                                "file"
                             };
-                            let perms_str = format_permissions(permissions);
-
-                            output.push_str(&format!(
-                                "{} {} {:>8} {}\n",
-                                type_char, perms_str, size, name
-                            ));
-                            entries += 1;
+                            entries.push(DirectoryEntryView {
+                                name,
+                                kind: kind.to_string(),
+                                size,
+                                permissions,
+                                permissions_text: format_permissions(permissions),
+                            });
                         }
                     }
                     Err(e) => {
@@ -496,11 +578,23 @@ impl AgentTool for ListDirectoryTool {
                     }
                 }
 
-                let body = truncate_output(output, MAX_LIST_BYTES);
-                Ok(
-                    ToolOutput::ok(format!("list {} ({} entries)", path, entries), body)
-                        .with_metadata(json!({ "path": path, "entries": entries })),
+                let view = build_directory_view(entries, offset, limit, sort_by);
+                Ok(ToolOutput::ok(
+                    format!(
+                        "list {} ({} of {} entries)",
+                        path, view.returned_entries, view.total_entries
+                    ),
+                    view.body,
                 )
+                .with_metadata(json!({
+                    "path": path,
+                    "total_entries": view.total_entries,
+                    "returned_entries": view.returned_entries,
+                    "offset": view.offset,
+                    "limit": view.limit,
+                    "next_offset": view.next_offset,
+                    "entries": directory_entries_metadata(&view.entries)
+                })))
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("list {}", path),
@@ -511,15 +605,6 @@ impl AgentTool for ListDirectoryTool {
 }
 
 fn format_permissions(mode: u32) -> String {
-    let is_dir = (mode & 0o170000) == 0o040000;
-    let is_link = (mode & 0o170000) == 0o120000;
-    let type_char = if is_dir {
-        'd'
-    } else if is_link {
-        'l'
-    } else {
-        '-'
-    };
     let perms = [
         if mode & 0o400 != 0 { 'r' } else { '-' },
         if mode & 0o200 != 0 { 'w' } else { '-' },
@@ -531,10 +616,159 @@ fn format_permissions(mode: u32) -> String {
         if mode & 0o002 != 0 { 'w' } else { '-' },
         if mode & 0o001 != 0 { 'x' } else { '-' },
     ];
-    let mut result = String::with_capacity(10);
-    result.push(type_char);
+    let mut result = String::with_capacity(9);
     result.extend(perms.iter());
     result
+}
+
+fn build_read_view(
+    bytes: &[u8],
+    start_line: usize,
+    max_lines: usize,
+    show_line_numbers: bool,
+) -> ReadView {
+    let lossy_utf8 = std::str::from_utf8(bytes).is_err();
+    let text = String::from_utf8_lossy(bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let total_lines = lines.len();
+
+    let start_index = start_line.saturating_sub(1).min(total_lines);
+    let end_index = start_index.saturating_add(max_lines).min(total_lines);
+    let selected = &lines[start_index..end_index];
+
+    let mut body = String::new();
+    if lossy_utf8 {
+        body.push_str("[warning: file contains non-UTF-8 bytes; invalid bytes were replaced]\n\n");
+    }
+
+    for (i, line) in selected.iter().enumerate() {
+        let line_no = start_index + i + 1;
+        if show_line_numbers {
+            body.push_str(&format!("{:>6}: {}\n", line_no, line));
+        } else {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+
+    let returned_lines = selected.len();
+    let next_line = (end_index < total_lines).then_some(end_index + 1);
+    let mut body = truncate_output(body, MAX_READ_BYTES);
+    let truncated = next_line.is_some() || body.contains("[truncated to ");
+
+    if let Some(next) = next_line {
+        body.push_str(&format!(
+            "\n[next: call read_file with start_line={} to continue]",
+            next
+        ));
+    }
+
+    ReadView {
+        body,
+        total_lines,
+        start_line,
+        end_line: end_index,
+        returned_lines,
+        next_line,
+        truncated,
+        lossy_utf8,
+    }
+}
+
+fn parse_directory_sort_by(sort_by: Option<&str>) -> DirectorySortBy {
+    match sort_by
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("size") => DirectorySortBy::Size,
+        Some("type") => DirectorySortBy::Type,
+        _ => DirectorySortBy::Name,
+    }
+}
+
+fn build_directory_view(
+    mut entries: Vec<DirectoryEntryView>,
+    offset: usize,
+    limit: usize,
+    sort_by: DirectorySortBy,
+) -> DirectoryView {
+    entries.sort_by(|a, b| match sort_by {
+        DirectorySortBy::Name => directory_kind_rank(&a.kind)
+            .cmp(&directory_kind_rank(&b.kind))
+            .then_with(|| {
+                a.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase())
+            }),
+        DirectorySortBy::Size => b.size.cmp(&a.size).then_with(|| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        }),
+        DirectorySortBy::Type => directory_kind_rank(&a.kind)
+            .cmp(&directory_kind_rank(&b.kind))
+            .then_with(|| {
+                a.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase())
+            }),
+    });
+
+    let total_entries = entries.len();
+    let start = offset.min(total_entries);
+    let end = start.saturating_add(limit).min(total_entries);
+    let page_entries = entries[start..end].to_vec();
+    let next_offset = (end < total_entries).then_some(end);
+
+    let mut body = String::new();
+    body.push_str("TYPE       PERMISSIONS     SIZE NAME\n");
+    for entry in &page_entries {
+        body.push_str(&format!(
+            "{:<10} {} {:>8} {}\n",
+            entry.kind, entry.permissions_text, entry.size, entry.name
+        ));
+    }
+    if let Some(next) = next_offset {
+        body.push_str(&format!(
+            "\n[next: call list_directory with offset={} to continue]",
+            next
+        ));
+    }
+
+    DirectoryView {
+        body: truncate_output(body, MAX_LIST_BYTES),
+        total_entries,
+        returned_entries: page_entries.len(),
+        offset: start,
+        limit,
+        next_offset,
+        entries: page_entries,
+    }
+}
+
+fn directory_kind_rank(kind: &str) -> u8 {
+    match kind {
+        "directory" => 0,
+        "file" => 1,
+        "symlink" => 2,
+        _ => 3,
+    }
+}
+
+fn directory_entries_metadata(entries: &[DirectoryEntryView]) -> Vec<serde_json::Value> {
+    entries
+        .iter()
+        .map(|entry| {
+            json!({
+                "name": &entry.name,
+                "kind": &entry.kind,
+                "size": entry.size,
+                "permissions": entry.permissions,
+                "permissions_text": &entry.permissions_text
+            })
+        })
+        .collect()
 }
 
 // ────────────────────────────── tests ──────────────────────────────
@@ -551,5 +785,85 @@ mod tests {
         let w = base64::cmd_decode_to_file("'/tmp/x'", "AAAA");
         assert!(w.contains("MARCEL_B64_EOF"));
         assert!(w.contains("AAAA"));
+    }
+
+    #[test]
+    fn build_read_view_adds_line_numbers_and_next_hint() {
+        let bytes = b"one\ntwo\nthree\nfour\n";
+        let view = build_read_view(bytes, 2, 2, true);
+
+        assert_eq!(view.total_lines, 4);
+        assert_eq!(view.start_line, 2);
+        assert_eq!(view.end_line, 3);
+        assert_eq!(view.returned_lines, 2);
+        assert_eq!(view.next_line, Some(4));
+        assert!(view.truncated);
+        assert!(view.body.contains("     2: two"), "{}", view.body);
+        assert!(view.body.contains("     3: three"), "{}", view.body);
+        assert!(view.body.contains("start_line=4"), "{}", view.body);
+    }
+
+    #[test]
+    fn build_read_view_reports_lossy_utf8() {
+        let bytes = [0xff, b'\n', b'o', b'k'];
+        let view = build_read_view(&bytes, 1, 10, true);
+
+        assert!(view.lossy_utf8);
+        assert!(view.body.contains("non-UTF-8"), "{}", view.body);
+    }
+
+    #[test]
+    fn build_directory_view_sorts_directories_first_and_paginates() {
+        let entries = vec![
+            DirectoryEntryView {
+                name: "z.txt".to_string(),
+                kind: "file".to_string(),
+                size: 10,
+                permissions: 0o100644,
+                permissions_text: format_permissions(0o100644),
+            },
+            DirectoryEntryView {
+                name: "app".to_string(),
+                kind: "directory".to_string(),
+                size: 0,
+                permissions: 0o040755,
+                permissions_text: format_permissions(0o040755),
+            },
+            DirectoryEntryView {
+                name: "a.txt".to_string(),
+                kind: "file".to_string(),
+                size: 1,
+                permissions: 0o100644,
+                permissions_text: format_permissions(0o100644),
+            },
+        ];
+
+        let view = build_directory_view(entries, 0, 2, DirectorySortBy::Name);
+
+        assert_eq!(view.total_entries, 3);
+        assert_eq!(view.returned_entries, 2);
+        assert_eq!(view.next_offset, Some(2));
+        assert_eq!(view.entries[0].name, "app");
+        assert_eq!(view.entries[1].name, "a.txt");
+        assert!(view.body.contains("TYPE"), "{}", view.body);
+        assert!(view.body.contains("offset=2"), "{}", view.body);
+    }
+
+    #[test]
+    fn directory_entries_metadata_contains_structured_entries() {
+        let entries = vec![DirectoryEntryView {
+            name: "file.txt".to_string(),
+            kind: "file".to_string(),
+            size: 42,
+            permissions: 0o100644,
+            permissions_text: format_permissions(0o100644),
+        }];
+
+        let metadata = directory_entries_metadata(&entries);
+
+        assert_eq!(metadata[0]["name"], "file.txt");
+        assert_eq!(metadata[0]["kind"], "file");
+        assert_eq!(metadata[0]["size"], 42);
+        assert_eq!(metadata[0]["permissions_text"], "rw-r--r--");
     }
 }
