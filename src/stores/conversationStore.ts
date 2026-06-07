@@ -22,6 +22,12 @@ export interface ConversationState {
   clearConnectionConversations: (connectionId: string) => void;
   loadConnectionConversations: (connectionId: string) => Promise<void>;
   getCurrentMessages: () => AgentMessage[];
+
+  ensureConversation: (sessionId: string, connectionId: string, fallbackTitle: string) => Promise<string>;
+  appendMessages: (conversationId: string, messages: AgentMessage[]) => void;
+  updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => void;
+  clearAllAssistantFlags: () => void;
+  buildLlmHistory: (conversationId: string) => Array<{role: string, content: string, reasoningContent?: string}>;
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
@@ -76,7 +82,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
     }));
-    useTaskStore.setState({ activeTaskId: null });
+    useTaskStore.getState().clearActiveTask();
   },
 
   loadConversation: async (conversationId: string) => {
@@ -86,7 +92,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
     }));
-    useTaskStore.setState({ activeTaskId: null });
+    useTaskStore.getState().clearActiveTask();
   },
 
   deleteConversation: async (conversationId: string) => {
@@ -172,5 +178,83 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     const convId = get().activeConversationId;
     if (!convId) return [];
     return get().messages[convId] || [];
+  },
+
+  ensureConversation: async (sessionId: string, connectionId: string, fallbackTitle: string) => {
+    const { activeConversationId } = get();
+    let conversationId: string;
+
+    if (!activeConversationId) {
+      const newTitle = fallbackTitle.slice(0, 30);
+      const newId = await tauri.agentCreateConversation(sessionId, newTitle);
+      conversationId = newId;
+      set((state) => ({
+        conversations: {
+          ...state.conversations,
+          [newId]: {
+            id: newId,
+            connectionId,
+            title: newTitle,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        messages: { ...state.messages, [newId]: [] },
+        activeConversationId: newId,
+      }));
+    } else {
+      conversationId = activeConversationId;
+      const conv = get().conversations[conversationId];
+      if (conv && conv.title === '新会话') {
+        const newTitle = fallbackTitle.slice(0, 30);
+        set((state) => ({
+          conversations: {
+            ...state.conversations,
+            [conversationId]: { ...conv, title: newTitle },
+          },
+        }));
+      }
+    }
+
+    return conversationId;
+  },
+
+  appendMessages: (conversationId: string, messages: AgentMessage[]) => {
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: [...(state.messages[conversationId] || []), ...messages],
+      },
+    }));
+  },
+
+  updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => {
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: updater(state.messages[conversationId] || []),
+      },
+    }));
+  },
+
+  clearAllAssistantFlags: () => {
+    set((state) => ({
+      messages: Object.fromEntries(
+        Object.entries(state.messages).map(([convId, msgs]) => [
+          convId,
+          msgs.map((m) =>
+            m.role === 'assistant' && (m.isThinking || m.isLoading)
+              ? { ...m, isThinking: false, isLoading: false }
+              : m,
+          ),
+        ]),
+      ),
+    }));
+  },
+
+  buildLlmHistory: (conversationId: string) => {
+    return (get().messages[conversationId] || [])
+      .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isLoading)
+      .map((m) => ({ role: m.role, content: m.content, reasoningContent: m.reasoningContent }));
   },
 }));

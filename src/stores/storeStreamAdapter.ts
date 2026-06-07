@@ -6,9 +6,7 @@ import type { StreamHandler } from './agentStreamHandlers';
 export function createDefaultStreamHandler(): StreamHandler {
   return {
     updateMessages(conversationId, updater) {
-      useConversationStore.setState((state) => ({
-        messages: { ...state.messages, [conversationId]: updater(state.messages[conversationId] || []) },
-      }));
+      useConversationStore.getState().updateConversationMessages(conversationId, updater);
     },
     updateTaskStatus(taskId, status) {
       useTaskStore.getState().updateTaskStatus(taskId, status as AgentStatus);
@@ -23,9 +21,7 @@ export function createDefaultStreamHandler(): StreamHandler {
       return useConversationStore.getState().messages[conversationId] || [];
     },
     clearActiveTaskIf(taskId) {
-      useTaskStore.setState((state) => ({
-        activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
-      }));
+      useTaskStore.getState().clearActiveTaskIf(taskId);
     },
     setPlan(taskId, plan) {
       useTaskStore.getState().setPlan(taskId, plan);

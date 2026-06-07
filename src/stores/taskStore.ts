@@ -30,6 +30,9 @@ export interface TaskState {
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
   updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => void;
   getActivePlan: () => AgentTaskPlan | null;
+
+  clearActiveTask: () => void;
+  clearActiveTaskIf: (taskId: string) => void;
 }
 
 const currentAssistantMessageId: Map<string, string> = new Map();
@@ -44,38 +47,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
     const { mode } = get();
-    let conversationId = useConversationStore.getState().activeConversationId;
+    const conversationStore = useConversationStore.getState();
 
-    if (!conversationId) {
-      const newTitle = prompt.slice(0, 30);
-      const newId = await tauri.agentCreateConversation(sessionId, newTitle);
-      conversationId = newId;
-      useConversationStore.setState((state) => ({
-        conversations: {
-          ...state.conversations,
-          [newId]: {
-            id: newId,
-            connectionId: connectionId ?? '',
-            title: newTitle,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          },
-        },
-        messages: { ...state.messages, [newId]: [] },
-        activeConversationId: newId,
-      }));
-    } else {
-      const conv = useConversationStore.getState().conversations[conversationId as string];
-      if (conv && conv.title === '新会话') {
-        const newTitle = prompt.slice(0, 30);
-        useConversationStore.setState((state) => ({
-          conversations: {
-            ...state.conversations,
-            [conversationId as string]: { ...conv, title: newTitle },
-          },
-        }));
-      }
-    }
+    const conversationId = await conversationStore.ensureConversation(sessionId, connectionId ?? '', prompt);
 
     const userMessage: AgentMessage = {
       id: crypto.randomUUID(),
@@ -93,37 +67,23 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       isLoading: true,
     };
 
-    useConversationStore.setState((state) => ({
-      messages: {
-        ...state.messages,
-        [conversationId as string]: [...(state.messages[conversationId as string] || []), userMessage, loadingAssistantMessage],
-      },
-    }));
+    conversationStore.appendMessages(conversationId, [userMessage, loadingAssistantMessage]);
 
     let taskId: string;
     try {
-      const llmHistory = useConversationStore
-        .getState()
-        .messages[conversationId as string]
-        .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isLoading)
-        .map((m) => ({ role: m.role, content: m.content, reasoningContent: m.reasoningContent }));
+      const llmHistory = conversationStore.buildLlmHistory(conversationId);
 
-      taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId as string, llmHistory);
+      taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId, llmHistory);
     } catch (err) {
-      useConversationStore.setState((state) => ({
-        messages: {
-          ...state.messages,
-          [conversationId as string]: [
-            ...(state.messages[conversationId as string] || []).filter((m) => m.id !== loadingAssistantId),
-            {
-              id: crypto.randomUUID(),
-              role: 'system',
-              content: `启动任务失败：${getErrorMessage(err)}`,
-              timestamp: new Date().toISOString(),
-            },
-          ],
+      conversationStore.updateConversationMessages(conversationId, (msgs) => [
+        ...msgs.filter((m) => m.id !== loadingAssistantId),
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `启动任务失败：${getErrorMessage(err)}`,
+          timestamp: new Date().toISOString(),
         },
-      }));
+      ]);
       throw err;
     }
 
@@ -140,7 +100,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       activeTaskId: taskId,
     }));
 
-    void attachStreamListener(taskId, conversationId as string, loadingAssistantId);
+    void attachStreamListener(taskId, conversationId, loadingAssistantId);
     void attachPlanListener(taskId);
 
     return taskId;
@@ -160,18 +120,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           pendingApproval: null,
         };
       });
-      useConversationStore.setState((state) => ({
-        messages: Object.fromEntries(
-          Object.entries(state.messages).map(([convId, msgs]) => [
-            convId,
-            msgs.map((m) =>
-              m.role === 'assistant' && (m.isThinking || m.isLoading)
-                ? { ...m, isThinking: false, isLoading: false }
-                : m,
-            ),
-          ]),
-        ),
-      }));
+      useConversationStore.getState().clearAllAssistantFlags();
     }
   },
 
@@ -226,5 +175,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const activeTaskId = get().activeTaskId;
     if (!activeTaskId) return null;
     return get().plans[activeTaskId] || null;
+  },
+
+  clearActiveTask: () => {
+    set({ activeTaskId: null });
+  },
+
+  clearActiveTaskIf: (taskId: string) => {
+    set((state) => ({
+      activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
+    }));
   },
 }));
