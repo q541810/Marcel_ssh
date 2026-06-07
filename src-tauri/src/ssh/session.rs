@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use russh::{Channel, ChannelMsg};
 use russh::client;
+use russh::{Channel, ChannelMsg};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
@@ -112,7 +112,9 @@ pub(crate) async fn drive_session(
         }
     }
     // Best-effort: close the underlying SSH session
-    let _ = handle.lock().await
+    let _ = handle
+        .lock()
+        .await
         .disconnect(russh::Disconnect::ByApplication, "client disconnect", "")
         .await;
 }

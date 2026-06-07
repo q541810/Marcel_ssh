@@ -6,8 +6,8 @@ use crate::agent::RiskLevel;
 use crate::error::AppError;
 
 use super::checker::{
-    analyze_rm_args, contains_top_level_pipe, is_bare_shell, is_dangerous_rm_target,
-    is_fork_bomb, looks_like_path, normalize_path, pattern_matches,
+    analyze_rm_args, contains_top_level_pipe, is_bare_shell, is_dangerous_rm_target, is_fork_bomb,
+    looks_like_path, normalize_path, pattern_matches,
 };
 use super::parser::{parse_segment, split_command_chain};
 use super::risk_model::parse_and_classify;

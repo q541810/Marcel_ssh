@@ -60,7 +60,10 @@ pub(crate) fn build_plan_context(state: &AppState, task_id: &str) -> Option<Stri
     let plan = plans.get(task_id)?;
 
     let all_terminal = plan.items.iter().all(|item| {
-        matches!(item.status, PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped)
+        matches!(
+            item.status,
+            PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped
+        )
     });
     if all_terminal {
         return None;
@@ -99,12 +102,23 @@ pub(crate) async fn handle_plan_tool_output(
     match tool_name {
         "create_plan" => handle_create_plan(app, state, task_id, meta).await,
         "update_plan_item" => {
-            let updated = meta.get("plan_item_updated").and_then(|v| v.as_bool()).unwrap_or(false);
+            let updated = meta
+                .get("plan_item_updated")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if !updated {
                 return;
             }
-            let item_id = meta.get("item_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let status = meta.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let item_id = meta
+                .get("item_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = meta
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let error = meta.get("error").and_then(|v| v.as_str()).map(String::from);
             handle_update_plan_item(app, state, task_id, &item_id, &status, &error).await;
         }
@@ -119,7 +133,10 @@ pub(crate) async fn handle_create_plan(
     task_id: &str,
     action: &serde_json::Value,
 ) {
-    let plan_created = action.get("plan_created").and_then(|v| v.as_bool()).unwrap_or(false);
+    let plan_created = action
+        .get("plan_created")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !plan_created {
         return;
     }
@@ -129,9 +146,20 @@ pub(crate) async fn handle_create_plan(
 
     let mut plan_items = Vec::with_capacity(items_json.len());
     for item_val in items_json {
-        let id = item_val.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-        let title = item_val.get("title").and_then(|v| v.as_str()).unwrap_or("未命名步骤").to_string();
-        let status_str = item_val.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+        let id = item_val
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let title = item_val
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未命名步骤")
+            .to_string();
+        let status_str = item_val
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pending");
         let status = match status_str {
             "pending" => PlanItemStatus::Pending,
             "in_progress" => PlanItemStatus::InProgress,
@@ -140,8 +168,16 @@ pub(crate) async fn handle_create_plan(
             "skipped" => PlanItemStatus::Skipped,
             _ => PlanItemStatus::Pending,
         };
-        let error = item_val.get("error").and_then(|v| v.as_str()).map(String::from);
-        plan_items.push(PlanItem { id, title, status, error });
+        let error = item_val
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        plan_items.push(PlanItem {
+            id,
+            title,
+            status,
+            error,
+        });
     }
 
     let plan = AgentTaskPlan {
@@ -156,10 +192,16 @@ pub(crate) async fn handle_create_plan(
         task.has_plan = true;
     }
 
-    let event = PlanStreamEvent::PlanCreated { items: plan_items.clone() };
+    let event = PlanStreamEvent::PlanCreated {
+        items: plan_items.clone(),
+    };
     emit_plan_event(app, task_id, &event);
 
-    log::info!("Plan created for task {} with {} items", task_id, plan_items.len());
+    log::info!(
+        "Plan created for task {} with {} items",
+        task_id,
+        plan_items.len()
+    );
 }
 
 /// Process `update_plan_item` tool output: update item status, advance index, emit events.
@@ -240,11 +282,29 @@ pub(crate) async fn handle_update_plan_item(
     }
 
     if is_plan_complete(plan) {
-        let completed = plan.items.iter().filter(|item| matches!(item.status, PlanItemStatus::Completed)).count();
-        let failed = plan.items.iter().filter(|item| matches!(item.status, PlanItemStatus::Failed)).count();
-        let event = PlanStreamEvent::PlanCompleted { completed, total, failed };
+        let completed = plan
+            .items
+            .iter()
+            .filter(|item| matches!(item.status, PlanItemStatus::Completed))
+            .count();
+        let failed = plan
+            .items
+            .iter()
+            .filter(|item| matches!(item.status, PlanItemStatus::Failed))
+            .count();
+        let event = PlanStreamEvent::PlanCompleted {
+            completed,
+            total,
+            failed,
+        };
         emit_plan_event(app, task_id, &event);
-        log::info!("Plan completed for task {}: {}/{} completed, {} failed", task_id, completed, total, failed);
+        log::info!(
+            "Plan completed for task {}: {}/{} completed, {} failed",
+            task_id,
+            completed,
+            total,
+            failed
+        );
     }
 }
 
@@ -262,6 +322,9 @@ fn advance_current_index(plan: &mut AgentTaskPlan) {
 /// Check whether all plan items are in a terminal state.
 fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
     plan.items.iter().all(|item| {
-        matches!(item.status, PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped)
+        matches!(
+            item.status,
+            PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped
+        )
     })
 }

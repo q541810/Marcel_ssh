@@ -2,7 +2,9 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::config::persist::JsonPersistable;
-use crate::config::quick_commands::{QuickCommand, QuickCommandInput, QuickCommandPatch, QuickCommandStore};
+use crate::config::quick_commands::{
+    QuickCommand, QuickCommandInput, QuickCommandPatch, QuickCommandStore,
+};
 use crate::error::AppError;
 use crate::AppState;
 
@@ -40,10 +42,7 @@ pub async fn quick_command_update(
 }
 
 #[tauri::command]
-pub async fn quick_command_delete(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn quick_command_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let mut store = state.quick_command_store.write().await;
     if !store.remove(&id) {
         return Err(AppError::Config(format!("未找到快捷指令: {}", id)));

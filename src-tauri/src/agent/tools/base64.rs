@@ -7,8 +7,7 @@ use crate::error::AppError;
 
 /// Base64-encode bytes (no line wrap).
 pub(crate) fn b64_encode(bytes: &[u8]) -> String {
-    const ALPHA: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
     let mut i = 0;
     while i + 3 <= bytes.len() {
@@ -63,10 +62,12 @@ pub(crate) fn b64_decode(s: &str) -> Result<Vec<u8>, AppError> {
                 continue;
             }
             b' ' | b'\n' | b'\r' | b'\t' => continue,
-            _ => return Err(AppError::Agent(format!(
-                "invalid base64 character: 0x{:02x}",
-                c
-            ))),
+            _ => {
+                return Err(AppError::Agent(format!(
+                    "invalid base64 character: 0x{:02x}",
+                    c
+                )))
+            }
         };
         buf[bi] = v;
         bi += 1;

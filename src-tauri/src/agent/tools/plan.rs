@@ -23,15 +23,21 @@ pub const PLAN_ITEM_UPDATED_KEY: &str = "plan_item_updated";
 
 pub struct CreatePlanTool;
 impl CreatePlanTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 impl Default for CreatePlanTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl AgentTool for CreatePlanTool {
-    fn name(&self) -> &str { "create_plan" }
+    fn name(&self) -> &str {
+        "create_plan"
+    }
 
     fn description(&self) -> &str {
         "Create a structured step-by-step plan for a complex task. Call this \
@@ -63,7 +69,9 @@ impl AgentTool for CreatePlanTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
@@ -73,14 +81,22 @@ impl AgentTool for CreatePlanTool {
         let items_array = params
             .get("items")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| AppError::Agent("create_plan: missing or invalid 'items' parameter".into()))?;
+            .ok_or_else(|| {
+                AppError::Agent("create_plan: missing or invalid 'items' parameter".into())
+            })?;
 
         if items_array.is_empty() {
-            return Ok(ToolOutput::fail("create_plan", "计划不能为空，请至少提供一个步骤"));
+            return Ok(ToolOutput::fail(
+                "create_plan",
+                "计划不能为空，请至少提供一个步骤",
+            ));
         }
 
         if items_array.len() > 20 {
-            return Ok(ToolOutput::fail("create_plan", "计划步骤过多（最多20步），请简化任务"));
+            return Ok(ToolOutput::fail(
+                "create_plan",
+                "计划步骤过多（最多20步），请简化任务",
+            ));
         }
 
         // Build plan items array for metadata
@@ -98,7 +114,8 @@ impl AgentTool for CreatePlanTool {
             }));
         }
 
-        let titles: Vec<&str> = plan_items.iter()
+        let titles: Vec<&str> = plan_items
+            .iter()
             .filter_map(|it| it.get("title").and_then(|v| v.as_str()))
             .collect();
 
@@ -124,15 +141,21 @@ impl AgentTool for CreatePlanTool {
 
 pub struct UpdatePlanItemTool;
 impl UpdatePlanItemTool {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 impl Default for UpdatePlanItemTool {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[async_trait]
 impl AgentTool for UpdatePlanItemTool {
-    fn name(&self) -> &str { "update_plan_item" }
+    fn name(&self) -> &str {
+        "update_plan_item"
+    }
 
     fn description(&self) -> &str {
         "Update the status of a single step in the current plan. Call this \
@@ -162,7 +185,9 @@ impl AgentTool for UpdatePlanItemTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
@@ -181,7 +206,10 @@ impl AgentTool for UpdatePlanItemTool {
             .ok_or_else(|| AppError::Agent("update_plan_item: missing 'status'".into()))?
             .to_string();
 
-        let error = params.get("error").and_then(|v| v.as_str()).map(String::from);
+        let error = params
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let label = match status.as_str() {
             "completed" => "已完成",
@@ -198,11 +226,13 @@ impl AgentTool for UpdatePlanItemTool {
 
         let output = format!("步骤 {} {}", item_id, label);
 
-        Ok(ToolOutput::ok("update_plan_item", output).with_metadata(json!({
-            PLAN_ITEM_UPDATED_KEY: true,
-            "item_id": item_id,
-            "status": status,
-            "error": error
-        })))
+        Ok(
+            ToolOutput::ok("update_plan_item", output).with_metadata(json!({
+                PLAN_ITEM_UPDATED_KEY: true,
+                "item_id": item_id,
+                "status": status,
+                "error": error
+            })),
+        )
     }
 }

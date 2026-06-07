@@ -22,24 +22,22 @@ pub struct SettingsResponse {
 /// Front-end displays "sk-******" when a key exists in the keychain but
 /// is not sent to the frontend (for security).
 fn is_masked_key(key: &str) -> bool {
-    key == "sk-******" ||
-    key.contains("******") ||
-    key.chars().all(|c| c == '*') ||
-    key == "sk-"
+    key == "sk-******" || key.contains("******") || key.chars().all(|c| c == '*') || key == "sk-"
 }
 
 /// Get the current application settings.
 #[tauri::command]
-pub async fn config_get_settings(
-    state: State<'_, AppState>,
-) -> Result<SettingsResponse, AppError> {
+pub async fn config_get_settings(state: State<'_, AppState>) -> Result<SettingsResponse, AppError> {
     let settings = state.settings.read().await.clone();
     let has_api_key = keychain::get_llm_api_key().ok().flatten().is_some();
-    Ok(SettingsResponse { settings, has_api_key })
+    Ok(SettingsResponse {
+        settings,
+        has_api_key,
+    })
 }
 
 /// Save updated application settings. Persists to disk.
-/// 
+///
 /// Note: The LLM API key is stored in the system keychain for security.
 /// The in-memory settings keep the key for the current session (the key is
 /// excluded from disk serialization via `skip_serializing` in LlmConfig).
@@ -58,7 +56,7 @@ pub async fn config_save_settings(
             log::info!("已将 LLM API Key 保存到密钥链");
         }
     }
-    
+
     let snapshot = {
         let mut current = state.settings.write().await;
         // Preserve the in-memory API key when the frontend sends an empty or masked value.

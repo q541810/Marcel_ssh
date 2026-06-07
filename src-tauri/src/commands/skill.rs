@@ -34,9 +34,7 @@ pub async fn import_skill_file(
         return process_zip(&bytes).map_err(AppError::Config);
     }
 
-    Err(AppError::Config(
-        "仅支持 .md / .zip / .skill 文件".into(),
-    ))
+    Err(AppError::Config("仅支持 .md / .zip / .skill 文件".into()))
 }
 
 #[tauri::command]
@@ -95,10 +93,7 @@ pub async fn skill_update(
 }
 
 #[tauri::command]
-pub async fn skill_toggle(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn skill_toggle(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let path = SkillStore::default_file(&state.config_dir);
     let mut store = state.skill_store.write().await;
     if !store.toggle(&id) {
@@ -109,10 +104,7 @@ pub async fn skill_toggle(
 }
 
 #[tauri::command]
-pub async fn skill_delete(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), AppError> {
+pub async fn skill_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let path = SkillStore::default_file(&state.config_dir);
     let mut store = state.skill_store.write().await;
     if !store.delete(&id) {

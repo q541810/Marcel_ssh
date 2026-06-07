@@ -8,21 +8,29 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::tools::{
-    shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput,
-};
+use crate::agent::tools::{shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
 const MAX_OUTPUT_BYTES: usize = 12_000;
 const DEFAULT_MAX_MATCHES: u64 = 200;
 
 pub struct SearchFilesTool;
-impl SearchFilesTool { pub fn new() -> Self { Self } }
-impl Default for SearchFilesTool { fn default() -> Self { Self::new() } }
+impl SearchFilesTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for SearchFilesTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for SearchFilesTool {
-    fn name(&self) -> &str { "search_files" }
+    fn name(&self) -> &str {
+        "search_files"
+    }
 
     fn description(&self) -> &str {
         "Recursively search for a pattern in files under a directory (grep -rnI). \
@@ -43,20 +51,30 @@ impl AgentTool for SearchFilesTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let pattern = params.get("pattern").and_then(|v| v.as_str())
+        let pattern = params
+            .get("pattern")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'pattern' parameter".into()))?;
         if pattern.is_empty() {
             return Ok(ToolOutput::fail("search_files", "empty pattern"));
         }
-        let directory = params.get("directory").and_then(|v| v.as_str()).unwrap_or(".");
-        let regex = params.get("regex").and_then(|v| v.as_bool()).unwrap_or(false);
+        let directory = params
+            .get("directory")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+        let regex = params
+            .get("regex")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let max_matches = params
             .get("max_matches")
             .and_then(|v| v.as_u64())
@@ -86,7 +104,12 @@ impl AgentTool for SearchFilesTool {
                 }
                 let body = truncate_output(output, MAX_OUTPUT_BYTES);
                 Ok(ToolOutput::ok(
-                    format!("search '{}' ({} match{})", pattern, count, if count == 1 { "" } else { "es" }),
+                    format!(
+                        "search '{}' ({} match{})",
+                        pattern,
+                        count,
+                        if count == 1 { "" } else { "es" }
+                    ),
                     body,
                 )
                 .with_metadata(json!({

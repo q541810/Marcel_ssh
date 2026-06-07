@@ -171,7 +171,10 @@ impl AuditLog {
 
     /// Get all entries for a specific task (in-memory).
     pub fn get_entries_for_task(&self, task_id: &str) -> Vec<&AuditEntry> {
-        self.recent.iter().filter(|e| e.task_id == task_id).collect()
+        self.recent
+            .iter()
+            .filter(|e| e.task_id == task_id)
+            .collect()
     }
 
     /// Query in-memory entries by task id (owned clones).
@@ -184,11 +187,7 @@ impl AuditLog {
     }
 
     /// Query in-memory entries by [from, to] timestamp window (inclusive).
-    pub fn query_by_time(
-        &self,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-    ) -> Vec<AuditEntry> {
+    pub fn query_by_time(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<AuditEntry> {
         self.recent
             .iter()
             .filter(|e| e.timestamp >= from && e.timestamp <= to)
@@ -274,9 +273,12 @@ mod tests {
     #[tokio::test]
     async fn write_and_tail_preserves_order() {
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100)
+            .await
+            .unwrap();
         for i in 0..5 {
-            log.record_persistent(mk_entry("t1", Some(&format!("cmd-{i}")))).await;
+            log.record_persistent(mk_entry("t1", Some(&format!("cmd-{i}"))))
+                .await;
         }
         let tail = log.tail_today(10).await.unwrap();
         assert_eq!(tail.len(), 5);
@@ -302,7 +304,9 @@ mod tests {
     #[tokio::test]
     async fn rolls_over_at_date_boundary() {
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100)
+            .await
+            .unwrap();
         let yesterday = Utc::now().date_naive() - Duration::days(1);
         log.writer
             .as_ref()
@@ -311,13 +315,13 @@ mod tests {
             .await
             .unwrap();
         log.record_persistent(mk_entry("t-old", Some("yest"))).await;
-        let yesterday_path = dir.path().join(format!(
-            "agent-audit-{}.jsonl",
-            yesterday.format("%Y%m%d")
-        ));
+        let yesterday_path = dir
+            .path()
+            .join(format!("agent-audit-{}.jsonl", yesterday.format("%Y%m%d")));
         assert!(yesterday_path.exists(), "yesterday file must exist");
 
-        log.record_persistent(mk_entry("t-new", Some("today"))).await;
+        log.record_persistent(mk_entry("t-new", Some("today")))
+            .await;
         let today = Utc::now().date_naive();
         let today_path = dir
             .path()
@@ -332,7 +336,9 @@ mod tests {
     #[tokio::test]
     async fn tolerates_corrupted_lines() {
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100)
+            .await
+            .unwrap();
         let path = log.writer.as_ref().unwrap().current_path().await;
         // append a garbage line directly
         {
@@ -353,7 +359,9 @@ mod tests {
     #[tokio::test]
     async fn truncates_oversized_fields() {
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 100)
+            .await
+            .unwrap();
         let big = "a".repeat(4096);
         log.record_persistent(mk_entry("t", Some(&big))).await;
         let tail = log.tail_today(10).await.unwrap();
@@ -365,10 +373,13 @@ mod tests {
     #[tokio::test]
     async fn query_by_task_matches_tail() {
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 1000).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 1000)
+            .await
+            .unwrap();
         for i in 0..30 {
             let tid = if i % 3 == 0 { "alpha" } else { "beta" };
-            log.record_persistent(mk_entry(tid, Some(&format!("c{i}")))).await;
+            log.record_persistent(mk_entry(tid, Some(&format!("c{i}"))))
+                .await;
         }
         let mem = log.query_by_task("alpha");
         let tail = log.tail_today(1000).await.unwrap();
@@ -382,7 +393,9 @@ mod tests {
     async fn unix_file_mode_is_0600() {
         use std::os::unix::fs::PermissionsExt;
         let dir = TempDir::new().unwrap();
-        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 10).await.unwrap();
+        let mut log = AuditLog::with_dir(dir.path().to_path_buf(), 10)
+            .await
+            .unwrap();
         log.record_persistent(mk_entry("t", Some("x"))).await;
         let path = log.writer.as_ref().unwrap().current_path().await;
         let meta = std::fs::metadata(&path).unwrap();
@@ -397,7 +410,9 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let log = StdArc::new(TokioMutex::new(
-            AuditLog::with_dir(dir.path().to_path_buf(), 1000).await.unwrap(),
+            AuditLog::with_dir(dir.path().to_path_buf(), 1000)
+                .await
+                .unwrap(),
         ));
         let mut handles = Vec::new();
         for i in 0..100 {

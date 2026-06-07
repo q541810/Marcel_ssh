@@ -18,7 +18,13 @@ impl SkillTool {
         let safe_name: String = skill
             .name
             .chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         Self {
             name: format!("skill_{}", safe_name),

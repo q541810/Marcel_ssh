@@ -1,4 +1,4 @@
-﻿//! `process_management` — list / inspect / signal remote processes.
+//! `process_management` — list / inspect / signal remote processes.
 //!
 //! Three actions:
 //! - `list` (ReadOnly)         : `ps -eo pid,user,pcpu,pmem,etime,comm,args`
@@ -13,9 +13,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::tools::{
-    shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput,
-};
+use crate::agent::tools::{shell_escape, truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
 const MAX_OUTPUT_BYTES: usize = 8_000;
@@ -27,12 +25,22 @@ const ALLOWED_SIGNALS: &[&str] = &[
 ];
 
 pub struct ProcessManagementTool;
-impl ProcessManagementTool { pub fn new() -> Self { Self } }
-impl Default for ProcessManagementTool { fn default() -> Self { Self::new() } }
+impl ProcessManagementTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for ProcessManagementTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for ProcessManagementTool {
-    fn name(&self) -> &str { "process_management" }
+    fn name(&self) -> &str {
+        "process_management"
+    }
 
     fn description(&self) -> &str {
         "List, inspect, or signal remote processes. \
@@ -83,7 +91,9 @@ impl AgentTool for ProcessManagementTool {
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let action = params.get("action").and_then(|v| v.as_str())
+        let action = params
+            .get("action")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'action' parameter".into()))?;
 
         match action {
@@ -103,7 +113,11 @@ async fn list_processes(
     ctx: &ToolContext,
 ) -> Result<ToolOutput, AppError> {
     let filter = params.get("filter").and_then(|v| v.as_str()).unwrap_or("");
-    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, 1000);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(DEFAULT_LIST_LIMIT)
+        .clamp(1, 1000);
 
     // ps with portable column set; sort by CPU descending.
     let header = "ps -eo pid,user,pcpu,pmem,etime,comm,args --sort=-pcpu --no-headers 2>/dev/null \
@@ -134,7 +148,10 @@ async fn list_processes(
                 "filter": filter,
             })))
         }
-        Err(e) => Ok(ToolOutput::fail("process list", format!("list failed: {}", e))),
+        Err(e) => Ok(ToolOutput::fail(
+            "process list",
+            format!("list failed: {}", e),
+        )),
     }
 }
 
@@ -142,7 +159,9 @@ async fn info_process(
     params: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<ToolOutput, AppError> {
-    let pid = params.get("pid").and_then(|v| v.as_i64())
+    let pid = params
+        .get("pid")
+        .and_then(|v| v.as_i64())
         .ok_or_else(|| AppError::Agent("Missing 'pid' for action 'info'".into()))?;
     if pid <= 0 {
         return Ok(ToolOutput::fail("process info", "pid must be positive"));
@@ -165,9 +184,8 @@ async fn info_process(
                 ));
             }
             let body = truncate_output(output, MAX_OUTPUT_BYTES);
-            Ok(ToolOutput::ok(format!("process info pid={}", pid), body).with_metadata(
-                json!({ "action": "info", "pid": pid }),
-            ))
+            Ok(ToolOutput::ok(format!("process info pid={}", pid), body)
+                .with_metadata(json!({ "action": "info", "pid": pid })))
         }
         Err(e) => Ok(ToolOutput::fail(
             format!("process info pid={}", pid),
@@ -180,7 +198,9 @@ async fn kill_process(
     params: &serde_json::Value,
     ctx: &ToolContext,
 ) -> Result<ToolOutput, AppError> {
-    let pid = params.get("pid").and_then(|v| v.as_i64())
+    let pid = params
+        .get("pid")
+        .and_then(|v| v.as_i64())
         .ok_or_else(|| AppError::Agent("Missing 'pid' for action 'kill'".into()))?;
     if pid <= 1 {
         // Block PID 0 (kernel scheduler) and PID 1 (init).
@@ -189,7 +209,11 @@ async fn kill_process(
             format!("refusing to signal pid {} (reserved)", pid),
         ));
     }
-    let signal = params.get("signal").and_then(|v| v.as_str()).unwrap_or("TERM").to_uppercase();
+    let signal = params
+        .get("signal")
+        .and_then(|v| v.as_str())
+        .unwrap_or("TERM")
+        .to_uppercase();
     if !ALLOWED_SIGNALS.contains(&signal.as_str()) {
         return Ok(ToolOutput::fail(
             "process kill",
@@ -201,10 +225,19 @@ async fn kill_process(
         ));
     }
 
-    let cmd = format!("kill -{sig} {pid} && echo OK || echo FAIL", sig = signal, pid = pid);
+    let cmd = format!(
+        "kill -{sig} {pid} && echo OK || echo FAIL",
+        sig = signal,
+        pid = pid
+    );
     match ctx.exec(&cmd).await {
         Ok(output) => {
-            let last = output.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            let last = output
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("")
+                .trim();
             if last == "OK" {
                 Ok(ToolOutput::ok(
                     format!("kill -{} {}", signal, pid),

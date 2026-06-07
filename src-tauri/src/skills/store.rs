@@ -113,12 +113,7 @@ impl SkillStore {
         self.skills
             .iter()
             .filter(|s| s.enabled)
-            .map(|s| {
-                format!(
-                    "[Skill: {}]\n{}\n",
-                    s.name, s.prompt
-                )
-            })
+            .map(|s| format!("[Skill: {}]\n{}\n", s.name, s.prompt))
             .collect::<Vec<_>>()
             .join("\n")
     }

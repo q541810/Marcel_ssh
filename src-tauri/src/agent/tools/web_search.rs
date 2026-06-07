@@ -138,20 +138,14 @@ impl AgentTool for WebSearchTool {
                     } else {
                         fail_count += 1;
                         if queries.len() > 1 {
-                            sections.push(format!(
-                                "Query: \"{}\"\nNo results found\n",
-                                query
-                            ));
+                            sections.push(format!("Query: \"{}\"\nNo results found\n", query));
                         }
                     }
                 }
                 Err(e) => {
                     fail_count += 1;
                     if queries.len() > 1 {
-                        sections.push(format!(
-                            "Query: \"{}\"\nError: {}\n",
-                            query, e
-                        ));
+                        sections.push(format!("Query: \"{}\"\nError: {}\n", query, e));
                     } else {
                         return Ok(ToolOutput::fail(
                             format!("web_search '{}'", query),
@@ -184,13 +178,12 @@ impl AgentTool for WebSearchTool {
             )
         };
 
-        Ok(ToolOutput::ok(summary, output)
-            .with_metadata(json!({
-                "queries": queries.len(),
-                "success": success_count,
-                "failed": fail_count,
-                "total_results": total_results
-            })))
+        Ok(ToolOutput::ok(summary, output).with_metadata(json!({
+            "queries": queries.len(),
+            "success": success_count,
+            "failed": fail_count,
+            "total_results": total_results
+        })))
     }
 }
 
@@ -201,7 +194,11 @@ struct SearchResult {
 }
 
 fn format_search_section(query: &str, results: &[SearchResult]) -> String {
-    let mut out = format!("=== Search: \"{}\" ({} results) ===\n\n", query, results.len());
+    let mut out = format!(
+        "=== Search: \"{}\" ({} results) ===\n\n",
+        query,
+        results.len()
+    );
 
     for (i, r) in results.iter().enumerate() {
         out.push_str(&format!(
@@ -220,7 +217,8 @@ fn format_search_section(query: &str, results: &[SearchResult]) -> String {
     out
 }
 
-const SEARCH_TIP: &str = "\nTip: Use the `http_get` tool with any URL above to read the full page content.";
+const SEARCH_TIP: &str =
+    "\nTip: Use the `http_get` tool with any URL above to read the full page content.";
 
 fn format_results(query: &str, results: &[SearchResult]) -> String {
     let mut out = format!("Search results for: \"{}\"\n{}\n\n", query, "=".repeat(50));
@@ -242,10 +240,7 @@ fn format_results(query: &str, results: &[SearchResult]) -> String {
     out
 }
 
-async fn search_bing(
-    query: &str,
-    max_results: usize,
-) -> Result<Vec<SearchResult>, AppError> {
+async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult>, AppError> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
         .build()
@@ -269,10 +264,7 @@ async fn search_bing(
         .map_err(|e| AppError::Agent(format!("HTTP request failed: {}", e)))?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Agent(format!(
-            "HTTP error: {}",
-            resp.status()
-        )));
+        return Err(AppError::Agent(format!("HTTP error: {}", resp.status())));
     }
 
     let html = resp
@@ -469,9 +461,6 @@ mod tests {
     #[test]
     fn extract_href_finds_link() {
         let tag = r#"<a href="https://example.com" class="foo">"#;
-        assert_eq!(
-            extract_href(tag),
-            Some("https://example.com".to_string())
-        );
+        assert_eq!(extract_href(tag), Some("https://example.com".to_string()));
     }
 }

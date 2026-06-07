@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::error::AppError;
 use super::persist::JsonPersistable;
+use crate::error::AppError;
 
 /// A thread-safe, persistent config store that wraps a `JsonPersistable` type.
 ///

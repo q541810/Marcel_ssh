@@ -30,8 +30,8 @@ fn parse_yaml_frontmatter(content: &str) -> Result<ParsedSkill, String> {
     let markdown_body = rest[end + 3..].trim();
 
     // Parse YAML
-    let data: serde_yaml::Value = serde_yaml::from_str(yaml_block)
-        .map_err(|e| format!("YAML 解析失败: {}", e))?;
+    let data: serde_yaml::Value =
+        serde_yaml::from_str(yaml_block).map_err(|e| format!("YAML 解析失败: {}", e))?;
 
     let name = data
         .get("name")
@@ -84,7 +84,9 @@ pub(crate) fn process_zip(data: &[u8]) -> Result<ParsedSkill, String> {
     let md_files: Vec<(String, Vec<u8>)> = {
         let mut files = Vec::new();
         for i in 0..archive.len() {
-            let mut file = archive.by_index(i).map_err(|e| format!("读取 zip 内文件失败: {}", e))?;
+            let mut file = archive
+                .by_index(i)
+                .map_err(|e| format!("读取 zip 内文件失败: {}", e))?;
             let name = file.name().to_string();
             // Skip directories and hidden files
             if name.ends_with('/') || name.starts_with('.') || name.contains("/.") {
@@ -92,7 +94,8 @@ pub(crate) fn process_zip(data: &[u8]) -> Result<ParsedSkill, String> {
             }
             if name.to_lowercase().ends_with(".md") {
                 let mut buf = Vec::new();
-                file.read_to_end(&mut buf).map_err(|e| format!("读取 zip 内文件失败: {}", e))?;
+                file.read_to_end(&mut buf)
+                    .map_err(|e| format!("读取 zip 内文件失败: {}", e))?;
                 files.push((name, buf));
             }
         }
@@ -113,8 +116,8 @@ pub(crate) fn process_zip(data: &[u8]) -> Result<ParsedSkill, String> {
     }
 
     let (name, bytes) = md_files.into_iter().next().unwrap();
-    let content = String::from_utf8(bytes)
-        .map_err(|e| format!("{} 不是有效的 UTF-8 文本: {}", name, e))?;
+    let content =
+        String::from_utf8(bytes).map_err(|e| format!("{} 不是有效的 UTF-8 文本: {}", name, e))?;
 
     process_md(&content, &name)
 }

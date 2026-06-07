@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
 use crate::error::AppError;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 pub trait JsonPersistable: Sized + Serialize + for<'de> Deserialize<'de> + Default {
     fn default_filename() -> &'static str;
@@ -24,14 +24,12 @@ pub trait JsonPersistable: Sized + Serialize + for<'de> Deserialize<'de> + Defau
 
     fn save_to_path(&self, path: &Path) -> Result<(), AppError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Config(format!("创建配置目录失败: {}", e))
-            })?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError::Config(format!("创建配置目录失败: {}", e)))?;
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| AppError::Config(format!("序列化配置失败: {}", e)))?;
-        atomic_write(path, &json)
-            .map_err(|e| AppError::Config(format!("写入配置文件失败: {}", e)))
+        atomic_write(path, &json).map_err(|e| AppError::Config(format!("写入配置文件失败: {}", e)))
     }
 }
 

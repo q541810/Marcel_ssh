@@ -24,7 +24,10 @@ impl client::Handler for Client {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        let outcome = self.store.verify(&self.host, self.port, server_public_key).await;
+        let outcome = self
+            .store
+            .verify(&self.host, self.port, server_public_key)
+            .await;
         let (algo, fp) = KnownHostsStore::fingerprint(server_public_key);
         let now = Utc::now().to_rfc3339();
         let entry = KnownHostEntry {

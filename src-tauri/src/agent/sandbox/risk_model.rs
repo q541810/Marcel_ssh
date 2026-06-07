@@ -8,16 +8,16 @@ use super::parser::{parse_segment, split_command_chain, ParseError};
 /// Shared parsing + risk classification for a command string.
 /// Handles split_command_chain, parse_segment, embedded_eval recursion,
 /// assess_segment_risk + sudo elevation. Returns original segments, tokens, and max risk.
-pub fn parse_and_classify(cmd: &str) -> Result<(Vec<String>, Vec<Vec<String>>, RiskLevel), AppError> {
+pub fn parse_and_classify(
+    cmd: &str,
+) -> Result<(Vec<String>, Vec<Vec<String>>, RiskLevel), AppError> {
     let segments = split_command_chain(cmd).map_err(|e| match e {
         ParseError::SubshellDetected => AppError::Agent(
             "Command contains command/process substitution which cannot be \
              safely analyzed; use explicit commands instead."
                 .into(),
         ),
-        ParseError::UnbalancedQuote => {
-            AppError::Agent("Command has unbalanced quotes".into())
-        }
+        ParseError::UnbalancedQuote => AppError::Agent("Command has unbalanced quotes".into()),
         ParseError::ShellWordsError(s) => {
             AppError::Agent(format!("Failed to parse command: {}", s))
         }
@@ -28,12 +28,10 @@ pub fn parse_and_classify(cmd: &str) -> Result<(Vec<String>, Vec<Vec<String>>, R
     let mut all_tokens: Vec<Vec<String>> = Vec::new();
     for seg in &segments {
         let parsed = parse_segment(seg).map_err(|e| match e {
-            ParseError::SubshellDetected => AppError::Agent(
-                "Command contains command/process substitution".into(),
-            ),
-            ParseError::UnbalancedQuote => {
-                AppError::Agent("Command has unbalanced quotes".into())
+            ParseError::SubshellDetected => {
+                AppError::Agent("Command contains command/process substitution".into())
             }
+            ParseError::UnbalancedQuote => AppError::Agent("Command has unbalanced quotes".into()),
             ParseError::ShellWordsError(s) => {
                 AppError::Agent(format!("Failed to parse command: {}", s))
             }
@@ -82,22 +80,20 @@ fn assess_segment_risk(parsed: &super::parser::ParsedSegment) -> RiskLevel {
         "" => RiskLevel::ReadOnly,
         "ls" | "cat" | "pwd" | "whoami" | "hostname" | "uname" | "date" | "uptime" | "df"
         | "du" | "free" | "top" | "ps" | "id" | "env" | "head" | "tail" | "wc" | "find"
-        | "grep" | "egrep" | "fgrep" | "which" | "file" | "stat" | "lsof" | "netstat"
-        | "ss" | "ifconfig" | "ip" | "dig" | "nslookup" | "ping" | "traceroute" | "curl"
-        | "wget" | "less" | "more" | "sort" | "uniq" | "diff" | "md5sum" | "sha256sum"
-        | "readlink" | "realpath" | "type" | "man" | "help" => RiskLevel::ReadOnly,
+        | "grep" | "egrep" | "fgrep" | "which" | "file" | "stat" | "lsof" | "netstat" | "ss"
+        | "ifconfig" | "ip" | "dig" | "nslookup" | "ping" | "traceroute" | "curl" | "wget"
+        | "less" | "more" | "sort" | "uniq" | "diff" | "md5sum" | "sha256sum" | "readlink"
+        | "realpath" | "type" | "man" | "help" => RiskLevel::ReadOnly,
         "echo" | "printf" => RiskLevel::ReadOnly,
-        "mkdir" | "touch" | "cp" | "ln" | "tar" | "gzip" | "gunzip" | "zip" | "unzip"
-        | "bzip2" | "xz" | "rsync" => RiskLevel::LowRisk,
+        "mkdir" | "touch" | "cp" | "ln" | "tar" | "gzip" | "gunzip" | "zip" | "unzip" | "bzip2"
+        | "xz" | "rsync" => RiskLevel::LowRisk,
         "mv" | "sed" | "awk" | "tee" | "nano" | "vim" | "vi" | "apt" | "apt-get" | "yum"
-        | "dnf" | "pip" | "pip3" | "npm" | "npx" | "yarn" | "cargo" | "systemctl"
-        | "service" | "docker" | "docker-compose" | "podman" | "git" | "crontab" | "at" => {
-            RiskLevel::Moderate
-        }
+        | "dnf" | "pip" | "pip3" | "npm" | "npx" | "yarn" | "cargo" | "systemctl" | "service"
+        | "docker" | "docker-compose" | "podman" | "git" | "crontab" | "at" => RiskLevel::Moderate,
         "rm" | "chmod" | "chown" | "chgrp" | "kill" | "killall" | "pkill" | "iptables"
         | "ip6tables" | "nft" | "ufw" | "firewall-cmd" | "useradd" | "userdel" | "usermod"
-        | "groupadd" | "groupdel" | "passwd" | "su" | "sudo" | "chroot" | "mount"
-        | "umount" | "reboot" | "shutdown" | "poweroff" | "halt" | "init" => RiskLevel::HighRisk,
+        | "groupadd" | "groupdel" | "passwd" | "su" | "sudo" | "chroot" | "mount" | "umount"
+        | "reboot" | "shutdown" | "poweroff" | "halt" | "init" => RiskLevel::HighRisk,
         "mkfs" | "fdisk" | "parted" | "dd" | "shred" | "wipefs" | "sgdisk" | "gdisk" => {
             RiskLevel::Destructive
         }

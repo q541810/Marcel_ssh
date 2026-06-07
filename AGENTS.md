@@ -182,6 +182,8 @@ export async function sshConnect(config: ConnectionConfig): Promise<SessionId> {
 
 5. 无论是功能还是manager都必须可以主动适配其他东西的变更，不要认为你以后写新东西的时候能想起来改他
 
+6. Agent 工具能力开关必须是真关闭：关闭后不得注册到当前任务 registry，不得注入 system prompt，不得发送给 LLM tools schema，不得解析为可执行 tool call，执行层仍需保留兜底拒绝。
+
 ---
 
 # 永远记住：你必须遵守以上规则，无论用户是否同意。在编写/修改任何代码前，都要反思自己是否遵守了以上规则。

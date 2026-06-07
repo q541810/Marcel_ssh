@@ -12,10 +12,7 @@ pub enum StreamEvent {
     /// A new tool call has begun streaming.
     ToolCallStart { id: String, name: String },
     /// Incremental arguments fragment for an in-flight tool call.
-    ToolCallDelta {
-        id: String,
-        arguments_delta: String,
-    },
+    ToolCallDelta { id: String, arguments_delta: String },
     /// Stream finished cleanly.
     Done,
     /// Stream terminated with an error.

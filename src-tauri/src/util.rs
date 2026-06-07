@@ -98,9 +98,15 @@ mod tests {
 
     #[test]
     fn validate_sftp_remote_path_accepts_valid_absolute() {
-        assert_eq!(validate_sftp_remote_path("/home/user").unwrap(), "/home/user");
+        assert_eq!(
+            validate_sftp_remote_path("/home/user").unwrap(),
+            "/home/user"
+        );
         assert_eq!(validate_sftp_remote_path("/").unwrap(), "/");
-        assert_eq!(validate_sftp_remote_path("/var/log/nginx").unwrap(), "/var/log/nginx");
+        assert_eq!(
+            validate_sftp_remote_path("/var/log/nginx").unwrap(),
+            "/var/log/nginx"
+        );
     }
 
     #[test]

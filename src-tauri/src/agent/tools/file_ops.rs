@@ -9,9 +9,7 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::tools::{
-    truncate_output, AgentTool, ToolContext, ToolOutput,
-};
+use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
 const MAX_READ_BYTES: usize = 16_000;
@@ -22,12 +20,22 @@ const MAX_FILE_WRITE_BYTES: usize = 1_000_000;
 
 pub struct ReadFileTool;
 
-impl ReadFileTool { pub fn new() -> Self { Self } }
-impl Default for ReadFileTool { fn default() -> Self { Self::new() } }
+impl ReadFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for ReadFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for ReadFileTool {
-    fn name(&self) -> &str { "read_file" }
+    fn name(&self) -> &str {
+        "read_file"
+    }
 
     fn description(&self) -> &str {
         "Read a file from the remote server. Binary-safe (transferred via base64). \
@@ -45,55 +53,68 @@ impl AgentTool for ReadFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let path = params.get("path").and_then(|v| v.as_str())
+        let path = params
+            .get("path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'path' parameter".into()))?;
         if path.is_empty() {
             return Ok(ToolOutput::fail("read_file", "empty path"));
         }
 
         let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => {
-                match sftp.read(path).await {
-                    Ok(data) => data,
-                    Err(e) => return Ok(ToolOutput::fail(
+            Ok(sftp) => match sftp.read(path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    return Ok(ToolOutput::fail(
                         format!("read {}", path),
                         format!("SFTP read failed: {}", e),
-                    )),
+                    ))
                 }
+            },
+            Err(e) => {
+                return Ok(ToolOutput::fail(
+                    format!("read {}", path),
+                    format!("SFTP unavailable: {}", e),
+                ))
             }
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("read {}", path),
-                format!("SFTP unavailable: {}", e),
-            )),
         };
 
         let n = bytes.len();
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let body = truncate_output(text, MAX_READ_BYTES);
-        Ok(ToolOutput::ok(
-            format!("read {} ({} bytes)", path, n),
-            body,
-        )
-        .with_metadata(json!({ "path": path, "bytes": n })))
+        Ok(ToolOutput::ok(format!("read {} ({} bytes)", path, n), body)
+            .with_metadata(json!({ "path": path, "bytes": n })))
     }
 }
 
 // ────────────────────────────── WriteFileTool ──────────────────────────────
 
 pub struct WriteFileTool;
-impl WriteFileTool { pub fn new() -> Self { Self } }
-impl Default for WriteFileTool { fn default() -> Self { Self::new() } }
+impl WriteFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for WriteFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for WriteFileTool {
-    fn name(&self) -> &str { "write_file" }
+    fn name(&self) -> &str {
+        "write_file"
+    }
 
     fn description(&self) -> &str {
         "Write content to a file on the remote server, creating or overwriting it. \
@@ -112,16 +133,22 @@ impl AgentTool for WriteFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::Moderate }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Moderate
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let path = params.get("path").and_then(|v| v.as_str())
+        let path = params
+            .get("path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'path' parameter".into()))?;
-        let content = params.get("content").and_then(|v| v.as_str())
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'content' parameter".into()))?;
         if path.is_empty() {
             return Ok(ToolOutput::fail("write_file", "empty path"));
@@ -189,12 +216,22 @@ impl AgentTool for WriteFileTool {
 // ────────────────────────────── EditFileTool ──────────────────────────────
 
 pub struct EditFileTool;
-impl EditFileTool { pub fn new() -> Self { Self } }
-impl Default for EditFileTool { fn default() -> Self { Self::new() } }
+impl EditFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for EditFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for EditFileTool {
-    fn name(&self) -> &str { "edit_file" }
+    fn name(&self) -> &str {
+        "edit_file"
+    }
 
     fn description(&self) -> &str {
         "Precisely edit a file by replacing an exact occurrence of `old_content` \
@@ -216,20 +253,31 @@ impl AgentTool for EditFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::Moderate }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::Moderate
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let path = params.get("path").and_then(|v| v.as_str())
+        let path = params
+            .get("path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'path' parameter".into()))?;
-        let old_content = params.get("old_content").and_then(|v| v.as_str())
+        let old_content = params
+            .get("old_content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'old_content' parameter".into()))?;
-        let new_content = params.get("new_content").and_then(|v| v.as_str())
+        let new_content = params
+            .get("new_content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'new_content' parameter".into()))?;
-        let replace_all = params.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false);
+        let replace_all = params
+            .get("replace_all")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         if path.is_empty() {
             return Ok(ToolOutput::fail("edit_file", "empty path"));
@@ -243,19 +291,21 @@ impl AgentTool for EditFileTool {
 
         // 1. Read current file via SFTP
         let current_bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => {
-                match sftp.read(path).await {
-                    Ok(data) => data,
-                    Err(e) => return Ok(ToolOutput::fail(
+            Ok(sftp) => match sftp.read(path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    return Ok(ToolOutput::fail(
                         format!("edit {}", path),
                         format!("SFTP read failed: {}", e),
-                    )),
+                    ))
                 }
+            },
+            Err(e) => {
+                return Ok(ToolOutput::fail(
+                    format!("edit {}", path),
+                    format!("SFTP unavailable: {}", e),
+                ))
             }
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                format!("SFTP unavailable: {}", e),
-            )),
         };
 
         let current = match String::from_utf8(current_bytes) {
@@ -306,7 +356,10 @@ impl AgentTool for EditFileTool {
 
         // 4. Write back via SFTP
         let write_result = async {
-            let sftp = ctx.ssh.open_sftp(&ctx.session_id).await
+            let sftp = ctx
+                .ssh
+                .open_sftp(&ctx.session_id)
+                .await
                 .map_err(|e| AppError::Ssh(format!("SFTP unavailable: {}", e)))?;
 
             let mut file = sftp
@@ -331,7 +384,12 @@ impl AgentTool for EditFileTool {
 
         match write_result {
             Ok(()) => Ok(ToolOutput::ok(
-                format!("edit {} ({} replacement{})", path, occurrences, if occurrences == 1 { "" } else { "s" }),
+                format!(
+                    "edit {} ({} replacement{})",
+                    path,
+                    occurrences,
+                    if occurrences == 1 { "" } else { "s" }
+                ),
                 format!(
                     "replaced {} occurrence(s) in {} ({} -> {} bytes)",
                     occurrences,
@@ -357,12 +415,22 @@ impl AgentTool for EditFileTool {
 // ────────────────────────────── ListDirectoryTool ──────────────────────────────
 
 pub struct ListDirectoryTool;
-impl ListDirectoryTool { pub fn new() -> Self { Self } }
-impl Default for ListDirectoryTool { fn default() -> Self { Self::new() } }
+impl ListDirectoryTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for ListDirectoryTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for ListDirectoryTool {
-    fn name(&self) -> &str { "list_directory" }
+    fn name(&self) -> &str {
+        "list_directory"
+    }
 
     fn description(&self) -> &str {
         "List the contents of a directory on the remote server (long format, no color)."
@@ -378,7 +446,9 @@ impl AgentTool for ListDirectoryTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
@@ -402,7 +472,13 @@ impl AgentTool for ListDirectoryTool {
                             let is_dir = metadata.is_dir();
                             let is_link = metadata.is_symlink();
 
-                            let type_char = if is_dir { 'd' } else if is_link { 'l' } else { '-' };
+                            let type_char = if is_dir {
+                                'd'
+                            } else if is_link {
+                                'l'
+                            } else {
+                                '-'
+                            };
                             let perms_str = format_permissions(permissions);
 
                             output.push_str(&format!(
@@ -412,18 +488,19 @@ impl AgentTool for ListDirectoryTool {
                             entries += 1;
                         }
                     }
-                    Err(e) => return Ok(ToolOutput::fail(
-                        format!("list {}", path),
-                        format!("SFTP list failed: {}", e),
-                    )),
+                    Err(e) => {
+                        return Ok(ToolOutput::fail(
+                            format!("list {}", path),
+                            format!("SFTP list failed: {}", e),
+                        ))
+                    }
                 }
 
                 let body = truncate_output(output, MAX_LIST_BYTES);
-                Ok(ToolOutput::ok(
-                    format!("list {} ({} entries)", path, entries),
-                    body,
+                Ok(
+                    ToolOutput::ok(format!("list {} ({} entries)", path, entries), body)
+                        .with_metadata(json!({ "path": path, "entries": entries })),
                 )
-                .with_metadata(json!({ "path": path, "entries": entries })))
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("list {}", path),
@@ -436,7 +513,13 @@ impl AgentTool for ListDirectoryTool {
 fn format_permissions(mode: u32) -> String {
     let is_dir = (mode & 0o170000) == 0o040000;
     let is_link = (mode & 0o170000) == 0o120000;
-    let type_char = if is_dir { 'd' } else if is_link { 'l' } else { '-' };
+    let type_char = if is_dir {
+        'd'
+    } else if is_link {
+        'l'
+    } else {
+        '-'
+    };
     let perms = [
         if mode & 0o400 != 0 { 'r' } else { '-' },
         if mode & 0o200 != 0 { 'w' } else { '-' },

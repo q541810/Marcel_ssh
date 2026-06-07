@@ -1,8 +1,8 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppError;
 use super::persist::JsonPersistable;
+use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +53,9 @@ pub struct QuickCommandStore {
 
 impl QuickCommandStore {
     pub fn new() -> Self {
-        Self { commands: Vec::new() }
+        Self {
+            commands: Vec::new(),
+        }
     }
 
     pub fn list_for_session(&self, session_key: Option<&str>) -> Vec<QuickCommand> {
@@ -139,7 +141,9 @@ fn validate_input(input: &QuickCommandInput) -> Result<(), AppError> {
     if commands.is_empty() {
         return Err(AppError::Config("快捷指令至少需要一条命令".into()));
     }
-    if input.scope == QuickCommandScope::Session && normalized_session_key(input.session_key.clone()).is_none() {
+    if input.scope == QuickCommandScope::Session
+        && normalized_session_key(input.session_key.clone()).is_none()
+    {
         return Err(AppError::Config("会话快捷指令缺少连接配置 ID".into()));
     }
     Ok(())
@@ -152,7 +156,14 @@ fn validate_command(command: &QuickCommand) -> Result<(), AppError> {
     if command.commands.is_empty() {
         return Err(AppError::Config("快捷指令至少需要一条命令".into()));
     }
-    if command.scope == QuickCommandScope::Session && command.session_key.as_deref().unwrap_or("").trim().is_empty() {
+    if command.scope == QuickCommandScope::Session
+        && command
+            .session_key
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+    {
         return Err(AppError::Config("会话快捷指令缺少连接配置 ID".into()));
     }
     Ok(())
@@ -221,14 +232,20 @@ mod tests {
     #[test]
     fn add_rejects_empty_name() {
         let mut s = store();
-        let input = QuickCommandInput { name: "   ".into(), ..valid_global_input() };
+        let input = QuickCommandInput {
+            name: "   ".into(),
+            ..valid_global_input()
+        };
         assert!(s.add("id".into(), input).is_err());
     }
 
     #[test]
     fn add_rejects_empty_commands() {
         let mut s = store();
-        let input = QuickCommandInput { commands: vec![], ..valid_global_input() };
+        let input = QuickCommandInput {
+            commands: vec![],
+            ..valid_global_input()
+        };
         assert!(s.add("id".into(), input).is_err());
     }
 
@@ -307,20 +324,28 @@ mod tests {
     #[test]
     fn list_for_session_filters_correctly() {
         let mut s = store();
-        s.add("g1".into(), QuickCommandInput {
-            scope: QuickCommandScope::Global,
-            name: "Global".into(),
-            commands: vec!["g".into()],
-            session_key: None,
-            interval_ms: 0,
-        }).unwrap();
-        s.add("s1".into(), QuickCommandInput {
-            scope: QuickCommandScope::Session,
-            name: "Session A".into(),
-            commands: vec!["sa".into()],
-            session_key: Some("conn-a".into()),
-            interval_ms: 0,
-        }).unwrap();
+        s.add(
+            "g1".into(),
+            QuickCommandInput {
+                scope: QuickCommandScope::Global,
+                name: "Global".into(),
+                commands: vec!["g".into()],
+                session_key: None,
+                interval_ms: 0,
+            },
+        )
+        .unwrap();
+        s.add(
+            "s1".into(),
+            QuickCommandInput {
+                scope: QuickCommandScope::Session,
+                name: "Session A".into(),
+                commands: vec!["sa".into()],
+                session_key: Some("conn-a".into()),
+                interval_ms: 0,
+            },
+        )
+        .unwrap();
 
         let for_a = s.list_for_session(Some("conn-a"));
         assert_eq!(for_a.len(), 2); // global + session

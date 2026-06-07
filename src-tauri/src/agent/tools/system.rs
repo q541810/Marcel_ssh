@@ -13,12 +13,22 @@ use crate::error::AppError;
 const MAX_OUTPUT_BYTES: usize = 10_000;
 
 pub struct SystemInfoTool;
-impl SystemInfoTool { pub fn new() -> Self { Self } }
-impl Default for SystemInfoTool { fn default() -> Self { Self::new() } }
+impl SystemInfoTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for SystemInfoTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for SystemInfoTool {
-    fn name(&self) -> &str { "system_info" }
+    fn name(&self) -> &str {
+        "system_info"
+    }
 
     fn description(&self) -> &str {
         "Get remote system information. Categories: 'os', 'memory', 'disk', \
@@ -39,23 +49,28 @@ impl AgentTool for SystemInfoTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let category = params.get("category").and_then(|v| v.as_str()).unwrap_or("all");
+        let category = params
+            .get("category")
+            .and_then(|v| v.as_str())
+            .unwrap_or("all");
 
         let cmd = match category {
-            "os"      => cmd_os(),
-            "memory"  => cmd_mem(),
-            "disk"    => cmd_disk(),
+            "os" => cmd_os(),
+            "memory" => cmd_mem(),
+            "disk" => cmd_disk(),
             "network" => cmd_net(),
-            "cpu"     => cmd_cpu(),
-            "uptime"  => cmd_uptime(),
-            "all"     => cmd_all(),
+            "cpu" => cmd_cpu(),
+            "uptime" => cmd_uptime(),
+            "all" => cmd_all(),
             other => {
                 return Ok(ToolOutput::fail(
                     "system_info",
@@ -67,9 +82,8 @@ impl AgentTool for SystemInfoTool {
         match ctx.exec(&cmd).await {
             Ok(output) => {
                 let body = truncate_output(output, MAX_OUTPUT_BYTES);
-                Ok(ToolOutput::ok(format!("system_info {}", category), body).with_metadata(
-                    json!({ "category": category }),
-                ))
+                Ok(ToolOutput::ok(format!("system_info {}", category), body)
+                    .with_metadata(json!({ "category": category })))
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("system_info {}", category),
@@ -107,7 +121,8 @@ fn cmd_cpu() -> String {
 
 fn cmd_net() -> String {
     "(ip -brief addr 2>/dev/null || ifconfig 2>/dev/null || true); \
-     echo; (ip route 2>/dev/null || netstat -rn 2>/dev/null || true)".into()
+     echo; (ip route 2>/dev/null || netstat -rn 2>/dev/null || true)"
+        .into()
 }
 
 fn cmd_all() -> String {

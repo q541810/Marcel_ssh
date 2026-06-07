@@ -22,7 +22,11 @@ pub async fn agent_create_conversation(
         .conversation_db
         .create_conversation(&connection_id, &title)
         .map_err(|e| AppError::Agent(format!("Failed to create conversation: {}", e)))?;
-    log::info!("Created conversation: {} (connection={})", conversation.id, connection_id);
+    log::info!(
+        "Created conversation: {} (connection={})",
+        conversation.id,
+        connection_id
+    );
     Ok(conversation.id)
 }
 
@@ -100,7 +104,13 @@ pub async fn agent_delete_conversations_by_session(
     state
         .conversation_db
         .delete_conversations_by_connection(&connection_id)
-        .map_err(|e| AppError::Agent(format!("Failed to delete conversations by session: {}", e)))?;
-    log::info!("Deleted all conversations for session: {} (connection={})", session_id, connection_id);
+        .map_err(|e| {
+            AppError::Agent(format!("Failed to delete conversations by session: {}", e))
+        })?;
+    log::info!(
+        "Deleted all conversations for session: {} (connection={})",
+        session_id,
+        connection_id
+    );
     Ok(())
 }

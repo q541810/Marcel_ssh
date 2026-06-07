@@ -104,10 +104,7 @@ impl AgentTool for HttpGetTool {
         };
 
         if urls_to_fetch.is_empty() {
-            return Ok(ToolOutput::fail(
-                "http_get",
-                "no valid URLs provided",
-            ));
+            return Ok(ToolOutput::fail("http_get", "no valid URLs provided"));
         }
 
         // Validate all URLs
@@ -195,13 +192,12 @@ impl AgentTool for HttpGetTool {
             )
         };
 
-        Ok(ToolOutput::ok(summary, final_output)
-            .with_metadata(json!({
-                "urls_fetched": urls_to_fetch.len(),
-                "success": success_count,
-                "failed": fail_count,
-                "bytes": total_bytes
-            })))
+        Ok(ToolOutput::ok(summary, final_output).with_metadata(json!({
+            "urls_fetched": urls_to_fetch.len(),
+            "success": success_count,
+            "failed": fail_count,
+            "bytes": total_bytes
+        })))
     }
 }
 
@@ -373,10 +369,7 @@ mod tests {
     #[test]
     fn extract_domain_works() {
         assert_eq!(extract_domain("https://example.com/page"), "example.com");
-        assert_eq!(
-            extract_domain("http://foo.bar/baz/qux"),
-            "foo.bar"
-        );
+        assert_eq!(extract_domain("http://foo.bar/baz/qux"), "foo.bar");
     }
 
     #[test]

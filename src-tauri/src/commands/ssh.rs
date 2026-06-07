@@ -55,9 +55,7 @@ pub async fn ssh_resize(
 
 /// List currently active SSH session IDs.
 #[tauri::command]
-pub async fn ssh_list_sessions(
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, AppError> {
+pub async fn ssh_list_sessions(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
     Ok(state.ssh_manager.list_sessions().await)
 }
 

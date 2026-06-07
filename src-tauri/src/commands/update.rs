@@ -13,9 +13,7 @@ pub struct UpdateCheckResult {
 }
 
 #[tauri::command]
-pub async fn check_update(
-    app: tauri::AppHandle,
-) -> Result<UpdateCheckResult, AppError> {
+pub async fn check_update(app: tauri::AppHandle) -> Result<UpdateCheckResult, AppError> {
     let current_version = app.package_info().version.to_string();
     let user_agent = format!("Marcel-SSH/{}", current_version);
 

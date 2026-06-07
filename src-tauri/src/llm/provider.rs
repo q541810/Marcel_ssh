@@ -87,7 +87,7 @@ impl LlmMessage {
 }
 
 /// Configuration for an LLM provider.
-/// 
+///
 /// Note: `api_key` is excluded from serialization to prevent it from being
 /// written to disk. It should be stored securely in the system keychain.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,15 +181,19 @@ mod tests {
         let json = serde_json::to_string(&config).expect("Failed to serialize");
 
         // Verify API key is NOT in the JSON
-        assert!(!json.contains("super-secret-key-12345"), 
-            "API key should not be serialized to JSON");
-        assert!(!json.contains("apiKey"), 
-            "apiKey field should not appear in JSON");
-        
+        assert!(
+            !json.contains("super-secret-key-12345"),
+            "API key should not be serialized to JSON"
+        );
+        assert!(
+            !json.contains("apiKey"),
+            "apiKey field should not appear in JSON"
+        );
+
         // Verify other fields ARE present
         assert!(json.contains("gpt-4"), "Model should be in JSON");
         assert!(json.contains("openai"), "Provider type should be in JSON");
-        
+
         println!("Serialized JSON: {}", json);
     }
 
@@ -203,8 +207,7 @@ mod tests {
             "allowInvalidCerts": false
         }"#;
 
-        let config: LlmConfig = serde_json::from_str(json)
-            .expect("Failed to deserialize");
+        let config: LlmConfig = serde_json::from_str(json).expect("Failed to deserialize");
 
         assert_eq!(config.provider_type, ProviderType::OpenAI);
         assert_eq!(config.model, "gpt-4");
@@ -222,25 +225,34 @@ mod tests {
         let config = LlmConfig::default();
 
         // Verify no hardcoded API key
-        assert_eq!(config.api_key, "", 
-            "Default config should not have hardcoded API key");
+        assert_eq!(
+            config.api_key, "",
+            "Default config should not have hardcoded API key"
+        );
 
         // Verify no hardcoded internal IP addresses
         if let Some(ref base_url) = config.base_url {
-            assert!(!base_url.contains("192.168."),
-                "Default base_url should not contain hardcoded internal IP");
-            assert!(!base_url.contains("10."),
-                "Default base_url should not contain hardcoded internal IP");
-            assert!(!base_url.contains("172.16."),
-                "Default base_url should not contain hardcoded internal IP");
+            assert!(
+                !base_url.contains("192.168."),
+                "Default base_url should not contain hardcoded internal IP"
+            );
+            assert!(
+                !base_url.contains("10."),
+                "Default base_url should not contain hardcoded internal IP"
+            );
+            assert!(
+                !base_url.contains("172.16."),
+                "Default base_url should not contain hardcoded internal IP"
+            );
         }
 
         // Verify allow_invalid_certs defaults to false (secure default)
-        assert!(!config.allow_invalid_certs,
-            "Default should not allow invalid certificates");
+        assert!(
+            !config.allow_invalid_certs,
+            "Default should not allow invalid certificates"
+        );
 
         // Model can have a safe default (not a secret)
-        assert!(!config.model.is_empty(),
-            "Model should have a value");
+        assert!(!config.model.is_empty(), "Model should have a value");
     }
 }

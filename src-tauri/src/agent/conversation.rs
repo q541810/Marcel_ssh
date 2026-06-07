@@ -14,9 +14,7 @@ pub enum ConversationError {
         source: rusqlite::Error,
     },
     #[error("Failed to initialize database schema: {source}")]
-    SchemaError {
-        source: rusqlite::Error,
-    },
+    SchemaError { source: rusqlite::Error },
     #[error("Database operation failed: {message}")]
     OperationError {
         message: String,
@@ -99,15 +97,19 @@ impl ConversationDb {
             CREATE INDEX IF NOT EXISTS idx_conversations_connection ON conversations(connection_id);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             ",
-        ).map_err(|e| ConversationError::SchemaError { source: e })?;
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
 
         // Migration: rename session_id → connection_id if old schema exists
         if column_exists(&conn, "conversations", "session_id")
             && !column_exists(&conn, "conversations", "connection_id")
         {
             log::info!("Migrating conversation database: renaming session_id → connection_id");
-            conn.execute("ALTER TABLE conversations RENAME COLUMN session_id TO connection_id", [])
-                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            conn.execute(
+                "ALTER TABLE conversations RENAME COLUMN session_id TO connection_id",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete");
         }
 
@@ -259,18 +261,14 @@ impl ConversationDb {
             "DELETE FROM messages WHERE conversation_id = ?1",
             [conversation_id],
         )?;
-        conn.execute(
-            "DELETE FROM conversations WHERE id = ?1",
-            [conversation_id],
-        )?;
+        conn.execute("DELETE FROM conversations WHERE id = ?1", [conversation_id])?;
         Ok(())
     }
 
     pub fn delete_conversations_by_connection(&self, connection_id: &str) -> RusqliteResult<()> {
         let ids: Vec<String> = {
             let conn = self.conn.lock().unwrap();
-            let mut stmt = conn
-                .prepare("SELECT id FROM conversations WHERE connection_id = ?1")?;
+            let mut stmt = conn.prepare("SELECT id FROM conversations WHERE connection_id = ?1")?;
             let rows: Vec<String> = stmt
                 .query_map([connection_id], |row| row.get(0))?
                 .filter_map(|r| r.ok())
@@ -372,7 +370,14 @@ mod tests {
             .expect("Failed to create conversation");
 
         let msg = db
-            .save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None, None)
+            .save_message(
+                &conversation.id,
+                "user",
+                "Hello",
+                "2024-01-01T00:00:00Z",
+                None,
+                None,
+            )
             .expect("Failed to save message");
         assert!(!msg.id.is_empty());
         assert_eq!(msg.role, "user");
@@ -394,8 +399,15 @@ mod tests {
             .create_conversation("conn_1", "To Delete")
             .expect("Failed to create conversation");
 
-        db.save_message(&conversation.id, "user", "Hello", "2024-01-01T00:00:00Z", None, None)
-            .expect("Failed to save message");
+        db.save_message(
+            &conversation.id,
+            "user",
+            "Hello",
+            "2024-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("Failed to save message");
 
         db.delete_conversation(&conversation.id)
             .expect("Failed to delete conversation");
@@ -425,14 +437,10 @@ mod tests {
         db.delete_conversations_by_connection("conn_1")
             .expect("Failed to delete by connection");
 
-        let remaining = db
-            .list_conversations("conn_1")
-            .expect("Failed to list");
+        let remaining = db.list_conversations("conn_1").expect("Failed to list");
         assert!(remaining.is_empty());
 
-        let conn2 = db
-            .list_conversations("conn_2")
-            .expect("Failed to list");
+        let conn2 = db.list_conversations("conn_2").expect("Failed to list");
         assert_eq!(conn2.len(), 1);
     }
 
@@ -447,9 +455,7 @@ mod tests {
         db.update_conversation_title(&conversation.id, "New Title")
             .expect("Failed to update title");
 
-        let conversations = db
-            .list_conversations("conn_1")
-            .expect("Failed to list");
+        let conversations = db.list_conversations("conn_1").expect("Failed to list");
         assert_eq!(conversations[0].title, "New Title");
     }
 
@@ -468,9 +474,7 @@ mod tests {
         db.touch_conversation(&conversation.id)
             .expect("Failed to touch");
 
-        let conversations = db
-            .list_conversations("conn_1")
-            .expect("Failed to list");
+        let conversations = db.list_conversations("conn_1").expect("Failed to list");
         assert!(conversations[0].updated_at > original_updated_at);
     }
 }

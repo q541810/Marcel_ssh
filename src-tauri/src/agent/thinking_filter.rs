@@ -219,10 +219,7 @@ mod tests {
 
     #[test]
     fn strip_single_tag_pair() {
-        assert_eq!(
-            strip_thinking_tags("a <thinking>b</thinking> c"),
-            "a  c"
-        );
+        assert_eq!(strip_thinking_tags("a <thinking>b</thinking> c"), "a  c");
     }
 
     #[test]
@@ -240,10 +237,7 @@ mod tests {
 
     #[test]
     fn strip_thought_variant() {
-        assert_eq!(
-            strip_thinking_tags("<Thought>inner</Thought>"),
-            ""
-        );
+        assert_eq!(strip_thinking_tags("<Thought>inner</Thought>"), "");
     }
 
     #[test]

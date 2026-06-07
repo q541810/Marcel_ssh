@@ -33,7 +33,10 @@ struct KnownHostsFile {
 
 impl Default for KnownHostsFile {
     fn default() -> Self {
-        Self { version: 1, entries: HashMap::new() }
+        Self {
+            version: 1,
+            entries: HashMap::new(),
+        }
     }
 }
 
@@ -351,4 +354,3 @@ mod tests {
         ));
     }
 }
-

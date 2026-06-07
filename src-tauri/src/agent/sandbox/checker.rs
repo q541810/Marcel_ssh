@@ -3,9 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use super::parser::ParsedSegment;
 
 pub fn looks_like_path(s: &str) -> bool {
-    s.starts_with('/')
-        || s.starts_with('~')
-        || s.starts_with("$HOME")
+    s.starts_with('/') || s.starts_with('~') || s.starts_with("$HOME")
 }
 
 pub fn analyze_rm_args(args: &[String]) -> (bool, bool, Vec<String>) {
@@ -44,9 +42,7 @@ pub fn analyze_rm_args(args: &[String]) -> (bool, bool, Vec<String>) {
 
 pub fn is_dangerous_rm_target(path: &str) -> bool {
     let norm = normalize_path(path);
-    let exact_dangerous = [
-        "/", "/*", "/.*", "~", "$HOME", "~/", "$HOME/",
-    ];
+    let exact_dangerous = ["/", "/*", "/.*", "~", "$HOME", "~/", "$HOME/"];
     if exact_dangerous.contains(&norm.as_str()) {
         return true;
     }
@@ -98,7 +94,11 @@ pub fn normalize_path(s: &str) -> String {
     };
 
     let is_abs = body.starts_with('/') || prefix.is_empty() && s.starts_with('/');
-    let work = if prefix.is_empty() { s.to_string() } else { body };
+    let work = if prefix.is_empty() {
+        s.to_string()
+    } else {
+        body
+    };
 
     let mut out: Vec<String> = Vec::new();
     let pb = PathBuf::from(&work);
@@ -139,7 +139,11 @@ pub fn normalize_path(s: &str) -> String {
     } else {
         joined
     };
-    if result.is_empty() { s.to_string() } else { result }
+    if result.is_empty() {
+        s.to_string()
+    } else {
+        result
+    }
 }
 
 /// Match a blocked pattern such that a trailing `/` only matches root,
@@ -217,20 +221,30 @@ pub fn contains_top_level_pipe(input: &str) -> bool {
     while i < bytes.len() {
         let c = bytes[i] as char;
         if in_single {
-            if c == '\'' { in_single = false; }
+            if c == '\'' {
+                in_single = false;
+            }
             i += 1;
             continue;
         }
         if in_double {
-            if c == '\\' && i + 1 < bytes.len() { i += 2; continue; }
-            if c == '"' { in_double = false; }
+            if c == '\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_double = false;
+            }
             i += 1;
             continue;
         }
         match c {
             '\'' => in_single = true,
             '"' => in_double = true,
-            '\\' if i + 1 < bytes.len() => { i += 2; continue; }
+            '\\' if i + 1 < bytes.len() => {
+                i += 2;
+                continue;
+            }
             '|' => {
                 // Skip `||` (logical OR is not a pipe sink).
                 if i + 1 < bytes.len() && bytes[i + 1] as char == '|' {

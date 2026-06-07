@@ -104,7 +104,17 @@ fn default_blacklist() -> Vec<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        for d in ["/System", "/Library", "/Applications", "/private", "/etc", "/usr", "/bin", "/sbin", "/var"] {
+        for d in [
+            "/System",
+            "/Library",
+            "/Applications",
+            "/private",
+            "/etc",
+            "/usr",
+            "/bin",
+            "/sbin",
+            "/var",
+        ] {
             raw.push(PathBuf::from(d));
         }
     }
@@ -138,9 +148,28 @@ fn is_windows_reserved_name(name: &str) -> bool {
     let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
     matches!(
         stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL"
-            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
-            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
     )
 }
 
@@ -276,14 +305,10 @@ pub async fn validate_local_download_path(
     if let Ok(meta) = fs::symlink_metadata(&resolved).await {
         let ft = meta.file_type();
         if ft.is_symlink() {
-            return Err(AppError::Agent(
-                "refusing to overwrite a symlink".into(),
-            ));
+            return Err(AppError::Agent("refusing to overwrite a symlink".into()));
         }
         if ft.is_dir() {
-            return Err(AppError::Agent(
-                "refusing to overwrite a directory".into(),
-            ));
+            return Err(AppError::Agent("refusing to overwrite a directory".into()));
         }
         if !overwrite {
             return Err(AppError::Agent(format!(
@@ -360,12 +385,22 @@ async fn local_file_size(p: &Path) -> Result<u64, AppError> {
 // ────────────────────────────── UploadFileTool ──────────────────────────────
 
 pub struct UploadFileTool;
-impl UploadFileTool { pub fn new() -> Self { Self } }
-impl Default for UploadFileTool { fn default() -> Self { Self::new() } }
+impl UploadFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for UploadFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for UploadFileTool {
-    fn name(&self) -> &str { "upload_file" }
+    fn name(&self) -> &str {
+        "upload_file"
+    }
 
     fn description(&self) -> &str {
         "Upload a file from the local filesystem to the remote server. \
@@ -384,16 +419,22 @@ impl AgentTool for UploadFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel { RiskLevel::LowRisk }
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::LowRisk
+    }
 
     async fn execute(
         &self,
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let local_path = params.get("local_path").and_then(|v| v.as_str())
+        let local_path = params
+            .get("local_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'local_path' parameter".into()))?;
-        let remote_path = params.get("remote_path").and_then(|v| v.as_str())
+        let remote_path = params
+            .get("remote_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'remote_path' parameter".into()))?;
         if remote_path.is_empty() {
             return Ok(ToolOutput::fail("upload_file", "empty remote_path"));
@@ -406,10 +447,12 @@ impl AgentTool for UploadFileTool {
 
         let size = match local_file_size(&local_path_buf).await {
             Ok(n) => n,
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path_buf.display()),
-                e.to_string(),
-            )),
+            Err(e) => {
+                return Ok(ToolOutput::fail(
+                    format!("upload {}", local_path_buf.display()),
+                    e.to_string(),
+                ))
+            }
         };
         if size > MAX_TRANSFER_BYTES {
             return Ok(ToolOutput::fail(
@@ -423,13 +466,19 @@ impl AgentTool for UploadFileTool {
 
         let bytes = match fs::read(&local_path_buf).await {
             Ok(b) => b,
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("upload {}", local_path_buf.display()),
-                format!("local read failed: {}", e),
-            )),
+            Err(e) => {
+                return Ok(ToolOutput::fail(
+                    format!("upload {}", local_path_buf.display()),
+                    format!("local read failed: {}", e),
+                ))
+            }
         };
 
-        let final_remote = if params.get("file_name").and_then(|v| v.as_str()).map_or(false, |n| !n.is_empty()) {
+        let final_remote = if params
+            .get("file_name")
+            .and_then(|v| v.as_str())
+            .map_or(false, |n| !n.is_empty())
+        {
             let dir = if remote_path.ends_with('/') || remote_path.ends_with('\\') {
                 remote_path.to_string()
             } else {
@@ -440,8 +489,15 @@ impl AgentTool for UploadFileTool {
                     remote_path.to_string()
                 }
             };
-            let name = params.get("file_name").and_then(|v| v.as_str()).unwrap_or("");
-            if dir.ends_with('/') { format!("{}{}", dir, name) } else { format!("{}/{}", dir, name) }
+            let name = params
+                .get("file_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if dir.ends_with('/') {
+                format!("{}{}", dir, name)
+            } else {
+                format!("{}/{}", dir, name)
+            }
         } else {
             let file_name = local_path_buf
                 .file_name()
@@ -482,7 +538,12 @@ impl AgentTool for UploadFileTool {
                 match write_result {
                     Ok(()) => Ok(ToolOutput::ok(
                         format!("upload {} ({} bytes)", final_remote, bytes.len()),
-                        format!("uploaded {} bytes: {} -> remote:{}", bytes.len(), local_path_buf.display(), final_remote),
+                        format!(
+                            "uploaded {} bytes: {} -> remote:{}",
+                            bytes.len(),
+                            local_path_buf.display(),
+                            final_remote
+                        ),
                     )
                     .with_metadata(json!({
                         "local_path": local_path_buf.display().to_string(),
@@ -506,12 +567,22 @@ impl AgentTool for UploadFileTool {
 // ────────────────────────────── DownloadFileTool ──────────────────────────────
 
 pub struct DownloadFileTool;
-impl DownloadFileTool { pub fn new() -> Self { Self } }
-impl Default for DownloadFileTool { fn default() -> Self { Self::new() } }
+impl DownloadFileTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for DownloadFileTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[async_trait]
 impl AgentTool for DownloadFileTool {
-    fn name(&self) -> &str { "download_file" }
+    fn name(&self) -> &str {
+        "download_file"
+    }
 
     fn description(&self) -> &str {
         "Download a file from the remote server to the local filesystem. \
@@ -542,42 +613,46 @@ impl AgentTool for DownloadFileTool {
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let remote_path = params.get("remote_path").and_then(|v| v.as_str())
+        let remote_path = params
+            .get("remote_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'remote_path' parameter".into()))?;
-        let local_path = params.get("local_path").and_then(|v| v.as_str())
+        let local_path = params
+            .get("local_path")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| AppError::Agent("Missing 'local_path' parameter".into()))?;
-        let overwrite = params.get("overwrite").and_then(|v| v.as_bool()).unwrap_or(false);
+        let overwrite = params
+            .get("overwrite")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if local_path.is_empty() || remote_path.is_empty() {
             return Ok(ToolOutput::fail("download_file", "empty path"));
         }
 
         let policy = LocalPathPolicy::default_policy();
-        let resolved = match validate_local_download_path(
-            Path::new(local_path),
-            overwrite,
-            &policy,
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(e) => return Ok(ToolOutput::fail("download_file", e.to_string())),
-        };
+        let resolved =
+            match validate_local_download_path(Path::new(local_path), overwrite, &policy).await {
+                Ok(r) => r,
+                Err(e) => return Ok(ToolOutput::fail("download_file", e.to_string())),
+            };
 
         // Open SFTP session and download
         let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => {
-                match sftp.read(remote_path).await {
-                    Ok(data) => data,
-                    Err(e) => return Ok(ToolOutput::fail(
+            Ok(sftp) => match sftp.read(remote_path).await {
+                Ok(data) => data,
+                Err(e) => {
+                    return Ok(ToolOutput::fail(
                         format!("download {}", remote_path),
                         format!("SFTP read failed: {}", e),
-                    )),
+                    ))
                 }
+            },
+            Err(e) => {
+                return Ok(ToolOutput::fail(
+                    format!("download {}", remote_path),
+                    format!("SFTP unavailable: {}", e),
+                ))
             }
-            Err(e) => return Ok(ToolOutput::fail(
-                format!("download {}", remote_path),
-                format!("SFTP unavailable: {}", e),
-            )),
         };
 
         let size = bytes.len() as u64;
@@ -703,7 +778,9 @@ mod tests {
         let target = std::fs::canonicalize(td.path())
             .unwrap()
             .join("sub/deeper/a.txt");
-        assert!(validate_local_download_path(&target, false, &policy).await.is_ok());
+        assert!(validate_local_download_path(&target, false, &policy)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -826,7 +903,9 @@ mod tests {
     async fn upload_path_with_dotdot_inside_home_ok() {
         // Previously the validator rejected any ".." component outright. We
         // only care about the resolved location.
-        let Some(home) = dirs::home_dir() else { return; };
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
         // Create a real temp file under home so we can reference it with "..".
         let dir = home.join(".marcel-ssh-upload-test");
         let _ = std::fs::create_dir_all(&dir);

@@ -171,8 +171,7 @@ const WRAPPERS: &[&str] = &[
 const SHELLS: &[&str] = &["bash", "sh", "zsh", "dash", "ash", "ksh"];
 
 pub fn parse_segment(seg: &str) -> Result<ParsedSegment, ParseError> {
-    let tokens = shell_words::split(seg)
-        .map_err(|e| ParseError::ShellWordsError(e.to_string()))?;
+    let tokens = shell_words::split(seg).map_err(|e| ParseError::ShellWordsError(e.to_string()))?;
     if tokens.is_empty() {
         return Ok(ParsedSegment {
             raw: seg.to_string(),
@@ -222,7 +221,10 @@ pub fn parse_segment(seg: &str) -> Result<ParsedSegment, ParseError> {
                     }
                     if tk.starts_with('-') {
                         // -u <user>, -g <group>, -p <prompt>: also consume value.
-                        let needs_val = matches!(tk.as_str(), "-u" | "-g" | "-p" | "-C" | "-D" | "-h" | "-r" | "-t" | "-T" | "-U");
+                        let needs_val = matches!(
+                            tk.as_str(),
+                            "-u" | "-g" | "-p" | "-C" | "-D" | "-h" | "-r" | "-t" | "-T" | "-U"
+                        );
                         idx += 1;
                         if needs_val && idx < tokens.len() {
                             idx += 1;
@@ -295,10 +297,11 @@ fn is_env_assignment(s: &str) -> bool {
             return false;
         }
         let key = &s[..eq];
-        return key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && key.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
+        return key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && key
+                .chars()
+                .next()
+                .map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
     }
     false
 }
@@ -406,7 +409,10 @@ mod tests {
         assert_eq!(parse_segment("env A=1 rm -rf /").unwrap().base_cmd, "rm");
         assert_eq!(parse_segment("env -i A=1 rm -rf /").unwrap().base_cmd, "rm");
         assert_eq!(parse_segment("sudo rm -rf /").unwrap().base_cmd, "rm");
-        assert_eq!(parse_segment("sudo -u root rm -rf /").unwrap().base_cmd, "rm");
+        assert_eq!(
+            parse_segment("sudo -u root rm -rf /").unwrap().base_cmd,
+            "rm"
+        );
         assert_eq!(parse_segment("nohup rm -rf /").unwrap().base_cmd, "rm");
     }
 
