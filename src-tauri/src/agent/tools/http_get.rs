@@ -10,7 +10,9 @@
 
 use async_trait::async_trait;
 use futures::future::join_all;
+use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
+use scraper::{Html, Selector};
 use serde_json::json;
 
 use crate::agent::sandbox::RiskLevel;
@@ -19,6 +21,34 @@ use crate::error::AppError;
 
 const MAX_OUTPUT_BYTES: usize = 24_000;
 const TIMEOUT_SECS: u64 = 20;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputFormat {
+    Markdown,
+    Text,
+}
+
+struct FetchedPage {
+    requested_url: String,
+    final_url: String,
+    status: u16,
+    status_text: String,
+    content_type: String,
+    title: Option<String>,
+    content: String,
+    source_bytes: usize,
+    markdown_bytes: usize,
+    redirected: bool,
+}
+
+struct PageChunk {
+    content: String,
+    offset: usize,
+    chunk_size: usize,
+    next_offset: Option<usize>,
+    total_bytes: usize,
+    truncated: bool,
+}
 
 pub struct HttpGetTool;
 impl HttpGetTool {
@@ -44,7 +74,9 @@ impl AgentTool for HttpGetTool {
          (much faster than fetching one at a time). \
          Use this to read detailed content from URLs returned by the `web_search` tool. \
          IMPORTANT: When you need to read multiple pages, ALWAYS use the `urls` array \
-         instead of calling this tool repeatedly. Returns text content (HTML stripped, links preserved)."
+         instead of calling this tool repeatedly. Returns readable Markdown by default, \
+         preserving headings, lists, code blocks, tables, links, and basic HTTP metadata. \
+         For long pages, use `offset` and `chunk_size` with a single `url` to continue reading."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -62,8 +94,29 @@ impl AgentTool for HttpGetTool {
                 },
                 "max_length": {
                     "type": "integer",
-                    "description": "Maximum total response length in bytes (default: 24000, max: 48000)",
+                    "description": "Backward-compatible alias for chunk_size in bytes (default: 24000, max: 48000)",
                     "default": 24000
+                },
+                "chunk_size": {
+                    "type": "integer",
+                    "description": "Maximum returned content chunk size in bytes (default: 24000, max: 48000)",
+                    "default": 24000
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Byte offset into the converted Markdown/text content. Only supported with a single url.",
+                    "default": 0
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["markdown", "text"],
+                    "description": "Output format for HTML pages (default: markdown)",
+                    "default": "markdown"
+                },
+                "include_metadata": {
+                    "type": "boolean",
+                    "description": "Include HTTP status, content type, final URL, title, and chunk info in the textual output (default: true)",
+                    "default": true
                 }
             }
         })
@@ -78,11 +131,18 @@ impl AgentTool for HttpGetTool {
         params: serde_json::Value,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let max_length = params
-            .get("max_length")
+        let chunk_size = params
+            .get("chunk_size")
+            .or_else(|| params.get("max_length"))
             .and_then(|v| v.as_u64())
             .unwrap_or(MAX_OUTPUT_BYTES as u64)
             .clamp(2000, 48000) as usize;
+        let offset = params.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let include_metadata = params
+            .get("include_metadata")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let format = parse_output_format(params.get("format").and_then(|v| v.as_str()));
 
         // Determine if single or batch mode
         let single_url = params.get("url").and_then(|v| v.as_str()).map(str::trim);
@@ -107,6 +167,13 @@ impl AgentTool for HttpGetTool {
             return Ok(ToolOutput::fail("http_get", "no valid URLs provided"));
         }
 
+        if urls_to_fetch.len() > 1 && offset > 0 {
+            return Ok(ToolOutput::fail(
+                "http_get",
+                "offset pagination is only supported with a single 'url', not 'urls'",
+            ));
+        }
+
         // Validate all URLs
         for url in &urls_to_fetch {
             if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -117,37 +184,49 @@ impl AgentTool for HttpGetTool {
             }
         }
 
-        // Fetch all URLs concurrently
-        let per_page_limit = max_length.saturating_div(urls_to_fetch.len().max(1));
+        // Fetch all URLs concurrently. Batch mode keeps one chunk per page, while
+        // paginated reads are intentionally restricted to single-url mode.
+        let per_page_limit = chunk_size.saturating_div(urls_to_fetch.len().max(1));
         let fetches: Vec<_> = urls_to_fetch
             .iter()
-            .map(|u| fetch_page(u, per_page_limit))
+            .map(|u| fetch_page(u, format))
             .collect();
 
         let results = join_all(fetches).await;
 
         // Build combined output
         let mut sections = Vec::new();
-        let mut total_bytes = 0;
+        let mut total_source_bytes = 0;
+        let mut total_content_bytes = 0;
         let mut success_count = 0;
         let mut fail_count = 0;
+        let mut pages_metadata = Vec::new();
 
         for (i, (url, result)) in urls_to_fetch.iter().zip(results.iter()).enumerate() {
             let domain = extract_domain(url);
             match result {
-                Ok(content) => {
+                Ok(page) => {
                     success_count += 1;
-                    total_bytes += content.len();
+                    total_source_bytes += page.source_bytes;
+                    total_content_bytes += page.markdown_bytes;
+                    let page_offset = if urls_to_fetch.len() == 1 { offset } else { 0 };
+                    let page_chunk_size = if urls_to_fetch.len() == 1 {
+                        chunk_size
+                    } else {
+                        per_page_limit.max(2000)
+                    };
+                    let chunk = make_chunk(&page.content, page_offset, page_chunk_size);
+                    pages_metadata.push(page_metadata(page, &chunk));
                     if urls_to_fetch.len() > 1 {
                         sections.push(format!(
-                            "=== Page {}/{}: {} ===\n{}",
+                            "## Page {}/{}: {}\n\n{}",
                             i + 1,
                             urls_to_fetch.len(),
                             domain,
-                            content
+                            format_page_output(page, &chunk, include_metadata)
                         ));
                     } else {
-                        sections.push(content.clone());
+                        sections.push(format_page_output(page, &chunk, include_metadata));
                     }
                 }
                 Err(e) => {
@@ -171,7 +250,7 @@ impl AgentTool for HttpGetTool {
         }
 
         let combined = sections.join("\n\n");
-        let output = truncate_output(combined, MAX_OUTPUT_BYTES.min(max_length));
+        let output = truncate_output(combined, MAX_OUTPUT_BYTES.min(chunk_size));
 
         let hint = "\n\n---\nTip: This page may contain links. Use `http_get` again with any URL to get its full content.";
         let final_output = format!("{}{}", output, hint);
@@ -180,7 +259,7 @@ impl AgentTool for HttpGetTool {
             format!(
                 "http_get {} ({})",
                 extract_domain(urls_to_fetch[0]),
-                format_bytes(total_bytes)
+                format_bytes(total_content_bytes)
             )
         } else {
             format!(
@@ -188,7 +267,7 @@ impl AgentTool for HttpGetTool {
                 urls_to_fetch.len(),
                 success_count,
                 fail_count,
-                format_bytes(total_bytes)
+                format_bytes(total_content_bytes)
             )
         };
 
@@ -196,12 +275,18 @@ impl AgentTool for HttpGetTool {
             "urls_fetched": urls_to_fetch.len(),
             "success": success_count,
             "failed": fail_count,
-            "bytes": total_bytes
+            "source_bytes": total_source_bytes,
+            "content_bytes": total_content_bytes,
+            "format": match format {
+                OutputFormat::Markdown => "markdown",
+                OutputFormat::Text => "text",
+            },
+            "pages": pages_metadata
         })))
     }
 }
 
-async fn fetch_page(url: &str, max_length: usize) -> Result<String, AppError> {
+async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppError> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -218,42 +303,296 @@ async fn fetch_page(url: &str, max_length: usize) -> Result<String, AppError> {
         .await
         .map_err(|e| AppError::Agent(format!("HTTP request failed: {}", e)))?;
 
-    if !resp.status().is_success() {
-        return Err(AppError::Agent(format!(
-            "HTTP error: {} ({})",
-            resp.status(),
-            resp.status().canonical_reason().unwrap_or("")
-        )));
-    }
-
+    let status = resp.status();
+    let status_text = status.canonical_reason().unwrap_or("").to_string();
+    let final_url = resp.url().to_string();
     let content_type = resp
         .headers()
-        .get("content-type")
+        .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+
+    if !status.is_success() {
+        return Err(AppError::Agent(format!(
+            "HTTP error: {} ({}) at {}",
+            status, status_text, final_url
+        )));
+    }
 
     let body = resp
         .text()
         .await
         .map_err(|e| AppError::Agent(format!("failed to read response: {}", e)))?;
+    let source_bytes = body.len();
+    let title = extract_title(&body);
 
-    // If it looks like HTML, strip tags and decode entities
-    if content_type.contains("text/html") || body.contains("<html") || body.contains("<!DOCTYPE") {
-        Ok(strip_html(&body, max_length))
+    let content = if is_html(&content_type, &body) {
+        let readable_html = extract_readable_html(&body);
+        match format {
+            OutputFormat::Markdown => html_to_markdown(&readable_html),
+            OutputFormat::Text => strip_html(&readable_html, usize::MAX),
+        }
     } else {
-        // Plain text, JSON, etc. — return as-is (truncated)
-        if body.len() > max_length {
-            Ok(format!(
-                "{}\n\n[truncated to {} bytes; original {} bytes]",
-                &body[..max_length],
-                max_length,
-                body.len()
-            ))
-        } else {
-            Ok(body)
+        body
+    };
+    let content = cleanup_markdown(&content);
+    let markdown_bytes = content.len();
+    let redirected = normalize_url_for_compare(url) != normalize_url_for_compare(&final_url);
+
+    Ok(FetchedPage {
+        requested_url: url.to_string(),
+        final_url,
+        status: status.as_u16(),
+        status_text,
+        content_type,
+        title,
+        content,
+        source_bytes,
+        markdown_bytes,
+        redirected,
+    })
+}
+
+fn parse_output_format(format: Option<&str>) -> OutputFormat {
+    match format
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("text") => OutputFormat::Text,
+        _ => OutputFormat::Markdown,
+    }
+}
+
+fn is_html(content_type: &str, body: &str) -> bool {
+    let content_type = content_type.to_ascii_lowercase();
+    content_type.contains("text/html")
+        || body.contains("<html")
+        || body.contains("<HTML")
+        || body.contains("<!DOCTYPE")
+        || body.contains("<!doctype")
+}
+
+fn html_to_markdown(html: &str) -> String {
+    html2md::parse_html(html)
+}
+
+fn extract_readable_html(html: &str) -> String {
+    let cleaned = strip_noise_html(html);
+    let document = Html::parse_document(&cleaned);
+
+    for selector in readable_selectors() {
+        if let Ok(selector) = Selector::parse(selector) {
+            if let Some(element) = document.select(&selector).find(|e| {
+                let text = cleanup_whitespace(&e.text().collect::<Vec<_>>().join(" "));
+                text.len() >= 40
+            }) {
+                return element.inner_html();
+            }
         }
     }
+
+    if let Ok(selector) = Selector::parse("body") {
+        if let Some(body) = document.select(&selector).next() {
+            return body.inner_html();
+        }
+    }
+
+    cleaned
+}
+
+fn readable_selectors() -> &'static [&'static str] {
+    &[
+        "main",
+        "article",
+        "[role=main]",
+        "#main",
+        "#content",
+        ".main",
+        ".content",
+        ".article",
+        ".product-detail",
+        ".product-details",
+        ".product-specs",
+        ".specs",
+        ".specifications",
+        "[class*=spec]",
+        "[id*=spec]",
+    ]
+}
+
+fn strip_noise_html(html: &str) -> String {
+    let without_comments = strip_html_comments(html);
+    let mut cleaned = without_comments;
+    for tag in [
+        "script", "style", "noscript", "template", "svg", "iframe", "canvas", "meta", "link",
+    ] {
+        cleaned = strip_html_tag(&cleaned, tag);
+    }
+    cleaned
+}
+
+fn strip_html_comments(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut pos = 0;
+    while let Some(start_rel) = html[pos..].find("<!--") {
+        let start = pos + start_rel;
+        out.push_str(&html[pos..start]);
+        if let Some(end_rel) = html[start + 4..].find("-->") {
+            pos = start + 4 + end_rel + 3;
+        } else {
+            return out;
+        }
+    }
+    out.push_str(&html[pos..]);
+    out
+}
+
+fn strip_html_tag(html: &str, tag: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let open_prefix = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let mut out = String::with_capacity(html.len());
+    let mut pos = 0;
+
+    while let Some(start_rel) = lower[pos..].find(&open_prefix) {
+        let start = pos + start_rel;
+        let after_open = start + open_prefix.len();
+        let next = lower.as_bytes().get(after_open).copied();
+        if !matches!(
+            next,
+            Some(b'>') | Some(b'/') | Some(b' ') | Some(b'\t') | Some(b'\r') | Some(b'\n')
+        ) {
+            out.push_str(&html[pos..after_open]);
+            pos = after_open;
+            continue;
+        }
+
+        out.push_str(&html[pos..start]);
+        let Some(open_end_rel) = lower[start..].find('>') else {
+            return out;
+        };
+        let open_end = start + open_end_rel + 1;
+
+        if tag == "meta" || tag == "link" || lower[start..open_end].trim_end().ends_with("/>") {
+            pos = open_end;
+            continue;
+        }
+
+        if let Some(close_rel) = lower[open_end..].find(&close) {
+            pos = open_end + close_rel + close.len();
+        } else {
+            pos = open_end;
+        }
+    }
+
+    out.push_str(&html[pos..]);
+    out
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let start = lower.find("<title")?;
+    let after_open = lower[start..].find('>')? + start + 1;
+    let end = lower[after_open..].find("</title>")? + after_open;
+    let title = decode_html_entities(&html[after_open..end]);
+    let title = cleanup_whitespace(&title);
+    (!title.is_empty()).then_some(title)
+}
+
+fn make_chunk(content: &str, offset: usize, chunk_size: usize) -> PageChunk {
+    if offset >= content.len() {
+        return PageChunk {
+            content: String::new(),
+            offset,
+            chunk_size,
+            next_offset: None,
+            total_bytes: content.len(),
+            truncated: false,
+        };
+    }
+
+    let start = previous_char_boundary(content, offset);
+    let requested_end = start.saturating_add(chunk_size).min(content.len());
+    let end = previous_char_boundary(content, requested_end);
+    let truncated = end < content.len();
+
+    PageChunk {
+        content: content[start..end].to_string(),
+        offset: start,
+        chunk_size,
+        next_offset: truncated.then_some(end),
+        total_bytes: content.len(),
+        truncated,
+    }
+}
+
+fn previous_char_boundary(s: &str, mut index: usize) -> usize {
+    index = index.min(s.len());
+    while index > 0 && !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn format_page_output(page: &FetchedPage, chunk: &PageChunk, include_metadata: bool) -> String {
+    let mut out = String::new();
+    if include_metadata {
+        out.push_str(&format!("URL: {}\n", page.requested_url));
+        out.push_str(&format!("Final URL: {}\n", page.final_url));
+        if page.redirected {
+            out.push_str("Warning: requested URL redirected; content is from Final URL.\n");
+        }
+        out.push_str(&format!("Status: {} {}\n", page.status, page.status_text));
+        if !page.content_type.is_empty() {
+            out.push_str(&format!("Content-Type: {}\n", page.content_type));
+        }
+        if let Some(title) = &page.title {
+            out.push_str(&format!("Title: {}\n", title));
+        }
+        out.push_str(&format!(
+            "Source-Length: {}\n",
+            format_bytes(page.source_bytes)
+        ));
+        out.push_str(&format!(
+            "Chunk: offset {}, {} bytes of {}\n\n---\n\n",
+            chunk.offset, chunk.chunk_size, chunk.total_bytes
+        ));
+    }
+
+    if chunk.content.is_empty() {
+        out.push_str("[empty chunk: offset is at or beyond the converted content length]");
+    } else {
+        out.push_str(&chunk.content);
+    }
+
+    if let Some(next_offset) = chunk.next_offset {
+        out.push_str(&format!(
+            "\n\n---\n[chunk truncated: next offset {}; converted content {} bytes]",
+            next_offset, chunk.total_bytes
+        ));
+    }
+
+    out
+}
+
+fn page_metadata(page: &FetchedPage, chunk: &PageChunk) -> serde_json::Value {
+    json!({
+        "url": &page.requested_url,
+        "final_url": &page.final_url,
+        "status": page.status,
+        "status_text": &page.status_text,
+        "content_type": &page.content_type,
+        "title": &page.title,
+        "source_bytes": page.source_bytes,
+        "markdown_bytes": page.markdown_bytes,
+        "redirected": page.redirected,
+        "offset": chunk.offset,
+        "chunk_size": chunk.chunk_size,
+        "next_offset": chunk.next_offset,
+        "truncated": chunk.truncated
+    })
 }
 
 /// Strip HTML tags and decode entities, preserving structure with newlines
@@ -310,17 +649,7 @@ fn strip_html(html: &str, max_len: usize) -> String {
         }
     }
 
-    // Decode common entities
-    let out = out
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&#39;", "'")
-        .replace("&quot;", "\"")
-        .replace("&#x27;", "'")
-        .replace("&nbsp;", " ")
-        .replace("&mdash;", "—")
-        .replace("&ndash;", "–");
+    let out = decode_html_entities(&out);
 
     // Clean up excessive newlines
     let out = {
@@ -343,6 +672,43 @@ fn strip_html(html: &str, max_len: usize) -> String {
     out.trim().to_string()
 }
 
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#39;", "'")
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&mdash;", "—")
+        .replace("&ndash;", "–")
+}
+
+fn cleanup_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cleanup_markdown(markdown: &str) -> String {
+    let mut result = String::with_capacity(markdown.len());
+    let mut consecutive_blank_lines = 0;
+
+    for line in markdown.lines() {
+        if line.trim().is_empty() {
+            consecutive_blank_lines += 1;
+            if consecutive_blank_lines <= 2 {
+                result.push('\n');
+            }
+            continue;
+        }
+
+        consecutive_blank_lines = 0;
+        result.push_str(line.trim_end());
+        result.push('\n');
+    }
+
+    result.trim().to_string()
+}
+
 fn extract_domain(url: &str) -> String {
     url.trim_start_matches("https://")
         .trim_start_matches("http://")
@@ -360,6 +726,10 @@ fn format_bytes(bytes: usize) -> String {
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     }
+}
+
+fn normalize_url_for_compare(url: &str) -> String {
+    url.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -398,5 +768,136 @@ mod tests {
         let html = "<p>".repeat(10000);
         let text = strip_html(&html, 100);
         assert!(text.len() <= 100);
+    }
+
+    #[test]
+    fn html_to_markdown_preserves_basic_structure() {
+        let html = r#"
+            <html><body>
+                <h1>API Reference</h1>
+                <h2>Fields</h2>
+                <ul><li>id</li><li>name</li></ul>
+                <pre><code>curl https://example.com</code></pre>
+                <table><tr><th>Name</th><th>Type</th></tr><tr><td>id</td><td>string</td></tr></table>
+            </body></html>
+        "#;
+
+        let markdown = cleanup_markdown(&html_to_markdown(html));
+
+        assert!(markdown.contains("API Reference"), "{markdown}");
+        assert!(markdown.contains("=========="), "{markdown}");
+        assert!(markdown.contains("Fields"), "{markdown}");
+        assert!(markdown.contains("----------"), "{markdown}");
+        assert!(markdown.contains("id"), "{markdown}");
+        assert!(markdown.contains("name"), "{markdown}");
+        assert!(markdown.contains("curl https://example.com"), "{markdown}");
+        assert!(markdown.contains("Name"), "{markdown}");
+        assert!(markdown.contains("Type"), "{markdown}");
+    }
+
+    #[test]
+    fn extract_title_decodes_entities_and_whitespace() {
+        let html = "<html><head><title>Tom &amp; Jerry\n Docs</title></head></html>";
+        assert_eq!(extract_title(html), Some("Tom & Jerry Docs".to_string()));
+    }
+
+    #[test]
+    fn make_chunk_returns_next_offset() {
+        let content = "abcdef";
+        let chunk = make_chunk(content, 0, 3);
+
+        assert_eq!(chunk.content, "abc");
+        assert_eq!(chunk.next_offset, Some(3));
+        assert!(chunk.truncated);
+    }
+
+    #[test]
+    fn make_chunk_respects_non_ascii_boundaries() {
+        let content = "αβγδε";
+        let chunk = make_chunk(content, 1, 5);
+
+        assert!(content.is_char_boundary(chunk.offset));
+        assert!(chunk.content.is_char_boundary(chunk.content.len()));
+    }
+
+    #[test]
+    fn format_page_output_includes_metadata_and_continuation() {
+        let page = FetchedPage {
+            requested_url: "https://example.com/docs".to_string(),
+            final_url: "https://example.com/docs/".to_string(),
+            status: 200,
+            status_text: "OK".to_string(),
+            content_type: "text/html; charset=utf-8".to_string(),
+            title: Some("Docs".to_string()),
+            content: "abcdef".to_string(),
+            source_bytes: 100,
+            markdown_bytes: 6,
+            redirected: true,
+        };
+        let chunk = make_chunk(&page.content, 0, 3);
+        let output = format_page_output(&page, &chunk, true);
+
+        assert!(output.contains("Final URL: https://example.com/docs/"));
+        assert!(output.contains("Status: 200 OK"));
+        assert!(output.contains("Content-Type: text/html; charset=utf-8"));
+        assert!(output.contains("Title: Docs"));
+        assert!(output.contains("requested URL redirected"));
+        assert!(output.contains("next offset 3"));
+    }
+
+    #[test]
+    fn extract_readable_html_removes_script_style_and_json_noise() {
+        let html = r#"
+            <html>
+                <head>
+                    <style>.hidden { display: none; }</style>
+                    <script type="application/ld+json">{"name":"Noise"}</script>
+                    <script>window.digitalData = { page: "noise" };</script>
+                </head>
+                <body>
+                    <main>
+                        <h1>Product Specs</h1>
+                        <table><tr><th>Name</th><th>Value</th></tr><tr><td>Battery</td><td>10 days</td></tr></table>
+                        <p>This readable product specification content is long enough to be selected.</p>
+                    </main>
+                </body>
+            </html>
+        "#;
+
+        let readable = extract_readable_html(html);
+        let markdown = cleanup_markdown(&html_to_markdown(&readable));
+
+        assert!(markdown.contains("Product Specs"), "{markdown}");
+        assert!(markdown.contains("Battery"), "{markdown}");
+        assert!(markdown.contains("10 days"), "{markdown}");
+        assert!(!markdown.contains("window.digitalData"), "{markdown}");
+        assert!(!markdown.contains("display: none"), "{markdown}");
+        assert!(!markdown.contains("Noise"), "{markdown}");
+    }
+
+    #[test]
+    fn extract_readable_html_prefers_main_over_navigation() {
+        let html = r#"
+            <html><body>
+                <nav><a>Home</a><a>Products</a><a>Support</a></nav>
+                <main><h1>Real Article</h1><p>This is the actual page body with enough readable text for extraction.</p></main>
+            </body></html>
+        "#;
+
+        let readable = extract_readable_html(html);
+
+        assert!(readable.contains("Real Article"), "{readable}");
+        assert!(!readable.contains("Support"), "{readable}");
+    }
+
+    #[test]
+    fn strip_html_tag_handles_self_closing_and_paired_tags() {
+        let html = r#"<html><head><meta name="x"><link href="x"><script>bad()</script></head><body>Good</body></html>"#;
+        let cleaned = strip_noise_html(html);
+
+        assert!(cleaned.contains("Good"), "{cleaned}");
+        assert!(!cleaned.contains("bad()"), "{cleaned}");
+        assert!(!cleaned.contains("<meta"), "{cleaned}");
+        assert!(!cleaned.contains("<link"), "{cleaned}");
     }
 }

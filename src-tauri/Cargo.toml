@@ -30,7 +30,9 @@ zeroize = { version = "^1", features = ["derive"] }
 keyring = { version = "^3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls"] }
 futures = "^0.3"
+html2md = "^0.2"
 parking_lot = "^0.12"
+scraper = "^0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rustc_version_runtime = "0.3"
 zip = "^2"

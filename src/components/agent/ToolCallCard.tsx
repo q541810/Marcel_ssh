@@ -62,6 +62,14 @@ function asStr(v: unknown): string | undefined {
   return undefined;
 }
 
+function asStrArray(v: unknown): string[] | undefined {
+  if (Array.isArray(v)) {
+    const arr = v.map((item) => asStr(item)).filter(Boolean) as string[];
+    if (arr.length > 0) return arr;
+  }
+  return undefined;
+}
+
 /** Extract a short command preview from tool arguments */
 function formatToolName(toolName: string): { display: string; isSkill: boolean } {
   if (toolName.startsWith('skill_')) {
@@ -99,6 +107,12 @@ function getCommandPreview(toolName: string, args: Record<string, unknown> | und
   if (toolName === 'web_search') {
     const query = asStr(args.query);
     if (query) return query;
+    const queries = asStrArray(args.queries);
+    if (queries) {
+      if (queries.length === 1) return queries[0];
+      const first = queries[0].length > 30 ? queries[0].slice(0, 30) + '...' : queries[0];
+      return `${first} +${queries.length - 1} more`;
+    }
   }
   if (toolName === 'http_get') {
     const url = asStr(args.url);
