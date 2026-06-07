@@ -19,7 +19,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'model',
     label: '模型',
     icon: <Cpu className="w-4 h-4" />,
-    sections: ['settings-llm'],
+    sections: ['settings-llm', 'settings-llm-retry'],
   },
   {
     id: 'agent',
@@ -49,7 +49,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   interface: ['settings-appearance', 'settings-display'],
-  model: ['settings-llm'],
+  model: ['settings-llm', 'settings-llm-retry'],
   agent: ['settings-command-policy', 'settings-notification'],
   tools: ['settings-experimental'],
   transfer: ['settings-transfer'],

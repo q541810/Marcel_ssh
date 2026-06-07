@@ -5,6 +5,7 @@ use crate::config::keychain;
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
 use crate::error::AppError;
+use crate::llm::openai::validate_retry_conditions;
 use crate::AppState;
 
 /// Response type for `config_get_settings`.
@@ -46,6 +47,13 @@ pub async fn config_save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
+    // Validate retry conditions format
+    if let Some(ref llm) = settings.llm_config {
+        if let Err(err) = validate_retry_conditions(&llm.retry_http_statuses) {
+            return Err(AppError::Config(format!("重试条件格式错误: {}", err)));
+        }
+    }
+
     // Only update keychain if the frontend explicitly provides a real API key.
     // `LlmConfig.api_key` is excluded from serialization, so an empty or masked
     // value means "leave the key as-is". Use `config_delete_llm_api_key` to

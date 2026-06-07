@@ -12,6 +12,7 @@ import {
   handleThinkingDelta,
   handleDone,
   handleError,
+  handleRetrying,
   type StreamHandler,
   cleanupStreamState,
 } from './agentStreamHandlers';
@@ -106,6 +107,11 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       if (hasEventType(ev, 'error')) {
         handleError(handler, taskId, conversationId, loadingAssistantId, ev);
         cleanupTaskListeners(taskId);
+        return;
+      }
+
+      if (hasEventType(ev, 'retrying')) {
+        handleRetrying(handler, taskId, conversationId, ev);
         return;
       }
 

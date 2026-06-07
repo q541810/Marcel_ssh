@@ -105,6 +105,16 @@ pub struct LlmConfig {
     /// inference servers behind self-signed HTTPS endpoints.
     #[serde(default)]
     pub allow_invalid_certs: bool,
+    /// Maximum number of automatic retries on transient LLM errors (0 = no retry).
+    #[serde(default)]
+    pub max_retries: u32,
+    /// Delay between retries in seconds.
+    #[serde(default = "default_retry_delay")]
+    pub retry_delay_secs: f32,
+    /// Comma-separated HTTP status codes/ranges that should trigger a retry.
+    /// Examples: "408, 429, 500-599"
+    #[serde(default = "default_retry_http_statuses")]
+    pub retry_http_statuses: String,
 }
 
 fn default_provider() -> ProviderType {
@@ -113,6 +123,14 @@ fn default_provider() -> ProviderType {
 
 fn default_temperature() -> f32 {
     0.1
+}
+
+fn default_retry_delay() -> f32 {
+    5.0
+}
+
+fn default_retry_http_statuses() -> String {
+    "408, 429, 500-599".into()
 }
 
 impl Default for LlmConfig {
@@ -132,6 +150,9 @@ impl Default for LlmConfig {
             allow_invalid_certs: std::env::var("MARCEL_SSH_LLM_ALLOW_INVALID_CERTS")
                 .map(|v| v == "true" || v == "1")
                 .unwrap_or(false),
+            max_retries: 1,
+            retry_delay_secs: 5.0,
+            retry_http_statuses: "408, 429, 500-599".into(),
         }
     }
 }
@@ -175,6 +196,9 @@ mod tests {
             base_url: Some("https://api.openai.com".to_string()),
             temperature: 0.7,
             allow_invalid_certs: false,
+            max_retries: 3,
+            retry_delay_secs: 5.0,
+            retry_http_statuses: "408, 429, 500-599".into(),
         };
 
         // Serialize to JSON
@@ -213,6 +237,10 @@ mod tests {
         assert_eq!(config.model, "gpt-4");
         // API key should be empty when deserialized from file
         assert_eq!(config.api_key, "");
+        // Retry fields get defaults when not present
+        assert_eq!(config.max_retries, 0);
+        assert!((config.retry_delay_secs - 5.0).abs() < f32::EPSILON);
+        assert_eq!(config.retry_http_statuses, "408, 429, 500-599");
     }
 
     #[test]
