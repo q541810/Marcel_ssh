@@ -1,4 +1,4 @@
-![Marcel SSH 标题上图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E6%A0%87%E9%A2%98%E4%B8%8A%E5%9B%BE.png?raw=true)
+![Marcel SSH 标题上图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E6%A0%87%E7%AD%BE%E5%9B%BE.png?raw=true)
 
 <h1 align="center">Marcel SSH</h1>
 
