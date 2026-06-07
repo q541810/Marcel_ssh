@@ -124,7 +124,12 @@ mod tests {
             code: 2,
         });
         assert_eq!(kind_of(&v), "Sftp");
-        assert_eq!(v.get("data").and_then(|d| d.get("code")).and_then(|c| c.as_u64()), Some(2));
+        assert_eq!(
+            v.get("data")
+                .and_then(|d| d.get("code"))
+                .and_then(|c| c.as_u64()),
+            Some(2)
+        );
     }
 
     #[test]
@@ -146,7 +151,10 @@ mod tests {
         });
         assert_eq!(kind_of(&v), "HostKeyMismatch");
         let data = v.get("data").expect("HostKeyMismatch must have data");
-        assert_eq!(data.get("host").and_then(|h| h.as_str()), Some("example.com"));
+        assert_eq!(
+            data.get("host").and_then(|h| h.as_str()),
+            Some("example.com")
+        );
         assert_eq!(data.get("port").and_then(|p| p.as_u64()), Some(22));
         assert_eq!(
             data.get("storedAlgorithm").and_then(|s| s.as_str()),
@@ -160,10 +168,19 @@ mod tests {
             ("Agent", AppError::Agent("test".into())),
             ("Llm", AppError::Llm("test".into())),
             ("Config", AppError::Config("test".into())),
-            ("Io", AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"))),
-            ("Serde", AppError::Serde(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err())),
+            (
+                "Io",
+                AppError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test")),
+            ),
+            (
+                "Serde",
+                AppError::Serde(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err()),
+            ),
             ("Update", AppError::Update("test".into())),
-            ("HostKeyVerification", AppError::HostKeyVerification("test".into())),
+            (
+                "HostKeyVerification",
+                AppError::HostKeyVerification("test".into()),
+            ),
             ("Other", AppError::Other("test".into())),
         ];
         for (expected_kind, err) in cases {

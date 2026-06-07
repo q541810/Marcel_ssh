@@ -1,8 +1,8 @@
 use serde::Serialize;
 
 use crate::agent::approval::ApprovalManager;
-use crate::agent::task::AgentMode;
 use crate::agent::sandbox::{assess_risk, RiskLevel};
+use crate::agent::task::AgentMode;
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
 use crate::llm::provider::ToolCall;
@@ -53,7 +53,11 @@ impl DispatchResult {
             risk_level,
         }
     }
-    fn blocked(summary: impl Into<String>, reason: impl Into<String>, risk_level: RiskLevel) -> Self {
+    fn blocked(
+        summary: impl Into<String>,
+        reason: impl Into<String>,
+        risk_level: RiskLevel,
+    ) -> Self {
         Self {
             summary: summary.into(),
             output: format!("BLOCKED: {}", reason.into()),
@@ -99,10 +103,7 @@ impl ToolDispatcher {
             mode,
             agent_settings,
             task_id,
-            approval: ApprovalManager::new(
-                app,
-                state.pending_approvals.clone(),
-            ),
+            approval: ApprovalManager::new(app, state.pending_approvals.clone()),
             registry,
         }
     }
@@ -126,6 +127,7 @@ impl ToolDispatcher {
                 .unwrap_or_else(|| tool.risk_level()),
             _ => tool.risk_level(),
         };
+        let requires_default_approval = tool.requires_approval_by_default();
 
         match &self.mode {
             AgentMode::Chat => {
@@ -136,21 +138,46 @@ impl ToolDispatcher {
                 );
             }
             AgentMode::Auto => {
-                // 沙箱检查已在 execute_cmd 工具内部完成，dispatcher 不再重复
-            }
-            AgentMode::Agent => {
-                if tc.name == "execute_command" {
-                    let cmd = tc.arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
-                    let needs_confirm = command_list_requires_confirm(cmd, &self.agent_settings);
-                    if needs_confirm
-                        && !self.approval.request_approval(
+                if requires_default_approval
+                    && !self
+                        .approval
+                        .request_approval(
                             event_name,
                             self.task_id.clone(),
                             tc.id.clone(),
                             &tc.name,
                             tc.arguments.clone(),
                             effective_risk,
-                        ).await
+                        )
+                        .await
+                {
+                    return DispatchResult::blocked(
+                        tc.name.clone(),
+                        "用户拒绝或确认超时",
+                        effective_risk,
+                    );
+                }
+            }
+            AgentMode::Agent => {
+                if tc.name == "execute_command" {
+                    let cmd = tc
+                        .arguments
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let needs_confirm = command_list_requires_confirm(cmd, &self.agent_settings);
+                    if needs_confirm
+                        && !self
+                            .approval
+                            .request_approval(
+                                event_name,
+                                self.task_id.clone(),
+                                tc.id.clone(),
+                                &tc.name,
+                                tc.arguments.clone(),
+                                effective_risk,
+                            )
+                            .await
                     {
                         return DispatchResult::blocked(
                             format!("$ {}", cmd),
@@ -159,21 +186,25 @@ impl ToolDispatcher {
                         );
                     }
                 } else {
-                    let needs_confirm = match effective_risk {
-                        RiskLevel::ReadOnly => false,
-                        RiskLevel::LowRisk => self.agent_settings.confirm_each_command,
-                        RiskLevel::Moderate => self.agent_settings.confirm_each_command,
-                        RiskLevel::HighRisk | RiskLevel::Destructive => true,
-                    };
+                    let needs_confirm = requires_default_approval
+                        || match effective_risk {
+                            RiskLevel::ReadOnly => false,
+                            RiskLevel::LowRisk => self.agent_settings.confirm_each_command,
+                            RiskLevel::Moderate => self.agent_settings.confirm_each_command,
+                            RiskLevel::HighRisk | RiskLevel::Destructive => true,
+                        };
                     if needs_confirm
-                        && !self.approval.request_approval(
-                            event_name,
-                            self.task_id.clone(),
-                            tc.id.clone(),
-                            &tc.name,
-                            tc.arguments.clone(),
-                            effective_risk,
-                        ).await
+                        && !self
+                            .approval
+                            .request_approval(
+                                event_name,
+                                self.task_id.clone(),
+                                tc.id.clone(),
+                                &tc.name,
+                                tc.arguments.clone(),
+                                effective_risk,
+                            )
+                            .await
                     {
                         return DispatchResult::blocked(
                             tc.name.clone(),

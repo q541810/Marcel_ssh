@@ -1,4 +1,9 @@
-pub(crate) fn build_system_prompt(session_id: &str, has_skills: bool) -> String {
+pub(crate) fn build_system_prompt(
+    session_id: &str,
+    has_skills: bool,
+    has_web_search: bool,
+    has_http_get: bool,
+) -> String {
     let base = " Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
 思考方式\n\
@@ -12,12 +17,22 @@ pub(crate) fn build_system_prompt(session_id: &str, has_skills: bool) -> String 
 你允许主动行动，但只在用户要求时才能这样做。你应该努力在以下两点之间取得平衡：\n\
 - 按要求做正确的事情，包括采取行动和后续行动\n\
 - 不要在未经询问的情况下让用户感到意外的行动\n\
-- 不要直接回答自己拿不准的问题，应当先使用工具 web_search 搜索资料\n\
 例如，如果用户询问如何处理某事，你应该先尽力回答他们的问题，而不是立即跳到采取行动。\n\n\
 记住！\n\
 你的操作均在远程服务器上进行，如果你部署了网页或服务，不要直接告诉用户访问localhost，而应该告诉用户访问远程服务器的访问地址。\n\
-同时，在部署网页完成后，请你使用工具 http_get 来确保网页可以正常访问（因为http_get在用户机上运行，不是在远程服务器上运行）。\n\
 当你需要执行 sudo 命令时，直接使用 sudo 即可，无需担心密码输入问题。不要询问用户 sudo 密码，也不要在命令中手写、回显或记录密码。\n";
+
+    let web_search_hint = if has_web_search {
+        "- 不要直接回答自己拿不准的问题，应当先使用工具 web_search 搜索资料\n"
+    } else {
+        ""
+    };
+
+    let http_get_hint = if has_http_get {
+        "同时，在部署网页完成后，请你使用工具 http_get 来确保网页可以正常访问（因为http_get在用户机上运行，不是在远程服务器上运行）。\n"
+    } else {
+        ""
+    };
 
     let conventions = "遵循惯例\n\
 在对文件进行更改时，首先理解文件的代码惯例。模仿代码风格，使用现有的库和工具，并遵循现有的模式。\n\
@@ -38,5 +53,31 @@ pub(crate) fn build_system_prompt(session_id: &str, has_skills: bool) -> String 
         ""
     };
 
-    format!("{}当前会话：SSH session id={}\n\n{}{}", base, session_id, conventions, skills_section)
+    format!(
+        "{}{}{}当前会话：SSH session id={}\n\n{}{}",
+        base, web_search_hint, http_get_hint, session_id, conventions, skills_section
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_system_prompt;
+
+    #[test]
+    fn prompt_omits_disabled_tool_hints() {
+        let prompt = build_system_prompt("session-1", false, false, false);
+
+        assert!(!prompt.contains("web_search"));
+        assert!(!prompt.contains("http_get"));
+        assert!(!prompt.contains("skill_"));
+    }
+
+    #[test]
+    fn prompt_includes_only_enabled_tool_hints() {
+        let prompt = build_system_prompt("session-1", true, true, false);
+
+        assert!(prompt.contains("web_search"));
+        assert!(!prompt.contains("http_get"));
+        assert!(prompt.contains("skill_"));
+    }
 }

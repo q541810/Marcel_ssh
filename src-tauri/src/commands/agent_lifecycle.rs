@@ -1,11 +1,12 @@
 use chrono::Utc;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
-use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
 use crate::agent::system_prompt::build_system_prompt;
-use crate::agent::tools::ToolRegistry;
+use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
+use crate::agent::tools::{mcp::register_mcp_tools, ToolRegistry};
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
@@ -43,15 +44,27 @@ pub async fn agent_start_task(
     };
     state.agent_tasks.write().insert(task_id.clone(), task);
 
-    // Snapshot config + skills
-    let (llm_config, agent_settings, experimental_settings, enabled_skills) = {
+    // Snapshot config + skills + MCP servers
+    let (llm_config, agent_settings, experimental_settings, enabled_skills, enabled_mcp_servers) = {
         let settings = state.settings.read().await;
         let skills = state.skill_store.read().await;
+        let mcp_store = state.mcp_store.read().await;
         (
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
             settings.experimental_settings.clone(),
-            skills.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
+            skills
+                .list()
+                .iter()
+                .filter(|s| s.enabled)
+                .cloned()
+                .collect::<Vec<_>>(),
+            mcp_store
+                .list()
+                .iter()
+                .filter(|s| s.enabled)
+                .cloned()
+                .collect::<Vec<_>>(),
         )
     };
 
@@ -64,25 +77,23 @@ pub async fn agent_start_task(
 
     let provider = OpenAiProvider::new(llm_config)?;
 
-    // Build initial messages
-    let system_prompt = build_system_prompt(&session_id, !enabled_skills.is_empty());
-    let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
-    messages.push(LlmMessage::system(system_prompt));
-    for msg in &history {
-        if msg.role == LlmRole::System {
-            continue;
+    // Build only the registry allowed for this mode/settings. Chat mode gets no registry entries.
+    let registry = match mode {
+        AgentMode::Chat => Arc::new(ToolRegistry::new()),
+        AgentMode::Agent | AgentMode::Auto => {
+            let mut registry =
+                ToolRegistry::build_mut_for_mode(&enabled_skills, &experimental_settings);
+            for server in enabled_mcp_servers {
+                match state.mcp_manager.refresh_tools(&server).await {
+                    Ok(tools) => register_mcp_tools(&mut registry, &server, tools),
+                    Err(err) => log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err),
+                }
+            }
+            Arc::new(registry)
         }
-        messages.push(msg.clone());
-    }
-    if !messages.last().map_or(false, |m| m.role == LlmRole::User && m.content == prompt) {
-        messages.push(LlmMessage::user(prompt.clone()));
-    }
+    };
 
-    // Build the registry: start with built-ins, then register enabled skills
-    // as tools (progressive disclosure), then conditionally add experimental tools.
-    let registry = ToolRegistry::build_for_mode(&enabled_skills, &experimental_settings);
-
-    // Choose which tools to expose based on mode
+    // Choose which tools to expose based on mode.
     let tools: Vec<ToolDefinition> = match mode {
         AgentMode::Chat => vec![], // No tools in chat mode
         AgentMode::Agent | AgentMode::Auto => registry
@@ -96,9 +107,36 @@ pub async fn agent_start_task(
             .collect(),
     };
 
+    // Build initial messages. Prompt hints are derived from the exact tool set sent to the LLM.
+    let has_tool = |name: &str| tools.iter().any(|t| t.name == name);
+    let has_skills = tools.iter().any(|t| t.name.starts_with("skill_"));
+    let system_prompt = build_system_prompt(
+        &session_id,
+        has_skills,
+        has_tool("web_search"),
+        has_tool("http_get"),
+    );
+    let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
+    messages.push(LlmMessage::system(system_prompt));
+    for msg in &history {
+        if msg.role == LlmRole::System {
+            continue;
+        }
+        messages.push(msg.clone());
+    }
+    if !messages
+        .last()
+        .map_or(false, |m| m.role == LlmRole::User && m.content == prompt)
+    {
+        messages.push(LlmMessage::user(prompt.clone()));
+    }
+
     // Clone what the spawned task needs
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    state.cancel_senders.write().insert(task_id.clone(), cancel_tx);
+    state
+        .cancel_senders
+        .write()
+        .insert(task_id.clone(), cancel_tx);
 
     let loop_ctx = LoopContext {
         ssh: state.ssh_manager.clone(),
@@ -128,19 +166,23 @@ pub async fn agent_start_task(
         .await;
 
         // Clean up cancellation sender after the loop finishes
-        state_for_cleanup.cancel_senders.write().remove(&task_id_for_cleanup);
+        state_for_cleanup
+            .cancel_senders
+            .write()
+            .remove(&task_id_for_cleanup);
     });
 
-    log::info!("Agent task started: {} ({:?})", task_id_for_log, mode_for_log);
+    log::info!(
+        "Agent task started: {} ({:?})",
+        task_id_for_log,
+        mode_for_log
+    );
     Ok(task_id_for_log)
 }
 
 /// Stop (cancel) a running agent task.
 #[tauri::command]
-pub async fn agent_stop_task(
-    state: State<'_, AppState>,
-    task_id: String,
-) -> Result<(), AppError> {
+pub async fn agent_stop_task(state: State<'_, AppState>, task_id: String) -> Result<(), AppError> {
     let mut tasks = state.agent_tasks.write();
     match tasks.get_mut(&task_id) {
         Some(task) => {
@@ -163,7 +205,10 @@ pub async fn agent_approve_operation(
     operation_id: String,
 ) -> Result<(), AppError> {
     log::info!("Operation approved: task={}, op={}", task_id, operation_id);
-    let sender = state.pending_approvals.write().remove(&(task_id, operation_id));
+    let sender = state
+        .pending_approvals
+        .write()
+        .remove(&(task_id, operation_id));
     if let Some(tx) = sender {
         let _ = tx.send(true);
     }
@@ -178,7 +223,10 @@ pub async fn agent_reject_operation(
     operation_id: String,
 ) -> Result<(), AppError> {
     log::info!("Operation rejected: task={}, op={}", task_id, operation_id);
-    let sender = state.pending_approvals.write().remove(&(task_id, operation_id));
+    let sender = state
+        .pending_approvals
+        .write()
+        .remove(&(task_id, operation_id));
     if let Some(tx) = sender {
         let _ = tx.send(false);
     }

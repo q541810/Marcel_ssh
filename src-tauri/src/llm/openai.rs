@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::time::Duration;
 
@@ -8,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
-use crate::llm::provider::{
-    LlmConfig, LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition,
-};
+use crate::llm::provider::{LlmConfig, LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
 
 /// OpenAI / OpenAI-compatible LLM provider with streaming support.
@@ -69,6 +68,8 @@ impl OpenAiProvider {
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
 
+        let allowed_tool_names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let tool_calling_enabled = !allowed_tool_names.is_empty();
         let req_body = build_request_body(&self.config, messages, tools, true);
 
         log::info!(
@@ -97,10 +98,7 @@ impl OpenAiProvider {
                 .text()
                 .await
                 .unwrap_or_else(|_| "<无法读取响应体>".into());
-            return Err(AppError::Llm(format!(
-                "LLM 返回错误 {}: {}",
-                status, body
-            )));
+            return Err(AppError::Llm(format!("LLM 返回错误 {}: {}", status, body)));
         }
 
         let mut accumulated_text = String::new();
@@ -111,8 +109,7 @@ impl OpenAiProvider {
         let mut stream = response.bytes_stream();
 
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk
-                .map_err(|e| AppError::Llm(format!("读取流式响应失败: {}", e)))?;
+            let chunk = chunk.map_err(|e| AppError::Llm(format!("读取流式响应失败: {}", e)))?;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
 
@@ -145,53 +142,76 @@ impl OpenAiProvider {
                                 if let Some(ref reasoning) = delta.reasoning_content {
                                     if !reasoning.is_empty() {
                                         accumulated_reasoning.push_str(reasoning);
-                                        let _ = event_tx
-                                            .send(StreamEvent::ThinkingDelta { text: reasoning.clone() });
+                                        let _ = event_tx.send(StreamEvent::ThinkingDelta {
+                                            text: reasoning.clone(),
+                                        });
                                     }
                                 }
                                 if let Some(text) = delta.content {
                                     if !text.is_empty() {
                                         accumulated_text.push_str(&text);
-                                        let _ = event_tx
-                                            .send(StreamEvent::TextDelta { text });
+                                        let _ = event_tx.send(StreamEvent::TextDelta { text });
                                     }
                                 }
-                                if let Some(tcs) = delta.tool_calls {
-                                    for delta_tc in tcs {
-                                        let idx = delta_tc.index.unwrap_or(0) as usize;
-                                        while tool_calls.len() <= idx {
-                                            tool_calls.push(PartialToolCall::default());
-                                        }
-                                        let entry = &mut tool_calls[idx];
-                                        if let Some(id) = delta_tc.id {
-                                            if entry.id.is_empty() {
-                                                entry.id = id.clone();
-                                                let name =
-                                                    delta_tc.function.as_ref()
-                                                        .and_then(|f| f.name.clone())
-                                                        .unwrap_or_default();
-                                                let _ = event_tx.send(
-                                                    StreamEvent::ToolCallStart {
-                                                        id,
-                                                        name,
-                                                    },
-                                                );
+                                if tool_calling_enabled {
+                                    if let Some(tcs) = delta.tool_calls {
+                                        for delta_tc in tcs {
+                                            let idx = delta_tc.index.unwrap_or(0) as usize;
+                                            while tool_calls.len() <= idx {
+                                                tool_calls.push(PartialToolCall::default());
                                             }
-                                        }
-                                        if let Some(func) = delta_tc.function {
-                                            if let Some(name) = func.name {
-                                                if entry.name.is_empty() {
-                                                    entry.name = name;
+                                            let entry = &mut tool_calls[idx];
+                                            if let Some(id) = delta_tc.id {
+                                                if entry.id.is_empty() {
+                                                    entry.id = id;
+                                                    if entry.allowed == Some(true)
+                                                        && !entry.name.is_empty()
+                                                        && !entry.start_emitted
+                                                    {
+                                                        let _ = event_tx.send(
+                                                            StreamEvent::ToolCallStart {
+                                                                id: entry.id.clone(),
+                                                                name: entry.name.clone(),
+                                                            },
+                                                        );
+                                                        entry.start_emitted = true;
+                                                    }
                                                 }
                                             }
-                                            if let Some(args_delta) = func.arguments {
-                                                entry.arguments_buf.push_str(&args_delta);
-                                                let _ = event_tx.send(
-                                                    StreamEvent::ToolCallDelta {
-                                                        id: entry.id.clone(),
-                                                        arguments_delta: args_delta,
-                                                    },
-                                                );
+                                            if let Some(func) = delta_tc.function {
+                                                if let Some(name) = func.name {
+                                                    if entry.name.is_empty() {
+                                                        entry.allowed = Some(
+                                                            allowed_tool_names
+                                                                .contains(name.as_str()),
+                                                        );
+                                                        if entry.allowed == Some(true) {
+                                                            entry.name = name.clone();
+                                                            if !entry.id.is_empty()
+                                                                && !entry.start_emitted
+                                                            {
+                                                                let _ = event_tx.send(
+                                                                    StreamEvent::ToolCallStart {
+                                                                        id: entry.id.clone(),
+                                                                        name,
+                                                                    },
+                                                                );
+                                                                entry.start_emitted = true;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if let Some(args_delta) = func.arguments {
+                                                    if entry.allowed == Some(true) {
+                                                        entry.arguments_buf.push_str(&args_delta);
+                                                        let _ = event_tx.send(
+                                                            StreamEvent::ToolCallDelta {
+                                                                id: entry.id.clone(),
+                                                                arguments_delta: args_delta,
+                                                            },
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -204,7 +224,10 @@ impl OpenAiProvider {
                         log::warn!("无法解析 SSE 数据: {} | 原文: {}", e, payload);
                         if consecutive_parse_errors >= 3 {
                             let _ = event_tx.send(StreamEvent::Error {
-                                message: format!("LLM 流式响应连续解析失败 ({} 次)，请重试", consecutive_parse_errors),
+                                message: format!(
+                                    "LLM 流式响应连续解析失败 ({} 次)，请重试",
+                                    consecutive_parse_errors
+                                ),
                             });
                             return Err(AppError::Llm(format!(
                                 "LLM 流式响应连续解析失败 ({} 次): 最近错误: {}",
@@ -226,10 +249,10 @@ impl OpenAiProvider {
             Some(
                 tool_calls
                     .into_iter()
-                    .filter(|tc| !tc.id.is_empty())
+                    .filter(|tc| !tc.id.is_empty() && tc.allowed == Some(true))
                     .map(|tc| {
-                        let arguments = serde_json::from_str(&tc.arguments_buf)
-                            .unwrap_or_else(|_| {
+                        let arguments =
+                            serde_json::from_str(&tc.arguments_buf).unwrap_or_else(|_| {
                                 serde_json::Value::String(tc.arguments_buf.clone())
                             });
                         ToolCall {
@@ -268,9 +291,7 @@ impl LlmProvider for OpenAiProvider {
     ) -> Result<LlmMessage, AppError> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         // Drain the receiver in a background task to avoid blocking
-        tokio::spawn(async move {
-            while rx.recv().await.is_some() {}
-        });
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
         self.chat_stream(messages, tools, tx).await
     }
 }
@@ -309,6 +330,8 @@ struct PartialToolCall {
     id: String,
     name: String,
     arguments_buf: String,
+    allowed: Option<bool>,
+    start_emitted: bool,
 }
 
 /* ---- Typed request structs — serialize once, zero intermediate Values ---- */

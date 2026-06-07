@@ -72,7 +72,7 @@ impl ApprovalManager {
 
         {
             let state = self.app.state::<crate::AppState>();
-            let ns = state.settings.blocking_read().notification_settings.clone();
+            let ns = state.settings.read().await.notification_settings.clone();
             send_notification(
                 &self.app,
                 NotificationKind::AgentApproval,

@@ -27,6 +27,7 @@ pub mod connection_info;
 pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
+pub mod mcp;
 pub mod open_cloud_page;
 pub mod plan;
 pub mod process;
@@ -153,6 +154,11 @@ pub trait AgentTool: Send + Sync {
     /// `execute_command`, the actual risk is computed from the command text).
     fn risk_level(&self) -> RiskLevel;
 
+    /// External tools may request approval even when their coarse risk appears low.
+    fn requires_approval_by_default(&self) -> bool {
+        false
+    }
+
     /// Execute the tool with the given parameters and SSH context.
     async fn execute(
         &self,
@@ -187,7 +193,9 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: HashMap::new() }
+        Self {
+            tools: HashMap::new(),
+        }
     }
 
     /// Register a tool. The last registration wins on name collision.
@@ -234,19 +242,45 @@ impl ToolRegistry {
         }
     }
 
-    /// Build a registry for the given mode and settings.
+    /// Build a registry for the current settings.
     pub fn build_for_mode(
         enabled_skills: &[crate::skills::store::Skill],
         experimental_settings: &crate::config::settings::ExperimentalSettings,
     ) -> Arc<Self> {
-        let mut registry = Self::with_builtins();
+        let mut registry = Self::with_core_tools();
         registry.register_skills(enabled_skills);
+        if experimental_settings.enable_web_search {
+            registry.register(Arc::new(web_search::WebSearchTool::new()));
+        }
+        if experimental_settings.enable_http_fetch {
+            registry.register(Arc::new(http_get::HttpGetTool::new()));
+        }
         if experimental_settings.enable_cloud_page {
             registry.register(Arc::new(
                 crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
             ));
         }
         Arc::new(registry)
+    }
+
+    pub fn build_mut_for_mode(
+        enabled_skills: &[crate::skills::store::Skill],
+        experimental_settings: &crate::config::settings::ExperimentalSettings,
+    ) -> Self {
+        let mut registry = Self::with_core_tools();
+        registry.register_skills(enabled_skills);
+        if experimental_settings.enable_web_search {
+            registry.register(Arc::new(web_search::WebSearchTool::new()));
+        }
+        if experimental_settings.enable_http_fetch {
+            registry.register(Arc::new(http_get::HttpGetTool::new()));
+        }
+        if experimental_settings.enable_cloud_page {
+            registry.register(Arc::new(
+                crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
+            ));
+        }
+        registry
     }
 
     /// Build a registry pre-populated with all 14 built-in tools.
@@ -266,7 +300,7 @@ impl ToolRegistry {
     ///
     /// Skills are NOT registered here — register them separately via
     /// [`register_skills`] for progressive disclosure.
-    pub fn with_builtins() -> Self {
+    pub fn with_core_tools() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(connection_info::ConnectionInfoTool::new()));
         r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
@@ -279,10 +313,15 @@ impl ToolRegistry {
         r.register(Arc::new(search::SearchFilesTool::new()));
         r.register(Arc::new(process::ProcessManagementTool::new()));
         r.register(Arc::new(system::SystemInfoTool::new()));
-        r.register(Arc::new(web_search::WebSearchTool::new()));
-        r.register(Arc::new(http_get::HttpGetTool::new()));
         r.register(Arc::new(plan::CreatePlanTool::new()));
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
+        r
+    }
+
+    pub fn with_builtins() -> Self {
+        let mut r = Self::with_core_tools();
+        r.register(Arc::new(web_search::WebSearchTool::new()));
+        r.register(Arc::new(http_get::HttpGetTool::new()));
         r
     }
 }
@@ -307,7 +346,12 @@ mod tests {
     fn registry_with_builtins_has_fourteen_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-        assert_eq!(names.len(), 15, "expected 15 built-in tools, got {:?}", names);
+        assert_eq!(
+            names.len(),
+            15,
+            "expected 15 built-in tools, got {:?}",
+            names
+        );
         for expected in [
             "connection_info",
             "execute_command",
@@ -325,8 +369,46 @@ mod tests {
             "create_plan",
             "update_plan_item",
         ] {
-            assert!(names.iter().any(|n| n == expected), "missing tool: {}", expected);
+            assert!(
+                names.iter().any(|n| n == expected),
+                "missing tool: {}",
+                expected
+            );
         }
+    }
+
+    #[test]
+    fn registry_build_for_mode_respects_experimental_tool_toggles() {
+        let disabled = crate::config::settings::ExperimentalSettings {
+            enable_web_search: false,
+            enable_http_fetch: false,
+            enable_cloud_page: false,
+        };
+        let r = ToolRegistry::build_for_mode(&[], &disabled);
+        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
+
+        assert!(!names.iter().any(|n| n == "web_search"));
+        assert!(!names.iter().any(|n| n == "http_get"));
+        assert!(!names.iter().any(|n| n == "open_cloud_page"));
+
+        let r = ToolRegistry::build_mut_for_mode(&[], &disabled);
+        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
+
+        assert!(!names.iter().any(|n| n == "web_search"));
+        assert!(!names.iter().any(|n| n == "http_get"));
+        assert!(!names.iter().any(|n| n == "open_cloud_page"));
+
+        let enabled = crate::config::settings::ExperimentalSettings {
+            enable_web_search: true,
+            enable_http_fetch: true,
+            enable_cloud_page: true,
+        };
+        let r = ToolRegistry::build_for_mode(&[], &enabled);
+        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
+
+        assert!(names.iter().any(|n| n == "web_search"));
+        assert!(names.iter().any(|n| n == "http_get"));
+        assert!(names.iter().any(|n| n == "open_cloud_page"));
     }
 
     #[test]
@@ -367,11 +449,23 @@ mod tests {
         struct DummyTool;
         #[async_trait]
         impl AgentTool for DummyTool {
-            fn name(&self) -> &str { "execute_command" }
-            fn description(&self) -> &str { "dummy" }
-            fn parameters_schema(&self) -> serde_json::Value { serde_json::json!({}) }
-            fn risk_level(&self) -> RiskLevel { RiskLevel::ReadOnly }
-            async fn execute(&self, _: serde_json::Value, _: &ToolContext) -> Result<ToolOutput, AppError> {
+            fn name(&self) -> &str {
+                "execute_command"
+            }
+            fn description(&self) -> &str {
+                "dummy"
+            }
+            fn parameters_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn risk_level(&self) -> RiskLevel {
+                RiskLevel::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _: serde_json::Value,
+                _: &ToolContext,
+            ) -> Result<ToolOutput, AppError> {
                 Ok(ToolOutput::ok("dummy", "dummy"))
             }
         }
@@ -381,5 +475,4 @@ mod tests {
         assert_eq!(r.get("execute_command").unwrap().description(), "dummy");
         assert_ne!(old_desc, "dummy");
     }
-
 }
