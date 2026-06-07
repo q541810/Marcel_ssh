@@ -8,8 +8,6 @@ import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import Button from '@/components/ui/Button';
 import { Card, SettingItem } from './helpers';
 
-const APP_NAME_STR = APP_NAME;
-
 export default function AboutSection() {
   const [appVersion, setAppVersion] = useState('');
   const [checking, setChecking] = useState(false);
@@ -39,14 +37,14 @@ export default function AboutSection() {
       <div className="flex justify-center mb-6">
         <img
           src={APP_LOGO}
-          alt={`${APP_NAME_STR} logo`}
+          alt={`${APP_NAME} logo`}
           className="w-56 h-56 object-contain select-none"
           draggable="false"
         />
       </div>
       <Card id="settings-about" title="应用信息">
         <SettingItem id="about-name" label="应用名称" sectionId="settings-about">
-          <span className="text-sm text-zinc-300">{APP_NAME_STR}</span>
+          <span className="text-sm text-zinc-300">{APP_NAME}</span>
         </SettingItem>
         <SettingItem id="about-version" label="当前版本" sectionId="settings-about">
           <span className="text-sm text-zinc-300">{appVersion}</span>
