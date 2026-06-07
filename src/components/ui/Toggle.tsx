@@ -1,11 +1,31 @@
+type ToggleSize = 'sm' | 'md';
+
 interface ToggleProps {
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   label?: string;
+  size?: ToggleSize;
 }
 
-export default function Toggle({ checked, onChange, disabled = false, label }: ToggleProps) {
+const sizeStyles: Record<ToggleSize, { track: string; knob: string; checkedLeft: string; uncheckedLeft: string }> = {
+  sm: {
+    track: 'h-4 w-7',
+    knob: 'h-3 w-3',
+    checkedLeft: 'left-3.5',
+    uncheckedLeft: 'left-0.5',
+  },
+  md: {
+    track: 'h-6 w-11',
+    knob: 'h-5 w-5',
+    checkedLeft: 'left-6',
+    uncheckedLeft: 'left-0.5',
+  },
+};
+
+export default function Toggle({ checked, onChange, disabled = false, label, size = 'md' }: ToggleProps) {
+  const s = sizeStyles[size];
+  const isMd = size === 'md';
   return (
     <label className="flex items-center gap-2 cursor-pointer select-none">
       <button
@@ -21,7 +41,7 @@ export default function Toggle({ checked, onChange, disabled = false, label }: T
           }
         }}
         className={`
-          relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full
+          relative inline-flex ${s.track} flex-shrink-0 items-center rounded-full
           transition-colors duration-300
           focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900
           disabled:opacity-50 disabled:cursor-not-allowed
@@ -32,11 +52,11 @@ export default function Toggle({ checked, onChange, disabled = false, label }: T
       >
         <span
           className={`
-            pointer-events-none absolute left-0.5 inline-block h-5 w-5 rounded-full
+            pointer-events-none absolute inline-block ${s.knob} rounded-full
             bg-white shadow ring-0
-            ${checked ? 'animate-toggle-on' : 'animate-toggle-off'}
+            ${isMd ? 'left-0.5 ' + (checked ? 'animate-toggle-on' : 'animate-toggle-off') : (checked ? s.checkedLeft + ' transition-all duration-200' : s.uncheckedLeft + ' transition-all duration-200')}
           `}
-          style={{ animationDuration: '400ms', animationTimingFunction: 'var(--spring-bounce)' }}
+          style={isMd ? { animationDuration: '400ms', animationTimingFunction: 'var(--spring-bounce)' } : undefined}
         />
       </button>
       {label && (
