@@ -5,11 +5,14 @@ import type {
   AppSettings,
   AgentConversation,
   StoredMessage,
-  RiskLevel,
   Skill,
   QuickCommand,
   QuickCommandInput,
   QuickCommandPatch,
+  McpServer,
+  McpServerInput,
+  McpServerListResponse,
+  McpTool,
   UpdateCheckResult,
   ParsedSkill,
   CommandCheckResult,
@@ -178,6 +181,32 @@ export async function quickCommandUpdate(id: string, patch: QuickCommandPatch): 
 
 export async function quickCommandDelete(id: string): Promise<void> {
   return invoke('quick_command_delete', { id });
+}
+
+// MCP commands
+
+export async function mcpListServers(): Promise<McpServerListResponse> {
+  return invoke<McpServerListResponse>('mcp_list_servers');
+}
+
+export async function mcpAddServer(input: McpServerInput): Promise<McpServer> {
+  return invoke<McpServer>('mcp_add_server', { input });
+}
+
+export async function mcpUpdateServer(id: string, input: McpServerInput): Promise<void> {
+  return invoke('mcp_update_server', { id, input });
+}
+
+export async function mcpDeleteServer(id: string): Promise<void> {
+  return invoke('mcp_delete_server', { id });
+}
+
+export async function mcpToggleServer(id: string): Promise<void> {
+  return invoke('mcp_toggle_server', { id });
+}
+
+export async function mcpRefreshTools(id: string): Promise<McpTool[]> {
+  return invoke<McpTool[]>('mcp_refresh_tools', { id });
 }
 
 // LLM API Key management

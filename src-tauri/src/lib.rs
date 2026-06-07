@@ -3,6 +3,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod llm;
+pub mod mcp;
 pub mod notification;
 pub mod skills;
 pub mod ssh;
@@ -13,8 +14,8 @@ use std::path::PathBuf;
 
 use parking_lot::RwLock as PlRwLock;
 use tauri::Manager;
-use tokio::sync::RwLock as TokioRwLock;
 use tokio::sync::oneshot;
+use tokio::sync::RwLock as TokioRwLock;
 
 use crate::agent::audit::AuditLog;
 use crate::agent::conversation::ConversationDb;
@@ -24,6 +25,8 @@ use crate::config::connections::ConnectionStore;
 use crate::config::persist::JsonPersistable;
 use crate::config::quick_commands::QuickCommandStore;
 use crate::config::settings::AppSettings;
+use crate::mcp::manager::McpManager;
+use crate::mcp::store::McpServerStore;
 use crate::skills::store::SkillStore;
 use crate::ssh::connection::SshManager;
 use crate::ssh::known_hosts::KnownHostsStore;
@@ -44,10 +47,13 @@ pub struct AppState {
     pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
     pub conversation_db: std::sync::Arc<ConversationDb>,
     pub skill_store: std::sync::Arc<TokioRwLock<SkillStore>>,
+    pub mcp_store: std::sync::Arc<TokioRwLock<McpServerStore>>,
+    pub mcp_manager: std::sync::Arc<McpManager>,
     /// Application config directory. Used for persisting connections, settings, etc.
     pub config_dir: PathBuf,
     /// Pending approval requests: (task_id, operation_id) -> oneshot sender for approval response
-    pub pending_approvals: std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
+    pub pending_approvals:
+        std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
     /// Cancellation signals for running agent tasks: task_id -> watch sender.
     /// Setting the value to `true` signals the agent loop to abort the current LLM call.
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
@@ -69,6 +75,7 @@ impl AppState {
         let db_path = config_dir.join("conversations.db");
         let skills_file = SkillStore::default_file(&config_dir);
         let quick_commands_file = QuickCommandStore::default_file(&config_dir);
+        let mcp_servers_file = McpServerStore::default_file(&config_dir);
 
         // ── Phase 1: parallel loads (all independent) ──────────────────────
         let (
@@ -78,6 +85,7 @@ impl AppState {
             db_handle,
             skills_res,
             qc_res,
+            mcp_res,
         ) = {
             // Clone once for the ConversationDb closure which needs both paths.
             let config_dir_for_db = config_dir.clone();
@@ -85,7 +93,6 @@ impl AppState {
             tokio::join!(
                 // KnownHostsStore::load is already async.
                 KnownHostsStore::load(known_hosts_path),
-
                 // Sync JSON stores – offload to blocking thread pool.
                 tokio::task::spawn_blocking(move || {
                     ConnectionStore::load_from_path(&connections_file)
@@ -93,7 +100,6 @@ impl AppState {
                 tokio::task::spawn_blocking(move || {
                     AppSettings::load_from_path(&settings_file)
                 }),
-
                 // ConversationDb involves SQLite file I/O + schema migration.
                 tokio::task::spawn_blocking(move || -> ConversationDb {
                     match ConversationDb::new(&db_path) {
@@ -110,27 +116,22 @@ impl AppState {
                             db
                         }
                         Err(e) => {
-                            log::warn!(
-                                "Failed to init file DB ({}): {}",
-                                db_path.display(),
-                                e
-                            );
+                            log::warn!("Failed to init file DB ({}): {}", db_path.display(), e);
                             log::warn!("  Falling back to in-memory DB");
                             log::warn!(
                                 "  Check write permissions: {}",
                                 config_dir_for_db.display()
                             );
-                            ConversationDb::in_memory()
-                                .expect("Failed to init in-memory DB")
+                            ConversationDb::in_memory().expect("Failed to init in-memory DB")
                         }
                     }
                 }),
-
-                tokio::task::spawn_blocking(move || {
-                    SkillStore::load_from_path(&skills_file)
-                }),
+                tokio::task::spawn_blocking(move || { SkillStore::load_from_path(&skills_file) }),
                 tokio::task::spawn_blocking(move || {
                     QuickCommandStore::load_from_path(&quick_commands_file)
+                }),
+                tokio::task::spawn_blocking(move || {
+                    McpServerStore::load_from_path(&mcp_servers_file)
                 }),
             )
         };
@@ -234,6 +235,18 @@ impl AppState {
             }
         };
 
+        let mcp_store = match mcp_res {
+            Ok(Ok(store)) => store,
+            Ok(Err(e)) => {
+                log::warn!("Failed to load MCP servers, using defaults: {}", e);
+                McpServerStore::new()
+            }
+            Err(join_err) => {
+                log::warn!("MCP servers 加载任务失败：{}", join_err);
+                McpServerStore::new()
+            }
+        };
+
         Self {
             ssh_manager: SshManager::with_known_hosts(known_hosts),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -244,6 +257,8 @@ impl AppState {
             audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
             conversation_db: std::sync::Arc::new(conversation_db),
             skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
+            mcp_store: std::sync::Arc::new(TokioRwLock::new(mcp_store)),
+            mcp_manager: std::sync::Arc::new(McpManager::new()),
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -253,10 +268,7 @@ impl AppState {
 
 /// Build and run the Tauri application.
 pub fn run() {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -286,6 +298,22 @@ pub fn run() {
             drop(init_rt);
 
             app.manage(app_state);
+
+            // Background: refresh MCP tools for enabled servers without blocking startup.
+            let mcp_manager = app.state::<AppState>().mcp_manager.clone();
+            let mcp_store = app.state::<AppState>().mcp_store.clone();
+            tauri::async_runtime::spawn(async move {
+                let servers = mcp_store.read().await;
+                let enabled: Vec<_> = servers.list().iter().filter(|s| s.enabled).cloned().collect();
+                drop(servers);
+                for server in enabled {
+                    match mcp_manager.refresh_tools(&server).await {
+                        Ok(tools) => log::info!("MCP [{}] 发现 {} 个工具", server.name, tools.len()),
+                        Err(err) => log::warn!("MCP [{}] 刷新失败: {}", err, server.name),
+                    }
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -328,6 +356,13 @@ pub fn run() {
             commands::skill::skill_toggle,
             commands::skill::skill_delete,
             commands::skill::import_skill_file,
+            commands::mcp::mcp_list_servers,
+            commands::mcp::mcp_add_server,
+            commands::mcp::mcp_update_server,
+            commands::mcp::mcp_delete_server,
+            commands::mcp::mcp_toggle_server,
+            commands::mcp::mcp_refresh_tools,
+            commands::mcp::mcp_call_tool,
             commands::update::check_update,
             commands::sftp::sftp_list_dir,
             commands::sftp::sftp_upload,

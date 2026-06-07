@@ -70,6 +70,44 @@ export interface QuickCommandPatch {
   intervalMs?: number;
 }
 
+// MCP types
+
+export interface McpServer {
+  id: string;
+  name: string;
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  trusted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpServerInput {
+  name: string;
+  url: string;
+  headers: Record<string, string>;
+  enabled: boolean;
+  trusted: boolean;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+export interface McpServerRuntimeStatus {
+  serverId: string;
+  tools: McpTool[];
+  error?: string | null;
+}
+
+export interface McpServerListResponse {
+  servers: McpServer[];
+  statuses: McpServerRuntimeStatus[];
+}
+
 // Agent types
 
 export type AgentMode = 'chat' | 'agent' | 'auto';

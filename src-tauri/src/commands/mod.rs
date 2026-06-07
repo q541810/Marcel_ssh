@@ -3,6 +3,7 @@ pub mod agent_lifecycle;
 pub mod agent_policy;
 pub mod connections;
 pub mod keychain;
+pub mod mcp;
 pub mod quick_command;
 pub mod settings;
 pub mod sftp;
