@@ -304,14 +304,21 @@ pub fn run() {
             let mcp_store = app.state::<AppState>().mcp_store.clone();
             tauri::async_runtime::spawn(async move {
                 let servers = mcp_store.read().await;
-                let enabled: Vec<_> = servers.list().iter().filter(|s| s.enabled).cloned().collect();
+                let enabled: Vec<_> = servers
+                    .list()
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .cloned()
+                    .collect();
                 drop(servers);
                 let mut set = tokio::task::JoinSet::new();
                 for server in enabled {
                     let mgr = mcp_manager.clone();
                     set.spawn(async move {
                         match mgr.refresh_tools(&server).await {
-                            Ok(tools) => log::info!("MCP [{}] 发现 {} 个工具", server.name, tools.len()),
+                            Ok(tools) => {
+                                log::info!("MCP [{}] 发现 {} 个工具", server.name, tools.len())
+                            }
                             Err(err) => log::warn!("MCP [{}] 刷新失败: {}", err, server.name),
                         }
                     });

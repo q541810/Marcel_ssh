@@ -88,7 +88,9 @@ pub struct McpServerStore {
 
 impl McpServerStore {
     pub fn new() -> Self {
-        Self { servers: Vec::new() }
+        Self {
+            servers: Vec::new(),
+        }
     }
 
     pub fn list(&self) -> &[McpServerConfig] {
@@ -147,8 +149,11 @@ mod tests {
             headers: Default::default(),
             enabled: true,
             trusted: false,
-        }).unwrap();
-        let store = McpServerStore { servers: vec![server] };
+        })
+        .unwrap();
+        let store = McpServerStore {
+            servers: vec![server],
+        };
         let json = serde_json::to_string(&store).unwrap();
         let parsed: McpServerStore = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.servers.len(), 1);
@@ -163,7 +168,8 @@ mod tests {
             headers: Default::default(),
             enabled: true,
             trusted: false,
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert!(err.to_string().contains("URL"));
     }
 }

@@ -197,7 +197,8 @@ mod tests {
     fn parameters_schema_preserves_input_schema() {
         let server = make_server("s1", false);
         let mut info = make_info("read");
-        info.input_schema = serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}});
+        info.input_schema =
+            serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}});
         let tool = McpTool::new("mcp__s1__read".into(), server, info);
         let schema = tool.parameters_schema();
         assert_eq!(schema["properties"]["path"]["type"], "string");

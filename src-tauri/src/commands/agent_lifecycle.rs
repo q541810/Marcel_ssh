@@ -94,7 +94,9 @@ pub async fn agent_start_task(
             while let Some(result) = set.join_next().await {
                 match result {
                     Ok((server, Ok(tools))) => register_mcp_tools(&mut registry, &server, tools),
-                    Ok((server, Err(err))) => log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err),
+                    Ok((server, Err(err))) => {
+                        log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err)
+                    }
                     Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
                 }
             }

@@ -409,8 +409,14 @@ pub(crate) fn validate_retry_conditions(input: &str) -> Result<(), String> {
             if parts.len() != 2 {
                 return Err(format!("无效范围: \"{}\"（使用格式 lo-hi）", entry));
             }
-            let lo: u16 = parts[0].trim().parse().map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
-            let hi: u16 = parts[1].trim().parse().map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
+            let lo: u16 = parts[0]
+                .trim()
+                .parse()
+                .map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
+            let hi: u16 = parts[1]
+                .trim()
+                .parse()
+                .map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
             if lo < 100 || lo > 599 || hi < 100 || hi > 599 {
                 return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
             }
@@ -418,7 +424,9 @@ pub(crate) fn validate_retry_conditions(input: &str) -> Result<(), String> {
                 return Err(format!("范围需从小到大: \"{}\"", entry));
             }
         } else {
-            let code: u16 = entry.parse().map_err(|_| format!("无效状态码: \"{}\"", entry))?;
+            let code: u16 = entry
+                .parse()
+                .map_err(|_| format!("无效状态码: \"{}\"", entry))?;
             if code < 100 || code > 599 {
                 return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
             }
@@ -554,7 +562,10 @@ mod retry_tests {
 
     #[test]
     fn extract_status_from_various_formats() {
-        assert_eq!(extract_http_status("LLM 返回错误 429: rate limit"), Some(429));
+        assert_eq!(
+            extract_http_status("LLM 返回错误 429: rate limit"),
+            Some(429)
+        );
         assert_eq!(extract_http_status("LLM HTTP 502: bad gateway"), Some(502));
         assert_eq!(extract_http_status("some error without status"), None);
     }

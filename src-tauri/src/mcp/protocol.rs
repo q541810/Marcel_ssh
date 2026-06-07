@@ -132,7 +132,8 @@ mod tests {
         let resp: JsonRpcResponse = serde_json::from_value(serde_json::json!({
             "id": 1,
             "result": { "tools": [] }
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(resp.id, Some(1));
         assert!(resp.result.is_some());
         assert!(resp.error.is_none());
@@ -143,7 +144,8 @@ mod tests {
         let resp: JsonRpcResponse = serde_json::from_value(serde_json::json!({
             "id": null,
             "error": { "code": -32600, "message": "Invalid Request" }
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(resp.result.is_none());
         let err = resp.error.unwrap();
         assert_eq!(err.code, -32600);
@@ -163,7 +165,8 @@ mod tests {
     fn tool_info_defaults() {
         let ti: McpToolInfo = serde_json::from_value(serde_json::json!({
             "name": "empty"
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(ti.name, "empty");
         assert_eq!(ti.description, "");
         assert_eq!(ti.input_schema, serde_json::Value::Null);

@@ -40,19 +40,28 @@ impl McpManager {
         }
     }
 
-    pub async fn refresh_tools(&self, server: &McpServerConfig) -> Result<Vec<McpToolInfo>, AppError> {
+    pub async fn refresh_tools(
+        &self,
+        server: &McpServerConfig,
+    ) -> Result<Vec<McpToolInfo>, AppError> {
         if !self.initialized.read().await.contains(&server.id) {
             self.client.initialize(&server.url, &server.headers).await?;
             self.initialized.write().await.insert(server.id.clone());
         }
         match self.client.list_tools(&server.url, &server.headers).await {
             Ok(tools) => {
-                self.cache.write().await.insert(server.id.clone(), (tools.clone(), None));
+                self.cache
+                    .write()
+                    .await
+                    .insert(server.id.clone(), (tools.clone(), None));
                 Ok(tools)
             }
             Err(err) => {
                 let msg = err.to_string();
-                self.cache.write().await.insert(server.id.clone(), (Vec::new(), Some(msg)));
+                self.cache
+                    .write()
+                    .await
+                    .insert(server.id.clone(), (Vec::new(), Some(msg)));
                 Err(err)
             }
         }
@@ -68,7 +77,9 @@ impl McpManager {
             self.client.initialize(&server.url, &server.headers).await?;
             self.initialized.write().await.insert(server.id.clone());
         }
-        self.client.call_tool(&server.url, &server.headers, tool_name, arguments).await
+        self.client
+            .call_tool(&server.url, &server.headers, tool_name, arguments)
+            .await
     }
 
     pub async fn clear_cache(&self, server_id: &str) {
@@ -82,7 +93,11 @@ impl McpManager {
             .iter()
             .map(|server| {
                 let (tools, error) = cache.get(&server.id).cloned().unwrap_or_default();
-                McpServerRuntimeStatus { server_id: server.id.clone(), tools, error }
+                McpServerRuntimeStatus {
+                    server_id: server.id.clone(),
+                    tools,
+                    error,
+                }
             })
             .collect()
     }
@@ -107,7 +122,11 @@ mod tests {
     }
 
     fn make_tool(name: &str) -> McpToolInfo {
-        McpToolInfo { name: name.into(), description: format!("Tool {}", name), input_schema: serde_json::json!({}) }
+        McpToolInfo {
+            name: name.into(),
+            description: format!("Tool {}", name),
+            input_schema: serde_json::json!({}),
+        }
     }
 
     // ── refresh_tools ──────────────────────────────────────────────
@@ -115,7 +134,10 @@ mod tests {
     #[tokio::test]
     async fn refresh_tools_calls_initialize_and_returns_tools() {
         let spy = SpyClient::new();
-        spy.tools_to_return.lock().await.extend(vec![make_tool("a"), make_tool("b")]);
+        spy.tools_to_return
+            .lock()
+            .await
+            .extend(vec![make_tool("a"), make_tool("b")]);
         let mgr = McpManager::with_client(Box::new(spy.clone()));
         let server = make_server("s1");
 
@@ -124,8 +146,14 @@ mod tests {
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "a");
         assert_eq!(tools[1].name, "b");
-        assert_eq!(*spy.init_calls.lock().await, vec!["https://s1.example.com/mcp"]);
-        assert_eq!(*spy.list_calls.lock().await, vec!["https://s1.example.com/mcp"]);
+        assert_eq!(
+            *spy.init_calls.lock().await,
+            vec!["https://s1.example.com/mcp"]
+        );
+        assert_eq!(
+            *spy.list_calls.lock().await,
+            vec!["https://s1.example.com/mcp"]
+        );
         assert!(mgr.initialized.read().await.contains("s1"));
     }
 
@@ -139,8 +167,14 @@ mod tests {
         mgr.initialized.write().await.insert("s1".into());
         mgr.refresh_tools(&server).await.unwrap();
 
-        assert!(spy.init_calls.lock().await.is_empty(), "initialize should be skipped");
-        assert_eq!(*spy.list_calls.lock().await, vec!["https://s1.example.com/mcp"]);
+        assert!(
+            spy.init_calls.lock().await.is_empty(),
+            "initialize should be skipped"
+        );
+        assert_eq!(
+            *spy.list_calls.lock().await,
+            vec!["https://s1.example.com/mcp"]
+        );
     }
 
     #[tokio::test]
@@ -183,7 +217,10 @@ mod tests {
         let (tools, error) = mgr.cache.read().await.get("s1").cloned().unwrap();
         assert!(tools.is_empty());
         assert_eq!(error.as_deref(), Some("Config error: list failed"));
-        assert!(mgr.initialized.read().await.contains("s1"), "initialize succeeded so initialized should be set");
+        assert!(
+            mgr.initialized.read().await.contains("s1"),
+            "initialize succeeded so initialized should be set"
+        );
     }
 
     #[tokio::test]
@@ -218,9 +255,14 @@ mod tests {
         let server = make_server("s1");
 
         mgr.initialized.write().await.insert("s1".into());
-        mgr.call_tool(&server, "do_thing", serde_json::json!({})).await.unwrap();
+        mgr.call_tool(&server, "do_thing", serde_json::json!({}))
+            .await
+            .unwrap();
 
-        assert!(spy.init_calls.lock().await.is_empty(), "initialize must be skipped");
+        assert!(
+            spy.init_calls.lock().await.is_empty(),
+            "initialize must be skipped"
+        );
     }
 
     #[tokio::test]
@@ -229,7 +271,9 @@ mod tests {
         let mgr = McpManager::with_client(Box::new(spy.clone()));
         let server = make_server("s1");
 
-        mgr.call_tool(&server, "do_thing", serde_json::json!({})).await.unwrap();
+        mgr.call_tool(&server, "do_thing", serde_json::json!({}))
+            .await
+            .unwrap();
 
         assert_eq!(spy.init_calls.lock().await.len(), 1);
         assert!(mgr.initialized.read().await.contains("s1"));
@@ -242,7 +286,9 @@ mod tests {
         let mgr = McpManager::with_client(Box::new(spy));
         let server = make_server("s1");
 
-        let result = mgr.call_tool(&server, "do_thing", serde_json::json!({})).await;
+        let result = mgr
+            .call_tool(&server, "do_thing", serde_json::json!({}))
+            .await;
         assert!(result.is_err());
         assert!(!mgr.initialized.read().await.contains("s1"));
     }
@@ -262,7 +308,11 @@ mod tests {
         mgr.clear_cache("s1").await;
         mgr.refresh_tools(&server).await.unwrap();
 
-        assert_eq!(spy.init_calls.lock().await.len(), 2, "initialize must be called again after clear");
+        assert_eq!(
+            spy.init_calls.lock().await.len(),
+            2,
+            "initialize must be called again after clear"
+        );
     }
 
     // ── statuses (existing tests) ───────────────────────────────────
@@ -282,7 +332,10 @@ mod tests {
     async fn statuses_returns_cached_data() {
         let mgr = McpManager::new();
         let tool = make_tool("read");
-        mgr.cache.write().await.insert("s1".into(), (vec![tool], None));
+        mgr.cache
+            .write()
+            .await
+            .insert("s1".into(), (vec![tool], None));
         let servers = vec![make_server("s1")];
         let statuses = mgr.statuses(&servers).await;
         assert_eq!(statuses[0].tools.len(), 1);
@@ -292,7 +345,10 @@ mod tests {
     #[tokio::test]
     async fn statuses_returns_error_string() {
         let mgr = McpManager::new();
-        mgr.cache.write().await.insert("s1".into(), (vec![], Some("fail".into())));
+        mgr.cache
+            .write()
+            .await
+            .insert("s1".into(), (vec![], Some("fail".into())));
         let servers = vec![make_server("s1")];
         let statuses = mgr.statuses(&servers).await;
         assert_eq!(statuses[0].error.as_deref(), Some("fail"));
@@ -333,7 +389,11 @@ mod tests {
         let elapsed = start.elapsed();
         results.sort();
         assert_eq!(results, vec![0, 1, 2]);
-        assert!(elapsed < std::time::Duration::from_millis(200), "should run in parallel (<200ms), took {:?}", elapsed);
+        assert!(
+            elapsed < std::time::Duration::from_millis(200),
+            "should run in parallel (<200ms), took {:?}",
+            elapsed
+        );
     }
 
     #[tokio::test]
