@@ -78,7 +78,7 @@ function formatToolName(toolName: string): { display: string; isSkill: boolean }
   return { display: toolName, isSkill: false };
 }
 
-function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
+export function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
   if (!args) return '';
 
   if (toolName.startsWith('skill_')) return '';
@@ -117,6 +117,12 @@ function getCommandPreview(toolName: string, args: Record<string, unknown> | und
   if (toolName === 'http_get') {
     const url = asStr(args.url);
     if (url) return url;
+    const urls = asStrArray(args.urls);
+    if (urls) {
+      if (urls.length === 1) return urls[0];
+      const first = urls[0].length > 40 ? urls[0].slice(0, 40) + '...' : urls[0];
+      return `${first} +${urls.length - 1} more`;
+    }
   }
   return '';
 }

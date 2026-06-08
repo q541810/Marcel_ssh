@@ -7,7 +7,7 @@ interface Props {
   autoExpand?: boolean;
 }
 
-const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file'];
+const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory'];
 
 export function isExplorationTool(msg: AgentMessage): boolean {
   if (msg.role === 'tool' && msg.toolResult) {
