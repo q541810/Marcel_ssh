@@ -25,6 +25,12 @@ describe('settingsStore', () => {
     expect(s.fileManagerPath).toBe('/');
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
+    expect(s.workspaceLayout).toEqual({
+      sidebarRatio: 0.22,
+      agentRatio: 0.3,
+      sidebarOpen: true,
+      agentOpen: true,
+    });
   });
 
   it('default agent mode settings are correct', () => {

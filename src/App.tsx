@@ -10,82 +10,61 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { appReady, checkUpdate } from '@/lib/tauri';
-import { useResizablePanel } from '@/hooks/useResizablePanel';
-import type { AgentMode } from '@/lib/types';
+import type { AgentMode, WorkspaceLayoutSettings } from '@/lib/types';
+import {
+  DEFAULT_WORKSPACE_LAYOUT,
+  resolveWorkspaceLayout,
+  widthToWorkspaceRatio,
+  WORKSPACE_LAYOUT_LIMITS,
+} from '@/lib/workspaceLayout';
 
 const SkillList = lazy(() => import('@/components/skill/SkillList'));
 const McpList = lazy(() => import('@/components/mcp/McpList'));
 const Settings = lazy(() => import('@/components/settings/Settings'));
 
-const AGENT_PANEL_MIN_WIDTH = 260;
-const AGENT_PANEL_MAX_WIDTH = 800;
-const AGENT_PANEL_DEFAULT_WIDTH = 320;
-const AGENT_RATIO_KEY = 'marcel:agentPanelWidthRatio';
 const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 
 export default function App() {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [agentPanelOpen, setAgentPanelOpen] = useState(true);
   const [navView, setNavView] = useState<NavView>('sessions');
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const mainRowRef = useRef<HTMLDivElement>(null);
-  const agentRatioRef = useRef(0);
-  const agentPanelWidthRef = useRef(AGENT_PANEL_DEFAULT_WIDTH);
   const mainRowWidthRef = useRef(0);
   const windowResizingRef = useRef(false);
-  const preSettingsPanelsRef = useRef<{ sidebarOpen: boolean; agentPanelOpen: boolean } | null>(null);
   const windowResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sidebarResizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const agentResizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const [layoutWidth, setLayoutWidth] = useState(0);
+  const [dragSidebarWidth, setDragSidebarWidth] = useState<number | null>(null);
+  const [dragAgentWidth, setDragAgentWidth] = useState<number | null>(null);
+  const [resizingSide, setResizingSide] = useState<'sidebar' | 'agent' | null>(null);
   const [isWindowResizing, setIsWindowResizing] = useState(false);
 
-  const saveAgentRatio = useCallback((ratio: number) => {
-    agentRatioRef.current = ratio;
-    try { localStorage.setItem(AGENT_RATIO_KEY, String(ratio)); } catch { /* ignore */ }
-  }, []);
+  const loadSettings = useSettingsStore((s) => s.load);
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
+  const defaultAgentMode = useSettingsStore((s) => s.settings.defaultAgentMode);
+  const workspaceLayout = useSettingsStore((s) => s.settings.workspaceLayout);
+  const updateSettings = useSettingsStore((s) => s.update);
+  const setAgentMode = useAgentStore((s) => s.setMode);
+  const fetchSkills = useSkillStore((s) => s.fetchSkills);
 
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem(AGENT_RATIO_KEY);
-      if (v) agentRatioRef.current = parseFloat(v) || 0;
-    } catch { /* ignore */ }
-  }, []);
-
-  const handleAgentWidthChange = useCallback((w: number) => {
-    if (mainRowWidthRef.current > 0) {
-      saveAgentRatio(w / mainRowWidthRef.current);
-    }
-  }, [saveAgentRatio]);
-
-  const { width: agentPanelWidth, isResizing, startResize: handleResizeMouseDown, setWidth: setAgentWidth } =
-    useResizablePanel({
-      minWidth: AGENT_PANEL_MIN_WIDTH,
-      maxWidth: AGENT_PANEL_MAX_WIDTH,
-      initialWidth: AGENT_PANEL_DEFAULT_WIDTH,
-      onChange: handleAgentWidthChange,
-    });
-
-  useEffect(() => {
-    agentPanelWidthRef.current = agentPanelWidth;
-  }, [agentPanelWidth]);
+  const sidebarOpen = workspaceLayout?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen;
+  const agentPanelOpen = workspaceLayout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
+  const isSettingsView = navView === 'settings';
+  const effectiveSidebarOpen = sidebarOpen && !isSettingsView;
+  const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
 
   useEffect(() => {
     const el = mainRowRef.current;
     if (!el) return;
 
-    const syncAgentWidth = () => {
-      const width = mainRowWidthRef.current;
-      if (width <= 0 || !agentPanelOpen) return;
-      if (agentRatioRef.current > 0) {
-        const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * width)));
-        setAgentWidth(w);
-      } else if (agentPanelWidthRef.current > 0) {
-        agentRatioRef.current = agentPanelWidthRef.current / width;
-      }
-    };
-
     const ro = new ResizeObserver(([entry]) => {
       const width = Math.round(entry.contentRect.width);
-      if (mainRowWidthRef.current === width) return;
+      const previousWidth = mainRowWidthRef.current;
+      if (previousWidth === width) return;
       mainRowWidthRef.current = width;
+      if (previousWidth === 0) {
+        setLayoutWidth(width);
+      }
 
       if (!windowResizingRef.current) {
         windowResizingRef.current = true;
@@ -95,7 +74,7 @@ export default function App() {
       windowResizeTimeoutRef.current = setTimeout(() => {
         windowResizingRef.current = false;
         setIsWindowResizing(false);
-        syncAgentWidth();
+        setLayoutWidth(mainRowWidthRef.current);
       }, 120);
     });
     ro.observe(el);
@@ -103,20 +82,99 @@ export default function App() {
       ro.disconnect();
       if (windowResizeTimeoutRef.current) clearTimeout(windowResizeTimeoutRef.current);
     };
-  }, [agentPanelOpen, setAgentWidth]);
+  }, []);
+
+  const resolvedLayout = resolveWorkspaceLayout({
+    containerWidth: layoutWidth,
+    settings: workspaceLayout,
+    sidebarOpen,
+    agentOpen: agentPanelOpen,
+    isSettingsView,
+  });
+
+  const sidebarWidth = dragSidebarWidth ?? resolvedLayout.sidebarWidth;
+  const agentPanelWidth = dragAgentWidth ?? resolvedLayout.agentWidth;
+  const isResizing = resizingSide !== null;
+
+  const persistWorkspaceLayout = useCallback((patch: Partial<WorkspaceLayoutSettings>) => {
+    const next = { ...DEFAULT_WORKSPACE_LAYOUT, ...workspaceLayout, ...patch };
+    updateSettings({ workspaceLayout: next }).catch((err) => {
+      console.error('Failed to save workspace layout:', err);
+    });
+  }, [updateSettings, workspaceLayout]);
+
+  const handleToggleSidebar = () => {
+    persistWorkspaceLayout({ sidebarOpen: !sidebarOpen });
+  };
+
+  const handleToggleAgentPanel = () => {
+    persistWorkspaceLayout({ agentOpen: !agentPanelOpen });
+  };
+
+  const handleSidebarResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!effectiveSidebarOpen || isSettingsView) return;
+    e.preventDefault();
+    sidebarResizeStartRef.current = { x: e.clientX, width: sidebarWidth };
+    setResizingSide('sidebar');
+  }, [effectiveSidebarOpen, isSettingsView, sidebarWidth]);
+
+  const handleAgentResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!effectiveAgentPanelOpen || isSettingsView) return;
+    e.preventDefault();
+    agentResizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
+    setResizingSide('agent');
+  }, [agentPanelWidth, effectiveAgentPanelOpen, isSettingsView]);
 
   useEffect(() => {
-    const width = mainRowWidthRef.current;
-    if (width <= 0 || !agentPanelOpen || agentRatioRef.current <= 0) return;
-    const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * width)));
-    setAgentWidth(w);
-  }, [agentPanelOpen, setAgentWidth]);
+    if (!resizingSide) return;
 
-  const loadSettings = useSettingsStore((s) => s.load);
-  const settingsLoaded = useSettingsStore((s) => s.loaded);
-  const defaultAgentMode = useSettingsStore((s) => s.settings.defaultAgentMode);
-  const setAgentMode = useAgentStore((s) => s.setMode);
-  const fetchSkills = useSkillStore((s) => s.fetchSkills);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (resizingSide === 'sidebar' && sidebarResizeStartRef.current) {
+        const delta = e.clientX - sidebarResizeStartRef.current.x;
+        const width = Math.min(
+          WORKSPACE_LAYOUT_LIMITS.sidebar.max,
+          Math.max(WORKSPACE_LAYOUT_LIMITS.sidebar.min, sidebarResizeStartRef.current.width + delta),
+        );
+        setDragSidebarWidth(width);
+        return;
+      }
+
+      if (resizingSide === 'agent' && agentResizeStartRef.current) {
+        const delta = agentResizeStartRef.current.x - e.clientX;
+        const width = Math.min(
+          WORKSPACE_LAYOUT_LIMITS.agent.max,
+          Math.max(WORKSPACE_LAYOUT_LIMITS.agent.min, agentResizeStartRef.current.width + delta),
+        );
+        setDragAgentWidth(width);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (resizingSide === 'sidebar' && dragSidebarWidth !== null) {
+        persistWorkspaceLayout({ sidebarRatio: widthToWorkspaceRatio(dragSidebarWidth, layoutWidth) });
+      }
+      if (resizingSide === 'agent' && dragAgentWidth !== null) {
+        persistWorkspaceLayout({ agentRatio: widthToWorkspaceRatio(dragAgentWidth, layoutWidth) });
+      }
+      sidebarResizeStartRef.current = null;
+      agentResizeStartRef.current = null;
+      setDragSidebarWidth(null);
+      setDragAgentWidth(null);
+      setResizingSide(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [dragAgentWidth, dragSidebarWidth, layoutWidth, persistWorkspaceLayout, resizingSide]);
 
   useEffect(() => {
     appReady().catch(console.error);
@@ -146,32 +204,11 @@ export default function App() {
   const handleNavChange = (view: NavView) => {
     if (view === navView) return;
 
-    if (view === 'settings') {
-      preSettingsPanelsRef.current = { sidebarOpen, agentPanelOpen };
-      setNavView(view);
-      setSidebarOpen(false);
-      setAgentPanelOpen(false);
-      return;
-    }
-
-    if (navView === 'settings') {
-      const previous = preSettingsPanelsRef.current;
-      if (previous) {
-        setSidebarOpen(previous.sidebarOpen);
-        setAgentPanelOpen(previous.agentPanelOpen);
-        preSettingsPanelsRef.current = null;
-      }
-    }
-
     setNavView(view);
-    if (view === 'sessions' || view === 'skills' || view === 'mcp') {
-      setSidebarOpen(true);
+    if ((view === 'sessions' || view === 'skills' || view === 'mcp') && !sidebarOpen) {
+      persistWorkspaceLayout({ sidebarOpen: true });
     }
   };
-
-  const isSettingsView = navView === 'settings';
-  const effectiveSidebarOpen = sidebarOpen && !isSettingsView;
-  const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
 
   return (
     <div
@@ -179,8 +216,8 @@ export default function App() {
       data-window-resizing={isWindowResizing ? 'true' : undefined}
     >
       <AppHeader
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
-        onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
+        onToggleSidebar={handleToggleSidebar}
+        onToggleAgentPanel={handleToggleAgentPanel}
       />
 
       <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
@@ -189,17 +226,27 @@ export default function App() {
         <aside
           className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
           style={{
-            width: effectiveSidebarOpen ? '16rem' : '0rem',
+            width: effectiveSidebarOpen ? `${sidebarWidth}px` : '0rem',
             borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
-            transition: `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
+            transition: isResizing || isWindowResizing
+              ? 'none'
+              : `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
           }}
         >
-          <div style={{ width: '16rem', height: '100%' }}>
+          <div style={{ width: `${sidebarWidth}px`, height: '100%' }}>
             {navView === 'sessions' && <ConnectionList />}
             {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
             {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
           </div>
         </aside>
+
+        {effectiveSidebarOpen && !isSettingsView && (
+          <div
+            className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+            onMouseDown={handleSidebarResizeMouseDown}
+            style={{ touchAction: 'none' }}
+          />
+        )}
 
         <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
           {isSettingsView ? (
@@ -225,17 +272,21 @@ export default function App() {
             transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
-          <div
-            className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-            onMouseDown={handleResizeMouseDown}
-            style={{ touchAction: 'none' }}
-          />
-          <aside
-            className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
-            style={{ width: `${agentPanelWidth}px` }}
-          >
-            <AgentPanel />
-          </aside>
+          {effectiveAgentPanelOpen && (
+            <>
+              <div
+                className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+                onMouseDown={handleAgentResizeMouseDown}
+                style={{ touchAction: 'none' }}
+              />
+              <aside
+                className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
+                style={{ width: `${agentPanelWidth}px` }}
+              >
+                <AgentPanel />
+              </aside>
+            </>
+          )}
         </div>
       </div>
 

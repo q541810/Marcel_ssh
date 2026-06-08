@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
 import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { DEFAULT_WORKSPACE_LAYOUT } from '@/lib/workspaceLayout';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
@@ -47,6 +48,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   panelHeight: 256,
   hideThinkingDisplay: false,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
+  workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
 };
 
 interface SettingsState {
@@ -87,6 +89,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
         experimentalSettings: fromDisk.experimentalSettings ?? DEFAULT_EXPERIMENTAL_SETTINGS,
+        workspaceLayout: { ...DEFAULT_WORKSPACE_LAYOUT, ...fromDisk.workspaceLayout },
       };
       set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey });
     } catch (err) {

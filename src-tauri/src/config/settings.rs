@@ -135,6 +135,40 @@ impl Default for NotificationSettings {
     }
 }
 
+/// Saved workspace layout intent. The frontend resolves these ratios against
+/// the current window size and panel constraints before rendering.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceLayoutSettings {
+    #[serde(default = "default_sidebar_ratio")]
+    pub sidebar_ratio: f64,
+    #[serde(default = "default_agent_ratio")]
+    pub agent_ratio: f64,
+    #[serde(default = "default_true")]
+    pub sidebar_open: bool,
+    #[serde(default = "default_true")]
+    pub agent_open: bool,
+}
+
+fn default_sidebar_ratio() -> f64 {
+    0.22
+}
+
+fn default_agent_ratio() -> f64 {
+    0.30
+}
+
+impl Default for WorkspaceLayoutSettings {
+    fn default() -> Self {
+        Self {
+            sidebar_ratio: default_sidebar_ratio(),
+            agent_ratio: default_agent_ratio(),
+            sidebar_open: true,
+            agent_open: true,
+        }
+    }
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +204,9 @@ pub struct AppSettings {
     /// Notification preferences.
     #[serde(default)]
     pub notification_settings: NotificationSettings,
+    /// Workspace layout intent for left/main/right columns.
+    #[serde(default)]
+    pub workspace_layout: WorkspaceLayoutSettings,
 }
 
 fn default_file_manager_path() -> String {
@@ -208,6 +245,7 @@ impl Default for AppSettings {
             panel_height: default_panel_height(),
             hide_thinking_display: false,
             notification_settings: NotificationSettings::default(),
+            workspace_layout: WorkspaceLayoutSettings::default(),
         }
     }
 }

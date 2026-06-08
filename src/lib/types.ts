@@ -230,6 +230,13 @@ export interface NotificationSettings {
   agentTaskFailed: boolean;
 }
 
+export interface WorkspaceLayoutSettings {
+  sidebarRatio: number;
+  agentRatio: number;
+  sidebarOpen: boolean;
+  agentOpen: boolean;
+}
+
 export interface AppSettings {
   terminalColors: TerminalColors;
   fontSize: number;
@@ -245,6 +252,7 @@ export interface AppSettings {
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
   notificationSettings: NotificationSettings;
+  workspaceLayout: WorkspaceLayoutSettings;
 }
 
 // LLM stream events
