@@ -2,15 +2,16 @@ import type { WorkspaceLayoutSettings } from '@/lib/types';
 
 export const WORKSPACE_LAYOUT_LIMITS = {
   navWidth: 56,
+  referenceWidth: 1144,
   sidebar: {
     min: 220,
-    max: 420,
-    defaultRatio: 0.22,
+    max: 560,
+    defaultBaseWidth: 280,
   },
   agent: {
     min: 300,
-    max: 720,
-    defaultRatio: 0.3,
+    max: 1100,
+    defaultBaseWidth: 460,
   },
   main: {
     min: 560,
@@ -18,8 +19,8 @@ export const WORKSPACE_LAYOUT_LIMITS = {
 } as const;
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayoutSettings = {
-  sidebarRatio: WORKSPACE_LAYOUT_LIMITS.sidebar.defaultRatio,
-  agentRatio: WORKSPACE_LAYOUT_LIMITS.agent.defaultRatio,
+  sidebarBaseWidth: WORKSPACE_LAYOUT_LIMITS.sidebar.defaultBaseWidth,
+  agentBaseWidth: WORKSPACE_LAYOUT_LIMITS.agent.defaultBaseWidth,
   sidebarOpen: true,
   agentOpen: true,
 };
@@ -40,17 +41,46 @@ interface ResolveWorkspaceLayoutInput {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const clampRatio = (value: number | undefined, fallback: number) => {
+const clampBaseWidth = (value: number | undefined, min: number, max: number, fallback: number) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return fallback;
-  return clamp(value, 0.12, 0.45);
+  return clamp(Math.round(value), min, max);
 };
+
+const legacyRatioToBaseWidth = (value: number | undefined, fallback: number) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return fallback;
+  return Math.round(WORKSPACE_LAYOUT_LIMITS.referenceWidth * clamp(value, 0.12, 0.45));
+};
+
+export function resolveWorkspaceScale(containerWidth: number): number {
+  const availableWidth = Math.max(1, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
+  return clamp(Math.pow(availableWidth / WORKSPACE_LAYOUT_LIMITS.referenceWidth, 0.35), 0.82, 1.35);
+}
 
 export function normalizeWorkspaceLayout(
   settings?: Partial<WorkspaceLayoutSettings> | null,
 ): WorkspaceLayoutSettings {
+  const legacySidebarBaseWidth = legacyRatioToBaseWidth(
+    settings?.sidebarRatio,
+    DEFAULT_WORKSPACE_LAYOUT.sidebarBaseWidth,
+  );
+  const legacyAgentBaseWidth = legacyRatioToBaseWidth(
+    settings?.agentRatio,
+    DEFAULT_WORKSPACE_LAYOUT.agentBaseWidth,
+  );
+
   return {
-    sidebarRatio: clampRatio(settings?.sidebarRatio, DEFAULT_WORKSPACE_LAYOUT.sidebarRatio),
-    agentRatio: clampRatio(settings?.agentRatio, DEFAULT_WORKSPACE_LAYOUT.agentRatio),
+    sidebarBaseWidth: clampBaseWidth(
+      settings?.sidebarBaseWidth,
+      WORKSPACE_LAYOUT_LIMITS.sidebar.min,
+      WORKSPACE_LAYOUT_LIMITS.sidebar.max,
+      legacySidebarBaseWidth,
+    ),
+    agentBaseWidth: clampBaseWidth(
+      settings?.agentBaseWidth,
+      WORKSPACE_LAYOUT_LIMITS.agent.min,
+      WORKSPACE_LAYOUT_LIMITS.agent.max,
+      legacyAgentBaseWidth,
+    ),
     sidebarOpen: settings?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen,
     agentOpen: settings?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen,
   };
@@ -65,6 +95,7 @@ export function resolveWorkspaceLayout({
 }: ResolveWorkspaceLayoutInput): ResolvedWorkspaceLayout {
   const layout = normalizeWorkspaceLayout(settings);
   const availableWidth = Math.max(0, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
+  const scale = resolveWorkspaceScale(containerWidth);
   const effectiveSidebarOpen = !isSettingsView && (sidebarOpen ?? layout.sidebarOpen);
   const effectiveAgentOpen = !isSettingsView && (agentOpen ?? layout.agentOpen);
 
@@ -78,14 +109,14 @@ export function resolveWorkspaceLayout({
 
   const sidebarDesired = effectiveSidebarOpen
     ? clamp(
-        Math.round(availableWidth * layout.sidebarRatio),
+        Math.round(layout.sidebarBaseWidth * scale),
         WORKSPACE_LAYOUT_LIMITS.sidebar.min,
         WORKSPACE_LAYOUT_LIMITS.sidebar.max,
       )
     : 0;
   const agentDesired = effectiveAgentOpen
     ? clamp(
-        Math.round(availableWidth * layout.agentRatio),
+        Math.round(layout.agentBaseWidth * scale),
         WORKSPACE_LAYOUT_LIMITS.agent.min,
         WORKSPACE_LAYOUT_LIMITS.agent.max,
       )
@@ -128,7 +159,11 @@ export function resolveWorkspaceLayout({
   return { sidebarWidth, mainWidth, agentWidth };
 }
 
-export function widthToWorkspaceRatio(width: number, containerWidth: number): number {
-  const availableWidth = Math.max(1, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
-  return clamp(width / availableWidth, 0.12, 0.45);
+export function displayedWidthToBaseWidth(
+  width: number,
+  containerWidth: number,
+  min: number,
+  max: number,
+): number {
+  return clampBaseWidth(width / resolveWorkspaceScale(containerWidth), min, max, min);
 }

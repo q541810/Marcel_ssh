@@ -26,8 +26,8 @@ describe('settingsStore', () => {
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
     expect(s.workspaceLayout).toEqual({
-      sidebarRatio: 0.22,
-      agentRatio: 0.3,
+      sidebarBaseWidth: 280,
+      agentBaseWidth: 460,
       sidebarOpen: true,
       agentOpen: true,
     });

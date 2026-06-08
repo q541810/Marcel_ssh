@@ -135,34 +135,74 @@ impl Default for NotificationSettings {
     }
 }
 
-/// Saved workspace layout intent. The frontend resolves these ratios against
-/// the current window size and panel constraints before rendering.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Saved workspace layout intent. The frontend treats these as user-preferred
+/// base widths, then scales them against the current window size.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayoutSettings {
-    #[serde(default = "default_sidebar_ratio")]
-    pub sidebar_ratio: f64,
-    #[serde(default = "default_agent_ratio")]
-    pub agent_ratio: f64,
+    #[serde(default = "default_sidebar_base_width")]
+    pub sidebar_base_width: u16,
+    #[serde(default = "default_agent_base_width")]
+    pub agent_base_width: u16,
     #[serde(default = "default_true")]
     pub sidebar_open: bool,
     #[serde(default = "default_true")]
     pub agent_open: bool,
 }
 
-fn default_sidebar_ratio() -> f64 {
-    0.22
+fn default_sidebar_base_width() -> u16 {
+    280
 }
 
-fn default_agent_ratio() -> f64 {
-    0.30
+fn default_agent_base_width() -> u16 {
+    460
+}
+
+fn legacy_ratio_to_base_width(ratio: Option<f64>, fallback: u16) -> u16 {
+    let Some(ratio) = ratio else {
+        return fallback;
+    };
+    if !ratio.is_finite() || ratio <= 0.0 {
+        return fallback;
+    }
+    (1144.0 * ratio.clamp(0.12, 0.45)).round() as u16
+}
+
+impl<'de> Deserialize<'de> for WorkspaceLayoutSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Helper {
+            sidebar_base_width: Option<u16>,
+            agent_base_width: Option<u16>,
+            sidebar_ratio: Option<f64>,
+            agent_ratio: Option<f64>,
+            sidebar_open: Option<bool>,
+            agent_open: Option<bool>,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(Self {
+            sidebar_base_width: helper.sidebar_base_width.unwrap_or_else(|| {
+                legacy_ratio_to_base_width(helper.sidebar_ratio, default_sidebar_base_width())
+            }),
+            agent_base_width: helper.agent_base_width.unwrap_or_else(|| {
+                legacy_ratio_to_base_width(helper.agent_ratio, default_agent_base_width())
+            }),
+            sidebar_open: helper.sidebar_open.unwrap_or(true),
+            agent_open: helper.agent_open.unwrap_or(true),
+        })
+    }
 }
 
 impl Default for WorkspaceLayoutSettings {
     fn default() -> Self {
         Self {
-            sidebar_ratio: default_sidebar_ratio(),
-            agent_ratio: default_agent_ratio(),
+            sidebar_base_width: default_sidebar_base_width(),
+            agent_base_width: default_agent_base_width(),
             sidebar_open: true,
             agent_open: true,
         }
@@ -266,6 +306,22 @@ mod tests {
         let json = serde_json::to_string(&settings).expect("serialize");
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed, settings);
+    }
+
+    #[test]
+    fn workspace_layout_reads_legacy_ratios_as_base_widths() {
+        let json = r#"{
+            "sidebarRatio": 0.22,
+            "agentRatio": 0.3,
+            "sidebarOpen": true,
+            "agentOpen": false
+        }"#;
+        let parsed: WorkspaceLayoutSettings = serde_json::from_str(json).expect("deserialize");
+
+        assert_eq!(parsed.sidebar_base_width, 252);
+        assert_eq!(parsed.agent_base_width, 343);
+        assert!(parsed.sidebar_open);
+        assert!(!parsed.agent_open);
     }
 
     #[test]

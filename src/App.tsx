@@ -13,8 +13,9 @@ import { appReady, checkUpdate } from '@/lib/tauri';
 import type { AgentMode, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
+  displayedWidthToBaseWidth,
+  normalizeWorkspaceLayout,
   resolveWorkspaceLayout,
-  widthToWorkspaceRatio,
   WORKSPACE_LAYOUT_LIMITS,
 } from '@/lib/workspaceLayout';
 
@@ -97,7 +98,7 @@ export default function App() {
   const isResizing = resizingSide !== null;
 
   const persistWorkspaceLayout = useCallback((patch: Partial<WorkspaceLayoutSettings>) => {
-    const next = { ...DEFAULT_WORKSPACE_LAYOUT, ...workspaceLayout, ...patch };
+    const next = normalizeWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...workspaceLayout, ...patch });
     updateSettings({ workspaceLayout: next }).catch((err) => {
       console.error('Failed to save workspace layout:', err);
     });
@@ -151,10 +152,24 @@ export default function App() {
 
     const handleMouseUp = () => {
       if (resizingSide === 'sidebar' && dragSidebarWidth !== null) {
-        persistWorkspaceLayout({ sidebarRatio: widthToWorkspaceRatio(dragSidebarWidth, layoutWidth) });
+        persistWorkspaceLayout({
+          sidebarBaseWidth: displayedWidthToBaseWidth(
+            dragSidebarWidth,
+            layoutWidth,
+            WORKSPACE_LAYOUT_LIMITS.sidebar.min,
+            WORKSPACE_LAYOUT_LIMITS.sidebar.max,
+          ),
+        });
       }
       if (resizingSide === 'agent' && dragAgentWidth !== null) {
-        persistWorkspaceLayout({ agentRatio: widthToWorkspaceRatio(dragAgentWidth, layoutWidth) });
+        persistWorkspaceLayout({
+          agentBaseWidth: displayedWidthToBaseWidth(
+            dragAgentWidth,
+            layoutWidth,
+            WORKSPACE_LAYOUT_LIMITS.agent.min,
+            WORKSPACE_LAYOUT_LIMITS.agent.max,
+          ),
+        });
       }
       sidebarResizeStartRef.current = null;
       agentResizeStartRef.current = null;

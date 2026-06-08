@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import type { SettingsLayout } from '@/lib/settingsLayout';
+import { resolveSettingsLayout } from '@/lib/settingsLayout';
 
 // ───── Search Registry ─────
 
@@ -46,6 +48,25 @@ export function useSearchRegistry() {
   return ctx;
 }
 
+// ───── Settings Layout ─────
+
+const SettingsLayoutContext = createContext<SettingsLayout>(resolveSettingsLayout(1200));
+
+export function SettingsLayoutProvider({
+  layout,
+  children,
+}: {
+  layout: SettingsLayout;
+  children: React.ReactNode;
+}) {
+  return <SettingsLayoutContext.Provider value={layout}>{children}</SettingsLayoutContext.Provider>;
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useSettingsLayout() {
+  return useContext(SettingsLayoutContext);
+}
+
 // ───── New UI Components ─────
 
 export function Card({
@@ -59,9 +80,11 @@ export function Card({
   description?: string;
   children: React.ReactNode;
 }) {
+  const layout = useSettingsLayout();
+
   return (
-    <div id={id} className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden mb-6">
-      <div className="px-6 py-4 border-b border-zinc-800">
+    <div id={id} className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+      <div className={`settings-card-header ${layout.mode === 'compact' ? 'px-5' : 'px-6'} py-4 border-b border-zinc-800`}>
         <h3 className="text-base font-semibold text-zinc-100">{title}</h3>
         {description && <p className="text-xs text-zinc-500 mt-1">{description}</p>}
       </div>
@@ -88,6 +111,7 @@ export function SettingItem({
   density?: 'default' | 'compact';
 }) {
   const { register, unregister } = useSearchRegistry();
+  const layout = useSettingsLayout();
 
   useEffect(() => {
     register({ id, label, description, keywords, sectionId });
@@ -95,10 +119,18 @@ export function SettingItem({
   }, [id, label, description, keywords, sectionId, register, unregister]);
 
   const compact = density === 'compact';
+  const stacked = layout.itemLayout === 'stacked' && !compact;
 
   return (
-    <div className={`${compact ? 'px-5 py-2.5 items-center' : 'px-6 py-4 items-start'} flex gap-6`}>
-      <div className={`${compact ? 'min-w-0 flex-1' : 'w-40 flex-shrink-0'}`}>
+    <div
+      className={`settings-item ${compact ? 'px-5 py-2.5 items-center' : 'px-6 py-4 items-start'} ${
+        stacked ? 'flex flex-col gap-3' : 'flex gap-6'
+      }`}
+    >
+      <div
+        className={`settings-label-column ${compact || stacked ? 'min-w-0' : 'flex-shrink-0'}`}
+        style={!compact && !stacked ? { width: `${layout.labelWidth}px` } : undefined}
+      >
         <div className={`${compact ? 'text-[13px]' : 'text-sm'} font-medium text-zinc-200`}>{label}</div>
         {description && (
           <div className={`${compact ? 'text-[11px] leading-4' : 'text-xs'} text-zinc-500 mt-0.5`}>

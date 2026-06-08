@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getErrorMessage } from '@/lib/errors';
 import type { AppSettings } from '@/lib/types';
-import { SearchRegistryProvider } from './helpers';
+import { resolveSettingsLayout } from '@/lib/settingsLayout';
+import { SearchRegistryProvider, SettingsLayoutProvider } from './helpers';
 import { SettingsActionsProvider } from './SettingsActionsContext';
 import { SettingsContent } from './SettingsContent';
 import { SettingsSidebar } from './SettingsSidebar';
@@ -20,6 +21,8 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [shellWidth, setShellWidth] = useState(1200);
 
   const updateDraft = useCallback((patch: Partial<AppSettings>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -38,6 +41,17 @@ export default function Settings() {
     }
   }, [loaded, draft, storeSettings]);
 
+  useEffect(() => {
+    const el = shellRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      setShellWidth((current) => (current === width ? current : width));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [draft]);
+
   if (!loaded || !draft) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-400">
@@ -47,6 +61,7 @@ export default function Settings() {
   }
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(storeSettings);
+  const layout = resolveSettingsLayout(shellWidth);
 
   const handleSave = async () => {
     setSaving(true);
@@ -71,23 +86,25 @@ export default function Settings() {
 
   return (
     <SearchRegistryProvider>
-      <SettingsActionsProvider value={{ settings: draft, update: updateDraft, setPreview, saving, saveError }}>
-        <div className="settings-shell flex h-full">
-          <SettingsSidebar
-            activeCategory={activeCategory}
-            onChange={setActiveCategory}
-            searchQuery={searchQuery}
-            onSearchChange={setSearchQuery}
-            dirty={dirty}
-            saving={saving}
-            saveError={saveError}
-            savedNotice={savedNotice}
-            onSave={handleSave}
-            onReset={handleReset}
-          />
-          <SettingsContent activeCategory={activeCategory} searchQuery={searchQuery} />
-        </div>
-      </SettingsActionsProvider>
+      <SettingsLayoutProvider layout={layout}>
+        <SettingsActionsProvider value={{ settings: draft, update: updateDraft, setPreview, saving, saveError }}>
+          <div ref={shellRef} className="settings-shell flex flex-1 h-full min-w-0">
+            <SettingsSidebar
+              activeCategory={activeCategory}
+              onChange={setActiveCategory}
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              dirty={dirty}
+              saving={saving}
+              saveError={saveError}
+              savedNotice={savedNotice}
+              onSave={handleSave}
+              onReset={handleReset}
+            />
+            <SettingsContent activeCategory={activeCategory} searchQuery={searchQuery} />
+          </div>
+        </SettingsActionsProvider>
+      </SettingsLayoutProvider>
     </SearchRegistryProvider>
   );
 }

@@ -9,7 +9,8 @@ import { NotificationSection } from './NotificationSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
-import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS } from './settingsNavigation';
+import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS, SETTINGS_SECTION_SPAN } from './settingsNavigation';
+import { useSettingsLayout } from './helpers';
 
 interface SettingsContentProps {
   activeCategory: string;
@@ -18,6 +19,7 @@ interface SettingsContentProps {
 
 export function SettingsContent({ activeCategory, searchQuery }: SettingsContentProps) {
   const { items } = useSearchRegistry();
+  const layout = useSettingsLayout();
 
   const visibleSections = useMemo(() => {
     if (!searchQuery.trim()) {
@@ -38,10 +40,28 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
   }, [activeCategory, searchQuery, items]);
 
   const isSearching = searchQuery.trim().length > 0;
+  const sections = [
+    { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
+    { id: 'settings-display', element: <ConversationDisplaySection /> },
+    { id: 'settings-llm', element: <ModelServiceSection /> },
+    { id: 'settings-llm-retry', element: <ModelRetrySection /> },
+    { id: 'settings-command-policy', element: <AgentPolicySection /> },
+    { id: 'settings-notification', element: <NotificationSection /> },
+    { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },
+    { id: 'settings-transfer', element: <TransferSection /> },
+    { id: 'settings-about', element: <AboutSection /> },
+  ].filter((section) => visibleSections.includes(section.id));
 
   return (
     <div className="flex-1 overflow-y-auto bg-zinc-900">
-      <div className="max-w-3xl mx-auto px-8 py-8">
+      <div
+        className="settings-layout-frame mx-auto py-8"
+        style={{
+          maxWidth: `${layout.contentMaxWidth}px`,
+          paddingLeft: `${layout.contentPaddingX}px`,
+          paddingRight: `${layout.contentPaddingX}px`,
+        }}
+      >
         <h1 className="text-2xl font-bold text-zinc-100 mb-6">
           {isSearching ? `搜索：${searchQuery}` : getSettingsCategoryLabel(activeCategory)}
         </h1>
@@ -50,15 +70,19 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
           <div className="text-zinc-500 text-center py-12">未找到匹配的设置项</div>
         )}
 
-        <div hidden={!visibleSections.includes('settings-appearance')}><TerminalAppearanceSection /></div>
-        <div hidden={!visibleSections.includes('settings-display')}><ConversationDisplaySection /></div>
-        <div hidden={!visibleSections.includes('settings-llm')}><ModelServiceSection /></div>
-        <div hidden={!visibleSections.includes('settings-llm-retry')}><ModelRetrySection /></div>
-        <div hidden={!visibleSections.includes('settings-command-policy')}><AgentPolicySection /></div>
-        <div hidden={!visibleSections.includes('settings-notification')}><NotificationSection /></div>
-        <div hidden={!visibleSections.includes('settings-experimental')}><ToolCapabilitiesSection /></div>
-        <div hidden={!visibleSections.includes('settings-transfer')}><TransferSection /></div>
-        <div hidden={!visibleSections.includes('settings-about')}><AboutSection /></div>
+        <div
+          className={`settings-section-grid ${layout.sectionColumns === 2 ? 'grid grid-cols-2 gap-6 items-start' : 'space-y-6'}`}
+          data-columns={layout.sectionColumns}
+        >
+          {sections.map((section) => (
+            <div
+              key={section.id}
+              className={layout.sectionColumns === 2 && SETTINGS_SECTION_SPAN[section.id] === 'full' ? 'col-span-2' : ''}
+            >
+              {section.element}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

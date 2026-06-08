@@ -8,6 +8,20 @@ export interface SettingsCategory {
   sections: string[];
 }
 
+export type SettingsSectionSpan = 'half' | 'full';
+
+export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
+  'settings-appearance': 'half',
+  'settings-display': 'half',
+  'settings-llm': 'full',
+  'settings-llm-retry': 'full',
+  'settings-command-policy': 'full',
+  'settings-notification': 'half',
+  'settings-experimental': 'half',
+  'settings-transfer': 'half',
+  'settings-about': 'half',
+};
+
 export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: 'interface',

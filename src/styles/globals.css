@@ -160,8 +160,59 @@ html {
 [data-window-resizing="true"] *,
 [data-window-resizing="true"] *::before,
 [data-window-resizing="true"] *::after {
-  animation: none !important;
-  transition: none !important;
+  animation-play-state: paused !important;
+}
+
+.settings-layout-frame {
+  transition:
+    max-width 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)),
+    padding-left 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)),
+    padding-right 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.settings-section-grid {
+  transition: gap 220ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.settings-section-grid[data-columns="1"] {
+  animation: settingsLayoutShiftOne 220ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.settings-section-grid[data-columns="2"] {
+  animation: settingsLayoutShiftTwo 220ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.settings-sidebar,
+.settings-sidebar-padding,
+.settings-card-header,
+.settings-item,
+.settings-label-column {
+  transition:
+    width 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)),
+    padding 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)),
+    gap 220ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+@keyframes settingsLayoutShiftOne {
+  from {
+    opacity: 0.86;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes settingsLayoutShiftTwo {
+  from {
+    opacity: 0.86;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 /* Smooth scrolling only where explicitly requested */

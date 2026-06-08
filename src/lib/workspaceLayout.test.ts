@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
+  displayedWidthToBaseWidth,
+  normalizeWorkspaceLayout,
   resolveWorkspaceLayout,
-  widthToWorkspaceRatio,
   WORKSPACE_LAYOUT_LIMITS,
 } from './workspaceLayout';
 
@@ -19,8 +20,8 @@ describe('workspaceLayout', () => {
   it('lets side columns grow on wide screens', () => {
     const layout = resolveWorkspaceLayout({ containerWidth: 2560, settings: DEFAULT_WORKSPACE_LAYOUT });
 
-    expect(layout.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.max);
-    expect(layout.agentWidth).toBeGreaterThan(650);
+    expect(layout.sidebarWidth).toBeGreaterThan(350);
+    expect(layout.agentWidth).toBeGreaterThan(580);
     expect(layout.agentWidth).toBeLessThanOrEqual(WORKSPACE_LAYOUT_LIMITS.agent.max);
   });
 
@@ -59,13 +60,43 @@ describe('workspaceLayout', () => {
       settings: { sidebarRatio: 0.9, agentRatio: 0.9, sidebarOpen: true, agentOpen: true },
     });
 
-    expect(layout.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.max);
-    expect(layout.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.max);
-    expect(layout.mainWidth).toBe(604);
+    expect(layout.sidebarWidth).toBeGreaterThan(500);
+    expect(layout.agentWidth).toBeGreaterThan(500);
+    expect(layout.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
   });
 
-  it('converts displayed width back to a persistable ratio', () => {
-    expect(widthToWorkspaceRatio(360, 1200)).toBeCloseTo(360 / 1144);
-    expect(widthToWorkspaceRatio(2000, 1200)).toBe(0.45);
+  it('keeps user-adjusted base widths meaningful across window sizes', () => {
+    const defaultLayout = resolveWorkspaceLayout({ containerWidth: 1600, settings: DEFAULT_WORKSPACE_LAYOUT });
+    const userLayout = resolveWorkspaceLayout({
+      containerWidth: 1600,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: 700 },
+    });
+    const wideUserLayout = resolveWorkspaceLayout({
+      containerWidth: 2560,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: 700 },
+    });
+
+    expect(userLayout.agentWidth).toBeGreaterThan(defaultLayout.agentWidth + 140);
+    expect(wideUserLayout.agentWidth).toBeGreaterThan(userLayout.agentWidth);
+  });
+
+  it('converts displayed width back to a persistable base width', () => {
+    const baseWidth = displayedWidthToBaseWidth(360, 1200, WORKSPACE_LAYOUT_LIMITS.sidebar.min, WORKSPACE_LAYOUT_LIMITS.sidebar.max);
+    const layout = resolveWorkspaceLayout({
+      containerWidth: 1200,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: baseWidth, agentOpen: false },
+    });
+
+    expect(layout.sidebarWidth).toBe(360);
+    expect(displayedWidthToBaseWidth(2000, 1200, WORKSPACE_LAYOUT_LIMITS.agent.min, WORKSPACE_LAYOUT_LIMITS.agent.max)).toBe(WORKSPACE_LAYOUT_LIMITS.agent.max);
+  });
+
+  it('normalizes legacy ratio settings into base widths', () => {
+    const layout = normalizeWorkspaceLayout({ sidebarRatio: 0.22, agentRatio: 0.3 });
+
+    expect(layout.sidebarBaseWidth).toBe(252);
+    expect(layout.agentBaseWidth).toBe(343);
+    expect(layout.sidebarOpen).toBe(true);
+    expect(layout.agentOpen).toBe(true);
   });
 });

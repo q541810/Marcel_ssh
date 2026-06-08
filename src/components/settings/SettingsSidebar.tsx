@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { AlertCircle, Check, Loader2, Save, Search, Undo2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { SETTINGS_CATEGORIES } from './settingsNavigation';
+import { useSettingsLayout } from './helpers';
 
 interface SettingsSidebarProps {
   activeCategory: string;
@@ -29,6 +30,7 @@ export function SettingsSidebar({
   onReset,
 }: SettingsSidebarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const layout = useSettingsLayout();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -42,8 +44,11 @@ export function SettingsSidebar({
   }, []);
 
   return (
-    <div className="w-64 flex-shrink-0 bg-zinc-950 border-r border-zinc-800 flex flex-col">
-      <div className="p-4">
+    <div
+      className="settings-sidebar flex-shrink-0 bg-zinc-950 border-r border-zinc-800 flex flex-col"
+      style={{ width: `${layout.sidebarWidth}px` }}
+    >
+      <div className={`settings-sidebar-padding ${layout.mode === 'wide' ? 'p-5' : 'p-4'}`}>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
           <input
@@ -64,14 +69,14 @@ export function SettingsSidebar({
               onChange(cat.id);
               onSearchChange('');
             }}
-            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+            className={`w-full flex items-center gap-3 px-3 ${layout.mode === 'wide' ? 'py-2.5' : 'py-2'} rounded-lg text-sm transition-colors ${
               activeCategory === cat.id && !searchQuery
                 ? 'bg-zinc-800 text-zinc-100'
                 : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
             }`}
           >
             {cat.icon}
-            <span>{cat.label}</span>
+            <span className="truncate">{cat.label}</span>
           </button>
         ))}
       </nav>

@@ -231,8 +231,10 @@ export interface NotificationSettings {
 }
 
 export interface WorkspaceLayoutSettings {
-  sidebarRatio: number;
-  agentRatio: number;
+  sidebarBaseWidth: number;
+  agentBaseWidth: number;
+  sidebarRatio?: number;
+  agentRatio?: number;
   sidebarOpen: boolean;
   agentOpen: boolean;
 }
