@@ -3,9 +3,8 @@ export const DEFAULT_WHIP_CRACK_SPEED = 240;
 export const DEFAULT_WHIP_PHRASES = [
   '快点干活，别磨蹭。',
   '再慢鞭子又要响了。',
-  '别装死，继续。',
-  '速度，别让我等。',
-  '醒醒，该干活了。',
+  'Go Work!!',
+  '再偷懒我就断你token😡',
 ];
 
 export function normalizeWhipPhrases(value: string[] | undefined | null) {
