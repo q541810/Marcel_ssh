@@ -62,6 +62,21 @@
   }
 }
 
+@keyframes exploration-count-change {
+  0% {
+    opacity: 0;
+    transform: translateY(0.35em) scale(0.9);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-0.08em) scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Spring utility classes */
 .spring-bounce {
   animation-timing-function: var(--spring-bounce);
@@ -86,6 +101,10 @@
 
 .animate-slide-down {
   animation: slideDown 200ms var(--spring-bounce) forwards;
+}
+
+.animate-exploration-count {
+  animation: exploration-count-change 240ms var(--spring-smooth) both;
 }
 
 /* Smooth transitions only where needed — avoid universal selector performance hit */

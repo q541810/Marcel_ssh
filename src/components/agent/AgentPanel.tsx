@@ -219,21 +219,25 @@ export default function AgentPanel() {
   // ── Preprocess messages: merge consecutive exploration tools ──
   const renderItems = useMemo<(AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[]>(() => {
     const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
-    const n = messages.length;
+    const visibleMessages = messages.filter((msg) => {
+      if (msg.role !== 'assistant') return true;
+      return msg.isLoading || msg.content || msg.reasoningContent || msg.toolCall;
+    });
+    const n = visibleMessages.length;
     let i = 0;
     while (i < n) {
-      if (isExplorationTool(messages[i])) {
+      if (isExplorationTool(visibleMessages[i])) {
         let j = i;
-        while (j < n && isExplorationTool(messages[j])) {
+        while (j < n && isExplorationTool(visibleMessages[j])) {
           j++;
         }
         if (j - i >= 4) {
-          result.push({ kind: 'exploration', tools: messages.slice(i, j) });
+          result.push({ kind: 'exploration', tools: visibleMessages.slice(i, j) });
           i = j;
           continue;
         }
       }
-      result.push(messages[i]);
+      result.push(visibleMessages[i]);
       i++;
     }
     return result;

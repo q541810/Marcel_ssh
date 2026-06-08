@@ -41,7 +41,17 @@ function ExplorationGroup({ messages, autoExpand }: Props) {
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-          <span className="text-sm"><span className="text-zinc-300">已探索</span><span className="text-zinc-500"> {messages.length} 次读取</span></span>
+          <span className="text-sm">
+            <span className="text-zinc-300">已探索</span>
+            <span className="text-zinc-500"> </span>
+            <span
+              key={messages.length}
+              className="inline-block min-w-[1ch] text-right text-zinc-500 animate-exploration-count"
+            >
+              {messages.length}
+            </span>
+            <span className="text-zinc-500"> 次读取</span>
+          </span>
         </button>
         {expanded && (
           <div className="mt-1.5 space-y-1">
