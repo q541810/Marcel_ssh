@@ -6,7 +6,7 @@ use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
-use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
+use crate::agent::tool_dispatcher::{DispatchResult, ToolDispatcher, ToolResultEvent};
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
 use crate::llm::openai::OpenAiProvider;
@@ -206,6 +206,7 @@ pub(crate) async fn run_agent_loop(
 
         // 4. Execute each tool call via the dispatcher
         let tool_ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
+        let mut web_search_executed_this_round = false;
         for tc in tool_calls {
             if is_task_cancelled(&state, &task_id) {
                 log::info!(
@@ -216,7 +217,14 @@ pub(crate) async fn run_agent_loop(
                 return;
             }
 
-            let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name).await;
+            let exec = if tc.name == "web_search" && web_search_executed_this_round {
+                DispatchResult::web_search_rate_limited()
+            } else {
+                if tc.name == "web_search" {
+                    web_search_executed_this_round = true;
+                }
+                dispatcher.dispatch(&tc, &tool_ctx, &event_name).await
+            };
 
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

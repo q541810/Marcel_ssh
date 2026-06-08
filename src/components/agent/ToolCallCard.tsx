@@ -107,12 +107,6 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
   if (toolName === 'web_search') {
     const query = asStr(args.query);
     if (query) return query;
-    const queries = asStrArray(args.queries);
-    if (queries) {
-      if (queries.length === 1) return queries[0];
-      const first = queries[0].length > 30 ? queries[0].slice(0, 30) + '...' : queries[0];
-      return `${first} +${queries.length - 1} more`;
-    }
   }
   if (toolName === 'http_get') {
     const url = asStr(args.url);

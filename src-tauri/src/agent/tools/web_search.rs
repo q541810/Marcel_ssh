@@ -5,13 +5,14 @@
 //! content — use the `http_get` tool to retrieve detailed content from
 //! any returned URL.
 //!
-//! Supports batch search: pass a single `query` or an array of `queries`
-//! to search for multiple things concurrently (up to 5 at a time).
+//! Accepts exactly one `query` per call. Keeping each search isolated avoids
+//! search-provider throttling and low-quality fallback results.
 
 use async_trait::async_trait;
-use futures::future::join_all;
 use reqwest::Client;
+use scraper::{Html, Selector};
 use serde_json::json;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
@@ -20,6 +21,8 @@ use crate::error::AppError;
 const MAX_RESULTS: usize = 8;
 const MAX_OUTPUT_BYTES: usize = 16_000;
 const TIMEOUT_SECS: u64 = 15;
+const MIN_SEARCH_DELAY_MS: u64 = 900;
+const SEARCH_DELAY_JITTER_MS: u64 = 1600;
 
 pub struct WebSearchTool;
 impl WebSearchTool {
@@ -40,26 +43,23 @@ impl AgentTool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the internet using Bing. Pass a single `query` for one search, or pass \
-         an array of `queries` to run MULTIPLE searches concurrently (much faster). \
-         Returns result titles, short snippets, and URLs for each query. \
-         IMPORTANT: When researching a topic, ALWAYS use the `queries` array to search \
-         multiple angles at once instead of calling this tool repeatedly. \
-         To read the full content of any result page, use the `http_get` tool with the returned URL."
+        "使用 Bing 搜索互联网。每次调用只能传入一个 `query`。 \
+         返回该查询的结果标题、简短片段和 URL。 \
+         重要：不要将多个搜索批量放入一次调用或一个工具回合中； \
+         先运行一次搜索，检查结果，然后如果需要再运行另一次搜索。 \
+         构建查询时不要耍小聪明瞎加关键词或高级用法，正确方式例如： `水月雨 Kadenz 升级线 推荐`。 \
+         要阅读任何结果页面的完整内容，请使用 `http_get` 工具并传入返回的 URL。"
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
             "type": "object",
+            "required": ["query"],
+            "additionalProperties": false,
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "A single search query (use this OR queries, not both)"
-                },
-                "queries": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "An array of search queries to run concurrently (up to 5 at a time)"
+                    "description": "A single search query. Do not include multiple queries."
                 },
                 "max_results": {
                     "type": "integer",
@@ -85,24 +85,25 @@ impl AgentTool for WebSearchTool {
             .unwrap_or(MAX_RESULTS as u64)
             .clamp(1, 10) as usize;
 
+        if params.get("queries").is_some() {
+            return Ok(ToolOutput::fail(
+                "web_search",
+                "'queries' is no longer supported; call web_search once per query using 'query'",
+            ));
+        }
+
         let single_query = params
             .get("query")
             .and_then(|v| v.as_str())
-            .map(str::trim)
+            .map(normalize_query)
             .filter(|q| !q.is_empty());
-        let query_array = params.get("queries").and_then(|v| v.as_array());
 
-        let queries: Vec<&str> = match (single_query, query_array) {
-            (Some(q), _) => vec![q],
-            (_, Some(arr)) => arr
-                .iter()
-                .filter_map(|v| v.as_str().map(str::trim))
-                .filter(|q| !q.is_empty())
-                .collect(),
+        let queries: Vec<String> = match single_query {
+            Some(q) => vec![q],
             _ => {
                 return Ok(ToolOutput::fail(
                     "web_search",
-                    "missing 'query' or 'queries' parameter",
+                    "missing 'query' parameter",
                 ));
             }
         };
@@ -111,12 +112,11 @@ impl AgentTool for WebSearchTool {
             return Ok(ToolOutput::fail("web_search", "no valid queries provided"));
         }
 
-        // Execute all searches concurrently
-        let searches: Vec<_> = queries
-            .iter()
-            .map(|q| search_bing(q, max_results))
-            .collect();
-        let results = join_all(searches).await;
+        // Keep this as a vector internally so the output formatter stays simple.
+        let mut results = Vec::with_capacity(queries.len());
+        for query in &queries {
+            results.push(search_bing(query, max_results).await);
+        }
 
         // Build combined output
         let mut sections = Vec::new();
@@ -131,17 +131,17 @@ impl AgentTool for WebSearchTool {
                     total_results += items.len();
                     if !items.is_empty() {
                         success_count += 1;
-                        sections.push(format_results_for_query(query, items));
-                        metadata_results.extend(search_result_metadata(query, items));
+                        sections.push(format_results_for_query(query.as_str(), items));
+                        metadata_results.extend(search_result_metadata(query.as_str(), items));
                     } else {
                         fail_count += 1;
-                        sections.push(format_empty_query_section(query));
+                        sections.push(format_empty_query_section(query.as_str()));
                     }
                 }
                 Err(e) => {
                     fail_count += 1;
                     if queries.len() > 1 {
-                        sections.push(format_error_query_section(query, e));
+                        sections.push(format_error_query_section(query.as_str(), e));
                     } else {
                         return Ok(ToolOutput::fail(
                             format!("web_search '{}'", query),
@@ -182,6 +182,35 @@ impl AgentTool for WebSearchTool {
             "results": metadata_results
         })))
     }
+}
+
+fn normalize_query(query: &str) -> String {
+    let mut normalized = String::with_capacity(query.len());
+    let mut last_was_space = false;
+
+    for ch in query.chars() {
+        if is_invisible_format_char(ch) {
+            continue;
+        }
+        if ch.is_whitespace() {
+            if !last_was_space {
+                normalized.push(' ');
+                last_was_space = true;
+            }
+            continue;
+        }
+        normalized.push(ch);
+        last_was_space = false;
+    }
+
+    normalized.trim().to_string()
+}
+
+fn is_invisible_format_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
+    )
 }
 
 struct SearchResult {
@@ -237,12 +266,14 @@ const SEARCH_TIP: &str =
 
 async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult>, AppError> {
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+        .timeout(Duration::from_secs(TIMEOUT_SECS))
         .build()
         .map_err(|e| AppError::Agent(format!("failed to create HTTP client: {}", e)))?;
 
+    sleep_like_human().await;
+
     let url = format!(
-        "https://www.bing.com/search?q={}",
+        "https://www.bing.com/search?q={}&mkt=zh-CN&cc=CN&setlang=zh-CN&ensearch=0",
         urlencoding::encode(query)
     );
 
@@ -252,14 +283,26 @@ async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8")
+        .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
+        .header("Upgrade-Insecure-Requests", "1")
+        .header("Sec-Fetch-Dest", "document")
+        .header("Sec-Fetch-Mode", "navigate")
+        .header("Sec-Fetch-Site", "none")
+        .header("Sec-Fetch-User", "?1")
+        .header("Sec-CH-UA", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+        .header("Sec-CH-UA-Mobile", "?0")
+        .header("Sec-CH-UA-Platform", "\"Windows\"")
         .send()
         .await
         .map_err(|e| AppError::Agent(format!("HTTP request failed: {}", e)))?;
 
-    if !resp.status().is_success() {
-        return Err(AppError::Agent(format!("HTTP error: {}", resp.status())));
+    let status = resp.status();
+
+    if !status.is_success() {
+        return Err(AppError::Agent(format!("HTTP error: {}", status)));
     }
 
     let html = resp
@@ -267,80 +310,48 @@ async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult
         .await
         .map_err(|e| AppError::Agent(format!("failed to read response: {}", e)))?;
 
-    Ok(parse_results(&html, max_results))
+    let results = parse_results(&html, max_results);
+
+    Ok(results)
+}
+
+async fn sleep_like_human() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as u64)
+        .unwrap_or(0);
+    let delay_ms = MIN_SEARCH_DELAY_MS + nanos % SEARCH_DELAY_JITTER_MS;
+    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
 }
 
 fn parse_results(html: &str, max: usize) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
-    // Bing results are in <li class="b_algo"> elements
-    // Each has an <h2><a href="..."> for the title/URL and a <div class="b_caption"><p> for the snippet
-    let parts: Vec<&str> = html.split("b_algo").collect();
+    let document = Html::parse_document(html);
+    let result_selector = Selector::parse("li.b_algo").expect("valid b_algo selector");
+    let link_selector = Selector::parse("h2 a").expect("valid result link selector");
+    let snippet_selector = Selector::parse(".b_caption p, p").expect("valid snippet selector");
 
-    for part in parts.iter().skip(1) {
+    for result in document.select(&result_selector) {
         if results.len() >= max {
             break;
         }
 
-        // Extract h2 > a for title and URL
-        let h2_start = match part.find("<h2") {
-            Some(i) => i,
-            None => continue,
+        let Some(link) = result.select(&link_selector).next() else {
+            continue;
         };
-        let h2_end = match part[h2_start..].find("</h2>") {
-            Some(i) => h2_start + i,
-            None => continue,
-        };
-        let h2_block = &part[h2_start..h2_end];
-
-        // Find the <a> tag inside h2
-        let a_start = match h2_block.find("<a ") {
-            Some(i) => i,
-            None => continue,
-        };
-        let a_end = match h2_block[a_start..].find("</a>") {
-            Some(i) => a_start + i,
-            None => continue,
-        };
-        let a_block = &h2_block[a_start..a_end];
-
-        // Extract href from the <a> tag
-        let url = extract_href(a_block);
-
-        // Extract title text (between > and </a>)
-        let title = match a_block.find('>') {
-            Some(idx) => {
-                let text = &a_block[idx + 1..];
-                clean_html(text)
-            }
-            None => continue,
-        };
+        let title = link.text().collect::<Vec<_>>().join(" ").trim().to_string();
 
         if title.is_empty() {
             continue;
         }
 
-        // Extract snippet from b_caption <p>
-        let snippet = if let Some(caption_start) = part.find("b_caption") {
-            if let Some(p_start) = part[caption_start..].find("<p") {
-                let abs_p_start = caption_start + p_start;
-                if let Some(close_gt) = part[abs_p_start..].find('>') {
-                    let content_start = abs_p_start + close_gt + 1;
-                    if let Some(p_end) = part[content_start..].find("</p>") {
-                        let snippet_text = &part[content_start..content_start + p_end];
-                        clean_html(snippet_text)
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
+        let url = link.value().attr("href").map(str::to_string);
+        let snippet = result
+            .select(&snippet_selector)
+            .next()
+            .map(|node| node.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .unwrap_or_default();
 
         // Bing URLs are direct — no redirect wrapper
         let final_url = if let Some(u) = url {
@@ -367,40 +378,6 @@ fn parse_results(html: &str, max: usize) -> Vec<SearchResult> {
     results
 }
 
-/// Extract href value from an <a ...> tag
-fn extract_href(tag: &str) -> Option<String> {
-    let href_prefix = "href=\"";
-    let idx = tag.find(href_prefix)?;
-    let value_start = idx + href_prefix.len();
-    let rest = &tag[value_start..];
-    let value_end = rest.find('"')?;
-    Some(rest[..value_end].to_string())
-}
-
-/// Strip HTML tags and decode common entities
-fn clean_html(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        if c == '<' {
-            in_tag = true;
-        } else if c == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            out.push(c);
-        }
-    }
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&#39;", "'")
-        .replace("&quot;", "\"")
-        .replace("&#x27;", "'")
-        .replace("&nbsp;", " ")
-        .trim()
-        .to_string()
-}
-
 mod urlencoding {
     pub fn encode(input: &str) -> String {
         let mut encoded = String::with_capacity(input.len() * 3);
@@ -409,7 +386,7 @@ mod urlencoding {
                 b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                     encoded.push(byte as char);
                 }
-                b' ' => encoded.push('+'),
+                b' ' => encoded.push_str("%20"),
                 _ => {
                     encoded.push('%');
                     encoded.push(to_hex(byte >> 4));
@@ -432,7 +409,7 @@ mod tests {
     #[test]
     fn urlencoding_spaces() {
         let encoded = urlencoding::encode("hello world");
-        assert_eq!(encoded, "hello+world");
+        assert_eq!(encoded, "hello%20world");
     }
 
     #[test]
@@ -442,21 +419,11 @@ mod tests {
     }
 
     #[test]
-    fn clean_html_strips_tags() {
-        assert_eq!(clean_html("<b>bold</b>"), "bold");
-        assert_eq!(clean_html("<a href='x'>link</a>"), "link");
-    }
-
-    #[test]
-    fn clean_html_decodes_entities() {
-        assert_eq!(clean_html("Tom &amp; Jerry"), "Tom & Jerry");
-        assert_eq!(clean_html("foo&nbsp;bar"), "foo bar");
-    }
-
-    #[test]
-    fn extract_href_finds_link() {
-        let tag = r#"<a href="https://example.com" class="foo">"#;
-        assert_eq!(extract_href(tag), Some("https://example.com".to_string()));
+    fn normalize_query_removes_invisible_chars_and_collapses_whitespace() {
+        assert_eq!(
+            normalize_query("  水月雨\u{200B}\tKadenz\n升级线  "),
+            "水月雨 Kadenz 升级线",
+        );
     }
 
     #[test]
@@ -508,4 +475,15 @@ mod tests {
         assert!(output.contains("## Query: bad query"), "{output}");
         assert!(output.contains("network failed"), "{output}");
     }
+
+    #[test]
+    fn schema_exposes_only_single_query() {
+        let schema = WebSearchTool::new().parameters_schema();
+
+        assert!(schema["properties"].get("query").is_some());
+        assert!(schema["properties"].get("queries").is_none());
+        assert_eq!(schema["required"], json!(["query"]));
+        assert_eq!(schema["additionalProperties"], false);
+    }
+
 }

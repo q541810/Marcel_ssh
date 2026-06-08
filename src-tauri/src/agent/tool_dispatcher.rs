@@ -79,6 +79,18 @@ impl DispatchResult {
             risk_level: RiskLevel::Moderate,
         }
     }
+
+    pub(crate) fn web_search_rate_limited() -> Self {
+        Self {
+            summary: "web_search skipped".to_string(),
+            output: "Only one web_search call is allowed per tool round. Run the next search in a separate round with a single query.".to_string(),
+            success: false,
+            blocked: false,
+            was_timeout: false,
+            metadata: None,
+            risk_level: RiskLevel::ReadOnly,
+        }
+    }
 }
 
 /// Dispatches tool calls through the registry with mode-aware security policy.
@@ -336,5 +348,16 @@ mod tests {
         };
         assert!(command_list_requires_confirm("echo hello", &s));
         assert!(command_list_requires_confirm("git status", &s));
+    }
+
+    #[test]
+    fn web_search_rate_limited_result_tells_model_to_retry_next_round() {
+        let result = DispatchResult::web_search_rate_limited();
+
+        assert!(!result.success);
+        assert!(!result.blocked);
+        assert_eq!(result.risk_level, RiskLevel::ReadOnly);
+        assert!(result.output.contains("Only one web_search call"));
+        assert!(result.output.contains("separate round"));
     }
 }
