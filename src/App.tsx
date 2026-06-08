@@ -24,6 +24,7 @@ const McpList = lazy(() => import('@/components/mcp/McpList'));
 const Settings = lazy(() => import('@/components/settings/Settings'));
 
 const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
+const AGENT_PANEL_COLLAPSE_MS = 300;
 
 export default function App() {
   const [navView, setNavView] = useState<NavView>('sessions');
@@ -39,6 +40,7 @@ export default function App() {
   const [dragAgentWidth, setDragAgentWidth] = useState<number | null>(null);
   const [resizingSide, setResizingSide] = useState<'sidebar' | 'agent' | null>(null);
   const [isWindowResizing, setIsWindowResizing] = useState(false);
+  const agentPanelUnmountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -53,6 +55,31 @@ export default function App() {
   const isSettingsView = navView === 'settings';
   const effectiveSidebarOpen = sidebarOpen && !isSettingsView;
   const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
+  const [agentPanelMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
+
+  useEffect(() => {
+    if (agentPanelUnmountTimeoutRef.current) {
+      clearTimeout(agentPanelUnmountTimeoutRef.current);
+      agentPanelUnmountTimeoutRef.current = null;
+    }
+
+    if (effectiveAgentPanelOpen) {
+      setAgentPanelMounted(true);
+      return;
+    }
+
+    agentPanelUnmountTimeoutRef.current = setTimeout(() => {
+      setAgentPanelMounted(false);
+      agentPanelUnmountTimeoutRef.current = null;
+    }, AGENT_PANEL_COLLAPSE_MS);
+
+    return () => {
+      if (agentPanelUnmountTimeoutRef.current) {
+        clearTimeout(agentPanelUnmountTimeoutRef.current);
+        agentPanelUnmountTimeoutRef.current = null;
+      }
+    };
+  }, [effectiveAgentPanelOpen]);
 
   useEffect(() => {
     const el = mainRowRef.current;
@@ -287,7 +314,7 @@ export default function App() {
             transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
-          {effectiveAgentPanelOpen && (
+          {agentPanelMounted && (
             <>
               <div
                 className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"

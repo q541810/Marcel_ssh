@@ -122,7 +122,7 @@ export default function AgentPanel() {
     const textarea = inputRef.current;
     if (!textarea) return;
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 72)}px`;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
   };
 
   const appendWhipPhrase = () => {
@@ -494,7 +494,7 @@ export default function AgentPanel() {
                 : '请先连接到服务器...'
             }
             disabled={!canInteract}
-            className="flex-1 min-w-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[4.5rem] overflow-y-auto leading-relaxed"
+            className="flex-1 min-w-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
           />
 
           {/* Send / Stop button (inside input) */}
