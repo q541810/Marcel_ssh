@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { AgentMessage } from '@/lib/types';
 
 interface Props {
@@ -121,7 +121,7 @@ function getCommandPreview(toolName: string, args: Record<string, unknown> | und
   return '';
 }
 
-export default function ToolCallCard({ message, autoExpand }: Props) {
+function ToolCallCard({ message, autoExpand }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
 
   useEffect(() => {
@@ -245,3 +245,5 @@ export default function ToolCallCard({ message, autoExpand }: Props) {
 
   return null;
 }
+
+export default memo(ToolCallCard);

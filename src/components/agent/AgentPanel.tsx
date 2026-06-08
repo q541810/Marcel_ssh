@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { AGENT_MODES } from '@/lib/constants';
@@ -14,6 +14,7 @@ export default function AgentPanel() {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastScrolledMessageRef = useRef<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -38,15 +39,22 @@ export default function AgentPanel() {
     deleteConversation,
   } = useAgent();
 
-  const sessionConversations = Object.values(conversations).filter(
-    (c) => c.connectionId === activeConfigId,
+  const sessionConversations = useMemo(
+    () => Object.values(conversations).filter((c) => c.connectionId === activeConfigId),
+    [conversations, activeConfigId],
   );
 
   const canInteract = !!activeSessionId;
 
+  const lastMessage = messages[messages.length - 1];
+  const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages]);
+    if (!lastMessage) return;
+    const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
+    lastScrolledMessageRef.current = lastMessage.id;
+    messagesEndRef.current?.scrollIntoView({ behavior: isNewMessage ? 'smooth' : 'auto', block: 'end' });
+  }, [lastMessage, lastMessageSize]);
 
   useEffect(() => {
     if (!modeDrawerOpen) return;
@@ -138,7 +146,7 @@ export default function AgentPanel() {
   const currentModeInfo = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
   // ── Preprocess messages: merge consecutive exploration tools ──
-  function processedMessages(): (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] {
+  const renderItems = useMemo<(AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[]>(() => {
     const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
     const n = messages.length;
     let i = 0;
@@ -158,10 +166,12 @@ export default function AgentPanel() {
       i++;
     }
     return result;
-  }
+  }, [messages]);
 
-  const renderItems = processedMessages();
-  const isThinking = messages.some((m) => m.role === 'assistant' && m.isThinking);
+  const isThinking = useMemo(
+    () => messages.some((m) => m.role === 'assistant' && m.isThinking),
+    [messages],
+  );
 
   return (
     <div className="relative flex flex-col h-full bg-zinc-900">

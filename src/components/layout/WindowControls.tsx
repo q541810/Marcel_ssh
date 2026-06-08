@@ -1,41 +1,32 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export default function WindowControls() {
   const [isMaximized, setIsMaximized] = useState(false);
 
-  useEffect(() => {
-    const appWindow = getCurrentWindow();
-    
-    const checkMaximized = async () => {
-      try {
-        setIsMaximized(await appWindow.isMaximized());
-      } catch (e) {
-        console.error('Failed to check maximized state:', e);
-      }
-    };
-    
-    checkMaximized();
-    
-    let unlisten: (() => void) | null = null;
-    
-    appWindow.onResized(() => {
-      checkMaximized();
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    
-    return () => {
-      if (unlisten) unlisten();
-    };
+  const checkMaximized = useCallback(async () => {
+    try {
+      setIsMaximized(await getCurrentWindow().isMaximized());
+    } catch (e) {
+      console.error('Failed to check maximized state:', e);
+    }
   }, []);
+
+  useEffect(() => {
+    checkMaximized();
+  }, [checkMaximized]);
 
   const handleMinimize = () => {
     getCurrentWindow().minimize();
   };
 
-  const handleMaximize = () => {
-    getCurrentWindow().toggleMaximize();
+  const handleMaximize = async () => {
+    try {
+      await getCurrentWindow().toggleMaximize();
+      await checkMaximized();
+    } catch (e) {
+      console.error('Failed to toggle maximized state:', e);
+    }
   };
 
   const handleClose = () => {

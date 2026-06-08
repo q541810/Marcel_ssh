@@ -137,12 +137,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   loadConnectionConversations: async (connectionId: string) => {
     const convs = await tauri.agentListConversationsByConnection(connectionId);
 
-    const loadedMessages: Record<string, AgentMessage[]> = {};
-    for (const conv of convs) {
-      const stored = await tauri.agentLoadConversation(conv.id);
-      loadedMessages[conv.id] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
-    }
-
     set((state) => {
       const incomingConvIds = new Set(convs.map((c) => c.id));
 
@@ -160,7 +154,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
       for (const conv of convs) {
         newConversations[conv.id] = conv;
-        newMessages[conv.id] = loadedMessages[conv.id];
+        newMessages[conv.id] = state.messages[conv.id] ?? [];
       }
 
       const firstConvId = convs.length > 0 ? convs[0].id : null;

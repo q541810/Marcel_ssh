@@ -30,8 +30,12 @@ export default function App() {
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const mainRowRef = useRef<HTMLDivElement>(null);
   const agentRatioRef = useRef(0);
+  const agentPanelWidthRef = useRef(AGENT_PANEL_DEFAULT_WIDTH);
+  const mainRowWidthRef = useRef(0);
+  const windowResizingRef = useRef(false);
   const preSettingsPanelsRef = useRef<{ sidebarOpen: boolean; agentPanelOpen: boolean } | null>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const windowResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isWindowResizing, setIsWindowResizing] = useState(false);
 
   const saveAgentRatio = useCallback((ratio: number) => {
     agentRatioRef.current = ratio;
@@ -45,21 +49,11 @@ export default function App() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => {
-    const el = mainRowRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const handleAgentWidthChange = useCallback((w: number) => {
-    if (containerWidth > 0) {
-      saveAgentRatio(w / containerWidth);
+    if (mainRowWidthRef.current > 0) {
+      saveAgentRatio(w / mainRowWidthRef.current);
     }
-  }, [containerWidth, saveAgentRatio]);
+  }, [saveAgentRatio]);
 
   const { width: agentPanelWidth, isResizing, startResize: handleResizeMouseDown, setWidth: setAgentWidth } =
     useResizablePanel({
@@ -70,14 +64,53 @@ export default function App() {
     });
 
   useEffect(() => {
-    if (containerWidth <= 0 || !agentPanelOpen) return;
-    if (agentRatioRef.current > 0) {
-      const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * containerWidth)));
-      setAgentWidth(w);
-    } else if (agentPanelWidth > 0) {
-      agentRatioRef.current = agentPanelWidth / containerWidth;
-    }
-  }, [containerWidth, agentPanelOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    agentPanelWidthRef.current = agentPanelWidth;
+  }, [agentPanelWidth]);
+
+  useEffect(() => {
+    const el = mainRowRef.current;
+    if (!el) return;
+
+    const syncAgentWidth = () => {
+      const width = mainRowWidthRef.current;
+      if (width <= 0 || !agentPanelOpen) return;
+      if (agentRatioRef.current > 0) {
+        const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * width)));
+        setAgentWidth(w);
+      } else if (agentPanelWidthRef.current > 0) {
+        agentRatioRef.current = agentPanelWidthRef.current / width;
+      }
+    };
+
+    const ro = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      if (mainRowWidthRef.current === width) return;
+      mainRowWidthRef.current = width;
+
+      if (!windowResizingRef.current) {
+        windowResizingRef.current = true;
+        setIsWindowResizing(true);
+      }
+      if (windowResizeTimeoutRef.current) clearTimeout(windowResizeTimeoutRef.current);
+      windowResizeTimeoutRef.current = setTimeout(() => {
+        windowResizingRef.current = false;
+        setIsWindowResizing(false);
+        syncAgentWidth();
+      }, 120);
+    });
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      if (windowResizeTimeoutRef.current) clearTimeout(windowResizeTimeoutRef.current);
+    };
+  }, [agentPanelOpen, setAgentWidth]);
+
+  useEffect(() => {
+    const width = mainRowWidthRef.current;
+    if (width <= 0 || !agentPanelOpen || agentRatioRef.current <= 0) return;
+    const w = Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, Math.round(agentRatioRef.current * width)));
+    setAgentWidth(w);
+  }, [agentPanelOpen, setAgentWidth]);
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -186,7 +219,7 @@ export default function App() {
           className="flex overflow-hidden flex-shrink-0"
           style={{
             width: effectiveAgentPanelOpen ? `${agentPanelWidth + 4}px` : '0px',
-            transition: isResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
+            transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
           <div

@@ -23,6 +23,7 @@ interface TerminalInstance {
   terminal: XTerm;
   fitAddon: FitAddon;
   container: HTMLDivElement;
+  lastResize?: { cols: number; rows: number };
   unlistenOutput?: UnlistenFn;
   onDataDisposable?: { dispose: () => void };
   domListeners: Array<() => void>;
@@ -40,6 +41,12 @@ export default function Terminal() {
   const hasResizedRef = useRef(false);
   const terminalRootRef = useRef<HTMLDivElement>(null);
   const panelRatioRef = useRef(0);
+  const fitFrameRef = useRef<number | null>(null);
+  const activeInstanceIdRef = useRef<string | null>(null);
+  const lastWrapperSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const terminalRootHeightRef = useRef(0);
+  const terminalRootHeightReadyRef = useRef(false);
+  const terminalRootResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [containerHeight, setContainerHeight] = useState(0);
 
   const savePanelRatio = useCallback((ratio: number) => {
@@ -70,10 +77,26 @@ export default function Terminal() {
     const el = terminalRootRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
-      setContainerHeight(entry.contentRect.height);
+      const height = Math.round(entry.contentRect.height);
+      if (terminalRootHeightRef.current === height) return;
+      terminalRootHeightRef.current = height;
+
+      if (!terminalRootHeightReadyRef.current) {
+        terminalRootHeightReadyRef.current = true;
+        setContainerHeight(height);
+        return;
+      }
+
+      if (terminalRootResizeTimeoutRef.current) clearTimeout(terminalRootResizeTimeoutRef.current);
+      terminalRootResizeTimeoutRef.current = setTimeout(() => {
+        setContainerHeight(terminalRootHeightRef.current);
+      }, 120);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (terminalRootResizeTimeoutRef.current) clearTimeout(terminalRootResizeTimeoutRef.current);
+    };
   }, []);
 
   const ratioInitDoneRef = useRef(false);
@@ -104,6 +127,31 @@ export default function Terminal() {
   const fontSize = preview?.fontSize ?? storeSettings.fontSize;
   const fontFamily = preview?.fontFamily ?? storeSettings.fontFamily;
   const terminalColors = preview?.terminalColors ?? storeSettings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+
+  const resizeRemoteIfChanged = (instance: TerminalInstance) => {
+    const cols = instance.terminal.cols;
+    const rows = instance.terminal.rows;
+    if (instance.lastResize?.cols === cols && instance.lastResize?.rows === rows) return;
+    instance.lastResize = { cols, rows };
+    sshResize(instance.id, cols, rows).catch(() => {});
+  };
+
+  useEffect(() => {
+    activeInstanceIdRef.current = activeInstanceId;
+  }, [activeInstanceId]);
+
+  const scheduleActiveFit = () => {
+    if (fitFrameRef.current !== null) return;
+    fitFrameRef.current = requestAnimationFrame(() => {
+      fitFrameRef.current = null;
+      const instanceId = activeInstanceIdRef.current;
+      if (!instanceId) return;
+      const instance = terminalsRef.current.get(instanceId);
+      if (!instance) return;
+      instance.fitAddon.fit();
+      resizeRemoteIfChanged(instance);
+    });
+  };
 
   // Create terminal instance for a session
   const createTerminal = (sessionId: string): TerminalInstance => {
@@ -260,7 +308,7 @@ export default function Terminal() {
       requestAnimationFrame(() => {
         instance.fitAddon.fit();
         instance.terminal.focus();
-        sshResize(activeSessionId, instance.terminal.cols, instance.terminal.rows).catch(() => {});
+        resizeRemoteIfChanged(instance);
       });
     }
 
@@ -271,23 +319,27 @@ export default function Terminal() {
   useEffect(() => {
     if (!wrapperRef.current) return;
 
-    const resizeObserver = new ResizeObserver(() => {
-      requestAnimationFrame(() => {
-        for (const instance of terminalsRef.current.values()) {
-          instance.fitAddon.fit();
-          if (instance.id === activeInstanceId) {
-            sshResize(instance.id, instance.terminal.cols, instance.terminal.rows).catch(() => {});
-          }
-        }
-      });
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      const size = {
+        width: Math.round(entry.contentRect.width),
+        height: Math.round(entry.contentRect.height),
+      };
+      const lastSize = lastWrapperSizeRef.current;
+      if (lastSize?.width === size.width && lastSize?.height === size.height) return;
+      lastWrapperSizeRef.current = size;
+      scheduleActiveFit();
     });
 
     resizeObserver.observe(wrapperRef.current);
 
     return () => {
       resizeObserver.disconnect();
+      if (fitFrameRef.current !== null) {
+        cancelAnimationFrame(fitFrameRef.current);
+        fitFrameRef.current = null;
+      }
     };
-  }, [activeInstanceId]);
+  }, []);
 
   // Apply settings changes
   useEffect(() => {
@@ -298,7 +350,7 @@ export default function Terminal() {
       requestAnimationFrame(() => {
         instance.fitAddon.fit();
         if (instance.id === activeInstanceId) {
-          sshResize(instance.id, instance.terminal.cols, instance.terminal.rows).catch(() => {});
+          resizeRemoteIfChanged(instance);
         }
       });
     }

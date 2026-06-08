@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import ToolCallCard from './ToolCallCard';
 
@@ -16,7 +16,7 @@ export function isExplorationTool(msg: AgentMessage): boolean {
   return false;
 }
 
-export default function ExplorationGroup({ messages, autoExpand }: Props) {
+function ExplorationGroup({ messages, autoExpand }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
 
   useEffect(() => {
@@ -54,3 +54,5 @@ export default function ExplorationGroup({ messages, autoExpand }: Props) {
     </div>
   );
 }
+
+export default memo(ExplorationGroup);
