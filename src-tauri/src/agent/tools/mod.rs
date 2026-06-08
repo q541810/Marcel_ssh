@@ -22,6 +22,7 @@ use crate::agent::sandbox::RiskLevel;
 use crate::error::AppError;
 use crate::ssh::connection::SshManager;
 
+#[cfg(test)]
 pub mod base64;
 pub mod connection_info;
 pub mod execute_cmd;
