@@ -174,7 +174,10 @@ export default function App() {
   const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
 
   return (
-    <div className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden">
+    <div
+      className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden"
+      data-window-resizing={isWindowResizing ? 'true' : undefined}
+    >
       <AppHeader
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
@@ -184,7 +187,7 @@ export default function App() {
         <NavRail active={navView} onChange={handleNavChange} />
 
         <aside
-          className="flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
+          className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
           style={{
             width: effectiveSidebarOpen ? '16rem' : '0rem',
             borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
@@ -198,7 +201,7 @@ export default function App() {
           </div>
         </aside>
 
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
+        <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
           {isSettingsView ? (
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
               <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
@@ -216,7 +219,7 @@ export default function App() {
         </div>
 
         <div
-          className="flex overflow-hidden flex-shrink-0"
+          className="layout-contained flex overflow-hidden flex-shrink-0"
           style={{
             width: effectiveAgentPanelOpen ? `${agentPanelWidth + 4}px` : '0px',
             transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
@@ -228,7 +231,7 @@ export default function App() {
             style={{ touchAction: 'none' }}
           />
           <aside
-            className="overflow-hidden border-l border-zinc-800 flex-shrink-0"
+            className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
             style={{ width: `${agentPanelWidth}px` }}
           >
             <AgentPanel />

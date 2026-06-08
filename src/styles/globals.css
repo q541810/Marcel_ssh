@@ -153,6 +153,17 @@ html {
   scrollbar-color: #3f3f46 transparent;
 }
 
+.layout-contained {
+  contain: layout paint;
+}
+
+[data-window-resizing="true"] *,
+[data-window-resizing="true"] *::before,
+[data-window-resizing="true"] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
 /* Smooth scrolling only where explicitly requested */
 .smooth-scroll {
   scroll-behavior: smooth;
