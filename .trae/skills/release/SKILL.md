@@ -46,7 +46,8 @@ pnpm tauri build
 
 产物路径：
 - `src-tauri/target/release/bundle/nsis/Marcel SSH_{version}_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/Marcel SSH_{version}_x64_zh-CN.msi`
+
+> Windows 默认只发布 NSIS 安装包，不发布 MSI，以控制安装包体积。
 
 ### 4. 拟定release描述
 先阅读commit记录，再查看release记录，模仿之前的release描述风格，根据commit记录确定当前版本的描述后告知用户。
@@ -83,5 +84,5 @@ Remove-Item -LiteralPath release-notes.md
 ### 7. 上传安装包到 Release Assets
 
 ```bash
-gh release upload v{version} "src-tauri\target\release\bundle\msi\Marcel SSH_{version}_x64_zh-CN.msi" "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe" --clobber
+gh release upload v{version} "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe" --clobber
 ```

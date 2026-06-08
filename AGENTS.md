@@ -73,6 +73,7 @@ Tauri 2.x (Rust 后端 + WebView 前端)
 - **后端**：Cargo (Rust 2021 edition)
 - **测试**：Vitest (前端), `cargo test` (Rust)
 - **Lint**：ESLint + Prettier (前端), clippy + rustfmt (Rust)
+- **Windows 发布**：默认只构建/发布 NSIS 安装包，不发布 MSI，以控制安装包体积；如需 MSI，必须在发布前显式说明并临时调整 Tauri bundle target。
 
 ---
 
