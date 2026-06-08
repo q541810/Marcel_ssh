@@ -19,6 +19,7 @@ export interface ConversationState {
   switchConversation: (conversationId: string) => Promise<void>;
   loadConversation: (conversationId: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
+  rollbackToMessage: (conversationId: string, messageId: string) => Promise<{ prompt: string; removedCount: number }>;
   clearConnectionConversations: (connectionId: string) => void;
   loadConnectionConversations: (connectionId: string) => Promise<void>;
   getCurrentMessages: () => AgentMessage[];
@@ -109,6 +110,31 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             : state.activeConversationId,
       };
     });
+  },
+
+  rollbackToMessage: async (conversationId: string, messageId: string) => {
+    const msgs = get().messages[conversationId] || [];
+    const index = msgs.findIndex((m) => m.id === messageId);
+    if (index < 0) {
+      throw new Error('消息不存在');
+    }
+
+    const target = msgs[index];
+    if (target.role !== 'user') {
+      throw new Error('只能撤回用户消息');
+    }
+
+    const removedCount = msgs.length - index;
+    await tauri.agentTruncateConversation(conversationId, target.timestamp);
+
+    set((state) => ({
+      messages: {
+        ...state.messages,
+        [conversationId]: (state.messages[conversationId] || []).slice(0, index),
+      },
+    }));
+
+    return { prompt: target.content, removedCount };
   },
 
   clearConnectionConversations: (connectionId: string) => {

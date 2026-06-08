@@ -265,6 +265,23 @@ impl ConversationDb {
         Ok(())
     }
 
+    pub fn delete_messages_from_timestamp(
+        &self,
+        conversation_id: &str,
+        from_timestamp: &str,
+    ) -> RusqliteResult<usize> {
+        let deleted = {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?1 AND timestamp >= ?2",
+                (conversation_id, from_timestamp),
+            )?
+        };
+
+        self.touch_conversation(conversation_id)?;
+        Ok(deleted)
+    }
+
     pub fn delete_conversations_by_connection(&self, connection_id: &str) -> RusqliteResult<()> {
         let ids: Vec<String> = {
             let conn = self.conn.lock().unwrap();
@@ -421,6 +438,63 @@ mod tests {
             .list_conversations("conn_1")
             .expect("Failed to list conversations");
         assert!(conversations.is_empty());
+    }
+
+    #[test]
+    fn test_delete_messages_from_timestamp() {
+        let db = create_test_db();
+
+        let conversation = db
+            .create_conversation("conn_1", "Rollback")
+            .expect("Failed to create conversation");
+
+        db.save_message(
+            &conversation.id,
+            "user",
+            "keep",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("Failed to save message");
+        db.save_message(
+            &conversation.id,
+            "user",
+            "rewrite",
+            "2026-01-01T00:01:00Z",
+            None,
+            None,
+        )
+        .expect("Failed to save message");
+        db.save_message(
+            &conversation.id,
+            "assistant",
+            "answer",
+            "2026-01-01T00:02:00Z",
+            None,
+            None,
+        )
+        .expect("Failed to save message");
+        db.save_message(
+            &conversation.id,
+            "tool",
+            "tool output",
+            "2026-01-01T00:03:00Z",
+            None,
+            None,
+        )
+        .expect("Failed to save message");
+
+        let deleted = db
+            .delete_messages_from_timestamp(&conversation.id, "2026-01-01T00:01:00Z")
+            .expect("Failed to delete messages");
+
+        assert_eq!(deleted, 3);
+        let messages = db
+            .load_messages(&conversation.id)
+            .expect("Failed to load messages");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "keep");
     }
 
     #[test]

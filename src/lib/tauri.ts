@@ -111,6 +111,13 @@ export async function agentDeleteConversation(conversationId: string): Promise<v
   return invoke('agent_delete_conversation', { conversationId });
 }
 
+export async function agentTruncateConversation(
+  conversationId: string,
+  fromTimestamp: string,
+): Promise<number> {
+  return invoke<number>('agent_truncate_conversation', { conversationId, fromTimestamp });
+}
+
 export async function agentDeleteConversationsBySession(sessionId: string): Promise<void> {
   return invoke('agent_delete_conversations_by_session', { sessionId });
 }

@@ -76,6 +76,26 @@ pub async fn agent_delete_conversation(
     Ok(())
 }
 
+/// Delete a message and all messages after it from a conversation.
+#[tauri::command]
+pub async fn agent_truncate_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    from_timestamp: String,
+) -> Result<usize, AppError> {
+    let deleted = state
+        .conversation_db
+        .delete_messages_from_timestamp(&conversation_id, &from_timestamp)
+        .map_err(|e| AppError::Agent(format!("Failed to truncate conversation: {}", e)))?;
+    log::info!(
+        "Truncated conversation: {} from {} (deleted={})",
+        conversation_id,
+        from_timestamp,
+        deleted
+    );
+    Ok(deleted)
+}
+
 /// List all conversations for a given connection config ID (persistent, works without active session).
 #[tauri::command]
 pub async fn agent_list_conversations_by_connection(

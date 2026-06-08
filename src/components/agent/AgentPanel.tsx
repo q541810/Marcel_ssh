@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -17,10 +18,12 @@ export default function AgentPanel() {
   const [whipActive, setWhipActive] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastScrolledMessageRef = useRef<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const rollbackNoticeTimerRef = useRef<number | null>(null);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const activeConfigId = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
@@ -45,6 +48,7 @@ export default function AgentPanel() {
     newConversation,
     switchConversation,
     deleteConversation,
+    rollbackToMessage,
   } = useAgent();
 
   const sessionConversations = useMemo(
@@ -80,6 +84,12 @@ export default function AgentPanel() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [modeDrawerOpen]);
+
+  useEffect(() => () => {
+    if (rollbackNoticeTimerRef.current !== null) {
+      window.clearTimeout(rollbackNoticeTimerRef.current);
+    }
+  }, []);
 
   const handleSend = async () => {
     const prompt = input.trim();
@@ -124,6 +134,40 @@ export default function AgentPanel() {
       resizeInput();
       inputRef.current?.focus();
     });
+  };
+
+  const showRollbackNotice = (removedCount: number) => {
+    setRollbackNotice(`已撤回 ${removedCount} 条消息，原消息已放回输入框`);
+    if (rollbackNoticeTimerRef.current !== null) {
+      window.clearTimeout(rollbackNoticeTimerRef.current);
+    }
+    rollbackNoticeTimerRef.current = window.setTimeout(() => {
+      setRollbackNotice(null);
+      rollbackNoticeTimerRef.current = null;
+    }, 4200);
+  };
+
+  const handleRollbackMessage = async (message: AgentMessage) => {
+    if (!activeConversationId || isRunning) return;
+    try {
+      const result = await rollbackToMessage(activeConversationId, message.id);
+      setInput(result.prompt);
+      showRollbackNotice(result.removedCount);
+      requestAnimationFrame(() => {
+        resizeInput();
+        inputRef.current?.focus();
+      });
+    } catch (err) {
+      console.error('Failed to rollback message:', err);
+    }
+  };
+
+  const handleCopyMessage = async (message: AgentMessage) => {
+    try {
+      await writeText(message.content);
+    } catch (err) {
+      console.error('Failed to copy message:', err);
+    }
   };
 
   const handleStop = () => {
@@ -292,7 +336,16 @@ export default function AgentPanel() {
                   </div>
                 </div>
               )
-              : <AgentMessageItem key={msg.id} message={msg} autoExpand={!!msg.isThinking} />;
+              : (
+                <AgentMessageItem
+                  key={msg.id}
+                  message={msg}
+                  autoExpand={!!msg.isThinking}
+                  rollbackDisabled={isRunning}
+                  onRollback={handleRollbackMessage}
+                  onCopy={handleCopyMessage}
+                />
+              );
               })(),
         )}
         <div ref={messagesEndRef} />
@@ -300,6 +353,29 @@ export default function AgentPanel() {
 
       {/* PlanList - todolist rendered between messages and input */}
       <PlanList />
+
+      {rollbackNotice && (
+        <div className="border-t border-zinc-800 bg-zinc-900/90 backdrop-blur animate-fadeIn">
+          <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-amber-200">
+            <div className="flex items-center gap-2 min-w-0">
+              <svg className="w-3.5 h-3.5 flex-shrink-0 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+              </svg>
+              <span className="truncate">{rollbackNotice}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRollbackNotice(null)}
+              className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              title="关闭"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">

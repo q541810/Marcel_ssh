@@ -346,6 +346,7 @@ pub fn run() {
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
             commands::agent_conversation::agent_delete_conversation,
+            commands::agent_conversation::agent_truncate_conversation,
             commands::agent_conversation::agent_list_conversations_by_connection,
             commands::agent_conversation::agent_delete_conversations_by_session,
             commands::connections::config_get_connections,

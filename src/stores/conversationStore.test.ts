@@ -2,14 +2,16 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationStore } from '@/stores/conversationStore';
 import type { AgentMessage } from '@/lib/types';
 
-const { agentListConversationsByConnection, agentLoadConversation } = vi.hoisted(() => ({
+const { agentListConversationsByConnection, agentLoadConversation, agentTruncateConversation } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
+  agentTruncateConversation: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
   agentListConversationsByConnection,
   agentLoadConversation,
+  agentTruncateConversation,
 }));
 
 describe('conversationStore', () => {
@@ -148,5 +150,54 @@ describe('conversationStore', () => {
     expect(state.messages.latest).toHaveLength(1);
     expect(state.messages.latest[0].content).toBe('previous message');
     expect(agentLoadConversation).toHaveBeenCalledWith('latest');
+  });
+
+  it('rolls back a user message and deletes it plus later messages', async () => {
+    agentTruncateConversation.mockResolvedValue(3);
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: {
+        'conv-1': [
+          makeMessage({ id: 'm1', role: 'user', content: 'keep', timestamp: '2026-01-01T00:00:00Z' }),
+          makeMessage({ id: 'm2', role: 'user', content: 'rewrite me', timestamp: '2026-01-01T00:01:00Z' }),
+          makeMessage({ id: 'm3', role: 'assistant', content: 'answer', timestamp: '2026-01-01T00:02:00Z' }),
+          makeMessage({ id: 'm4', role: 'tool', content: 'tool output', timestamp: '2026-01-01T00:03:00Z' }),
+        ],
+      },
+    });
+
+    const result = await useConversationStore.getState().rollbackToMessage('conv-1', 'm2');
+
+    expect(result).toEqual({ prompt: 'rewrite me', removedCount: 3 });
+    expect(agentTruncateConversation).toHaveBeenCalledWith('conv-1', '2026-01-01T00:01:00Z');
+    expect(useConversationStore.getState().messages['conv-1'].map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('rejects rollback for non-user messages', async () => {
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: {
+        'conv-1': [makeMessage({ id: 'm1', role: 'assistant', content: 'answer' })],
+      },
+    });
+
+    await expect(useConversationStore.getState().rollbackToMessage('conv-1', 'm1')).rejects.toThrow('只能撤回用户消息');
+    expect(agentTruncateConversation).not.toHaveBeenCalled();
+  });
+
+  it('does not mutate messages when persistent rollback fails', async () => {
+    agentTruncateConversation.mockRejectedValue(new Error('db failed'));
+    useConversationStore.setState({
+      activeConversationId: 'conv-1',
+      messages: {
+        'conv-1': [
+          makeMessage({ id: 'm1', role: 'user', content: 'rewrite me', timestamp: '2026-01-01T00:01:00Z' }),
+          makeMessage({ id: 'm2', role: 'assistant', content: 'answer', timestamp: '2026-01-01T00:02:00Z' }),
+        ],
+      },
+    });
+
+    await expect(useConversationStore.getState().rollbackToMessage('conv-1', 'm1')).rejects.toThrow('db failed');
+    expect(useConversationStore.getState().messages['conv-1'].map((m) => m.id)).toEqual(['m1', 'm2']);
   });
 });

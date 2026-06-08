@@ -21,6 +21,7 @@ export function useAgent() {
     switchConversation: s.switchConversation,
     loadConversation: s.loadConversation,
     deleteConversation: s.deleteConversation,
+    rollbackToMessage: s.rollbackToMessage,
     loadConnectionConversations: s.loadConnectionConversations,
   }));
 
@@ -103,6 +104,13 @@ export function useAgent() {
     [store.deleteConversation],
   );
 
+  const rollbackToMessage = useCallback(
+    async (conversationId: string, messageId: string) => {
+      return store.rollbackToMessage(conversationId, messageId);
+    },
+    [store.rollbackToMessage],
+  );
+
   const loadConnectionConversations = useCallback(
     async (connectionId: string) => {
       return store.loadConnectionConversations(connectionId);
@@ -127,6 +135,7 @@ export function useAgent() {
     switchConversation,
     loadConversation,
     deleteConversation,
+    rollbackToMessage,
     loadConnectionConversations,
   };
 }

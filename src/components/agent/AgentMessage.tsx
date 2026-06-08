@@ -9,12 +9,15 @@ import { openExternalLink } from "@/lib/externalLinks";
 interface Props {
   message: AgentMessageType;
   autoExpand?: boolean;
+  rollbackDisabled?: boolean;
+  onRollback?: (message: AgentMessageType) => void;
+  onCopy?: (message: AgentMessageType) => void;
 }
 
 const MARKDOWN_CLASS =
   "text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic";
 
-function AgentMessage({ message, autoExpand }: Props) {
+function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCopy }: Props) {
   const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay);
   const [thinkingExpanded, setThinkingExpanded] = useState(autoExpand ?? false);
   useEffect(() => {
@@ -41,10 +44,41 @@ function AgentMessage({ message, autoExpand }: Props) {
 
   // ─── User message: right-aligned bubble ──
   if (isUser) {
+    const sentAt = new Date(message.timestamp).toLocaleString();
     return (
-      <div className="flex justify-end my-1">
-        <div className="max-w-[80%] rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
+      <div className="group flex justify-end my-1">
+        <div className="flex max-w-[80%] flex-col items-end">
+        <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
           {message.content}
+        </div>
+          <div className="mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0">
+            <span className="min-w-0 truncate">
+              {sentAt}
+            </span>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => onRollback?.(message)}
+                disabled={rollbackDisabled}
+                className="p-1 rounded text-zinc-500 hover:text-amber-300 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title={rollbackDisabled ? '任务运行中，暂不能撤回' : '撤回到这条消息'}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => onCopy?.(message)}
+                className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                title="复制消息"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
