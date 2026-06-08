@@ -136,6 +136,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   loadConnectionConversations: async (connectionId: string) => {
     const convs = await tauri.agentListConversationsByConnection(connectionId);
+    let activeConversationId: string | null = null;
 
     set((state) => {
       const incomingConvIds = new Set(convs.map((c) => c.id));
@@ -159,13 +160,18 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
       const firstConvId = convs.length > 0 ? convs[0].id : null;
       const isActiveStillValid = state.activeConversationId && newConversations[state.activeConversationId];
+      activeConversationId = isActiveStillValid ? state.activeConversationId : (firstConvId || state.activeConversationId || null);
 
       return {
         conversations: newConversations,
         messages: newMessages,
-        activeConversationId: isActiveStillValid ? state.activeConversationId : (firstConvId || state.activeConversationId || null),
+        activeConversationId,
       };
     });
+
+    if (activeConversationId && !get().messages[activeConversationId]?.length) {
+      await get().loadConversation(activeConversationId);
+    }
   },
 
   getCurrentMessages: () => {

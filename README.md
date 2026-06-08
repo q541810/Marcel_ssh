@@ -91,4 +91,6 @@ GNU General Public License v3.0
 
 ## 致谢
 
+感谢[GitFrog1111](https://github.com/GitFrog1111/OpenWhip) ，本项目的鞭子借鉴了其仓库GitFrog1111/OpenWhip的实现
+
 感谢[heibaiya-dev](https://github.com/heibaiya-dev) 为项目的贡献

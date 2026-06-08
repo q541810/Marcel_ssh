@@ -64,6 +64,7 @@ export default function Settings() {
   const layout = resolveSettingsLayout(shellWidth);
 
   const handleSave = async () => {
+    if (!dirty || saving) return;
     setSaving(true);
     setSaveError(null);
     setSavedNotice(null);

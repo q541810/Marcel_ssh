@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage } from '@/lib/types';
+import { normalizeWhipPhrases } from '@/lib/whip';
+import { WhipOverlay } from '@/components/whip/WhipOverlay';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
 import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
@@ -11,6 +14,7 @@ import PlanList from './PlanList';
 
 export default function AgentPanel() {
   const [input, setInput] = useState('');
+  const [whipActive, setWhipActive] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -22,6 +26,10 @@ export default function AgentPanel() {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
     return session?.configId;
   });
+  const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
+  const whipCrackSpeed = useSettingsStore((s) => s.settings.whipCrackSpeed);
+  const whipAutoInputEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
+  const whipPhrases = useSettingsStore((s) => s.settings.whipPhrases);
   const {
     messages,
     sendPrompt,
@@ -45,6 +53,12 @@ export default function AgentPanel() {
   );
 
   const canInteract = !!activeSessionId;
+
+  useEffect(() => {
+    if (!whipEnabled && whipActive) {
+      setWhipActive(false);
+    }
+  }, [whipActive, whipEnabled]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
@@ -91,12 +105,25 @@ export default function AgentPanel() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
-    // Auto-resize textarea
+    resizeInput();
+  };
+
+  const resizeInput = () => {
     const textarea = inputRef.current;
-    if (textarea) {
-      textarea.style.height = 'auto';
-      textarea.style.height = `${Math.min(textarea.scrollHeight, 72)}px`;
-    }
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 72)}px`;
+  };
+
+  const appendWhipPhrase = () => {
+    if (!(whipAutoInputEnabled ?? true)) return;
+    const phrases = normalizeWhipPhrases(whipPhrases);
+    const phrase = phrases[Math.floor(Math.random() * phrases.length)];
+    setInput((prev) => (prev.trim().length > 0 ? `${prev}\n${phrase}` : phrase));
+    requestAnimationFrame(() => {
+      resizeInput();
+      inputRef.current?.focus();
+    });
   };
 
   const handleStop = () => {
@@ -175,6 +202,12 @@ export default function AgentPanel() {
 
   return (
     <div className="relative flex flex-col h-full bg-zinc-900">
+      <WhipOverlay
+        active={whipEnabled && whipActive}
+        crackSpeed={whipCrackSpeed ?? 240}
+        onCrack={appendWhipPhrase}
+        onDismiss={() => setWhipActive(false)}
+      />
       {/* Approval Dialog */}
       {pendingApproval && (
         <ApprovalDialog
@@ -271,6 +304,20 @@ export default function AgentPanel() {
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
         <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
+          {whipEnabled && (
+            <button
+              type="button"
+              onClick={() => setWhipActive(true)}
+              className={`flex-shrink-0 self-center ml-1 px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+                whipActive
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-700/60'
+              }`}
+              title="生成鞭子，右键收起"
+            >
+              鞭
+            </button>
+          )}
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button

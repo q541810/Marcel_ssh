@@ -1,9 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationStore } from '@/stores/conversationStore';
 import type { AgentMessage } from '@/lib/types';
 
+const { agentListConversationsByConnection, agentLoadConversation } = vi.hoisted(() => ({
+  agentListConversationsByConnection: vi.fn(),
+  agentLoadConversation: vi.fn(),
+}));
+
+vi.mock('@/lib/tauri', () => ({
+  agentListConversationsByConnection,
+  agentLoadConversation,
+}));
+
 describe('conversationStore', () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     useConversationStore.setState({
       conversations: {},
       messages: {},
@@ -112,5 +123,30 @@ describe('conversationStore', () => {
 
     // Active was c1 which got removed; should be null since nothing left
     expect(useConversationStore.getState().activeConversationId).toBeNull();
+  });
+
+  it('loads messages for the restored latest conversation', async () => {
+    agentListConversationsByConnection.mockResolvedValue([
+      { id: 'latest', connectionId: 'conn-a', title: 'Latest', createdAt: '', updatedAt: '2026-01-02T00:00:00Z' },
+      { id: 'older', connectionId: 'conn-a', title: 'Older', createdAt: '', updatedAt: '2026-01-01T00:00:00Z' },
+    ]);
+    agentLoadConversation.mockResolvedValue([
+      {
+        id: 'msg-1',
+        conversationId: 'latest',
+        role: 'user',
+        content: 'previous message',
+        timestamp: '2026-01-02T00:00:00Z',
+        createdAt: '2026-01-02T00:00:00Z',
+      },
+    ]);
+
+    await useConversationStore.getState().loadConnectionConversations('conn-a');
+
+    const state = useConversationStore.getState();
+    expect(state.activeConversationId).toBe('latest');
+    expect(state.messages.latest).toHaveLength(1);
+    expect(state.messages.latest[0].content).toBe('previous message');
+    expect(agentLoadConversation).toHaveBeenCalledWith('latest');
   });
 });

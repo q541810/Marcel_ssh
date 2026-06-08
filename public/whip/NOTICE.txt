@@ -1,0 +1,4 @@
+Whip sound assets and physics implementation are adapted from OpenWhip.
+
+Source: https://github.com/GitFrog1111/OpenWhip
+License: MIT

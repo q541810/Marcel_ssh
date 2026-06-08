@@ -114,7 +114,13 @@ export function SettingsSidebar({
                 撤销
               </Button>
             )}
-            <Button variant="primary" className="flex-1" onClick={onSave} disabled={!dirty} loading={saving}>
+            <Button
+              variant="primary"
+              className={`flex-1 ${dirty ? '' : 'opacity-50 cursor-not-allowed'}`}
+              onClick={onSave}
+              disabled={saving}
+              loading={saving}
+            >
               <Save className="w-4 h-4" />
               保存
             </Button>

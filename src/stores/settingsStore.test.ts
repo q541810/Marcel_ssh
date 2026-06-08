@@ -25,6 +25,10 @@ describe('settingsStore', () => {
     expect(s.fileManagerPath).toBe('/');
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
+    expect(s.whipEnabled).toBe(false);
+    expect(s.whipCrackSpeed).toBe(240);
+    expect(s.whipAutoInputEnabled).toBe(true);
+    expect(s.whipPhrases).toContain('快点干活，别磨蹭。');
     expect(s.workspaceLayout).toEqual({
       sidebarBaseWidth: 280,
       agentBaseWidth: 460,

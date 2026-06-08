@@ -253,6 +253,14 @@ export interface AppSettings {
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
+  /** Whether to enable the whip button in the Agent input area */
+  whipEnabled: boolean;
+  /** Tip velocity threshold for whip crack detection; lower is more sensitive */
+  whipCrackSpeed: number;
+  /** Whether a whip crack appends text to the Agent input */
+  whipAutoInputEnabled: boolean;
+  /** User-editable phrases appended when the whip cracks */
+  whipPhrases: string[];
   notificationSettings: NotificationSettings;
   workspaceLayout: WorkspaceLayoutSettings;
 }
