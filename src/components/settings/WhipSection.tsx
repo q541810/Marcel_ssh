@@ -52,11 +52,11 @@ export function WhipSection() {
   };
 
   return (
-    <Card id="settings-whip" title="鞭子" description="在 Agent 输入框旁启用鞭子按钮，甩响后自动写入催促文案">
+    <Card id="settings-whip" title="鞭子" description="在 Agent 输入框旁启用鞭子按钮，甩响后在屏幕上弹出催促浮字">
       <SettingItem
         id="enable-whip"
         label="打开鞭子"
-        description="开启后可在 Agent 输入区生成鞭子；甩动出声时会追加一条催促文字，不会自动发送或打断任务"
+        description="开启后可在 Agent 输入区生成鞭子；甩动出声时播放音效，可在屏幕上弹出催促浮字，不会改写输入框或打断任务"
         sectionId="settings-whip"
         keywords={['whip', '鞭子', '催促', '音效', '界面']}
       >
@@ -107,22 +107,22 @@ export function WhipSection() {
         </div>
       </SettingItem>
       <SettingItem
-        id="whip-auto-input"
-        label="甩响后输入文字"
-        description="关闭后只播放鞭响，不再向 Agent 输入框追加文字"
+        id="whip-floating-text"
+        label="鞭响浮字"
+        description="关闭后只播放鞭响，不在屏幕上显示催促文案"
         sectionId="settings-whip"
-        keywords={['whip', '鞭子', '输入', '文字', '催促']}
+        keywords={['whip', '鞭子', '浮字', '文字', '催促']}
       >
         <Toggle
           checked={settings.whipAutoInputEnabled ?? true}
           onChange={(checked) => update({ whipAutoInputEnabled: checked })}
-          label="鞭响时追加文案"
+          label="鞭响时显示浮字"
         />
       </SettingItem>
       <SettingItem
         id="whip-phrases"
         label="催促文案"
-        description="一行一句；鞭响时随机选择其中一条"
+        description="一行一句；鞭响时随机选择其中一条显示在屏幕上"
         sectionId="settings-whip"
         keywords={['whip', '鞭子', '文案', '辱骂', '催促']}
       >

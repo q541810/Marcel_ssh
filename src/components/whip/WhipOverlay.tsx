@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 
 interface WhipOverlayProps {
   active: boolean;
   crackSpeed: number;
-  onCrack: () => void;
+  phrases: string[];
+  showCrackText: boolean;
   onDismiss: () => void;
 }
 
@@ -13,6 +14,14 @@ interface WhipPoint {
   y: number;
   px: number;
   py: number;
+}
+
+interface CrackText {
+  id: number;
+  text: string;
+  left: number;
+  top: number;
+  rotate: number;
 }
 
 const P = {
@@ -57,6 +66,8 @@ const SOUND_PATHS = [
   '/whip/sounds/D.mp3',
   '/whip/sounds/E.mp3',
 ];
+
+const CRACK_TEXT_LIFETIME_MS = 1600;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -113,17 +124,41 @@ function whipSegmentBezier(points: WhipPoint[], index: number) {
   };
 }
 
-export function WhipOverlay({ active, crackSpeed, onCrack, onDismiss }: WhipOverlayProps) {
+export function WhipOverlay({ active, crackSpeed, phrases, showCrackText, onDismiss }: WhipOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textIdRef = useRef(0);
   const crackSpeedRef = useRef(crackSpeed);
-  const onCrackRef = useRef(onCrack);
+  const phrasesRef = useRef(phrases);
+  const showCrackTextRef = useRef(showCrackText);
   const onDismissRef = useRef(onDismiss);
+  const [crackTexts, setCrackTexts] = useState<CrackText[]>([]);
 
   useEffect(() => {
     crackSpeedRef.current = crackSpeed;
-    onCrackRef.current = onCrack;
+    phrasesRef.current = phrases;
+    showCrackTextRef.current = showCrackText;
     onDismissRef.current = onDismiss;
-  }, [crackSpeed, onCrack, onDismiss]);
+  }, [crackSpeed, phrases, showCrackText, onDismiss]);
+
+  useEffect(() => {
+    if (!active) setCrackTexts([]);
+  }, [active]);
+
+  const showRandomCrackText = () => {
+    if (!showCrackTextRef.current) return;
+    const available = phrasesRef.current.filter(Boolean);
+    if (available.length === 0) return;
+    const id = textIdRef.current++;
+    const text = available[Math.floor(Math.random() * available.length)];
+    const left = 18 + Math.random() * 64;
+    const top = 18 + Math.random() * 42;
+    const rotate = (Math.random() > 0.5 ? 1 : -1) * (8 + Math.random() * 14);
+
+    setCrackTexts((prev) => [...prev.slice(-4), { id, text, left, top, rotate }]);
+    window.setTimeout(() => {
+      setCrackTexts((prev) => prev.filter((item) => item.id !== id));
+    }, CRACK_TEXT_LIFETIME_MS);
+  };
 
   useEffect(() => {
     if (!active) return;
@@ -327,7 +362,7 @@ export function WhipOverlay({ active, crackSpeed, onCrack, onDismiss }: WhipOver
       if (!dropping && tipVelocity > crackSpeedRef.current && now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
         lastCrackTime = now;
         playCrackSound();
-        onCrackRef.current();
+        showRandomCrackText();
       }
       if (dropping && whip.every((point) => point.y > height + 60)) {
         whip = null;
@@ -404,11 +439,30 @@ export function WhipOverlay({ active, crackSpeed, onCrack, onDismiss }: WhipOver
   if (!active) return null;
 
   return createPortal(
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 z-[9999] h-[100vh] w-[100vw] cursor-none bg-transparent"
-      title="右键收起鞭子"
-    />,
+    <div className="fixed inset-0 z-[9999] h-[100vh] w-[100vw] cursor-none bg-transparent">
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full bg-transparent"
+        title="右键收起鞭子"
+      />
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {crackTexts.map((item) => (
+          <div
+            key={item.id}
+            className="absolute select-none whitespace-pre-wrap text-3xl sm:text-4xl font-black tracking-wide text-amber-200 animate-whip-crack-text"
+            style={{
+              left: `${item.left}%`,
+              top: `${item.top}%`,
+              '--whip-text-rotate': `${item.rotate}deg`,
+              transform: `translate(-50%, -50%) rotate(${item.rotate}deg)`,
+              textShadow: '0 3px 0 rgba(127, 29, 29, 0.95), 0 0 18px rgba(251, 191, 36, 0.75)',
+            } as CSSProperties}
+          >
+            {item.text}
+          </div>
+        ))}
+      </div>
+    </div>,
     document.body,
   );
 }

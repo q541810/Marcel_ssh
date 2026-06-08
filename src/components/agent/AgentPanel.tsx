@@ -31,7 +31,7 @@ export default function AgentPanel() {
   });
   const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
   const whipCrackSpeed = useSettingsStore((s) => s.settings.whipCrackSpeed);
-  const whipAutoInputEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
+  const whipFloatingTextEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
   const whipPhrases = useSettingsStore((s) => s.settings.whipPhrases);
   const {
     messages,
@@ -123,17 +123,6 @@ export default function AgentPanel() {
     if (!textarea) return;
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
-  };
-
-  const appendWhipPhrase = () => {
-    if (!(whipAutoInputEnabled ?? true)) return;
-    const phrases = normalizeWhipPhrases(whipPhrases);
-    const phrase = phrases[Math.floor(Math.random() * phrases.length)];
-    setInput((prev) => (prev.trim().length > 0 ? `${prev}\n${phrase}` : phrase));
-    requestAnimationFrame(() => {
-      resizeInput();
-      inputRef.current?.focus();
-    });
   };
 
   const showRollbackNotice = (removedCount: number) => {
@@ -253,7 +242,8 @@ export default function AgentPanel() {
       <WhipOverlay
         active={whipEnabled && whipActive}
         crackSpeed={whipCrackSpeed ?? 240}
-        onCrack={appendWhipPhrase}
+        phrases={normalizeWhipPhrases(whipPhrases)}
+        showCrackText={whipFloatingTextEnabled ?? true}
         onDismiss={() => setWhipActive(false)}
       />
       {/* Approval Dialog */}
