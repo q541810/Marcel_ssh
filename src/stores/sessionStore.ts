@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Session, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 
 interface SessionState {
   sessions: Record<string, Session>;
@@ -12,7 +13,7 @@ interface SessionState {
   disconnect: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
   getActiveSession: () => Session | null;
-  updateSessionStatus: (sessionId: string, status: Session['status']) => void;
+  updateSessionStatus: (sessionId: string, status: Session['status'], errorMessage?: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -53,11 +54,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       return sessionId;
     } catch (err) {
+      const errorMessage = getErrorMessage(err);
       set((state) => {
         const updated = { ...state.sessions };
         const existing = updated[tempId];
         if (existing) {
-          updated[tempId] = { ...existing, status: 'error' };
+          updated[tempId] = { ...existing, status: 'error', errorMessage };
         }
         return { sessions: updated };
       });
@@ -98,11 +100,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       return sessionId;
     } catch (err) {
+      const errorMessage = getErrorMessage(err);
       set((state) => {
         const updated = { ...state.sessions };
         const existing = updated[tempId];
         if (existing) {
-          updated[tempId] = { ...existing, status: 'error' };
+          updated[tempId] = { ...existing, status: 'error', errorMessage };
         }
         return { sessions: updated };
       });
@@ -139,12 +142,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return sessions[activeSessionId] ?? null;
   },
 
-  updateSessionStatus: (sessionId: string, status: Session['status']) => {
+  updateSessionStatus: (sessionId: string, status: Session['status'], errorMessage?: string) => {
     set((state) => {
       const session = state.sessions[sessionId];
       if (!session) return state;
       return {
-        sessions: { ...state.sessions, [sessionId]: { ...session, status } },
+        sessions: {
+          ...state.sessions,
+          [sessionId]: {
+            ...session,
+            status,
+            errorMessage: status === 'error' ? errorMessage : undefined,
+          },
+        },
       };
     });
   },
@@ -176,7 +186,10 @@ async function attachSessionStatusListener(sessionId: string) {
           statusListeners.delete(sessionId);
         }
       } else if (typeof payload === 'object' && payload !== null && 'error' in payload) {
-        store.updateSessionStatus(sessionId, 'error');
+        const errorMessage = typeof (payload as Record<string, unknown>).error === 'string'
+          ? (payload as Record<string, unknown>).error as string
+          : '未知错误';
+        store.updateSessionStatus(sessionId, 'error', errorMessage);
       }
     },
   );

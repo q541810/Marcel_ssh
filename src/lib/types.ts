@@ -33,6 +33,7 @@ export interface Session {
   connectionId: string;
   status: SessionStatus;
   createdAt: string;
+  errorMessage?: string;
   /** The saved connection config ID (persistent across restarts) */
   configId?: string;
 }

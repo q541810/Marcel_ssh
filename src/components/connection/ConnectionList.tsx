@@ -93,14 +93,6 @@ export default function ConnectionList() {
       }
     } catch (err) {
       console.error('连接失败:', err);
-      if (password && conn.authMethod === 'Password') {
-        try {
-          await tauri.deletePassword(conn.id);
-        } catch {
-          /* ignore */
-        }
-        promptForPassword(conn);
-      }
     }
   };
 
@@ -138,8 +130,6 @@ export default function ConnectionList() {
             await connectWithSavedPassword(connection.id, connLabel);
           } catch (err) {
             console.warn('连接失败:', err);
-            try { await tauri.deletePassword(connection.id); } catch { /* ignore */ }
-            promptForPassword(connection);
             return;
           }
           if (connection.id) {

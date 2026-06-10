@@ -443,6 +443,22 @@ export default function Terminal() {
             <div className="text-zinc-400">请选择一个会话</div>
           </div>
         )}
+        {activeSession?.status === 'error' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/95 z-10 pointer-events-none px-6">
+            <div className="w-full max-w-2xl rounded-2xl border border-red-500/25 bg-red-500/10 p-5 shadow-2xl shadow-red-950/20 pointer-events-auto">
+              <div className="mb-2 text-lg font-medium text-red-200">连接失败</div>
+              <div className="mb-3 text-sm text-zinc-400">
+                {activeSession.connectionId}
+              </div>
+              <div className="max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-red-500/20 bg-zinc-950/50 p-3 font-mono text-xs leading-relaxed text-red-100 [overflow-wrap:anywhere]">
+                {activeSession.errorMessage ?? '未知错误'}
+              </div>
+              <div className="mt-3 text-xs text-zinc-500">
+                请检查主机、端口、网络和认证信息后重新连接。
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {hasSessions && activeSessionId && activeSession?.status === 'connected' && (
