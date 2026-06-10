@@ -14,6 +14,7 @@ function ListModeButton({
   label,
   description,
   position,
+  disabled,
 }: {
   value: CommandListMode;
   current: CommandListMode;
@@ -21,6 +22,7 @@ function ListModeButton({
   label: string;
   description: string;
   position?: 'first' | 'last' | 'middle';
+  disabled?: boolean;
 }) {
   const active = value === current;
   const roundedClass =
@@ -30,9 +32,10 @@ function ListModeButton({
     <button
       onClick={() => onClick(value)}
       title={description}
+      disabled={disabled}
       className={`flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0 ${roundedClass} ${
         active ? 'bg-indigo-600 text-white' : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
-      }`}
+      } disabled:opacity-40 disabled:cursor-not-allowed`}
       style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
     >
       {label}
@@ -90,32 +93,39 @@ export function AgentPolicySection() {
 
   return (
     <Card id="settings-command-policy" title="命令执行策略" description="控制 Agent 模式下的命令安全边界">
-      <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单', '命令执行策略', 'Agent']}>
-        <div className="flex rounded-lg overflow-hidden border border-zinc-700">
-          <ListModeButton
-            value="denylist"
-            current={agent.listMode}
-            onClick={(v) => updateAgent({ listMode: v })}
-            label="黑名单"
-            description="只阻止列表中的命令"
-            position="first"
-          />
-          <ListModeButton
-            value="allowlist"
-            current={agent.listMode}
-            onClick={(v) => updateAgent({ listMode: v })}
-            label="白名单"
-            description="只允许列表中的命令"
-            position="last"
-          />
-        </div>
-      </SettingItem>
-      <SettingItem id="cmd-confirm" label="逐条确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
+      <SettingItem id="cmd-confirm" label="每条都手动确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
         <Toggle
           checked={agent.confirmEachCommand}
           onChange={(checked) => updateAgent({ confirmEachCommand: checked })}
           label="即使通过列表过滤，仍要求用户确认每条命令"
         />
+      </SettingItem>
+      <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单', '命令执行策略', 'Agent']}>
+        <div className={`transition-opacity ${agent.confirmEachCommand ? 'opacity-40' : ''}`}>
+          <div className="flex rounded-lg overflow-hidden border border-zinc-700">
+            <ListModeButton
+              value="denylist"
+              current={agent.listMode}
+              onClick={(v) => updateAgent({ listMode: v })}
+              label="黑名单"
+              description="只阻止列表中的命令"
+              position="first"
+              disabled={agent.confirmEachCommand}
+            />
+            <ListModeButton
+              value="allowlist"
+              current={agent.listMode}
+              onClick={(v) => updateAgent({ listMode: v })}
+              label="白名单"
+              description="只允许列表中的命令"
+              position="last"
+              disabled={agent.confirmEachCommand}
+            />
+          </div>
+        </div>
+        {agent.confirmEachCommand && (
+          <p className="text-xs text-amber-400 mt-2">已开启「每条都手动确认」，此选项无用</p>
+        )}
       </SettingItem>
       <SettingItem
         id="cmd-list"
@@ -124,7 +134,7 @@ export function AgentPolicySection() {
         sectionId="settings-command-policy"
         keywords={['command', 'list', '命令列表', '命令执行策略', 'Agent']}
       >
-        <div className="flex-1 space-y-2 min-w-0 w-80">
+        <div className={`flex-1 space-y-2 min-w-0 w-80 transition-opacity ${agent.confirmEachCommand ? 'opacity-40' : ''}`}>
           <div className="flex gap-2">
             <input
               type="text"
@@ -137,9 +147,10 @@ export function AgentPolicySection() {
                 }
               }}
               placeholder="例如：rm 或 sudo"
-              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              disabled={agent.confirmEachCommand}
+              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
             />
-            <Button variant="secondary" size="sm" onClick={handleAddCommand} disabled={!newCommand.trim()}>
+            <Button variant="secondary" size="sm" onClick={handleAddCommand} disabled={!newCommand.trim() || agent.confirmEachCommand}>
               添加
             </Button>
           </div>
@@ -155,7 +166,8 @@ export function AgentPolicySection() {
                   {cmd}
                   <button
                     onClick={() => handleRemoveCommand(cmd)}
-                    className="text-zinc-500 hover:text-red-400 transition-colors"
+                    disabled={agent.confirmEachCommand}
+                    className="text-zinc-500 hover:text-red-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     aria-label={`移除 ${cmd}`}
                   >
                     ×
@@ -163,6 +175,9 @@ export function AgentPolicySection() {
                 </span>
               ))}
             </div>
+          )}
+          {agent.confirmEachCommand && (
+            <p className="text-xs text-amber-400">已开启「每条都手动确认」，此选项无用</p>
           )}
         </div>
       </SettingItem>
