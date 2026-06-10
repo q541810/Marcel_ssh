@@ -1,4 +1,5 @@
 import { useEffect, useCallback, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface Props {
   open: boolean;
@@ -24,7 +25,7 @@ export default function Modal({ open, onClose, title, children }: Props) {
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
@@ -51,6 +52,7 @@ export default function Modal({ open, onClose, title, children }: Props) {
         {/* Body */}
         <div className={title ? '' : 'pt-4'}>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
