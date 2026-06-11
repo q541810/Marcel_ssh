@@ -2,13 +2,14 @@ import { useConversationStore } from '@/stores/agentStore';
 
 export function useSessionLifecycle() {
   return {
-    onConnected: (connectionId: string) => {
+    onConnected: async (connectionId: string, sessionId: string) => {
+      await useConversationStore.getState().loadConnectionConversations(connectionId);
       const currentConvs = useConversationStore.getState().conversations;
       const hasConvsForConnection = Object.values(currentConvs).some(
         (c) => c.connectionId === connectionId,
       );
       if (!hasConvsForConnection) {
-        void useConversationStore.getState().loadConnectionConversations(connectionId);
+        await useConversationStore.getState().newConversation(sessionId, connectionId);
       }
     },
     onDisconnected: (connectionId: string) => {

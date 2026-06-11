@@ -87,9 +87,9 @@ export default function ConnectionList() {
       connectionId: conn.id,
     };
     try {
-      await connect(config);
+      const sessionId = await connect(config);
       if (config.connectionId) {
-        onConnected(config.connectionId);
+        onConnected(config.connectionId, sessionId);
       }
     } catch (err) {
       console.error('连接失败:', err);
@@ -127,13 +127,13 @@ export default function ConnectionList() {
         if (stored) {
           const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
           try {
-            await connectWithSavedPassword(connection.id, connLabel);
+            const sessionId = await connectWithSavedPassword(connection.id, connLabel);
+            if (connection.id) {
+              onConnected(connection.id, sessionId);
+            }
           } catch (err) {
             console.warn('连接失败:', err);
             return;
-          }
-          if (connection.id) {
-            onConnected(connection.id);
           }
           return;
         }
