@@ -24,11 +24,12 @@ export default function AgentPanel() {
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
-  const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const activeConfigId = useSessionStore((s) => {
+  const activeSession = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
-    return session?.configId;
+    return session ?? null;
   });
+  const activeSessionId = activeSession?.id ?? null;
+  const activeConfigId = activeSession?.configId;
   const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
   const whipCrackSpeed = useSettingsStore((s) => s.settings.whipCrackSpeed);
   const whipFloatingTextEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
@@ -56,7 +57,7 @@ export default function AgentPanel() {
     [conversations, activeConfigId],
   );
 
-  const canInteract = !!activeSessionId;
+  const canInteract = activeSession?.status === 'connected';
 
   useEffect(() => {
     if (!whipEnabled && whipActive) {
@@ -292,11 +293,37 @@ export default function AgentPanel() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1">
-        {!canInteract && (
+        {!activeSession && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>请先连接 SSH 服务器。</p>
             <p className="mt-1">
               连接成功后即可使用智能助手。
+            </p>
+          </div>
+        )}
+        {activeSession?.status === 'connecting' && (
+          <div className="text-center text-zinc-500 text-sm mt-8">
+            <p>正在连接 SSH 服务器...</p>
+            <p className="mt-1">
+              连接完成后将加载智能助手会话。
+            </p>
+          </div>
+        )}
+        {activeSession?.status === 'error' && (
+          <div className="text-center text-zinc-500 text-sm mt-8">
+            <p>连接失败。</p>
+            {activeSession.errorMessage && (
+              <p className="mt-1 text-zinc-600">
+                {activeSession.errorMessage}
+              </p>
+            )}
+          </div>
+        )}
+        {activeSession?.status === 'disconnected' && (
+          <div className="text-center text-zinc-500 text-sm mt-8">
+            <p>SSH 连接已断开。</p>
+            <p className="mt-1">
+              请重新连接服务器后继续使用智能助手。
             </p>
           </div>
         )}
@@ -308,7 +335,7 @@ export default function AgentPanel() {
             </p>
           </div>
         )}
-        {messages.length === 0 && activeConversationId && (
+        {canInteract && messages.length === 0 && activeConversationId && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>暂无消息。</p>
             <p className="mt-1">
@@ -316,7 +343,7 @@ export default function AgentPanel() {
             </p>
           </div>
         )}
-        {renderItems.map((item) =>
+        {canInteract && renderItems.map((item) =>
           'kind' in item && item.kind === 'exploration'
             ? <ExplorationGroup key={item.tools[0].id} messages={item.tools} autoExpand={isThinking} />
             : (() => {
@@ -483,7 +510,9 @@ export default function AgentPanel() {
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              canInteract
+              activeSession?.status === 'connecting'
+                ? '正在连接服务器...'
+                : canInteract
                 ? '描述您想要做的事情...'
                 : '请先连接到服务器...'
             }
