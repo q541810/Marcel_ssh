@@ -10,14 +10,16 @@ interface QuickCommandPanelProps {
 
 interface FormState {
   id?: string;
-  scope: QuickCommandScope;
+  scope: QuickCommandScope | '';
   name: string;
   commandsText: string;
   intervalMs: number;
 }
 
-const emptyForm = (scope: QuickCommandScope, sessionKey?: string | null): FormState => ({
-  scope: sessionKey ? scope : 'global',
+type QuickCommandTab = 'all' | QuickCommandScope;
+
+const emptyForm = (scope: QuickCommandScope | ''): FormState => ({
+  scope,
   name: '',
   commandsText: '',
   intervalMs: 300,
@@ -41,7 +43,7 @@ function parseCommands(text: string): string[] {
 }
 
 export default function QuickCommandPanel({ sessionId, sessionKey }: QuickCommandPanelProps) {
-  const [tab, setTab] = useState<QuickCommandScope>('global');
+  const [tab, setTab] = useState<QuickCommandTab>('all');
   const [form, setForm] = useState<FormState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
@@ -62,7 +64,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
 
   useEffect(() => {
     if (!sessionKey && tab === 'session') {
-      setTab('global');
+      setTab('all');
     }
   }, [sessionKey, tab]);
 
@@ -77,19 +79,25 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
   }, [setActiveMenuId]);
 
   const visibleCommands = useMemo(() => {
+    if (tab === 'all') return commands;
     return commands.filter((command) => command.scope === tab);
   }, [commands, tab]);
 
   const canUseSessionCommands = !!sessionKey;
 
-  const handleNew = (scope: QuickCommandScope) => {
-    setForm(emptyForm(scope, sessionKey));
+  const handleNew = () => {
+    const scope = tab === 'all' ? '' : tab;
+    setForm(emptyForm(scope));
     setMessage(null);
   };
 
   const handleSubmit = async () => {
     if (!form) return;
     const commandLines = parseCommands(form.commandsText);
+    if (!form.scope) {
+      setMessage('请选择快捷指令作用域');
+      return;
+    }
     if (!form.name.trim()) {
       setMessage('名称不能为空');
       return;
@@ -118,7 +126,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
         await add(payload);
       }
       setForm(null);
-      setTab(payload.scope);
+      setTab(tab === 'all' ? 'all' : payload.scope);
       setMessage(null);
     } catch (err) {
       setMessage(`保存失败：${getErrorMessage(err)}`);
@@ -154,6 +162,13 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
         <div className="flex items-center gap-1">
           <button
             type="button"
+            onClick={() => setTab('all')}
+            className={`rounded-md px-2 py-1 text-xs ${tab === 'all' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
+          >
+            全部
+          </button>
+          <button
+            type="button"
             onClick={() => setTab('global')}
             className={`rounded-md px-2 py-1 text-xs ${tab === 'global' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
           >
@@ -171,7 +186,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
         </div>
         <button
           type="button"
-          onClick={() => handleNew(tab)}
+          onClick={handleNew}
           disabled={tab === 'session' && !canUseSessionCommands}
           className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
@@ -199,9 +214,10 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                 <label className="mb-1 block text-xs text-zinc-400">作用域</label>
                 <select
                   value={form.scope}
-                  onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope })}
+                  onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope | '' })}
                   className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
                 >
+                  <option value="" disabled>请选择</option>
                   <option value="global">全局</option>
                   <option value="session" disabled={!canUseSessionCommands}>当前连接</option>
                 </select>
@@ -264,6 +280,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                 >
                   <div className="text-sm font-medium text-zinc-100 transition-colors group-hover:text-zinc-50">{command.name}</div>
                   <div className="mt-0.5 text-xs text-zinc-500 transition-colors group-hover:text-zinc-400">
+                    {tab === 'all' && `${command.scope === 'global' ? '全局' : '当前连接'} · `}
                     {command.commands.length} 条命令 · 间隔 {command.intervalMs} ms
                   </div>
                 </button>
