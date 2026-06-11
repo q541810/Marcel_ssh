@@ -18,11 +18,14 @@ import FileEditorModal from './FileEditorModal';
 
 interface FileManagerPanelProps {
   sessionId: string;
+  connectionKey: string;
 }
 
-export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
+export default function FileManagerPanel({ sessionId, connectionKey }: FileManagerPanelProps) {
   const storeSettings = useSettingsStore((s) => s.settings);
-  const [currentPath, setCurrentPath] = useState(storeSettings.fileManagerPath ?? '/');
+  const [currentPath, setCurrentPath] = useState(
+    storeSettings.fileManagerPaths?.[connectionKey] ?? storeSettings.fileManagerPath ?? '/',
+  );
   const [history, setHistory] = useState<string[]>(['/']);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
@@ -58,8 +61,15 @@ export default function FileManagerPanel({ sessionId }: FileManagerPanelProps) {
   }, [currentPath, loadDirectory]);
 
   useEffect(() => {
-    useSettingsStore.getState().update({ fileManagerPath: currentPath });
-  }, [currentPath]);
+    const settings = useSettingsStore.getState().settings;
+    useSettingsStore.getState().update({
+      fileManagerPath: currentPath,
+      fileManagerPaths: {
+        ...(settings.fileManagerPaths ?? {}),
+        [connectionKey]: currentPath,
+      },
+    });
+  }, [connectionKey, currentPath]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {

@@ -249,6 +249,7 @@ export interface AppSettings {
   agentModeSettings: AgentModeSettings;
   experimentalSettings?: ExperimentalSettings;
   fileManagerPath: string;
+  fileManagerPaths: Record<string, string>;
   fileManagerShowHidden: boolean;
   folderUploadCompressionLevel: number;
   panelHeight: number;

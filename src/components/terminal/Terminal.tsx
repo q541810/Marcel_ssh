@@ -359,7 +359,11 @@ export default function Terminal() {
                 <ProcessPanel sessionId={activeSessionId} />
               )}
               {displayTab === 'file-manager' && (
-                <FileManagerPanel key={activeSessionId} sessionId={activeSessionId} />
+                <FileManagerPanel
+                  key={activeSessionId}
+                  sessionId={activeSessionId}
+                  connectionKey={activeSession.configId ?? activeSession.connectionId}
+                />
               )}
             </div>
           </div>

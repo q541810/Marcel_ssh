@@ -23,6 +23,7 @@ describe('settingsStore', () => {
     expect(s.panelHeight).toBe(256);
     expect(s.fileManagerShowHidden).toBe(false);
     expect(s.fileManagerPath).toBe('/');
+    expect(s.fileManagerPaths).toEqual({});
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
     expect(s.whipEnabled).toBe(false);

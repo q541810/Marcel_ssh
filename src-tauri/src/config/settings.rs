@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use super::persist::JsonPersistable;
 use crate::llm::provider::LlmConfig;
@@ -227,6 +228,9 @@ pub struct AppSettings {
     /// File manager last browsed path
     #[serde(default = "default_file_manager_path")]
     pub file_manager_path: String,
+    /// File manager last browsed path per SSH connection key.
+    #[serde(default)]
+    pub file_manager_paths: HashMap<String, String>,
     /// File manager show hidden files
     #[serde(default)]
     pub file_manager_show_hidden: bool,
@@ -304,6 +308,7 @@ impl Default for AppSettings {
             },
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),
+            file_manager_paths: HashMap::new(),
             file_manager_show_hidden: false,
             folder_upload_compression_level: default_folder_upload_compression_level(),
             panel_height: default_panel_height(),
@@ -415,6 +420,7 @@ mod tests {
         assert_eq!(s.default_agent_mode, "agent");
         assert_eq!(s.panel_height, 256);
         assert_eq!(s.file_manager_path, "/");
+        assert!(s.file_manager_paths.is_empty());
         assert!(!s.file_manager_show_hidden);
         assert_eq!(s.folder_upload_compression_level, 6);
         assert!(!s.hide_thinking_display);
