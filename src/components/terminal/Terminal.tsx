@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -15,8 +15,7 @@ import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import PasteConfirmDialog from './PasteConfirmDialog';
 import { useClipboardHandler } from '@/hooks/useClipboardHandler';
-
-const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
+import { useTerminalBottomPanel } from './useTerminalBottomPanel';
 
 interface TerminalInstance {
   id: string;
@@ -34,93 +33,24 @@ export default function Terminal() {
   const terminalsRef = useRef<Map<string, TerminalInstance>>(new Map());
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState<{ text: string; sessionId: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [displayTab, setDisplayTab] = useState<string | null>(null);
-  const [isResizingPanel, setIsResizingPanel] = useState(false);
-  const panelResizeStartRef = useRef<{ y: number; height: number } | null>(null);
-  const hasResizedRef = useRef(false);
-  const terminalRootRef = useRef<HTMLDivElement>(null);
-  const panelRatioRef = useRef(0);
   const fitFrameRef = useRef<number | null>(null);
   const activeInstanceIdRef = useRef<string | null>(null);
   const lastWrapperSizeRef = useRef<{ width: number; height: number } | null>(null);
-  const terminalRootHeightRef = useRef(0);
-  const terminalRootHeightReadyRef = useRef(false);
-  const terminalRootResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [containerHeight, setContainerHeight] = useState(0);
-
-  const savePanelRatio = useCallback((ratio: number) => {
-    panelRatioRef.current = ratio;
-    try { localStorage.setItem(PANEL_RATIO_KEY, String(ratio)); } catch {
-      // localStorage can be unavailable in restricted WebView contexts.
-    }
-  }, []);
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
-  const settingsLoaded = useSettingsStore((s) => s.loaded);
   const preview = useSettingsStore((s) => s.preview);
-  const [panelHeight, setPanelHeight] = useState(storeSettings.panelHeight ?? 256);
-
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem(PANEL_RATIO_KEY);
-      if (v) panelRatioRef.current = parseFloat(v) || 0;
-    } catch {
-      // Keep the terminal usable even if localStorage is unavailable.
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = terminalRootRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      const height = Math.round(entry.contentRect.height);
-      if (terminalRootHeightRef.current === height) return;
-      terminalRootHeightRef.current = height;
-
-      if (!terminalRootHeightReadyRef.current) {
-        terminalRootHeightReadyRef.current = true;
-        setContainerHeight(height);
-        return;
-      }
-
-      if (terminalRootResizeTimeoutRef.current) clearTimeout(terminalRootResizeTimeoutRef.current);
-      terminalRootResizeTimeoutRef.current = setTimeout(() => {
-        setContainerHeight(terminalRootHeightRef.current);
-      }, 120);
-    });
-    ro.observe(el);
-    return () => {
-      ro.disconnect();
-      if (terminalRootResizeTimeoutRef.current) clearTimeout(terminalRootResizeTimeoutRef.current);
-    };
-  }, []);
-
-  const ratioInitDoneRef = useRef(false);
-
-  useEffect(() => {
-    if (containerHeight <= 0 || !settingsLoaded || ratioInitDoneRef.current) return;
-    ratioInitDoneRef.current = true;
-
-    if (panelRatioRef.current > 0) {
-      const px = Math.min(500, Math.max(100, Math.round(panelRatioRef.current * containerHeight)));
-      setPanelHeight(px);
-    } else {
-      const storePx = storeSettings.panelHeight ?? 256;
-      panelRatioRef.current = storePx / containerHeight;
-      savePanelRatio(panelRatioRef.current);
-      setPanelHeight(storePx);
-    }
-  }, [containerHeight, settingsLoaded, storeSettings.panelHeight, savePanelRatio]);
-
-  useEffect(() => {
-    if (containerHeight <= 0 || !ratioInitDoneRef.current) return;
-    const px = Math.min(500, Math.max(100, Math.round(panelRatioRef.current * containerHeight)));
-    setPanelHeight(px);
-  }, [containerHeight]);
+  const {
+    terminalRootRef,
+    activeTab,
+    setActiveTab,
+    displayTab,
+    isResizingPanel,
+    panelHeight,
+    handlePanelResizeMouseDown,
+  } = useTerminalBottomPanel();
 
   const { handleCopy } = useClipboardHandler();
 
@@ -365,62 +295,6 @@ export default function Terminal() {
       terminalsRef.current.clear();
     };
   }, []);
-
-  // Panel resize handlers
-  const handlePanelResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    panelResizeStartRef.current = { y: e.clientY, height: panelHeight };
-    setIsResizingPanel(true);
-    hasResizedRef.current = true;
-  }, [panelHeight]);
-
-  useEffect(() => {
-    if (!isResizingPanel) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!panelResizeStartRef.current) return;
-      const delta = panelResizeStartRef.current.y - e.clientY;
-      const newHeight = Math.min(500, Math.max(100, panelResizeStartRef.current.height + delta));
-      setPanelHeight(newHeight);
-      if (containerHeight > 0) {
-        savePanelRatio(newHeight / containerHeight);
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsResizingPanel(false);
-      panelResizeStartRef.current = null;
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [isResizingPanel, containerHeight, savePanelRatio]);
-
-  // Save panel height when user has manually resized
-  useEffect(() => {
-    if (!isResizingPanel && panelResizeStartRef.current === null && hasResizedRef.current) {
-      useSettingsStore.getState().update({ panelHeight });
-    }
-  }, [isResizingPanel, panelHeight]);
-
-  // Delay content unmount until animation completes
-  useEffect(() => {
-    if (activeTab) {
-      setDisplayTab(activeTab);
-    } else {
-      const timer = setTimeout(() => setDisplayTab(null), 200);
-      return () => clearTimeout(timer);
-    }
-  }, [activeTab]);
 
   const hasSessions = Object.keys(sessions).length > 0;
 
