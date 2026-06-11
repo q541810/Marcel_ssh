@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde_json::json;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
@@ -21,9 +21,6 @@ use crate::error::AppError;
 const MAX_RESULTS: usize = 8;
 const MAX_OUTPUT_BYTES: usize = 16_000;
 const TIMEOUT_SECS: u64 = 15;
-const MIN_SEARCH_DELAY_MS: u64 = 900;
-const SEARCH_DELAY_JITTER_MS: u64 = 1600;
-
 pub struct WebSearchTool;
 impl WebSearchTool {
     pub fn new() -> Self {
@@ -45,9 +42,7 @@ impl AgentTool for WebSearchTool {
     fn description(&self) -> &str {
         "使用 Bing 搜索互联网。每次调用只能传入一个 `query`。 \
          返回该查询的结果标题、简短片段和 URL。 \
-         重要：不要将多个搜索批量放入一次调用或一个工具回合中； \
-         先运行一次搜索，检查结果，然后如果需要再运行另一次搜索。 \
-         构建查询时不要耍小聪明瞎加关键词或高级用法，正确方式例如： `水月雨 Kadenz 升级线 推荐`。 \
+         可以在同一轮中多次调用 web_search，但每次调用只搜索一个 query。 \
          要阅读任何结果页面的完整内容，请使用 `http_get` 工具并传入返回的 URL。"
     }
 
@@ -101,10 +96,7 @@ impl AgentTool for WebSearchTool {
         let queries: Vec<String> = match single_query {
             Some(q) => vec![q],
             _ => {
-                return Ok(ToolOutput::fail(
-                    "web_search",
-                    "missing 'query' parameter",
-                ));
+                return Ok(ToolOutput::fail("web_search", "missing 'query' parameter"));
             }
         };
 
@@ -270,10 +262,8 @@ async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult
         .build()
         .map_err(|e| AppError::Agent(format!("failed to create HTTP client: {}", e)))?;
 
-    sleep_like_human().await;
-
     let url = format!(
-        "https://www.bing.com/search?q={}&mkt=zh-CN&cc=CN&setlang=zh-CN&ensearch=0",
+        "https://www.bing.com/search?q={}",
         urlencoding::encode(query)
     );
 
@@ -313,15 +303,6 @@ async fn search_bing(query: &str, max_results: usize) -> Result<Vec<SearchResult
     let results = parse_results(&html, max_results);
 
     Ok(results)
-}
-
-async fn sleep_like_human() {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    let delay_ms = MIN_SEARCH_DELAY_MS + nanos % SEARCH_DELAY_JITTER_MS;
-    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
 }
 
 fn parse_results(html: &str, max: usize) -> Vec<SearchResult> {
@@ -485,5 +466,4 @@ mod tests {
         assert_eq!(schema["required"], json!(["query"]));
         assert_eq!(schema["additionalProperties"], false);
     }
-
 }
