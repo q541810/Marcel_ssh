@@ -9,6 +9,7 @@ dist/
 src-tauri/target/
 
 # IDE
+AGENTS.md
 .vscode/
 .idea/
 .trae/*
