@@ -10,6 +10,7 @@ export const WORKSPACE_LAYOUT_LIMITS = {
   },
   agent: {
     min: 300,
+    compactMin: 260,
     max: 1100,
     defaultBaseWidth: 460,
   },
@@ -125,11 +126,15 @@ export function resolveWorkspaceLayout({
   const sideMin =
     (effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0) +
     (effectiveAgentOpen ? WORKSPACE_LAYOUT_LIMITS.agent.min : 0);
+  const compactSideMin =
+    (effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0) +
+    (effectiveAgentOpen ? WORKSPACE_LAYOUT_LIMITS.agent.compactMin : 0);
 
   if (availableWidth <= WORKSPACE_LAYOUT_LIMITS.main.min + sideMin) {
     const sidebarWidth = effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0;
-    const agentWidth = effectiveAgentOpen
-      ? Math.max(0, availableWidth - WORKSPACE_LAYOUT_LIMITS.main.min - sidebarWidth)
+    const remainingForAgent = availableWidth - WORKSPACE_LAYOUT_LIMITS.main.min - sidebarWidth;
+    const agentWidth = effectiveAgentOpen && availableWidth >= WORKSPACE_LAYOUT_LIMITS.main.min + compactSideMin
+      ? Math.max(WORKSPACE_LAYOUT_LIMITS.agent.compactMin, remainingForAgent)
       : 0;
     return {
       sidebarWidth,
@@ -144,11 +149,28 @@ export function resolveWorkspaceLayout({
 
   if (mainWidth < WORKSPACE_LAYOUT_LIMITS.main.min) {
     let deficit = WORKSPACE_LAYOUT_LIMITS.main.min - mainWidth;
-    if (effectiveAgentOpen) {
+
+    const agentSlack = effectiveAgentOpen ? Math.max(0, agentWidth - WORKSPACE_LAYOUT_LIMITS.agent.min) : 0;
+    const sidebarSlack = effectiveSidebarOpen ? Math.max(0, sidebarWidth - WORKSPACE_LAYOUT_LIMITS.sidebar.min) : 0;
+    const totalSlack = agentSlack + sidebarSlack;
+
+    if (totalSlack > 0) {
+      const agentReduction = Math.min(
+        agentSlack,
+        Math.round(deficit * (agentSlack / totalSlack)),
+      );
+      const sidebarReduction = Math.min(sidebarSlack, deficit - agentReduction);
+      agentWidth -= agentReduction;
+      sidebarWidth -= sidebarReduction;
+      deficit -= agentReduction + sidebarReduction;
+    }
+
+    if (deficit > 0 && effectiveAgentOpen) {
       const reducible = Math.min(deficit, agentWidth - WORKSPACE_LAYOUT_LIMITS.agent.min);
       agentWidth -= reducible;
       deficit -= reducible;
     }
+
     if (deficit > 0 && effectiveSidebarOpen) {
       const reducible = Math.min(deficit, sidebarWidth - WORKSPACE_LAYOUT_LIMITS.sidebar.min);
       sidebarWidth -= reducible;

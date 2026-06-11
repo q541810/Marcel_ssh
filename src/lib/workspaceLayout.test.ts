@@ -29,8 +29,30 @@ describe('workspaceLayout', () => {
     const layout = resolveWorkspaceLayout({ containerWidth: 900, settings: DEFAULT_WORKSPACE_LAYOUT });
 
     expect(layout.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
-    expect(layout.mainWidth).toBe(WORKSPACE_LAYOUT_LIMITS.main.min);
-    expect(layout.agentWidth).toBe(64);
+    expect(layout.agentWidth).toBe(0);
+    expect(layout.mainWidth).toBe(624);
+  });
+
+  it('keeps the agent panel usable until there is no compact room', () => {
+    const enoughForCompactAgent = resolveWorkspaceLayout({
+      containerWidth:
+        WORKSPACE_LAYOUT_LIMITS.navWidth +
+        WORKSPACE_LAYOUT_LIMITS.main.min +
+        WORKSPACE_LAYOUT_LIMITS.sidebar.min +
+        WORKSPACE_LAYOUT_LIMITS.agent.compactMin,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+    });
+    const notEnoughForCompactAgent = resolveWorkspaceLayout({
+      containerWidth:
+        WORKSPACE_LAYOUT_LIMITS.navWidth +
+        WORKSPACE_LAYOUT_LIMITS.main.min +
+        WORKSPACE_LAYOUT_LIMITS.sidebar.min +
+        WORKSPACE_LAYOUT_LIMITS.agent.compactMin - 1,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+    });
+
+    expect(enoughForCompactAgent.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.compactMin);
+    expect(notEnoughForCompactAgent.agentWidth).toBe(0);
   });
 
   it('gives the workspace all room when side panels are closed', () => {
@@ -78,6 +100,17 @@ describe('workspaceLayout', () => {
 
     expect(userLayout.agentWidth).toBeGreaterThan(defaultLayout.agentWidth + 140);
     expect(wideUserLayout.agentWidth).toBeGreaterThan(userLayout.agentWidth);
+  });
+
+  it('shares resize pressure between side panels before shrinking the agent to its minimum', () => {
+    const layout = resolveWorkspaceLayout({
+      containerWidth: 1280,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: 520, agentBaseWidth: 520 },
+    });
+
+    expect(layout.mainWidth).toBe(WORKSPACE_LAYOUT_LIMITS.main.min);
+    expect(layout.sidebarWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
+    expect(layout.agentWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.agent.min);
   });
 
   it('converts displayed width back to a persistable base width', () => {

@@ -122,6 +122,7 @@ export default function App() {
 
   const sidebarWidth = dragSidebarWidth ?? resolvedLayout.sidebarWidth;
   const agentPanelWidth = dragAgentWidth ?? resolvedLayout.agentWidth;
+  const agentPanelVisible = effectiveAgentPanelOpen && agentPanelWidth > 0;
   const isResizing = resizingSide !== null;
 
   const persistWorkspaceLayout = useCallback((patch: Partial<WorkspaceLayoutSettings>) => {
@@ -147,11 +148,11 @@ export default function App() {
   }, [effectiveSidebarOpen, isSettingsView, sidebarWidth]);
 
   const handleAgentResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!effectiveAgentPanelOpen || isSettingsView) return;
+    if (!agentPanelVisible || isSettingsView) return;
     e.preventDefault();
     agentResizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
     setResizingSide('agent');
-  }, [agentPanelWidth, effectiveAgentPanelOpen, isSettingsView]);
+  }, [agentPanelWidth, agentPanelVisible, isSettingsView]);
 
   useEffect(() => {
     if (!resizingSide) return;
@@ -310,11 +311,11 @@ export default function App() {
         <div
           className="layout-contained flex overflow-hidden flex-shrink-0"
           style={{
-            width: effectiveAgentPanelOpen ? `${agentPanelWidth + 4}px` : '0px',
+            width: agentPanelVisible ? `${agentPanelWidth + 4}px` : '0px',
             transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
           }}
         >
-          {agentPanelMounted && (
+          {agentPanelMounted && agentPanelVisible && (
             <>
               <div
                 className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
