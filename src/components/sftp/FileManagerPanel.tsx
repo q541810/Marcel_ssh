@@ -23,6 +23,7 @@ interface FileManagerPanelProps {
 
 export default function FileManagerPanel({ sessionId, connectionKey }: FileManagerPanelProps) {
   const storeSettings = useSettingsStore((s) => s.settings);
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
   const [currentPath, setCurrentPath] = useState(
     storeSettings.fileManagerPaths?.[connectionKey] ?? storeSettings.fileManagerPath ?? '/',
   );
@@ -61,6 +62,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   }, [currentPath, loadDirectory]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     const settings = useSettingsStore.getState().settings;
     useSettingsStore.getState().update({
       fileManagerPath: currentPath,

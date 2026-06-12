@@ -110,11 +110,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   save: async (settings: AppSettings) => {
+    if (!get().loaded) {
+      console.warn('[settingsStore] save() blocked — settings not loaded yet');
+      return;
+    }
     await tauri.saveSettings(settings);
     set({ settings, preview: null });
   },
 
   update: async (patch: Partial<AppSettings>) => {
+    if (!get().loaded) {
+      console.warn('[settingsStore] update() blocked — settings not loaded yet');
+      return;
+    }
     const next = { ...get().settings, ...patch };
     await tauri.saveSettings(next);
     set({ settings: next, preview: null });

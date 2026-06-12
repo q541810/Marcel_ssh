@@ -77,6 +77,9 @@ impl AppState {
         let quick_commands_file = QuickCommandStore::default_file(&config_dir);
         let mcp_servers_file = McpServerStore::default_file(&config_dir);
 
+        // Clone before the file path is moved into the spawn_blocking closure.
+        let settings_backup_src = settings_file.clone();
+
         // ── Phase 1: parallel loads (all independent) ──────────────────────
         let (
             known_hosts_res,
@@ -167,6 +170,9 @@ impl AppState {
             Ok(Ok(s)) => s,
             Ok(Err(e)) => {
                 log::warn!("无法加载应用设置，使用默认值：{}", e);
+                // The file exists but is unreadable/incompatible.
+                // Back it up before any save overwrites it silently.
+                backup_settings_on_load_failure(&settings_backup_src);
                 AppSettings::default()
             }
             Err(join_err) => {
@@ -262,6 +268,51 @@ impl AppState {
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+        }
+    }
+}
+
+/// When settings.json exists but cannot be deserialised (schema mismatch,
+/// corruption, version drift), copy it to a backup so the incompatible
+/// file is never silently overwritten by a subsequent save.
+/// Timestamped backups grow unbounded if loading fails on every launch.
+/// Keep at most this many historical copies; prune older ones.
+const MAX_TIMESTAMPED_SETTINGS_BACKUPS: usize = 5;
+
+fn backup_settings_on_load_failure(settings_file: &std::path::Path) {
+    let parent = settings_file.parent().unwrap_or_else(|| std::path::Path::new("."));
+
+    // Overwrite the most recent "last failure" backup (single file, always fresh).
+    let bak_path = settings_file.with_extension("json.bak");
+    match std::fs::copy(settings_file, &bak_path) {
+        Ok(_) => log::warn!("旧配置文件已备份到: {}", bak_path.display()),
+        Err(e) => log::error!("无法备份旧配置文件: {} ({})", bak_path.display(), e),
+    }
+
+    // Timestamped snapshot — pruned so failures over many launches don't pile up.
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let ts_path = settings_file.with_extension(format!("json.{}.bak", ts));
+    let _ = std::fs::copy(settings_file, &ts_path);
+
+    // Prune excess timestamped backups (oldest first).
+    if let Ok(dir) = std::fs::read_dir(parent) {
+        let mut stamped: Vec<_> = dir
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("settings.json.")
+            })
+            .filter_map(|e| {
+                let m = e.metadata().ok()?;
+                Some((e.path(), m.modified().ok()?))
+            })
+            .collect();
+        if stamped.len() > MAX_TIMESTAMPED_SETTINGS_BACKUPS {
+            stamped.sort_by_key(|(_, t)| *t);
+            for (path, _) in stamped.iter().take(stamped.len() - MAX_TIMESTAMPED_SETTINGS_BACKUPS) {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }

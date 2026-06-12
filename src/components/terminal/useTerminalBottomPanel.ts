@@ -135,6 +135,7 @@ export function useTerminalBottomPanel() {
   }, [isResizingPanel, containerHeight, savePanelRatio]);
 
   useEffect(() => {
+    if (!settingsLoaded) return;
     if (!isResizingPanel && panelResizeStartRef.current === null && hasResizedRef.current) {
       useSettingsStore.getState().update({ panelHeight });
     }
