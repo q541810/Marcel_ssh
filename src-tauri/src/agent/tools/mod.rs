@@ -290,7 +290,6 @@ impl ToolRegistry {
     /// - `execute_command`           (execute_cmd)
     /// - `read_file`, `write_file`,
     ///   `edit_file`, `list_directory` (file_ops)
-    /// - `upload_file`, `download_file` (sftp_transfer)
     /// - `search_files`               (search)
     /// - `process_management`         (process)
     /// - `system_info`                (system)
@@ -309,8 +308,6 @@ impl ToolRegistry {
         r.register(Arc::new(file_ops::WriteFileTool::new()));
         r.register(Arc::new(file_ops::EditFileTool::new()));
         r.register(Arc::new(file_ops::ListDirectoryTool::new()));
-        r.register(Arc::new(sftp_transfer::UploadFileTool::new()));
-        r.register(Arc::new(sftp_transfer::DownloadFileTool::new()));
         r.register(Arc::new(search::SearchFilesTool::new()));
         r.register(Arc::new(process::ProcessManagementTool::new()));
         r.register(Arc::new(system::SystemInfoTool::new()));
@@ -349,8 +346,8 @@ mod tests {
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            15,
-            "expected 15 built-in tools, got {:?}",
+            13,
+            "expected 13 built-in tools, got {:?}",
             names
         );
         for expected in [
@@ -360,8 +357,6 @@ mod tests {
             "write_file",
             "edit_file",
             "list_directory",
-            "upload_file",
-            "download_file",
             "search_files",
             "process_management",
             "system_info",
