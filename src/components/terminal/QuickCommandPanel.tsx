@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import type { QuickCommand, QuickCommandInput, QuickCommandScope } from '@/lib/types';
 import { useQuickCommandStore } from '@/stores/quickCommandStore';
 import { getErrorMessage } from '@/lib/errors';
@@ -198,69 +199,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
         {message && <div className="mb-2 rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-300">{message}</div>}
         {error && <div className="mb-2 rounded-lg bg-red-950/60 px-3 py-2 text-xs text-red-200">{error}</div>}
 
-        {form ? (
-          <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">名称</label>
-              <input
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-                placeholder="例如：查看磁盘"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="mb-1 block text-xs text-zinc-400">作用域</label>
-                <select
-                  value={form.scope}
-                  onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope | '' })}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-                >
-                  <option value="" disabled>请选择</option>
-                  <option value="global">全局</option>
-                  <option value="session" disabled={!canUseSessionCommands}>当前连接</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-zinc-400">间隔 ms</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.intervalMs}
-                  onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-zinc-400">命令（一行一条，按顺序执行）</label>
-              <textarea
-                value={form.commandsText}
-                onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
-                rows={4}
-                className="w-full resize-none rounded-md border border-zinc-700 bg-zinc-800 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
-                placeholder={'pwd\ndf -h'}
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setForm(null)}
-                className="rounded-md px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                onClick={handleSubmit}
-                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        ) : loading ? (
+        {loading ? (
           <div className="py-6 text-center text-sm text-zinc-500">加载中...</div>
         ) : visibleCommands.length === 0 ? (
           <div className="py-6 text-center text-sm text-zinc-500">暂无快捷指令</div>
@@ -330,6 +269,79 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           </div>
         )}
       </div>
+
+      {form && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+            <h3 className="text-sm font-semibold text-zinc-200 mb-3">
+              {form.id ? '编辑快捷指令' : '新建快捷指令'}
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs text-zinc-400">名称</label>
+                <input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  placeholder="例如：查看磁盘"
+                  autoFocus
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">作用域</label>
+                  <select
+                    value={form.scope}
+                    onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope | '' })}
+                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  >
+                    <option value="" disabled>请选择</option>
+                    <option value="global">全局</option>
+                    <option value="session" disabled={!canUseSessionCommands}>当前连接</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">间隔 ms</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.intervalMs}
+                    onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
+                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-zinc-400">命令（一行一条，按顺序执行）</label>
+                <textarea
+                  value={form.commandsText}
+                  onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
+                  rows={4}
+                  className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  placeholder={'pwd\ndf -h'}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                type="button"
+                onClick={() => setForm(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
