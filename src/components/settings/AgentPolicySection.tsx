@@ -176,10 +176,10 @@ export function AgentPolicySection() {
               ))}
             </div>
           )}
-          {agent.confirmEachCommand && (
-            <p className="text-xs text-amber-400">已开启「每条都手动确认」，此选项无用</p>
-          )}
         </div>
+        {agent.confirmEachCommand && (
+          <p className="text-xs text-amber-400 mt-2">已开启「每条都手动确认」，此选项无用</p>
+        )}
       </SettingItem>
       <SettingItem id="cmd-test" label="测试命令" description="验证命令是否会被允许" sectionId="settings-command-policy" keywords={['test', '验证', '命令执行策略', 'Agent']}>
         <div className="flex-1 space-y-2 min-w-0 w-80">
