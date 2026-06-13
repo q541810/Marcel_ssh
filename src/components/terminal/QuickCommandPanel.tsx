@@ -48,6 +48,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
   const [form, setForm] = useState<FormState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const commands = useQuickCommandStore((s) => s.commands);
   const loading = useQuickCommandStore((s) => s.loading);
@@ -80,9 +81,11 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
   }, [setActiveMenuId]);
 
   const visibleCommands = useMemo(() => {
-    if (tab === 'all') return commands;
-    return commands.filter((command) => command.scope === tab);
-  }, [commands, tab]);
+    const scoped = tab === 'all' ? commands : commands.filter((c) => c.scope === tab);
+    if (!search.trim()) return scoped;
+    const q = search.toLowerCase();
+    return scoped.filter((c) => c.name.toLowerCase().includes(q));
+  }, [commands, tab, search]);
 
   const canUseSessionCommands = !!sessionKey;
 
@@ -159,7 +162,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2">
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -185,6 +188,13 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
             当前连接
           </button>
         </div>
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索快捷指令..."
+          className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+        />
         <button
           type="button"
           onClick={handleNew}
