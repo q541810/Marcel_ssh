@@ -1,5 +1,4 @@
 import { useSettingsStore } from '@/stores/settingsStore';
-import Toggle from '@/components/ui/Toggle';
 import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
@@ -14,7 +13,6 @@ export function ModelServiceSection() {
     model: '',
     baseUrl: '',
     temperature: 0.1,
-    allowInvalidCerts: false,
     maxRetries: 1,
     retryDelaySecs: 5,
     retryHttpStatuses: '408, 429, 500-599',
@@ -81,13 +79,6 @@ export function ModelServiceSection() {
           value={llmConfig.temperature}
           onChange={(e) => updateLlm({ temperature: Math.max(0, Math.min(2, parseFloat(e.target.value) || 0)) })}
           className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        />
-      </SettingItem>
-      <SettingItem id="llm-tls" label="TLS" description="证书验证设置" sectionId="settings-llm" keywords={['tls', 'ssl', 'certificate', '证书']}>
-        <Toggle
-          checked={llmConfig.allowInvalidCerts}
-          onChange={(checked) => updateLlm({ allowInvalidCerts: checked })}
-          label="允许自签名/无效证书（用于本地或内网 HTTPS 服务器）"
         />
       </SettingItem>
     </Card>

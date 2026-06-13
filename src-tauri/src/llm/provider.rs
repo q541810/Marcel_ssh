@@ -101,10 +101,6 @@ pub struct LlmConfig {
     pub base_url: Option<String>,
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    /// Allow self-signed / invalid TLS certificates. Useful for on-prem
-    /// inference servers behind self-signed HTTPS endpoints.
-    #[serde(default)]
-    pub allow_invalid_certs: bool,
     /// Maximum number of automatic retries on transient LLM errors (0 = no retry).
     #[serde(default)]
     pub max_retries: u32,
@@ -145,11 +141,6 @@ impl Default for LlmConfig {
             // No default base URL - users must configure their own endpoint
             base_url: std::env::var("MARCEL_SSH_LLM_BASE_URL").ok(),
             temperature: 0.1,
-            // Only allow invalid certs if explicitly set via environment variable
-            // This is a security-sensitive setting that should not have a permissive default
-            allow_invalid_certs: std::env::var("MARCEL_SSH_LLM_ALLOW_INVALID_CERTS")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false),
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -195,7 +186,6 @@ mod tests {
             model: "gpt-4".to_string(),
             base_url: Some("https://api.openai.com".to_string()),
             temperature: 0.7,
-            allow_invalid_certs: false,
             max_retries: 3,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
@@ -227,8 +217,7 @@ mod tests {
         let json = r#"{
             "providerType": "openai",
             "model": "gpt-4",
-            "temperature": 0.5,
-            "allowInvalidCerts": false
+            "temperature": 0.5
         }"#;
 
         let config: LlmConfig = serde_json::from_str(json).expect("Failed to deserialize");
@@ -248,7 +237,6 @@ mod tests {
         // Clear environment variables to test defaults
         std::env::remove_var("MARCEL_SSH_LLM_API_KEY");
         std::env::remove_var("MARCEL_SSH_LLM_BASE_URL");
-        std::env::remove_var("MARCEL_SSH_LLM_ALLOW_INVALID_CERTS");
 
         let config = LlmConfig::default();
 
@@ -273,12 +261,6 @@ mod tests {
                 "Default base_url should not contain hardcoded internal IP"
             );
         }
-
-        // Verify allow_invalid_certs defaults to false (secure default)
-        assert!(
-            !config.allow_invalid_certs,
-            "Default should not allow invalid certificates"
-        );
 
         // Model can have a safe default (not a secret)
         assert!(!config.model.is_empty(), "Model should have a value");

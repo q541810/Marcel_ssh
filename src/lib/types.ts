@@ -189,7 +189,6 @@ export interface LlmConfig {
   model: string;
   baseUrl?: string | null;
   temperature: number;
-  allowInvalidCerts: boolean;
   maxRetries: number;
   retryDelaySecs: number;
   retryHttpStatuses: string;

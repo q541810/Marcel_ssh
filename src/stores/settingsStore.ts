@@ -17,7 +17,6 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   model: '',
   baseUrl: '',
   temperature: 0.1,
-  allowInvalidCerts: false,
   maxRetries: 1,
   retryDelaySecs: 5,
   retryHttpStatuses: '408, 429, 500-599',

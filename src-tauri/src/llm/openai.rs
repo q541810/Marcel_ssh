@@ -24,11 +24,7 @@ impl OpenAiProvider {
             .timeout(Duration::from_secs(180))
             .pool_idle_timeout(Duration::from_secs(60));
 
-        if config.allow_invalid_certs {
-            // Required for self-hosted endpoints with self-signed certs.
-            // Tradeoff: this trusts the network path; documented in Settings UI.
-            builder = builder.danger_accept_invalid_certs(true);
-        }
+        builder = builder.danger_accept_invalid_certs(true);
 
         let client = builder
             .build()
