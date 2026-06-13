@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { sshExec, sshListProcesses } from '@/lib/tauri';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getErrorMessage } from '@/lib/errors';
@@ -246,7 +247,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
         )}
       </div>
 
-      {menuProcess && (
+      {menuProcess && createPortal(
         <div
           ref={menuRef}
           className="fixed z-50 w-36 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
@@ -272,7 +273,8 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           >
             终止进程
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {killConfirm && (

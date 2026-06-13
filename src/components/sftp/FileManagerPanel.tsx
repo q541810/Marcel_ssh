@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
@@ -519,7 +520,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         )}
       </div>
 
-      {menuEntry && (
+      {menuEntry && createPortal(
         <div
           ref={menuRef}
           className="fixed z-50 w-40 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
@@ -596,7 +597,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           >
             删除
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {renameEntry && (
