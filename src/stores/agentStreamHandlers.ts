@@ -314,6 +314,7 @@ export function handleTextDelta(
 ) {
   const state = getStreamState(taskId);
   state.pendingTextDelta += streamEv.text;
+  setStreamState(taskId, state);
   scheduleFlush(handler, taskId, conversationId, loadingAssistantId);
 
   if (handler.getTaskStatus(taskId) === 'planning') {
@@ -330,6 +331,7 @@ export function handleThinkingDelta(
 ) {
   const state = getStreamState(taskId);
   state.pendingThinkingDelta += streamEv.text;
+  setStreamState(taskId, state);
   scheduleFlush(handler, taskId, conversationId, loadingAssistantId);
 }
 
