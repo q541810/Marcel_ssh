@@ -57,6 +57,7 @@ export function handleToolCallStart(
   };
 
   handler.updateMessages(conversationId, (convMsgs) => {
+    convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
     const newMsgs = [...convMsgs];
 
     // Clear reasoningContent from the last assistant message (same as before)
@@ -210,6 +211,7 @@ export function handleTextDelta(
 
   if (state.assistantMessageId) {
     handler.updateMessages(conversationId, (convMsgs) => {
+      convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
       let { messageIndex: idx } = state;
       if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
         idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
@@ -238,6 +240,7 @@ export function handleTextDelta(
     const initialLoadingCleared = state.loadingCleared;
 
     handler.updateMessages(conversationId, (convMsgs) => {
+      convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
       let newMsgs = [...convMsgs];
       let loadingCleared = initialLoadingCleared;
 
@@ -370,6 +373,8 @@ export function handleDone(
       if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.reasoningContent) return false;
       // Remove tool messages that are still executing (tool call never completed)
       if (m.role === 'tool' && m.isExecuting) return false;
+      // Remove retrying indicator (stale if we got a final response)
+      if (m.role === 'system' && m.isRetrying) return false;
       return true;
     });
     // Clear isThinking and isLoading flags on all assistant messages
