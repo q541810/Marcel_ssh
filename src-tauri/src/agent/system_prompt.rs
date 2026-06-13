@@ -3,6 +3,7 @@ pub(crate) fn build_system_prompt(
     has_skills: bool,
     has_web_search: bool,
     has_http_get: bool,
+    user_prompt: &str,
 ) -> String {
     let base = " Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
@@ -53,9 +54,15 @@ pub(crate) fn build_system_prompt(
         ""
     };
 
+    let user_section = if user_prompt.is_empty() {
+        String::new()
+    } else {
+        format!("\n## 用户附加指令\n\n{}\n", user_prompt)
+    };
+
     format!(
-        "{}{}{}当前会话：SSH session id={}\n\n{}{}",
-        base, web_search_hint, http_get_hint, session_id, conventions, skills_section
+        "{}{}{}当前会话：SSH session id={}\n\n{}{}{}",
+        base, web_search_hint, http_get_hint, session_id, conventions, skills_section, user_section
     )
 }
 
@@ -65,7 +72,7 @@ mod tests {
 
     #[test]
     fn prompt_omits_disabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", false, false, false);
+        let prompt = build_system_prompt("session-1", false, false, false, "");
 
         assert!(!prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
@@ -74,7 +81,7 @@ mod tests {
 
     #[test]
     fn prompt_includes_only_enabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", true, true, false);
+        let prompt = build_system_prompt("session-1", true, true, false, "");
 
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));

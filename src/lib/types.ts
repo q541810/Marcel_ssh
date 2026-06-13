@@ -179,6 +179,7 @@ export interface AgentModeSettings {
   listMode: CommandListMode;
   commandList: string[];
   confirmEachCommand: boolean;
+  systemPrompt: string;
 }
 
 export type LlmProviderType = 'openai';

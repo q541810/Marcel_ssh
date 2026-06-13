@@ -268,6 +268,7 @@ mod tests {
             list_mode: CommandListMode::Denylist,
             command_list: vec!["rm".into(), "mkfs".into(), "dd".into()],
             confirm_each_command: false,
+            system_prompt: String::new(),
         }
     }
 
@@ -295,6 +296,7 @@ mod tests {
             list_mode: CommandListMode::Allowlist,
             command_list: vec!["ls".into(), "cat".into()],
             confirm_each_command: false,
+            system_prompt: String::new(),
         };
         assert!(!command_list_requires_confirm("ls -la", &s));
 
@@ -309,6 +311,7 @@ mod tests {
             list_mode: CommandListMode::Allowlist,
             command_list: vec!["ls".into()],
             confirm_each_command: false,
+            system_prompt: String::new(),
         };
         assert!(command_list_requires_confirm("rm -rf /tmp", &s));
     }
@@ -333,6 +336,7 @@ mod tests {
             list_mode: CommandListMode::Denylist,
             command_list: vec![],
             confirm_each_command: true,
+            system_prompt: String::new(),
         };
         assert!(command_list_requires_confirm("echo hello", &s));
         assert!(command_list_requires_confirm("git status", &s));

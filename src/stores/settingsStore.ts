@@ -9,6 +9,7 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
   commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
+  systemPrompt: '',
 };
 
 const DEFAULT_LLM_CONFIG: LlmConfig = {

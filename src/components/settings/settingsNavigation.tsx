@@ -17,6 +17,7 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-llm': 'full',
   'settings-llm-retry': 'full',
   'settings-command-policy': 'full',
+  'settings-agent-system-prompt': 'full',
   'settings-notification': 'half',
   'settings-experimental': 'half',
   'settings-transfer': 'half',
@@ -40,7 +41,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'agent',
     label: 'Agent',
     icon: <Bot className="w-4 h-4" />,
-    sections: ['settings-command-policy', 'settings-notification'],
+    sections: ['settings-command-policy', 'settings-agent-system-prompt', 'settings-notification'],
   },
   {
     id: 'tools',
@@ -65,7 +66,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   interface: ['settings-appearance', 'settings-display', 'settings-whip'],
   model: ['settings-llm', 'settings-llm-retry'],
-  agent: ['settings-command-policy', 'settings-notification'],
+  agent: ['settings-command-policy', 'settings-agent-system-prompt', 'settings-notification'],
   tools: ['settings-experimental'],
   transfer: ['settings-transfer'],
   about: ['settings-about'],

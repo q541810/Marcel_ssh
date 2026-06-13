@@ -88,6 +88,10 @@ pub struct AgentModeSettings {
     /// command that passes the list filter. When false, listed commands run
     /// silently — useful when the user has carefully curated the lists.
     pub confirm_each_command: bool,
+    /// User-defined extra content appended to the system prompt sent to the LLM.
+    /// Empty means nothing is appended.
+    #[serde(default)]
+    pub system_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -317,6 +321,7 @@ impl Default for AppSettings {
                     "reboot".into(),
                 ],
                 confirm_each_command: true,
+                system_prompt: String::new(),
             },
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),

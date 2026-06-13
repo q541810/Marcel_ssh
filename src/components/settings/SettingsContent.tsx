@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useSearchRegistry } from './helpers';
 import { AgentPolicySection } from './AgentPolicySection';
+import { AgentSystemPromptSection } from './AgentSystemPromptSection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
 import { ModelServiceSection } from './ModelServiceSection';
@@ -48,6 +49,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-llm', element: <ModelServiceSection /> },
     { id: 'settings-llm-retry', element: <ModelRetrySection /> },
     { id: 'settings-command-policy', element: <AgentPolicySection /> },
+    { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },
     { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },
     { id: 'settings-transfer', element: <TransferSection /> },

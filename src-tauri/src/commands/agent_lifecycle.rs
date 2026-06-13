@@ -126,6 +126,7 @@ pub async fn agent_start_task(
         has_skills,
         has_tool("web_search"),
         has_tool("http_get"),
+        &agent_settings.system_prompt,
     );
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
