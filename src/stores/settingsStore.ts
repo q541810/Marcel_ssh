@@ -62,6 +62,8 @@ interface SettingsState {
   loaded: boolean;
   /** True if a key is currently stored in the system keychain. */
   hasApiKey: boolean;
+  /** Non-fatal warning from the backend (e.g. settings.json was backed up). */
+  warning: string | null;
 
   /** Load settings from disk on app startup. Idempotent unless forced. */
   load: (force?: boolean) => Promise<void>;
@@ -69,6 +71,8 @@ interface SettingsState {
   save: (settings: AppSettings) => Promise<void>;
   /** Patch a subset of fields, persist, and update local state. */
   update: (patch: Partial<AppSettings>) => Promise<void>;
+  /** Acknowledge / dismiss a backend warning. */
+  clearWarning: () => void;
   /** Preview settings for live updates (not persisted until save) */
   preview: Partial<AppSettings> | null;
   /** Update preview settings for live preview */
@@ -81,6 +85,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
   hasApiKey: false,
+  warning: null,
   preview: null,
 
   load: async (force = false) => {
@@ -101,7 +106,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         whipPhrases: normalizeWhipPhrases(fromDisk.whipPhrases),
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       };
-      set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey });
+      set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey, warning: resp.warning ?? null });
     } catch (err) {
       console.error('加载设置失败:', err);
       set({ loaded: false });
@@ -130,6 +135,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setPreview: (preview: Partial<AppSettings>) => {
     set({ preview });
+  },
+
+  clearWarning: () => {
+    set({ warning: null });
   },
 
   clearPreview: () => {

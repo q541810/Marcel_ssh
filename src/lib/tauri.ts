@@ -143,7 +143,7 @@ export async function deleteConnection(id: string): Promise<void> {
   return invoke('config_delete_connection', { id });
 }
 
-export async function getSettings(): Promise<{ settings: AppSettings; hasApiKey: boolean }> {
+export async function getSettings(): Promise<{ settings: AppSettings; hasApiKey: boolean; warning?: string }> {
   return invoke('config_get_settings');
 }
 

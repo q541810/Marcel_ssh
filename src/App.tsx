@@ -5,6 +5,7 @@ import Terminal from '@/components/terminal/Terminal';
 import TabBar from '@/components/terminal/TabBar';
 import AgentPanel from '@/components/agent/AgentPanel';
 import AppHeader from '@/components/layout/AppHeader';
+import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
@@ -340,6 +341,8 @@ export default function App() {
           onDismiss={() => setUpdateToast(null)}
         />
       )}
+
+      <SettingsWarningToast />
     </div>
   );
 }

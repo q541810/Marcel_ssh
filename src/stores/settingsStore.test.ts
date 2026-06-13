@@ -70,4 +70,12 @@ describe('settingsStore', () => {
     useSettingsStore.getState().clearPreview();
     expect(useSettingsStore.getState().preview).toBeNull();
   });
+
+  it('warning starts null and clearWarning is idempotent', () => {
+    expect(useSettingsStore.getState().warning).toBeNull();
+    useSettingsStore.setState({ warning: 'something went wrong' });
+    expect(useSettingsStore.getState().warning).toBe('something went wrong');
+    useSettingsStore.getState().clearWarning();
+    expect(useSettingsStore.getState().warning).toBeNull();
+  });
 });

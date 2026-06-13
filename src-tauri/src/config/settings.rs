@@ -5,7 +5,7 @@ use super::persist::JsonPersistable;
 use crate::llm::provider::LlmConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct TerminalColors {
     pub background: String,
     pub foreground: String,
@@ -91,7 +91,7 @@ pub struct AgentModeSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct ExperimentalSettings {
     pub enable_web_search: bool,
     pub enable_http_fetch: bool,
@@ -112,7 +112,7 @@ impl Default for ExperimentalSettings {
 
 /// Notification preferences.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct NotificationSettings {
     #[serde(default = "default_true")]
     pub agent_approval: bool,
@@ -212,12 +212,15 @@ impl Default for WorkspaceLayoutSettings {
 
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     #[serde(default)]
     pub terminal_colors: TerminalColors,
+    #[serde(default = "default_font_size")]
     pub font_size: u16,
+    #[serde(default = "default_font_family")]
     pub font_family: String,
+    #[serde(default = "default_agent_mode_str")]
     pub default_agent_mode: String,
     #[serde(default)]
     pub llm_config: Option<LlmConfig>,
@@ -267,6 +270,15 @@ pub struct AppSettings {
 
 fn default_file_manager_path() -> String {
     "/".to_string()
+}
+fn default_font_size() -> u16 {
+    14
+}
+fn default_font_family() -> String {
+    "JetBrains Mono, Fira Code, Consolas, \"Microsoft YaHei\", monospace".to_string()
+}
+fn default_agent_mode_str() -> String {
+    "agent".to_string()
 }
 fn default_folder_upload_compression_level() -> i64 {
     6
@@ -428,5 +440,56 @@ mod tests {
         assert_eq!(s.whip_crack_speed, 240);
         assert!(s.whip_auto_input_enabled);
         assert!(s.whip_phrases.contains(&"快点干活，别磨蹭。".to_string()));
+    }
+
+    /// Old configs (before fileManagerPaths was added) should still load — the
+    /// struct-level `#[serde(default)]` fills missing fields from AppSettings::default().
+    #[test]
+    fn app_settings_loads_old_format_without_file_manager_paths() {
+        let json = "{
+            \"terminalColors\": {\"background\":\"#000\",\"foreground\":\"#fff\",\"cursor\":\"#fff\",
+                \"cursorAccent\":\"#000\",\"selectionBackground\":\"#444\",\"black\":\"#000\",\"red\":\"#f00\",
+                \"green\":\"#0f0\",\"yellow\":\"#ff0\",\"blue\":\"#00f\",\"magenta\":\"#f0f\",\"cyan\":\"#0ff\",
+                \"white\":\"#fff\",\"brightBlack\":\"#888\",\"brightRed\":\"#f88\",\"brightGreen\":\"#8f8\",
+                \"brightYellow\":\"#ff8\",\"brightBlue\":\"#88f\",\"brightMagenta\":\"#f8f\",\"brightCyan\":\"#8ff\",
+                \"brightWhite\":\"#fff\"},
+            \"fontSize\": 16,
+            \"fontFamily\": \"Comic Sans\",
+            \"defaultAgentMode\": \"auto\"
+        }";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("old format should load via struct default");
+        assert_eq!(parsed.font_size, 16);
+        assert_eq!(parsed.font_family, "Comic Sans");
+        assert_eq!(parsed.default_agent_mode, "auto");
+        // Missing nested objects filled from AppSettings::default().
+        assert_eq!(parsed.file_manager_path, "/");
+        assert!(parsed.file_manager_paths.is_empty());
+        assert!(parsed.notification_settings.agent_approval);
+    }
+
+    /// Old configs that have a partial terminalColors (missing fields) should
+    /// still load via field-level `#[serde(default)]` on the inner struct.
+    #[test]
+    fn terminal_colors_loads_with_missing_fields() {
+        let json = "{\"background\": \"#000\", \"foreground\": \"#fff\"}";
+        let parsed: TerminalColors =
+            serde_json::from_str(json).expect("partial terminalColors should load");
+        assert_eq!(parsed.background, "#000");
+        assert_eq!(parsed.foreground, "#fff");
+        // Missing fields fall back to TerminalColors::default() values.
+        assert_eq!(parsed.cursor, "#a1a1aa");
+        assert_eq!(parsed.bright_white, "#fafafa");
+    }
+
+    /// notificationSettings is entirely missing — should use Default.
+    #[test]
+    fn app_settings_loads_without_notification_settings() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("missing notificationSettings should load");
+        assert!(parsed.notification_settings.agent_approval);
+        assert!(parsed.notification_settings.agent_task_done);
+        assert!(parsed.notification_settings.agent_task_failed);
     }
 }

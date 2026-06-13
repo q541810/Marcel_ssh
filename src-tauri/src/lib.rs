@@ -57,6 +57,9 @@ pub struct AppState {
     /// Cancellation signals for running agent tasks: task_id -> watch sender.
     /// Setting the value to `true` signals the agent loop to abort the current LLM call.
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
+    /// the frontend via `config_get_settings` so it can show a notification.
+    pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
 }
 
 impl AppState {
@@ -79,6 +82,9 @@ impl AppState {
 
         // Clone before the file path is moved into the spawn_blocking closure.
         let settings_backup_src = settings_file.clone();
+
+        // Captured during phase-2 fallbacks; surfaced via AppState.settings_warning.
+        let mut settings_warning: Option<String> = None;
 
         // ── Phase 1: parallel loads (all independent) ──────────────────────
         let (
@@ -172,11 +178,24 @@ impl AppState {
                 log::warn!("无法加载应用设置，使用默认值：{}", e);
                 // The file exists but is unreadable/incompatible.
                 // Back it up before any save overwrites it silently.
-                backup_settings_on_load_failure(&settings_backup_src);
+                let bak_path = backup_settings_on_load_failure(&settings_backup_src);
+                let msg = match bak_path {
+                    Some(path) => format!(
+                        "配置文件加载失败: {}。旧文件已备份到 {}，当前使用默认设置。",
+                        e,
+                        path.display()
+                    ),
+                    None => format!("配置文件加载失败: {}。当前使用默认设置。", e),
+                };
+                settings_warning = Some(msg);
                 AppSettings::default()
             }
             Err(join_err) => {
                 log::warn!("应用设置加载任务失败：{}", join_err);
+                settings_warning = Some(format!(
+                    "应用设置加载任务失败: {}。当前使用默认设置。",
+                    join_err
+                ));
                 AppSettings::default()
             }
         };
@@ -268,6 +287,7 @@ impl AppState {
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
         }
     }
 }
@@ -277,17 +297,25 @@ impl AppState {
 /// file is never silently overwritten by a subsequent save.
 /// Timestamped backups grow unbounded if loading fails on every launch.
 /// Keep at most this many historical copies; prune older ones.
+/// Returns the path of the "latest" backup (`settings.json.bak`) if it was
+/// successfully created, for surfacing a warning to the user.
 const MAX_TIMESTAMPED_SETTINGS_BACKUPS: usize = 5;
 
-fn backup_settings_on_load_failure(settings_file: &std::path::Path) {
+fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<std::path::PathBuf> {
     let parent = settings_file.parent().unwrap_or_else(|| std::path::Path::new("."));
 
     // Overwrite the most recent "last failure" backup (single file, always fresh).
     let bak_path = settings_file.with_extension("json.bak");
-    match std::fs::copy(settings_file, &bak_path) {
-        Ok(_) => log::warn!("旧配置文件已备份到: {}", bak_path.display()),
-        Err(e) => log::error!("无法备份旧配置文件: {} ({})", bak_path.display(), e),
-    }
+    let bak_created = match std::fs::copy(settings_file, &bak_path) {
+        Ok(_) => {
+            log::warn!("旧配置文件已备份到: {}", bak_path.display());
+            true
+        }
+        Err(e) => {
+            log::error!("无法备份旧配置文件: {} ({})", bak_path.display(), e);
+            false
+        }
+    };
 
     // Timestamped snapshot — pruned so failures over many launches don't pile up.
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
@@ -314,6 +342,12 @@ fn backup_settings_on_load_failure(settings_file: &std::path::Path) {
                 let _ = std::fs::remove_file(path);
             }
         }
+    }
+
+    if bak_created {
+        Some(bak_path)
+    } else {
+        None
     }
 }
 

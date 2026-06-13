@@ -17,6 +17,10 @@ pub struct SettingsResponse {
     pub settings: AppSettings,
     /// True if a key is currently stored in the keychain.
     pub has_api_key: bool,
+    /// Non-fatal warning surfaced to the user (e.g. settings.json was backed
+    /// up because it could not be deserialised). `None` on a clean load.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// Check if the given API key looks like a masked placeholder.
@@ -31,9 +35,12 @@ fn is_masked_key(key: &str) -> bool {
 pub async fn config_get_settings(state: State<'_, AppState>) -> Result<SettingsResponse, AppError> {
     let settings = state.settings.read().await.clone();
     let has_api_key = keychain::get_llm_api_key().ok().flatten().is_some();
+    // Take the warning so the user only sees it once (after a single load).
+    let warning = state.settings_warning.write().take();
     Ok(SettingsResponse {
         settings,
         has_api_key,
+        warning,
     })
 }
 
