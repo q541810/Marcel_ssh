@@ -93,6 +93,9 @@ describe('agentStreamHandlers', () => {
         loadingCleared: true,
         toolResultCount: 2,
         pendingToolCalls: new Map(),
+        pendingTextDelta: '',
+        pendingThinkingDelta: '',
+        flushRafId: null,
       });
       const state = getStreamState(taskId);
       expect(state.assistantMessageId).toBe('msg-1');

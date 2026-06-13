@@ -89,6 +89,15 @@ interface TaskStreamState {
   loadingCleared: boolean;
   toolResultCount: number;
   pendingToolCalls: Map<string, string>; // toolCallId → message.id
+  // ── rAF-batched delta buffer ──
+  // LLM streaming 在高速场景下每秒可能产生几十到上百个 delta，
+  // 直接 updateMessages 会触发等量的 React 渲染，配合 react-markdown
+  // 的高亮插件会把 DOM 解析跑成单线程瓶颈，最终导致 token 任务堆积、
+  // 通知弹窗先于内容渲染完成到达。把 delta 先攒进 buffer，
+  // 用 requestAnimationFrame 把同帧内全部 delta 合并成一次提交。
+  pendingTextDelta: string;
+  pendingThinkingDelta: string;
+  flushRafId: number | null;
 }
 
 const taskStreamState: Map<string, TaskStreamState> = new Map();
@@ -100,10 +109,17 @@ export function getStreamState(taskId: string): TaskStreamState {
     loadingCleared: false,
     toolResultCount: 0,
     pendingToolCalls: new Map(),
+    pendingTextDelta: '',
+    pendingThinkingDelta: '',
+    flushRafId: null,
   };
 }
 
 export function cleanupStreamState(taskId: string) {
+  const state = taskStreamState.get(taskId);
+  if (state?.flushRafId != null) {
+    cancelAnimationFrame(state.flushRafId);
+  }
   taskStreamState.delete(taskId);
 }
 
@@ -200,6 +216,95 @@ export function handleToolResult(
   });
 }
 
+// ---------------------------------------------------------------------------
+// rAF-batched delta flush
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 task 累积的 pending delta 合并提交到 store。
+ * 由 scheduleFlush（rAF 触发）或 handleDone（强制同步）调用。
+ * 同步执行：调用后 buffer 清空，rAF 句柄释放。
+ */
+function flushPendingDeltas(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  loadingAssistantId: string,
+) {
+  const state = getStreamState(taskId);
+  const { pendingTextDelta, pendingThinkingDelta } = state;
+
+  // 清空 buffer 和 raf 句柄 —— 必须在 updateMessages 之前完成，
+  // 否则 updater 闭包里对 state 的写入会丢失。
+  state.pendingTextDelta = '';
+  state.pendingThinkingDelta = '';
+  if (state.flushRafId != null) {
+    cancelAnimationFrame(state.flushRafId);
+    state.flushRafId = null;
+  }
+
+  if (!pendingTextDelta && !pendingThinkingDelta) return;
+
+  handler.updateMessages(conversationId, (convMsgs) => {
+    convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
+    const newMsgs = [...convMsgs];
+    const targetId = state.assistantMessageId;
+    let idx = targetId
+      ? newMsgs.findIndex((m) => m.id === targetId)
+      : -1;
+
+    if (idx === -1) {
+      // 第一次 flush：清掉 loading 占位符并建一条 assistant 消息
+      if (!state.loadingCleared) {
+        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
+        if (loadingIdx !== -1) {
+          newMsgs.splice(loadingIdx, 1);
+          state.loadingCleared = true;
+        }
+      }
+      const newMsg: AgentMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: pendingTextDelta,
+        reasoningContent: pendingThinkingDelta || undefined,
+        isThinking: !!pendingThinkingDelta && !pendingTextDelta,
+        timestamp: new Date().toISOString(),
+      };
+      newMsgs.push(newMsg);
+      state.assistantMessageId = newMsg.id;
+      state.messageIndex = newMsgs.length - 1;
+    } else {
+      const msg = newMsgs[idx];
+      newMsgs[idx] = {
+        ...msg,
+        content: msg.content + pendingTextDelta,
+        reasoningContent: pendingThinkingDelta
+          ? (msg.reasoningContent || '') + pendingThinkingDelta
+          : msg.reasoningContent,
+        isThinking: pendingThinkingDelta && !msg.content ? true : false,
+      };
+    }
+    return newMsgs;
+  });
+}
+
+/**
+ * 把一次 delta 调度到下一帧再提交。同一帧内多次调用只会真正 flush 一次。
+ * 如果已调度则直接返回（O(1) 短路）。
+ */
+function scheduleFlush(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  loadingAssistantId: string,
+) {
+  const state = getStreamState(taskId);
+  if (state.flushRafId != null) return;
+  state.flushRafId = requestAnimationFrame(() => {
+    flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
+  });
+}
+
 export function handleTextDelta(
   handler: StreamHandler,
   taskId: string,
@@ -208,69 +313,8 @@ export function handleTextDelta(
   streamEv: { type: 'textDelta'; text: string },
 ) {
   const state = getStreamState(taskId);
-
-  if (state.assistantMessageId) {
-    handler.updateMessages(conversationId, (convMsgs) => {
-      convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
-      let { messageIndex: idx } = state;
-      if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
-        idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
-      }
-      const newMsgs = [...convMsgs];
-      if (idx === -1) {
-        // Fallback: target message not found, create new
-        const newMsg: AgentMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: streamEv.text,
-          timestamp: new Date().toISOString(),
-        };
-        newMsgs.push(newMsg);
-        setStreamState(taskId, {
-          ...getStreamState(taskId),
-          assistantMessageId: newMsg.id,
-          messageIndex: newMsgs.length - 1,
-        });
-      } else {
-        newMsgs[idx] = { ...newMsgs[idx], isThinking: false, content: newMsgs[idx].content + streamEv.text };
-      }
-      return newMsgs;
-    });
-  } else {
-    const initialLoadingCleared = state.loadingCleared;
-
-    handler.updateMessages(conversationId, (convMsgs) => {
-      convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
-      let newMsgs = [...convMsgs];
-      let loadingCleared = initialLoadingCleared;
-
-      if (!loadingCleared) {
-        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
-        if (loadingIdx !== -1) {
-          newMsgs.splice(loadingIdx, 1);
-          loadingCleared = true;
-        }
-      }
-
-      const newMsg: AgentMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: streamEv.text,
-        timestamp: new Date().toISOString(),
-      };
-      newMsgs.push(newMsg);
-
-      setStreamState(taskId, {
-        assistantMessageId: newMsg.id,
-        messageIndex: newMsgs.length - 1,
-        loadingCleared,
-        toolResultCount: getStreamState(taskId).toolResultCount,
-        pendingToolCalls: getStreamState(taskId).pendingToolCalls,
-      });
-
-      return newMsgs;
-    });
-  }
+  state.pendingTextDelta += streamEv.text;
+  scheduleFlush(handler, taskId, conversationId, loadingAssistantId);
 
   if (handler.getTaskStatus(taskId) === 'planning') {
     handler.updateTaskStatus(taskId, 'executing');
@@ -285,76 +329,8 @@ export function handleThinkingDelta(
   streamEv: { type: 'thinkingDelta'; text: string },
 ) {
   const state = getStreamState(taskId);
-
-  if (state.assistantMessageId) {
-    handler.updateMessages(conversationId, (convMsgs) => {
-      let { messageIndex: idx } = state;
-      if (idx >= convMsgs.length || convMsgs[idx]?.id !== state.assistantMessageId) {
-        idx = convMsgs.findIndex((m) => m.id === state.assistantMessageId);
-      }
-      const newMsgs = [...convMsgs];
-      if (idx === -1) {
-        // Fallback: target message not found, create new
-        const newMsg: AgentMessage = {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: '',
-          reasoningContent: streamEv.text,
-          isThinking: true,
-          timestamp: new Date().toISOString(),
-        };
-        newMsgs.push(newMsg);
-        setStreamState(taskId, {
-          ...getStreamState(taskId),
-          assistantMessageId: newMsg.id,
-          messageIndex: newMsgs.length - 1,
-        });
-      } else {
-        const msg = newMsgs[idx];
-        newMsgs[idx] = {
-          ...msg,
-          reasoningContent: (msg.reasoningContent || '') + streamEv.text,
-          isThinking: true,
-        };
-      }
-      return newMsgs;
-    });
-  } else {
-    const initialLoadingCleared = state.loadingCleared;
-
-    handler.updateMessages(conversationId, (convMsgs) => {
-      let newMsgs = [...convMsgs];
-      let loadingCleared = initialLoadingCleared;
-
-      if (!loadingCleared) {
-        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
-        if (loadingIdx !== -1) {
-          newMsgs.splice(loadingIdx, 1);
-          loadingCleared = true;
-        }
-      }
-
-      const newMsg: AgentMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: '',
-        reasoningContent: streamEv.text,
-        isThinking: true,
-        timestamp: new Date().toISOString(),
-      };
-      newMsgs.push(newMsg);
-
-      setStreamState(taskId, {
-        assistantMessageId: newMsg.id,
-        messageIndex: newMsgs.length - 1,
-        loadingCleared,
-        toolResultCount: getStreamState(taskId).toolResultCount,
-        pendingToolCalls: getStreamState(taskId).pendingToolCalls,
-      });
-
-      return newMsgs;
-    });
-  }
+  state.pendingThinkingDelta += streamEv.text;
+  scheduleFlush(handler, taskId, conversationId, loadingAssistantId);
 }
 
 export function handleDone(
@@ -363,6 +339,11 @@ export function handleDone(
   conversationId: string,
   loadingAssistantId: string,
 ) {
+  // LLM 流结束：把尚未 flush 的 delta 同步提交。
+  // 不依赖 rAF 是因为 rAF 在某些边缘场景（页面已失活等）可能延迟到下一帧，
+  // 而 Done 之后没新事件进来了，残留 delta 会卡住不渲染。
+  flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
+
   handler.updateTaskStatus(taskId, 'completed');
 
   handler.updateMessages(conversationId, (convMsgs) => {
@@ -397,6 +378,15 @@ export function handleError(
   loadingAssistantId: string,
   errEv: { type: 'error'; message: string },
 ) {
+  // 错误发生：丢掉 buffer，不渲染残缺流式内容。rAF 句柄一并取消避免泄漏。
+  const state = getStreamState(taskId);
+  if (state.flushRafId != null) {
+    cancelAnimationFrame(state.flushRafId);
+    state.flushRafId = null;
+  }
+  state.pendingTextDelta = '';
+  state.pendingThinkingDelta = '';
+
   handler.updateTaskStatus(taskId, 'failed');
 
   handler.updateMessages(conversationId, (convMsgs) => {
