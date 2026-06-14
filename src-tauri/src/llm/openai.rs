@@ -101,36 +101,13 @@ impl OpenAiProvider {
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
-
         let allowed_tool_names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         let tool_calling_enabled = !allowed_tool_names.is_empty();
         let req_body = build_request_body(&self.config, messages, tools, true);
 
-        log::info!(
-            "LLM 请求: {} model={} messages={}",
-            url,
-            self.config.model,
-            messages.len()
-        );
-
         let response = self
-            .client
-            .post(&url)
-            .headers(self.build_headers()?)
-            .json(&req_body)
-            .send()
-            .await
-            .map_err(|e| {
-                let detail = format_reqwest_error(&e);
-                log::error!("LLM 请求发送失败: {}", detail);
-                AppError::Llm(format!("LLM 请求失败: {}", detail))
-            })?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = read_error_body(response).await;
-            return Err(AppError::Llm(format!("LLM 返回错误 {}: {}", status, body)));
-        }
+            .send_llm_request(&url, &req_body, messages.len())
+            .await?;
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();
@@ -144,7 +121,6 @@ impl OpenAiProvider {
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
 
-            // SSE: parse complete lines (terminated by \n)
             while let Some(idx) = buffer.find('\n') {
                 let line = buffer[..idx].trim_end_matches('\r').to_owned();
                 buffer.drain(..=idx);
@@ -155,10 +131,6 @@ impl OpenAiProvider {
                 };
 
                 if payload == "[DONE]" {
-                    // Do NOT send StreamEvent::Done here. The caller
-                    // (agent loop) controls the final Done to avoid
-                    // prematurely closing the frontend listener when
-                    // tool calls still need to be executed.
                     break;
                 }
                 if payload.is_empty() {
@@ -168,102 +140,15 @@ impl OpenAiProvider {
                 match serde_json::from_str::<ChatChunk>(payload) {
                     Ok(chunk) => {
                         consecutive_parse_errors = 0;
-                        for choice in chunk.choices {
-                            if let Some(delta) = choice.delta {
-                                if let Some(ref reasoning) = delta.reasoning_content {
-                                    if !reasoning.is_empty() {
-                                        accumulated_reasoning.push_str(reasoning);
-                                        let _ = event_tx.send(StreamEvent::ThinkingDelta {
-                                            text: reasoning.clone(),
-                                        });
-                                    }
-                                }
-                                if let Some(text) = delta.content {
-                                    if !text.is_empty() {
-                                        accumulated_text.push_str(&text);
-                                        let _ = event_tx.send(StreamEvent::TextDelta { text });
-                                    }
-                                }
-                                if tool_calling_enabled {
-                                    if let Some(tcs) = delta.tool_calls {
-                                        for delta_tc in tcs {
-                                            let idx = delta_tc.index.unwrap_or(0) as usize;
-                                            while tool_calls.len() <= idx {
-                                                tool_calls.push(PartialToolCall::default());
-                                            }
-                                            let entry = &mut tool_calls[idx];
-                                            if let Some(id) = delta_tc.id {
-                                                if entry.id.is_empty() {
-                                                    entry.id = id;
-                                                    if entry.allowed == Some(true)
-                                                        && !entry.name.is_empty()
-                                                        && !entry.start_emitted
-                                                    {
-                                                        let _ = event_tx.send(
-                                                            StreamEvent::ToolCallStart {
-                                                                id: entry.id.clone(),
-                                                                name: entry.name.clone(),
-                                                            },
-                                                        );
-                                                        entry.start_emitted = true;
-                                                    }
-                                                }
-                                            }
-                                            if let Some(func) = delta_tc.function {
-                                                if let Some(name) = func.name {
-                                                    if entry.name.is_empty() {
-                                                        entry.allowed = Some(
-                                                            allowed_tool_names
-                                                                .contains(name.as_str()),
-                                                        );
-                                                        if entry.allowed == Some(true) {
-                                                            entry.name = name.clone();
-                                                            if !entry.id.is_empty()
-                                                                && !entry.start_emitted
-                                                            {
-                                                                let _ = event_tx.send(
-                                                                    StreamEvent::ToolCallStart {
-                                                                        id: entry.id.clone(),
-                                                                        name,
-                                                                    },
-                                                                );
-                                                                entry.start_emitted = true;
-                                                            }
-                                                            for args_delta in
-                                                                entry.pending_arguments.drain(..)
-                                                            {
-                                                                entry.arguments_buf.push_str(&args_delta);
-                                                                let _ = event_tx.send(
-                                                                    StreamEvent::ToolCallDelta {
-                                                                        id: entry.id.clone(),
-                                                                        arguments_delta: args_delta,
-                                                                    },
-                                                                );
-                                                            }
-                                                        } else {
-                                                            entry.pending_arguments.clear();
-                                                        }
-                                                    }
-                                                }
-                                                if let Some(args_delta) = func.arguments {
-                                                    if entry.allowed == Some(true) {
-                                                        entry.arguments_buf.push_str(&args_delta);
-                                                        let _ = event_tx.send(
-                                                            StreamEvent::ToolCallDelta {
-                                                                id: entry.id.clone(),
-                                                                arguments_delta: args_delta,
-                                                            },
-                                                        );
-                                                    } else if entry.allowed.is_none() {
-                                                        entry.pending_arguments.push(args_delta);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        process_chunk(
+                            &chunk,
+                            &mut accumulated_text,
+                            &mut accumulated_reasoning,
+                            &mut tool_calls,
+                            &allowed_tool_names,
+                            tool_calling_enabled,
+                            event_tx,
+                        );
                     }
                     Err(e) => {
                         consecutive_parse_errors += 1;
@@ -285,45 +170,46 @@ impl OpenAiProvider {
             }
         }
 
-        // Note: we do NOT send StreamEvent::Done here. The agent loop is
-        // responsible for sending Done after all tool-call rounds complete.
+        Ok(assemble_final_message(
+            accumulated_text,
+            accumulated_reasoning,
+            tool_calls,
+        ))
+    }
 
-        // Assemble the final message
-        let final_tool_calls: Option<Vec<ToolCall>> = if tool_calls.is_empty() {
-            None
-        } else {
-            Some(
-                tool_calls
-                    .into_iter()
-                    .filter(|tc| !tc.id.is_empty() && tc.allowed == Some(true))
-                    .map(|tc| {
-                        let arguments =
-                            serde_json::from_str(&tc.arguments_buf).unwrap_or_else(|_| {
-                                serde_json::Value::String(tc.arguments_buf.clone())
-                            });
-                        ToolCall {
-                            id: tc.id,
-                            name: tc.name,
-                            arguments,
-                        }
-                    })
-                    .collect(),
-            )
-        };
+    async fn send_llm_request(
+        &self,
+        url: &str,
+        req_body: &ChatCompletionRequest,
+        messages_len: usize,
+    ) -> Result<reqwest::Response, AppError> {
+        log::info!(
+            "LLM 请求: {} model={} messages={}",
+            url,
+            self.config.model,
+            messages_len
+        );
 
-        let reasoning = if accumulated_reasoning.is_empty() {
-            None
-        } else {
-            Some(accumulated_reasoning)
-        };
+        let response = self
+            .client
+            .post(url)
+            .headers(self.build_headers()?)
+            .json(req_body)
+            .send()
+            .await
+            .map_err(|e| {
+                let detail = format_reqwest_error(&e);
+                log::error!("LLM 请求发送失败: {}", detail);
+                AppError::Llm(format!("LLM 请求失败: {}", detail))
+            })?;
 
-        Ok(LlmMessage {
-            role: LlmRole::Assistant,
-            content: accumulated_text,
-            tool_calls: final_tool_calls,
-            tool_call_id: None,
-            reasoning_content: reasoning,
-        })
+        let status = response.status();
+        if !status.is_success() {
+            let body = read_error_body(response).await;
+            return Err(AppError::Llm(format!("LLM 返回错误 {}: {}", status, body)));
+        }
+
+        Ok(response)
     }
 }
 
@@ -660,6 +546,87 @@ mod retry_tests {
     }
 }
 
+fn process_chunk(
+    chunk: &ChatChunk,
+    accumulated_text: &mut String,
+    accumulated_reasoning: &mut String,
+    tool_calls: &mut Vec<PartialToolCall>,
+    allowed_tool_names: &HashSet<&str>,
+    tool_calling_enabled: bool,
+    event_tx: &mpsc::UnboundedSender<StreamEvent>,
+) {
+    for choice in &chunk.choices {
+        if let Some(ref delta) = choice.delta {
+            if let Some(ref reasoning) = delta.reasoning_content {
+                if !reasoning.is_empty() {
+                    accumulated_reasoning.push_str(reasoning);
+                    let _ = event_tx.send(StreamEvent::ThinkingDelta {
+                        text: reasoning.clone(),
+                    });
+                }
+            }
+            if let Some(ref text) = delta.content {
+                if !text.is_empty() {
+                    accumulated_text.push_str(text);
+                    let _ = event_tx.send(StreamEvent::TextDelta {
+                        text: text.clone(),
+                    });
+                }
+            }
+            if tool_calling_enabled {
+                if let Some(ref tcs) = delta.tool_calls {
+                    for delta_tc in tcs {
+                        let idx = delta_tc.index.unwrap_or(0) as usize;
+                        while tool_calls.len() <= idx {
+                            tool_calls.push(PartialToolCall::default());
+                        }
+                        tool_calls[idx].apply_delta(delta_tc, allowed_tool_names, event_tx);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn assemble_final_message(
+    accumulated_text: String,
+    accumulated_reasoning: String,
+    tool_calls: Vec<PartialToolCall>,
+) -> LlmMessage {
+    let final_tool_calls: Option<Vec<ToolCall>> = if tool_calls.is_empty() {
+        None
+    } else {
+        Some(
+            tool_calls
+                .into_iter()
+                .filter(|tc| !tc.id.is_empty() && tc.allowed == Some(true))
+                .map(|tc| {
+                    let arguments = serde_json::from_str(&tc.arguments_buf).unwrap_or_else(|_| {
+                        serde_json::Value::String(tc.arguments_buf.clone())
+                    });
+                    ToolCall {
+                        id: tc.id,
+                        name: tc.name,
+                        arguments,
+                    }
+                })
+                .collect(),
+        )
+    };
+
+    LlmMessage {
+        role: LlmRole::Assistant,
+        content: accumulated_text,
+        tool_calls: final_tool_calls,
+        tool_call_id: None,
+        reasoning_content: if accumulated_reasoning.is_empty() {
+            None
+        } else {
+            Some(accumulated_reasoning)
+        },
+    }
+}
+
 #[derive(Default)]
 struct PartialToolCall {
     id: String,
@@ -670,6 +637,66 @@ struct PartialToolCall {
     pending_arguments: Vec<String>,
 }
 
+impl PartialToolCall {
+    fn apply_delta(
+        &mut self,
+        delta_tc: &DeltaToolCall,
+        allowed_tool_names: &HashSet<&str>,
+        event_tx: &mpsc::UnboundedSender<StreamEvent>,
+    ) {
+        if let Some(ref id) = delta_tc.id {
+            if self.id.is_empty() {
+                self.id = id.clone();
+                self.maybe_emit_start(event_tx);
+            }
+        }
+        if let Some(ref func) = delta_tc.function {
+            if let Some(ref name) = func.name {
+                if self.name.is_empty() {
+                    self.allowed = Some(allowed_tool_names.contains(name.as_str()));
+                    if self.allowed == Some(true) {
+                        self.name = name.clone();
+                        self.maybe_emit_start(event_tx);
+                        for args_delta in self.pending_arguments.drain(..) {
+                            self.arguments_buf.push_str(&args_delta);
+                            let _ = event_tx.send(StreamEvent::ToolCallDelta {
+                                id: self.id.clone(),
+                                arguments_delta: args_delta,
+                            });
+                        }
+                    } else {
+                        self.pending_arguments.clear();
+                    }
+                }
+            }
+            if let Some(ref args_delta) = func.arguments {
+                if self.allowed == Some(true) {
+                    self.arguments_buf.push_str(args_delta);
+                    let _ = event_tx.send(StreamEvent::ToolCallDelta {
+                        id: self.id.clone(),
+                        arguments_delta: args_delta.clone(),
+                    });
+                } else if self.allowed.is_none() {
+                    self.pending_arguments.push(args_delta.clone());
+                }
+            }
+        }
+    }
+
+    fn maybe_emit_start(&mut self, event_tx: &mpsc::UnboundedSender<StreamEvent>) {
+        if self.allowed == Some(true)
+            && !self.id.is_empty()
+            && !self.name.is_empty()
+            && !self.start_emitted
+        {
+            let _ = event_tx.send(StreamEvent::ToolCallStart {
+                id: self.id.clone(),
+                name: self.name.clone(),
+            });
+            self.start_emitted = true;
+        }
+    }
+}
 /* ---- Typed request structs — serialize once, zero intermediate Values ---- */
 
 #[derive(Serialize)]
