@@ -20,13 +20,9 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(config: LlmConfig) -> Result<Self, AppError> {
-        let mut builder = reqwest::Client::builder()
+        let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
-            .pool_idle_timeout(Duration::from_secs(60));
-
-        builder = builder.danger_accept_invalid_certs(true);
-
-        let client = builder
+            .pool_idle_timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| AppError::Llm(format!("HTTP 客户端初始化失败: {}", e)))?;
 
