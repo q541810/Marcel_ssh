@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useMcpStore } from '@/stores/mcpStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import type { McpServer, McpServerInput } from '@/lib/types';
 import ListPanel from '@/components/ui/ListPanel';
 import ContextMenu from '@/components/ui/ContextMenu';
@@ -17,6 +18,7 @@ export default function McpList() {
   const deleteServer = useMcpStore((s) => s.deleteServer);
   const toggleServer = useMcpStore((s) => s.toggleServer);
   const refreshTools = useMcpStore((s) => s.refreshTools);
+  const confirmEachCommand = useSettingsStore((s) => s.settings.agentModeSettings.confirmEachCommand);
 
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState<McpServer | null>(null);
@@ -166,6 +168,9 @@ export default function McpList() {
               {expandedId === server.id && (
                 <div className="rounded-md bg-zinc-950/60 border border-zinc-800 p-2 text-xs text-zinc-400 space-y-1">
                   <div>{tools.length} 个工具 · {server.trusted ? '已信任' : '默认需审批'}</div>
+                  {confirmEachCommand && server.trusted && (
+                    <p className="text-xs text-amber-400">已开启「每条都手动确认」，信任后仍需手动审批</p>
+                  )}
                   {tools.map((tool) => (
                     <div key={tool.name} className="border-t border-zinc-800 pt-1 first:border-t-0 first:pt-0">
                       <div className="text-zinc-200 font-mono">{tool.name}</div>
