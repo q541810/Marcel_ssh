@@ -229,6 +229,19 @@ impl OpenAiProvider {
                                                                 );
                                                                 entry.start_emitted = true;
                                                             }
+                                                            for args_delta in
+                                                                entry.pending_arguments.drain(..)
+                                                            {
+                                                                entry.arguments_buf.push_str(&args_delta);
+                                                                let _ = event_tx.send(
+                                                                    StreamEvent::ToolCallDelta {
+                                                                        id: entry.id.clone(),
+                                                                        arguments_delta: args_delta,
+                                                                    },
+                                                                );
+                                                            }
+                                                        } else {
+                                                            entry.pending_arguments.clear();
                                                         }
                                                     }
                                                 }
@@ -241,6 +254,8 @@ impl OpenAiProvider {
                                                                 arguments_delta: args_delta,
                                                             },
                                                         );
+                                                    } else if entry.allowed.is_none() {
+                                                        entry.pending_arguments.push(args_delta);
                                                     }
                                                 }
                                             }
@@ -652,6 +667,7 @@ struct PartialToolCall {
     arguments_buf: String,
     allowed: Option<bool>,
     start_emitted: bool,
+    pending_arguments: Vec<String>,
 }
 
 /* ---- Typed request structs — serialize once, zero intermediate Values ---- */
