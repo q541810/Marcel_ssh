@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+
 interface Props {
   text: string;
   sessionId: string;
@@ -6,7 +8,7 @@ interface Props {
 }
 
 export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCancel }: Props) {
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
@@ -58,6 +60,7 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

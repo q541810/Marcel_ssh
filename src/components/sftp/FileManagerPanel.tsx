@@ -601,7 +601,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         document.body,
       )}
 
-      {renameEntry && (
+      {renameEntry && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-3">重命名</h3>
@@ -633,10 +633,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {deleteConfirm && (
+      {deleteConfirm && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-red-300 mb-2">确认删除</h3>
@@ -672,7 +673,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {editorFile && (
