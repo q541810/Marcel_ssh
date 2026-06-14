@@ -396,6 +396,62 @@ impl Default for UploadFileTool {
     }
 }
 
+fn resolve_upload_remote_path(local_path_buf: &Path, remote_path: &str, params: &serde_json::Value) -> String {
+    if params
+        .get("file_name")
+        .and_then(|v| v.as_str())
+        .map_or(false, |n| !n.is_empty())
+    {
+        let dir = if remote_path.ends_with('/') || remote_path.ends_with('\\') {
+            remote_path.to_string()
+        } else {
+            let parts: Vec<&str> = remote_path.rsplitn(2, '/').collect();
+            if parts.last().map_or(false, |p| !p.contains('.')) {
+                format!("{}/", remote_path)
+            } else {
+                remote_path.to_string()
+            }
+        };
+        let name = params.get("file_name").and_then(|v| v.as_str()).unwrap_or("");
+        if dir.ends_with('/') {
+            format!("{}{}", dir, name)
+        } else {
+            format!("{}/{}", dir, name)
+        }
+    } else {
+        let file_name = local_path_buf
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "upload".to_string());
+        if remote_path.ends_with('/') || remote_path.ends_with('\\') {
+            format!("{}{}", remote_path, file_name)
+        } else {
+            format!("{}/{}", remote_path, file_name)
+        }
+    }
+}
+
+async fn sftp_write_file(
+    sftp: russh_sftp::client::SftpSession,
+    remote_path: &str,
+    payload: &[u8],
+) -> Result<(), AppError> {
+    let mut file = sftp
+        .open_with_flags(
+            remote_path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
+        .await
+        .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
+    file.write_all(payload)
+        .await
+        .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
+    file.flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
+    Ok(())
+}
+
 #[async_trait]
 impl AgentTool for UploadFileTool {
     fn name(&self) -> &str {
@@ -474,88 +530,29 @@ impl AgentTool for UploadFileTool {
             }
         };
 
-        let final_remote = if params
-            .get("file_name")
-            .and_then(|v| v.as_str())
-            .map_or(false, |n| !n.is_empty())
-        {
-            let dir = if remote_path.ends_with('/') || remote_path.ends_with('\\') {
-                remote_path.to_string()
-            } else {
-                let parts: Vec<&str> = remote_path.rsplitn(2, '/').collect();
-                if parts.last().map_or(false, |p| !p.contains('.')) {
-                    format!("{}/", remote_path)
-                } else {
-                    remote_path.to_string()
-                }
-            };
-            let name = params
-                .get("file_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if dir.ends_with('/') {
-                format!("{}{}", dir, name)
-            } else {
-                format!("{}/{}", dir, name)
-            }
-        } else {
-            let file_name = local_path_buf
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "upload".to_string());
-            if remote_path.ends_with('/') || remote_path.ends_with('\\') {
-                format!("{}{}", remote_path, file_name)
-            } else {
-                format!("{}/{}", remote_path, file_name)
-            }
-        };
-
-        let payload = bytes.clone();
+        let final_remote = resolve_upload_remote_path(&local_path_buf, remote_path, &params);
 
         match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => {
-                let write_result = async {
-                    let mut file = sftp
-                        .open_with_flags(
-                            &final_remote,
-                            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
-                        )
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
-
-                    file.write_all(&payload)
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
-
-                    file.flush()
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
-
-                    Ok::<(), AppError>(())
-                }
-                .await;
-
-                match write_result {
-                    Ok(()) => Ok(ToolOutput::ok(
-                        format!("upload {} ({} bytes)", final_remote, bytes.len()),
-                        format!(
-                            "uploaded {} bytes: {} -> remote:{}",
-                            bytes.len(),
-                            local_path_buf.display(),
-                            final_remote
-                        ),
-                    )
-                    .with_metadata(json!({
-                        "local_path": local_path_buf.display().to_string(),
-                        "remote_path": final_remote,
-                        "bytes": bytes.len(),
-                    }))),
-                    Err(e) => Ok(ToolOutput::fail(
-                        format!("upload {}", final_remote),
-                        format!("transfer failed: {}", e),
-                    )),
-                }
-            }
+            Ok(sftp) => match sftp_write_file(sftp, &final_remote, &bytes).await {
+                Ok(()) => Ok(ToolOutput::ok(
+                    format!("upload {} ({} bytes)", final_remote, bytes.len()),
+                    format!(
+                        "uploaded {} bytes: {} -> remote:{}",
+                        bytes.len(),
+                        local_path_buf.display(),
+                        final_remote
+                    ),
+                )
+                .with_metadata(json!({
+                    "local_path": local_path_buf.display().to_string(),
+                    "remote_path": final_remote,
+                    "bytes": bytes.len(),
+                }))),
+                Err(e) => Ok(ToolOutput::fail(
+                    format!("upload {}", final_remote),
+                    format!("transfer failed: {}", e),
+                )),
+            },
             Err(e) => Ok(ToolOutput::fail(
                 format!("upload {}", final_remote),
                 format!("SFTP unavailable: {}", e),
@@ -576,6 +573,44 @@ impl Default for DownloadFileTool {
     fn default() -> Self {
         Self::new()
     }
+}
+
+async fn sftp_read_file(
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    remote_path: &str,
+) -> Result<Vec<u8>, String> {
+    let sftp = ssh.open_sftp(session_id).await.map_err(|e| format!("SFTP unavailable: {}", e))?;
+    sftp.read(remote_path).await.map_err(|e| format!("SFTP read failed: {}", e))
+}
+
+async fn ensure_parent_in_sandbox(
+    resolved: &Path,
+    policy: &LocalPathPolicy,
+) -> Result<(), String> {
+    let Some(parent) = resolved.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    let parent_ok = policy
+        .allowed_roots
+        .iter()
+        .any(|r| parent.starts_with(r) || parent == r.as_path());
+    let parent_in_sandbox = parent_ok
+        || resolve_against_ancestors(parent)
+            .map(|rp| policy.allowed_roots.iter().any(|r| rp.starts_with(r)))
+            .unwrap_or(false);
+    if !parent_in_sandbox {
+        return Err("refusing to create directories outside the sandbox".into());
+    }
+    if !parent.exists() {
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("local mkdir failed: {}", e))?;
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -604,7 +639,6 @@ impl AgentTool for DownloadFileTool {
     }
 
     fn risk_level(&self) -> RiskLevel {
-        // Writes to local disk (and may overwrite existing files).
         RiskLevel::Moderate
     }
 
@@ -636,27 +670,17 @@ impl AgentTool for DownloadFileTool {
                 Err(e) => return Ok(ToolOutput::fail("download_file", e.to_string())),
             };
 
-        // Open SFTP session and download
-        let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => match sftp.read(remote_path).await {
-                Ok(data) => data,
-                Err(e) => {
-                    return Ok(ToolOutput::fail(
-                        format!("download {}", remote_path),
-                        format!("SFTP read failed: {}", e),
-                    ))
-                }
-            },
+        let bytes = match sftp_read_file(&ctx.ssh, &ctx.session_id, remote_path).await {
+            Ok(data) => data,
             Err(e) => {
                 return Ok(ToolOutput::fail(
                     format!("download {}", remote_path),
-                    format!("SFTP unavailable: {}", e),
+                    e,
                 ))
             }
         };
 
         let size = bytes.len() as u64;
-
         if size > MAX_TRANSFER_BYTES {
             return Ok(ToolOutput::fail(
                 format!("download {}", remote_path),
@@ -667,34 +691,8 @@ impl AgentTool for DownloadFileTool {
             ));
         }
 
-        // Ensure parent exists — but only if the parent itself lives inside
-        // the sandbox. We don't create directories outside the allowed roots.
-        if let Some(parent) = resolved.parent() {
-            if !parent.as_os_str().is_empty() {
-                let parent_ok = policy
-                    .allowed_roots
-                    .iter()
-                    .any(|r| parent.starts_with(r) || parent == r.as_path());
-                // The parent might not exist yet; check its eventual resolved form.
-                let parent_in_sandbox = parent_ok
-                    || resolve_against_ancestors(parent)
-                        .map(|rp| policy.allowed_roots.iter().any(|r| rp.starts_with(r)))
-                        .unwrap_or(false);
-                if !parent_in_sandbox {
-                    return Ok(ToolOutput::fail(
-                        format!("download {}", remote_path),
-                        "refusing to create directories outside the sandbox",
-                    ));
-                }
-                if !parent.exists() {
-                    if let Err(e) = fs::create_dir_all(parent).await {
-                        return Ok(ToolOutput::fail(
-                            format!("download {}", remote_path),
-                            format!("local mkdir failed: {}", e),
-                        ));
-                    }
-                }
-            }
+        if let Err(e) = ensure_parent_in_sandbox(&resolved, &policy).await {
+            return Ok(ToolOutput::fail(format!("download {}", remote_path), e));
         }
 
         use std::fs::OpenOptions;
