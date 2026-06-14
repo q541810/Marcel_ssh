@@ -56,6 +56,22 @@ export function handleToolCallStart(
     },
   };
 
+  // Tool call starts: discard pending delta buffer.
+  // Thinking text before a tool call is ephemeral — the agent_loop
+  // does not persist it and handleToolCallStart clears reasoningContent
+  // from the last assistant message.  If deltas are still buffered
+  // (not yet flushed via rAF), they would otherwise survive as a
+  // stale isThinking=true message, auto-expanding every tool card
+  // mid-execution with "no output".  Clearing the buffer and
+  // cancelling the scheduled rAF prevents that.
+  const state = getStreamState(taskId);
+  state.pendingTextDelta = '';
+  state.pendingThinkingDelta = '';
+  if (state.flushRafId != null) {
+    cancelAnimationFrame(state.flushRafId);
+    state.flushRafId = null;
+  }
+
   handler.updateMessages(conversationId, (convMsgs) => {
     convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
     const newMsgs = [...convMsgs];
