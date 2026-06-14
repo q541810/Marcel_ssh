@@ -10,6 +10,7 @@ import UpdateToast from '@/components/UpdateToast';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
+import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate } from '@/lib/tauri';
 import type { AgentMode, WorkspaceLayoutSettings } from '@/lib/types';
 import {
@@ -59,6 +60,11 @@ export default function App() {
   const [agentPanelMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
 
   useEffect(() => {
+    attachTransferListeners();
+    return () => detachTransferListeners();
+  }, []);
+
+  useEffect(() => {
     if (agentPanelUnmountTimeoutRef.current) {
       clearTimeout(agentPanelUnmountTimeoutRef.current);
       agentPanelUnmountTimeoutRef.current = null;
@@ -73,13 +79,6 @@ export default function App() {
       setAgentPanelMounted(false);
       agentPanelUnmountTimeoutRef.current = null;
     }, AGENT_PANEL_COLLAPSE_MS);
-
-    return () => {
-      if (agentPanelUnmountTimeoutRef.current) {
-        clearTimeout(agentPanelUnmountTimeoutRef.current);
-        agentPanelUnmountTimeoutRef.current = null;
-      }
-    };
   }, [effectiveAgentPanelOpen]);
 
   useEffect(() => {
