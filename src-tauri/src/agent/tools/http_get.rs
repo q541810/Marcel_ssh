@@ -418,30 +418,13 @@ fn readable_selectors() -> &'static [&'static str] {
 }
 
 fn strip_noise_html(html: &str) -> String {
-    let without_comments = strip_html_comments(html);
-    let mut cleaned = without_comments;
+    let mut cleaned = html.to_string();
     for tag in [
         "script", "style", "noscript", "template", "svg", "iframe", "canvas", "meta", "link",
     ] {
         cleaned = strip_html_tag(&cleaned, tag);
     }
     cleaned
-}
-
-fn strip_html_comments(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut pos = 0;
-    while let Some(start_rel) = html[pos..].find("<!--") {
-        let start = pos + start_rel;
-        out.push_str(&html[pos..start]);
-        if let Some(end_rel) = html[start + 4..].find("-->") {
-            pos = start + 4 + end_rel + 3;
-        } else {
-            return out;
-        }
-    }
-    out.push_str(&html[pos..]);
-    out
 }
 
 fn strip_html_tag(html: &str, tag: &str) -> String {
@@ -487,13 +470,12 @@ fn strip_html_tag(html: &str, tag: &str) -> String {
 }
 
 fn extract_title(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?;
-    let after_open = lower[start..].find('>')? + start + 1;
-    let end = lower[after_open..].find("</title>")? + after_open;
-    let title = decode_html_entities(&html[after_open..end]);
-    let title = cleanup_whitespace(&title);
-    (!title.is_empty()).then_some(title)
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("title").ok()?;
+    let element = document.select(&selector).next()?;
+    let text = element.text().collect::<Vec<_>>().join("");
+    let text = cleanup_whitespace(&text);
+    (!text.is_empty()).then_some(text)
 }
 
 fn make_chunk(content: &str, offset: usize, chunk_size: usize) -> PageChunk {
