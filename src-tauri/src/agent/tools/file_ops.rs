@@ -56,7 +56,116 @@ enum DirectorySortBy {
     Type,
 }
 
-// ────────────────────────────── ReadFileTool ──────────────────────────────
+// ───────────────────── Shared SFTP helpers ─────────────────────
+
+async fn sftp_read(
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    path: &str,
+) -> Result<Vec<u8>, String> {
+    let sftp = ssh
+        .open_sftp(session_id)
+        .await
+        .map_err(|e| format!("SFTP unavailable: {}", e))?;
+    sftp.read(path)
+        .await
+        .map_err(|e| format!("SFTP read failed: {}", e))
+}
+
+async fn sftp_write(
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let sftp = ssh
+        .open_sftp(session_id)
+        .await
+        .map_err(|e| format!("SFTP unavailable: {}", e))?;
+    let mut file = sftp
+        .open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("open failed: {}", e))?;
+    file.write_all(bytes)
+        .await
+        .map_err(|e| format!("write failed: {}", e))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("flush failed: {}", e))?;
+    Ok(())
+}
+
+// ────────────────────────────── Parse helpers ──────────────────────────────
+
+struct EditParams {
+    path: String,
+    old_content: String,
+    new_content: String,
+    replace_all: bool,
+}
+
+fn parse_edit_params(params: &serde_json::Value) -> Result<EditParams, String> {
+    let path = params
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'path' parameter")?;
+    let old_content = params
+        .get("old_content")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'old_content' parameter")?;
+    let new_content = params
+        .get("new_content")
+        .and_then(|v| v.as_str())
+        .ok_or("Missing 'new_content' parameter")?;
+    let replace_all = params
+        .get("replace_all")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if path.is_empty() {
+        return Err("empty path".into());
+    }
+    if old_content.is_empty() {
+        return Err("old_content must not be empty".into());
+    }
+    Ok(EditParams {
+        path: path.to_string(),
+        old_content: old_content.to_string(),
+        new_content: new_content.to_string(),
+        replace_all,
+    })
+}
+
+fn try_replace(
+    current: &str,
+    old_content: &str,
+    new_content: &str,
+    replace_all: bool,
+) -> Result<(String, usize), String> {
+    let occurrences = current.matches(old_content).count();
+    if occurrences == 0 {
+        return Err("old_content not found in file. Read the file again to refresh.".into());
+    }
+    if occurrences > 1 && !replace_all {
+        return Err(format!(
+            "old_content matches {} times; pass replace_all=true or supply more context",
+            occurrences
+        ));
+    }
+    let updated = if replace_all {
+        current.replace(old_content, new_content)
+    } else {
+        current.replacen(old_content, new_content, 1)
+    };
+    if updated.len() > MAX_FILE_WRITE_BYTES {
+        return Err(format!(
+            "result exceeds size limit ({} bytes; limit {})",
+            updated.len(),
+            MAX_FILE_WRITE_BYTES
+        ));
+    }
+    Ok((updated, occurrences))
+}
 
 pub struct ReadFileTool;
 
@@ -127,21 +236,10 @@ impl AgentTool for ReadFileTool {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => match sftp.read(path).await {
-                Ok(data) => data,
-                Err(e) => {
-                    return Ok(ToolOutput::fail(
-                        format!("read {}", path),
-                        format!("SFTP read failed: {}", e),
-                    ))
-                }
-            },
+        let bytes = match sftp_read(&ctx.ssh, &ctx.session_id, path).await {
+            Ok(data) => data,
             Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("read {}", path),
-                    format!("SFTP unavailable: {}", e),
-                ))
+                return Ok(ToolOutput::fail(format!("read {}", path), e));
             }
         };
 
@@ -237,50 +335,19 @@ impl AgentTool for WriteFileTool {
         }
 
         let bytes = content.as_bytes();
-
-        match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => {
-                let write_result = async {
-                    let mut file = sftp
-                        .open_with_flags(
-                            path,
-                            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
-                        )
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
-
-                    file.write_all(bytes)
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
-
-                    file.flush()
-                        .await
-                        .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
-
-                    Ok::<(), AppError>(())
-                }
-                .await;
-
-                match write_result {
-                    Ok(()) => {
-                        let lines = content.lines().count();
-                        let summary = format!("write {} ({} lines)", path, lines);
-                        let body = format!("wrote {} bytes to {}", bytes.len(), path);
-                        Ok(ToolOutput::ok(summary, body).with_metadata(json!({
-                            "path": path,
-                            "bytes_sent": bytes.len(),
-                        })))
-                    }
-                    Err(e) => Ok(ToolOutput::fail(
-                        format!("write {}", path),
-                        format!("write failed: {}", e),
-                    )),
-                }
+        match sftp_write(&ctx.ssh, &ctx.session_id, path, bytes).await {
+            Ok(()) => {
+                let lines = content.lines().count();
+                Ok(ToolOutput::ok(
+                    format!("write {} ({} lines)", path, lines),
+                    format!("wrote {} bytes to {}", bytes.len(), path),
+                )
+                .with_metadata(json!({
+                    "path": path,
+                    "bytes_sent": bytes.len(),
+                })))
             }
-            Err(e) => Ok(ToolOutput::fail(
-                format!("write {}", path),
-                format!("SFTP unavailable: {}", e),
-            )),
+            Err(e) => Ok(ToolOutput::fail(format!("write {}", path), e)),
         }
     }
 }
@@ -334,152 +401,59 @@ impl AgentTool for EditFileTool {
         params: serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
-        let path = params
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Agent("Missing 'path' parameter".into()))?;
-        let old_content = params
-            .get("old_content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Agent("Missing 'old_content' parameter".into()))?;
-        let new_content = params
-            .get("new_content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Agent("Missing 'new_content' parameter".into()))?;
-        let replace_all = params
-            .get("replace_all")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let edit = match parse_edit_params(&params) {
+            Ok(p) => p,
+            Err(e) => return Ok(ToolOutput::fail("edit_file", e)),
+        };
 
-        if path.is_empty() {
-            return Ok(ToolOutput::fail("edit_file", "empty path"));
-        }
-        if old_content.is_empty() {
-            return Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                "old_content must not be empty",
-            ));
-        }
-
-        // 1. Read current file via SFTP
-        let current_bytes = match ctx.ssh.open_sftp(&ctx.session_id).await {
-            Ok(sftp) => match sftp.read(path).await {
-                Ok(data) => data,
-                Err(e) => {
-                    return Ok(ToolOutput::fail(
-                        format!("edit {}", path),
-                        format!("SFTP read failed: {}", e),
-                    ))
-                }
-            },
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("edit {}", path),
-                    format!("SFTP unavailable: {}", e),
-                ))
-            }
+        let current_bytes = match sftp_read(&ctx.ssh, &ctx.session_id, &edit.path).await {
+            Ok(data) => data,
+            Err(e) => return Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         };
 
         let current = match String::from_utf8(current_bytes) {
             Ok(s) => s,
             Err(_) => {
                 return Ok(ToolOutput::fail(
-                    format!("edit {}", path),
+                    format!("edit {}", edit.path),
                     "file is not valid UTF-8; edit_file requires text files",
                 ));
             }
         };
 
-        // 2. Locate match(es)
-        let occurrences = current.matches(old_content).count();
-        if occurrences == 0 {
-            return Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                "old_content not found in file. Read the file again to refresh.",
-            ));
-        }
-        if occurrences > 1 && !replace_all {
-            return Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                format!(
-                    "old_content matches {} times; pass replace_all=true or supply more context",
-                    occurrences
-                ),
-            ));
-        }
-
-        // 3. Apply replacement
-        let updated = if replace_all {
-            current.replace(old_content, new_content)
-        } else {
-            current.replacen(old_content, new_content, 1)
+        let (updated, occurrences) = match try_replace(
+            &current,
+            &edit.old_content,
+            &edit.new_content,
+            edit.replace_all,
+        ) {
+            Ok(result) => result,
+            Err(e) => return Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         };
 
-        if updated.len() > MAX_FILE_WRITE_BYTES {
-            return Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                format!(
-                    "result exceeds size limit ({} bytes; limit {})",
-                    updated.len(),
-                    MAX_FILE_WRITE_BYTES
-                ),
-            ));
-        }
-
-        // 4. Write back via SFTP
-        let write_result = async {
-            let sftp = ctx
-                .ssh
-                .open_sftp(&ctx.session_id)
-                .await
-                .map_err(|e| AppError::Ssh(format!("SFTP unavailable: {}", e)))?;
-
-            let mut file = sftp
-                .open_with_flags(
-                    path,
-                    OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
-                )
-                .await
-                .map_err(|e| AppError::Ssh(format!("open failed: {}", e)))?;
-
-            file.write_all(updated.as_bytes())
-                .await
-                .map_err(|e| AppError::Ssh(format!("write failed: {}", e)))?;
-
-            file.flush()
-                .await
-                .map_err(|e| AppError::Ssh(format!("flush failed: {}", e)))?;
-
-            Ok::<(), AppError>(())
-        }
-        .await;
-
-        match write_result {
+        match sftp_write(&ctx.ssh, &ctx.session_id, &edit.path, updated.as_bytes()).await {
             Ok(()) => Ok(ToolOutput::ok(
                 format!(
                     "edit {} ({} replacement{})",
-                    path,
+                    edit.path,
                     occurrences,
                     if occurrences == 1 { "" } else { "s" }
                 ),
                 format!(
                     "replaced {} occurrence(s) in {} ({} -> {} bytes)",
                     occurrences,
-                    path,
+                    edit.path,
                     current.len(),
                     updated.len()
                 ),
             )
             .with_metadata(json!({
-                "path": path,
+                "path": edit.path,
                 "occurrences": occurrences,
                 "old_bytes": current.len(),
                 "new_bytes": updated.len(),
             }))),
-            Err(e) => Ok(ToolOutput::fail(
-                format!("edit {}", path),
-                format!("write-back failed: {}", e),
-            )),
+            Err(e) => Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         }
     }
 }
@@ -777,6 +751,109 @@ fn directory_entries_metadata(entries: &[DirectoryEntryView]) -> Vec<serde_json:
 mod tests {
     use super::*;
     use crate::agent::tools::base64;
+
+    // ── try_replace tests ──
+
+    #[test]
+    fn try_replace_single_occurrence() {
+        let result = try_replace("hello world", "world", "there", false);
+        assert!(result.is_ok());
+        let (updated, occurrences) = result.unwrap();
+        assert_eq!(updated, "hello there");
+        assert_eq!(occurrences, 1);
+    }
+
+    #[test]
+    fn try_replace_all() {
+        let result = try_replace("a a a", "a", "b", true);
+        let (updated, occurrences) = result.unwrap();
+        assert_eq!(updated, "b b b");
+        assert_eq!(occurrences, 3);
+    }
+
+    #[test]
+    fn try_replace_not_found() {
+        let result = try_replace("hello", "world", "x", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+    }
+
+    #[test]
+    fn try_replace_multiple_without_replace_all() {
+        let result = try_replace("hello hello", "hello", "x", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("matches 2 times"));
+    }
+
+    #[test]
+    fn try_replace_result_too_large() {
+        // File is just under the limit, replacing a small sentinel pushes it over
+        let sentinel = "START";
+        let pad = "a".repeat((MAX_FILE_WRITE_BYTES - 20).max(1));
+        let current = format!("{}{}END", sentinel, pad);
+        assert!(current.len() < MAX_FILE_WRITE_BYTES);
+        let result = try_replace(&current, sentinel, &"b".repeat(30), false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exceeds size limit"));
+    }
+
+    #[test]
+    fn try_replace_new_content_can_be_empty() {
+        let result = try_replace("hello world", " world", "", false);
+        let (updated, occurrences) = result.unwrap();
+        assert_eq!(updated, "hello");
+        assert_eq!(occurrences, 1);
+    }
+
+    // ── parse_edit_params tests ──
+
+    fn edit_json(path: &str, old: &str, new: &str) -> serde_json::Value {
+        json!({"path": path, "old_content": old, "new_content": new})
+    }
+
+    #[test]
+    fn parse_edit_params_all_fields() {
+        let params = edit_json("/a.txt", "old", "new");
+        let p = parse_edit_params(&params).unwrap();
+        assert_eq!(p.path, "/a.txt");
+        assert_eq!(p.old_content, "old");
+        assert_eq!(p.new_content, "new");
+        assert!(!p.replace_all);
+    }
+
+    #[test]
+    fn parse_edit_params_replace_all_true() {
+        let mut params = edit_json("/a.txt", "old", "new");
+        params["replace_all"] = json!(true);
+        let p = parse_edit_params(&params).unwrap();
+        assert!(p.replace_all);
+    }
+
+    #[test]
+    fn parse_edit_params_missing_path() {
+        let params = json!({"old_content": "x", "new_content": "y"});
+        assert!(parse_edit_params(&params).is_err());
+    }
+
+    #[test]
+    fn parse_edit_params_missing_old_content() {
+        let params = json!({"path": "/a", "new_content": "y"});
+        assert!(parse_edit_params(&params).is_err());
+    }
+
+    #[test]
+    fn parse_edit_params_empty_path() {
+        let params = edit_json("", "old", "new");
+        assert!(parse_edit_params(&params).is_err());
+    }
+
+    #[test]
+    fn parse_edit_params_empty_old_content() {
+        let params = edit_json("/a.txt", "", "new");
+        assert!(parse_edit_params(&params).is_err());
+    }
+
+    // ── existing tests ──
 
     #[test]
     fn cmd_helpers_quote_path() {
