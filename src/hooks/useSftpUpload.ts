@@ -1,120 +1,46 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { sftpUploadFolderStream, sftpUploadStream } from '@/lib/tauri';
-import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
-import { formatFolderUploadStatus, type FolderStatusPayload } from './sftpUploadStatus';
-
-interface ProgressPayload {
-  uploadId: string;
-  written: number;
-  total: number;
-}
-
-interface DonePayload {
-  uploadId: string;
-}
-
-export interface UploadState {
-  status: 'uploading' | 'done' | 'error';
-  fileName: string;
-  written: number;
-  total: number;
-  statusText: string;
-}
+import { getErrorMessage } from '@/lib/sftp-helpers';
+import { formatFolderUploadStatus, type FolderUploadPhase } from './sftpUploadStatus';
+import { useTransferStore, type UploadState } from '@/stores/transferStore';
 
 export function useSftpUpload(sessionId: string, remotePath: string) {
-  const [uploadState, setUploadState] = useState<UploadState | null>(null);
-  const [folderStatus, setFolderStatus] = useState<string | null>(null);
-  const unlistenRef = useRef<UnlistenFn | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearTimer = useCallback(() => {
-    if (timeoutRef.current !== null) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-  }, []);
-
-  const cleanup = useCallback(() => {
-    unlistenRef.current?.();
-    unlistenRef.current = null;
-    clearTimer();
-  }, [clearTimer]);
+  const uploadState = useTransferStore((s) => s.upload);
+  const folderStatus = useTransferStore((s) => s.folderUpload);
 
   const uploadFile = useCallback(
     async (localPath: string, fileName: string, targetPath: string) => {
-      cleanup();
-
+      const { setUpload, setActiveUploadId, clearUploadAfter } = useTransferStore.getState();
       const uploadId = `${Date.now()}`;
 
-      const unlistenProgress = await listen<ProgressPayload>(
-        'sftp-upload-progress',
-        (event) => {
-          if (event.payload.uploadId !== uploadId) return;
-          const pct =
-            event.payload.total > 0
-              ? Math.round((event.payload.written * 100) / event.payload.total)
-              : 0;
-          setUploadState({
-            status: 'uploading',
-            fileName,
-            written: event.payload.written,
-            total: event.payload.total,
-            statusText: `上传 ${formatSize(event.payload.written)} / ${formatSize(event.payload.total)} (${pct}%)`,
-          });
-        },
-      );
-
-      const unlistenDone = await listen<DonePayload>(
-        'sftp-upload-done',
-        (event) => {
-          if (event.payload.uploadId !== uploadId) return;
-          setUploadState({
-            status: 'done',
-            fileName,
-            written: 0,
-            total: 0,
-            statusText: `${fileName} 上传完成`,
-          });
-          clearTimer();
-          timeoutRef.current = setTimeout(() => setUploadState(null), 3000);
-          cleanup();
-        },
-      );
-
-      unlistenRef.current = () => {
-        unlistenProgress();
-        unlistenDone();
-      };
+      setActiveUploadId(uploadId);
+      setUpload({
+        status: 'uploading',
+        fileName,
+        written: 0,
+        total: 0,
+        statusText: `正在上传 ${fileName} ...`,
+      });
 
       try {
-        setUploadState({
-          status: 'uploading',
-          fileName,
-          written: 0,
-          total: 0,
-          statusText: `正在上传 ${fileName} ...`,
-        });
-
         await sftpUploadStream(sessionId, targetPath, localPath, uploadId);
       } catch (err) {
-        setUploadState({
+        setUpload({
           status: 'error',
           fileName,
           written: 0,
           total: 0,
           statusText: `上传失败：${getErrorMessage(err)}`,
         });
-        clearTimer();
-        timeoutRef.current = setTimeout(() => setUploadState(null), 4000);
-        cleanup();
+        clearUploadAfter(4000);
       }
     },
-    [sessionId, cleanup, clearTimer],
+    [sessionId],
   );
 
   const uploadFolder = useCallback(async () => {
+    const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
     try {
       const folderPath = await open({
         directory: true,
@@ -124,61 +50,28 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
 
       const path = Array.isArray(folderPath) ? folderPath[0] : folderPath;
       const folderName = path.split(/[/\\]/).pop() || 'upload';
-
       const uploadId = `${Date.now()}`;
 
-      const unlistenProgress = await listen<ProgressPayload>(
-        'sftp-upload-progress',
-        (event) => {
-          if (event.payload.uploadId !== uploadId) return;
-          setFolderStatus(
-            formatFolderUploadStatus({
-              uploadId,
-              phase: 'uploading',
-              written: event.payload.written,
-              total: event.payload.total,
-            }),
-          );
-        },
+      setActiveFolderUploadId(uploadId);
+      setFolderUpload(
+        formatFolderUploadStatus({ uploadId, phase: 'checking' as FolderUploadPhase, percent: 0 }),
       );
 
-      const unlistenStatus = await listen<FolderStatusPayload>(
-        'sftp-folder-upload-status',
-        (event) => {
-          if (event.payload.uploadId !== uploadId) return;
-          setFolderStatus(formatFolderUploadStatus(event.payload));
-        },
-      );
-
-      const unlistenDone = await listen<DonePayload>(
-        'sftp-upload-done',
-        (event) => {
-          if (event.payload.uploadId !== uploadId) return;
-          setFolderStatus(null);
-        },
-      );
-
+      const targetPath = remotePath === '/' ? `/${folderName}` : `${remotePath}/${folderName}`;
       try {
-        setFolderStatus(formatFolderUploadStatus({ uploadId, phase: 'checking', percent: 0 }));
-        const targetPath = remotePath === '/' ? `/${folderName}` : `${remotePath}/${folderName}`;
         await sftpUploadFolderStream(sessionId, path, targetPath, uploadId);
       } finally {
-        setFolderStatus(null);
-        unlistenProgress();
-        unlistenStatus();
-        unlistenDone();
+        setFolderUpload(null);
+        setActiveFolderUploadId(null);
       }
     } catch (e) {
-      setFolderStatus(null);
+      setFolderUpload(null);
+      setActiveFolderUploadId(null);
       throw e;
     }
   }, [sessionId, remotePath]);
 
-  useEffect(() => {
-    return () => {
-      cleanup();
-    };
-  }, [cleanup]);
-
   return { uploadFile, uploadFolder, uploadState, folderStatus };
 }
+
+export type { UploadState };
