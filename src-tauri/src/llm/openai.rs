@@ -128,10 +128,7 @@ impl OpenAiProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<无法读取响应体>".into());
+            let body = read_error_body(response).await;
             return Err(AppError::Llm(format!("LLM 返回错误 {}: {}", status, body)));
         }
 
@@ -457,6 +454,21 @@ fn is_retryable(err: &AppError, conditions: &[RetryCondition]) -> bool {
 
 /// Try to extract an HTTP status code from an error message.
 /// Looks for patterns like "429" or "500" following "error" or "HTTP".
+/// 读取错误响应体，最多取前 128KB，并保留读取失败的原始错误信息。
+async fn read_error_body(response: reqwest::Response) -> String {
+    let max_bytes = 128 * 1024;
+    match response.text().await {
+        Ok(body) => {
+            if body.len() > max_bytes {
+                format!("{}...（已截断，原始大小 {} 字节）", &body[..max_bytes], body.len())
+            } else {
+                body
+            }
+        }
+        Err(e) => format!("<无法读取响应体: {}>", e),
+    }
+}
+
 fn extract_http_status(msg: &str) -> Option<u16> {
     // Pattern: "LLM 返回错误 429:" or "LLM HTTP 429:"
     for prefix in &["错误 ", "HTTP ", "错误"] {
