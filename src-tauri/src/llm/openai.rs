@@ -363,7 +363,7 @@ enum RetryCondition {
 
 /// Parse a comma-separated list of HTTP status codes/ranges.
 /// Examples: "429" → [Code(429)], "500-599" → [Range(500,599)], "408, 429, 500-599" → mixed.
-/// Whitespace is ignored. Invalid entries are silently skipped.
+/// Whitespace is ignored. Invalid entries are skipped with a warning. Reversed ranges (e.g. "599-500") are auto-corrected.
 fn parse_retry_conditions(input: &str) -> Vec<RetryCondition> {
     let mut conditions = Vec::new();
     for entry in input.split(',') {
@@ -372,11 +372,17 @@ fn parse_retry_conditions(input: &str) -> Vec<RetryCondition> {
             continue;
         }
         if let Some((lo, hi)) = entry.split_once('-') {
-            if let (Ok(lo), Ok(hi)) = (lo.trim().parse::<u16>(), hi.trim().parse::<u16>()) {
-                conditions.push(RetryCondition::Range(lo, hi));
+            match (lo.trim().parse::<u16>(), hi.trim().parse::<u16>()) {
+                (Ok(lo), Ok(hi)) => {
+                    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
+                    conditions.push(RetryCondition::Range(lo, hi));
+                }
+                _ => log::warn!("忽略无效的重试范围配置: \"{}\"", entry),
             }
         } else if let Ok(code) = entry.parse::<u16>() {
             conditions.push(RetryCondition::Code(code));
+        } else {
+            log::warn!("忽略无效的重试状态码配置: \"{}\"", entry);
         }
     }
     conditions
