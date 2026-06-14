@@ -102,7 +102,7 @@ pub struct LlmConfig {
     #[serde(default = "default_temperature")]
     pub temperature: f32,
     /// Maximum number of automatic retries on transient LLM errors (0 = no retry).
-    #[serde(default)]
+    #[serde(default = "default_max_retries")]
     pub max_retries: u32,
     /// Delay between retries in seconds.
     #[serde(default = "default_retry_delay")]
@@ -119,6 +119,10 @@ fn default_provider() -> ProviderType {
 
 fn default_temperature() -> f32 {
     0.1
+}
+
+fn default_max_retries() -> u32 {
+    1
 }
 
 fn default_retry_delay() -> f32 {
@@ -227,7 +231,7 @@ mod tests {
         // API key should be empty when deserialized from file
         assert_eq!(config.api_key, "");
         // Retry fields get defaults when not present
-        assert_eq!(config.max_retries, 0);
+        assert_eq!(config.max_retries, 1);
         assert!((config.retry_delay_secs - 5.0).abs() < f32::EPSILON);
         assert_eq!(config.retry_http_statuses, "408, 429, 500-599");
     }

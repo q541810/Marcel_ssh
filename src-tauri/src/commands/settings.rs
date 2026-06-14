@@ -54,10 +54,13 @@ pub async fn config_save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
-    // Validate retry conditions format
+    // Validate retry settings
     if let Some(ref llm) = settings.llm_config {
         if let Err(err) = validate_retry_conditions(&llm.retry_http_statuses) {
             return Err(AppError::Config(format!("重试条件格式错误: {}", err)));
+        }
+        if !llm.retry_delay_secs.is_finite() || llm.retry_delay_secs < 0.0 {
+            return Err(AppError::Config("重试间隔必须为非负有限数字".into()));
         }
     }
 
