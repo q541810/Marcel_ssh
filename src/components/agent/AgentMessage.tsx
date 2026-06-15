@@ -101,7 +101,7 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
     }
     return (
       <div className="flex justify-center my-1">
-        <div className="text-xs text-zinc-500 italic px-2 py-1">
+        <div className="text-xs text-zinc-500 italic px-2 py-1 break-words [overflow-wrap:anywhere]">
           {message.content}
         </div>
       </div>

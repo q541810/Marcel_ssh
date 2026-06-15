@@ -313,7 +313,7 @@ export default function AgentPanel() {
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>连接失败。</p>
             {activeSession.errorMessage && (
-              <p className="mt-1 text-zinc-600">
+              <p className="mt-1 text-zinc-600 break-words [overflow-wrap:anywhere]">
                 {activeSession.errorMessage}
               </p>
             )}

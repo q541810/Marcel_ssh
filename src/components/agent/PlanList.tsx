@@ -210,7 +210,7 @@ function StepItem({ item, index }: { item: PlanItem; index: number }) {
 
         {/* Error message for failed items */}
         {item.status === 'failed' && item.error && (
-          <div className="mt-0.5 ml-5 text-[10px] text-red-400/80 truncate">
+          <div className="mt-0.5 ml-5 text-[10px] text-red-400/80 break-words [overflow-wrap:anywhere] max-h-[4.5em] overflow-y-auto">
             {item.error}
           </div>
         )}
