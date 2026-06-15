@@ -102,6 +102,6 @@ pub async fn config_save_settings(
     };
     // Write lock released — perform disk I/O without blocking readers.
     let path = AppSettings::default_file(&state.config_dir);
-    snapshot.save_to_path(&path)?;
+    tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
     Ok(())
 }

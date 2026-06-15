@@ -34,7 +34,7 @@ pub async fn config_save_connection(
 
     // Persist
     let path = ConnectionStore::default_file(&state.config_dir);
-    store.save_to_path(&path)?;
+    tokio::task::block_in_place(|| store.save_to_path(&path))?;
 
     Ok(id)
 }
@@ -51,7 +51,7 @@ pub async fn config_delete_connection(
         return Err(AppError::Config(format!("未找到连接: {}", id)));
     }
     let path = ConnectionStore::default_file(&state.config_dir);
-    store.save_to_path(&path)?;
+    tokio::task::block_in_place(|| store.save_to_path(&path))?;
     // Best-effort: also purge any stored password from the keychain
     if let Err(e) = keychain::delete_password(&id) {
         log::warn!("清除密钥链条目失败（id={}): {}", id, e);
