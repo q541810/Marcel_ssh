@@ -204,8 +204,18 @@ pub(crate) async fn run_agent_loop(
         let _ = persister.save_msg("assistant", &assistant_msg.content, None, None);
         messages.push(assistant_msg);
 
-        // 4. Execute each tool call via the dispatcher
-        let tool_ctx = ToolContext::new(ssh.clone(), session_id.clone(), app.clone());
+        // 4. Execute each tool call via the dispatcher.
+        //    The security policy is built fresh from current settings (including
+        //    user-defined custom_protected_paths) and attached to the context.
+        let tool_ctx = {
+            let settings = state.settings.read().await;
+            let policy = std::sync::Arc::new(
+                crate::agent::sandbox::SecurityPolicy::from_user_settings(
+                    &settings.custom_protected_paths,
+                ),
+            );
+            ToolContext::new(ssh.clone(), session_id.clone(), app.clone()).with_policy(policy)
+        };
         for tc in tool_calls {
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

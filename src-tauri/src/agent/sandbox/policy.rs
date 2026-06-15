@@ -20,15 +20,29 @@ pub struct SecurityPolicy {
     pub blocked_patterns: Vec<String>,
     pub blocked_base_commands: Vec<String>,
     pub protected_paths: Vec<String>,
+    #[serde(default)]
+    pub custom_protected_paths: Vec<String>,
     pub auto_approve_level: RiskLevel,
 }
 
 impl SecurityPolicy {
-    /// Check whether `path` falls under any protected system directory.
+    /// Check whether `path` falls under any protected system directory
+    /// (built-in or user-defined).
     pub fn is_protected_path(&self, path: &str) -> bool {
         let norm = normalize_path(path);
         let np = Path::new(&norm);
-        self.protected_paths.iter().any(|prot| np.starts_with(prot))
+        self.protected_paths
+            .iter()
+            .chain(self.custom_protected_paths.iter())
+            .any(|prot| np.starts_with(prot))
+    }
+
+    /// Build a policy from the user's persisted settings, layering
+    /// `custom_protected_paths` on top of the built-in defaults.
+    pub fn from_user_settings(custom_paths: &[String]) -> Self {
+        let mut p = Self::default();
+        p.custom_protected_paths = custom_paths.to_vec();
+        p
     }
 }
 impl Default for SecurityPolicy {
@@ -60,6 +74,7 @@ impl Default for SecurityPolicy {
                 "/proc".into(),
                 "/dev".into(),
             ],
+            custom_protected_paths: vec![],
             auto_approve_level: RiskLevel::ReadOnly,
         }
     }
@@ -259,5 +274,23 @@ mod tests {
         // /etc/foo/../cron.d/evil still falls under /etc after normalization
         assert!(policy.is_protected_path("/etc/foo/../cron.d/evil"));
         assert!(policy.is_protected_path("/etc//cron.d/evil"));
+    }
+
+    #[test]
+    fn is_protected_path_checks_custom_protected_paths() {
+        let mut policy = SecurityPolicy::default();
+        policy.custom_protected_paths = vec!["/home/user/.ssh".into(), "/var/log".into()];
+        assert!(policy.is_protected_path("/home/user/.ssh/authorized_keys"));
+        assert!(policy.is_protected_path("/var/log/secure"));
+        // Built-in paths still work alongside custom ones
+        assert!(policy.is_protected_path("/etc/passwd"));
+        assert!(!policy.is_protected_path("/home/user/.config"));
+    }
+
+    #[test]
+    fn from_user_settings_populates_custom_paths() {
+        let policy = SecurityPolicy::from_user_settings(&["/srv/prod".into()]);
+        assert!(policy.is_protected_path("/srv/prod/db.sqlite"));
+        assert!(policy.is_protected_path("/etc/passwd"));
     }
 }

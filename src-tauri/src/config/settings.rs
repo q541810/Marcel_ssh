@@ -270,6 +270,10 @@ pub struct AppSettings {
     /// Workspace layout intent for left/main/right columns.
     #[serde(default)]
     pub workspace_layout: WorkspaceLayoutSettings,
+    /// User-defined protected paths. Writes to anything under these paths
+    /// require explicit user approval, same as built-in `/etc`, `/boot`, etc.
+    #[serde(default)]
+    pub custom_protected_paths: Vec<String>,
 }
 
 fn default_file_manager_path() -> String {
@@ -336,6 +340,7 @@ impl Default for AppSettings {
             whip_phrases: default_whip_phrases(),
             notification_settings: NotificationSettings::default(),
             workspace_layout: WorkspaceLayoutSettings::default(),
+            custom_protected_paths: vec![],
         }
     }
 }

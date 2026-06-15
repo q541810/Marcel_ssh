@@ -105,3 +105,70 @@ pub async fn config_save_settings(
     tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
     Ok(())
 }
+
+/// Validate a candidate list of user-defined protected paths.
+/// Returns the first error message, or Ok(()) if all entries are well-formed.
+#[tauri::command]
+pub async fn config_validate_custom_protected_paths(paths: Vec<String>) -> Result<(), String> {
+    for raw in &paths {
+        let path = raw.trim();
+        if path.is_empty() {
+            return Err("路径不能为空".into());
+        }
+        if !path.starts_with('/') {
+            return Err(format!("路径必须以 / 开头：{}", path));
+        }
+        if path.contains('\0') {
+            return Err(format!("路径不能包含 NUL 字节：{}", path));
+        }
+        if path.split('/').any(|c| c == "..") {
+            return Err(format!("路径不能包含 .. 段：{}", path));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::runtime::Runtime;
+
+    fn validate(paths: Vec<String>) -> Result<(), String> {
+        Runtime::new()
+            .unwrap()
+            .block_on(config_validate_custom_protected_paths(paths))
+    }
+
+    #[test]
+    fn rejects_empty_path() {
+        assert!(validate(vec!["/etc".into(), "".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_relative_path() {
+        assert!(validate(vec!["etc".into()]).is_err());
+        assert!(validate(vec!["./etc".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_nul_byte() {
+        assert!(validate(vec!["/etc\0".into()]).is_err());
+    }
+
+    #[test]
+    fn rejects_dotdot_component() {
+        assert!(validate(vec!["/etc/../shadow".into()]).is_err());
+        assert!(validate(vec!["/etc/foo/..".into()]).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_paths() {
+        assert!(validate(vec!["/etc".into(), "/home/user/.ssh".into()]).is_ok());
+        assert!(validate(vec!["/var/log".into()]).is_ok());
+    }
+
+    #[test]
+    fn accepts_empty_list() {
+        assert!(validate(vec![]).is_ok());
+    }
+}
