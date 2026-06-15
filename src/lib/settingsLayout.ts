@@ -1,4 +1,4 @@
-export type SettingsLayoutMode = 'compact' | 'normal' | 'wide';
+export type SettingsLayoutMode = 'compact' | 'normal' | 'wide' | 'extraWide';
 export type SettingsItemLayout = 'stacked' | 'inline';
 
 export interface SettingsLayout {
@@ -36,13 +36,25 @@ export function resolveSettingsLayout(width: number): SettingsLayout {
     };
   }
 
+  if (width < 1920) {
+    return {
+      mode: 'wide',
+      sidebarWidth: 304,
+      contentMaxWidth: 1280,
+      contentPaddingX: 40,
+      sectionColumns: 2,
+      itemLayout: 'inline',
+      labelWidth: 192,
+    };
+  }
+
   return {
-    mode: 'wide',
-    sidebarWidth: 304,
-    contentMaxWidth: 1280,
-    contentPaddingX: 40,
+    mode: 'extraWide',
+    sidebarWidth: 320,
+    contentMaxWidth: 1600,
+    contentPaddingX: 48,
     sectionColumns: 2,
     itemLayout: 'inline',
-    labelWidth: 192,
+    labelWidth: 224,
   };
 }

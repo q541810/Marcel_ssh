@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { preCheckCustomPath } from './CustomProtectedPathsSection';
+import { preCheckCustomPath } from './AgentPolicySection';
 
 describe('preCheckCustomPath', () => {
   it('returns null for empty string', () => {

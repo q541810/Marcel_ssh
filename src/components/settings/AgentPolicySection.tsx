@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
+import { Trash2 } from 'lucide-react';
 import type { CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
@@ -6,6 +7,20 @@ import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+
+const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
+  { path: '/etc', reason: '系统配置' },
+  { path: '/boot', reason: '启动分区' },
+  { path: '/sys', reason: 'sysfs 设备' },
+  { path: '/proc', reason: '进程信息' },
+  { path: '/dev', reason: '设备文件' },
+];
+
+export function preCheckCustomPath(trimmed: string, existing: string[]): string | null {
+  if (!trimmed) return null;
+  if (existing.includes(trimmed)) return `路径已存在：${trimmed}`;
+  return null;
+}
 
 function ListModeButton({
   value,
@@ -55,6 +70,29 @@ export function AgentPolicySection() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
+
+  // Custom protected paths
+  const customPaths = settings.customProtectedPaths ?? [];
+  const [draftPath, setDraftPath] = useState('');
+  const [pathError, setPathError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleAddProtectedPath = async () => {
+    const trimmed = draftPath.trim();
+    if (!trimmed) return;
+    const localErr = preCheckCustomPath(trimmed, customPaths);
+    if (localErr) { setPathError(localErr); return; }
+    const err = await tauri.validateCustomProtectedPaths([trimmed]);
+    if (err) { setPathError(err); return; }
+    setPathError(null);
+    setDraftPath('');
+    update({ customProtectedPaths: [...customPaths, trimmed] });
+    inputRef.current?.focus();
+  };
+
+  const handleRemoveProtectedPath = (path: string) => {
+    update({ customProtectedPaths: customPaths.filter((p) => p !== path) });
+  };
 
   const handleAddCommand = () => {
     const v = newCommand.trim();
@@ -224,6 +262,66 @@ export function AgentPolicySection() {
               </div>
             </div>
           )}
+        </div>
+      </SettingItem>
+
+      <SettingItem
+        id="cmd-protected-paths"
+        label="受保护路径"
+        description="Agent 在这些路径下的写操作会触发用户审批。内置 /etc、/boot 等已默认保护。"
+        sectionId="settings-command-policy"
+        keywords={['protected', 'paths', '受保护', '路径', 'agent', '审批', '命令执行策略']}
+      >
+        <div className="flex-1 space-y-3 min-w-0">
+          <div>
+            <p className="text-xs text-zinc-500 mb-1">内置保护路径（只读）</p>
+              <ul className="text-xs text-zinc-400 flex flex-wrap gap-x-5 gap-y-0.5">
+                {BUILT_IN_PROTECTED.map((p) => (
+                  <li key={p.path} className="whitespace-nowrap">
+                    <code className="text-indigo-300">{p.path}</code>
+                    <span className="text-zinc-500"> — {p.reason}</span>
+                  </li>
+                ))}
+              </ul>
+          </div>
+
+          <div>
+            <p className="text-xs text-zinc-500 mb-1">自定义路径</p>
+            <div className="flex gap-2 mb-1.5">
+              <input
+                ref={inputRef}
+                type="text"
+                value={draftPath}
+                onChange={(e) => { if (pathError) setPathError(null); setDraftPath(e.target.value); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void handleAddProtectedPath(); } }}
+                placeholder="/home/user/.ssh"
+                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              />
+              <Button variant="secondary" size="sm" onClick={() => void handleAddProtectedPath()} disabled={!draftPath.trim()}>
+                添加
+              </Button>
+            </div>
+            {pathError && <p className="text-xs text-red-400 mb-1.5">{pathError}</p>}
+            {customPaths.length === 0 ? (
+              <p className="text-xs text-zinc-500 italic px-1">无自定义路径</p>
+            ) : (
+              <ul className="text-xs space-y-1">
+                {customPaths.map((p) => (
+                  <li key={p} className="flex items-center justify-between gap-2 rounded-md bg-zinc-800 px-2 py-1">
+                    <code className="text-indigo-300 truncate">{p}</code>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveProtectedPath(p)}
+                      className="text-zinc-500 hover:text-red-400 transition-colors flex-shrink-0"
+                      title={`移除 ${p}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </SettingItem>
     </Card>

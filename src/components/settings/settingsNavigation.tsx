@@ -18,7 +18,6 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-llm-retry': 'full',
   'settings-command-policy': 'full',
   'settings-agent-system-prompt': 'full',
-  'settings-custom-protected-paths': 'full',
   'settings-notification': 'half',
   'settings-experimental': 'half',
   'settings-transfer': 'half',
@@ -45,7 +44,6 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     sections: [
       'settings-command-policy',
       'settings-agent-system-prompt',
-      'settings-custom-protected-paths',
       'settings-notification',
     ],
   },
@@ -75,7 +73,6 @@ export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   agent: [
     'settings-command-policy',
     'settings-agent-system-prompt',
-    'settings-custom-protected-paths',
     'settings-notification',
   ],
   tools: ['settings-experimental'],
