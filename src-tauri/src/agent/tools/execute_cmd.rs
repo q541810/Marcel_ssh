@@ -13,6 +13,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 use std::time::Duration;
+use zeroize::Zeroize;
 
 use crate::agent::sandbox::{self, RiskLevel, Sandbox};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
@@ -110,6 +111,7 @@ impl AgentTool for ExecuteCommandTool {
         let risk = sandbox::assess_risk(command);
 
         // Auto-inject password for sudo commands when running as non-root
+        let mut sudo_password: Option<String> = None;
         let final_command = if is_sudo_command(command) {
             match lookup_password(ctx).await {
                 Some(password) => {
@@ -118,6 +120,7 @@ impl AgentTool for ExecuteCommandTool {
                         "execute_command: sudo auto-fill enabled for cmd='{}'",
                         command
                     );
+                    sudo_password = Some(password);
                     rewritten
                 }
                 None => {
@@ -147,7 +150,16 @@ impl AgentTool for ExecuteCommandTool {
 
         let timeout = Duration::from_secs(timeout_secs);
 
-        match ctx.exec_timed(&final_command, timeout).await {
+        let exec_result = ctx.exec_timed(&final_command, timeout).await;
+
+        // Zeroize password and rewritten command immediately after execution
+        if let Some(ref mut p) = sudo_password {
+            p.zeroize();
+        }
+        let mut cmd = final_command;
+        cmd.zeroize();
+
+        match exec_result {
             Ok((output, was_timeout)) => {
                 let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
                 if was_timeout {
