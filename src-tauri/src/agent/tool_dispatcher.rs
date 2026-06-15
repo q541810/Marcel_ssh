@@ -125,6 +125,25 @@ impl ToolDispatcher {
                 .and_then(|v| v.as_str())
                 .map(assess_risk)
                 .unwrap_or_else(|| tool.risk_level()),
+            "write_file" | "edit_file" => {
+                let base_risk = tool.risk_level();
+                let path_hits_protected = tc
+                    .arguments
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .map(|path| {
+                        ctx.policy
+                            .as_ref()
+                            .map(|p| p.is_protected_path(path))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
+                if path_hits_protected {
+                    RiskLevel::HighRisk
+                } else {
+                    base_risk
+                }
+            }
             _ => tool.risk_level(),
         };
         let requires_default_approval = tool.requires_approval_by_default();

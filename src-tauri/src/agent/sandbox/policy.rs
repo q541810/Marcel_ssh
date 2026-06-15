@@ -23,6 +23,14 @@ pub struct SecurityPolicy {
     pub auto_approve_level: RiskLevel,
 }
 
+impl SecurityPolicy {
+    /// Check whether `path` falls under any protected system directory.
+    pub fn is_protected_path(&self, path: &str) -> bool {
+        let norm = normalize_path(path);
+        let np = Path::new(&norm);
+        self.protected_paths.iter().any(|prot| np.starts_with(prot))
+    }
+}
 impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
@@ -213,5 +221,43 @@ impl Sandbox {
 impl Default for Sandbox {
     fn default() -> Self {
         Self::new(SecurityPolicy::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_protected_path_matches_known_protected_dirs() {
+        let policy = SecurityPolicy::default();
+        for protected in &policy.protected_paths {
+            let path = format!("{}/some/file.txt", protected);
+            assert!(
+                policy.is_protected_path(&path),
+                "expected `{}` to be detected as protected",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn is_protected_path_rejects_unrelated_paths() {
+        let policy = SecurityPolicy::default();
+        for path in ["/home/user/x.txt", "/tmp/foo", "/var/tmp/bar"] {
+            assert!(
+                !policy.is_protected_path(path),
+                "expected `{}` to NOT be protected",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn is_protected_path_normalizes_relative_components() {
+        let policy = SecurityPolicy::default();
+        // /etc/foo/../cron.d/evil still falls under /etc after normalization
+        assert!(policy.is_protected_path("/etc/foo/../cron.d/evil"));
+        assert!(policy.is_protected_path("/etc//cron.d/evil"));
     }
 }
