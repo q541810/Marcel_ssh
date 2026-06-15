@@ -200,4 +200,62 @@ describe('conversationStore', () => {
     await expect(useConversationStore.getState().rollbackToMessage('conv-1', 'm1')).rejects.toThrow('db failed');
     expect(useConversationStore.getState().messages['conv-1'].map((m) => m.id)).toEqual(['m1', 'm2']);
   });
+
+  describe('clearExecutingToolFlags', () => {
+    it('clears isExecuting on tool messages across all conversations', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm1', role: 'user', content: 'hi' }),
+            makeMessage({ id: 'm2', role: 'tool', content: 'running', isExecuting: true }),
+          ],
+          'conv-2': [
+            makeMessage({ id: 'm3', role: 'tool', content: 'also running', isExecuting: true }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().clearExecutingToolFlags();
+
+      const state = useConversationStore.getState();
+      expect(state.messages['conv-1'][0].isExecuting).toBeUndefined();
+      expect(state.messages['conv-1'][1].isExecuting).toBe(false);
+      expect(state.messages['conv-2'][0].isExecuting).toBe(false);
+    });
+
+    it('leaves completed tool messages untouched', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm1', role: 'tool', content: 'done', isExecuting: false }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().clearExecutingToolFlags();
+
+      const state = useConversationStore.getState();
+      expect(state.messages['conv-1'][0].isExecuting).toBe(false);
+    });
+
+    it('does not touch non-tool messages', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm1', role: 'user', content: 'hi' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'reply', isLoading: true }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().clearExecutingToolFlags();
+
+      const state = useConversationStore.getState();
+      expect(state.messages['conv-1'][0].isLoading).toBeUndefined();
+      expect(state.messages['conv-1'][1].isLoading).toBe(true);
+    });
+  });
 });

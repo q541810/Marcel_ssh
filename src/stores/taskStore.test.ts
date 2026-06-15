@@ -1,6 +1,22 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useTaskStore } from '@/stores/taskStore';
-import type { AgentTaskPlan } from '@/lib/types';
+import { useConversationStore } from '@/stores/conversationStore';
+import { cleanupTaskListeners } from '@/stores/agentStreamManager';
+import type { AgentTaskPlan, AgentMessage } from '@/lib/types';
+
+const { agentStopTask, cleanupTaskListenersMock } = vi.hoisted(() => ({
+  agentStopTask: vi.fn(),
+  cleanupTaskListenersMock: vi.fn(),
+}));
+
+vi.mock('@/lib/tauri', () => ({
+  agentStopTask,
+}));
+vi.mock('@/stores/agentStreamManager', () => ({
+  attachStreamListener: vi.fn(),
+  attachPlanListener: vi.fn(),
+  cleanupTaskListeners: cleanupTaskListenersMock,
+}));
 
 describe('taskStore', () => {
   beforeEach(() => {
@@ -12,6 +28,12 @@ describe('taskStore', () => {
       plans: {},
       plansDirty: false,
     });
+    useConversationStore.setState({
+      conversations: {},
+      messages: {},
+      activeConversationId: null,
+    });
+    vi.clearAllMocks();
   });
 
   it('has correct initial state', () => {
@@ -126,5 +148,116 @@ describe('taskStore', () => {
 
   it('getActivePlan returns null when no active task', () => {
     expect(useTaskStore.getState().getActivePlan()).toBeNull();
+  });
+
+  describe('stopTask', () => {
+    it('clears executing tool messages before unlistening stream events', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      const runningTool: AgentMessage = {
+        id: 'tool-1',
+        role: 'tool',
+        content: 'executing',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+      };
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: { 'conv-1': [runningTool] },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      // Tool message's isExecuting was cleared
+      expect(useConversationStore.getState().messages['conv-1'][0].isExecuting).toBe(false);
+      // The clear happened BEFORE cleanupTaskListeners
+      const clearOrder: string[] = [];
+      cleanupTaskListenersMock.mockImplementation(() => {
+        clearOrder.push('cleanup');
+      });
+      const origClear = useConversationStore.getState().clearExecutingToolFlags;
+      useConversationStore.setState({
+        clearExecutingToolFlags: () => {
+          clearOrder.push('clear');
+          origClear();
+        },
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      expect(clearOrder.indexOf('clear')).toBeLessThan(clearOrder.indexOf('cleanup'));
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+    });
+
+    it('marks the task as cancelled and clears active', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      const task = useTaskStore.getState().tasks['task-1'];
+      expect(task.status).toBe('cancelled');
+      expect(useTaskStore.getState().activeTaskId).toBeNull();
+    });
+
+    it('clears tool messages even when agentStopTask throws', async () => {
+      agentStopTask.mockRejectedValue(new Error('backend gone'));
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            {
+              id: 'tool-1',
+              role: 'tool',
+              content: 'executing',
+              timestamp: new Date().toISOString(),
+              isExecuting: true,
+            },
+          ],
+        },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await expect(useTaskStore.getState().stopTask('task-1')).rejects.toThrow('backend gone');
+
+      expect(useConversationStore.getState().messages['conv-1'][0].isExecuting).toBe(false);
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+    });
   });
 });

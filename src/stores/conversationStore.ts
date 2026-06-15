@@ -28,6 +28,7 @@ export interface ConversationState {
   appendMessages: (conversationId: string, messages: AgentMessage[]) => void;
   updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => void;
   clearAllAssistantFlags: () => void;
+  clearExecutingToolFlags: () => void;
   buildLlmHistory: (conversationId: string) => Array<{role: string, content: string, reasoningContent?: string}>;
 }
 
@@ -272,6 +273,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             m.role === 'assistant' && (m.isThinking || m.isLoading)
               ? { ...m, isThinking: false, isLoading: false }
               : m,
+          ),
+        ]),
+      ),
+    }));
+  },
+
+  clearExecutingToolFlags: () => {
+    set((state) => ({
+      messages: Object.fromEntries(
+        Object.entries(state.messages).map(([convId, msgs]) => [
+          convId,
+          msgs.map((m) =>
+            m.role === 'tool' && m.isExecuting ? { ...m, isExecuting: false } : m,
           ),
         ]),
       ),

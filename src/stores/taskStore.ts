@@ -110,6 +110,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       await tauri.agentStopTask(taskId);
     } finally {
+      // Clear in-flight tool cards before unlistening. The backend only sends a cancel
+      // signal and a late StreamEvent::Done after the in-progress tool finishes; the
+      // listener cleanup below would close the channel before that Done arrives, so
+      // handleDone's defensive filter never runs and isExecuting tool messages would
+      // stay stuck on their spinner.
+      useConversationStore.getState().clearExecutingToolFlags();
       cleanupTaskListeners(taskId);
       set((state) => {
         const task = state.tasks[taskId];
