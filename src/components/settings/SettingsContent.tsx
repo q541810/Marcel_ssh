@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useSearchRegistry } from './helpers';
 import { AgentPolicySection } from './AgentPolicySection';
 import { AgentSystemPromptSection } from './AgentSystemPromptSection';
+import CustomProtectedPathsSection from './CustomProtectedPathsSection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
 import { ModelServiceSection } from './ModelServiceSection';
@@ -50,6 +51,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-llm-retry', element: <ModelRetrySection /> },
     { id: 'settings-command-policy', element: <AgentPolicySection /> },
     { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
+    { id: 'settings-custom-protected-paths', element: <CustomProtectedPathsSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },
     { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },
     { id: 'settings-transfer', element: <TransferSection /> },

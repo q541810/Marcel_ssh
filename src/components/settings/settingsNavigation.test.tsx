@@ -20,6 +20,7 @@ describe('settingsNavigation', () => {
     expect(allSections).toContain('settings-display');
     expect(allSections).toContain('settings-llm');
     expect(allSections).toContain('settings-command-policy');
+    expect(allSections).toContain('settings-custom-protected-paths');
     expect(allSections).toContain('settings-notification');
     expect(allSections).toContain('settings-experimental');
     expect(allSections).toContain('settings-transfer');
