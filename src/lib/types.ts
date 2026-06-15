@@ -265,6 +265,9 @@ export interface AppSettings {
   whipPhrases: string[];
   notificationSettings: NotificationSettings;
   workspaceLayout: WorkspaceLayoutSettings;
+  /** User-defined protected paths. Writes to anything under these paths
+   * require explicit user approval, same as built-in `/etc`, `/boot`, etc. */
+  customProtectedPaths: string[];
 }
 
 // LLM stream events

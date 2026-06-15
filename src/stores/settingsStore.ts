@@ -55,6 +55,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   whipPhrases: DEFAULT_WHIP_PHRASES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
+  customProtectedPaths: [],
 };
 
 interface SettingsState {

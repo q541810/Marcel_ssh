@@ -151,6 +151,11 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke('config_save_settings', { settings });
 }
 
+export async function validateCustomProtectedPaths(paths: string[]): Promise<string | null> {
+  // returns null if OK, error message string otherwise
+  return invoke('config_validate_custom_protected_paths', { paths });
+}
+
 // Password / keychain commands
 
 export async function savePassword(
