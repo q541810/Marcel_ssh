@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 
+let uploadTimerId: ReturnType<typeof setTimeout> | null = null;
+let downloadTimerId: ReturnType<typeof setTimeout> | null = null;
+
 export interface UploadState {
   status: 'uploading' | 'done' | 'error';
   fileName: string;
@@ -44,20 +47,40 @@ export const useTransferStore = create<TransferState>((set) => ({
   activeDownloadId: null,
   activeFolderUploadId: null,
 
-  setUpload: (state) => set({ upload: state }),
-  setDownload: (state) => set({ download: state }),
+  setUpload: (state) => {
+    if (uploadTimerId !== null) {
+      clearTimeout(uploadTimerId);
+      uploadTimerId = null;
+    }
+    set({ upload: state });
+  },
+  setDownload: (state) => {
+    if (downloadTimerId !== null) {
+      clearTimeout(downloadTimerId);
+      downloadTimerId = null;
+    }
+    set({ download: state });
+  },
   setFolderUpload: (status) => set({ folderUpload: status }),
   setActiveUploadId: (id) => set({ activeUploadId: id }),
   setActiveDownloadId: (id) => set({ activeDownloadId: id }),
   setActiveFolderUploadId: (id) => set({ activeFolderUploadId: id }),
 
   clearUploadAfter: (ms) => {
-    setTimeout(() => {
+    if (uploadTimerId !== null) {
+      clearTimeout(uploadTimerId);
+    }
+    uploadTimerId = setTimeout(() => {
+      uploadTimerId = null;
       set({ upload: null });
     }, ms);
   },
   clearDownloadAfter: (ms) => {
-    setTimeout(() => {
+    if (downloadTimerId !== null) {
+      clearTimeout(downloadTimerId);
+    }
+    downloadTimerId = setTimeout(() => {
+      downloadTimerId = null;
       set({ download: null });
     }, ms);
   },
