@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { open } from '@tauri-apps/plugin-dialog';
+import { stat } from '@tauri-apps/plugin-fs';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   sftpListDir,
@@ -8,10 +9,11 @@ import {
   sftpRemove,
   sftpRemoveViaShell,
   sftpRename,
+  sftpExtractArchive,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import { formatSize, modeToString, getErrorMessage } from '@/lib/sftp-helpers';
-import { MAX_EDITOR_FILE_SIZE, BINARY_EXTENSIONS } from '@/lib/constants';
+import { MAX_EDITOR_FILE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
@@ -45,6 +47,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
   const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
   const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
+  const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadDirectory = useCallback(async (path: string) => {
@@ -257,9 +260,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   }, [sessionId, currentPath, loadDirectory]);
 
   // 拖拽上传：使用 useFileDrop hook，上传中时禁用
-  const handleFileDrop = useCallback((paths: string[]) => {
+  const handleFileDrop = useCallback(async (paths: string[]) => {
     if (isUploading) return;
     if (paths.length === 1) {
+      try {
+        const info = await stat(paths[0]);
+        if (info.isDirectory) {
+          const folderName = paths[0].split(/[/\\]/).pop() || 'upload';
+          setPendingFolderUpload({ localPath: paths[0], folderName });
+          return;
+        }
+      } catch {
+        // stat 失败，降级为普通上传
+      }
       handleDropUpload(paths);
     } else {
       setPendingDropFiles(paths);
@@ -338,6 +351,22 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       await writeText(entryPath);
     } catch {
       // ignore
+    }
+  };
+
+  const handleExtract = async (targetDir: string) => {
+    const entry = extractConfirm;
+    if (!entry) return;
+    setExtractConfirm(null);
+    const archivePath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    try {
+      setLoading(true);
+      await sftpExtractArchive(sessionId, archivePath, targetDir);
+      await loadDirectory(currentPath);
+    } catch (err) {
+      setError(`解压失败：${getErrorMessage(err)}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -665,6 +694,18 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               >
                 下载
               </button>
+              {isArchiveFile(menuEntry.name) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setExtractConfirm(menuEntry);
+                    setMenuEntry(null);
+                  }}
+                  className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                >
+                  解压
+                </button>
+              )}
             </>
           )}
           <button
@@ -869,6 +910,49 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => setPendingFolderUpload(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {extractConfirm && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+            <h3 className="text-sm font-semibold text-zinc-200 mb-2">解压文件</h3>
+            <p className="text-xs text-zinc-400 mb-4">
+              将「{extractConfirm.name}」解压到 <span className="text-zinc-300">{currentPath}</span>，选择解压位置：
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const stem = archiveStem(extractConfirm.name);
+                  const target = currentPath === '/' ? `/${stem}` : `${currentPath}/${stem}`;
+                  handleExtract(target);
+                }}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">解压到同名子文件夹</span>
+                <span className="block text-zinc-500 mt-0.5">在当前目录下创建「{archiveStem(extractConfirm.name)}」文件夹并解压到其中</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleExtract(currentPath)}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">解压到当前目录</span>
+                <span className="block text-zinc-500 mt-0.5">直接解压到当前目录，保留压缩包内部结构</span>
+              </button>
+            </div>
+            <div className="flex justify-end mt-3">
+              <button
+                type="button"
+                onClick={() => setExtractConfirm(null)}
                 className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
               >
                 取消

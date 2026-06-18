@@ -347,3 +347,7 @@ export async function sftpPrepareDragUpload(filePaths: string[]): Promise<string
 export async function sftpCleanupTempDir(tempDir: string): Promise<void> {
   return invoke('sftp_cleanup_temp_dir', { tempDir });
 }
+
+export async function sftpExtractArchive(sessionId: string, remotePath: string, targetDir: string): Promise<void> {
+  return invoke('sftp_extract_archive', { sessionId, remotePath, targetDir });
+}

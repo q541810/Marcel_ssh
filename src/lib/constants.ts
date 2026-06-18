@@ -20,6 +20,28 @@ export const BINARY_EXTENSIONS = new Set([
   '.class', '.jar', '.war', '.pyc', '.pyd',
 ]);
 
+/** Archive extensions that support remote extraction. Compound extensions (e.g. .tar.gz) first. */
+export const ARCHIVE_EXTENSIONS = [
+  '.tar.gz', '.tar.bz2', '.tar.xz',
+  '.tgz', '.tbz2', '.txz',
+  '.tar', '.zip',
+];
+
+export function isArchiveFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  return ARCHIVE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+export function archiveStem(filename: string): string {
+  const lower = filename.toLowerCase();
+  for (const ext of ARCHIVE_EXTENSIONS) {
+    if (lower.endsWith(ext)) {
+      return filename.slice(0, filename.length - ext.length);
+    }
+  }
+  return filename;
+}
+
 export const DEFAULT_PORT = 22;
 export const DEFAULT_FONT_SIZE = 14;
 export const DEFAULT_FONT_FAMILY = 'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace';

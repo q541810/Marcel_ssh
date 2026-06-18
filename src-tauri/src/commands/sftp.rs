@@ -225,6 +225,59 @@ pub async fn sftp_rename(
 }
 
 #[tauri::command]
+pub async fn sftp_extract_archive(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    target_dir: String,
+) -> Result<(), AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
+    let target_dir = validate_sftp_remote_path(&target_dir)?;
+
+    let filename = remote_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(&remote_path);
+
+    let kind = crate::ssh::sftp_extract::get_archive_type(filename).ok_or_else(|| {
+        AppError::Ssh("不支持的压缩格式，仅支持 .zip、.tar、.tar.gz、.tgz、.tar.bz2、.tar.xz".into())
+    })?;
+
+    let check_cmd = match kind {
+        crate::ssh::sftp_extract::ArchiveType::Zip => {
+            crate::ssh::sftp_extract::build_unzip_check_cmd()
+        }
+        _ => crate::ssh::sftp_extract::build_tar_check_cmd(),
+    };
+    let check_output = state
+        .ssh_manager
+        .exec_command(&session_id, check_cmd)
+        .await?;
+    if !crate::ssh::sftp_extract::has_tool(&check_output) {
+        let tool = match kind {
+            crate::ssh::sftp_extract::ArchiveType::Zip => "unzip",
+            _ => "tar",
+        };
+        return Err(AppError::Ssh(format!(
+            "远端服务器缺少 {}，无法解压。请安装后重试。",
+            tool
+        )));
+    }
+
+    let cmd = crate::ssh::sftp_extract::build_extract_to_dir_cmd(&remote_path, &target_dir, kind);
+    let output = state
+        .ssh_manager
+        .exec_command(&session_id, &cmd)
+        .await?;
+
+    if !output.trim().contains("OK") {
+        return Err(AppError::Ssh(format!("解压失败: {}", output.trim())));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn sftp_upload_folder(
     state: State<'_, AppState>,
     session_id: String,

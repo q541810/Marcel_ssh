@@ -470,6 +470,7 @@ pub fn run() {
             commands::sftp::sftp_remove,
             commands::sftp::sftp_remove_via_shell,
             commands::sftp::sftp_rename,
+            commands::sftp::sftp_extract_archive,
             commands::sftp::sftp_upload_folder,
             commands::sftp::sftp_read_file,
             commands::sftp::sftp_get_mtime,

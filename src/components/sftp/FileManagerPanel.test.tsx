@@ -7,6 +7,10 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  stat: vi.fn(async () => ({ isDirectory: false, isFile: true, isSymlink: false, size: 0, mtime: null, atime: null, birthtime: null, readonly: false })),
+}));
+
 vi.mock('@/lib/tauri', () => ({
   sftpListDir: vi.fn(async () => []),
   sftpMkdir: vi.fn(),
@@ -19,6 +23,7 @@ vi.mock('@/lib/tauri', () => ({
   sftpWriteFile: vi.fn(),
   sftpUploadStream: vi.fn(),
   sftpDownloadStream: vi.fn(),
+  sftpExtractArchive: vi.fn(),
 }));
 
 const useSftpUploadMock = vi.fn();
