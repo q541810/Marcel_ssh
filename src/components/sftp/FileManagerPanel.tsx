@@ -18,6 +18,7 @@ import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { useContainerWidth } from '@/hooks/useContainerWidth';
 import FileEditorModal from './FileEditorModal';
 
 interface FileManagerPanelProps {
@@ -49,6 +50,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
   const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const toolbarWidth = useContainerWidth(toolbarRef);
+  const mode = toolbarWidth >= 600 ? 'full' : toolbarWidth >= 300 ? 'compact' : 'icon-only';
 
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(true);
@@ -91,7 +95,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   }, []);
 
   const filteredEntries = useMemo(() => {
-    let result = showHidden ? [...entries] : entries.filter((e) => !e.name.startsWith('.'));
+    const result = showHidden ? [...entries] : entries.filter((e) => !e.name.startsWith('.'));
     result.sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
       return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
@@ -372,7 +376,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 flex-shrink-0">
+      <div ref={toolbarRef} className="flex items-center gap-1.5 border-b border-zinc-800 px-3 py-2 flex-shrink-0">
         <button
           type="button"
           onClick={handleGoBack}
@@ -399,34 +403,43 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <button
           type="button"
           onClick={() => setShowNewFolder(true)}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700"
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 whitespace-nowrap"
           title="新建文件夹"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-          </svg>
+          {mode !== 'compact' && (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+            </svg>
+          )}
+          {mode !== 'icon-only' && <span>新建文件夹</span>}
         </button>
         <button
           type="button"
           onClick={handleUpload}
           disabled={isUploading}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800"
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800 whitespace-nowrap"
           title={isUploading ? '正在上传，请等待' : '上传文件'}
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-          </svg>
+          {mode !== 'compact' && (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+          )}
+          {mode !== 'icon-only' && <span>上传</span>}
         </button>
         <button
           type="button"
           onClick={handleUploadFolder}
           disabled={isUploading}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800"
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800 whitespace-nowrap"
           title={isUploading ? '正在上传，请等待' : '上传文件夹'}
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+          {mode !== 'compact' && (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          )}
+          {mode !== 'icon-only' && <span>上传文件夹</span>}
         </button>
         <button
           type="button"
@@ -435,21 +448,33 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             setShowHidden(newVal);
             useSettingsStore.getState().update({ fileManagerShowHidden: newVal });
           }}
-          className={`rounded-md px-2 py-1 text-xs transition-colors ${showHidden ? 'bg-indigo-500/20 text-indigo-400' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'}`}
+          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${showHidden ? 'bg-indigo-500/20 text-indigo-400' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'}`}
           title="显示隐藏文件"
         >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
+          {mode !== 'compact' && (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          )}
+          {mode !== 'icon-only' && <span>{showHidden ? '隐藏' : '显示'}</span>}
         </button>
         <button
           type="button"
           onClick={() => loadDirectory(currentPath)}
           disabled={loading}
-          className="rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 whitespace-nowrap"
+          title="刷新"
         >
-          {loading ? '加载中...' : '刷新'}
+          {mode === 'icon-only' ? (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          ) : loading ? (
+            '加载中...'
+          ) : (
+            '刷新'
+          )}
         </button>
       </div>
 
