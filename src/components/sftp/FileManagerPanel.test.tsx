@@ -77,6 +77,7 @@ describe('FileManagerPanel upload button disable', () => {
     });
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
       uploadState: null,
       folderStatus: null,
@@ -99,6 +100,7 @@ describe('FileManagerPanel upload button disable', () => {
   it('disables upload buttons when uploadState is set', () => {
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
       uploadState: makeUploadState({ statusText: 'uploading a.txt' }),
       folderStatus: null,
@@ -121,6 +123,7 @@ describe('FileManagerPanel upload button disable', () => {
   it('disables upload buttons when folderStatus is set', () => {
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
       uploadState: null,
       folderStatus: '正在压缩文件夹 50%',
@@ -137,6 +140,7 @@ describe('FileManagerPanel upload button disable', () => {
   it('keeps download button enabled when only upload is active', () => {
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
       uploadState: makeUploadState(),
       folderStatus: null,
@@ -157,6 +161,7 @@ describe('FileManagerPanel upload button disable', () => {
   it('re-enables upload buttons after upload state is cleared', () => {
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
       uploadState: null,
       folderStatus: null,

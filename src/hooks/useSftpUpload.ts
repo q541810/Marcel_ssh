@@ -5,6 +5,13 @@ import { getErrorMessage } from '@/lib/sftp-helpers';
 import { formatFolderUploadStatus, type FolderUploadPhase } from './sftpUploadStatus';
 import { useTransferStore, type UploadState } from '@/stores/transferStore';
 
+export type FolderUploadMode = 'folder' | 'flat';
+
+export interface PickedFolder {
+  localPath: string;
+  folderName: string;
+}
+
 export function useSftpUpload(sessionId: string, remotePath: string) {
   const uploadState = useTransferStore((s) => s.upload);
   const folderStatus = useTransferStore((s) => s.folderUpload);
@@ -39,39 +46,45 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
     [sessionId],
   );
 
-  const uploadFolder = useCallback(async () => {
-    const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
-    try {
-      const folderPath = await open({
-        directory: true,
-        title: '选择文件夹',
-      });
-      if (!folderPath) return;
+  const pickFolder = useCallback(async (): Promise<PickedFolder | null> => {
+    const folderPath = await open({
+      directory: true,
+      title: '选择文件夹',
+    });
+    if (!folderPath) return null;
 
-      const path = Array.isArray(folderPath) ? folderPath[0] : folderPath;
-      const folderName = path.split(/[/\\]/).pop() || 'upload';
+    const path = Array.isArray(folderPath) ? folderPath[0] : folderPath;
+    const folderName = path.split(/[/\\]/).pop() || 'upload';
+    return { localPath: path, folderName };
+  }, []);
+
+  const uploadFolder = useCallback(
+    async (localPath: string, folderName: string, mode: FolderUploadMode) => {
+      const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
       const uploadId = `${Date.now()}`;
+      const flat = mode === 'flat';
+      const targetPath = flat
+        ? remotePath
+        : remotePath === '/'
+          ? `/${folderName}`
+          : `${remotePath}/${folderName}`;
 
       setActiveFolderUploadId(uploadId);
       setFolderUpload(
         formatFolderUploadStatus({ uploadId, phase: 'checking' as FolderUploadPhase, percent: 0 }),
       );
 
-      const targetPath = remotePath === '/' ? `/${folderName}` : `${remotePath}/${folderName}`;
       try {
-        await sftpUploadFolderStream(sessionId, path, targetPath, uploadId);
+        await sftpUploadFolderStream(sessionId, localPath, targetPath, uploadId, flat);
       } finally {
         setFolderUpload(null);
         setActiveFolderUploadId(null);
       }
-    } catch (e) {
-      setFolderUpload(null);
-      setActiveFolderUploadId(null);
-      throw e;
-    }
-  }, [sessionId, remotePath]);
+    },
+    [sessionId, remotePath],
+  );
 
-  return { uploadFile, uploadFolder, uploadState, folderStatus };
+  return { uploadFile, pickFolder, uploadFolder, uploadState, folderStatus };
 }
 
 export type { UploadState };

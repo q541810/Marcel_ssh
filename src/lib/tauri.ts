@@ -336,8 +336,8 @@ export async function sftpUploadStream(sessionId: string, remotePath: string, lo
   return invoke('sftp_upload_stream', { sessionId, remotePath, localPath, uploadId });
 }
 
-export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string): Promise<void> {
-  return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId });
+export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string, flat: boolean): Promise<void> {
+  return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId, flat });
 }
 
 export async function sftpPrepareDragUpload(filePaths: string[]): Promise<string> {

@@ -15,6 +15,7 @@ import { MAX_EDITOR_FILE_SIZE, BINARY_EXTENSIONS } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import FileEditorModal from './FileEditorModal';
 
 interface FileManagerPanelProps {
@@ -42,6 +43,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
+  const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
+  const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const loadDirectory = useCallback(async (path: string) => {
@@ -170,7 +173,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  const { uploadFile, uploadFolder: doUploadFolder, uploadState, folderStatus } = useSftpUpload(sessionId, currentPath);
+  const { uploadFile, pickFolder, uploadFolder: doUploadFolder, uploadState, folderStatus } = useSftpUpload(sessionId, currentPath);
   const { downloadState, startDownload } = useSftpDownload(sessionId);
 
   const isUploading = uploadState !== null || folderStatus !== null;
@@ -178,12 +181,92 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const handleUploadFolder = async () => {
     setMenuEntry(null);
     try {
-      await doUploadFolder();
+      const picked = await pickFolder();
+      if (!picked) return;
+      setPendingFolderUpload(picked);
+    } catch (err) {
+      setError(`选择文件夹失败：${getErrorMessage(err)}`);
+    }
+  };
+
+  const runFolderUpload = async (mode: 'folder' | 'flat') => {
+    const picked = pendingFolderUpload;
+    if (!picked) return;
+    setPendingFolderUpload(null);
+    try {
+      await doUploadFolder(picked.localPath, picked.folderName, mode);
       await loadDirectory(currentPath);
     } catch (err) {
       setError(`上传文件夹失败：${getErrorMessage(err)}`);
     }
   };
+
+  const handleDropUpload = useCallback(async (paths: string[]) => {
+    for (const localPath of paths) {
+      const fileName = localPath.split(/[/\\]/).pop() || 'upload';
+      const targetPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+      try {
+        await uploadFile(localPath, fileName, targetPath);
+      } catch (err) {
+        setError(`上传失败：${getErrorMessage(err)}`);
+      }
+    }
+    await loadDirectory(currentPath);
+  }, [currentPath, uploadFile, loadDirectory]);
+
+  const handleDropUploadAsZip = useCallback(async (paths: string[]) => {
+    const { sftpPrepareDragUpload, sftpUploadFolderStream, sftpCleanupTempDir } = await import('@/lib/tauri');
+    const { useTransferStore } = await import('@/stores/transferStore');
+    const { formatFolderUploadStatus } = await import('@/hooks/sftpUploadStatus');
+
+    const uploadId = `${Date.now()}`;
+    let tempDir: string | null = null;
+
+    try {
+      // 1. 后端创建临时目录并复制文件
+      tempDir = await sftpPrepareDragUpload(paths);
+
+      // 2. 上传（解压到当前目录）
+      const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
+      setActiveFolderUploadId(uploadId);
+      setFolderUpload(
+        formatFolderUploadStatus({ uploadId, phase: 'checking' as const, percent: 0 }),
+      );
+
+      const targetPath = currentPath;
+      try {
+        await sftpUploadFolderStream(sessionId, tempDir, targetPath, uploadId, true);
+      } finally {
+        setFolderUpload(null);
+        setActiveFolderUploadId(null);
+      }
+
+      await loadDirectory(currentPath);
+    } catch (err) {
+      setError(`打包上传失败：${getErrorMessage(err)}`);
+    } finally {
+      // 3. 清理临时目录
+      if (tempDir) {
+        try {
+          await sftpCleanupTempDir(tempDir);
+        } catch {
+          // 忽略清理失败
+        }
+      }
+    }
+  }, [sessionId, currentPath, loadDirectory]);
+
+  // 拖拽上传：使用 useFileDrop hook，上传中时禁用
+  const handleFileDrop = useCallback((paths: string[]) => {
+    if (isUploading) return;
+    if (paths.length === 1) {
+      handleDropUpload(paths);
+    } else {
+      setPendingDropFiles(paths);
+    }
+  }, [isUploading, handleDropUpload]);
+
+  const { isDragging } = useFileDrop(handleFileDrop, !isUploading);
 
   const handleDelete = async (entry: SftpFileEntry) => {
     setDeleteConfirm(null);
@@ -457,7 +540,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
+      {/* Drag-over overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
+          <div className="text-center">
+            <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+            </svg>
+            <p className="text-sm text-indigo-300 font-medium">松手上传到当前目录</p>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-auto relative">
 
         <table className="w-full text-xs table-fixed">
           <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800">
@@ -694,6 +789,94 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             loadDirectory(currentPath);
           }}
         />
+      )}
+
+      {/* Upload mode selection dialog for multiple files */}
+      {pendingDropFiles && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+            <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传多个文件</h3>
+            <p className="text-xs text-zinc-400 mb-4">
+              检测到 {pendingDropFiles.length} 个文件，选择上传方式：
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  const paths = pendingDropFiles;
+                  setPendingDropFiles(null);
+                  await handleDropUpload(paths);
+                }}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">逐个上传</span>
+                <span className="block text-zinc-500 mt-0.5">每个文件单独上传到当前目录</span>
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const paths = pendingDropFiles;
+                  setPendingDropFiles(null);
+                  await handleDropUploadAsZip(paths);
+                }}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">打包上传</span>
+                <span className="block text-zinc-500 mt-0.5">压缩为 zip 后上传并解压到当前目录</span>
+              </button>
+            </div>
+            <div className="flex justify-end mt-3">
+              <button
+                type="button"
+                onClick={() => setPendingDropFiles(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Upload mode selection dialog for folder upload */}
+      {pendingFolderUpload && createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+            <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传文件夹</h3>
+            <p className="text-xs text-zinc-400 mb-4">
+              将「{pendingFolderUpload.folderName}」上传到 <span className="text-zinc-300">{currentPath}</span>，选择上传方式：
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => runFolderUpload('folder')}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">上传到新建子文件夹</span>
+                <span className="block text-zinc-500 mt-0.5">在当前目录下创建同名文件夹，文件落到该子文件夹内</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => runFolderUpload('flat')}
+                className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
+              >
+                <span className="font-medium text-zinc-100">上传到当前目录</span>
+                <span className="block text-zinc-500 mt-0.5">文件直接落到当前目录；若存在同名条目将报错中止</span>
+              </button>
+            </div>
+            <div className="flex justify-end mt-3">
+              <button
+                type="button"
+                onClick={() => setPendingFolderUpload(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

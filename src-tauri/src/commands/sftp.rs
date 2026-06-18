@@ -275,6 +275,12 @@ pub async fn sftp_upload_folder(
     }
 }
 
+#[derive(Debug, Serialize)]
+pub struct ReadFileResult {
+    pub content: String,
+    pub mtime: u64,
+}
+
 const MAX_EDITOR_FILE_SIZE: u64 = 2 * 1024 * 1024;
 
 #[tauri::command]
@@ -282,7 +288,7 @@ pub async fn sftp_read_file(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
-) -> Result<String, AppError> {
+) -> Result<ReadFileResult, AppError> {
     let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
     let metadata = sftp
@@ -293,6 +299,8 @@ pub async fn sftp_read_file(
     if metadata.is_dir() {
         return Err(AppError::Ssh("无法编辑目录".into()));
     }
+
+    let mtime = metadata.mtime.unwrap_or(0) as u64;
 
     if metadata.len() > MAX_EDITOR_FILE_SIZE {
         return Err(AppError::Ssh(format!(
@@ -320,8 +328,30 @@ pub async fn sftp_read_file(
         &data[..]
     };
 
-    String::from_utf8(bytes.to_vec())
-        .map_err(|_| AppError::Ssh("无法解码文件，可能为二进制文件或使用了不支持的编码".into()))
+    let content = String::from_utf8(bytes.to_vec())
+        .map_err(|_| AppError::Ssh("无法解码文件，可能为二进制文件或使用了不支持的编码".into()))?;
+
+    Ok(ReadFileResult { content, mtime })
+}
+
+#[tauri::command]
+pub async fn sftp_get_mtime(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<u64, AppError> {
+    let path = validate_sftp_remote_path(&path)?;
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+    let metadata = sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取文件信息失败: {}", e)))?;
+
+    if metadata.is_dir() {
+        return Err(AppError::Ssh("路径是目录，不是文件".into()));
+    }
+
+    Ok(metadata.mtime.unwrap_or(0) as u64)
 }
 
 #[tauri::command]
@@ -650,7 +680,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::folder_upload_percent;
+    use super::{find_name_collisions, folder_upload_percent};
 
     #[test]
     fn maps_folder_upload_phases_to_overall_percent() {
@@ -668,6 +698,56 @@ mod tests {
     fn clamps_folder_upload_progress_ratio() {
         assert_eq!(folder_upload_percent("uploading", 150, 100), 85);
         assert_eq!(folder_upload_percent("unknown", 0, 0), 0);
+    }
+
+    #[test]
+    fn finds_no_collision_when_disjoint() {
+        let local = vec!["a.txt".to_string(), "lib".to_string()];
+        let remote = vec!["b.txt".to_string(), "doc".to_string()];
+        assert!(find_name_collisions(&local, &remote).is_empty());
+    }
+
+    #[test]
+    fn detects_file_and_dir_name_collisions() {
+        let local = vec![
+            "a.txt".to_string(),
+            "lib".to_string(),
+            "c.png".to_string(),
+        ];
+        let remote = vec![
+            "lib".to_string(),
+            "c.png".to_string(),
+            "other".to_string(),
+        ];
+        let collisions = find_name_collisions(&local, &remote);
+        assert_eq!(collisions, vec!["c.png".to_string(), "lib".to_string()]);
+    }
+
+    #[test]
+    fn collision_list_is_sorted_and_deduped() {
+        let local = vec![
+            "z.txt".to_string(),
+            "z.txt".to_string(),
+            "a.txt".to_string(),
+        ];
+        let remote = vec!["a.txt".to_string(), "z.txt".to_string()];
+        let collisions = find_name_collisions(&local, &remote);
+        assert_eq!(collisions, vec!["a.txt".to_string(), "z.txt".to_string()]);
+    }
+
+    #[test]
+    fn handles_empty_inputs() {
+        assert!(find_name_collisions(&[], &[]).is_empty());
+        assert!(find_name_collisions(
+            &["a.txt".to_string()],
+            &[]
+        )
+        .is_empty());
+        assert!(find_name_collisions(
+            &[],
+            &["a.txt".to_string()]
+        )
+        .is_empty());
     }
 }
 
@@ -704,6 +784,47 @@ fn collect_dir_entries(
     Ok(())
 }
 
+fn collect_local_top_level_names(dir: &Path) -> Result<Vec<String>, AppError> {
+    let entries = std::fs::read_dir(dir)
+        .map_err(|e| AppError::Ssh(format!("读取本地目录失败 {}: {}", dir.display(), e)))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| AppError::Ssh(format!("读取目录条目失败: {}", e)))?;
+        names.push(entry.file_name().to_string_lossy().to_string());
+    }
+    Ok(names)
+}
+
+async fn collect_remote_top_level_names(
+    sftp: &russh_sftp::client::SftpSession,
+    remote_path: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut dir = sftp
+        .read_dir(remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取远端目录失败: {}", e)))?;
+    let mut names = Vec::new();
+    while let Some(entry) = dir.next() {
+        let name = entry.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        names.push(name);
+    }
+    Ok(names)
+}
+
+fn find_name_collisions(local_names: &[String], remote_names: &[String]) -> Vec<String> {
+    let remote_set: std::collections::HashSet<&String> = remote_names.iter().collect();
+    let mut collisions: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for name in local_names {
+        if remote_set.contains(name) {
+            collisions.insert(name.clone());
+        }
+    }
+    collisions.into_iter().collect()
+}
+
 #[tauri::command]
 pub async fn sftp_upload_folder_stream(
     app: AppHandle,
@@ -712,6 +833,7 @@ pub async fn sftp_upload_folder_stream(
     local_path: String,
     remote_path: String,
     upload_id: String,
+    flat: bool,
 ) -> Result<(), AppError> {
     let local_path = validate_local_path(&local_path)?;
     let remote_path = validate_sftp_remote_path(&remote_path)?;
@@ -732,6 +854,21 @@ pub async fn sftp_upload_folder_stream(
         return Err(AppError::Ssh(
             "远端服务器缺少 unzip，无法解压文件夹上传包。请安装 unzip 后重试。".into(),
         ));
+    }
+
+    if flat {
+        let local_names = collect_local_top_level_names(local)?;
+        let sftp_check = state.ssh_manager.open_sftp(&session_id).await?;
+        let remote_names = collect_remote_top_level_names(&sftp_check, &remote_path).await;
+        drop(sftp_check);
+        let remote_names = remote_names?;
+        let collisions = find_name_collisions(&local_names, &remote_names);
+        if !collisions.is_empty() {
+            return Err(AppError::Ssh(format!(
+                "远端目录已存在同名条目：{}，请先处理后再上传",
+                collisions.join("、")
+            )));
+        }
     }
 
     emit_folder_upload_status(&app, &upload_id, "zipping", 0, 1);
@@ -859,6 +996,143 @@ pub async fn sftp_upload_folder_stream(
     }
 
     let _ = app.emit("sftp-upload-done", json!({ "uploadId": &upload_id }));
+
+    Ok(())
+}
+
+const MAX_DRAG_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), AppError> {
+    std::fs::create_dir_all(dest)
+        .map_err(|e| AppError::Ssh(format!("创建目录失败 {}: {}", dest.display(), e)))?;
+
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| AppError::Ssh(format!("读取目录失败 {}: {}", src.display(), e)))?
+    {
+        let entry = entry.map_err(|e| AppError::Ssh(format!("读取目录条目失败: {}", e)))?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let dest_path = dest.join(file_name);
+
+        if path.is_symlink() {
+            continue;
+        }
+
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dest_path)?;
+        } else if path.is_file() {
+            std::fs::copy(&path, &dest_path)
+                .map_err(|e| AppError::Ssh(format!("复制文件失败 {}: {}", path.display(), e)))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn dir_size(path: &Path) -> Result<u64, AppError> {
+    let mut total: u64 = 0;
+    for entry in std::fs::read_dir(path)
+        .map_err(|e| AppError::Ssh(format!("读取目录失败 {}: {}", path.display(), e)))?
+    {
+        let entry = entry.map_err(|e| AppError::Ssh(format!("读取目录条目失败: {}", e)))?;
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+        if path.is_dir() {
+            total += dir_size(&path)?;
+        } else if path.is_file() {
+            total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    Ok(total)
+}
+
+#[tauri::command]
+pub async fn sftp_prepare_drag_upload(file_paths: Vec<String>) -> Result<String, AppError> {
+    if file_paths.is_empty() {
+        return Err(AppError::Ssh("没有提供文件路径".into()));
+    }
+
+    let temp_id = uuid::Uuid::new_v4();
+    let temp_dir = std::env::temp_dir().join(format!("marcel-drag-{}", temp_id));
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| AppError::Ssh(format!("创建临时目录失败: {}", e)))?;
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for path_str in &file_paths {
+        let validated = match validate_local_path(path_str) {
+            Ok(p) => p,
+            Err(e) => {
+                errors.push(format!("{}: {}", path_str, e));
+                continue;
+            }
+        };
+        let src = Path::new(&validated);
+
+        if !src.exists() {
+            errors.push(format!("{}: 文件不存在", path_str));
+            continue;
+        }
+
+        let file_name = match src.file_name() {
+            Some(n) => n,
+            None => {
+                errors.push(format!("{}: 无效的文件路径", path_str));
+                continue;
+            }
+        };
+        let dest = temp_dir.join(file_name);
+
+        let result = if src.is_symlink() {
+            Ok(())
+        } else if src.is_dir() {
+            copy_dir_recursive(src, &dest)
+        } else if src.is_file() {
+            std::fs::copy(src, &dest)
+                .map(|_| ())
+                .map_err(|e| AppError::Ssh(format!("复制文件失败: {}", e)))
+        } else {
+            Ok(())
+        };
+
+        if let Err(e) = result {
+            errors.push(format!("{}: {}", path_str, e));
+        }
+    }
+
+    let total_size = dir_size(&temp_dir).unwrap_or(0);
+    if total_size > MAX_DRAG_UPLOAD_BYTES {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，拖拽上传限制为 2 GB",
+            total_size as f64 / 1_048_576.0
+        )));
+    }
+
+    if !errors.is_empty() {
+        log::warn!("拖拽上传部分文件复制失败: {:?}", errors);
+    }
+
+    Ok(temp_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn sftp_cleanup_temp_dir(temp_dir: String) -> Result<(), AppError> {
+    let path = Path::new(&temp_dir);
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if !name.starts_with("marcel-drag-") {
+            return Err(AppError::Ssh("拒绝清理非 marcel 临时目录".into()));
+        }
+    } else {
+        return Err(AppError::Ssh("无效的临时目录路径".into()));
+    }
+
+    if path.exists() {
+        std::fs::remove_dir_all(path)
+            .map_err(|e| AppError::Ssh(format!("清理临时目录失败: {}", e)))?;
+    }
 
     Ok(())
 }
