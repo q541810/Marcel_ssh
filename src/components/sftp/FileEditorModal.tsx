@@ -5,7 +5,7 @@ import { EditorState, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { searchKeymap } from '@codemirror/search';
-import { sftpReadFile, sftpWriteFile } from '@/lib/tauri';
+import { sftpReadFile, sftpWriteFile, sftpGetMtime } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 
 import { StreamLanguage } from '@codemirror/language';
@@ -58,6 +58,7 @@ export default function FileEditorModal({
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const originalContentRef = useRef<string>('');
+  const mtimeRef = useRef<number>(0);
   const saveRef = useRef<() => Promise<void>>(async () => {});
 
   const [loading, setLoading] = useState(false);
@@ -65,9 +66,10 @@ export default function FileEditorModal({
   const [error, setError] = useState<string | null>(null);
   const [savedIndicator, setSavedIndicator] = useState(false);
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [lineCount, setLineCount] = useState(0);
 
-  const handleSave = useCallback(async () => {
+  const doSave = useCallback(async () => {
     if (!viewRef.current) return;
     setSaving(true);
     setError(null);
@@ -75,6 +77,13 @@ export default function FileEditorModal({
       const content = viewRef.current.state.doc.toString();
       await sftpWriteFile(sessionId, filePath, content);
       originalContentRef.current = content;
+      // Update mtime after successful save
+      try {
+        const newMtime = await sftpGetMtime(sessionId, filePath);
+        mtimeRef.current = newMtime;
+      } catch {
+        // Ignore mtime fetch error after save
+      }
       setSavedIndicator(true);
       setTimeout(() => setSavedIndicator(false), 2000);
       onSaved();
@@ -84,6 +93,25 @@ export default function FileEditorModal({
       setSaving(false);
     }
   }, [sessionId, filePath, onSaved]);
+
+  const handleSave = useCallback(async () => {
+    if (!viewRef.current) return;
+    try {
+      const currentMtime = await sftpGetMtime(sessionId, filePath);
+      if (currentMtime !== mtimeRef.current) {
+        setShowOverwriteConfirm(true);
+        return;
+      }
+    } catch (err) {
+      const msg = getErrorMessage(err);
+      if (msg.includes('No such file') || msg.includes('不存在') || msg.includes('not found')) {
+        setError('文件已不存在，无法保存');
+        return;
+      }
+      // Other errors: proceed with save attempt
+    }
+    await doSave();
+  }, [sessionId, filePath, doSave]);
 
   saveRef.current = handleSave;
 
@@ -173,13 +201,15 @@ export default function FileEditorModal({
       setLoading(true);
       setError(null);
       setShowCloseConfirm(false);
+      setShowOverwriteConfirm(false);
       setSavedIndicator(false);
 
       try {
-        const text = await sftpReadFile(sessionId, filePath);
+        const result = await sftpReadFile(sessionId, filePath);
         if (cancelled) return;
-        originalContentRef.current = text;
-        await createEditor(text);
+        originalContentRef.current = result.content;
+        mtimeRef.current = result.mtime;
+        await createEditor(result.content);
       } catch (err) {
         if (cancelled) return;
         setError(getErrorMessage(err));
@@ -355,6 +385,37 @@ export default function FileEditorModal({
                   className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
                 >
                   取消
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Overwrite confirmation dialog */}
+        {showOverwriteConfirm && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+              <h3 className="text-sm font-semibold text-amber-300 mb-2">文件已被外部修改</h3>
+              <p className="text-xs text-zinc-400 mb-4">
+                此文件在编辑期间被其他程序修改过。覆盖将丢失外部修改。
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowOverwriteConfirm(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowOverwriteConfirm(false);
+                    await doSave();
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-amber-600 hover:bg-amber-500"
+                >
+                  覆盖保存
                 </button>
               </div>
             </div>

@@ -316,8 +316,12 @@ export async function sftpUploadFolder(sessionId: string, remotePath: string, ar
   return invoke<string>('sftp_upload_folder', { sessionId, remotePath, archiveData });
 }
 
-export async function sftpReadFile(sessionId: string, path: string): Promise<string> {
-  return invoke<string>('sftp_read_file', { sessionId, path });
+export async function sftpReadFile(sessionId: string, path: string): Promise<{ content: string; mtime: number }> {
+  return invoke<{ content: string; mtime: number }>('sftp_read_file', { sessionId, path });
+}
+
+export async function sftpGetMtime(sessionId: string, path: string): Promise<number> {
+  return invoke<number>('sftp_get_mtime', { sessionId, path });
 }
 
 export async function sftpWriteFile(sessionId: string, path: string, content: string): Promise<void> {
@@ -334,4 +338,12 @@ export async function sftpUploadStream(sessionId: string, remotePath: string, lo
 
 export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string): Promise<void> {
   return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId });
+}
+
+export async function sftpPrepareDragUpload(filePaths: string[]): Promise<string> {
+  return invoke<string>('sftp_prepare_drag_upload', { filePaths });
+}
+
+export async function sftpCleanupTempDir(tempDir: string): Promise<void> {
+  return invoke('sftp_cleanup_temp_dir', { tempDir });
 }
