@@ -9,6 +9,7 @@ import {
   sftpRemove,
   sftpRemoveViaShell,
   sftpRename,
+  sftpWriteFile,
   sftpExtractArchive,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
@@ -39,12 +40,16 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(storeSettings.fileManagerShowHidden ?? false);
   const [menuEntry, setMenuEntry] = useState<SftpFileEntry | null>(null);
+  const [menuTargets, setMenuTargets] = useState<SftpFileEntry[]>([]);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [deleteConfirm, setDeleteConfirm] = useState<SftpFileEntry | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<SftpFileEntry[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renameEntry, setRenameEntry] = useState<SftpFileEntry | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
+  const [newFileName, setNewFileName] = useState('');
+  const [showNewFile, setShowNewFile] = useState(false);
   const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
   const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
   const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
@@ -70,6 +75,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   useEffect(() => {
     loadDirectory(currentPath);
+    setSelected(new Set());
   }, [currentPath, loadDirectory]);
 
   useEffect(() => {
@@ -88,6 +94,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     const handleClickOutside = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuEntry(null);
+        setMenuTargets([]);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -102,6 +109,20 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     });
     return result;
   }, [entries, showHidden]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        setSelected(new Set(filteredEntries.map((en) => en.name)));
+      }
+      if (e.key === 'Escape' && selected.size > 0) {
+        setSelected(new Set());
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [filteredEntries, selected.size]);
 
   const navigateTo = useCallback((path: string) => {
     setHistory((prev) => {
@@ -150,18 +171,27 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   const handleContextMenu = (e: React.MouseEvent, entry: SftpFileEntry) => {
     e.preventDefault();
+    let targets: SftpFileEntry[];
+    if (selected.has(entry.name) && selected.size > 1) {
+      targets = filteredEntries.filter((en) => selected.has(en.name));
+    } else {
+      targets = [entry];
+    }
     setMenuEntry(entry);
+    setMenuTargets(targets);
     setMenuPos({ x: e.clientX, y: e.clientY });
   };
 
   const handleDownload = (entry: SftpFileEntry) => {
     setMenuEntry(null);
+    setMenuTargets([]);
     const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
     startDownload(entry, entryPath);
   };
 
   const handleUpload = async () => {
     setMenuEntry(null);
+    setMenuTargets([]);
     try {
       const filePaths = await open({
         multiple: false,
@@ -187,6 +217,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   const handleUploadFolder = async () => {
     setMenuEntry(null);
+    setMenuTargets([]);
     try {
       const picked = await pickFolder();
       if (!picked) return;
@@ -285,13 +316,25 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   const { isDragging } = useFileDrop(handleFileDrop, !isUploading);
 
-  const handleDelete = async (entry: SftpFileEntry) => {
-    setDeleteConfirm(null);
+  const handleDelete = async (entries: SftpFileEntry[]) => {
+    setDeleteConfirm([]);
     setMenuEntry(null);
+    setMenuTargets([]);
+    setSelected(new Set());
     try {
       setLoading(true);
-      const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-      await sftpRemove(sessionId, entryPath, entry.is_dir);
+      const errors: string[] = [];
+      for (const entry of entries) {
+        try {
+          const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          await sftpRemove(sessionId, entryPath, entry.is_dir);
+        } catch (err) {
+          errors.push(`${entry.name}: ${getErrorMessage(err)}`);
+        }
+      }
+      if (errors.length > 0) {
+        setError(`部分删除失败：${errors.join('；')}`);
+      }
       await loadDirectory(currentPath);
     } catch (err) {
       setError(`删除失败：${getErrorMessage(err)}`);
@@ -300,13 +343,25 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  const handleQuickDelete = async (entry: SftpFileEntry) => {
-    setDeleteConfirm(null);
+  const handleQuickDelete = async (entries: SftpFileEntry[]) => {
+    setDeleteConfirm([]);
     setMenuEntry(null);
+    setMenuTargets([]);
+    setSelected(new Set());
     try {
       setLoading(true);
-      const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-      await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
+      const errors: string[] = [];
+      for (const entry of entries) {
+        try {
+          const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+          await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
+        } catch (err) {
+          errors.push(`${entry.name}: ${getErrorMessage(err)}`);
+        }
+      }
+      if (errors.length > 0) {
+        setError(`部分快速删除失败：${errors.join('；')}`);
+      }
       await loadDirectory(currentPath);
     } catch (err) {
       setError(`快速删除失败：${getErrorMessage(err)}`);
@@ -319,6 +374,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     if (!renameEntry || !renameValue.trim()) return;
     setRenameEntry(null);
     setMenuEntry(null);
+    setMenuTargets([]);
     try {
       setLoading(true);
       const oldPath = currentPath === '/' ? `/${renameEntry.name}` : `${currentPath}/${renameEntry.name}`;
@@ -347,12 +403,30 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  const handleCopyPath = async (entry: SftpFileEntry) => {
-    setMenuEntry(null);
+  const handleCreateFile = async () => {
+    if (!newFileName.trim()) return;
+    setShowNewFile(false);
     try {
-      const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+      setLoading(true);
+      const filePath = currentPath === '/' ? `/${newFileName}` : `${currentPath}/${newFileName}`;
+      await sftpWriteFile(sessionId, filePath, '');
+      await loadDirectory(currentPath);
+    } catch (err) {
+      setError(`创建文件失败：${getErrorMessage(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopyPath = async (entries: SftpFileEntry[]) => {
+    setMenuEntry(null);
+    setMenuTargets([]);
+    try {
+      const paths = entries.map((e) =>
+        currentPath === '/' ? `/${e.name}` : `${currentPath}/${e.name}`,
+      );
       const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
-      await writeText(entryPath);
+      await writeText(paths.join('\n'));
     } catch {
       // ignore
     }
@@ -412,6 +486,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             </svg>
           )}
           {mode !== 'icon-only' && <span>新建文件夹</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowNewFile(true)}
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 whitespace-nowrap"
+          title="新建文件"
+        >
+          {mode !== 'compact' && (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          )}
+          {mode !== 'icon-only' && <span>新建文件</span>}
         </button>
         <button
           type="button"
@@ -502,6 +589,36 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <button
             type="button"
             onClick={() => setShowNewFolder(false)}
+            className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600"
+          >
+            取消
+          </button>
+        </div>
+      )}
+      {showNewFile && (
+        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 bg-zinc-800/50">
+          <input
+            type="text"
+            value={newFileName}
+            onChange={(e) => setNewFileName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleCreateFile();
+              if (e.key === 'Escape') setShowNewFile(false);
+            }}
+            placeholder="新文件名称"
+            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+            autoFocus
+          />
+          <button
+            type="button"
+            onClick={handleCreateFile}
+            className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+          >
+            创建
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowNewFile(false)}
             className="rounded-md bg-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-600"
           >
             取消
@@ -611,7 +728,28 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <table className="w-full text-xs table-fixed">
           <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800">
             <tr className="text-zinc-500">
-              <th className="px-3 py-2 text-left font-medium w-3/5">名称</th>
+              <th className="py-2 text-center font-medium w-8">
+                <label className="relative inline-flex items-center justify-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selected.size > 0 && selected.size === filteredEntries.length}
+                    onChange={() => {
+                      if (selected.size === filteredEntries.length) {
+                        setSelected(new Set());
+                      } else {
+                        setSelected(new Set(filteredEntries.map((e) => e.name)));
+                      }
+                    }}
+                    className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${selected.size > 0 && selected.size === filteredEntries.length ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                  />
+                  {selected.size > 0 && selected.size === filteredEntries.length && (
+                    <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M2 6l3 3 5-5" />
+                    </svg>
+                  )}
+                </label>
+              </th>
+              <th className="px-3 py-2 text-left font-medium">名称</th>
               <th className="px-3 py-2 text-left font-medium w-24">大小</th>
               <th className="px-3 py-2 text-left font-medium w-28">权限</th>
             </tr>
@@ -619,7 +757,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={3} className="py-8 text-center">
+                <td colSpan={4} className="py-8 text-center">
                   <div className="flex items-center justify-center gap-2 text-xs text-zinc-400">
                     <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -632,13 +770,47 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             ) : (
               filteredEntries.map((entry) => {
               const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+              const isSelected = selected.has(entry.name);
               return (
                 <tr
                   key={entryPath}
-                  className="border-b border-zinc-800/50 hover:bg-zinc-800/50 transition-colors cursor-pointer"
+                  className={`border-b border-zinc-800/50 hover:bg-zinc-800/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
                   onDoubleClick={() => handleNavigate(entry)}
+                  onClick={(e) => {
+                    if (e.ctrlKey || e.metaKey) {
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(entry.name)) next.delete(entry.name);
+                        else next.add(entry.name);
+                        return next;
+                      });
+                    }
+                  }}
                   onContextMenu={(e) => handleContextMenu(e, entry)}
                 >
+                  <td className="py-1.5 text-center">
+                    <label className="relative inline-flex items-center justify-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(entry.name)) next.delete(entry.name);
+                            else next.add(entry.name);
+                            return next;
+                          });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                      />
+                      {isSelected && (
+                        <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M2 6l3 3 5-5" />
+                        </svg>
+                      )}
+                    </label>
+                  </td>
                   <td className="px-3 py-1.5 text-zinc-300 truncate">
                     <span className="flex items-center gap-2">
                       {entry.is_dir ? (
@@ -671,82 +843,125 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             {showHidden ? '空目录' : '空目录（可能包含隐藏文件）'}
           </div>
         )}
+
+        {selected.size > 0 && (
+          <div className="sticky bottom-0 flex items-center justify-between gap-3 px-3 py-2 bg-zinc-800/95 border-t border-zinc-700 backdrop-blur-sm">
+            <span className="text-xs text-zinc-300">已选 {selected.size} 个</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const targets = filteredEntries.filter((e) => selected.has(e.name));
+                  handleCopyPath(targets);
+                }}
+                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-600 transition-colors"
+              >
+                复制路径
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const targets = filteredEntries.filter((e) => selected.has(e.name));
+                  setDeleteConfirm(targets);
+                }}
+                className="rounded-md bg-red-900/60 px-2.5 py-1 text-xs text-red-300 hover:bg-red-900/80 transition-colors"
+              >
+                删除
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="rounded-md bg-zinc-700 px-2.5 py-1 text-xs text-zinc-400 hover:bg-zinc-600 transition-colors"
+              >
+                取消选择
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {menuEntry && createPortal(
+      {menuEntry && menuTargets.length > 0 && createPortal(
         <div
           ref={menuRef}
           className="fixed z-50 w-40 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
           style={{ top: menuPos.y, left: menuPos.x }}
         >
-          {menuEntry.is_dir && (
-            <button
-              type="button"
-              onClick={() => handleNavigate(menuEntry)}
-              className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-            >
-              打开
-            </button>
-          )}
-          {!menuEntry.is_dir && (
+          {menuTargets.length === 1 ? (
             <>
+              {menuEntry.is_dir && (
+                <button
+                  type="button"
+                  onClick={() => { handleNavigate(menuEntry); setMenuEntry(null); setMenuTargets([]); }}
+                  className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                >
+                  打开
+                </button>
+              )}
+              {!menuEntry.is_dir && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
+                      if (BINARY_EXTENSIONS.has(ext)) {
+                        setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+                        setMenuEntry(null); setMenuTargets([]);
+                        return;
+                      }
+                      if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
+                        setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+                        setMenuEntry(null); setMenuTargets([]);
+                        return;
+                      }
+                      const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                      setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
+                      setMenuEntry(null); setMenuTargets([]);
+                    }}
+                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(menuEntry)}
+                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    下载
+                  </button>
+                  {isArchiveFile(menuEntry.name) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExtractConfirm(menuEntry);
+                        setMenuEntry(null); setMenuTargets([]);
+                      }}
+                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                    >
+                      解压
+                    </button>
+                  )}
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
-                  const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
-                  if (BINARY_EXTENSIONS.has(ext)) {
-                    setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
-                    setMenuEntry(null);
-                    return;
-                  }
-                  if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
-                    setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
-                    setMenuEntry(null);
-                    return;
-                  }
-                  const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
-                  setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
-                  setMenuEntry(null);
+                  setRenameEntry(menuEntry);
+                  setRenameValue(menuEntry.name);
+                  setMenuEntry(null); setMenuTargets([]);
                 }}
                 className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
               >
-                编辑
+                重命名
               </button>
-              <button
-                type="button"
-                onClick={() => handleDownload(menuEntry)}
-                className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-              >
-                下载
-              </button>
-              {isArchiveFile(menuEntry.name) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExtractConfirm(menuEntry);
-                    setMenuEntry(null);
-                  }}
-                  className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-                >
-                  解压
-                </button>
-              )}
             </>
+          ) : (
+            <div className="px-2 py-1.5 text-xs text-zinc-400">
+              已选 {menuTargets.length} 个
+            </div>
           )}
           <button
             type="button"
-            onClick={() => {
-              setRenameEntry(menuEntry);
-              setRenameValue(menuEntry.name);
-              setMenuEntry(null);
-            }}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-          >
-            重命名
-          </button>
-          <button
-            type="button"
-            onClick={() => handleCopyPath(menuEntry)}
+            onClick={() => handleCopyPath(menuTargets)}
             className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
           >
             复制路径
@@ -755,8 +970,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <button
             type="button"
             onClick={() => {
-              setDeleteConfirm(menuEntry);
-              setMenuEntry(null);
+              setDeleteConfirm(menuTargets);
+              setMenuEntry(null); setMenuTargets([]);
             }}
             className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
           >
@@ -802,20 +1017,33 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         document.body,
       )}
 
-      {deleteConfirm && createPortal(
+      {deleteConfirm.length > 0 && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-red-300 mb-2">确认删除</h3>
-            <p className="text-xs text-zinc-400 mb-1">
-              类型: <span className="text-zinc-200">{deleteConfirm.is_dir ? '目录' : '文件'}</span>
-            </p>
-            <p className="text-xs text-zinc-400 mb-4">
-              名称: <span className="text-zinc-200">{deleteConfirm.name}</span>
-            </p>
+            <h3 className="text-sm font-semibold text-red-300 mb-2">
+              确认删除 {deleteConfirm.length > 1 ? `${deleteConfirm.length} 个文件` : ''}
+            </h3>
+            {deleteConfirm.length === 1 ? (
+              <>
+                <p className="text-xs text-zinc-400 mb-1">
+                  类型: <span className="text-zinc-200">{deleteConfirm[0].is_dir ? '目录' : '文件'}</span>
+                </p>
+                <p className="text-xs text-zinc-400 mb-4">
+                  名称: <span className="text-zinc-200">{deleteConfirm[0].name}</span>
+                </p>
+              </>
+            ) : (
+              <div className="text-xs text-zinc-400 mb-4 max-h-40 overflow-auto">
+                {deleteConfirm.slice(0, 10).map((e) => (
+                  <p key={e.name} className="text-zinc-200">{e.name}</p>
+                ))}
+                {deleteConfirm.length > 10 && <p className="text-zinc-500">等 {deleteConfirm.length} 个文件…</p>}
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setDeleteConfirm(null)}
+                onClick={() => setDeleteConfirm([])}
                 className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
               >
                 取消
@@ -827,7 +1055,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               >
                 确认删除
               </button>
-              {deleteConfirm.is_dir && (
+              {deleteConfirm.length === 1 && deleteConfirm[0].is_dir && (
                 <button
                   type="button"
                   onClick={() => handleQuickDelete(deleteConfirm)}
