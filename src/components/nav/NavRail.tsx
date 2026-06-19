@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { Terminal, Wand, Plug, HelpCircle, Settings } from 'lucide-react';
 import HelpModal from '../HelpModal';
 
 export type NavView = 'sessions' | 'skills' | 'mcp' | 'settings';
@@ -18,60 +19,30 @@ const TOP_ITEMS: NavItem[] = [
   {
     value: 'sessions',
     label: '会话',
-    icon: (
-      // server / connection icon
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-          d="M5 12H3l9-9 9 9h-2M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7M9 21V12h6v9" />
-      </svg>
-    ),
+    icon: <Terminal className="w-5 h-5" />,
   },
   {
     value: 'skills',
     label: '技能',
-    icon: (
-      // lightning / bolt icon
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-          d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-      </svg>
-    ),
+    icon: <Wand className="w-5 h-5" />,
   },
   {
     value: 'mcp',
     label: '自定义 MCP',
-    icon: (
-      // puzzle / plugin icon
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-          d="M14.121 4.879A3 3 0 0119 7v3h2a2 2 0 110 4h-2v3a2 2 0 01-2 2h-3v2a2 2 0 11-4 0v-2H7a2 2 0 01-2-2v-3a3 3 0 110-6V7a2 2 0 012-2h3V3a2 2 0 114 0v2a3 3 0 01.121-.121z" />
-      </svg>
-    ),
+    icon: <Plug className="w-5 h-5" />,
   },
 ];
 
 const HELP_ITEM: NavItem = {
   value: 'settings',
   label: '帮助',
-  icon: (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  ),
+  icon: <HelpCircle className="w-5 h-5" />,
 };
 
 const BOTTOM_ITEM: NavItem = {
   value: 'settings',
   label: '设置',
-  icon: (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-    </svg>
-  ),
+  icon: <Settings className="w-5 h-5" />,
 };
 
 function NavButton({
