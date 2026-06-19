@@ -41,7 +41,7 @@ gh release list
 | `src-tauri/tauri.conf.json` | `version` |
 | `src-tauri/Cargo.toml` | `version` (package section) |
 | `package.json` | `version` |
-| `latest.json` | `version` |
+| `latest.json` | `version`、`release_url` |
 
 > 改完 `Cargo.toml` 后 `Cargo.lock` 会自动更新，这是预期行为，一并提交。
 

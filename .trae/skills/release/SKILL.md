@@ -41,7 +41,7 @@ gh release list
 | `src-tauri/tauri.conf.json` | `version` |
 | `src-tauri/Cargo.toml` | `version` (package section) |
 | `package.json` | `version` |
-| `latest.json` | `version` |
+| `latest.json` | `version`、`release_url` |
 
 > 改完 `Cargo.toml` 后 `Cargo.lock` 会自动更新，这是预期行为，一并提交。
 
@@ -78,11 +78,13 @@ git push origin v{version}
 
 ### 6. 创建 GitHub Release
 
-先将 release 描述写入临时文件（避免 PowerShell 吞换行），再用 `--notes-file` 创建 Release。
+先将 release 描述写入临时文件，**必须用 UTF-8 编码**（`Set-Content` 默认 UTF-16LE 会导致中文乱码）：
 
-```bash
-# 将 changelog 写入文件（PowerShell 用 Set-Content，bash 用 cat）
-Set-Content -LiteralPath release-notes.md -Value @"<changelog>"@
+```powershell
+# PowerShell：用 WriteAllText + UTF8 编码，不要用 Set-Content
+[System.IO.File]::WriteAllText("release-notes.md", @"
+<changelog>
+"@, [System.Text.Encoding]::UTF8)
 ```
 
 ```bash
