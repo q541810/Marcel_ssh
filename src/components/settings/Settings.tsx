@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getErrorMessage } from '@/lib/errors';
 import type { AppSettings } from '@/lib/types';
@@ -23,6 +23,15 @@ export default function Settings() {
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const [shellWidth, setShellWidth] = useState(1200);
+  const savedNoticeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    return () => {
+      clearTimeout(savedNoticeTimerRef.current);
+      clearTimeout(saveErrorTimerRef.current);
+    };
+  }, []);
 
   const updateDraft = useCallback((patch: Partial<AppSettings>) => {
     setDraft((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -50,18 +59,27 @@ export default function Settings() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [draft]);
+  }, []);
 
-  if (!loaded || !draft) {
+  const layout = useMemo(() => resolveSettingsLayout(shellWidth), [shellWidth]);
+
+  const dirty = useMemo(
+    () => (draft ? JSON.stringify(draft) !== JSON.stringify(storeSettings) : false),
+    [draft, storeSettings]
+  );
+
+  const actionsValue = useMemo(
+    () => (draft ? { settings: draft, update: updateDraft, setPreview, saving, saveError } : null),
+    [draft, updateDraft, setPreview, saving, saveError]
+  );
+
+  if (!loaded || !draft || !actionsValue) {
     return (
       <div className="flex items-center justify-center h-full text-zinc-400">
         加载设置中...
       </div>
     );
   }
-
-  const dirty = JSON.stringify(draft) !== JSON.stringify(storeSettings);
-  const layout = resolveSettingsLayout(shellWidth);
 
   const handleSave = async () => {
     if (!dirty || saving) return;
@@ -71,10 +89,12 @@ export default function Settings() {
     try {
       await storeSave(draft);
       setSavedNotice('已保存');
-      setTimeout(() => setSavedNotice(null), 2000);
+      clearTimeout(savedNoticeTimerRef.current);
+      savedNoticeTimerRef.current = setTimeout(() => setSavedNotice(null), 2000);
     } catch (err) {
       setSaveError(getErrorMessage(err));
-      setTimeout(() => setSaveError(null), 3000);
+      clearTimeout(saveErrorTimerRef.current);
+      saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 3000);
     } finally {
       setSaving(false);
     }
@@ -88,7 +108,7 @@ export default function Settings() {
   return (
     <SearchRegistryProvider>
       <SettingsLayoutProvider layout={layout}>
-        <SettingsActionsProvider value={{ settings: draft, update: updateDraft, setPreview, saving, saveError }}>
+        <SettingsActionsProvider value={actionsValue}>
           <div ref={shellRef} className="settings-shell flex flex-1 h-full min-w-0">
             <SettingsSidebar
               activeCategory={activeCategory}

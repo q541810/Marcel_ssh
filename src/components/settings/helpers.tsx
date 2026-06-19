@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import type { SettingsLayout } from '@/lib/settingsLayout';
 import { resolveSettingsLayout } from '@/lib/settingsLayout';
 
@@ -34,8 +34,10 @@ export function SearchRegistryProvider({ children }: { children: React.ReactNode
     setItems((prev) => prev.filter((i) => i.id !== id));
   }, []);
 
+  const value = useMemo(() => ({ items, register, unregister }), [items, register, unregister]);
+
   return (
-    <SearchRegistryContext.Provider value={{ items, register, unregister }}>
+    <SearchRegistryContext.Provider value={value}>
       {children}
     </SearchRegistryContext.Provider>
   );
@@ -112,11 +114,12 @@ export function SettingItem({
 }) {
   const { register, unregister } = useSearchRegistry();
   const layout = useSettingsLayout();
+  const keywordsKey = keywords ? JSON.stringify(keywords) : '';
 
   useEffect(() => {
     register({ id, label, description, keywords, sectionId });
     return () => unregister(id);
-  }, [id, label, description, keywords, sectionId, register, unregister]);
+  }, [id, label, description, keywordsKey, sectionId, register, unregister]);
 
   const compact = density === 'compact';
   const stacked = layout.itemLayout === 'stacked' && !compact;

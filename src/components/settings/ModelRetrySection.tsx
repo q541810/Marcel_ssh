@@ -1,5 +1,4 @@
-import { useState, useCallback } from 'react';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
@@ -31,27 +30,36 @@ export function validateRetryHttpStatuses(value: string): string | null {
 
 export function ModelRetrySection() {
   const { settings, update } = useSettingsActions();
-  const llmConfig: LlmConfig = settings.llmConfig ?? {
-    providerType: 'openai',
-    apiKey: '',
-    model: '',
-    baseUrl: '',
-    temperature: 0.1,
-    maxRetries: 1,
-    retryDelaySecs: 5,
-    retryHttpStatuses: '408, 429, 500-599',
-  };
+  const llmConfig: LlmConfig = useMemo(
+    () =>
+      settings.llmConfig ?? {
+        providerType: 'openai',
+        apiKey: '',
+        model: '',
+        baseUrl: '',
+        temperature: 0.1,
+        maxRetries: 1,
+        retryDelaySecs: 5,
+        retryHttpStatuses: '408, 429, 500-599',
+      },
+    [settings.llmConfig]
+  );
 
   const [statusesError, setStatusesError] = useState<string | null>(null);
 
-  const updateLlm = (patch: Partial<LlmConfig>) => {
+  const updateLlm = useCallback((patch: Partial<LlmConfig>) => {
     update({ llmConfig: { ...llmConfig, ...patch } });
-  };
+  }, [update, llmConfig]);
+
+  const updateLlmRef = useRef(updateLlm);
+  useEffect(() => {
+    updateLlmRef.current = updateLlm;
+  }, [updateLlm]);
 
   const handleStatusesChange = useCallback((value: string) => {
     const err = validateRetryHttpStatuses(value);
     setStatusesError(err);
-    updateLlm({ retryHttpStatuses: value });
+    updateLlmRef.current({ retryHttpStatuses: value });
   }, []);
 
   const handleStatusesBlur = useCallback(() => {

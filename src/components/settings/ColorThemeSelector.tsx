@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type { TerminalColors } from '@/lib/types';
 import { TERMINAL_COLOR_PRESETS } from '@/lib/constants';
 
@@ -50,9 +50,10 @@ export function ColorThemeSelector({
     onChange(newColors);
   };
 
-  const isPresetSelected = (preset: TerminalColors) => {
-    return JSON.stringify(preset) === JSON.stringify(value);
-  };
+  const selectedPresetName = useMemo(() => {
+    const valueKey = JSON.stringify(value);
+    return TERMINAL_COLOR_PRESETS.find((p) => JSON.stringify(p.colors) === valueKey)?.name;
+  }, [value]);
 
   return (
     <div className="flex-1 space-y-3">
@@ -63,7 +64,7 @@ export function ColorThemeSelector({
             onClick={() => handlePresetSelect(preset.colors)}
             className={`
               px-3 py-1.5 rounded-lg text-sm transition-all
-              ${isPresetSelected(preset.colors)
+              ${selectedPresetName === preset.name
                 ? 'bg-indigo-600 text-white ring-2 ring-indigo-400'
                 : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-zinc-700'
               }

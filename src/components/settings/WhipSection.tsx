@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Toggle from '@/components/ui/Toggle';
 import { DEFAULT_WHIP_PHRASES, normalizeWhipPhrases } from '@/lib/whip';
 import { Card, SettingItem } from './helpers';
@@ -18,7 +18,10 @@ export function validateWhipPhrases(value: string): string | null {
 export function WhipSection() {
   const { settings, update } = useSettingsActions();
   const crackSpeed = settings.whipCrackSpeed ?? 240;
-  const phrasesText = normalizeWhipPhrases(settings.whipPhrases).join('\n');
+  const phrasesText = useMemo(
+    () => normalizeWhipPhrases(settings.whipPhrases).join('\n'),
+    [settings.whipPhrases]
+  );
   const [phrasesDraft, setPhrasesDraft] = useState(phrasesText);
   const [phrasesError, setPhrasesError] = useState<string | null>(null);
 
