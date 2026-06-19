@@ -17,7 +17,10 @@ export default function Settings() {
 
   const [activeCategory, setActiveCategory] = useState('interface');
   const [searchQuery, setSearchQuery] = useState('');
-  const [draft, setDraft] = useState<AppSettings | null>(null);
+  const [draft, setDraft] = useState<AppSettings | null>(() => {
+    const state = useSettingsStore.getState();
+    return state.loaded ? state.settings : null;
+  });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
