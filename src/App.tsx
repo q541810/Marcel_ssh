@@ -221,6 +221,13 @@ export default function App() {
 
   useEffect(() => {
     appReady().catch(console.error);
+    // 预加载设置页面，消除首次进入的模块加载延迟
+    const preload = () => import('@/components/settings/Settings');
+    if (typeof requestIdleCallback !== 'undefined') {
+      requestIdleCallback(preload);
+    } else {
+      setTimeout(preload, 1000);
+    }
   }, []);
 
   useEffect(() => {
