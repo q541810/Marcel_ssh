@@ -52,13 +52,13 @@ export function FontSizeInput({
         <div 
           className="absolute top-full left-1/2 -translate-x-1/2 mt-2 p-3 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-50 w-52 animate-slide-down"
           style={{ animationDuration: '200ms', animationTimingFunction: 'var(--spring-bounce)' }}
-          onMouseDown={(e) => e.preventDefault()}
         >
           <input
             type="range"
             min={10}
             max={32}
             value={value}
+            onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => {
               const v = parseInt(e.target.value, 10);
               if (v !== value) {
