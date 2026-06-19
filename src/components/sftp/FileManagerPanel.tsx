@@ -57,7 +57,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const menuRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const toolbarWidth = useContainerWidth(toolbarRef);
-  const mode = toolbarWidth >= 600 ? 'full' : toolbarWidth >= 300 ? 'compact' : 'icon-only';
+  const mode = toolbarWidth >= 870 ? 'full' : toolbarWidth >= 750 ? 'compact' : 'icon-only';
 
   const loadDirectory = useCallback(async (path: string) => {
     setLoading(true);
