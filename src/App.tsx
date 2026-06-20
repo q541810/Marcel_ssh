@@ -12,6 +12,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate } from '@/lib/tauri';
+import { playNotificationSound } from '@/lib/notificationSound';
 import type { AgentMode, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
@@ -62,6 +63,16 @@ export default function App() {
   useEffect(() => {
     attachTransferListeners();
     return () => detachTransferListeners();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    import('@tauri-apps/api/event').then(({ listen }) => {
+      listen<string>('notification-sound', (event) => {
+        playNotificationSound(event.payload);
+      }).then((fn) => { unlisten = fn; });
+    });
+    return () => { unlisten?.(); };
   }, []);
 
   useEffect(() => {

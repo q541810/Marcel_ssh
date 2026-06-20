@@ -197,6 +197,39 @@ html {
   scrollbar-color: #3f3f46 transparent;
 }
 
+/* ── Custom range slider ── */
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg-primary, #18181b);
+  border: 2px solid var(--color-accent, #a78bfa);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-bg-primary, #18181b);
+  border: 2px solid var(--color-accent, #a78bfa);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+
+input[type='range']::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+input[type='range']:focus-visible {
+  outline: none;
+}
+
 .layout-contained {
   contain: layout paint;
 }

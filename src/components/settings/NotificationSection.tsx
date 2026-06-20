@@ -46,7 +46,10 @@ function VolumeSlider({
           onChange(v);
           setNotificationVolume(v);
         }}
-        className="w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-[var(--color-accent)]"
+        className="w-full h-1.5 appearance-none cursor-pointer rounded-full"
+        style={{
+          background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${value}%, var(--color-bg-tertiary) ${value}%, var(--color-bg-tertiary) 100%)`,
+        }}
       />
       <span className="text-xs text-[var(--color-text-secondary)] w-8 text-right tabular-nums">
         {value}
