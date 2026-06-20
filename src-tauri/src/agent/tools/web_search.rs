@@ -58,7 +58,7 @@ impl AgentTool for WebSearchTool {
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of results per query (default: 5, max: 10)",
+                    "description": "Maximum number of results per query (default: 8, max: 10)",
                     "default": 5
                 }
             }
