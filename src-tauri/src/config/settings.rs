@@ -124,6 +124,12 @@ pub struct NotificationSettings {
     pub agent_task_done: bool,
     #[serde(default = "default_true")]
     pub agent_task_failed: bool,
+    #[serde(default = "default_volume")]
+    pub notification_volume: u8,
+}
+
+fn default_volume() -> u8 {
+    70
 }
 
 fn default_true() -> bool {
@@ -136,6 +142,7 @@ impl Default for NotificationSettings {
             agent_approval: true,
             agent_task_done: true,
             agent_task_failed: true,
+            notification_volume: 70,
         }
     }
 }

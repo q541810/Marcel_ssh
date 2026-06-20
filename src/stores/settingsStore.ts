@@ -4,6 +4,7 @@ import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, N
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { DEFAULT_WHIP_CRACK_SPEED, DEFAULT_WHIP_PHRASES, normalizeWhipPhrases } from '@/lib/whip';
+import { setNotificationVolume } from '@/lib/notificationSound';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
@@ -33,6 +34,7 @@ const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   agentApproval: true,
   agentTaskDone: true,
   agentTaskFailed: true,
+  notificationVolume: 70,
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -108,6 +110,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       };
       set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey, warning: resp.warning ?? null });
+      setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);
     } catch (err) {
       console.error('加载设置失败:', err);
       set({ loaded: false });

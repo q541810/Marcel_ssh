@@ -229,6 +229,7 @@ export interface NotificationSettings {
   agentApproval: boolean;
   agentTaskDone: boolean;
   agentTaskFailed: boolean;
+  notificationVolume: number;
 }
 
 export interface WorkspaceLayoutSettings {
