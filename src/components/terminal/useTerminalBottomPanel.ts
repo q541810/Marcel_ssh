@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 
 const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
+const ACTIVE_TAB_KEY = 'marcel:terminalActiveTab';
 const MIN_PANEL_HEIGHT = 100;
 const MAX_PANEL_HEIGHT = 500;
 const RESIZE_SETTLE_MS = 120;
@@ -25,11 +26,30 @@ export function useTerminalBottomPanel() {
   const storePanelHeight = useSettingsStore((s) => s.settings.panelHeight);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
 
-  const [activeTab, setActiveTab] = useState<string | null>(null);
+  const [activeTab, setActiveTabRaw] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(ACTIVE_TAB_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [displayTab, setDisplayTab] = useState<string | null>(null);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const [containerHeight, setContainerHeight] = useState(0);
   const [panelHeight, setPanelHeight] = useState(storePanelHeight ?? 256);
+
+  const setActiveTab = useCallback((tab: string | null) => {
+    setActiveTabRaw(tab);
+    try {
+      if (tab) {
+        localStorage.setItem(ACTIVE_TAB_KEY, tab);
+      } else {
+        localStorage.removeItem(ACTIVE_TAB_KEY);
+      }
+    } catch {
+      // localStorage can be unavailable in restricted WebView contexts.
+    }
+  }, []);
 
   const savePanelRatio = useCallback((ratio: number) => {
     panelRatioRef.current = ratio;
