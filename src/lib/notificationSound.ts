@@ -86,12 +86,12 @@ async function playTaskFailed(): Promise<void> {
     const src = ac.createBufferSource();
     const gainNode = ac.createGain();
     src.buffer = audioBuf;
-    gainNode.gain.value = gain;
+    gainNode.gain.setValueAtTime(Math.max(gain, 0.001), ac.currentTime);
     src.connect(gainNode);
     gainNode.connect(ac.destination);
     src.start();
   } catch {
-    await playTone({ freq: 200, duration: 0.4, type: 'sawtooth', gain: 0.2, delay: 0 });
+    playTone({ freq: 200, duration: 0.4, type: 'sawtooth', gain: 0.2, delay: 0 });
   }
 }
 

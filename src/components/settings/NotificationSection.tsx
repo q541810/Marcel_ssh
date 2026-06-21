@@ -3,6 +3,7 @@ import type { NotificationSettings } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+import { DEFAULT_NOTIFICATION_SETTINGS } from '@/stores/settingsStore';
 import {
   previewNotificationSound,
   setNotificationVolume,
@@ -61,12 +62,7 @@ function VolumeSlider({
 export function NotificationSection() {
   const { settings, update } = useSettingsActions();
 
-  const ns = settings.notificationSettings ?? {
-    agentApproval: true,
-    agentTaskDone: true,
-    agentTaskFailed: true,
-    notificationVolume: 80,
-  };
+  const ns = settings.notificationSettings ?? DEFAULT_NOTIFICATION_SETTINGS;
 
   const updateNotification = (patch: Partial<NotificationSettings>) => {
     update({ notificationSettings: { ...ns, ...patch } });

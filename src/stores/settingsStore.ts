@@ -30,7 +30,7 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableCloudPage: false,
 };
 
-const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   agentApproval: true,
   agentTaskDone: true,
   agentTaskFailed: true,
