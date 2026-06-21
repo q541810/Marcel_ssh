@@ -131,14 +131,14 @@ function ToolCallCard({ message, autoExpand }: Props) {
     }
   }, [autoExpand]);
 
-  // Auto-expand only when execution completes (transition true→false)
+  // Auto-collapse when execution completes (transition true→false)
   useEffect(() => {
     const was = wasExecutingRef.current;
     wasExecutingRef.current = message.isExecuting;
-    if (was && !message.isExecuting && !autoExpand) {
-      setExpanded(true);
+    if (was && !message.isExecuting) {
+      setExpanded(false);
     }
-  }, [message.isExecuting, autoExpand]);
+  }, [message.isExecuting]);
 
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {
