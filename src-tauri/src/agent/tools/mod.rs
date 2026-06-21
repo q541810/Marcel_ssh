@@ -100,6 +100,8 @@ pub struct ToolContext {
     pub ssh: SshManager,
     pub session_id: String,
     pub app_handle: AppHandle,
+    pub tool_call_id: Option<String>,
+    pub event_name: Option<String>,
     /// Optional security policy. When set, tools that run a sandbox
     /// (e.g. `execute_command`) should honour it instead of falling back
     /// to [`crate::agent::sandbox::Sandbox::default`].
@@ -112,6 +114,8 @@ impl ToolContext {
             ssh,
             session_id: session_id.into(),
             app_handle,
+            tool_call_id: None,
+            event_name: None,
             policy: None,
         }
     }
@@ -119,6 +123,18 @@ impl ToolContext {
     /// Attach a security policy to this context (builder-style).
     pub fn with_policy(mut self, policy: Arc<crate::agent::sandbox::SecurityPolicy>) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Attach a tool call ID to this context so the tool can emit streaming events.
+    pub fn with_tool_call_id(mut self, id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(id.into());
+        self
+    }
+
+    /// Attach the stream event name for streaming tool output.
+    pub fn with_event_name(mut self, name: impl Into<String>) -> Self {
+        self.event_name = Some(name.into());
         self
     }
 
@@ -135,6 +151,27 @@ impl ToolContext {
     ) -> Result<(String, bool), AppError> {
         self.ssh
             .exec_command_timed(&self.session_id, command, timeout)
+            .await
+    }
+
+    /// Run a command with a timeout and streaming output to frontend.
+    /// Emits intermediate output chunks on the given event channel.
+    pub async fn exec_streamed(
+        &self,
+        command: &str,
+        timeout: Duration,
+        event_name: &str,
+        tool_call_id: &str,
+    ) -> Result<(String, bool), AppError> {
+        self.ssh
+            .exec_command_streamed(
+                &self.session_id,
+                command,
+                timeout,
+                &self.app_handle,
+                event_name,
+                tool_call_id,
+            )
             .await
     }
 }

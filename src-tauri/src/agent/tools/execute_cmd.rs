@@ -147,10 +147,14 @@ impl AgentTool for ExecuteCommandTool {
         );
 
         let timeout_secs = command_timeout_secs(&params, ctx.policy.as_deref());
-
         let timeout = Duration::from_secs(timeout_secs);
 
-        let exec_result = ctx.exec_timed(&final_command, timeout).await;
+        // Use streaming exec if we have a tool_call_id and event_name, otherwise fall back to timed
+        let exec_result = if let (Some(tool_call_id), Some(event_name)) = (&ctx.tool_call_id, &ctx.event_name) {
+            ctx.exec_streamed(&final_command, timeout, event_name, tool_call_id).await
+        } else {
+            ctx.exec_timed(&final_command, timeout).await
+        };
 
         // Zeroize password and rewritten command immediately after execution
         if let Some(ref mut p) = sudo_password {

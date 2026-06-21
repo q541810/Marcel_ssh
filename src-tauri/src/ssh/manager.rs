@@ -358,6 +358,99 @@ impl SshManager {
         Ok(output)
     }
 
+    /// Execute a command with a timeout and stream output to the frontend.
+    /// Emits `toolOutput` events on the given event channel per data chunk.
+    pub async fn exec_command_streamed(
+        &self,
+        session_id: &str,
+        command: &str,
+        timeout: Duration,
+        app: &AppHandle,
+        event_name: &str,
+        tool_call_id: &str,
+    ) -> Result<(String, bool), AppError> {
+        let conn = {
+            let guard = self.connections.read().await;
+            guard.get(session_id).cloned()
+        };
+        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+
+        let mut channel = conn
+            .handle
+            .lock()
+            .await
+            .channel_open_session()
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开 exec 通道失败: {}", e)))?;
+
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
+
+        let mut output = String::new();
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+
+        loop {
+            tokio::select! {
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            let chunk = String::from_utf8_lossy(&data).to_string();
+                            output.push_str(&chunk);
+                            let _ = app.emit(
+                                &event_name,
+                                &serde_json::json!({
+                                    "type": "toolOutput",
+                                    "toolCallId": tool_call_id,
+                                    "chunk": chunk,
+                                }),
+                            );
+                        }
+                        Some(ChannelMsg::ExtendedData { data, .. }) => {
+                            let chunk = String::from_utf8_lossy(&data).to_string();
+                            output.push_str(&chunk);
+                            let _ = app.emit(
+                                &event_name,
+                                &serde_json::json!({
+                                    "type": "toolOutput",
+                                    "toolCallId": tool_call_id,
+                                    "chunk": chunk,
+                                }),
+                            );
+                        }
+                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
+                            break;
+                        }
+                        Some(ChannelMsg::ExitStatus { .. }) => {}
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+                _ = &mut deadline => {
+                    let close_timeout = tokio::time::sleep(Duration::from_secs(2));
+                    tokio::pin!(close_timeout);
+                    tokio::select! {
+                        _ = async {
+                            let _ = channel.eof().await;
+                            let _ = channel.close().await;
+                            loop {
+                                match channel.wait().await {
+                                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                                    Some(_) => {}
+                                }
+                            }
+                        } => {}
+                        _ = &mut close_timeout => {}
+                    }
+                    return Ok((output, true));
+                }
+            }
+        }
+        Ok((output, false))
+    }
+
     /// Execute a command with a timeout. Returns (output, was_timeout).
     /// If the timeout fires, the channel is closed and partial output is returned.
     pub async fn exec_command_timed(

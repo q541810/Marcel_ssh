@@ -96,6 +96,38 @@ export function handleToolCallStart(
 }
 
 // ---------------------------------------------------------------------------
+// Tool output stream — updates the result field incrementally
+// ---------------------------------------------------------------------------
+
+export function handleToolOutput(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  toolCallId: string,
+  chunk: string,
+) {
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const newMsgs = [...convMsgs];
+    const streamState = getStreamState(taskId);
+    const pendingMsgId = streamState.pendingToolCalls.get(toolCallId);
+    if (pendingMsgId) {
+      const pendingIdx = newMsgs.findIndex((m) => m.id === pendingMsgId);
+      if (pendingIdx !== -1) {
+        const msg = newMsgs[pendingIdx];
+        newMsgs[pendingIdx] = {
+          ...msg,
+          toolResult: {
+            ...msg.toolResult!,
+            result: (msg.toolResult!.result || '') + chunk,
+          },
+        };
+      }
+    }
+    return newMsgs;
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Per-task stream state tracking
 // ---------------------------------------------------------------------------
 

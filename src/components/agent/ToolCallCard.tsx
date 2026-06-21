@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from 'react';
+import { memo, useState, useEffect, useRef } from 'react';
 import type { AgentMessage } from '@/lib/types';
 
 interface Props {
@@ -123,12 +123,22 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
 
 function ToolCallCard({ message, autoExpand }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
+  const wasExecutingRef = useRef(message.isExecuting);
 
   useEffect(() => {
     if (!autoExpand) {
       setExpanded(false);
     }
   }, [autoExpand]);
+
+  // Auto-expand only when execution completes (transition true→false)
+  useEffect(() => {
+    const was = wasExecutingRef.current;
+    wasExecutingRef.current = message.isExecuting;
+    if (was && !message.isExecuting && !autoExpand) {
+      setExpanded(true);
+    }
+  }, [message.isExecuting, autoExpand]);
 
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {
@@ -147,6 +157,7 @@ function ToolCallCard({ message, autoExpand }: Props) {
     const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tr.toolName, tr.arguments);
     const isExecuting = message.isExecuting;
+    const showOutput = isExecuting || expanded;
 
     return (
       <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : tr.wasTimeout ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
@@ -187,7 +198,14 @@ function ToolCallCard({ message, autoExpand }: Props) {
             )}
           </div>
         </button>
-        {expanded && (
+        {showOutput && (
+          <div className={`border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
+            <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-24 overflow-y-auto font-mono leading-relaxed">
+              {tr.result || ''}
+            </pre>
+          </div>
+        )}
+        {expanded && !isExecuting && (
           <div className="border-t border-zinc-700/50 px-3 py-1.5">
             <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
               {tr.result || 'no output'}

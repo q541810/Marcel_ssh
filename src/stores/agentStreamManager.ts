@@ -13,6 +13,7 @@ import {
   handleDone,
   handleError,
   handleRetrying,
+  handleToolOutput,
   type StreamHandler,
   cleanupStreamState,
 } from './agentStreamHandlers';
@@ -91,6 +92,12 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'toolCallStart')) {
         handleToolCallStart(handler, taskId, conversationId, ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'toolOutput')) {
+        const outputEv = ev as unknown as { type: 'toolOutput'; toolCallId: string; chunk: string };
+        handleToolOutput(handler, taskId, conversationId, outputEv.toolCallId, outputEv.chunk);
         return;
       }
 
