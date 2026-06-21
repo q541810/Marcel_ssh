@@ -7,6 +7,7 @@ import AgentPanel from '@/components/agent/AgentPanel';
 import AppHeader from '@/components/layout/AppHeader';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
+import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
@@ -32,6 +33,7 @@ const AGENT_PANEL_COLLAPSE_MS = 300;
 export default function App() {
   const [navView, setNavView] = useState<NavView>('sessions');
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const mainRowRef = useRef<HTMLDivElement>(null);
   const mainRowWidthRef = useRef(0);
   const windowResizingRef = useRef(false);
@@ -259,6 +261,11 @@ export default function App() {
     if ((valid as string[]).includes(defaultAgentMode)) {
       setAgentMode(defaultAgentMode as AgentMode);
     }
+    // Check if onboarding should be shown
+    const hasCompletedOnboarding = useSettingsStore.getState().settings.hasCompletedOnboarding;
+    if (!hasCompletedOnboarding) {
+      setShowOnboarding(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded]);
 
@@ -360,6 +367,11 @@ export default function App() {
       )}
 
       <SettingsWarningToast />
+
+      <OnboardingWizard
+        open={showOnboarding}
+        onComplete={() => setShowOnboarding(false)}
+      />
     </div>
   );
 }

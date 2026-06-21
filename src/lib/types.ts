@@ -269,6 +269,8 @@ export interface AppSettings {
   /** User-defined protected paths. Writes to anything under these paths
    * require explicit user approval, same as built-in `/etc`, `/boot`, etc. */
   customProtectedPaths: string[];
+  /** Whether the user has completed the onboarding wizard. */
+  hasCompletedOnboarding: boolean;
 }
 
 // LLM stream events

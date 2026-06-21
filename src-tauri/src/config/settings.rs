@@ -281,6 +281,9 @@ pub struct AppSettings {
     /// require explicit user approval, same as built-in `/etc`, `/boot`, etc.
     #[serde(default)]
     pub custom_protected_paths: Vec<String>,
+    /// Whether the user has completed the onboarding wizard.
+    #[serde(default)]
+    pub has_completed_onboarding: bool,
 }
 
 fn default_file_manager_path() -> String {
@@ -348,6 +351,7 @@ impl Default for AppSettings {
             notification_settings: NotificationSettings::default(),
             workspace_layout: WorkspaceLayoutSettings::default(),
             custom_protected_paths: vec![],
+            has_completed_onboarding: false,
         }
     }
 }
@@ -508,5 +512,25 @@ mod tests {
         assert!(parsed.notification_settings.agent_approval);
         assert!(parsed.notification_settings.agent_task_done);
         assert!(parsed.notification_settings.agent_task_failed);
+    }
+
+    /// hasCompletedOnboarding should default to false for old configs.
+    #[test]
+    fn app_settings_loads_old_format_without_onboarding() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("missing hasCompletedOnboarding should load");
+        assert!(!parsed.has_completed_onboarding);
+    }
+
+    /// hasCompletedOnboarding should roundtrip correctly.
+    #[test]
+    fn app_settings_onboarding_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.has_completed_onboarding = true;
+        let json = serde_json::to_string(&settings).expect("serialize");
+        assert!(json.contains("\"hasCompletedOnboarding\":true"));
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.has_completed_onboarding);
     }
 }

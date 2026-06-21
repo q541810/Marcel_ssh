@@ -58,6 +58,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   customProtectedPaths: [],
+  hasCompletedOnboarding: false,
 };
 
 interface SettingsState {

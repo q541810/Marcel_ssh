@@ -7,12 +7,14 @@ import { openExternalLink } from '@/lib/externalLinks';
 import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import Button from '@/components/ui/Button';
 import { Card, SettingItem } from './helpers';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 export default function AboutSection() {
   const [appVersion, setAppVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<UpdateCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const update = useSettingsStore((s) => s.update);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion('0.1.3'));
@@ -31,6 +33,15 @@ export default function AboutSection() {
       setChecking(false);
     }
   }, []);
+
+  const handleResetOnboarding = useCallback(async () => {
+    try {
+      await update({ hasCompletedOnboarding: false });
+      window.location.reload();
+    } catch (err) {
+      console.error('Failed to reset onboarding:', err);
+    }
+  }, [update]);
 
   return (
     <>
@@ -75,6 +86,17 @@ export default function AboutSection() {
               </Button>
             </div>
           )}
+        </SettingItem>
+        <SettingItem
+          id="about-onboarding"
+          label="重新引导"
+          description="重新运行初次使用引导流程"
+          sectionId="settings-about"
+          keywords={['onboarding', 'guide', '引导', '新手', '教程']}
+        >
+          <Button variant="secondary" onClick={handleResetOnboarding}>
+            重新运行引导
+          </Button>
         </SettingItem>
       </Card>
     </>
