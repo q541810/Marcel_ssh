@@ -279,82 +279,85 @@ export default function App() {
   };
 
   return (
-    <div
-      className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden"
-      data-window-resizing={isWindowResizing ? 'true' : undefined}
-    >
+    <div className="relative">
       <AppHeader
         onToggleSidebar={handleToggleSidebar}
         onToggleAgentPanel={handleToggleAgentPanel}
+        className="fixed top-0 left-0 right-0 z-[99999]"
       />
 
-      <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
-        <NavRail active={navView} onChange={handleNavChange} />
+      <div
+        className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden pt-8"
+        data-window-resizing={isWindowResizing ? 'true' : undefined}
+      >
+        <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
+          <NavRail active={navView} onChange={handleNavChange} />
 
-        <aside
-          className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
-          style={{
-            width: effectiveSidebarOpen ? `${sidebarWidth}px` : '0rem',
-            borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
-            transition: isResizing || isWindowResizing
-              ? 'none'
-              : `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
-          }}
-        >
-          <div style={{ width: `${sidebarWidth}px`, height: '100%' }}>
-            {navView === 'sessions' && <ConnectionList />}
-            {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
-            {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
-          </div>
-        </aside>
-
-        {effectiveSidebarOpen && !isSettingsView && (
-          <div
-            className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-            onMouseDown={handleSidebarResizeMouseDown}
-            style={{ touchAction: 'none' }}
-          />
-        )}
-
-        <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
-          {isSettingsView ? (
-            <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
-              <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
-                <Settings />
-              </Suspense>
+          <aside
+            className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
+            style={{
+              width: effectiveSidebarOpen ? `${sidebarWidth}px` : '0rem',
+              borderRightWidth: effectiveSidebarOpen ? '1px' : '0px',
+              transition: isResizing || isWindowResizing
+                ? 'none'
+                : `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
+            }}
+          >
+            <div style={{ width: `${sidebarWidth}px`, height: '100%' }}>
+              {navView === 'sessions' && <ConnectionList />}
+              {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
+              {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
             </div>
-          ) : (
-            <>
-              <TabBar />
-              <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                <Terminal />
-              </main>
-            </>
-          )}
-        </div>
+          </aside>
 
-        <div
-          className="layout-contained flex overflow-hidden flex-shrink-0"
-          style={{
-            width: agentPanelVisible ? `${agentPanelWidth + 4}px` : '0px',
-            transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
-          }}
-        >
-          {agentPanelMounted && agentPanelVisible && (
-            <>
-              <div
-                className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-                onMouseDown={handleAgentResizeMouseDown}
-                style={{ touchAction: 'none' }}
-              />
-              <aside
-                className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
-                style={{ width: `${agentPanelWidth}px` }}
-              >
-                <AgentPanel />
-              </aside>
-            </>
+          {effectiveSidebarOpen && !isSettingsView && (
+            <div
+              className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+              onMouseDown={handleSidebarResizeMouseDown}
+              style={{ touchAction: 'none' }}
+            />
           )}
+
+          <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
+            {isSettingsView ? (
+              <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
+                <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
+                  <Settings />
+                </Suspense>
+              </div>
+            ) : (
+              <>
+                <TabBar />
+                <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                  <Terminal />
+                </main>
+              </>
+            )}
+          </div>
+
+          <div
+            className="layout-contained flex overflow-hidden flex-shrink-0"
+            style={{
+              width: agentPanelVisible ? `${agentPanelWidth + 4}px` : '0px',
+              transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
+            }}
+          >
+            {agentPanelMounted && agentPanelVisible && (
+              <>
+                <div
+                  className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+                  onMouseDown={handleAgentResizeMouseDown}
+                  style={{ touchAction: 'none' }}
+                />
+                <aside
+                  className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
+                  style={{ width: `${agentPanelWidth}px` }}
+                >
+                  <AgentPanel />
+                </aside>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

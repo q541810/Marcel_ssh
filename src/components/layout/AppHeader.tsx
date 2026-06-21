@@ -5,11 +5,12 @@ import WindowControls from '@/components/layout/WindowControls';
 interface Props {
   onToggleSidebar: () => void;
   onToggleAgentPanel: () => void;
+  className?: string;
 }
 
-export default function AppHeader({ onToggleSidebar, onToggleAgentPanel }: Props) {
+export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, className }: Props) {
   return (
-    <header className="flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8">
+    <header className={`flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8 ${className ?? ''}`}>
       <div
         className="flex items-center gap-3 px-2 flex-1"
         data-tauri-drag-region
