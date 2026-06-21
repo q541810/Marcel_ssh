@@ -91,9 +91,7 @@ async function playTaskFailed(): Promise<void> {
     gainNode.connect(ac.destination);
     src.start();
   } catch {
-    const audio = new Audio('/sounds/agent-failed.mp3');
-    audio.volume = Math.min(gain, 1);
-    audio.play().catch(() => {});
+    await playTone({ freq: 200, duration: 0.4, type: 'sawtooth', gain: 0.2, delay: 0 });
   }
 }
 
