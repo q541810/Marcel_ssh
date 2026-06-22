@@ -58,7 +58,10 @@ export function ValidatedInput(props: ValidatedInputProps) {
   // onChange
   const handleChange = (raw: string) => {
     if (type === 'number') {
-      const v = raw === '' ? 0 : Math.round(Number(raw));
+      // 不做 Math.round — 是否取整由 validate 函数决定（如 maxToolRounds 的
+      // Number.isInteger 校验）。这里只负责把字符串转成数字传出去。
+      const v = raw === '' ? 0 : Number(raw);
+      if (!Number.isFinite(v)) return; // type=number 浏览器已拦截非数字,兜底
       (props as NumberProps).onChange(v);
       setError(null);
       if (validate(String(v)) === null) {

@@ -80,17 +80,6 @@ export function ModelServiceSection() {
           </button>
         </div>
       </SettingItem>
-      <SettingItem id="llm-temperature" label="温度" description="采样温度 (0-2)" sectionId="settings-llm" keywords={['temperature', '采样', '随机性']}>
-        <input
-          type="number"
-          step={0.1}
-          min={0}
-          max={2}
-          value={llmConfig.temperature}
-          onChange={(e) => updateLlm({ temperature: Math.max(0, Math.min(2, parseFloat(e.target.value) || 0)) })}
-          className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        />
-      </SettingItem>
       <ModelListModal
         open={modelsOpen}
         onClose={() => setModelsOpen(false)}
