@@ -110,20 +110,6 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     return result;
   }, [entries, showHidden]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
-        e.preventDefault();
-        setSelected(new Set(filteredEntries.map((en) => en.name)));
-      }
-      if (e.key === 'Escape' && selected.size > 0) {
-        setSelected(new Set());
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [filteredEntries, selected.size]);
-
   const navigateTo = useCallback((path: string) => {
     setHistory((prev) => {
       const newHistory = prev.slice(0, historyIndex + 1);
