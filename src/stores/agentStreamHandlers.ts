@@ -478,9 +478,13 @@ export function handleRetrying(
       {
         id: crypto.randomUUID(),
         role: 'system',
-        content: `正在重试 (${ev.attempt}/${ev.maxAttempts})，等待 ${ev.delaySecs}s...`,
+        content: '',
         timestamp: new Date().toISOString(),
         isRetrying: true,
+        retryAttempt: ev.attempt - 1,
+        retryMaxAttempts: ev.maxAttempts - 1,
+        retryTotalDelaySecs: ev.delaySecs,
+        retryLastError: ev.lastError,
       },
     ];
   });

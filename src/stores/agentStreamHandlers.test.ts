@@ -266,7 +266,7 @@ describe('agentStreamHandlers', () => {
   });
 
   describe('handleRetrying', () => {
-    it('adds a system retrying message and clears previous ones', () => {
+    it('adds a structured retrying message and clears previous ones', () => {
       const handler = mockHandler({ [convId]: [] });
 
       handleRetrying(handler, taskId, convId, {
@@ -281,8 +281,12 @@ describe('agentStreamHandlers', () => {
       expect(msgs).toHaveLength(1);
       expect(msgs[0].role).toBe('system');
       expect(msgs[0].isRetrying).toBe(true);
-      expect(msgs[0].content).toContain('正在重试 (2/4)');
-      expect(msgs[0].content).toContain('等待 5s');
+      expect(msgs[0].retryAttempt).toBe(1);
+      expect(msgs[0].retryMaxAttempts).toBe(3);
+      expect(msgs[0].retryTotalDelaySecs).toBe(5);
+      expect(msgs[0].retryLastError).toBe('LLM 返回错误 429: rate limit');
+      // content is now empty — UI composes the text from structured fields
+      expect(msgs[0].content).toBe('');
     });
 
     it('does not alter other messages in the conversation', () => {
@@ -311,9 +315,10 @@ describe('agentStreamHandlers', () => {
       expect(msgs[0].content).toBe('hello');
       expect(msgs[1].role).toBe('system');
       expect(msgs[1].isRetrying).toBe(true);
+      expect(msgs[1].retryAttempt).toBe(0);
     });
 
-    it('deduplicates: only keeps one retrying message', () => {
+    it('deduplicates: only keeps one retrying message with latest attempt', () => {
       const handler = mockHandler({ [convId]: [] });
 
       handleRetrying(handler, taskId, convId, {
@@ -333,7 +338,8 @@ describe('agentStreamHandlers', () => {
 
       const msgs = handler._messages[convId];
       expect(msgs).toHaveLength(1);
-      expect(msgs[0].content).toContain('正在重试 (2/3)');
+      expect(msgs[0].retryAttempt).toBe(1);
+      expect(msgs[0].retryLastError).toBe('LLM 返回错误 502: bad gateway');
     });
   });
 });

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 /// Events emitted while streaming an LLM response. Tagged so the frontend
 /// can use a discriminated union for type-safe handling.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum StreamEvent {
     /// Incremental text delta from the assistant.
     TextDelta { text: String },

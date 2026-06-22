@@ -21,6 +21,21 @@ function makeUserMessage(overrides: Partial<AgentMessageType> = {}): AgentMessag
   };
 }
 
+function makeRetryingMessage(overrides: Partial<AgentMessageType> = {}): AgentMessageType {
+  return {
+    id: 'retry-1',
+    role: 'system',
+    content: '',
+    timestamp: new Date().toISOString(),
+    isRetrying: true,
+    retryAttempt: 2,
+    retryMaxAttempts: 4,
+    retryTotalDelaySecs: 5,
+    retryLastError: 'HTTP 429 Too Many Requests',
+    ...overrides,
+  };
+}
+
 describe('AgentMessage user actions', () => {
   it('renders user message metadata and action buttons', () => {
     const html = renderToStaticMarkup(
@@ -48,5 +63,71 @@ describe('AgentMessage user actions', () => {
 
     expect(html).toContain('title="任务运行中，暂不能撤回"');
     expect(html).toContain('disabled=""');
+  });
+});
+
+describe('AgentMessage retry indicator', () => {
+  it('shows countdown and attempt count in waiting phase', () => {
+    // timestamp = now, so remaining ≈ full 5s → waiting phase
+    const html = renderToStaticMarkup(
+      <AgentMessage message={makeRetryingMessage()} />,
+    );
+
+    // waiting phase: shows "Ns 后重试 (2/4)"
+    expect(html).toMatch(/\d+s 后重试/);
+    expect(html).toContain('(2/4)');
+    // clock icon present (waiting), not spinner-only
+    expect(html).toContain('cx="12" cy="12" r="9"');
+  });
+
+  it('shows retrying phase when countdown has elapsed', () => {
+    // timestamp 10s ago, delay 5s → remaining = 0 → retrying phase
+    const tenSecondsAgo = new Date(Date.now() - 10_000).toISOString();
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeRetryingMessage({ timestamp: tenSecondsAgo })}
+      />,
+    );
+
+    expect(html).toContain('正在重试请求');
+    expect(html).toContain('(2/4)');
+    expect(html).toContain('animate-spin');
+  });
+
+  it('shows error summary and is expandable when error is long', () => {
+    const longError = 'x'.repeat(120);
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeRetryingMessage({ retryLastError: longError })}
+      />,
+    );
+
+    // summary truncated to 80 chars + ellipsis
+    expect(html).toContain('x'.repeat(80) + '…');
+    // expandable: has title attribute for toggle
+    expect(html).toContain('点击展开完整错误');
+  });
+
+  it('shows full short error inline without expand control', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeRetryingMessage({ retryLastError: 'timeout' })}
+      />,
+    );
+
+    expect(html).toContain('timeout');
+    // short error: no expand title
+    expect(html).not.toContain('点击展开完整错误');
+  });
+
+  it('hides attempt count when maxAttempts is 0', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeRetryingMessage({ retryMaxAttempts: 0 })}
+      />,
+    );
+
+    expect(html).not.toContain('(2/0)');
+    expect(html).not.toContain('(2/');
   });
 });

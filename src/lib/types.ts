@@ -158,6 +158,14 @@ export interface AgentMessage {
   isRetrying?: boolean;
   /** Reasoning/thinking content from the model (DeepSeek thinking mode). Passed back to API. */
   reasoningContent?: string;
+  /** Current retry attempt number (1-based) for isRetrying messages */
+  retryAttempt?: number;
+  /** Max retry attempts for isRetrying messages */
+  retryMaxAttempts?: number;
+  /** Total delay seconds before next retry; UI counts down from timestamp + this */
+  retryTotalDelaySecs?: number;
+  /** Last error message that triggered the retry */
+  retryLastError?: string;
 }
 
 export interface ToolCallInfo {

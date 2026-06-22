@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from "react";
+import { memo, useState, useEffect, useRef } from "react";
 import type { AgentMessage as AgentMessageType } from "@/lib/types";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,6 +16,96 @@ interface Props {
 
 const MARKDOWN_CLASS =
   "text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic";
+
+// ─── Retry indicator: 倒计时 + 错误折叠 ───
+// 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs
+// 自己算剩余秒数，区分"等待"和"正在重试"两个阶段。
+function RetryIndicator({ message }: { message: AgentMessageType }) {
+  const attempt = message.retryAttempt ?? 0;
+  const maxAttempts = message.retryMaxAttempts ?? 0;
+  const totalDelay = message.retryTotalDelaySecs ?? 0;
+  const lastError = message.retryLastError ?? '';
+
+  const startMs = new Date(message.timestamp).getTime();
+  const endMs = startMs + totalDelay * 1000;
+
+  const [remaining, setRemaining] = useState(() => {
+    const r = (endMs - Date.now()) / 1000;
+    return r > 0 ? r : 0;
+  });
+  const [errorExpanded, setErrorExpanded] = useState(false);
+  const endMsRef = useRef(endMs);
+  endMsRef.current = endMs;
+
+  useEffect(() => {
+    const tick = () => {
+      const r = (endMsRef.current - Date.now()) / 1000;
+      setRemaining(r > 0 ? r : 0);
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const waiting = remaining > 0;
+  const remainingCeil = Math.ceil(remaining);
+
+  // 错误展示：首行截断 80 字符
+  const errorFirstLine = lastError.split('\n')[0] ?? '';
+  const errorSummary = errorFirstLine.length > 80 ? errorFirstLine.slice(0, 80) + '…' : errorFirstLine;
+  const hasMore = errorFirstLine.length > 80 || lastError.includes('\n');
+
+  return (
+    <div className="flex justify-center my-1">
+      <div className="flex flex-col items-center gap-1 max-w-[90%]">
+        <div
+          className={`flex items-center gap-1.5 text-xs rounded-full px-3 py-1 border transition-colors ${
+            waiting
+              ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
+              : 'text-sky-400 bg-sky-400/10 border-sky-400/20'
+          }`}
+        >
+          {waiting ? (
+            // 时钟图标：等待阶段
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" strokeWidth={2} />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 7v5l3 2" />
+            </svg>
+          ) : (
+            // spinner：正在重试阶段
+            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {waiting ? (
+            <span>
+              {remainingCeil}s 后重试
+              {maxAttempts > 0 && ` (${attempt}/${maxAttempts})`}
+            </span>
+          ) : (
+            <span>
+              正在重试请求{maxAttempts > 0 && ` (${attempt}/${maxAttempts})`}…
+            </span>
+          )}
+        </div>
+        {/* 错误信息：默认折叠，点击展开 */}
+        {lastError && (
+          <button
+            type="button"
+            onClick={() => hasMore && setErrorExpanded((v) => !v)}
+            className={`text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors max-w-full text-left break-words [overflow-wrap:anywhere] ${
+              hasMore ? 'cursor-pointer' : 'cursor-default'
+            }`}
+            title={hasMore ? (errorExpanded ? '点击折叠' : '点击展开完整错误') : undefined}
+          >
+            {errorExpanded ? lastError : errorSummary}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCopy }: Props) {
   const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay);
@@ -87,17 +177,7 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
   // ─── System message ───
   if (isSystem) {
     if (message.isRetrying) {
-      return (
-        <div className="flex justify-center my-1">
-          <div className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-full px-3 py-1">
-            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            {message.content}
-          </div>
-        </div>
-      );
+      return <RetryIndicator message={message} />;
     }
     return (
       <div className="flex justify-center my-1">
