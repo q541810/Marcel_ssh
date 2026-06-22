@@ -53,25 +53,47 @@ export function ModelRetrySection() {
   return (
     <Card id="settings-llm-retry" title="请求重试" description="LLM API 调用失败时自动重试，规避供应商偶发异常">
       <SettingItem id="llm-max-retries" label="最大重试次数" description="LLM 请求失败时自动重试的最大次数（0 = 不重试）" sectionId="settings-llm-retry" keywords={['retry', '重试', '请求重试']}>
-        <input
+        <ValidatedInput
           type="number"
-          min={0}
-          max={10}
-          step={1}
           value={llmConfig.maxRetries}
-          onChange={(e) => updateLlm({ maxRetries: Math.max(0, Math.min(10, parseInt(e.target.value) || 0)) })}
-          className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+          onChange={(v) => updateLlm({ maxRetries: v })}
+          validate={(s) => {
+            const v = Number(s);
+            if (!Number.isInteger(v) || v < 0 || v > 10) return '须为 0-10 的整数';
+            return null;
+          }}
+          validatorId="maxRetries"
+          validatorFn={(draft) => {
+            const v = draft.llmConfig?.maxRetries;
+            if (v === undefined) return null;
+            if (!Number.isInteger(v) || v < 0 || v > 10) return `最大重试次数须为 0-10 的整数（当前值：${v}）`;
+            return null;
+          }}
+          min={0} max={10} step={1}
+          suffix="次"
+          className="w-24"
         />
       </SettingItem>
       <SettingItem id="llm-retry-delay" label="重试间隔 (秒)" description="两次重试之间的等待时间" sectionId="settings-llm-retry" keywords={['delay', '间隔', '重试']}>
-        <input
+        <ValidatedInput
           type="number"
-          min={1}
-          max={60}
-          step={1}
           value={llmConfig.retryDelaySecs}
-          onChange={(e) => updateLlm({ retryDelaySecs: Math.max(1, Math.min(60, parseFloat(e.target.value) || 5)) })}
-          className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+          onChange={(v) => updateLlm({ retryDelaySecs: v })}
+          validate={(s) => {
+            const v = Number(s);
+            if (!Number.isFinite(v) || v < 1 || v > 60) return '须为 1-60 的有限数字';
+            return null;
+          }}
+          validatorId="retryDelaySecs"
+          validatorFn={(draft) => {
+            const v = draft.llmConfig?.retryDelaySecs;
+            if (v === undefined) return null;
+            if (!Number.isFinite(v) || v < 1 || v > 60) return `重试间隔须为 1-60 的有限数字（当前值：${v}）`;
+            return null;
+          }}
+          min={1} max={60} step={1}
+          suffix="秒"
+          className="w-24"
         />
       </SettingItem>
       <SettingItem id="llm-retry-statuses" label="重试条件" description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试；网络/超时错误始终重试。" sectionId="settings-llm-retry" keywords={['retry', '重试条件', '状态码']}>
