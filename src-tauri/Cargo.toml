@@ -1,6 +1,6 @@
 [package]
 name = "marcel-ssh"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "AI-Native SSH Client with Autonomous Agent Operations"
 rust-version = "1.77.2"
