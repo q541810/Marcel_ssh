@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import { ModelServiceSection } from '@/components/settings/ModelServiceSection';
 import { AgentPolicySection } from '@/components/settings/AgentPolicySection';
-import { SettingsActionsProvider } from '@/components/settings/SettingsActionsContext';
+import { SettingsActionsProvider, useValidators } from '@/components/settings/SettingsActionsContext';
 import { SearchRegistryProvider } from '@/components/settings/helpers';
 import type { AppSettings } from '@/lib/types';
 
@@ -128,8 +128,12 @@ interface OnboardingWizardProps {
 
 export default function OnboardingWizard({ open, onComplete }: OnboardingWizardProps) {
   const [currentStep, setCurrentStep] = useState(0);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const fullSettings = useSettingsStore((s) => s.settings);
   const persist = useSettingsStore((s) => s.update);
+  const { registerValidator, runValidators } = useValidators();
+
+  const clearValidationErrors = useCallback(() => setValidationErrors([]), []);
 
   // 被复用方：设置页的 ModelServiceSection / AgentPolicySection 内部用
   // SettingsActionsContext（draft 模式），所以外层提供 Provider 接入 store。
@@ -140,24 +144,37 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
     setPreview: () => {},
     saving: false,
     saveError: null as string | null,
-    validationErrors: [] as string[],
-    registerValidator: () => () => {},
-    clearValidationErrors: () => {},
+    validationErrors,
+    registerValidator,
+    clearValidationErrors,
   };
 
+  const validateBeforeProceed = useCallback((): boolean => {
+    const errors = runValidators(fullSettings);
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      return false;
+    }
+    setValidationErrors([]);
+    return true;
+  }, [runValidators, fullSettings]);
+
   const handleNext = useCallback(() => {
+    if (!validateBeforeProceed()) return;
     if (currentStep < STEPS.length - 1) {
       setCurrentStep(currentStep + 1);
     }
-  }, [currentStep]);
+  }, [currentStep, validateBeforeProceed]);
 
   const handlePrev = useCallback(() => {
+    setValidationErrors([]);
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1);
     }
   }, [currentStep]);
 
   const handleComplete = useCallback(async () => {
+    if (!validateBeforeProceed()) return;
     try {
       await persist({ hasCompletedOnboarding: true });
       onComplete();
@@ -165,9 +182,10 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
       console.error('Failed to save onboarding status:', err);
       onComplete();
     }
-  }, [persist, onComplete]);
+  }, [persist, onComplete, validateBeforeProceed]);
 
   const handleSkip = useCallback(async () => {
+    setValidationErrors([]);
     try {
       await persist({ hasCompletedOnboarding: true });
       onComplete();
@@ -223,6 +241,18 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
             <div className="flex-1 overflow-y-auto min-h-0 mb-6">
               {STEPS[currentStep].component}
             </div>
+
+            {/* Validation errors */}
+            {validationErrors.length > 0 && (
+              <div className="mb-4 space-y-0.5 flex-shrink-0">
+                {validationErrors.map((err, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs text-red-400">
+                    <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                    <span>{err}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Navigation buttons */}
             <div className={currentStep === 0 ? 'flex flex-col items-center gap-3 flex-shrink-0' : 'flex items-center justify-between flex-shrink-0'}>

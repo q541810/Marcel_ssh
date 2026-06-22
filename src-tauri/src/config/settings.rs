@@ -306,6 +306,9 @@ pub struct AppSettings {
     /// require explicit user approval, same as built-in `/etc`, `/boot`, etc.
     #[serde(default)]
     pub custom_protected_paths: Vec<String>,
+    /// Command execution timeout in seconds for Agent tools.
+    #[serde(default = "default_command_timeout")]
+    pub command_timeout_secs: u64,
     /// Whether the user has completed the onboarding wizard.
     #[serde(default)]
     pub has_completed_onboarding: bool,
@@ -340,6 +343,9 @@ fn default_whip_phrases() -> Vec<String> {
         "速度，别让我等。".into(),
         "醒醒，该干活了。".into(),
     ]
+}
+fn default_command_timeout() -> u64 {
+    120
 }
 
 impl Default for AppSettings {
@@ -377,6 +383,7 @@ impl Default for AppSettings {
             notification_settings: NotificationSettings::default(),
             workspace_layout: WorkspaceLayoutSettings::default(),
             custom_protected_paths: vec![],
+            command_timeout_secs: default_command_timeout(),
             has_completed_onboarding: false,
         }
     }
@@ -429,7 +436,8 @@ mod tests {
     fn agent_mode_settings_default_is_denylist() {
         let s = AgentModeSettings::default();
         assert_eq!(s.list_mode, CommandListMode::Denylist);
-        assert!(s.command_list.is_empty());
+        assert!(!s.command_list.is_empty());
+        assert!(s.command_list.contains(&"rm".to_string()));
     }
 
     #[test]

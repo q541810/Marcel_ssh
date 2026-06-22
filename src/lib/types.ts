@@ -278,6 +278,8 @@ export interface AppSettings {
   /** User-defined protected paths. Writes to anything under these paths
    * require explicit user approval, same as built-in `/etc`, `/boot`, etc. */
   customProtectedPaths: string[];
+  /** Command execution timeout in seconds for Agent tools. */
+  commandTimeoutSecs: number;
   /** Whether the user has completed the onboarding wizard. */
   hasCompletedOnboarding: boolean;
 }

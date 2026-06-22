@@ -48,7 +48,7 @@ impl AgentTool for ExecuteCommandTool {
          stdout+stderr. Long output is truncated. The command is statically \
          analyzed by a security sandbox before execution; some patterns \
          (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) are \
-         always rejected."
+         always rejected. Timeout is configured by the user (default 120s)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -58,13 +58,6 @@ impl AgentTool for ExecuteCommandTool {
                 "command": {
                     "type": "string",
                     "description": "Shell command line to execute (run via the user's login shell)."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Optional command timeout in seconds (10-180, default 120). Increase for long-running commands like large file downloads or compilations.",
-                    "minimum": 10,
-                    "maximum": 180,
-                    "default": 120
                 }
             },
             "required": ["command"]
@@ -146,7 +139,7 @@ impl AgentTool for ExecuteCommandTool {
             }
         );
 
-        let timeout_secs = command_timeout_secs(&params, ctx.policy.as_deref());
+        let timeout_secs = ctx.policy.as_ref().map(|p| p.command_timeout_secs).unwrap_or(120);
         let timeout = Duration::from_secs(timeout_secs);
 
         // Use streaming exec if we have a tool_call_id and event_name, otherwise fall back to timed
@@ -184,18 +177,6 @@ impl AgentTool for ExecuteCommandTool {
             )),
         }
     }
-}
-
-fn command_timeout_secs(
-    params: &serde_json::Value,
-    policy: Option<&crate::agent::sandbox::SecurityPolicy>,
-) -> u64 {
-    let default_timeout = policy.map(|p| p.command_timeout_secs).unwrap_or(120);
-    params
-        .get("timeout_secs")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(default_timeout)
-        .clamp(10, 180)
 }
 
 /// Check if a command starts with `sudo` (possibly preceded by env-var
@@ -362,39 +343,5 @@ mod tests {
         // argument, not in the format string.
         assert!(result.contains("'ab%scd'"), "got: {}", result);
         assert!(result.starts_with("printf '%s\\n' '"), "got: {}", result);
-    }
-
-    #[test]
-    fn command_timeout_uses_policy_default_when_not_requested() {
-        let mut policy = crate::agent::sandbox::SecurityPolicy::default();
-        policy.command_timeout_secs = 45;
-
-        assert_eq!(
-            command_timeout_secs(&serde_json::json!({}), Some(&policy)),
-            45
-        );
-    }
-
-    #[test]
-    fn command_timeout_clamps_requested_value() {
-        assert_eq!(
-            command_timeout_secs(&serde_json::json!({ "timeout_secs": 5 }), None),
-            10
-        );
-        assert_eq!(
-            command_timeout_secs(&serde_json::json!({ "timeout_secs": 240 }), None),
-            180
-        );
-    }
-
-    #[test]
-    fn command_timeout_uses_requested_value_over_policy_default() {
-        let mut policy = crate::agent::sandbox::SecurityPolicy::default();
-        policy.command_timeout_secs = 30;
-
-        assert_eq!(
-            command_timeout_secs(&serde_json::json!({ "timeout_secs": 90 }), Some(&policy)),
-            90
-        );
     }
 }

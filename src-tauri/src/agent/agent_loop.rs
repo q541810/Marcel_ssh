@@ -205,13 +205,14 @@ pub(crate) async fn run_agent_loop(
 
         // 4. Execute each tool call via the dispatcher.
         //    The security policy is built fresh from current settings (including
-        //    user-defined custom_protected_paths) and attached to the context.
+        //    user-defined custom_protected_paths and command_timeout_secs) and attached to the context.
         for tc in tool_calls {
             let tool_ctx = {
                 let settings = state.settings.read().await;
                 let policy = std::sync::Arc::new(
                     crate::agent::sandbox::SecurityPolicy::from_user_settings(
                         &settings.custom_protected_paths,
+                        settings.command_timeout_secs,
                     ),
                 );
                 ToolContext::new(ssh.clone(), session_id.clone(), app.clone())

@@ -59,6 +59,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   customProtectedPaths: [],
+  commandTimeoutSecs: 120,
   hasCompletedOnboarding: false,
 };
 

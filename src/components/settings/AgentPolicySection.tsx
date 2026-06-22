@@ -131,8 +131,22 @@ export function AgentPolicySection() {
   };
 
   return (
-    <>
+    <div className="space-y-6">
     <Card id="settings-command-policy" title="命令执行策略" description="控制 Agent 模式下的命令安全边界">
+      <SettingItem id="cmd-timeout" label="命令超时时间" description="Agent 执行单条命令的最大等待时间" sectionId="settings-command-policy" keywords={['timeout', '超时', '命令执行策略', 'Agent']}>
+        <div className="flex items-center gap-3 w-80">
+          <input
+            type="range"
+            min={10}
+            max={300}
+            step={10}
+            value={settings.commandTimeoutSecs ?? 120}
+            onChange={(e) => update({ commandTimeoutSecs: Number(e.target.value) })}
+            className="flex-1 accent-indigo-500"
+          />
+          <span className="text-sm font-mono text-zinc-300 w-16 text-right">{settings.commandTimeoutSecs ?? 120}s</span>
+        </div>
+      </SettingItem>
       <SettingItem id="cmd-confirm" label="每条都手动确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
         <Toggle
           checked={agent.confirmEachCommand}
@@ -350,6 +364,6 @@ export function AgentPolicySection() {
         />
       </SettingItem>
     </Card>
-    </>
+    </div>
   );
 }

@@ -39,9 +39,10 @@ impl SecurityPolicy {
 
     /// Build a policy from the user's persisted settings, layering
     /// `custom_protected_paths` on top of the built-in defaults.
-    pub fn from_user_settings(custom_paths: &[String]) -> Self {
+    pub fn from_user_settings(custom_paths: &[String], command_timeout_secs: u64) -> Self {
         let mut p = Self::default();
         p.custom_protected_paths = custom_paths.to_vec();
+        p.command_timeout_secs = command_timeout_secs;
         p
     }
 }
@@ -49,7 +50,7 @@ impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
             max_commands_per_task: 50,
-            command_timeout_secs: 30,
+            command_timeout_secs: 120,
             task_timeout_secs: 600,
             blocked_patterns: vec![
                 "rm -rf /".into(),
@@ -289,7 +290,7 @@ mod tests {
 
     #[test]
     fn from_user_settings_populates_custom_paths() {
-        let policy = SecurityPolicy::from_user_settings(&["/srv/prod".into()]);
+        let policy = SecurityPolicy::from_user_settings(&["/srv/prod".into()], 120);
         assert!(policy.is_protected_path("/srv/prod/db.sqlite"));
         assert!(policy.is_protected_path("/etc/passwd"));
     }
