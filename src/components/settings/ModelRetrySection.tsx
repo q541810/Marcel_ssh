@@ -8,21 +8,21 @@ export function validateRetryHttpStatuses(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null; // empty is valid (no HTTP retry)
 
-  for (const entry of value.split(',')) {
+  for (const entry of trimmed.split(',')) {
     const entryTrimmed = entry.trim();
     if (!entryTrimmed) continue;
 
     if (entryTrimmed.includes('-')) {
       const parts = entryTrimmed.split('-');
       if (parts.length !== 2) return `无效范围: "${entryTrimmed}"（使用格式 lo-hi）`;
-      const lo = parseInt(parts[0], 10);
-      const hi = parseInt(parts[1], 10);
-      if (isNaN(lo) || isNaN(hi)) return `无法解析范围: "${entryTrimmed}"`;
+      const lo = Number(parts[0].trim());
+      const hi = Number(parts[1].trim());
+      if (!Number.isFinite(lo) || !Number.isFinite(hi)) return `无法解析范围: "${entryTrimmed}"`;
       if (lo < 100 || lo > 599 || hi < 100 || hi > 599) return `状态码超出范围 (100-599): "${entryTrimmed}"`;
       if (hi < lo) return `范围需从小到大: "${entryTrimmed}"`;
     } else {
-      const code = parseInt(entryTrimmed, 10);
-      if (isNaN(code)) return `无效状态码: "${entryTrimmed}"`;
+      const code = Number(entryTrimmed);
+      if (!Number.isFinite(code)) return `无效状态码: "${entryTrimmed}"`;
       if (code < 100 || code > 599) return `状态码超出范围 (100-599): "${entryTrimmed}"`;
     }
   }
