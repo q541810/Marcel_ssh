@@ -124,6 +124,18 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
 function ToolCallCard({ message, autoExpand }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
   const wasExecutingRef = useRef(message.isExecuting);
+  const outputRef = useRef<HTMLPreElement>(null);
+
+  // Auto-scroll output when at bottom
+  useEffect(() => {
+    const el = outputRef.current;
+    if (!el || !message.isExecuting) return;
+    const threshold = 8;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    if (atBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [message.toolResult?.result, message.isExecuting]);
 
   useEffect(() => {
     if (!autoExpand) {
@@ -157,7 +169,8 @@ function ToolCallCard({ message, autoExpand }: Props) {
     const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tr.toolName, tr.arguments);
     const isExecuting = message.isExecuting;
-    const showOutput = isExecuting || expanded;
+    const hasOutput = !!tr.result;
+    const showOutput = (isExecuting && hasOutput) || expanded;
 
     return (
       <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : tr.wasTimeout ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
@@ -200,7 +213,7 @@ function ToolCallCard({ message, autoExpand }: Props) {
         </button>
         {showOutput && (
           <div className={`border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
-            <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-24 overflow-y-auto font-mono leading-relaxed">
+            <pre ref={outputRef} className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-[120px] overflow-y-auto font-mono leading-relaxed">
               {tr.result || ''}
             </pre>
           </div>
@@ -233,7 +246,7 @@ function ToolCallCard({ message, autoExpand }: Props) {
     const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tc.name, tc.arguments);
     const timeoutSecs = tc.name === 'execute_command'
-      ? (typeof tc.arguments?.timeout_secs === 'number' ? tc.arguments.timeout_secs as number : 60)
+      ? (typeof tc.arguments?.timeout_secs === 'number' ? tc.arguments.timeout_secs as number : 120)
       : 0;
 
     return (

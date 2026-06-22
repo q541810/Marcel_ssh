@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+import { ValidatedInput } from './ValidatedInput';
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
   { path: '/etc', reason: '系统配置' },
@@ -130,6 +131,7 @@ export function AgentPolicySection() {
   };
 
   return (
+    <>
     <Card id="settings-command-policy" title="命令执行策略" description="控制 Agent 模式下的命令安全边界">
       <SettingItem id="cmd-confirm" label="每条都手动确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
         <Toggle
@@ -325,5 +327,29 @@ export function AgentPolicySection() {
         </div>
       </SettingItem>
     </Card>
+    <Card id="settings-agent-rounds" title="执行轮数限制" description="控制 Agent 单次任务的工具调用轮数上限">
+      <SettingItem id="cmd-max-rounds" label="最大执行轮数" description="Agent 单次任务最多执行的工具调用轮数，超限自动停止" sectionId="settings-agent-rounds" keywords={['max', 'rounds', '轮数', '最大', '执行轮数', 'Agent']}>
+        <ValidatedInput
+          type="number"
+          value={agent.maxToolRounds ?? 80}
+          onChange={(v) => updateAgent({ maxToolRounds: v })}
+          validate={(s) => {
+            const v = Number(s);
+            if (!Number.isInteger(v) || v < 10 || v > 300) return '须为 10-300 的整数';
+            return null;
+          }}
+          validatorId="maxToolRounds"
+          validatorFn={(draft) => {
+            const v = draft.agentModeSettings.maxToolRounds;
+            if (!Number.isInteger(v) || v < 10 || v > 300) return `最大执行轮数须为 10-300 的整数（当前值：${v}）`;
+            return null;
+          }}
+          min={10} max={300} step={1}
+          suffix="轮"
+          className="w-24"
+        />
+      </SettingItem>
+    </Card>
+    </>
   );
 }

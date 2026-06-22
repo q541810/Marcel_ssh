@@ -11,6 +11,7 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
   systemPrompt: '',
+  maxToolRounds: 80,
 };
 
 const DEFAULT_LLM_CONFIG: LlmConfig = {

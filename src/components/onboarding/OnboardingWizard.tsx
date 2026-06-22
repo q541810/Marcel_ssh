@@ -140,6 +140,9 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
     setPreview: () => {},
     saving: false,
     saveError: null as string | null,
+    validationErrors: [] as string[],
+    registerValidator: () => () => {},
+    clearValidationErrors: () => {},
   };
 
   const handleNext = useCallback(() => {

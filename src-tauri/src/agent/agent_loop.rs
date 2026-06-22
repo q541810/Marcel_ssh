@@ -30,9 +30,6 @@ pub(crate) struct PersistedToolResult {
     pub was_timeout: bool,
 }
 
-/// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
-const MAX_TOOL_ROUNDS: usize = 50;
-
 /// Checks if a task has been cancelled by the user.
 fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
     state
@@ -84,6 +81,8 @@ pub(crate) async fn run_agent_loop(
     persister.update_title_from_last_user_msg(&messages);
     persister.save_last_user_msg(&messages);
 
+    let max_rounds = agent_settings.max_tool_rounds.max(10);
+
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
         mode.clone(),
@@ -94,7 +93,7 @@ pub(crate) async fn run_agent_loop(
         registry.clone(),
     );
 
-    for round in 0..MAX_TOOL_ROUNDS {
+    for round in 0..max_rounds {
         log::info!("Agent {} round {}", task_id, round);
 
         if is_task_cancelled(&state, &task_id) {
@@ -292,7 +291,7 @@ pub(crate) async fn run_agent_loop(
     }
 
     // Exceeded max rounds
-    let msg = format!("Agent 达到最大执行轮数 ({MAX_TOOL_ROUNDS})，已停止");
+    let msg = format!("Agent 达到最大执行轮数 ({max_rounds})，已停止");
     let _ = app.emit(
         &event_name,
         StreamEvent::Error {

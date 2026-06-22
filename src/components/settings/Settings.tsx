@@ -5,6 +5,7 @@ import type { AppSettings } from '@/lib/types';
 import { resolveSettingsLayout } from '@/lib/settingsLayout';
 import { SearchRegistryProvider, SettingsLayoutProvider } from './helpers';
 import { SettingsActionsProvider } from './SettingsActionsContext';
+import { useValidators } from './SettingsActionsContext';
 import { SettingsContent } from './SettingsContent';
 import { SettingsSidebar } from './SettingsSidebar';
 
@@ -24,7 +25,9 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const shellRef = useRef<HTMLDivElement>(null);
+  const { registerValidator, runValidators } = useValidators();
   const [shellWidth, setShellWidth] = useState(1200);
   const savedNoticeTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout>>();
@@ -71,9 +74,11 @@ export default function Settings() {
     [draft, storeSettings]
   );
 
+  const clearValidationErrors = useCallback(() => setValidationErrors([]), []);
+
   const actionsValue = useMemo(
-    () => (draft ? { settings: draft, update: updateDraft, setPreview, saving, saveError } : null),
-    [draft, updateDraft, setPreview, saving, saveError]
+    () => (draft ? { settings: draft, update: updateDraft, setPreview, saving, saveError, validationErrors, registerValidator, clearValidationErrors } : null),
+    [draft, updateDraft, setPreview, saving, saveError, validationErrors, registerValidator, clearValidationErrors]
   );
 
   if (!loaded || !draft || !actionsValue) {
@@ -84,11 +89,20 @@ export default function Settings() {
     );
   }
 
+  // 需要值校验的输入框请使用 ValidatedInput 组件（自动注册保存时校验 + 值合法时清除 context 错误）
+  // 用法：import { ValidatedInput } from './ValidatedInput';
   const handleSave = async () => {
-    if (!dirty || saving) return;
-    setSaving(true);
+    if (saving) return;
+    if (!dirty && validationErrors.length === 0) return;
     setSaveError(null);
     setSavedNotice(null);
+    setValidationErrors([]);
+    const errors = runValidators(draft);
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      return;
+    }
+    setSaving(true);
     try {
       await storeSave(draft);
       setSavedNotice('已保存');
@@ -122,6 +136,7 @@ export default function Settings() {
               saving={saving}
               saveError={saveError}
               savedNotice={savedNotice}
+              validationErrors={validationErrors}
               onSave={handleSave}
               onReset={handleReset}
             />

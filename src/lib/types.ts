@@ -180,6 +180,7 @@ export interface AgentModeSettings {
   commandList: string[];
   confirmEachCommand: boolean;
   systemPrompt: string;
+  maxToolRounds: number;
 }
 
 export type LlmProviderType = 'openai';

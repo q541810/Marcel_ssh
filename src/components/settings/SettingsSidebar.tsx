@@ -13,6 +13,7 @@ interface SettingsSidebarProps {
   saving: boolean;
   saveError: string | null;
   savedNotice: string | null;
+  validationErrors: string[];
   onSave: () => void;
   onReset: () => void;
 }
@@ -26,6 +27,7 @@ export function SettingsSidebar({
   saving,
   saveError,
   savedNotice,
+  validationErrors,
   onSave,
   onReset,
 }: SettingsSidebarProps) {
@@ -82,7 +84,7 @@ export function SettingsSidebar({
       </nav>
       {!searchQuery && (
         <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
-          {(saving || savedNotice || saveError || dirty) && (
+          {(saving || savedNotice || saveError || validationErrors.length > 0 || dirty) && (
             <div className="text-xs">
               {saving && (
                 <div className="flex items-center gap-1.5 text-zinc-400">
@@ -102,7 +104,17 @@ export function SettingsSidebar({
                   {saveError}
                 </div>
               )}
-              {!saving && !savedNotice && !saveError && dirty && (
+              {validationErrors.length > 0 && (
+                <div className="space-y-0.5">
+                  {validationErrors.map((err, i) => (
+                    <div key={i} className="flex items-start gap-1.5 text-red-400">
+                      <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                      <span>{err}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!saving && !savedNotice && !saveError && validationErrors.length === 0 && dirty && (
                 <span className="text-amber-400">有未保存的更改</span>
               )}
             </div>
@@ -116,7 +128,7 @@ export function SettingsSidebar({
             )}
             <Button
               variant="primary"
-              className={`flex-1 ${dirty ? '' : 'opacity-50 cursor-not-allowed'}`}
+              className={`flex-1 ${dirty || validationErrors.length > 0 ? '' : 'opacity-50 cursor-not-allowed'}`}
               onClick={onSave}
               disabled={saving}
               loading={saving}

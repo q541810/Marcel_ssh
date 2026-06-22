@@ -76,7 +76,7 @@ impl Default for CommandListMode {
 }
 
 /// Settings for the AGENT mode's command-execution policy.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AgentModeSettings {
     /// Whether `commandList` acts as allowlist or denylist.
@@ -92,6 +92,31 @@ pub struct AgentModeSettings {
     /// Empty means nothing is appended.
     #[serde(default)]
     pub system_prompt: String,
+    /// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
+    #[serde(default = "default_max_tool_rounds")]
+    pub max_tool_rounds: usize,
+}
+
+fn default_max_tool_rounds() -> usize {
+    80
+}
+
+impl Default for AgentModeSettings {
+    fn default() -> Self {
+        Self {
+            list_mode: CommandListMode::Denylist,
+            command_list: vec![
+                "rm".into(),
+                "mkfs".into(),
+                "dd".into(),
+                "shutdown".into(),
+                "reboot".into(),
+            ],
+            confirm_each_command: true,
+            system_prompt: String::new(),
+            max_tool_rounds: 80,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -336,6 +361,7 @@ impl Default for AppSettings {
                 ],
                 confirm_each_command: true,
                 system_prompt: String::new(),
+                max_tool_rounds: 80,
             },
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),

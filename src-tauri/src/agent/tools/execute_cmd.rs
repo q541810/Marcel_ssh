@@ -61,10 +61,10 @@ impl AgentTool for ExecuteCommandTool {
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Optional command timeout in seconds (10-180, default 60). Increase for long-running commands like large file downloads or compilations.",
+                    "description": "Optional command timeout in seconds (10-180, default 120). Increase for long-running commands like large file downloads or compilations.",
                     "minimum": 10,
                     "maximum": 180,
-                    "default": 60
+                    "default": 120
                 }
             },
             "required": ["command"]
@@ -190,7 +190,7 @@ fn command_timeout_secs(
     params: &serde_json::Value,
     policy: Option<&crate::agent::sandbox::SecurityPolicy>,
 ) -> u64 {
-    let default_timeout = policy.map(|p| p.command_timeout_secs).unwrap_or(60);
+    let default_timeout = policy.map(|p| p.command_timeout_secs).unwrap_or(120);
     params
         .get("timeout_secs")
         .and_then(|v| v.as_u64())

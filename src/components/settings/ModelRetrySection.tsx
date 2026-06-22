@@ -1,7 +1,8 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+import { ValidatedInput } from './ValidatedInput';
 
 export function validateRetryHttpStatuses(value: string): string | null {
   const trimmed = value.trim();
@@ -45,27 +46,9 @@ export function ModelRetrySection() {
     [settings.llmConfig]
   );
 
-  const [statusesError, setStatusesError] = useState<string | null>(null);
-
-  const updateLlm = useCallback((patch: Partial<LlmConfig>) => {
+  const updateLlm = (patch: Partial<LlmConfig>) => {
     update({ llmConfig: { ...llmConfig, ...patch } });
-  }, [update, llmConfig]);
-
-  const updateLlmRef = useRef(updateLlm);
-  useEffect(() => {
-    updateLlmRef.current = updateLlm;
-  }, [updateLlm]);
-
-  const handleStatusesChange = useCallback((value: string) => {
-    const err = validateRetryHttpStatuses(value);
-    setStatusesError(err);
-    updateLlmRef.current({ retryHttpStatuses: value });
-  }, []);
-
-  const handleStatusesBlur = useCallback(() => {
-    const err = validateRetryHttpStatuses(llmConfig.retryHttpStatuses);
-    setStatusesError(err);
-  }, [llmConfig.retryHttpStatuses]);
+  };
 
   return (
     <Card id="settings-llm-retry" title="请求重试" description="LLM API 调用失败时自动重试，规避供应商偶发异常">
@@ -92,23 +75,16 @@ export function ModelRetrySection() {
         />
       </SettingItem>
       <SettingItem id="llm-retry-statuses" label="重试条件" description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试；网络/超时错误始终重试。" sectionId="settings-llm-retry" keywords={['retry', '重试条件', '状态码']}>
-        <div className="flex-1">
-          <input
-            type="text"
-            value={llmConfig.retryHttpStatuses}
-            onChange={(e) => handleStatusesChange(e.target.value)}
-            onBlur={handleStatusesBlur}
-            placeholder="408, 429, 500-599"
-            className={`w-full rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 ${
-              statusesError
-                ? 'bg-red-900/20 border border-red-500/50 focus:border-red-400'
-                : 'bg-zinc-800 border border-zinc-700'
-            }`}
-          />
-          {statusesError && (
-            <p className="text-xs text-red-400 mt-1">{statusesError}</p>
-          )}
-        </div>
+        <ValidatedInput
+          type="text"
+          value={llmConfig.retryHttpStatuses}
+          onChange={(v) => updateLlm({ retryHttpStatuses: v })}
+          validate={validateRetryHttpStatuses}
+          validatorId="retryHttpStatuses"
+          validatorFn={(draft) => validateRetryHttpStatuses(draft.llmConfig?.retryHttpStatuses ?? '')}
+          placeholder="408, 429, 500-599"
+          className="w-full"
+        />
       </SettingItem>
     </Card>
   );
