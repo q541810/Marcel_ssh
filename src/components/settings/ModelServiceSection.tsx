@@ -3,7 +3,6 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
-import Button from '@/components/ui/Button';
 import ModelListModal from './ModelListModal';
 
 export function ModelServiceSection() {
@@ -72,9 +71,13 @@ export function ModelServiceSection() {
             <option value="claude-opus-4-7" />
             <option value="claude-opus-4-6-1m" />
           </datalist>
-          <Button variant="secondary" size="sm" onClick={() => setModelsOpen(true)}>
+          <button
+            type="button"
+            onClick={() => setModelsOpen(true)}
+            className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors"
+          >
             获取模型列表
-          </Button>
+          </button>
         </div>
       </SettingItem>
       <SettingItem id="llm-temperature" label="温度" description="采样温度 (0-2)" sectionId="settings-llm" keywords={['temperature', '采样', '随机性']}>
