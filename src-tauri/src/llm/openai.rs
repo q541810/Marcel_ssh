@@ -211,6 +211,53 @@ impl OpenAiProvider {
 
         Ok(response)
     }
+
+    /// Fetch the list of available models from the provider's `/models` endpoint.
+    /// Used by the settings UI to let users pick a model id from what the
+    /// provider actually serves. No retry — the user clicks the button on demand.
+    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, AppError> {
+        let url = format!("{}/models", self.base_url().trim_end_matches('/'));
+        log::info!("LLM 列出模型请求: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .headers(self.build_headers()?)
+            .send()
+            .await
+            .map_err(|e| {
+                let detail = format_reqwest_error(&e);
+                log::error!("LLM 列出模型请求失败: {}", detail);
+                AppError::Llm(format!("获取模型列表失败: {}", detail))
+            })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = read_error_body(response).await;
+            return Err(AppError::Llm(format!(
+                "获取模型列表失败 (HTTP {}): {}",
+                status, body
+            )));
+        }
+
+        let resp: ModelsResponse = response
+            .json()
+            .await
+            .map_err(|e| AppError::Llm(format!("解析模型列表响应失败: {}", e)))?;
+
+        let models: Vec<ModelInfo> = resp
+            .data
+            .into_iter()
+            .map(|entry| ModelInfo {
+                id: entry.id,
+                owned_by: entry.owned_by,
+                created: entry.created,
+            })
+            .collect();
+
+        log::info!("LLM 列出模型: 获取到 {} 个模型", models.len());
+        Ok(models)
+    }
 }
 
 #[async_trait]
@@ -841,4 +888,91 @@ struct DeltaFunction {
     name: Option<String>,
     #[serde(default)]
     arguments: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInfo {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    #[serde(default)]
+    owned_by: Option<String>,
+    #[serde(default)]
+    created: Option<i64>,
+}
+
+#[cfg(test)]
+mod models_tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_openai_models_response() {
+        let payload = r#"{
+            "data": [
+                {"id": "gpt-4", "object": "model", "created": 1687882411, "owned_by": "openai"},
+                {"id": "claude-opus-4-7", "object": "model", "owned_by": "anthropic"}
+            ]
+        }"#;
+        let resp: ModelsResponse = serde_json::from_str(payload).expect("parse");
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(resp.data[0].id, "gpt-4");
+        assert_eq!(resp.data[0].owned_by.as_deref(), Some("openai"));
+        assert_eq!(resp.data[0].created, Some(1687882411));
+        // created is optional
+        assert_eq!(resp.data[1].created, None);
+    }
+
+    #[test]
+    fn deserialize_empty_models_response() {
+        let payload = r#"{"data": []}"#;
+        let resp: ModelsResponse = serde_json::from_str(payload).expect("parse");
+        assert!(resp.data.is_empty());
+    }
+
+    #[test]
+    fn model_info_serializes_camel_case() {
+        let info = ModelInfo {
+            id: "gpt-4".into(),
+            owned_by: Some("openai".into()),
+            created: Some(1687882411),
+        };
+        let json = serde_json::to_value(&info).expect("serialize");
+        assert_eq!(json.get("id").and_then(|v| v.as_str()), Some("gpt-4"));
+        assert_eq!(
+            json.get("ownedBy").and_then(|v| v.as_str()),
+            Some("openai")
+        );
+        assert_eq!(
+            json.get("created").and_then(|v| v.as_i64()),
+            Some(1687882411)
+        );
+        // snake_case must NOT appear
+        assert!(json.get("owned_by").is_none());
+    }
+
+    #[test]
+    fn model_info_skips_none_fields() {
+        let info = ModelInfo {
+            id: "foo".into(),
+            owned_by: None,
+            created: None,
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        assert!(json.contains("\"id\":\"foo\""));
+        assert!(!json.contains("ownedBy"));
+        assert!(!json.contains("created"));
+    }
 }

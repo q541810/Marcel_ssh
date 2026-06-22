@@ -440,6 +440,7 @@ pub fn run() {
             commands::settings::config_get_settings,
             commands::settings::config_save_settings,
             commands::settings::config_validate_custom_protected_paths,
+            commands::settings::llm_list_models,
             commands::keychain::config_save_password,
             commands::keychain::config_has_password,
             commands::keychain::config_delete_password,

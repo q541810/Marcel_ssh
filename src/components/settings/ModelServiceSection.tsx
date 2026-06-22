@@ -1,11 +1,15 @@
+import { useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+import Button from '@/components/ui/Button';
+import ModelListModal from './ModelListModal';
 
 export function ModelServiceSection() {
   const { settings, update } = useSettingsActions();
   const hasApiKey = useSettingsStore((s) => s.hasApiKey);
+  const [modelsOpen, setModelsOpen] = useState(false);
 
   const llmConfig: LlmConfig = settings.llmConfig ?? {
     providerType: 'openai',
@@ -68,6 +72,9 @@ export function ModelServiceSection() {
             <option value="claude-opus-4-7" />
             <option value="claude-opus-4-6-1m" />
           </datalist>
+          <Button variant="secondary" size="sm" onClick={() => setModelsOpen(true)}>
+            获取模型列表
+          </Button>
         </div>
       </SettingItem>
       <SettingItem id="llm-temperature" label="温度" description="采样温度 (0-2)" sectionId="settings-llm" keywords={['temperature', '采样', '随机性']}>
@@ -81,6 +88,14 @@ export function ModelServiceSection() {
           className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
         />
       </SettingItem>
+      <ModelListModal
+        open={modelsOpen}
+        onClose={() => setModelsOpen(false)}
+        currentModel={llmConfig.model}
+        baseUrl={llmConfig.baseUrl}
+        apiKey={llmConfig.apiKey}
+        onSelect={(id) => updateLlm({ model: id })}
+      />
     </Card>
   );
 }

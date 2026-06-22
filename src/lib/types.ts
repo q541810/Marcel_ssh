@@ -204,6 +204,13 @@ export interface LlmConfig {
   retryHttpStatuses: string;
 }
 
+/** A model entry returned by the provider's /models endpoint. */
+export interface ModelInfo {
+  id: string;
+  ownedBy?: string | null;
+  created?: number | null;
+}
+
 export interface TerminalColors {
   background: string;
   foreground: string;

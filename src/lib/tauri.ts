@@ -17,6 +17,7 @@ import type {
   ParsedSkill,
   CommandCheckResult,
   SftpFileEntry,
+  ModelInfo,
 } from './types';
 
 // SSH commands
@@ -233,6 +234,23 @@ export async function saveLlmApiKey(apiKey: string): Promise<void> {
 
 export async function deleteLlmApiKey(): Promise<void> {
   return invoke('config_delete_llm_api_key');
+}
+
+// LLM model discovery
+
+/**
+ * Fetch the list of models available on the configured provider.
+ * Pass the current draft baseUrl/apiKey so the request reflects the UI state;
+ * the backend falls back to the keychain when apiKey is empty or masked.
+ */
+export async function llmListModels(
+  baseUrl?: string | null,
+  apiKey?: string | null,
+): Promise<ModelInfo[]> {
+  return invoke<ModelInfo[]>('llm_list_models', {
+    baseUrl: baseUrl ?? null,
+    apiKey: apiKey ?? null,
+  });
 }
 
 // Skill commands

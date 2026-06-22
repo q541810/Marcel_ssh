@@ -5,7 +5,8 @@ use crate::config::keychain;
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
 use crate::error::AppError;
-use crate::llm::openai::validate_retry_conditions;
+use crate::llm::openai::{validate_retry_conditions, ModelInfo, OpenAiProvider};
+use crate::llm::provider::{LlmConfig, ProviderType};
 use crate::AppState;
 
 /// Response type for `config_get_settings`.
@@ -126,6 +127,46 @@ pub async fn config_validate_custom_protected_paths(paths: Vec<String>) -> Resul
         }
     }
     Ok(())
+}
+
+/// Fetch the list of available models from the configured OpenAI-compatible
+/// provider. The frontend passes the current draft `baseUrl` / `apiKey` so the
+/// request reflects what the user sees, not what was last persisted. When the
+/// API key is empty or masked (the frontend never receives the real key back),
+/// we fall back to the keychain — this covers the common case where the key was
+/// already saved and the user is just re-opening settings.
+#[tauri::command]
+pub async fn llm_list_models(
+    base_url: Option<String>,
+    api_key: Option<String>,
+) -> Result<Vec<ModelInfo>, AppError> {
+    let resolved_key = match api_key {
+        Some(k) if !k.is_empty() && !is_masked_key(&k) => k,
+        _ => match keychain::get_llm_api_key()? {
+            Some(k) => k,
+            None => {
+                return Err(AppError::Llm(
+                    "未配置 API Key，请先在设置中输入 API Key".into(),
+                ))
+            }
+        },
+    };
+
+    // Minimal config: model/temperature/retry fields are unused by list_models,
+    // but LlmConfig requires them. Empty/zero values are harmless here.
+    let config = LlmConfig {
+        provider_type: ProviderType::OpenAI,
+        api_key: resolved_key,
+        model: String::new(),
+        base_url: base_url.filter(|s| !s.is_empty()),
+        temperature: 0.0,
+        max_retries: 0,
+        retry_delay_secs: 0.0,
+        retry_http_statuses: String::new(),
+    };
+
+    let provider = OpenAiProvider::new(config)?;
+    provider.list_models().await
 }
 
 #[cfg(test)]
