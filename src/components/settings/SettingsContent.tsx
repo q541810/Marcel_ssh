@@ -42,7 +42,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
   }, [activeCategory, searchQuery, items]);
 
   const isSearching = searchQuery.trim().length > 0;
-  const sections = [
+  const allSections = [
     { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
     { id: 'settings-display', element: <ConversationDisplaySection /> },
     { id: 'settings-whip', element: <WhipSection /> },
@@ -54,7 +54,12 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },
     { id: 'settings-transfer', element: <TransferSection /> },
     { id: 'settings-about', element: <AboutSection /> },
-  ].filter((section) => visibleSections.includes(section.id));
+  ];
+  // 搜索时渲染全部 Section（隐藏不匹配的），确保所有 SettingItem 注册到搜索索引；
+  // 非搜索时只渲染当前分类，零额外开销。
+  const sections = isSearching
+    ? allSections
+    : allSections.filter((section) => visibleSections.includes(section.id));
 
   return (
     <div className="flex-1 overflow-y-auto bg-zinc-900">
@@ -82,6 +87,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
             <div
               key={section.id}
               className={layout.sectionColumns === 2 && SETTINGS_SECTION_SPAN[section.id] === 'full' ? 'col-span-2' : ''}
+              style={isSearching && !visibleSections.includes(section.id) ? { display: 'none' } : undefined}
             >
               {section.element}
             </div>
