@@ -361,7 +361,7 @@ fn default_whip_phrases() -> Vec<String> {
     ]
 }
 fn default_command_timeout() -> u64 {
-    120
+    180
 }
 
 impl Default for AppSettings {

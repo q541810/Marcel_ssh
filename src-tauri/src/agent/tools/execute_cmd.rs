@@ -139,7 +139,7 @@ impl AgentTool for ExecuteCommandTool {
             }
         );
 
-        let timeout_secs = ctx.policy.as_ref().map(|p| p.command_timeout_secs).unwrap_or(120);
+        let timeout_secs = ctx.policy.as_ref().map(|p| p.command_timeout_secs).unwrap_or(180);
         let timeout = Duration::from_secs(timeout_secs);
 
         // Use streaming exec if we have a tool_call_id and event_name, otherwise fall back to timed

@@ -50,7 +50,7 @@ impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
             max_commands_per_task: 50,
-            command_timeout_secs: 120,
+            command_timeout_secs: 180,
             task_timeout_secs: 600,
             blocked_patterns: vec![
                 "rm -rf /".into(),
