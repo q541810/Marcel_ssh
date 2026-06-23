@@ -285,7 +285,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         Object.entries(state.messages).map(([convId, msgs]) => [
           convId,
           msgs.map((m) =>
-            m.role === 'tool' && m.isExecuting ? { ...m, isExecuting: false } : m,
+            m.role === 'tool' && (m.isExecuting || m.modelApproval) ? { ...m, isExecuting: false, modelApproval: undefined } : m,
           ),
         ]),
       ),

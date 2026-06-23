@@ -10,6 +10,8 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
   commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
+  enableModelCommandApproval: false,
+  modelApprovalModel: '',
   systemPrompt: '',
   maxToolRounds: 80,
 };

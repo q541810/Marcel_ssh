@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
+import ModelListModal from './ModelListModal';
 import { ValidatedInput } from './ValidatedInput';
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
@@ -71,6 +72,7 @@ export function AgentPolicySection() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [approvalModelsOpen, setApprovalModelsOpen] = useState(false);
 
   // Custom protected paths
   const customPaths = settings.customProtectedPaths ?? [];
@@ -153,6 +155,42 @@ export function AgentPolicySection() {
           onChange={(checked) => updateAgent({ confirmEachCommand: checked })}
           label="即使通过列表过滤，仍要求用户确认每条命令"
         />
+      </SettingItem>
+      <SettingItem
+        id="cmd-model-approval"
+        label="执行前模型审批"
+        description="在执行命令前，用当前 Agent 模型结合上下文判断是否放行、转人工审批或阻止"
+        sectionId="settings-command-policy"
+        keywords={['model', 'approval', '模型', '审批', '命令执行策略', 'Agent']}
+      >
+        <div className="w-80 space-y-2">
+          <Toggle
+            checked={agent.enableModelCommandApproval ?? false}
+            onChange={(checked) => updateAgent({ enableModelCommandApproval: checked })}
+            label="在 execute_command 执行前调用模型做一次审批判定"
+          />
+          {agent.enableModelCommandApproval && (
+            <div className="pl-1 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={agent.modelApprovalModel ?? ''}
+                  onChange={(e) => updateAgent({ modelApprovalModel: e.target.value })}
+                  placeholder="留空使用主模型"
+                  className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setApprovalModelsOpen(true)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors whitespace-nowrap"
+                >
+                  获取模型列表
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500">填写模型名可降低审批延迟和成本，如 <code className="text-indigo-300">MIMo-v2.5</code></p>
+            </div>
+          )}
+        </div>
       </SettingItem>
       <SettingItem id="cmd-list-mode" label="列表模式" description="命令过滤方式" sectionId="settings-command-policy" keywords={['list', 'mode', '黑名单', '白名单', '命令执行策略', 'Agent']}>
         <div className={`transition-opacity ${agent.confirmEachCommand ? 'opacity-40' : ''}`}>
@@ -363,6 +401,14 @@ export function AgentPolicySection() {
           className="w-24"
         />
       </SettingItem>
+      <ModelListModal
+        open={approvalModelsOpen}
+        onClose={() => setApprovalModelsOpen(false)}
+        currentModel={agent.modelApprovalModel ?? ''}
+        baseUrl={settings.llmConfig?.baseUrl ?? ''}
+        apiKey={settings.llmConfig?.apiKey ?? ''}
+        onSelect={(id) => updateAgent({ modelApprovalModel: id })}
+      />
     </Card>
     </div>
   );

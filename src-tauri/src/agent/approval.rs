@@ -19,6 +19,10 @@ pub(crate) struct ApprovalRequestEvent {
     pub tool_name: String,
     pub arguments: serde_json::Value,
     pub risk_level: RiskLevel,
+    /// Reasons from the model approval step (when it decided to route to human).
+    /// Surfaced in the approval dialog so the user sees why human review is needed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<Vec<String>>,
 }
 
 /// Manages user approval flow for tool execution.
@@ -37,6 +41,9 @@ impl ApprovalManager {
 
     /// Ask user for approval and wait up to 60 seconds.
     /// Returns `true` if approved, `false` if rejected or timed out.
+    ///
+    /// `model_reasons` — optional reasons from the model approval step, shown
+    /// to the user in the approval dialog when the model routed to human.
     pub async fn request_approval(
         &self,
         event_name: &str,
@@ -45,6 +52,7 @@ impl ApprovalManager {
         tool_name: &str,
         arguments: serde_json::Value,
         risk: RiskLevel,
+        model_reasons: Option<&[String]>,
     ) -> bool {
         let approval_id = tool_call_id.clone();
         let _ = self.app.emit(
@@ -55,6 +63,7 @@ impl ApprovalManager {
                 tool_name: tool_name.to_string(),
                 arguments,
                 risk_level: risk,
+                reasons: model_reasons.map(|r| r.to_vec()),
             },
         );
 

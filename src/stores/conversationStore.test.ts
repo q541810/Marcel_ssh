@@ -240,6 +240,26 @@ describe('conversationStore', () => {
       expect(state.messages['conv-1'][0].isExecuting).toBe(false);
     });
 
+    it('clears modelApproval on tool messages', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm1', role: 'tool', content: 'checking', modelApproval: { status: 'checking' } }),
+            makeMessage({ id: 'm2', role: 'tool', content: 'block', modelApproval: { status: 'done', decision: 'block', reasons: ['x'] } }),
+            makeMessage({ id: 'm3', role: 'tool', content: 'clean' }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().clearExecutingToolFlags();
+
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs[0].modelApproval).toBeUndefined();
+      expect(msgs[1].modelApproval).toBeUndefined();
+      expect(msgs[2].modelApproval).toBeUndefined();
+    });
+
     it('does not touch non-tool messages', () => {
       useConversationStore.setState({
         activeConversationId: 'conv-1',

@@ -83,6 +83,10 @@ pub(crate) async fn run_agent_loop(
 
     let max_rounds = agent_settings.max_tool_rounds.max(10);
 
+    // Wrap the provider in Arc so the dispatcher's command approver can share
+    // it without cloning the underlying HTTP client / config.
+    let provider = std::sync::Arc::new(provider);
+
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
         mode.clone(),
@@ -91,6 +95,7 @@ pub(crate) async fn run_agent_loop(
         app.clone(),
         state.clone(),
         registry.clone(),
+        provider.clone(),
     );
 
     for round in 0..max_rounds {
@@ -229,7 +234,7 @@ pub(crate) async fn run_agent_loop(
                 return;
             }
 
-            let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name).await;
+            let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name, &messages).await;
 
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

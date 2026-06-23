@@ -3,6 +3,8 @@ import type {
   ToolResultPayload,
   ApprovalRequestPayload,
   AgentTaskPlan,
+  ModelApprovalStartPayload,
+  ModelApprovalDonePayload,
 } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -216,6 +218,7 @@ export function handleToolResult(
         newMsgs[pendingIdx] = {
           ...newMsgs[pendingIdx],
           isExecuting: false,
+          modelApproval: undefined,
           toolResult: {
             toolName: tr.toolName,
             summary: tr.summary,
@@ -487,6 +490,63 @@ export function handleRetrying(
         retryLastError: ev.lastError,
       },
     ];
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Model approval progress handlers
+// ---------------------------------------------------------------------------
+
+export function handleModelApprovalStart(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: ModelApprovalStartPayload,
+) {
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const streamState = getStreamState(taskId);
+    const pendingMsgId = streamState.pendingToolCalls.get(ev.toolCallId);
+    if (!pendingMsgId) return convMsgs;
+    const idx = convMsgs.findIndex((m) => m.id === pendingMsgId);
+    if (idx === -1) return convMsgs;
+    const newMsgs = [...convMsgs];
+    newMsgs[idx] = {
+      ...newMsgs[idx],
+      modelApproval: { status: 'checking' },
+    };
+    return newMsgs;
+  });
+}
+
+export function handleModelApprovalDone(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: ModelApprovalDonePayload,
+) {
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const streamState = getStreamState(taskId);
+    const pendingMsgId = streamState.pendingToolCalls.get(ev.toolCallId);
+    if (!pendingMsgId) return convMsgs;
+    const idx = convMsgs.findIndex((m) => m.id === pendingMsgId);
+    if (idx === -1) return convMsgs;
+    const newMsgs = [...convMsgs];
+    if (ev.decision === 'approve' || ev.decision === 'error') {
+      // Approve: clear the indicator — execution continues.
+      // Error: clear — the tool result will show the error message.
+      newMsgs[idx] = { ...newMsgs[idx], modelApproval: undefined };
+    } else {
+      // route_to_human / block: keep the indicator visible.
+      newMsgs[idx] = {
+        ...newMsgs[idx],
+        modelApproval: {
+          status: 'done' as const,
+          decision: ev.decision as 'route_to_human' | 'block',
+          reasons: ev.reasons,
+        },
+      };
+    }
+    return newMsgs;
   });
 }
 

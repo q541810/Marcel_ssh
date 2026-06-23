@@ -88,6 +88,15 @@ pub struct AgentModeSettings {
     /// command that passes the list filter. When false, listed commands run
     /// silently — useful when the user has carefully curated the lists.
     pub confirm_each_command: bool,
+    /// When true, execute_command will later run an extra model-based approval
+    /// check before execution.
+    #[serde(default)]
+    pub enable_model_command_approval: bool,
+    /// Optional model name override for the model-based command approval step.
+    /// When empty, the main LLM model is used. Set to a smaller/faster model
+    /// name to reduce approval latency and cost.
+    #[serde(default)]
+    pub model_approval_model: String,
     /// User-defined extra content appended to the system prompt sent to the LLM.
     /// Empty means nothing is appended.
     #[serde(default)]
@@ -113,6 +122,8 @@ impl Default for AgentModeSettings {
                 "reboot".into(),
             ],
             confirm_each_command: true,
+            enable_model_command_approval: false,
+            model_approval_model: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         }
@@ -366,6 +377,8 @@ impl Default for AppSettings {
                     "reboot".into(),
                 ],
                 confirm_each_command: true,
+                enable_model_command_approval: false,
+                model_approval_model: String::new(),
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
             },

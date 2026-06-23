@@ -43,6 +43,8 @@ describe('settingsStore', () => {
     expect(am.listMode).toBe('denylist');
     expect(am.commandList).toContain('rm');
     expect(am.confirmEachCommand).toBe(true);
+    expect(am.enableModelCommandApproval).toBe(false);
+    expect(am.modelApprovalModel).toBe('');
   });
 
   it('default experimental settings are correct', () => {

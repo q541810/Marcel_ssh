@@ -166,6 +166,12 @@ export interface AgentMessage {
   retryTotalDelaySecs?: number;
   /** Last error message that triggered the retry */
   retryLastError?: string;
+  /** Model approval phase — shown as a distinct progress step on the tool card. */
+  modelApproval?: {
+    status: 'checking' | 'done';
+    decision?: 'approve' | 'route_to_human' | 'block';
+    reasons?: string[];
+  };
 }
 
 export interface ToolCallInfo {
@@ -175,6 +181,8 @@ export interface ToolCallInfo {
   result?: string;
   riskLevel: RiskLevel;
   approved?: boolean;
+  /** Reasons from the model approval step, shown when the model routed to human. */
+  reasons?: string[];
 }
 
 export type RiskLevel = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
@@ -187,6 +195,9 @@ export interface AgentModeSettings {
   listMode: CommandListMode;
   commandList: string[];
   confirmEachCommand: boolean;
+  enableModelCommandApproval: boolean;
+  /** Model name override for the approval step. Empty = use main model. */
+  modelApprovalModel: string;
   systemPrompt: string;
   maxToolRounds: number;
 }
@@ -303,7 +314,10 @@ export type LlmStreamEvent =
   // Tool result — emitted as a separate event on the same channel
   | { type: 'toolResult' } & ToolResultPayload
   // Approval request — emitted when user confirmation is needed
-  | ApprovalRequestPayload;
+  | ApprovalRequestPayload
+  // Model approval progress — shows a distinct step on the tool card
+  | ModelApprovalStartPayload
+  | ModelApprovalDonePayload;
 
 export interface ToolResultPayload {
   type: 'toolResult';
@@ -323,6 +337,20 @@ export interface ApprovalRequestPayload {
   toolName: string;
   arguments: Record<string, unknown>;
   riskLevel: RiskLevel;
+  /** Reasons from the model approval step (when it routed to human). */
+  reasons?: string[];
+}
+
+export interface ModelApprovalStartPayload {
+  type: 'modelApprovalStart';
+  toolCallId: string;
+}
+
+export interface ModelApprovalDonePayload {
+  type: 'modelApprovalDone';
+  toolCallId: string;
+  decision: 'approve' | 'route_to_human' | 'block' | 'error';
+  reasons: string[];
 }
 
 // Conversation types

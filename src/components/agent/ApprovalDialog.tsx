@@ -73,6 +73,18 @@ export default function ApprovalDialog({
             </Badge>
           </div>
 
+          {/* Model reasons — shown when the model approval routed to human */}
+          {toolCall.reasons && toolCall.reasons.length > 0 && (
+            <div className="rounded-lg border border-amber-700/60 bg-amber-950/40 px-3 py-2">
+              <div className="text-xs font-medium text-amber-300 mb-1">模型提示</div>
+              <ul className="text-xs text-amber-200/90 space-y-0.5 list-disc list-inside">
+                {toolCall.reasons.map((r, i) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Tool name */}
           <div>
             <span className="text-sm text-zinc-400">工具：</span>
