@@ -10,6 +10,20 @@ import { useSettingsActions } from './SettingsActionsContext';
 import ModelListModal from './ModelListModal';
 import { ValidatedInput } from './ValidatedInput';
 
+const DEFAULT_APPROVAL_PROMPT = `你是一个命令执行审批助手。Agent 即将在远程服务器上执行一条 shell 命令，你需要结合上下文判断这条命令是否可以安全放行。
+
+判断原则：
+- 大多数常规命令（查看状态、列目录、读取文件等）应当放行，不要过度紧张。
+- 只在命令存在真实风险时才转人工审批或阻止：不可逆的破坏、越权操作、与用户当前任务明显不符等。
+- 你只能判定，不能改写命令。
+- 沙箱已做过静态风险分析，其结论供你参考：沙箱要求人工审批的命令，你无法放行使其绕过人审，最多维持人审。
+
+输出严格的 JSON，不要添加任何额外文字：
+{"decision": "approve" 或 "route_to_human" 或 "block", "reasons": ["问题点1", "问题点2"]}
+- approve：放行，reasons 可为空数组。
+- route_to_human：需要人工审批，reasons 写明需要人审的原因。
+- block：应当阻止，reasons 写明阻止原因。`;
+
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
   { path: '/etc', reason: '系统配置' },
   { path: '/boot', reason: '启动分区' },
@@ -188,6 +202,25 @@ export function AgentPolicySection() {
                 </button>
               </div>
               <p className="text-xs text-zinc-500">填写模型名可降低审批延迟和成本，如 <code className="text-indigo-300">MIMo-v2.5</code></p>
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-xs text-zinc-400">审批提示词</span>
+                <button
+                  type="button"
+                  onClick={() => updateAgent({ modelApprovalPrompt: '' })}
+                  className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  恢复默认
+                </button>
+              </div>
+              <textarea
+                value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  updateAgent({ modelApprovalPrompt: v === DEFAULT_APPROVAL_PROMPT ? '' : v });
+                }}
+                rows={6}
+                className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
+              />
             </div>
           )}
         </div>

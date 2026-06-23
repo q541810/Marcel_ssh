@@ -97,6 +97,10 @@ pub struct AgentModeSettings {
     /// name to reduce approval latency and cost.
     #[serde(default)]
     pub model_approval_model: String,
+    /// Custom system prompt for the model-based command approval step.
+    /// When empty, the built-in approval prompt is used.
+    #[serde(default)]
+    pub model_approval_prompt: String,
     /// User-defined extra content appended to the system prompt sent to the LLM.
     /// Empty means nothing is appended.
     #[serde(default)]
@@ -124,6 +128,7 @@ impl Default for AgentModeSettings {
             confirm_each_command: true,
             enable_model_command_approval: false,
             model_approval_model: String::new(),
+            model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         }
@@ -379,6 +384,7 @@ impl Default for AppSettings {
                 confirm_each_command: true,
                 enable_model_command_approval: false,
                 model_approval_model: String::new(),
+                model_approval_prompt: String::new(),
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
             },

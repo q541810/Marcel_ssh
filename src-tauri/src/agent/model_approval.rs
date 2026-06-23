@@ -53,11 +53,15 @@ pub(crate) trait CommandApprover: Send + Sync {
 /// LLM-backed command approver. Reuses the agent's normal model + retry path.
 pub(crate) struct ModelApprover {
     provider: Arc<OpenAiProvider>,
+    custom_prompt: String,
 }
 
 impl ModelApprover {
-    pub(crate) fn new(provider: Arc<OpenAiProvider>) -> Self {
-        Self { provider }
+    pub(crate) fn new(provider: Arc<OpenAiProvider>, custom_prompt: String) -> Self {
+        Self {
+            provider,
+            custom_prompt,
+        }
     }
 }
 
@@ -101,8 +105,14 @@ impl CommandApprover for ModelApprover {
              请给出你的判定。"
         );
 
+        let system_prompt = if self.custom_prompt.is_empty() {
+            APPROVAL_SYSTEM_PROMPT
+        } else {
+            &self.custom_prompt
+        };
+
         let messages = vec![
-            LlmMessage::system(APPROVAL_SYSTEM_PROMPT),
+            LlmMessage::system(system_prompt.to_string()),
             LlmMessage::user(user_prompt),
         ];
         let tools: Vec<ToolDefinition> = vec![];

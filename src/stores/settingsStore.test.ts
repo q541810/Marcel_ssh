@@ -45,6 +45,7 @@ describe('settingsStore', () => {
     expect(am.confirmEachCommand).toBe(true);
     expect(am.enableModelCommandApproval).toBe(false);
     expect(am.modelApprovalModel).toBe('');
+    expect(am.modelApprovalPrompt).toBe('');
   });
 
   it('default experimental settings are correct', () => {

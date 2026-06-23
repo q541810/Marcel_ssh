@@ -150,7 +150,10 @@ impl ToolDispatcher {
                 } else {
                     provider.clone()
                 };
-            Some(std::sync::Arc::new(ModelApprover::new(approval_provider)))
+            Some(std::sync::Arc::new(ModelApprover::new(
+                approval_provider,
+                agent_settings.model_approval_prompt.clone(),
+            )))
         } else {
             None
         };
@@ -304,8 +307,11 @@ impl ToolDispatcher {
                                 reasons: rs.clone(),
                             },
                         );
-                        final_needs_confirm = true;
-                        model_reasons = if rs.is_empty() { None } else { Some(rs) };
+                        // Auto 模式下跳过人审，直接执行；Agent 模式弹窗
+                        if self.mode != AgentMode::Auto {
+                            final_needs_confirm = true;
+                            model_reasons = if rs.is_empty() { None } else { Some(rs) };
+                        }
                     }
                     Ok(ModelApprovalDecision::Approve) => {
                         let _ = ctx.app_handle.emit(
@@ -426,6 +432,7 @@ mod tests {
             confirm_each_command: false,
             enable_model_command_approval: false,
             model_approval_model: String::new(),
+            model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         }
@@ -457,6 +464,7 @@ mod tests {
             confirm_each_command: false,
             enable_model_command_approval: false,
             model_approval_model: String::new(),
+            model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         };
@@ -475,6 +483,7 @@ mod tests {
             confirm_each_command: false,
             enable_model_command_approval: false,
             model_approval_model: String::new(),
+            model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         };
@@ -503,6 +512,7 @@ mod tests {
             confirm_each_command: true,
             enable_model_command_approval: false,
             model_approval_model: String::new(),
+            model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
         };

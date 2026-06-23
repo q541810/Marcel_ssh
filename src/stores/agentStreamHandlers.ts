@@ -78,12 +78,24 @@ export function handleToolCallStart(
     convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
     const newMsgs = [...convMsgs];
 
-    // Clear reasoningContent from the last assistant message (same as before)
+    // Find the assistant message with matching toolCall to extract arguments
+    let toolCallArgs: Record<string, unknown> | undefined;
     for (let i = newMsgs.length - 1; i >= 0; i--) {
-      if (newMsgs[i].role === 'assistant' && newMsgs[i].reasoningContent) {
-        newMsgs[i] = { ...newMsgs[i], reasoningContent: undefined, isThinking: false };
-        break;
+      const m = newMsgs[i];
+      if (m.role === 'assistant') {
+        if (m.toolCall?.id === ev.id) {
+          toolCallArgs = m.toolCall.arguments;
+        }
+        // Clear reasoningContent from the last assistant message
+        if (m.reasoningContent) {
+          newMsgs[i] = { ...m, reasoningContent: undefined, isThinking: false };
+        }
+        if (toolCallArgs) break;
       }
+    }
+
+    if (toolCallArgs) {
+      toolMessage.toolResult!.arguments = toolCallArgs;
     }
 
     newMsgs.push(toolMessage);

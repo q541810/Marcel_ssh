@@ -12,6 +12,7 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   confirmEachCommand: true,
   enableModelCommandApproval: false,
   modelApprovalModel: '',
+  modelApprovalPrompt: '',
   systemPrompt: '',
   maxToolRounds: 80,
 };

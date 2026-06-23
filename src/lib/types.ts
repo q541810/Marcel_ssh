@@ -198,6 +198,8 @@ export interface AgentModeSettings {
   enableModelCommandApproval: boolean;
   /** Model name override for the approval step. Empty = use main model. */
   modelApprovalModel: string;
+  /** Custom system prompt for the approval step. Empty = use built-in prompt. */
+  modelApprovalPrompt: string;
   systemPrompt: string;
   maxToolRounds: number;
 }
