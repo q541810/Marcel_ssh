@@ -375,6 +375,9 @@ impl SshManager {
         };
         let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+
         let mut channel = conn
             .handle
             .lock()
@@ -389,8 +392,6 @@ impl SshManager {
             .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
 
         let mut output = String::new();
-        let deadline = tokio::time::sleep(timeout);
-        tokio::pin!(deadline);
 
         loop {
             tokio::select! {
@@ -465,6 +466,9 @@ impl SshManager {
         };
         let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
+        let deadline = tokio::time::sleep(timeout);
+        tokio::pin!(deadline);
+
         let mut channel = conn
             .handle
             .lock()
@@ -479,8 +483,6 @@ impl SshManager {
             .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
 
         let mut output = String::new();
-        let deadline = tokio::time::sleep(timeout);
-        tokio::pin!(deadline);
 
         loop {
             tokio::select! {
