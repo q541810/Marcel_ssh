@@ -16,6 +16,7 @@ import {
   handleError,
   handleRetrying,
   handleToolOutput,
+  handleToolCallDelta,
   handleModelApprovalStart,
   handleModelApprovalDone,
   type StreamHandler,
@@ -116,6 +117,8 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       }
 
       if (hasEventType(ev, 'toolCallDelta')) {
+        const deltaEv = ev as unknown as { type: 'toolCallDelta'; id: string; argumentsDelta: string };
+        handleToolCallDelta(handler, taskId, conversationId, deltaEv);
         return;
       }
 

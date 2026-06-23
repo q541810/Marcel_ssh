@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect } from 'vitest';
 import {
   handleToolCallStart,
+  handleToolCallDelta,
   handleToolResult,
   handleDone,
   handleError,
@@ -93,6 +94,7 @@ describe('agentStreamHandlers', () => {
         loadingCleared: true,
         toolResultCount: 2,
         pendingToolCalls: new Map(),
+        pendingToolArgs: new Map(),
         pendingTextDelta: '',
         pendingThinkingDelta: '',
         flushRafId: null,
@@ -340,6 +342,46 @@ describe('agentStreamHandlers', () => {
       expect(msgs).toHaveLength(1);
       expect(msgs[0].retryAttempt).toBe(1);
       expect(msgs[0].retryLastError).toBe('LLM 返回错误 502: bad gateway');
+    });
+  });
+
+  describe('handleToolCallDelta', () => {
+    it('accumulates argument deltas and backfills when JSON is complete', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-delta-1',
+        name: 'execute_command',
+      });
+
+      const msgs = handler._messages[convId];
+      expect(msgs[0].toolResult?.arguments).toBeUndefined();
+
+      // Partial JSON — not yet parseable
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'tc-delta-1',
+        argumentsDelta: '{"command":',
+      });
+      expect(handler._messages[convId][0].toolResult?.arguments).toBeUndefined();
+
+      // Complete JSON — should backfill
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'tc-delta-1',
+        argumentsDelta: ' "ls -la"}',
+      });
+      expect(handler._messages[convId][0].toolResult?.arguments).toEqual({ command: 'ls -la' });
+    });
+
+    it('ignores delta for unknown tool call id', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'unknown-id',
+        argumentsDelta: '{"x":1}',
+      });
+      expect(handler._messages[convId]).toHaveLength(0);
     });
   });
 });

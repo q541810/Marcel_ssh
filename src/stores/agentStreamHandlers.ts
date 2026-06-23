@@ -78,24 +78,12 @@ export function handleToolCallStart(
     convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
     const newMsgs = [...convMsgs];
 
-    // Find the assistant message with matching toolCall to extract arguments
-    let toolCallArgs: Record<string, unknown> | undefined;
     for (let i = newMsgs.length - 1; i >= 0; i--) {
       const m = newMsgs[i];
-      if (m.role === 'assistant') {
-        if (m.toolCall?.id === ev.id) {
-          toolCallArgs = m.toolCall.arguments;
-        }
-        // Clear reasoningContent from the last assistant message
-        if (m.reasoningContent) {
-          newMsgs[i] = { ...m, reasoningContent: undefined, isThinking: false };
-        }
-        if (toolCallArgs) break;
+      if (m.role === 'assistant' && m.reasoningContent) {
+        newMsgs[i] = { ...m, reasoningContent: undefined, isThinking: false };
+        break;
       }
-    }
-
-    if (toolCallArgs) {
-      toolMessage.toolResult!.arguments = toolCallArgs;
     }
 
     newMsgs.push(toolMessage);
@@ -105,6 +93,46 @@ export function handleToolCallStart(
     streamState.pendingToolCalls.set(ev.id, messageId);
     setStreamState(taskId, streamState);
 
+    return newMsgs;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tool arguments delta — accumulates streamed arguments and backfills tool message
+// ---------------------------------------------------------------------------
+
+export function handleToolCallDelta(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'toolCallDelta'; id: string; argumentsDelta: string },
+) {
+  const streamState = getStreamState(taskId);
+  const pendingMsgId = streamState.pendingToolCalls.get(ev.id);
+  if (!pendingMsgId) return;
+
+  const prev = streamState.pendingToolArgs.get(ev.id) ?? '';
+  const accumulated = prev + ev.argumentsDelta;
+  streamState.pendingToolArgs.set(ev.id, accumulated);
+  setStreamState(taskId, streamState);
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(accumulated);
+  } catch {
+    return;
+  }
+
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const idx = convMsgs.findIndex((m) => m.id === pendingMsgId);
+    if (idx === -1) return convMsgs;
+    const msg = convMsgs[idx];
+    if (!msg.toolResult) return convMsgs;
+    const newMsgs = [...convMsgs];
+    newMsgs[idx] = {
+      ...msg,
+      toolResult: { ...msg.toolResult, arguments: parsed },
+    };
     return newMsgs;
   });
 }
@@ -151,6 +179,7 @@ interface TaskStreamState {
   loadingCleared: boolean;
   toolResultCount: number;
   pendingToolCalls: Map<string, string>; // toolCallId → message.id
+  pendingToolArgs: Map<string, string>; // toolCallId → accumulated arguments string
   // ── rAF-batched delta buffer ──
   // LLM streaming 在高速场景下每秒可能产生几十到上百个 delta，
   // 直接 updateMessages 会触发等量的 React 渲染，配合 react-markdown
@@ -171,6 +200,7 @@ export function getStreamState(taskId: string): TaskStreamState {
     loadingCleared: false,
     toolResultCount: 0,
     pendingToolCalls: new Map(),
+    pendingToolArgs: new Map(),
     pendingTextDelta: '',
     pendingThinkingDelta: '',
     flushRafId: null,
