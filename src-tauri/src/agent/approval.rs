@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
-use tokio::time::{timeout, Duration};
 
 use crate::agent::sandbox::RiskLevel;
 use crate::notification::{send_notification, NotificationKind};
@@ -95,13 +94,9 @@ impl ApprovalManager {
         let key = (task_id.clone(), approval_id.clone());
         self.pending.write().insert(key.clone(), tx);
 
-        match timeout(Duration::from_secs(60), rx).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(_)) => false,
-            Err(_) => {
-                self.pending.write().remove(&key);
-                false
-            }
+        match rx.await {
+            Ok(v) => v,
+            Err(_) => false,
         }
     }
 }

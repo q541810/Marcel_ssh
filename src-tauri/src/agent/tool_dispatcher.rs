@@ -291,9 +291,10 @@ impl ToolDispatcher {
                         } else {
                             format!("模型审批阻止: {}", rs.join("; "))
                         };
+                        let hint = "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
                         return DispatchResult::blocked(
                             format!("$ {}", cmd),
-                            reason,
+                            format!("{}{}", reason, hint),
                             effective_risk,
                         );
                     }
@@ -372,7 +373,7 @@ impl ToolDispatcher {
                 };
                 return DispatchResult::blocked(
                     summary,
-                    "用户拒绝或确认超时",
+                    "用户拒绝",
                     effective_risk,
                 );
             }
