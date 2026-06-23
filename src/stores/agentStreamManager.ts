@@ -145,8 +145,11 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 export async function attachPlanListener(taskId: string) {
   if (planListeners.has(taskId)) return;
 
-  const handler = streamHandlers.get(taskId);
-  if (!handler) return;
+  let handler = streamHandlers.get(taskId);
+  if (!handler) {
+    handler = createDefaultStreamHandler();
+    streamHandlers.set(taskId, handler);
+  }
 
   const unlisten = await listen<PlanStreamEvent>(
     `agent://plan/${taskId}`,
