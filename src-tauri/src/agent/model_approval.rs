@@ -140,7 +140,7 @@ fn build_context(messages: &[LlmMessage]) -> String {
     const MAX_TOOL_OUTPUT: usize = 500;
     const MAX_OTHER_CONTENT: usize = 1000;
     const MAX_FIRST_USER: usize = 2000;
-    const MAX_RECENT: usize = 8;
+    const MAX_ROUNDS: usize = 5;
 
     let mut parts: Vec<String> = Vec::new();
 
@@ -151,13 +151,25 @@ fn build_context(messages: &[LlmMessage]) -> String {
         ));
     }
 
-    let mut recent: Vec<&LlmMessage> = messages
+    let non_system: Vec<&LlmMessage> = messages
         .iter()
         .filter(|m| m.role != LlmRole::System)
-        .rev()
-        .take(MAX_RECENT)
-        .collect::<Vec<_>>();
-    recent.reverse();
+        .collect();
+
+    // 按轮次切分：每条 User 消息是一个轮次的起点，取最后 MAX_ROUNDS 个完整轮次
+    let user_indices: Vec<usize> = non_system
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == LlmRole::User)
+        .map(|(i, _)| i)
+        .collect();
+
+    let start = if user_indices.len() > MAX_ROUNDS {
+        user_indices[user_indices.len() - MAX_ROUNDS]
+    } else {
+        0
+    };
+    let recent = &non_system[start..];
 
     if !recent.is_empty() {
         parts.push("[近期对话]".to_string());
@@ -353,6 +365,27 @@ mod tests {
     #[test]
     fn truncate_over_limit_marks_truncation() {
         assert_eq!(truncate("hello world", 5), "hello…（已截断）");
+    }
+
+    #[test]
+    fn build_context_takes_last_5_rounds() {
+        // 7 个用户轮次，每轮 user + assistant + tool
+        let mut messages: Vec<LlmMessage> = vec![LlmMessage::system("sys")];
+        for i in 0..7 {
+            messages.push(LlmMessage::user(format!("用户第{i}轮")));
+            messages.push(LlmMessage::assistant(format!("助手第{i}轮回复")));
+            messages.push(tool_msg(&format!("工具第{i}轮结果")));
+        }
+        let ctx = build_context(&messages);
+        // 原始任务仍取第一条 User 消息
+        assert!(ctx.contains("[原始任务]"));
+        assert!(ctx.contains("用户第0轮"), "原始任务应保留第一条用户消息");
+        // 第 0、1 轮在近期对话中应该被裁掉（只保留最后 5 轮：2~6）
+        // 用 "用户第1轮" 验证近期对话不包含它（"用户第0轮"会出现在原始任务里无法断言）
+        let recent_section = ctx.split("[近期对话]").nth(1).unwrap_or("");
+        assert!(!recent_section.contains("用户第1轮"));
+        assert!(recent_section.contains("用户第2轮"));
+        assert!(recent_section.contains("用户第6轮"));
     }
 
     #[test]
