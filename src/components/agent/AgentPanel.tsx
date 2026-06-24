@@ -72,11 +72,11 @@ export default function AgentPanel() {
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
 
   useEffect(() => {
-    if (!lastMessage) return;
+    if (!lastMessage || !canInteract) return;
     const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
     lastScrolledMessageRef.current = lastMessage.id;
     messagesEndRef.current?.scrollIntoView({ behavior: isNewMessage ? 'smooth' : 'auto', block: 'end' });
-  }, [lastMessage, lastMessageSize]);
+  }, [lastMessage, lastMessageSize, canInteract]);
 
   useEffect(() => {
     if (!modeDrawerOpen) return;
