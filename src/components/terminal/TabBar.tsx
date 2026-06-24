@@ -1,4 +1,5 @@
 import { useSessionStore } from '@/stores/sessionStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 
 export default function TabBar() {
@@ -6,6 +7,7 @@ export default function TabBar() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const disconnect = useSessionStore((s) => s.disconnect);
+  const connections = useConnectionStore((s) => s.connections);
   const { onDisconnected } = useSessionLifecycle();
 
   const sessionList = Object.values(sessions);
@@ -14,12 +16,38 @@ export default function TabBar() {
     return null;
   }
 
+  const baseLabelOf = (session: (typeof sessionList)[number]) => {
+    const saved = session.configId ? connections.find((c) => c.id === session.configId) : null;
+    return saved?.name || session.connectionId || '未命名';
+  };
+
+  const labelCounts: Record<string, number> = {};
+  for (const s of sessionList) {
+    const l = baseLabelOf(s);
+    labelCounts[l] = (labelCounts[l] || 0) + 1;
+  }
+
+  const dupSeen: Record<string, number> = {};
+  const dupIndex: Record<string, number> = {};
+  sessionList
+    .slice()
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .forEach((s) => {
+      const l = baseLabelOf(s);
+      if (labelCounts[l] > 1) {
+        const idx = dupSeen[l] || 0;
+        dupSeen[l] = idx + 1;
+        dupIndex[s.id] = idx;
+      }
+    });
+
   return (
     <div className="flex items-center bg-zinc-900 border-b border-zinc-800 overflow-x-auto">
       <div className="flex items-center">
         {sessionList.map((session) => {
           const isActive = session.id === activeSessionId;
-          const label = session.connectionId || '未命名';
+          const base = baseLabelOf(session);
+          const label = labelCounts[base] > 1 ? `${base}:${dupIndex[session.id]}` : base;
 
           return (
             <div
