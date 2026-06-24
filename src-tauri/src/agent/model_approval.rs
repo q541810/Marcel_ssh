@@ -139,17 +139,9 @@ fn risk_label(r: RiskLevel) -> &'static str {
 fn build_context(messages: &[LlmMessage]) -> String {
     const MAX_TOOL_OUTPUT: usize = 500;
     const MAX_OTHER_CONTENT: usize = 1000;
-    const MAX_FIRST_USER: usize = 2000;
     const MAX_ROUNDS: usize = 5;
 
     let mut parts: Vec<String> = Vec::new();
-
-    if let Some(first_user) = messages.iter().find(|m| m.role == LlmRole::User) {
-        parts.push(format!(
-            "[原始任务]\n{}",
-            truncate(&first_user.content, MAX_FIRST_USER)
-        ));
-    }
 
     let non_system: Vec<&LlmMessage> = messages
         .iter()
@@ -335,8 +327,6 @@ mod tests {
             tool_msg("result"),
         ];
         let ctx = build_context(&messages);
-        assert!(ctx.contains("[原始任务]"));
-        assert!(ctx.contains("帮我清理/tmp"));
         assert!(ctx.contains("[近期对话]"));
         assert!(ctx.contains("助手: 好的"));
         assert!(ctx.contains("工具结果: result"));
@@ -377,11 +367,7 @@ mod tests {
             messages.push(tool_msg(&format!("工具第{i}轮结果")));
         }
         let ctx = build_context(&messages);
-        // 原始任务仍取第一条 User 消息
-        assert!(ctx.contains("[原始任务]"));
-        assert!(ctx.contains("用户第0轮"), "原始任务应保留第一条用户消息");
         // 第 0、1 轮在近期对话中应该被裁掉（只保留最后 5 轮：2~6）
-        // 用 "用户第1轮" 验证近期对话不包含它（"用户第0轮"会出现在原始任务里无法断言）
         let recent_section = ctx.split("[近期对话]").nth(1).unwrap_or("");
         assert!(!recent_section.contains("用户第1轮"));
         assert!(recent_section.contains("用户第2轮"));
