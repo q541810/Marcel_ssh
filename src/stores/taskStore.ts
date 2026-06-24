@@ -11,11 +11,13 @@ import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import { attachStreamListener, attachPlanListener, cleanupTaskListeners } from './agentStreamManager';
 import { useConversationStore } from './conversationStore';
+import { useSettingsStore } from './settingsStore';
 
 export interface TaskState {
   tasks: Record<string, AgentTask>;
   activeTaskId: string | null;
   mode: AgentMode;
+  inputDraft: string;
   pendingApproval: ApprovalRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
@@ -25,6 +27,7 @@ export interface TaskState {
   approveOperation: (taskId: string, operationId: string) => Promise<void>;
   rejectOperation: (taskId: string, operationId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
+  setInputDraft: (text: string) => void;
   updateTaskStatus: (taskId: string, status: AgentTask['status']) => void;
   setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
@@ -41,6 +44,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: {},
   activeTaskId: null,
   mode: 'agent',
+  inputDraft: '',
   pendingApproval: null,
   plans: {},
   plansDirty: false,
@@ -140,6 +144,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   setMode: (mode: AgentMode) => {
     set({ mode });
+    const settingsStore = useSettingsStore.getState();
+    if (settingsStore.loaded && settingsStore.settings.defaultAgentMode !== mode) {
+      settingsStore.update({ defaultAgentMode: mode }).catch((err) => {
+        console.error('[taskStore] persist defaultAgentMode failed', err);
+      });
+    }
+  },
+
+  setInputDraft: (text: string) => {
+    set({ inputDraft: text });
   },
 
   updateTaskStatus: (taskId: string, status: AgentTask['status']) => {

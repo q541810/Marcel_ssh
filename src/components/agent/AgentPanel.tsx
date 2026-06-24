@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -14,7 +14,6 @@ import ApprovalDialog from './ApprovalDialog';
 import PlanList from './PlanList';
 
 export default function AgentPanel() {
-  const [input, setInput] = useState('');
   const [whipActive, setWhipActive] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
@@ -40,6 +39,8 @@ export default function AgentPanel() {
     stopActiveTask,
     mode,
     setMode,
+    inputDraft: input,
+    setInputDraft: setInput,
     isRunning,
     pendingApproval,
     approveCurrent,
@@ -125,6 +126,13 @@ export default function AgentPanel() {
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
   };
+
+  useLayoutEffect(() => {
+    const textarea = inputRef.current;
+    if (!textarea || !input) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
+  }, [input]);
 
   const showRollbackNotice = (removedCount: number) => {
     setRollbackNotice(`已撤回 ${removedCount} 条消息，原消息已放回输入框`);
