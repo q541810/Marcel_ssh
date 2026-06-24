@@ -95,6 +95,35 @@ impl SshManager {
         config: ConnectionConfig,
         app: AppHandle,
     ) -> Result<String, AppError> {
+        let session_id = Uuid::new_v4().to_string();
+        self.connect_inner(session_id.clone(), config, app).await?;
+        Ok(session_id)
+    }
+
+    /// Re-establish an SSH connection on an existing session id (used after a
+    /// remote-side disconnect so the frontend can keep the same session id,
+    /// terminal instance, and event listeners).
+    pub async fn reconnect(
+        &self,
+        session_id: String,
+        config: ConnectionConfig,
+        app: AppHandle,
+    ) -> Result<(), AppError> {
+        self.connect_inner(session_id, config, app).await
+    }
+
+    /// Shared connection logic for both fresh connects and reconnects.
+    ///
+    /// Validates the config, performs TCP+SSH handshake, authenticates, opens
+    /// a shell channel with a PTY, inserts the connection into the manager
+    /// (overwriting any stale entry for the same id), emits `Connected`, and
+    /// spawns the driver task.
+    async fn connect_inner(
+        &self,
+        session_id: String,
+        config: ConnectionConfig,
+        app: AppHandle,
+    ) -> Result<(), AppError> {
         if config.host.is_empty() {
             return Err(AppError::Ssh("主机地址不能为空".into()));
         }
@@ -105,7 +134,6 @@ impl SshManager {
             return Err(AppError::Ssh("端口不能为 0".into()));
         }
 
-        let session_id = Uuid::new_v4().to_string();
         let host = config.host.clone();
         let port = config.port;
         let username = config.username.clone();
@@ -249,7 +277,7 @@ impl SshManager {
             log::info!("SSH session {} cleaned up", sid);
         });
 
-        Ok(session_id)
+        Ok(())
     }
 
     /// Send input data to the session's shell channel.

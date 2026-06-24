@@ -25,6 +25,33 @@ pub async fn config_delete_password(connection_id: String) -> Result<(), AppErro
     keychain::delete_password(&connection_id)
 }
 
+/// Save a private-key passphrase for a connection into the OS keychain.
+/// 存储 account 为 "pk:{connection_id}"，与主密码条目分开。
+#[tauri::command]
+pub async fn config_save_passphrase(
+    connection_id: String,
+    passphrase: String,
+) -> Result<(), AppError> {
+    keychain::save_password(&format!("pk:{}", connection_id), &passphrase)
+}
+
+/// Check whether a private-key passphrase has been saved for a connection.
+/// 安全：不将 passphrase 返回给前端，只返回是否已保存。
+#[tauri::command]
+pub async fn config_has_passphrase(connection_id: String) -> Result<bool, AppError> {
+    match keychain::get_password(&format!("pk:{}", connection_id)) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove a stored private-key passphrase from the keychain.
+#[tauri::command]
+pub async fn config_delete_passphrase(connection_id: String) -> Result<(), AppError> {
+    keychain::delete_password(&format!("pk:{}", connection_id))
+}
+
 /// Save the LLM API key to the system keychain.
 #[tauri::command]
 pub async fn config_save_llm_api_key(api_key: String) -> Result<(), AppError> {

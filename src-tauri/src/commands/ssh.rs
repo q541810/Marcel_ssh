@@ -106,3 +106,98 @@ pub async fn ssh_connect_with_saved_password(
 
     state.ssh_manager.connect(config, app).await
 }
+
+/// 使用已保存的私钥 passphrase 连接 SSH。passphrase 在 Rust 侧从系统密钥链读取
+/// （account = "pk:{connection_id}"），不经过前端。
+/// 安全：passphrase 永远不会暴露给 WebView。
+#[tauri::command]
+pub async fn ssh_connect_with_saved_passphrase(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<String, AppError> {
+    let saved = {
+        let store = state.connection_store.read().await;
+        store
+            .get_by_id(&connection_id)
+            .ok_or_else(|| AppError::Config(format!("未找到连接: {}", connection_id)))?
+            .clone()
+    };
+
+    let key_path = saved
+        .key_path
+        .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
+
+    let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
+
+    let config = ConnectionConfig {
+        host: saved.host,
+        port: saved.port,
+        username: saved.username,
+        auth_method: AuthMethod::PrivateKey {
+            key_path,
+            passphrase,
+        },
+        connection_id: Some(connection_id),
+        trust_new_host_key: false,
+    };
+
+    state.ssh_manager.connect(config, app).await
+}
+///
+/// 根据 saved connection 的 auth_method 从 keychain 取凭证：
+/// - Password：从 keychain 取密码（account = connection_id）
+/// - PrivateKey：从 keychain 取 passphrase（account = "pk:{connection_id}"），无 passphrase 则用 None（未加密私钥）
+///
+/// 凭证缺失时返回 `AppError::Config`，前端据 `kind === "Config"` 弹窗让用户输入。
+/// 安全：密码/passphrase 都在 Rust 侧从 keychain 读取，不经过前端。
+#[tauri::command]
+pub async fn ssh_reconnect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    connection_id: String,
+) -> Result<(), AppError> {
+    let saved = {
+        let store = state.connection_store.read().await;
+        store
+            .get_by_id(&connection_id)
+            .ok_or_else(|| AppError::Config(format!("未找到连接: {}", connection_id)))?
+            .clone()
+    };
+
+    let auth_method = match saved.auth_method.as_str() {
+        "Password" => {
+            let password = keychain::get_password(&connection_id)?
+                .ok_or_else(|| AppError::Config("重连需要密码，请重新输入".into()))?;
+            AuthMethod::Password { password }
+        }
+        "PrivateKey" => {
+            let key_path = saved
+                .key_path
+                .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
+            let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
+            AuthMethod::PrivateKey {
+                key_path,
+                passphrase,
+            }
+        }
+        other => {
+            return Err(AppError::Config(format!(
+                "不支持的认证方式: {}",
+                other
+            )))
+        }
+    };
+
+    let config = ConnectionConfig {
+        host: saved.host,
+        port: saved.port,
+        username: saved.username,
+        auth_method,
+        connection_id: Some(connection_id),
+        trust_new_host_key: false,
+    };
+
+    state.ssh_manager.reconnect(session_id, config, app).await
+}

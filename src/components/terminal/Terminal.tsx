@@ -3,6 +3,7 @@ import { sshSendInput } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import Button from '@/components/ui/Button';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
@@ -22,6 +23,7 @@ export default function Terminal() {
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const reconnect = useSessionStore((s) => s.reconnect);
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
@@ -186,6 +188,32 @@ export default function Terminal() {
               <div className="mt-3 text-xs text-zinc-500">
                 请检查主机、端口、网络和认证信息后重新连接。
               </div>
+            </div>
+          </div>
+        )}
+        {activeSession?.status === 'disconnected' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/85 z-10 px-6">
+            <div className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-amber-500/10 p-5 shadow-2xl shadow-amber-950/20 text-center">
+              <div className="mb-2 text-lg font-medium text-amber-200">SSH 连接已断开</div>
+              <div className="mb-4 text-sm text-zinc-400">
+                {activeSession.connectionId}
+              </div>
+              {activeSession.configId ? (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    reconnect(activeSession.id).catch((err) => {
+                      console.error('重连失败:', err);
+                    });
+                  }}
+                >
+                  重新连接
+                </Button>
+              ) : (
+                <div className="text-sm text-zinc-500">
+                  临时连接无法自动重连，请去侧边栏重新连接。
+                </div>
+              )}
             </div>
           </div>
         )}

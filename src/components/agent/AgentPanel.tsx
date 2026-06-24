@@ -7,6 +7,7 @@ import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage } from '@/lib/types';
 import { normalizeWhipPhrases } from '@/lib/whip';
 import { WhipOverlay } from '@/components/whip/WhipOverlay';
+import Button from '@/components/ui/Button';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
 import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
@@ -27,6 +28,7 @@ export default function AgentPanel() {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
     return session ?? null;
   });
+  const reconnect = useSessionStore((s) => s.reconnect);
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
   const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
@@ -329,11 +331,27 @@ export default function AgentPanel() {
           </div>
         )}
         {activeSession?.status === 'disconnected' && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>SSH 连接已断开。</p>
-            <p className="mt-1">
-              请重新连接服务器后继续使用智能助手。
-            </p>
+          <div className="text-center text-zinc-500 text-sm mt-8 space-y-3">
+            <div>
+              <p>SSH 连接已断开。</p>
+              <p className="mt-1">
+                请重新连接服务器后继续使用智能助手。
+              </p>
+            </div>
+            {activeSession.configId ? (
+              <Button
+                variant="primary"
+                onClick={() => {
+                  reconnect(activeSession.id).catch((err) => {
+                    console.error('重连失败:', err);
+                  });
+                }}
+              >
+                重新连接
+              </Button>
+            ) : (
+              <p className="text-zinc-600">临时连接无法自动重连，请去侧边栏重新连接。</p>
+            )}
           </div>
         )}
         {canInteract && messages.length === 0 && !activeConversationId && (

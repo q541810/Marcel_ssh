@@ -178,8 +178,34 @@ export async function connectWithSavedPassword(connectionId: string): Promise<st
   return invoke<string>('ssh_connect_with_saved_password', { connectionId });
 }
 
+export async function connectWithSavedPassphrase(connectionId: string): Promise<string> {
+  return invoke<string>('ssh_connect_with_saved_passphrase', { connectionId });
+}
+
 export async function deletePassword(connectionId: string): Promise<void> {
   return invoke('config_delete_password', { connectionId });
+}
+
+export async function sshReconnect(
+  sessionId: string,
+  connectionId: string,
+): Promise<void> {
+  return invoke('ssh_reconnect', { sessionId, connectionId });
+}
+
+export async function savePassphrase(
+  connectionId: string,
+  passphrase: string,
+): Promise<void> {
+  return invoke('config_save_passphrase', { connectionId, passphrase });
+}
+
+export async function hasPassphrase(connectionId: string): Promise<boolean> {
+  return invoke<boolean>('config_has_passphrase', { connectionId });
+}
+
+export async function deletePassphrase(connectionId: string): Promise<void> {
+  return invoke('config_delete_passphrase', { connectionId });
 }
 
 // Quick command commands

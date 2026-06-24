@@ -52,9 +52,12 @@ pub async fn config_delete_connection(
     }
     let path = ConnectionStore::default_file(&state.config_dir);
     tokio::task::block_in_place(|| store.save_to_path(&path))?;
-    // Best-effort: also purge any stored password from the keychain
+    // Best-effort: also purge any stored password and passphrase from the keychain
     if let Err(e) = keychain::delete_password(&id) {
         log::warn!("清除密钥链条目失败（id={}): {}", id, e);
+    }
+    if let Err(e) = keychain::delete_password(&format!("pk:{}", id)) {
+        log::warn!("清除密钥链 passphrase 条目失败（id={}): {}", id, e);
     }
     Ok(())
 }

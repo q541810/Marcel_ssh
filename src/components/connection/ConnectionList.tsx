@@ -20,6 +20,7 @@ export default function ConnectionList() {
   const setActiveConnection = useConnectionStore((s) => s.setActiveConnection);
   const connect = useSessionStore((s) => s.connect);
   const connectWithSavedPassword = useSessionStore((s) => s.connectWithSavedPassword);
+  const connectWithSavedPassphrase = useSessionStore((s) => s.connectWithSavedPassphrase);
   const { onConnected } = useSessionLifecycle();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,7 +60,7 @@ export default function ConnectionList() {
    * methods). On password-auth failure with a saved password, the stored entry
    * is purged and the user is prompted to re-enter.
    */
-  const doConnect = async (conn: SavedConnection, password?: string) => {
+  const doConnect = async (conn: SavedConnection, password?: string, passphrase?: string) => {
     let authMethod: ConnectionConfig['authMethod'];
     switch (conn.authMethod) {
       case 'Password':
@@ -73,6 +74,7 @@ export default function ConnectionList() {
         authMethod = {
           type: 'PrivateKey',
           keyPath: conn.keyPath ?? '',
+          passphrase,
         };
         break;
       case 'Agent':
@@ -114,6 +116,24 @@ export default function ConnectionList() {
     });
   };
 
+  const promptForPassphrase = (conn: SavedConnection) => {
+    promptPassword({
+      title: '私钥密码',
+      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
+      allowRemember: true,
+      onSubmit: async (passphrase, remember) => {
+        if (remember) {
+          try {
+            await tauri.savePassphrase(conn.id, passphrase);
+          } catch (err) {
+            console.warn('保存 passphrase 到密钥链失败:', err);
+          }
+        }
+        await doConnect(conn, undefined, passphrase);
+      },
+    });
+  };
+
   /**
    * Click handler for a saved connection. For password-auth connections,
    * checks if a password is saved in the OS keychain. If so, connects via
@@ -141,6 +161,30 @@ export default function ConnectionList() {
         console.warn('检查已保存密码失败:', err);
       }
       promptForPassword(connection);
+      return;
+    }
+    if (connection.authMethod === 'PrivateKey') {
+      const hasSavedPassphrase = await tauri.hasPassphrase(connection.id).catch((err) => {
+        console.warn('检查已保存 passphrase 失败:', err);
+        return false;
+      });
+      if (hasSavedPassphrase) {
+        const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+        try {
+          const sessionId = await connectWithSavedPassphrase(connection.id, connLabel);
+          onConnected(connection.id, sessionId);
+          return;
+        } catch (err) {
+          console.warn('passphrase 连接失败，尝试无 passphrase:', err);
+        }
+      }
+      try {
+        await doConnect(connection);
+        return;
+      } catch (err) {
+        console.warn('无 passphrase 连接失败，可能私钥已加密:', err);
+      }
+      promptForPassphrase(connection);
       return;
     }
     await doConnect(connection);
