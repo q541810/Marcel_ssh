@@ -1,4 +1,5 @@
 import { useConversationStore } from '@/stores/agentStore';
+import { useSessionStore } from '@/stores/sessionStore';
 
 export function useSessionLifecycle() {
   return {
@@ -13,7 +14,11 @@ export function useSessionLifecycle() {
       }
     },
     onDisconnected: (connectionId: string) => {
-      useConversationStore.getState().clearConnectionConversations(connectionId);
+      const sessions = useSessionStore.getState().sessions;
+      const stillActive = Object.values(sessions).some((s) => s.configId === connectionId);
+      if (!stillActive) {
+        useConversationStore.getState().clearConnectionConversations(connectionId);
+      }
     },
   };
 }
