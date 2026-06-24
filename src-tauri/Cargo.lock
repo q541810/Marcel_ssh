@@ -3303,7 +3303,7 @@ dependencies = [
 
 [[package]]
 name = "marcel-ssh"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

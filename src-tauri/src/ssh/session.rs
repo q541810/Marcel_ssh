@@ -25,6 +25,10 @@ pub struct SshConnection {
     pub port: u16,
     pub username: String,
     pub connection_id: Option<String>,
+    /// Monotonic generation counter — incremented each time a new connection
+    /// is created for the same session_id (reconnect). Used by cleanup to
+    /// prevent a stale driver task from removing a newer connection.
+    pub generation: u64,
     /// Sender to the per-session driver task (for the interactive shell).
     pub(crate) cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     /// Shared russh Handle — used to open additional exec channels for

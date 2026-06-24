@@ -181,20 +181,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       await tauri.sshReconnect(sessionId, connectionId);
       void attachSessionStatusListener(sessionId);
-      set((state) => ({
-        sessions: {
-          ...state.sessions,
-          [sessionId]: { ...state.sessions[sessionId], status: 'connected', errorMessage: undefined },
-        },
-      }));
+      set((state) => {
+        const existing = state.sessions[sessionId];
+        if (!existing) return state;
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: { ...existing, status: 'connected', errorMessage: undefined },
+          },
+        };
+      });
     } catch (err) {
       const errorMessage = getErrorMessage(err);
-      set((state) => ({
-        sessions: {
-          ...state.sessions,
-          [sessionId]: { ...state.sessions[sessionId], status: 'error', errorMessage },
-        },
-      }));
+      set((state) => {
+        const existing = state.sessions[sessionId];
+        if (!existing) return state;
+        return {
+          sessions: {
+            ...state.sessions,
+            [sessionId]: { ...existing, status: 'error', errorMessage },
+          },
+        };
+      });
       throw err;
     }
   },

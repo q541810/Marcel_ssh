@@ -57,6 +57,12 @@ impl fmt::Debug for ConnectionConfig {
 #[derive(Clone)]
 pub struct SshManager {
     connections: Arc<RwLock<HashMap<String, Arc<SshConnection>>>>,
+    /// Per-session generation counter. Incremented each time a new connection
+    /// replaces an existing one for the same session_id (reconnect). The driver
+    /// task captures its generation at spawn time; during cleanup it only
+    /// removes the entry if the generation still matches, preventing a stale
+    /// driver from deleting a newer connection.
+    generations: Arc<RwLock<HashMap<String, u64>>>,
     known_hosts: Arc<KnownHostsStore>,
 }
 
@@ -66,6 +72,7 @@ impl SshManager {
     pub fn with_known_hosts(known_hosts: Arc<KnownHostsStore>) -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
+            generations: Arc::new(RwLock::new(HashMap::new())),
             known_hosts,
         }
     }
@@ -237,12 +244,22 @@ impl SshManager {
         // both can use it without move conflicts.
         let shared_handle = Arc::new(TokioMutex::new(handle));
 
+        // Increment generation so any stale driver task for the same
+        // session_id will skip cleanup (it captured an older generation).
+        let generation = {
+            let mut gens = self.generations.write().await;
+            let g = gens.get(&session_id).copied().unwrap_or(0) + 1;
+            gens.insert(session_id.clone(), g);
+            g
+        };
+
         let connection = Arc::new(SshConnection {
             id: session_id.clone(),
             host: host.clone(),
             port,
             username: username.clone(),
             connection_id,
+            generation,
             cmd_tx,
             handle: shared_handle.clone(),
         });
@@ -271,10 +288,21 @@ impl SshManager {
                 app_clone.clone(),
             )
             .await;
-            // Cleanup
-            manager_connections.write().await.remove(&sid);
-            let _ = app_clone.emit(&format!("ssh://status/{}", sid), SshStatus::Disconnected);
-            log::info!("SSH session {} cleaned up", sid);
+            // Cleanup: only remove if the generation still matches.
+            // A reconnect increments the generation, so a stale driver
+            // that exits after reconnect will see a mismatch and skip.
+            let mut guard = manager_connections.write().await;
+            let dominated = guard
+                .get(&sid)
+                .map_or(true, |c| c.generation == generation);
+            if dominated {
+                guard.remove(&sid);
+                drop(guard);
+                let _ = app_clone.emit(&format!("ssh://status/{}", sid), SshStatus::Disconnected);
+                log::info!("SSH session {} cleaned up", sid);
+            } else {
+                log::info!("SSH session {} stale driver exited (gen {} vs current), skipping cleanup", sid, generation);
+            }
         });
 
         Ok(())

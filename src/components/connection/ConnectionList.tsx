@@ -179,7 +179,17 @@ export default function ConnectionList() {
         }
       }
       try {
-        await doConnect(connection);
+        const config: ConnectionConfig = {
+          host: connection.host,
+          port: connection.port,
+          username: connection.username,
+          authMethod: { type: 'PrivateKey', keyPath: connection.keyPath ?? '' },
+          connectionId: connection.id,
+        };
+        const sessionId = await connect(config);
+        if (connection.id) {
+          onConnected(connection.id, sessionId);
+        }
         return;
       } catch (err) {
         console.warn('无 passphrase 连接失败，可能私钥已加密:', err);
