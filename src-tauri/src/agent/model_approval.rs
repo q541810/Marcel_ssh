@@ -22,7 +22,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::agent::sandbox::RiskLevel;
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmProvider, LlmRole, ToolDefinition};
@@ -44,8 +43,6 @@ pub(crate) trait CommandApprover: Send + Sync {
     async fn evaluate(
         &self,
         command: &str,
-        risk: RiskLevel,
-        sandbox_needs_confirm: bool,
         recent_messages: &[LlmMessage],
     ) -> Result<ModelApprovalDecision, AppError>;
 }
@@ -85,23 +82,13 @@ impl CommandApprover for ModelApprover {
     async fn evaluate(
         &self,
         command: &str,
-        risk: RiskLevel,
-        sandbox_needs_confirm: bool,
         recent_messages: &[LlmMessage],
     ) -> Result<ModelApprovalDecision, AppError> {
         let context = build_context(recent_messages);
-        let risk_label = risk_label(risk);
-        let sandbox_label = if sandbox_needs_confirm {
-            "是（沙箱要求人工审批）"
-        } else {
-            "否"
-        };
 
         let user_prompt = format!(
             "用户任务上下文：\n{context}\n\n\
              待审批命令：\n{command}\n\n\
-             沙箱风险等级：{risk_label}\n\
-             沙箱是否要求人工审批：{sandbox_label}\n\n\
              请给出你的判定。"
         );
 
@@ -119,16 +106,6 @@ impl CommandApprover for ModelApprover {
 
         let resp = self.provider.send_message(&messages, &tools).await?;
         parse_decision(&resp.content)
-    }
-}
-
-fn risk_label(r: RiskLevel) -> &'static str {
-    match r {
-        RiskLevel::ReadOnly => "只读",
-        RiskLevel::LowRisk => "低风险",
-        RiskLevel::Moderate => "中风险",
-        RiskLevel::HighRisk => "高风险",
-        RiskLevel::Destructive => "破坏性",
     }
 }
 

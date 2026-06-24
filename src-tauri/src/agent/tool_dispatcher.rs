@@ -272,7 +272,7 @@ impl ToolDispatcher {
                 );
 
                 let eval_result = approver
-                    .evaluate(cmd, effective_risk, sandbox_needs_confirm, recent_messages)
+                    .evaluate(cmd, recent_messages)
                     .await;
 
                 match eval_result {
