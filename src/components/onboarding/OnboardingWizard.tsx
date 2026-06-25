@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { AlertCircle, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { AlertCircle, Bot, ChevronLeft, ChevronRight, Check, FolderOpen, Monitor } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { APP_NAME, APP_LOGO } from '@/lib/constants';
@@ -31,17 +31,23 @@ function WelcomeStep() {
 
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-2xl mb-2">🖥️</div>
+          <div className="flex justify-center mb-2">
+            <Monitor className="w-7 h-7 text-zinc-300" />
+          </div>
           <div className="text-sm font-medium text-zinc-200">智能终端</div>
           <div className="text-xs text-zinc-500 mt-1">多会话管理</div>
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-2xl mb-2">🤖</div>
+          <div className="flex justify-center mb-2">
+            <Bot className="w-7 h-7 text-zinc-300" />
+          </div>
           <div className="text-sm font-medium text-zinc-200">AI Agent</div>
           <div className="text-xs text-zinc-500 mt-1">自动执行命令</div>
         </div>
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="text-2xl mb-2">📁</div>
+          <div className="flex justify-center mb-2">
+            <FolderOpen className="w-7 h-7 text-zinc-300" />
+          </div>
           <div className="text-sm font-medium text-zinc-200">文件管理</div>
           <div className="text-xs text-zinc-500 mt-1">SFTP 传输</div>
         </div>
