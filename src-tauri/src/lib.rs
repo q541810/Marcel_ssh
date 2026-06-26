@@ -4,6 +4,7 @@ pub mod config;
 pub mod error;
 pub mod llm;
 pub mod mcp;
+pub mod plugins;
 pub mod notification;
 pub mod skills;
 pub mod ssh;
@@ -361,6 +362,9 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .register_uri_scheme_protocol("plugin", |app, request| {
+            crate::commands::plugin_webview::handle_plugin_uri(app, request)
+        })
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -486,6 +490,10 @@ pub fn run() {
             commands::sftp::sftp_upload_folder_stream,
             commands::sftp::sftp_prepare_drag_upload,
             commands::sftp::sftp_cleanup_temp_dir,
+            commands::plugin_webview::plugin_webview_create,
+            commands::plugin_webview::plugin_webview_set_bounds,
+            commands::plugin_webview::plugin_webview_close,
+            commands::plugin::plugin_list,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

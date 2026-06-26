@@ -4,6 +4,8 @@ pub mod agent_policy;
 pub mod connections;
 pub mod keychain;
 pub mod mcp;
+pub mod plugin;
+pub mod plugin_webview;
 pub mod quick_command;
 pub mod settings;
 pub mod sftp;
