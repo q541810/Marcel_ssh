@@ -408,7 +408,7 @@ export async function pluginWebviewCreate(
   width: number,
   height: number,
 ): Promise<void> {
-  return invoke('plugin_webview_create', { label, pluginId, entry, x, y, width, height });
+  return invoke('plugin_webview_create', { params: { label, pluginId, entry, x, y, width, height } });
 }
 
 export async function pluginWebviewSetBounds(

@@ -8,38 +8,44 @@ use tauri::{
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginWebviewCreateParams {
+    pub label: String,
+    pub plugin_id: String,
+    pub entry: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 #[tauri::command]
 pub async fn plugin_webview_create(
     app: tauri::AppHandle,
-    label: String,
-    plugin_id: String,
-    entry: String,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
+    params: PluginWebviewCreateParams,
 ) -> Result<(), String> {
-    if app.get_webview(&label).is_some() {
+    if app.get_webview(&params.label).is_some() {
         return Ok(());
     }
 
-    if !is_plugin_enabled_async(&app, &plugin_id).await {
-        return Err(format!("plugin disabled: {}", plugin_id));
+    if !is_plugin_enabled_async(&app, &params.plugin_id).await {
+        return Err(format!("plugin disabled: {}", params.plugin_id));
     }
 
     let window = app
         .get_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
 
-    let url = format!("plugin://{}/{}", plugin_id, entry);
+    let url = format!("plugin://{}/{}", params.plugin_id, params.entry);
     let webview_url = WebviewUrl::External(url::Url::parse(&url).map_err(|e| e.to_string())?);
 
     window
         .add_child(
-            WebviewBuilder::new(&label, webview_url)
+            WebviewBuilder::new(&params.label, webview_url)
                 .background_color(Color(24, 24, 27, 255)),
-            LogicalPosition::new(x, y),
-            LogicalSize::new(width.max(1.0), height.max(1.0)),
+            LogicalPosition::new(params.x, params.y),
+            LogicalSize::new(params.width.max(1.0), params.height.max(1.0)),
         )
         .map_err(|e| e.to_string())?;
 
@@ -176,7 +182,7 @@ fn handle_plugin_api<R: tauri::Runtime>(
         .unwrap_or_else(|_| bad_request("api build failed"))
 }
 
-fn guess_mime(path: &PathBuf) -> &'static str {
+fn guess_mime(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "application/javascript; charset=utf-8",
