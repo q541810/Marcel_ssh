@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use tauri::http::Response;
 use tauri::utils::config::Color;
 use tauri::{
