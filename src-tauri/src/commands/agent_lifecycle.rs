@@ -5,10 +5,11 @@ use uuid::Uuid;
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
-use crate::agent::tools::{mcp::register_mcp_tools, ToolRegistry};
+use crate::agent::tools::{mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry};
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
+use crate::plugins::scan::scan_plugins_filtered;
 use crate::AppState;
 use crate::mcp::manager::McpManager;
 use crate::mcp::store::McpServerConfig;
@@ -21,10 +22,24 @@ async fn build_registry(
     enabled_mcp_servers: &[McpServerConfig],
     mcp_manager: Arc<McpManager>,
     experimental_settings: &crate::config::settings::ExperimentalSettings,
+    config_dir: &std::path::Path,
+    disabled_plugins: &[String],
 ) -> Arc<ToolRegistry> {
     let AgentMode::Chat = mode else {
         let mut registry =
             ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
+
+        let manifests = tokio::task::spawn_blocking({
+            let config_dir = config_dir.to_path_buf();
+            let disabled = disabled_plugins.to_vec();
+            move || scan_plugins_filtered(&config_dir, &disabled)
+        })
+        .await
+        .unwrap_or_default();
+        for m in &manifests {
+            register_plugin_tools(&mut registry, &m.agent_tools);
+        }
+
         let mut set = tokio::task::JoinSet::new();
         for server in enabled_mcp_servers {
             let mgr = mcp_manager.clone();
@@ -195,7 +210,7 @@ pub async fn agent_start_task(
         created_at: chrono::Utc::now(),
     });
 
-    let (llm_config, agent_settings, experimental_settings, enabled_skills, enabled_mcp_servers) = {
+    let (llm_config, agent_settings, experimental_settings, enabled_skills, enabled_mcp_servers, disabled_plugins) = {
         let settings = state.settings.read().await;
         let skills = state.skill_store.read().await;
         let mcp_store = state.mcp_store.read().await;
@@ -205,6 +220,7 @@ pub async fn agent_start_task(
             settings.experimental_settings.clone(),
             skills.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
             mcp_store.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
+            settings.disabled_plugins.clone(),
         )
     };
 
@@ -216,7 +232,7 @@ pub async fn agent_start_task(
     }
     let provider = OpenAiProvider::new(llm_config)?;
 
-    let registry = build_registry(&mode, &enabled_skills, &enabled_mcp_servers, state.mcp_manager.clone(), &experimental_settings).await;
+    let registry = build_registry(&mode, &enabled_skills, &enabled_mcp_servers, state.mcp_manager.clone(), &experimental_settings, &state.config_dir, &disabled_plugins).await;
     let tools = build_definitions(&registry, &mode);
     let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt);
 

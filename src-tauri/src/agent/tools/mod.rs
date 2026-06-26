@@ -31,6 +31,7 @@ pub mod http_get;
 pub mod mcp;
 pub mod open_cloud_page;
 pub mod plan;
+pub mod plugin_tool;
 pub mod process;
 pub mod search;
 pub mod sftp_transfer;
