@@ -1,64 +1,41 @@
-import { useState, type ReactNode } from 'react';
-import { Terminal, Wand, Plug, HelpCircle, Settings } from 'lucide-react';
+import { useState, useMemo, type ReactNode } from 'react';
+import { HelpCircle } from 'lucide-react';
 import HelpModal from '../HelpModal';
-
-export type NavView = 'sessions' | 'skills' | 'mcp' | 'settings';
+import { useViewStore, byNavGroup } from '@/stores/viewStore';
+import type { ViewIcon } from '@/lib/types';
 
 interface Props {
-  active: NavView;
-  onChange: (view: NavView) => void;
+  activeId: string;
+  onChange: (id: string) => void;
 }
 
-interface NavItem {
-  value: NavView;
-  label: string;
-  icon: ReactNode;
+function renderIcon(icon: ViewIcon): ReactNode {
+  if (icon.kind === 'react') return icon.node;
+  if (icon.kind === 'svg') {
+    return <img src={icon.path} alt="" className="w-5 h-5" />;
+  }
+  if (icon.kind === 'img') {
+    return <img src={icon.src} alt="" className="w-5 h-5" />;
+  }
+  return null;
 }
-
-const TOP_ITEMS: NavItem[] = [
-  {
-    value: 'sessions',
-    label: '会话',
-    icon: <Terminal className="w-5 h-5" />,
-  },
-  {
-    value: 'skills',
-    label: '技能',
-    icon: <Wand className="w-5 h-5" />,
-  },
-  {
-    value: 'mcp',
-    label: '自定义 MCP',
-    icon: <Plug className="w-5 h-5" />,
-  },
-];
-
-const HELP_ITEM: NavItem = {
-  value: 'settings',
-  label: '帮助',
-  icon: <HelpCircle className="w-5 h-5" />,
-};
-
-const BOTTOM_ITEM: NavItem = {
-  value: 'settings',
-  label: '设置',
-  icon: <Settings className="w-5 h-5" />,
-};
 
 function NavButton({
-  item,
+  title,
+  icon,
   active,
   onClick,
 }: {
-  item: NavItem;
+  title: string;
+  icon: ReactNode;
   active: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       onClick={onClick}
-      title={item.label}
-      aria-label={item.label}
+      title={title}
+      aria-label={title}
       className={`
         relative flex items-center justify-center w-12 h-12 rounded-lg transition-colors
         ${
@@ -68,41 +45,49 @@ function NavButton({
         }
       `}
     >
-      {/* Active indicator bar on the left edge */}
       {active && (
         <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r bg-indigo-400" />
       )}
-      {item.icon}
+      {icon}
     </button>
   );
 }
 
-export default function NavRail({ active, onChange }: Props) {
+export default function NavRail({ activeId, onChange }: Props) {
   const [helpOpen, setHelpOpen] = useState(false);
+  const providers = useViewStore((s) => s.providers);
+  const topItems = useMemo(() => byNavGroup(providers, 'top'), [providers]);
+  const bottomItems = useMemo(() => byNavGroup(providers, 'bottom'), [providers]);
 
   return (
     <nav className="flex flex-col items-center justify-between w-14 flex-shrink-0 bg-zinc-950 border-r border-zinc-800 py-2">
       <div className="flex flex-col gap-1">
-        {TOP_ITEMS.map((item) => (
+        {topItems.map((p) => (
           <NavButton
-            key={item.value}
-            item={item}
-            active={active === item.value}
-            onClick={() => onChange(item.value)}
+            key={p.id}
+            title={p.title}
+            icon={renderIcon(p.icon)}
+            active={activeId === p.id}
+            onClick={() => onChange(p.id)}
           />
         ))}
       </div>
       <div className="flex flex-col gap-1">
         <NavButton
-          item={HELP_ITEM}
+          title="帮助"
+          icon={<HelpCircle className="w-5 h-5" />}
           active={false}
           onClick={() => setHelpOpen(true)}
         />
-        <NavButton
-          item={BOTTOM_ITEM}
-          active={active === BOTTOM_ITEM.value}
-          onClick={() => onChange(BOTTOM_ITEM.value)}
-        />
+        {bottomItems.map((p) => (
+          <NavButton
+            key={p.id}
+            title={p.title}
+            icon={renderIcon(p.icon)}
+            active={activeId === p.id}
+            onClick={() => onChange(p.id)}
+          />
+        ))}
       </div>
       <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     </nav>

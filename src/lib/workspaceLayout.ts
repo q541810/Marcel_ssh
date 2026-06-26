@@ -37,7 +37,7 @@ interface ResolveWorkspaceLayoutInput {
   settings?: Partial<WorkspaceLayoutSettings> | null;
   sidebarOpen?: boolean;
   agentOpen?: boolean;
-  isSettingsView?: boolean;
+  isExclusive?: boolean;
 }
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -92,13 +92,13 @@ export function resolveWorkspaceLayout({
   settings,
   sidebarOpen,
   agentOpen,
-  isSettingsView = false,
+  isExclusive = false,
 }: ResolveWorkspaceLayoutInput): ResolvedWorkspaceLayout {
   const layout = normalizeWorkspaceLayout(settings);
   const availableWidth = Math.max(0, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
   const scale = resolveWorkspaceScale(containerWidth);
-  const effectiveSidebarOpen = !isSettingsView && (sidebarOpen ?? layout.sidebarOpen);
-  const effectiveAgentOpen = !isSettingsView && (agentOpen ?? layout.agentOpen);
+  const effectiveSidebarOpen = !isExclusive && (sidebarOpen ?? layout.sidebarOpen);
+  const effectiveAgentOpen = !isExclusive && (agentOpen ?? layout.agentOpen);
 
   if (availableWidth <= 0) {
     return { sidebarWidth: 0, mainWidth: 0, agentWidth: 0 };

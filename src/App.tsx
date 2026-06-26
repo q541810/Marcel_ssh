@@ -1,9 +1,16 @@
-import { useEffect, useState, lazy, Suspense, useRef, useCallback } from 'react';
-import NavRail, { type NavView } from '@/components/nav/NavRail';
-import ConnectionList from '@/components/connection/ConnectionList';
-import Terminal from '@/components/terminal/Terminal';
+import {
+  useEffect,
+  useState,
+  lazy,
+  Suspense,
+  useRef,
+  useCallback,
+  useMemo,
+  type ComponentType,
+  type LazyExoticComponent,
+} from 'react';
+import NavRail from '@/components/nav/NavRail';
 import TabBar from '@/components/terminal/TabBar';
-import AgentPanel from '@/components/agent/AgentPanel';
 import AppHeader from '@/components/layout/AppHeader';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
@@ -11,10 +18,12 @@ import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
+import { usePluginStore } from '@/stores/pluginStore';
+import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate } from '@/lib/tauri';
 import { playNotificationSound } from '@/lib/notificationSound';
-import type { AgentMode, WorkspaceLayoutSettings } from '@/lib/types';
+import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
   displayedWidthToBaseWidth,
@@ -22,16 +31,29 @@ import {
   resolveWorkspaceLayout,
   WORKSPACE_LAYOUT_LIMITS,
 } from '@/lib/workspaceLayout';
+import { registerBuiltinViews } from '@/plugins/builtinViews';
+import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
+import { initPluginIpc } from '@/plugins/pluginIpc';
 
-const SkillList = lazy(() => import('@/components/skill/SkillList'));
-const McpList = lazy(() => import('@/components/mcp/McpList'));
-const Settings = lazy(() => import('@/components/settings/Settings'));
+const lazyCache = new Map<string, LazyExoticComponent<ComponentType>>();
+
+function getLazy(provider: ViewProvider): LazyExoticComponent<ComponentType> {
+  let c = lazyCache.get(provider.id);
+  if (!c) {
+    c = lazy(provider.component);
+    lazyCache.set(provider.id, c);
+  }
+  return c;
+}
+
+registerBuiltinViews();
 
 const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 const AGENT_PANEL_COLLAPSE_MS = 300;
 
 export default function App() {
-  const [navView, setNavView] = useState<NavView>('sessions');
+  const [activeId, setActiveId] = useState<string>('builtin.sessions');
+  const providers = useViewStore((s) => s.providers);
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const mainRowRef = useRef<HTMLDivElement>(null);
@@ -54,18 +76,36 @@ export default function App() {
   const updateSettings = useSettingsStore((s) => s.update);
   const setAgentMode = useAgentStore((s) => s.setMode);
   const fetchSkills = useSkillStore((s) => s.fetchSkills);
+  const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const pluginRefreshKey = usePluginStore((s) => s.refreshKey);
 
   const sidebarOpen = workspaceLayout?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen;
   const agentPanelOpen = workspaceLayout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
-  const isSettingsView = navView === 'settings';
-  const effectiveSidebarOpen = sidebarOpen && !isSettingsView;
-  const effectiveAgentPanelOpen = agentPanelOpen && !isSettingsView;
+  const centerProviders = useMemo(() => byMount(providers, 'center'), [providers]);
+  const agentProviders = useMemo(() => byMount(providers, 'agent'), [providers]);
+  const activeProvider = useMemo(
+    () => providers.find((p) => p.id === activeId),
+    [providers, activeId],
+  );
+  const isExclusive = activeProvider?.exclusive ?? false;
+  const sidebarProvider =
+    !isExclusive && activeProvider?.mount === 'sidebar' ? activeProvider : null;
+  const centerProvider = isExclusive ? activeProvider : centerProviders[0];
+  const agentProvider = isExclusive ? null : agentProviders[0];
+  const effectiveSidebarOpen = sidebarOpen && !isExclusive && sidebarProvider !== null;
+  const effectiveAgentPanelOpen = agentPanelOpen && !isExclusive && agentProvider !== null;
   const [agentPanelMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
 
   useEffect(() => {
     attachTransferListeners();
     return () => detachTransferListeners();
   }, []);
+
+  useEffect(() => {
+    if (providers.length > 0 && !providers.some((p) => p.id === activeId)) {
+      setActiveId('builtin.sessions');
+    }
+  }, [providers, activeId]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -130,7 +170,7 @@ export default function App() {
     settings: workspaceLayout,
     sidebarOpen,
     agentOpen: agentPanelOpen,
-    isSettingsView,
+    isExclusive,
   });
 
   const sidebarWidth = dragSidebarWidth ?? resolvedLayout.sidebarWidth;
@@ -154,18 +194,18 @@ export default function App() {
   };
 
   const handleSidebarResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!effectiveSidebarOpen || isSettingsView) return;
+    if (!effectiveSidebarOpen || isExclusive) return;
     e.preventDefault();
     sidebarResizeStartRef.current = { x: e.clientX, width: sidebarWidth };
     setResizingSide('sidebar');
-  }, [effectiveSidebarOpen, isSettingsView, sidebarWidth]);
+  }, [effectiveSidebarOpen, isExclusive, sidebarWidth]);
 
   const handleAgentResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!agentPanelVisible || isSettingsView) return;
+    if (!agentPanelVisible || isExclusive) return;
     e.preventDefault();
     agentResizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
     setResizingSide('agent');
-  }, [agentPanelWidth, agentPanelVisible, isSettingsView]);
+  }, [agentPanelWidth, agentPanelVisible, isExclusive]);
 
   useEffect(() => {
     if (!resizingSide) return;
@@ -250,10 +290,16 @@ export default function App() {
     fetchSkills().catch(err => {
       console.error('Failed to load skills:', err);
     });
+    fetchPlugins().catch(err => {
+      console.error('Failed to load plugins:', err);
+    });
+    initPluginIpc().catch(err => {
+      console.error('Failed to init plugin IPC:', err);
+    });
     checkUpdate().then(res => {
       if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
     }).catch(() => {});
-  }, [loadSettings, fetchSkills]);
+  }, [loadSettings, fetchSkills, fetchPlugins]);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -269,14 +315,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settingsLoaded]);
 
-  const handleNavChange = (view: NavView) => {
-    if (view === navView) return;
+  const handleNavChange = (id: string) => {
+    if (id === activeId) return;
 
-    setNavView(view);
-    if ((view === 'sessions' || view === 'skills' || view === 'mcp') && !sidebarOpen) {
+    setActiveId(id);
+    const p = providers.find((x) => x.id === id);
+    if (p && p.mount === 'sidebar' && !sidebarOpen) {
       persistWorkspaceLayout({ sidebarOpen: true });
     }
   };
+
+  const SidebarView = sidebarProvider ? getLazy(sidebarProvider) : null;
+  const CenterView = centerProvider ? getLazy(centerProvider) : null;
+  const AgentView = agentProvider ? getLazy(agentProvider) : null;
 
   return (
     <div className="relative">
@@ -291,7 +342,7 @@ export default function App() {
         data-window-resizing={isWindowResizing ? 'true' : undefined}
       >
         <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
-          <NavRail active={navView} onChange={handleNavChange} />
+          <NavRail activeId={activeId} onChange={handleNavChange} />
 
           <aside
             className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
@@ -304,13 +355,17 @@ export default function App() {
             }}
           >
             <div style={{ width: `${sidebarWidth}px`, height: '100%' }}>
-              {navView === 'sessions' && <ConnectionList />}
-              {navView === 'skills' && <Suspense fallback={null}><SkillList /></Suspense>}
-              {navView === 'mcp' && <Suspense fallback={null}><McpList /></Suspense>}
+              {sidebarProvider && sidebarProvider.pluginId !== 'builtin' ? (
+                <PluginWebviewSlot key={`${sidebarProvider.id}-${pluginRefreshKey}`} provider={sidebarProvider} />
+              ) : SidebarView ? (
+                <Suspense fallback={null}>
+                  <SidebarView />
+                </Suspense>
+              ) : null}
             </div>
           </aside>
 
-          {effectiveSidebarOpen && !isSettingsView && (
+          {effectiveSidebarOpen && (
             <div
               className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
               onMouseDown={handleSidebarResizeMouseDown}
@@ -319,17 +374,25 @@ export default function App() {
           )}
 
           <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
-            {isSettingsView ? (
+            {isExclusive ? (
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
-                <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
-                  <Settings />
-                </Suspense>
+                {centerProvider && centerProvider.pluginId !== 'builtin' ? (
+                  <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
+                ) : (
+                  <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>
+                    {CenterView && <CenterView />}
+                  </Suspense>
+                )}
               </div>
             ) : (
               <>
                 <TabBar />
                 <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                  <Terminal />
+                  {centerProvider && centerProvider.pluginId !== 'builtin' ? (
+                    <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
+                  ) : (
+                    <Suspense fallback={null}>{CenterView && <CenterView />}</Suspense>
+                  )}
                 </main>
               </>
             )}
@@ -353,7 +416,11 @@ export default function App() {
                   className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
                   style={{ width: `${agentPanelWidth}px` }}
                 >
-                  <AgentPanel />
+                  {agentProvider && agentProvider.pluginId !== 'builtin' ? (
+                    <PluginWebviewSlot key={`${agentProvider.id}-${pluginRefreshKey}`} provider={agentProvider} />
+                  ) : (
+                    AgentView && <AgentView />
+                  )}
                 </aside>
               </>
             )}

@@ -66,11 +66,11 @@ describe('workspaceLayout', () => {
     expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, agentWidth: 0 });
   });
 
-  it('hides side panels in settings view', () => {
+  it('hides side panels in exclusive view', () => {
     const layout = resolveWorkspaceLayout({
       containerWidth: 1600,
       settings: DEFAULT_WORKSPACE_LAYOUT,
-      isSettingsView: true,
+      isExclusive: true,
     });
 
     expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, agentWidth: 0 });

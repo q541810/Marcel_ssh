@@ -1,14 +1,17 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useMemo } from 'react';
 import { sshSendInput } from '@/lib/tauri';
-import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { BOTTOM_TABS, DEFAULT_TERMINAL_COLORS, type BottomTab } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useViewStore, byMount } from '@/stores/viewStore';
 import Button from '@/components/ui/Button';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import PasteConfirmDialog from './PasteConfirmDialog';
+import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
+import { usePluginStore } from '@/stores/pluginStore';
 import { useClipboardHandler } from '@/hooks/useClipboardHandler';
 import { useTerminalBottomPanel } from './useTerminalBottomPanel';
 import { terminalInstanceManager } from './TerminalInstanceManager';
@@ -38,6 +41,30 @@ export default function Terminal() {
   } = useTerminalBottomPanel();
 
   const { handleCopy } = useClipboardHandler();
+
+  const providers = useViewStore((s) => s.providers);
+  const pluginRefreshKey = usePluginStore((s) => s.refreshKey);
+  const pluginBottomProviders = useMemo(() => byMount(providers, 'bottom'), [providers]);
+  const pluginBottomTabs: BottomTab[] = useMemo(
+    () =>
+      pluginBottomProviders.map((p) => ({
+        id: `plugin:${p.id}`,
+        icon: 'M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
+        label: p.title,
+      })),
+    [pluginBottomProviders],
+  );
+  const allTabs = useMemo(() => [...BOTTOM_TABS, ...pluginBottomTabs], [pluginBottomTabs]);
+  const activePluginView = useMemo(
+    () => pluginBottomProviders.find((p) => `plugin:${p.id}` === activeTab) ?? null,
+    [pluginBottomProviders, activeTab],
+  );
+
+  useEffect(() => {
+    if (activeTab?.startsWith('plugin:') && !activePluginView) {
+      setActiveTab(null);
+    }
+  }, [activeTab, activePluginView, setActiveTab]);
 
   const fontSize = preview?.fontSize ?? storeSettings.fontSize;
   const fontFamily = preview?.fontFamily ?? storeSettings.fontFamily;
@@ -235,7 +262,10 @@ export default function Terminal() {
               onMouseDown={handlePanelResizeMouseDown}
               style={{ touchAction: 'none' }}
             />
-            <div className="bg-zinc-900" style={{ height: `${panelHeight - 4}px` }}>
+            <div
+              className="bg-zinc-900"
+              style={{ height: `${panelHeight - 4}px` }}
+            >
               {displayTab === 'quick-command' && (
                 <QuickCommandPanel sessionId={activeSessionId} sessionKey={activeSession.configId} />
               )}
@@ -249,9 +279,12 @@ export default function Terminal() {
                   connectionKey={activeSession.configId ?? activeSession.connectionId}
                 />
               )}
+              {activePluginView && activeTab === `plugin:${activePluginView.id}` && (
+                <PluginWebviewSlot key={`${activePluginView.id}-${pluginRefreshKey}`} provider={activePluginView} />
+              )}
             </div>
           </div>
-          <BottomTabBar activeTab={activeTab} onTabChange={setActiveTab} />
+          <BottomTabBar activeTab={activeTab} onTabChange={setActiveTab} tabs={allTabs} />
         </div>
       )}
 

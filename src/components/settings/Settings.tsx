@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { usePluginStore } from '@/stores/pluginStore';
 import { getErrorMessage } from '@/lib/errors';
 import type { AppSettings } from '@/lib/types';
 import { resolveSettingsLayout } from '@/lib/settingsLayout';
@@ -108,6 +109,9 @@ export default function Settings() {
       setSavedNotice('已保存');
       clearTimeout(savedNoticeTimerRef.current);
       savedNoticeTimerRef.current = setTimeout(() => setSavedNotice(null), 2000);
+      usePluginStore.getState().fetchPlugins().catch((err) => {
+        console.error('保存后刷新插件失败:', err);
+      });
     } catch (err) {
       setSaveError(getErrorMessage(err));
       clearTimeout(saveErrorTimerRef.current);
