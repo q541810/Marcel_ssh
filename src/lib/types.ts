@@ -1,3 +1,65 @@
+import type { ComponentType, ReactNode } from 'react';
+
+// View Registry types
+
+export type MountPoint = 'sidebar' | 'center' | 'bottom' | 'agent';
+export type NavGroup = 'top' | 'bottom';
+
+export type ViewIcon =
+  | { kind: 'react'; node: ReactNode }
+  | { kind: 'svg'; path: string }
+  | { kind: 'img'; src: string };
+
+export interface ViewProvider {
+  id: string;
+  pluginId: string;
+  mount: MountPoint;
+  title: string;
+  icon: ViewIcon;
+  navGroup?: NavGroup;
+  order: number;
+  exclusive?: boolean;
+  component: () => Promise<{ default: ComponentType }>;
+  webviewEntry?: string;
+}
+
+// Plugin manifest types
+
+export interface PluginIconDef {
+  kind: string;
+  src: string;
+}
+
+export interface PluginViewDef {
+  id: string;
+  mount: MountPoint;
+  title: string;
+  icon?: PluginIconDef;
+  navGroup?: NavGroup;
+  order: number;
+  entry: string;
+  exclusive?: boolean;
+}
+
+export interface PluginAgentToolDef {
+  name: string;
+  description: string;
+  command: string;
+  parameters?: unknown;
+  riskLevel?: string;
+}
+
+export interface PluginManifest {
+  id: string;
+  version: string;
+  name: string;
+  publisher: string;
+  description: string;
+  capabilities: string[];
+  views: PluginViewDef[];
+  agentTools: PluginAgentToolDef[];
+}
+
 // Connection types
 
 export interface ConnectionConfig {
@@ -302,6 +364,14 @@ export interface AppSettings {
   commandTimeoutSecs: number;
   /** Whether the user has completed the onboarding wizard. */
   hasCompletedOnboarding: boolean;
+  /** Disabled plugin IDs. Plugins listed here are scanned but not loaded. */
+  disabledPlugins: string[];
+  /**
+   * Per-plugin authorized capability IDs.
+   * If a plugin is not in the map, all declared capabilities are authorized (backward compatible).
+   * If a plugin IS in the map, only the listed capabilities are authorized.
+   */
+  authorizedCapabilities: Record<string, string[]>;
 }
 
 // LLM stream events

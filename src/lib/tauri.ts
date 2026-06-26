@@ -18,6 +18,7 @@ import type {
   CommandCheckResult,
   SftpFileEntry,
   ModelInfo,
+  PluginManifest,
 } from './types';
 
 // SSH commands
@@ -394,4 +395,36 @@ export async function sftpCleanupTempDir(tempDir: string): Promise<void> {
 
 export async function sftpExtractArchive(sessionId: string, remotePath: string, targetDir: string): Promise<void> {
   return invoke('sftp_extract_archive', { sessionId, remotePath, targetDir });
+}
+
+// Plugin webview commands
+
+export async function pluginWebviewCreate(
+  label: string,
+  pluginId: string,
+  entry: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): Promise<void> {
+  return invoke('plugin_webview_create', { label, pluginId, entry, x, y, width, height });
+}
+
+export async function pluginWebviewSetBounds(
+  label: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): Promise<void> {
+  return invoke('plugin_webview_set_bounds', { label, x, y, width, height });
+}
+
+export async function pluginWebviewClose(label: string): Promise<void> {
+  return invoke('plugin_webview_close', { label });
+}
+
+export async function pluginList(): Promise<PluginManifest[]> {
+  return invoke<PluginManifest[]>('plugin_list');
 }
