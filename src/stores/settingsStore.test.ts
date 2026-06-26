@@ -81,4 +81,15 @@ describe('settingsStore', () => {
     useSettingsStore.getState().clearWarning();
     expect(useSettingsStore.getState().warning).toBeNull();
   });
+
+  it('disabledPlugins defaults to empty array', () => {
+    expect(useSettingsStore.getState().settings.disabledPlugins).toEqual([]);
+  });
+
+  it('disabledPlugins survives setState round-trip', () => {
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, disabledPlugins: ['a', 'b'] },
+    });
+    expect(useSettingsStore.getState().settings.disabledPlugins).toEqual(['a', 'b']);
+  });
 });

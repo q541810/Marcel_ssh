@@ -64,6 +64,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   customProtectedPaths: [],
   commandTimeoutSecs: 120,
   hasCompletedOnboarding: false,
+  disabledPlugins: [],
+  authorizedCapabilities: {},
 };
 
 interface SettingsState {

@@ -328,6 +328,14 @@ pub struct AppSettings {
     /// Whether the user has completed the onboarding wizard.
     #[serde(default)]
     pub has_completed_onboarding: bool,
+    /// Disabled plugin IDs. Plugins listed here are scanned but not loaded.
+    #[serde(default)]
+    pub disabled_plugins: Vec<String>,
+    /// Per-plugin authorized capability IDs. If a plugin is not in the map,
+    /// all declared capabilities are authorized (backward compatible).
+    /// If a plugin IS in the map, only the listed capabilities are authorized.
+    #[serde(default)]
+    pub authorized_capabilities: HashMap<String, Vec<String>>,
 }
 
 fn default_file_manager_path() -> String {
@@ -404,6 +412,8 @@ impl Default for AppSettings {
             custom_protected_paths: vec![],
             command_timeout_secs: default_command_timeout(),
             has_completed_onboarding: false,
+            disabled_plugins: vec![],
+            authorized_capabilities: HashMap::new(),
         }
     }
 }
@@ -585,5 +595,28 @@ mod tests {
         assert!(json.contains("\"hasCompletedOnboarding\":true"));
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(parsed.has_completed_onboarding);
+    }
+
+    #[test]
+    fn disabled_plugins_defaults_to_empty() {
+        let s = AppSettings::default();
+        assert!(s.disabled_plugins.is_empty());
+    }
+
+    #[test]
+    fn disabled_plugins_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.disabled_plugins = vec!["plug-a".into(), "plug-b".into()];
+        let json = serde_json::to_string(&settings).expect("serialize");
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.disabled_plugins, vec!["plug-a", "plug-b"]);
+    }
+
+    #[test]
+    fn disabled_plugins_loads_missing_as_empty() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("missing disabledPlugins should load");
+        assert!(parsed.disabled_plugins.is_empty());
     }
 }
