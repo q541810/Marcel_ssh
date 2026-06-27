@@ -428,3 +428,11 @@ export async function pluginWebviewClose(label: string): Promise<void> {
 export async function pluginList(): Promise<PluginManifest[]> {
   return invoke<PluginManifest[]>('plugin_list');
 }
+
+export async function getPluginDir(): Promise<string> {
+  return invoke<string>('get_plugin_dir');
+}
+
+export async function openPluginDir(): Promise<void> {
+  return invoke('open_plugin_dir');
+}

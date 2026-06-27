@@ -494,6 +494,8 @@ pub fn run() {
             commands::plugin_webview::plugin_webview_set_bounds,
             commands::plugin_webview::plugin_webview_close,
             commands::plugin::plugin_list,
+            commands::plugin::get_plugin_dir,
+            commands::plugin::open_plugin_dir,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");
