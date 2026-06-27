@@ -132,9 +132,13 @@ interface OnboardingWizardProps {
   onComplete: () => void;
 }
 
+type TransitionDirection = 'forward' | 'backward';
+
 export default function OnboardingWizard({ open, onComplete }: OnboardingWizardProps) {
   const [currentStep, setCurrentStep] = useState(0);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  // 翻页方向：用于决定入场动画从左还是从右滑入
+  const [direction, setDirection] = useState<TransitionDirection>('forward');
   const fullSettings = useSettingsStore((s) => s.settings);
   const persist = useSettingsStore((s) => s.update);
   const { registerValidator, runValidators } = useValidators();
@@ -168,6 +172,7 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
   const handleNext = useCallback(() => {
     if (!validateBeforeProceed()) return;
     if (currentStep < STEPS.length - 1) {
+      setDirection('forward');
       setCurrentStep(currentStep + 1);
     }
   }, [currentStep, validateBeforeProceed]);
@@ -175,6 +180,7 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
   const handlePrev = useCallback(() => {
     setValidationErrors([]);
     if (currentStep > 0) {
+      setDirection('backward');
       setCurrentStep(currentStep - 1);
     }
   }, [currentStep]);
@@ -243,9 +249,30 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
               ))}
             </div>
 
+            {/* 翻页后左上角 logo + "新手引导"标题（welcome 页不显示）
+                不加 key：仅在首次从 welcome 进入步骤页时挂载一次，避免每页重播滑出动画 */}
+            {currentStep > 0 && (
+              <div className="flex items-center gap-2.5 mb-5 flex-shrink-0">
+                <img
+                  src={APP_LOGO}
+                  alt={`${APP_NAME} logo`}
+                  className="w-8 h-8 object-contain select-none onboarding-logo-enter"
+                  draggable="false"
+                />
+                <span className="text-base font-semibold text-zinc-100 onboarding-title-slide">新手引导</span>
+              </div>
+            )}
+
             {/* Step content - scrollable */}
-            <div className="flex-1 overflow-y-auto min-h-0 mb-6">
-              {STEPS[currentStep].component}
+            <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 mb-6">
+              <div
+                key={currentStep}
+                className={direction === 'backward'
+                  ? 'onboarding-step-backward'
+                  : 'onboarding-step-forward'}
+              >
+                {STEPS[currentStep].component}
+              </div>
             </div>
 
             {/* Validation errors */}

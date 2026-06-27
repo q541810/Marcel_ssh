@@ -534,3 +534,98 @@ button,
 .animate-fadeIn {
   animation: fadeIn 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ── Onboarding wizard step transitions ──
+   方向感知的入场动画：前进时新内容从右滑入，后退时从左滑入。
+   通过给容器加 key={step} 强制重挂载触发动画。 */
+@keyframes onboardingEnterForward {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes onboardingEnterBackward {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.onboarding-step-forward {
+  animation: onboardingEnterForward 380ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.onboarding-step-backward {
+  animation: onboardingEnterBackward 380ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-step-forward,
+  .onboarding-step-backward,
+  .onboarding-logo-enter,
+  .onboarding-title-slide,
+  .main-row-enter {
+    animation: none;
+  }
+}
+
+/* ── Onboarding 步骤页左上角 header 入场 ──
+   welcome 页 logo 居中显示；翻页后 logo 从下方划上去到左上角，
+   "新手引导"文字随后从 logo 位置向右滑出。
+   较大的垂直位移营造明显的"划上去"滑动轨迹。 */
+@keyframes onboardingLogoEnter {
+  from {
+    opacity: 0;
+    transform: translate(36px, 56px) scale(1.35);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes onboardingTitleSlideRight {
+  from {
+    opacity: 0;
+    transform: translateX(-40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.onboarding-logo-enter {
+  animation: onboardingLogoEnter 720ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.onboarding-title-slide {
+  animation: onboardingTitleSlideRight 620ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) 280ms both;
+}
+
+/* ── 引导结束后主界面缓慢滑出 ──
+   用 animation（非 transition）确保仅在引导结束时触发一次，
+   首次加载 showOnboarding 由 false→true 时不产生无效淡出。 */
+@keyframes mainRowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.main-row-enter {
+  animation: mainRowEnter 900ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
