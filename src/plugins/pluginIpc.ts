@@ -1,4 +1,4 @@
-import { listen, emitTo } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -13,9 +13,20 @@ interface PluginRequest {
 }
 
 // Backend commands: capability → tauri command
+// These commands pass args directly to invoke without modification
 const CAPABILITY_TO_COMMAND: Record<string, string> = {
   'ssh.list': 'ssh_list_sessions',
   'ssh.exec': 'ssh_exec',
+  'sftp.read': 'sftp_read_file',
+  'sftp.write': 'sftp_write_file',
+};
+
+// Plugin-scoped commands: automatically inject pluginId as first argument
+const PLUGIN_SCOPED_COMMANDS: Record<string, string> = {
+  'fs.read': 'plugin_fs_read',
+  'fs.write': 'plugin_fs_write',
+  'net.request': 'plugin_http_request',
+  'notification': 'plugin_send_notification',
 };
 
 // Virtual commands: read from frontend stores (no backend invoke)
@@ -71,14 +82,16 @@ const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) => unknow
   },
 };
 
-// All valid commands (backend + virtual)
+// All valid commands (backend + virtual + plugin-scoped)
 const ALL_COMMANDS = new Set([
   ...Object.values(CAPABILITY_TO_COMMAND),
   ...Object.keys(VIRTUAL_COMMANDS),
+  ...Object.keys(PLUGIN_SCOPED_COMMANDS),
 ]);
 
 const COMMAND_TO_CAPABILITY: Record<string, string> = {
   ...Object.fromEntries(Object.entries(CAPABILITY_TO_COMMAND).map(([cap, cmd]) => [cmd, cap])),
+  ...Object.fromEntries(Object.entries(PLUGIN_SCOPED_COMMANDS).map(([cap, cmd]) => [cmd, cap])),
   'session.active': 'ssh.list',
   'session.info': 'ssh.list',
   'connection.info': 'ssh.list',
@@ -107,6 +120,10 @@ function isAuthorized(pluginId: string, cmd: string): boolean {
   return authorizedList.includes(required);
 }
 
+function getPluginScopedCommand(cmd: string): string | null {
+  return PLUGIN_SCOPED_COMMANDS[cmd] ?? null;
+}
+
 let initialized = false;
 
 export async function initPluginIpc(): Promise<void> {
@@ -116,7 +133,7 @@ export async function initPluginIpc(): Promise<void> {
   await listen<PluginRequest>('plugin-request', async (event) => {
     const req = event.payload;
     const respond = (ok: boolean, data: unknown) => {
-      emitTo('plugin-request', `plugin-response-${req.id}`, { ok, data }).catch(console.error);
+      emit(`plugin-response-${req.id}`, { ok, data }).catch(console.error);
     };
 
     if (!isAuthorized(req.pluginId, req.cmd)) {
@@ -129,6 +146,14 @@ export async function initPluginIpc(): Promise<void> {
       const virtualHandler = VIRTUAL_COMMANDS[req.cmd];
       if (virtualHandler) {
         respond(true, virtualHandler(req.args));
+        return;
+      }
+
+      // Plugin-scoped commands: inject pluginId as first argument
+      const scopedCommand = getPluginScopedCommand(req.cmd);
+      if (scopedCommand) {
+        const result = await invoke(scopedCommand, { pluginId: req.pluginId, ...req.args });
+        respond(true, result);
         return;
       }
 

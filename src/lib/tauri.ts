@@ -19,6 +19,8 @@ import type {
   SftpFileEntry,
   ModelInfo,
   PluginManifest,
+  PluginHttpRequest,
+  PluginHttpResponse,
 } from './types';
 
 // SSH commands
@@ -435,4 +437,20 @@ export async function getPluginDir(): Promise<string> {
 
 export async function openPluginDir(): Promise<void> {
   return invoke('open_plugin_dir');
+}
+
+export async function pluginFsRead(pluginId: string, path: string): Promise<string> {
+  return invoke<string>('plugin_fs_read', { pluginId, path });
+}
+
+export async function pluginFsWrite(pluginId: string, path: string, content: string): Promise<void> {
+  return invoke('plugin_fs_write', { pluginId, path, content });
+}
+
+export async function pluginHttpRequest(request: PluginHttpRequest): Promise<PluginHttpResponse> {
+  return invoke<PluginHttpResponse>('plugin_http_request', { request });
+}
+
+export async function pluginSendNotification(pluginId: string, title: string, body: string): Promise<void> {
+  return invoke('plugin_send_notification', { pluginId, title, body });
 }

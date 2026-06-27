@@ -53,11 +53,25 @@ export interface PluginManifest {
   id: string;
   version: string;
   name: string;
-  publisher: string;
-  description: string;
+  publisher?: string;
+  description?: string;
   capabilities: string[];
   views: PluginViewDef[];
   agentTools: PluginAgentToolDef[];
+}
+
+export interface PluginHttpRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+export interface PluginHttpResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  url: string;
 }
 
 // Connection types
