@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Che
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getPluginDir, openPluginDir } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
+import type { PluginManifest } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
 import { useSettingsActions } from './SettingsActionsContext';
@@ -75,7 +76,7 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
   );
 }
 
-function PluginCard({ manifest }: { manifest: { id: string; name: string; version: string; publisher: string; description: string; capabilities: string[]; views: { id: string; mount: string; title: string }[]; agentTools: { name: string }[] } }) {
+function PluginCard({ manifest }: { manifest: PluginManifest }) {
   const { settings, update } = useSettingsActions();
   const disabledSet = new Set(settings.disabledPlugins ?? []);
   const isDisabled = disabledSet.has(manifest.id);
