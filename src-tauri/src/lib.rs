@@ -496,6 +496,10 @@ pub fn run() {
             commands::plugin::plugin_list,
             commands::plugin::get_plugin_dir,
             commands::plugin::open_plugin_dir,
+            commands::plugin_fs::plugin_fs_read,
+            commands::plugin_fs::plugin_fs_write,
+            commands::plugin_http::plugin_http_request,
+            commands::plugin_notification::plugin_send_notification,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");
