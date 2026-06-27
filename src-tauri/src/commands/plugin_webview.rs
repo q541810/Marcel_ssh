@@ -1,11 +1,16 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use tauri::http::Response;
 use tauri::utils::config::Color;
 use tauri::{
     LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl,
 };
+use tauri_plugin_notification::NotificationExt;
 
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
+use crate::plugins::manifest::PluginManifest;
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,19 +165,294 @@ fn is_plugin_enabled_from_disk<R: tauri::Runtime>(app: &tauri::AppHandle<R>, plu
 }
 
 fn handle_plugin_api<R: tauri::Runtime>(
-    _app: &tauri::AppHandle<R>,
+    app: &tauri::AppHandle<R>,
     plugin_id: &str,
     cmd: &str,
     request: tauri::http::Request<Vec<u8>>,
 ) -> Response<std::borrow::Cow<'static, [u8]>> {
+    // Parse request body as JSON args
     let body = String::from_utf8_lossy(request.body());
-    let response = serde_json::json!({
-        "ok": true,
-        "cmd": cmd,
-        "plugin": plugin_id,
-        "echo": serde_json::from_str::<serde_json::Value>(&body).unwrap_or(serde_json::Value::Null),
-    });
+    let args: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let args_map = match &args {
+        serde_json::Value::Object(m) => m.clone(),
+        _ => serde_json::Map::new(),
+    };
+
+    // Read manifest from disk and check capability
+    let config_dir = match app.path().app_config_dir() {
+        Ok(d) => d,
+        Err(_) => return json_error(500, "no config dir"),
+    };
+
+    let manifest = match read_manifest_from_disk(&config_dir, plugin_id) {
+        Some(m) => m,
+        None => return json_error(404, "plugin not found"),
+    };
+
+    let required_cap = match command_to_capability(cmd) {
+        Some(cap) => cap,
+        None => return json_error(400, &format!("unknown command: {}", cmd)),
+    };
+
+    if !manifest.capabilities.contains(&required_cap.to_string()) {
+        return json_error(403, &format!("capability '{}' not declared", required_cap));
+    }
+
+    // Execute command via tokio runtime
+    let handle = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => return json_error(500, "no async runtime"),
+    };
+
+    let result = handle.block_on(execute_command(app, cmd, &args_map, plugin_id));
+
+    match result {
+        Ok(data) => json_ok(data),
+        Err(e) => json_error(500, &e),
+    }
+}
+
+fn read_manifest_from_disk(config_dir: &PathBuf, plugin_id: &str) -> Option<PluginManifest> {
+    let manifest_path = config_dir.join("plugins").join(plugin_id).join("plugin.json");
+    let content = std::fs::read_to_string(&manifest_path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
+fn command_to_capability(cmd: &str) -> Option<&'static str> {
+    match cmd {
+        // ssh.list virtual commands
+        "session.active" | "session.info" | "connection.info" | "connection.list"
+        | "ssh_list_sessions" => Some("ssh.list"),
+        // ssh.exec
+        "ssh_exec" => Some("ssh.exec"),
+        // sftp
+        "sftp_read_file" => Some("sftp.read"),
+        "sftp_write_file" => Some("sftp.write"),
+        // plugin-scoped
+        "plugin_fs_read" | "fs.read" => Some("fs.read"),
+        "plugin_fs_write" | "fs.write" => Some("fs.write"),
+        "plugin_http_request" | "net.request" => Some("net.request"),
+        "plugin_send_notification" | "notification" => Some("notification"),
+        // events
+        "events.subscribe" | "events.unsubscribe" => Some("events"),
+        _ => None,
+    }
+}
+
+async fn execute_command<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    cmd: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+    plugin_id: &str,
+) -> Result<serde_json::Value, String> {
+    let state = app.state::<crate::AppState>();
+
+    match cmd {
+        // ── Virtual commands (backend implementation) ──
+        "session.active" => {
+            let sessions = state.ssh_manager.list_sessions().await;
+            if sessions.is_empty() {
+                return Ok(serde_json::Value::Null);
+            }
+            // Return the first connected session
+            for sid in &sessions {
+                if state.ssh_manager.is_connected(sid).await {
+                    let connection_id = state.ssh_manager.get_connection_id(sid).await;
+                    return Ok(serde_json::json!({
+                        "sessionId": sid,
+                        "connectionId": connection_id,
+                        "status": "connected",
+                        "configId": null,
+                    }));
+                }
+            }
+            Ok(serde_json::Value::Null)
+        }
+        "session.info" => {
+            let sid = args.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            if sid.is_empty() {
+                return Ok(serde_json::Value::Null);
+            }
+            if state.ssh_manager.is_connected(sid).await {
+                let connection_id = state.ssh_manager.get_connection_id(sid).await;
+                Ok(serde_json::json!({
+                    "sessionId": sid,
+                    "connectionId": connection_id,
+                    "status": "connected",
+                    "configId": null,
+                }))
+            } else {
+                Ok(serde_json::Value::Null)
+            }
+        }
+        "connection.info" => {
+            let cid = args.get("connectionId").and_then(|v| v.as_str()).unwrap_or("");
+            if cid.is_empty() {
+                return Ok(serde_json::Value::Null);
+            }
+            let store = state.connection_store.read().await;
+            let conn = store.connections.iter().find(|c| c.id == cid);
+            match conn {
+                Some(c) => Ok(serde_json::json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "host": c.host,
+                    "port": c.port,
+                    "username": c.username,
+                    "group": c.group,
+                })),
+                None => Ok(serde_json::Value::Null),
+            }
+        }
+        "connection.list" => {
+            let store = state.connection_store.read().await;
+            let list: Vec<_> = store.connections.iter().map(|c| {
+                serde_json::json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "host": c.host,
+                    "port": c.port,
+                    "username": c.username,
+                    "group": c.group,
+                })
+            }).collect();
+            Ok(serde_json::Value::Array(list))
+        }
+
+        // ── Backend commands ──
+        "ssh_list_sessions" => {
+            let sessions = state.ssh_manager.list_sessions().await;
+            Ok(serde_json::json!(sessions))
+        }
+        "ssh_exec" => {
+            let sid = args.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
+            let command = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            if sid.is_empty() || command.is_empty() {
+                return Err("sessionId and command required".into());
+            }
+            let output = state.ssh_manager.exec_command(sid, command).await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::Value::String(output))
+        }
+
+        // ── Plugin-scoped commands ──
+        "plugin_fs_read" | "fs.read" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin_dir = config_dir_for(app).join("plugins").join(plugin_id);
+            let base = plugin_dir.canonicalize().map_err(|_| "plugin dir not found")?;
+            let candidate = plugin_dir.join(path);
+            let file_path = candidate.canonicalize().map_err(|_| "path not found")?;
+            if !file_path.starts_with(&base) {
+                return Err("path traversal rejected".into());
+            }
+            let content = std::fs::read_to_string(&file_path)
+                .map_err(|e| format!("read failed: {}", e))?;
+            Ok(serde_json::Value::String(content))
+        }
+        "plugin_fs_write" | "fs.write" => {
+            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let plugin_dir = config_dir_for(app).join("plugins").join(plugin_id);
+            let base = plugin_dir.canonicalize().map_err(|_| "plugin dir not found")?;
+            let candidate = plugin_dir.join(path);
+            let file_path = candidate.canonicalize().map_err(|e| {
+                // Try to create intermediate dirs for new files
+                if let Some(parent) = candidate.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                format!("path not found: {}", e)
+            })?;
+            if !file_path.starts_with(&base) {
+                return Err("path traversal rejected".into());
+            }
+            std::fs::write(&file_path, content)
+                .map_err(|e| format!("write failed: {}", e))?;
+            Ok(serde_json::Value::Null)
+        }
+        "plugin_http_request" | "net.request" => {
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            let method = args.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+            let headers = args.get("headers").and_then(|v| v.as_object());
+            let body = args.get("body").and_then(|v| v.as_str());
+
+            let client = reqwest::Client::new();
+            let mut req = match method.to_uppercase().as_str() {
+                "POST" => client.post(url),
+                "PUT" => client.put(url),
+                "DELETE" => client.delete(url),
+                "PATCH" => client.patch(url),
+                "HEAD" => client.head(url),
+                _ => client.get(url),
+            };
+
+            if let Some(hdrs) = headers {
+                for (k, v) in hdrs {
+                    if let Some(val) = v.as_str() {
+                        req = req.header(k.as_str(), val);
+                    }
+                }
+            }
+            if let Some(b) = body {
+                req = req.body(b.to_string());
+            }
+
+            let resp = req.timeout(std::time::Duration::from_secs(20))
+                .send().await.map_err(|e| format!("request failed: {}", e))?;
+
+            let status = resp.status().as_u16();
+            let resp_headers: HashMap<String, String> = resp.headers().iter()
+                .filter_map(|(k, v)| v.to_str().ok().map(|v| (k.to_string(), v.to_string())))
+                .collect();
+            let resp_url = resp.url().to_string();
+            let resp_body = resp.text().await.map_err(|e| format!("read body failed: {}", e))?;
+            let truncated = if resp_body.len() > 256 * 1024 {
+                &resp_body[..256 * 1024]
+            } else {
+                &resp_body
+            };
+
+            Ok(serde_json::json!({
+                "status": status,
+                "headers": resp_headers,
+                "body": truncated,
+                "url": resp_url,
+            }))
+        }
+        "plugin_send_notification" | "notification" => {
+            let title = args.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let body = args.get("body").and_then(|v| v.as_str()).unwrap_or("");
+            let prefixed_title = format!("[{}] {}", plugin_id, title);
+            let _ = app.notification()
+                .builder()
+                .title(&prefixed_title)
+                .body(body)
+                .show();
+            Ok(serde_json::Value::Null)
+        }
+
+        _ => Err(format!("unhandled command: {}", cmd)),
+    }
+}
+
+fn config_dir_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> PathBuf {
+    app.path().app_config_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn json_ok(data: serde_json::Value) -> Response<std::borrow::Cow<'static, [u8]>> {
+    let response = serde_json::json!({ "ok": true, "data": data });
     Response::builder()
+        .header("Content-Type", "application/json; charset=utf-8")
+        .header("Access-Control-Allow-Origin", "*")
+        .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        .header("Access-Control-Allow-Headers", "Content-Type")
+        .body(std::borrow::Cow::Owned(response.to_string().into_bytes()))
+        .unwrap_or_else(|_| bad_request("api build failed"))
+}
+
+fn json_error(status: u16, msg: &str) -> Response<std::borrow::Cow<'static, [u8]>> {
+    let response = serde_json::json!({ "ok": false, "data": msg });
+    Response::builder()
+        .status(status)
         .header("Content-Type", "application/json; charset=utf-8")
         .header("Access-Control-Allow-Origin", "*")
         .header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

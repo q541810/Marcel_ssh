@@ -2,6 +2,7 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
+use crate::emit_event;
 use crate::config::settings::NotificationSettings;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -34,5 +35,5 @@ pub fn send_notification(
     if let Err(e) = app.notification().builder().title(title).body(body).show() {
         log::warn!("发送通知失败: {}", e);
     }
-    let _ = app.emit("notification-sound", kind);
+    emit_event(app, "notification-sound", kind);
 }

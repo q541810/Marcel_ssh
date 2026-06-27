@@ -1,6 +1,7 @@
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
+use crate::emit_event;
 use crate::agent::conversation::ConversationDb;
 use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
@@ -103,7 +104,7 @@ pub(crate) async fn run_agent_loop(
 
         if is_task_cancelled(&state, &task_id) {
             log::info!("Agent task {} cancelled, stopping loop", task_id);
-            let _ = app.emit(&event_name, StreamEvent::Done);
+            emit_event(&app, &event_name, StreamEvent::Done);
             return;
         }
 
@@ -124,11 +125,11 @@ pub(crate) async fn run_agent_loop(
                         let (filtered, new_in_thinking) = filter_thinking_tags(text, in_thinking);
                         in_thinking = new_in_thinking;
                         if !filtered.is_empty() && !in_thinking {
-                            let _ = app_fwd.emit(&evn, StreamEvent::TextDelta { text: filtered });
+                            emit_event(&app_fwd, &evn, StreamEvent::TextDelta { text: filtered });
                         }
                     }
                     other => {
-                        let _ = app_fwd.emit(&evn, other);
+                        emit_event(&app_fwd, &evn, other);
                     }
                 }
             }
@@ -140,7 +141,7 @@ pub(crate) async fn run_agent_loop(
                 // Cancelled during LLM call
                 log::info!("Agent task {} cancelled during LLM call", task_id);
                 let _ = forwarder.await;
-                let _ = app.emit(&event_name, StreamEvent::Done);
+                emit_event(&app, &event_name, StreamEvent::Done);
                 return;
             }
         };
@@ -150,7 +151,8 @@ pub(crate) async fn run_agent_loop(
             Ok(msg) => msg,
             Err(e) => {
                 let err_msg = e.to_string();
-                let _ = app.emit(
+                emit_event(
+                    &app,
                     &event_name,
                     StreamEvent::Error {
                         message: err_msg.clone(),
@@ -186,7 +188,7 @@ pub(crate) async fn run_agent_loop(
                 cleaned_msg.reasoning_content.as_deref(),
             );
             messages.push(cleaned_msg);
-            let _ = app.emit(&event_name, StreamEvent::Done);
+            emit_event(&app, &event_name, StreamEvent::Done);
             {
                 let ns = state.settings.read().await.notification_settings.clone();
                 send_notification(
@@ -230,7 +232,7 @@ pub(crate) async fn run_agent_loop(
                     "Agent task {} cancelled before tool execution, stopping",
                     task_id
                 );
-                let _ = app.emit(&event_name, StreamEvent::Done);
+                emit_event(&app, &event_name, StreamEvent::Done);
                 return;
             }
 
@@ -241,12 +243,13 @@ pub(crate) async fn run_agent_loop(
                     "Agent task {} cancelled after tool execution, stopping",
                     task_id
                 );
-                let _ = app.emit(&event_name, StreamEvent::Done);
+                emit_event(&app, &event_name, StreamEvent::Done);
                 return;
             }
 
             // Emit result to frontend (requires owned strings for serialization).
-            let _ = app.emit(
+            emit_event(
+                &app,
                 &event_name,
                 ToolResultEvent {
                     event_type: "toolResult".into(),
@@ -298,7 +301,8 @@ pub(crate) async fn run_agent_loop(
 
     // Exceeded max rounds
     let msg = format!("Agent 达到最大执行轮数 ({max_rounds})，已停止");
-    let _ = app.emit(
+    emit_event(
+        &app,
         &event_name,
         StreamEvent::Error {
             message: msg.clone(),

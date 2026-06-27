@@ -280,6 +280,68 @@ async function listSessions() {
 |------|------|------|
 | `notification` | `{title, body}` | 发送系统通知（标题自动加 `[插件ID]` 前缀） |
 
+### 事件订阅（capability: `events`）
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `events.subscribe` | `{events: string[]}` | 订阅事件，支持通配符 |
+| `events.unsubscribe` | `{events: string[]}` | 取消订阅事件 |
+
+#### 可订阅事件
+
+| 事件模式 | 说明 |
+|----------|------|
+| `ssh://status/*` | SSH 连接状态变化 |
+| `agent://stream/*` | Agent 任务流 |
+| `agent://plan/*` | Agent 计划流 |
+| `sftp-upload-progress` | SFTP 上传进度 |
+| `sftp-upload-done` | SFTP 上传完成 |
+| `sftp-download-progress` | SFTP 下载进度 |
+| `sftp-download-done` | SFTP 下载完成 |
+
+#### 使用示例
+
+```javascript
+const { emit, listen } = window.__TAURI__.event;
+
+// 订阅
+const subId = Date.now().toString();
+await listen(`plugin-response-${subId}`, (e) => {
+  console.log('订阅结果:', e.payload.data);
+});
+await emit('plugin-request', {
+  id: subId,
+  pluginId: 'my-plugin',
+  cmd: 'events.subscribe',
+  args: { events: ['ssh://status/*'] }
+});
+
+// 接收事件
+await listen('plugin-event-my-plugin', (e) => {
+  console.log('事件:', e.payload.event, e.payload.data);
+});
+```
+
+---
+
+## HTTP API 端点
+
+除了事件 IPC，插件还可以通过 `plugin://` 协议的 HTTP API 端点调用命令：
+
+```javascript
+const res = await fetch('plugin://my-plugin/api/ssh_exec', {
+  method: 'POST',
+  body: JSON.stringify({ sessionId: 'xxx', command: 'uptime' }),
+});
+const { ok, data } = await res.json();
+```
+
+优点：代码更简洁，无需管理请求 ID 和监听器。
+
+限制：同步执行，长时间命令可能阻塞。
+
+详见 [API 参考 - HTTP API 端点](./plugin-api.md#http-api-端点)。
+
 ---
 
 ## Agent 工具
@@ -358,6 +420,7 @@ async function listSessions() {
 | IPC 无响应 | 未声明对应 capability、`pluginId` 不匹配 |
 | 资源加载失败 | 路径含 `../`（被拒绝）、文件不存在 |
 | Agent 工具不生效 | 当前处于 Chat 模式，需切换到 Agent/Auto |
+| 事件订阅无效果 | 未声明 `events` capability、事件模式拼写错误 |
 
 ---
 

@@ -5,6 +5,7 @@ use russh::{Channel, ChannelMsg};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
+use crate::emit_event;
 use super::client::Client;
 
 /// Commands sent to the per-session driver task.
@@ -57,7 +58,7 @@ pub(crate) async fn drive_session(
                             Ok(s) => s.to_owned(),
                             Err(_) => String::from_utf8_lossy(&data).into_owned(),
                         };
-                        let _ = app.emit(&event_name, text);
+                        emit_event(&app, &event_name, text);
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         // stderr — forward to same stream
@@ -65,7 +66,7 @@ pub(crate) async fn drive_session(
                             Ok(s) => s.to_owned(),
                             Err(_) => String::from_utf8_lossy(&data).into_owned(),
                         };
-                        let _ = app.emit(&event_name, text);
+                        emit_event(&app, &event_name, text);
                     }
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
                         log::info!("SSH session {} closed by remote", session_id);

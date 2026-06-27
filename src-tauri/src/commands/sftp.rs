@@ -5,6 +5,7 @@ use std::path::Path;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use crate::emit_event;
 use crate::error::AppError;
 use crate::util::{shell_escape, validate_local_path, validate_sftp_remote_path};
 use crate::AppState;
@@ -490,7 +491,8 @@ pub async fn sftp_download_stream(
 
             written += n as u64;
 
-            let _ = app.emit(
+            emit_event(
+                &app,
                 "sftp-download-progress",
                 json!({ "downloadId": &download_id, "written": written, "total": total }),
             );
@@ -518,7 +520,7 @@ pub async fn sftp_download_stream(
         )));
     }
 
-    let _ = app.emit("sftp-download-done", json!({ "downloadId": &download_id }));
+    emit_event(&app, "sftp-download-done", json!({ "downloadId": &download_id }));
 
     Ok(())
 }
@@ -591,7 +593,8 @@ pub async fn sftp_upload_stream(
 
             written += n as u64;
 
-            let _ = app.emit(
+            emit_event(
+                &app,
                 "sftp-upload-progress",
                 json!({ "uploadId": &upload_id, "written": written, "total": total }),
             );
@@ -619,7 +622,7 @@ pub async fn sftp_upload_stream(
         )));
     }
 
-    let _ = app.emit("sftp-upload-done", json!({ "uploadId": &upload_id }));
+    emit_event(&app, "sftp-upload-done", json!({ "uploadId": &upload_id }));
 
     Ok(())
 }
@@ -647,7 +650,8 @@ fn emit_folder_upload_status(
     written: u64,
     total: u64,
 ) {
-    let _ = app.emit(
+    emit_event(
+        app,
         "sftp-folder-upload-status",
         json!({
             "uploadId": upload_id,
@@ -1004,7 +1008,8 @@ pub async fn sftp_upload_folder_stream(
 
             written += n as u64;
 
-            let _ = app.emit(
+            emit_event(
+                &app,
                 "sftp-upload-progress",
                 json!({ "uploadId": &upload_id, "written": written, "total": total }),
             );
@@ -1048,7 +1053,7 @@ pub async fn sftp_upload_folder_stream(
         return Err(AppError::Ssh(format!("解压失败: {}", output.trim())));
     }
 
-    let _ = app.emit("sftp-upload-done", json!({ "uploadId": &upload_id }));
+    emit_event(&app, "sftp-upload-done", json!({ "uploadId": &upload_id }));
 
     Ok(())
 }

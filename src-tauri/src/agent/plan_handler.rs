@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
+use crate::emit_event;
 use crate::agent::task::{AgentTaskPlan, PlanItem, PlanItemStatus};
 use crate::AppState;
 
@@ -49,8 +50,8 @@ pub(crate) enum PlanStreamEvent {
 
 /// Emit a plan event to both `agent://plan/` and `agent://stream/` channels.
 fn emit_plan_event(app: &AppHandle, task_id: &str, event: &PlanStreamEvent) {
-    let _ = app.emit(&format!("agent://plan/{}", task_id), event);
-    let _ = app.emit(&format!("agent://stream/{}", task_id), event);
+    emit_event(app, &format!("agent://plan/{}", task_id), event);
+    emit_event(app, &format!("agent://stream/{}", task_id), event);
 }
 
 /// Build a plan context string for injection into the LLM conversation.

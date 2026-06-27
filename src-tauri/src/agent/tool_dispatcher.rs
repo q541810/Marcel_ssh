@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::Emitter;
 
+use crate::emit_event;
 use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
 use crate::agent::sandbox::{assess_risk, RiskLevel};
@@ -263,7 +264,8 @@ impl ToolDispatcher {
                     .unwrap_or("");
 
                 // Signal the frontend that model approval is in progress.
-                let _ = ctx.app_handle.emit(
+                emit_event(
+                    &ctx.app_handle,
                     event_name,
                     ModelApprovalStartEvent {
                         event_type: "modelApprovalStart".to_string(),
@@ -277,7 +279,8 @@ impl ToolDispatcher {
 
                 match eval_result {
                     Ok(ModelApprovalDecision::Block(rs)) => {
-                        let _ = ctx.app_handle.emit(
+                        emit_event(
+                            &ctx.app_handle,
                             event_name,
                             ModelApprovalDoneEvent {
                                 event_type: "modelApprovalDone".to_string(),
@@ -299,7 +302,8 @@ impl ToolDispatcher {
                         );
                     }
                     Ok(ModelApprovalDecision::RouteToHuman(rs)) => {
-                        let _ = ctx.app_handle.emit(
+                        emit_event(
+                            &ctx.app_handle,
                             event_name,
                             ModelApprovalDoneEvent {
                                 event_type: "modelApprovalDone".to_string(),
@@ -315,7 +319,8 @@ impl ToolDispatcher {
                         }
                     }
                     Ok(ModelApprovalDecision::Approve) => {
-                        let _ = ctx.app_handle.emit(
+                        emit_event(
+                            &ctx.app_handle,
                             event_name,
                             ModelApprovalDoneEvent {
                                 event_type: "modelApprovalDone".to_string(),
@@ -327,7 +332,8 @@ impl ToolDispatcher {
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
-                        let _ = ctx.app_handle.emit(
+                        emit_event(
+                            &ctx.app_handle,
                             event_name,
                             ModelApprovalDoneEvent {
                                 event_type: "modelApprovalDone".to_string(),

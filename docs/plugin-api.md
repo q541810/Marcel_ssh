@@ -91,6 +91,7 @@
 | `fs.write` | 写入本地文件（仅限插件目录） | 高 |
 | `net.request` | 发起 HTTP/HTTPS 网络请求 | 高 |
 | `notification` | 发送系统通知 | 低 |
+| `events` | 订阅应用事件 | 低 |
 
 ### `ssh.list` 授权的命令
 
@@ -154,6 +155,35 @@
 
 标题自动添加 `[插件ID]` 前缀。
 
+### `events` 授权的命令
+
+| 命令 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `events.subscribe` | `{events: string[]}` | `{subscribed: string[]}` | 订阅事件，支持通配符（如 `ssh://status/*`） |
+| `events.unsubscribe` | `{events: string[]}` | `{unsubscribed: string[]}` | 取消订阅事件 |
+
+#### 可订阅事件
+
+| 事件模式 | 说明 | Payload |
+|----------|------|---------|
+| `ssh://status/*` | SSH 连接状态变化 | `SshStatus`（connected/disconnected/error） |
+| `agent://stream/*` | Agent 任务流 | `StreamEvent`（textDelta/toolCall/done/error） |
+| `agent://plan/*` | Agent 计划流 | `PlanStreamEvent` |
+| `sftp-upload-progress` | SFTP 上传进度 | `{uploadId, written, total}` |
+| `sftp-upload-done` | SFTP 上传完成 | `{uploadId}` |
+| `sftp-download-progress` | SFTP 下载进度 | `{downloadId, written, total}` |
+| `sftp-download-done` | SFTP 下载完成 | `{downloadId}` |
+
+#### 接收事件
+
+订阅后，通过 `plugin-event-<pluginId>` 事件接收：
+
+```javascript
+await listen('plugin-event-my-plugin', (e) => {
+  // e.payload = { event: 'ssh://status/xxx', data: { status: 'connected' } }
+});
+```
+
 ### 授权模型
 
 - 插件在 `plugin.json` 中声明需要的 capabilities
@@ -191,6 +221,38 @@
 ```
 
 通过 `listen('plugin-response-<id>', ...)` 接收。
+
+### HTTP API 端点
+
+除了事件 IPC，插件还可以通过 `plugin://` 协议的 HTTP API 端点调用命令：
+
+```
+POST plugin://<pluginId>/api/<cmd>
+Content-Type: application/json
+
+{ "参数对象" }
+```
+
+响应格式与事件 IPC 相同：`{ "ok": true, "data": ... }` 或 `{ "ok": false, "data": "错误信息" }`。
+
+#### 示例
+
+```javascript
+const res = await fetch('plugin://my-plugin/api/ssh_exec', {
+  method: 'POST',
+  body: JSON.stringify({ sessionId: 'xxx', command: 'uptime' }),
+});
+const { ok, data } = await res.json();
+if (ok) {
+  console.log('输出:', data);
+}
+```
+
+#### 限制
+
+- HTTP API 支持所有后端命令和插件域命令
+- 虚拟命令（`session.active` 等）通过后端状态实现，行为可能与前端略有差异
+- 同步执行，长时间命令可能阻塞 WebView 网络线程
 
 ### 示例
 
@@ -233,3 +295,4 @@ await emit('plugin-request', {
 |------|------|------|
 | 1.0.0 | 2026-06-26 | 初始版本 |
 | 1.1.0 | 2026-06-27 | 补全 capability 实现；拆分为开发指南 + API 参考 |
+| 1.2.0 | 2026-06-27 | 新增 `events` capability；新增 HTTP API 端点 |

@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
+use crate::emit_event;
 use crate::agent::sandbox::RiskLevel;
 use crate::notification::{send_notification, NotificationKind};
 
@@ -54,7 +55,8 @@ impl ApprovalManager {
         model_reasons: Option<&[String]>,
     ) -> bool {
         let approval_id = tool_call_id.clone();
-        let _ = self.app.emit(
+        emit_event(
+            &self.app,
             event_name,
             ApprovalRequestEvent {
                 event_type: "approvalRequest".to_string(),

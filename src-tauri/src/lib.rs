@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use parking_lot::RwLock as PlRwLock;
-use tauri::Manager;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock as TokioRwLock;
 
@@ -31,6 +31,16 @@ use crate::mcp::store::McpServerStore;
 use crate::skills::store::SkillStore;
 use crate::ssh::connection::SshManager;
 use crate::ssh::known_hosts::KnownHostsStore;
+
+/// 发射事件到原始通道 + plugin://events 通道
+/// 插件系统通过监听 plugin://events 接收所有应用事件
+pub fn emit_event<S: serde::Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let _ = app.emit(event, &payload);
+    let _ = app.emit("plugin://events", serde_json::json!({
+        "event": event,
+        "data": payload,
+    }));
+}
 
 /// Shared application state managed by Tauri.
 ///

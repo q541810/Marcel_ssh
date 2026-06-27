@@ -1,4 +1,4 @@
-import { listen, emit } from '@tauri-apps/api/event';
+import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -82,6 +82,91 @@ const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) => unknow
   },
 };
 
+// ── Event subscription system ──
+
+// Per-plugin subscription tracking: pluginId → Set<eventPattern>
+const pluginSubscriptions = new Map<string, Set<string>>();
+
+// Single listener for all plugin events from the backend
+let pluginEventsListener: Promise<UnlistenFn> | null = null;
+
+function matchPattern(pattern: string, event: string): boolean {
+  if (pattern.endsWith('/*')) {
+    const prefix = pattern.slice(0, -1); // keep the /
+    return event.startsWith(prefix);
+  }
+  return pattern === event;
+}
+
+function ensurePluginEventsListener(): void {
+  if (pluginEventsListener) return;
+  pluginEventsListener = listen<{ event: string; data: unknown }>('plugin://events', (e) => {
+    forwardToPlugins(e.payload.event, e.payload.data);
+  });
+}
+
+function forwardToPlugins(event: string, data: unknown): void {
+  for (const [pluginId, patterns] of pluginSubscriptions) {
+    for (const pattern of patterns) {
+      if (matchPattern(pattern, event)) {
+        emit(`plugin-event-${pluginId}`, { event, data }).catch(console.error);
+        break;
+      }
+    }
+  }
+}
+
+function subscribeEvents(pluginId: string, events: string[]): string[] {
+  if (!pluginSubscriptions.has(pluginId)) {
+    pluginSubscriptions.set(pluginId, new Set());
+  }
+  const subs = pluginSubscriptions.get(pluginId)!;
+  const subscribed: string[] = [];
+
+  for (const ev of events) {
+    subs.add(ev);
+    subscribed.push(ev);
+  }
+
+  // Ensure the single listener is active
+  if (subscribed.length > 0) {
+    ensurePluginEventsListener();
+  }
+
+  return subscribed;
+}
+
+function unsubscribeEvents(pluginId: string, events: string[]): string[] {
+  const subs = pluginSubscriptions.get(pluginId);
+  if (!subs) return [];
+  const unsubscribed: string[] = [];
+  for (const ev of events) {
+    if (subs.delete(ev)) {
+      unsubscribed.push(ev);
+    }
+  }
+  return unsubscribed;
+}
+
+function removePluginSubscriptions(pluginId: string): void {
+  pluginSubscriptions.delete(pluginId);
+}
+
+// Add event commands to virtual commands
+VIRTUAL_COMMANDS['events.subscribe'] = (args) => {
+  const events = (args.events as string[]) ?? [];
+  const pid = args._pluginId as string ?? '';
+  const subscribed = subscribeEvents(pid, events);
+  return { subscribed };
+};
+
+VIRTUAL_COMMANDS['events.unsubscribe'] = (args) => {
+  const events = (args.events as string[]) ?? [];
+  const pid = args._pluginId as string ?? '';
+  const unsubscribed = unsubscribeEvents(pid, events);
+  return { unsubscribed };
+};
+
 // All valid commands (backend + virtual + plugin-scoped)
 const ALL_COMMANDS = new Set([
   ...Object.values(CAPABILITY_TO_COMMAND),
@@ -96,6 +181,8 @@ const COMMAND_TO_CAPABILITY: Record<string, string> = {
   'session.info': 'ssh.list',
   'connection.info': 'ssh.list',
   'connection.list': 'ssh.list',
+  'events.subscribe': 'events',
+  'events.unsubscribe': 'events',
 };
 
 function isAuthorized(pluginId: string, cmd: string): boolean {
@@ -145,7 +232,9 @@ export async function initPluginIpc(): Promise<void> {
       // Virtual commands read from frontend stores
       const virtualHandler = VIRTUAL_COMMANDS[req.cmd];
       if (virtualHandler) {
-        respond(true, virtualHandler(req.args));
+        // Inject pluginId for event commands
+        const argsWithPluginId = { ...req.args, _pluginId: req.pluginId };
+        respond(true, virtualHandler(argsWithPluginId));
         return;
       }
 

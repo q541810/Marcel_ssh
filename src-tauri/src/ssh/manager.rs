@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
 
+use crate::emit_event;
 use crate::error::AppError;
 use crate::ssh::auth::AuthMethod;
 use crate::ssh::known_hosts::{KnownHostsStore, VerifyOutcome};
@@ -270,10 +271,7 @@ impl SshManager {
             .insert(session_id.clone(), connection);
 
         // Notify frontend that the session is ready
-        let _ = app.emit(
-            &format!("ssh://status/{}", session_id),
-            SshStatus::Connected,
-        );
+        emit_event(&app, &format!("ssh://status/{}", session_id), SshStatus::Connected);
 
         // Spawn the driver task: owns the channel and the session handle
         let sid = session_id.clone();
@@ -456,7 +454,8 @@ impl SshManager {
                         Some(ChannelMsg::Data { data }) => {
                             let chunk = String::from_utf8_lossy(&data).to_string();
                             output.push_str(&chunk);
-                            let _ = app.emit(
+                            emit_event(
+                                app,
                                 &event_name,
                                 &serde_json::json!({
                                     "type": "toolOutput",
@@ -468,7 +467,8 @@ impl SshManager {
                         Some(ChannelMsg::ExtendedData { data, .. }) => {
                             let chunk = String::from_utf8_lossy(&data).to_string();
                             output.push_str(&chunk);
-                            let _ = app.emit(
+                            emit_event(
+                                app,
                                 &event_name,
                                 &serde_json::json!({
                                     "type": "toolOutput",
