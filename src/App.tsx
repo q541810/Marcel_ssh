@@ -56,6 +56,9 @@ export default function App() {
   const providers = useViewStore((s) => s.providers);
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // 标记引导是否已结束：仅引导结束时触发主行滑出动画，
+  // 避免首次加载 showOnboarding 由 false→true 时产生无效淡出
+  const [onboardingExited, setOnboardingExited] = useState(false);
   const mainRowRef = useRef<HTMLDivElement>(null);
   const mainRowWidthRef = useRef(0);
   const windowResizingRef = useRef(false);
@@ -341,7 +344,16 @@ export default function App() {
         className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden pt-8"
         data-window-resizing={isWindowResizing ? 'true' : undefined}
       >
-        <div ref={mainRowRef} className="flex flex-1 overflow-hidden">
+        <div
+          ref={mainRowRef}
+          className={`flex flex-1 overflow-hidden ${
+            onboardingExited && !showOnboarding
+              ? 'main-row-enter'
+              : showOnboarding
+                ? 'opacity-0'
+                : ''
+          }`}
+        >
           <NavRail activeId={activeId} onChange={handleNavChange} />
 
           <aside
@@ -440,7 +452,10 @@ export default function App() {
 
       <OnboardingWizard
         open={showOnboarding}
-        onComplete={() => setShowOnboarding(false)}
+        onComplete={() => {
+          setShowOnboarding(false);
+          setOnboardingExited(true);
+        }}
       />
     </div>
   );
