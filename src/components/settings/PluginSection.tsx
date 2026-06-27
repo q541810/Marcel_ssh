@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check } from 'lucide-react';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { getPluginDir, openPluginDir } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
@@ -202,6 +204,18 @@ export function PluginSection() {
   const loading = usePluginStore((s) => s.loading);
   const error = usePluginStore((s) => s.error);
   const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const [pluginDir, setPluginDir] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    getPluginDir().then(setPluginDir);
+  }, []);
+
+  const handleCopy = async () => {
+    await writeText(pluginDir);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div className="space-y-6">
@@ -214,8 +228,29 @@ export function PluginSection() {
           sectionId="settings-plugins"
           keywords={['plugin', 'directory', 'path', '插件', '目录']}
         >
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 font-mono">~/.marcel/plugins/</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="text-xs text-zinc-500 font-mono cursor-pointer hover:text-zinc-300 transition-colors select-all"
+              title="点击复制路径"
+              onClick={handleCopy}
+            >
+              {copied ? (
+                <span className="inline-flex items-center gap-1 text-emerald-400">
+                  <Check className="w-3 h-3" />
+                  已复制
+                </span>
+              ) : (
+                pluginDir
+              )}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => openPluginDir()}
+              title="打开目录"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+            </Button>
             <Button
               variant="secondary"
               size="sm"
