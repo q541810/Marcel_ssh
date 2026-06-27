@@ -1,0 +1,473 @@
+# 插件开发指南
+
+本文档帮助你从零开始开发 Marcel SSH 插件。如果你已经熟悉插件系统，直接查阅 [API 参考](./plugin-api.md)。
+
+---
+
+## 快速开始
+
+### 1. 创建插件目录
+
+在插件目录下创建一个新文件夹：
+
+```
+<app-config-dir>/plugins/hello-world/
+```
+
+> `<app-config-dir>` 因平台而异：
+> - Windows: `C:\Users\<user>\AppData\Roaming\com.marcel.ssh\`
+> - macOS: `~/Library/Application Support/com.marcel.ssh/`
+> - Linux: `~/.config/com.marcel.ssh/`
+>
+> 也可以在 Marcel SSH 的 **设置 → 插件** 页面复制完整路径。
+
+### 2. 创建 manifest
+
+在 `hello-world/` 下创建 `plugin.json`：
+
+```json
+{
+  "id": "hello-world",
+  "version": "1.0.0",
+  "name": "Hello World",
+  "capabilities": ["ssh.list"],
+  "views": [
+    {
+      "id": "main",
+      "mount": "sidebar",
+      "title": "Hello"
+    }
+  ]
+}
+```
+
+### 3. 创建入口文件
+
+在 `hello-world/` 下创建 `index.html`：
+
+```html
+<!DOCTYPE html>
+<html>
+<body style="background:#18181b;color:#e4e4e7;padding:16px;font-family:sans-serif">
+  <h3>Hello Plugin</h3>
+  <button id="btn" style="padding:6px 12px;background:#3f3f46;color:#fff;border:none;border-radius:6px;cursor:pointer">
+    获取当前会话
+  </button>
+  <pre id="out" style="margin-top:12px;font-size:13px;white-space:pre-wrap"></pre>
+
+  <script>
+    const { emit, listen } = window.__TAURI__.event;
+    let counter = 0;
+
+    document.getElementById('btn').onclick = async () => {
+      const id = String(++counter);
+      const unlisten = await listen(`plugin-response-${id}`, (e) => {
+        document.getElementById('out').textContent = JSON.stringify(e.payload, null, 2);
+        unlisten();
+      });
+      await emit('plugin-request', {
+        id,
+        pluginId: 'hello-world',
+        cmd: 'session.active',
+        args: {}
+      });
+    };
+  </script>
+</body>
+</html>
+```
+
+### 4. 刷新插件
+
+打开 Marcel SSH → **设置 → 插件** → 点击 **刷新**。
+
+左侧导航栏会出现 "Hello" 按钮，点击即可看到插件界面。
+
+---
+
+## 插件结构
+
+```
+<app-config-dir>/plugins/
+  <plugin-id>/
+    plugin.json          # 必须。插件 manifest。
+    index.html           # 默认入口文件（可在 manifest 中用 entry 指定其他文件）
+    style.css            # 可选。样式文件。
+    icon.svg             # 可选。插件图标。
+    ...                  # 其他前端资源
+```
+
+- `plugin-id` 必须是合法的文件夹名（字母、数字、连字符、下划线）
+- 所有资源通过 `plugin://<plugin-id>/<path>` 协议加载
+- HTML 中用相对路径引用资源（如 `<link rel="stylesheet" href="style.css">`）
+
+---
+
+## manifest 字段速查
+
+```jsonc
+{
+  "id": "my-plugin",              // 必须。与文件夹名一致。
+  "version": "1.0.0",             // 必须。语义化版本号。
+  "name": "我的插件",              // 必须。显示名称。
+  "publisher": "developer",       // 可选。发布者。
+  "description": "插件描述",       // 可选。
+  "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
+  "views": [...],                 // 可选。视图定义。
+  "agentTools": [...]             // 可选。Agent 工具定义。
+}
+```
+
+详见 [API 参考 - Manifest 格式](./plugin-api.md#pluginjson-manifest-格式)。
+
+---
+
+## 视图开发
+
+### 挂载点
+
+视图可以挂在四个位置：
+
+| 挂载点 | 说明 | 典型用途 |
+|--------|------|----------|
+| `sidebar` | 左侧面板 | 导航列表、快捷操作 |
+| `center` | 中央主面板 | 主要内容展示 |
+| `bottom` | 底部面板 | 日志、输出 |
+| `agent` | 右侧 Agent 面板 | AI 辅助工具 |
+
+### 基本视图定义
+
+```json
+{
+  "id": "main",
+  "mount": "sidebar",
+  "title": "我的面板",
+  "navGroup": "top",
+  "order": 100,
+  "entry": "index.html"
+}
+```
+
+- `id`：在插件内简短即可（如 `main`），最终 ID 自动拼接为 `<plugin-id>.<view-id>`
+- `navGroup`：`sidebar` 视图必须设置，`top` 或 `bottom`
+- `order`：排序权重，越小越靠前，默认 100
+- `entry`：入口文件路径，相对于插件根目录，默认 `index.html`
+- `exclusive`：设为 `true` 独占中央面板（如设置页），默认 `false`
+
+### 图标
+
+```json
+// SVG 图标
+{ "kind": "svg", "src": "icon.svg" }
+
+// 图片图标
+{ "kind": "img", "src": "icon.png" }
+```
+
+不设置图标时显示默认插件图标。
+
+### WebView 特性
+
+- 每个插件视图是**独立的 OS 窗口**，不是主窗口的 DOM
+- 不能访问主窗口的 DOM 或 React 状态
+- 背景色建议使用 `#18181b`（zinc-900）以匹配应用主题
+- Tauri API 通过 `window.__TAURI__` 自动注入
+
+---
+
+## IPC 通信
+
+插件通过事件与主应用通信。
+
+### 请求
+
+```javascript
+const { emit, listen } = window.__TAURI__.event;
+
+// 发送请求
+const id = '1';  // 唯一标识，用于匹配响应
+await emit('plugin-request', {
+  id,                    // 请求 ID（字符串）
+  pluginId: 'my-plugin', // 你的插件 ID
+  cmd: 'session.active', // 要执行的命令
+  args: {}               // 命令参数
+});
+```
+
+### 响应
+
+```javascript
+// 监听响应
+const unlisten = await listen(`plugin-response-${id}`, (e) => {
+  if (e.payload.ok) {
+    console.log('成功:', e.payload.data);
+  } else {
+    console.error('失败:', e.payload.data);
+  }
+  unlisten();  // 用完后取消监听
+});
+```
+
+### 完整示例：获取会话列表
+
+```javascript
+async function listSessions() {
+  const id = Date.now().toString();
+  return new Promise((resolve, reject) => {
+    window.__TAURI__.event.listen(`plugin-response-${id}`, (e) => {
+      if (e.payload.ok) {
+        resolve(e.payload.data);
+      } else {
+        reject(new Error(e.payload.data));
+      }
+    }).then(unlisten => {
+      window.__TAURI__.event.emit('plugin-request', {
+        id,
+        pluginId: 'my-plugin',
+        cmd: 'session.active',
+        args: {}
+      }).then(null, reject);
+    }).catch(reject);
+  });
+}
+```
+
+### 错误处理
+
+插件 IPC 代理层会捕获所有错误并通过 `{ ok: false, data: "错误信息" }` 返回。常见错误：
+
+- `command xxx not authorized for plugin yyy` — 未声明对应 capability
+- 后端命令执行失败 — 返回 Rust 错误信息
+
+---
+
+## 可用命令
+
+### 查询类（capability: `ssh.list`）
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `session.active` | 无 | 获取当前活跃会话 |
+| `session.info` | `{sessionId}` | 查询会话详情 |
+| `connection.info` | `{connectionId}` | 查询保存的连接信息 |
+| `connection.list` | 无 | 列出所有保存的连接 |
+| `ssh_list_sessions` | 无 | 列出所有会话 ID |
+
+### 执行类（capability: `ssh.exec`）
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `ssh_exec` | `{sessionId, command}` | 在远程服务器执行命令 |
+
+### 文件类
+
+| 命令 | 参数 | capability | 说明 |
+|------|------|------------|------|
+| `sftp_read_file` | `{sessionId, path}` | `sftp.read` | 读取远程文件（最大 2MB） |
+| `sftp_write_file` | `{sessionId, path, content}` | `sftp.write` | 写入远程文件 |
+| `fs.read` | `{path}` | `fs.read` | 读取插件目录下的本地文件 |
+| `fs.write` | `{path, content}` | `fs.write` | 写入插件目录下的本地文件 |
+
+### 网络类（capability: `net.request`）
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `net.request` | `{url, method?, headers?, body?}` | HTTP 请求（超时 20s，响应最大 256KB） |
+
+### 通知类（capability: `notification`）
+
+| 命令 | 参数 | 说明 |
+|------|------|------|
+| `notification` | `{title, body}` | 发送系统通知（标题自动加 `[插件ID]` 前缀） |
+
+---
+
+## Agent 工具
+
+插件可以为 AI Agent 提供自定义工具。
+
+### 定义工具
+
+在 `plugin.json` 的 `agentTools` 中定义：
+
+```json
+{
+  "agentTools": [
+    {
+      "name": "server_status",
+      "description": "获取服务器运行状态",
+      "command": "top -bn1 | head -20",
+      "parameters": {},
+      "riskLevel": "ReadOnly"
+    }
+  ]
+}
+```
+
+### 命令模板
+
+用 `{{param}}` 引用参数：
+
+```json
+{
+  "name": "restart_service",
+  "description": "重启指定服务",
+  "command": "sudo systemctl restart {{service}}",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "service": { "type": "string", "description": "服务名称" }
+    },
+    "required": ["service"]
+  },
+  "riskLevel": "HighRisk"
+}
+```
+
+### 风险等级
+
+| 等级 | 说明 |
+|------|------|
+| `ReadOnly` | 只读操作 |
+| `LowRisk` | 低风险，可能创建临时文件 |
+| `Moderate` | 中等风险（默认） |
+| `HighRisk` | 高风险，沙箱审查后执行 |
+
+> **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+---
+
+## 开发与调试
+
+### 刷新插件
+
+修改插件文件后，进入 **设置 → 插件** → 点击 **刷新**。
+
+### 查看日志
+
+- 按 `F12` 打开主窗口 DevTools
+- Console 中可看到 IPC 相关日志
+- 插件加载失败会在插件区域显示错误信息和重试按钮
+
+### 常见问题
+
+| 症状 | 原因 |
+|------|------|
+| 插件不显示 | `plugin.json` 格式错误、文件夹名与 `id` 不一致 |
+| 视图不出现 | `entry` 文件不存在、`mount` 值拼写错误 |
+| IPC 无响应 | 未声明对应 capability、`pluginId` 不匹配 |
+| 资源加载失败 | 路径含 `../`（被拒绝）、文件不存在 |
+| Agent 工具不生效 | 当前处于 Chat 模式，需切换到 Agent/Auto |
+
+---
+
+## 完整示例：服务器监控插件
+
+### 文件结构
+
+```
+server-monitor/
+  plugin.json
+  index.html
+  icon.svg
+```
+
+### plugin.json
+
+```json
+{
+  "id": "server-monitor",
+  "version": "1.0.0",
+  "name": "服务器监控",
+  "description": "实时监控服务器 CPU、内存使用情况",
+  "capabilities": ["ssh.list", "ssh.exec"],
+  "views": [
+    {
+      "id": "dashboard",
+      "mount": "sidebar",
+      "title": "监控",
+      "icon": { "kind": "svg", "src": "icon.svg" },
+      "navGroup": "top",
+      "order": 50
+    }
+  ],
+  "agentTools": [
+    {
+      "name": "server_status",
+      "description": "获取服务器运行状态（CPU、内存、磁盘）",
+      "command": "top -bn1 | head -20",
+      "parameters": {},
+      "riskLevel": "ReadOnly"
+    }
+  ]
+}
+```
+
+### index.html
+
+```html
+<!DOCTYPE html>
+<html>
+<body style="background:#18181b;color:#e4e4e7;padding:16px;font-family:sans-serif">
+  <h3 style="margin:0 0 12px">服务器监控</h3>
+  <button id="btn" style="padding:6px 12px;background:#3f3f46;color:#fff;border:none;border-radius:6px;cursor:pointer">
+    刷新状态
+  </button>
+  <pre id="out" style="margin-top:12px;font-size:13px;white-space:pre-wrap;color:#a1a1aa"></pre>
+
+  <script>
+    const { emit, listen } = window.__TAURI__.event;
+    let counter = 0;
+
+    async function getStatus() {
+      const sessionId = await getSessionId();
+      if (!sessionId) {
+        document.getElementById('out').textContent = '没有活跃的 SSH 会话';
+        return;
+      }
+
+      const id = String(++counter);
+      const unlisten = await listen(`plugin-response-${id}`, (e) => {
+        if (e.payload.ok) {
+          document.getElementById('out').textContent = e.payload.data;
+        } else {
+          document.getElementById('out').textContent = '错误: ' + e.payload.data;
+        }
+        unlisten();
+      });
+      await emit('plugin-request', {
+        id,
+        pluginId: 'server-monitor',
+        cmd: 'ssh_exec',
+        args: { sessionId, command: 'top -bn1 | head -20' }
+      });
+    }
+
+    async function getSessionId() {
+      const id = String(++counter);
+      return new Promise((resolve) => {
+        listen(`plugin-response-${id}`, (e) => {
+          resolve(e.payload.ok ? e.payload.data?.sessionId : null);
+        }).then(() => {
+          emit('plugin-request', {
+            id,
+            pluginId: 'server-monitor',
+            cmd: 'session.active',
+            args: {}
+          });
+        });
+      });
+    }
+
+    document.getElementById('btn').onclick = getStatus;
+    getStatus();
+  </script>
+</body>
+</html>
+```
+
+---
+
+## 更多
+
+- [API 参考](./plugin-api.md) — 完整的字段定义、协议格式

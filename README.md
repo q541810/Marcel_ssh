@@ -39,7 +39,7 @@ QQ:1101255501
 - **文件编辑**：内置 CodeMirror 编辑器，支持语法高亮
 - **安全筛选**：危险命令默认被拦截，黑白名单可自定义
 - **原生性能**：Tauri 2 + Rust + React + TypeScript
-- **插件系统**：支持自定义插件，扩展Marcel SSH的功能
+- **插件系统**：支持自定义插件，扩展 Marcel SSH 的功能（[开发指南](docs/plugin-development.md)）
 
 
 
@@ -76,7 +76,9 @@ QQ:1101255501
 
 贡献必读： [Contributors_read.md](Contributors_read.md)，了解贡献者需要遵守的规则和建议
 
-插件开发文档： [plugin-api.md](docs\plugin-api.md)，了解如何开发插件
+插件开发：
+- [插件开发指南](docs/plugin-development.md) — 从零开始创建插件
+- [插件 API 参考](docs/plugin-api.md) — 完整的字段定义与协议格式
 
 
 ---
