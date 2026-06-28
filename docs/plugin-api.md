@@ -381,3 +381,4 @@ await emit('plugin-request', {
 | 1.0.0 | 2026-06-26 | 初始版本 |
 | 1.1.0 | 2026-06-27 | 补全 capability 实现；拆分为开发指南 + API 参考 |
 | 1.2.0 | 2026-06-27 | 新增 `events` capability；新增 HTTP API 端点 |
+| 1.3.0 | 2026-06-28 | 新增 `configView` 配置视图功能；支持 `config.read`/`config.write`/`config.saved` 命令 |

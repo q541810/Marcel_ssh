@@ -113,6 +113,7 @@
   "publisher": "developer",       // 可选。发布者。
   "description": "插件描述",       // 可选。
   "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
+  "configView": "config.html",     // 可选。配置视图入口文件。
   "views": [...],                 // 可选。视图定义。
   "agentTools": [...]             // 可选。Agent 工具定义。
 }
@@ -554,7 +555,7 @@ const { ok, data } = await res.json();
 
 - 按 `F12` 打开主窗口 DevTools
 - Console 中可看到 IPC 相关日志
-- 插件加载失败会在插件区域显示错误信息和重试按钮
+- 插件加载失败会在插件区域显示错误信息（加载失败显示重试按钮，运行时错误显示"禁用此插件"按钮）
 
 ### 常见问题
 
