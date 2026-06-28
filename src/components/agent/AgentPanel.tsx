@@ -372,15 +372,15 @@ export default function AgentPanel() {
         )}
         {canInteract && renderItems.map((item) =>
           'kind' in item && item.kind === 'exploration'
-            ? <ExplorationGroup key={item.tools[0].id} messages={item.tools} autoExpand={isThinking} />
+            ? <ExplorationGroup key={`exploration-${item.tools[0].id}`} messages={item.tools} autoExpand={isThinking} />
             : (() => {
                 const msg = item as AgentMessage;
                 return (msg.role === 'tool' && msg.toolResult) ||
                   (msg.role === 'assistant' && msg.toolCall)
                   ? (
-                <div className="flex justify-start">
+                <div key={msg.id} className="flex justify-start">
                   <div className="max-w-[85%]">
-                    <ToolCallCard key={msg.id} message={msg} autoExpand={isThinking} />
+                    <ToolCallCard message={msg} autoExpand={isThinking} />
                   </div>
                 </div>
               )
