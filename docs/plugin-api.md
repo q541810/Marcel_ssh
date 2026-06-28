@@ -39,7 +39,7 @@
 | 字段 | 类型 | 必须 | 说明 |
 |------|------|------|------|
 | `id` | string | 是 | 视图唯一标识（在插件内简短即可，如 `main`。最终 ID 自动拼接为 `<plugin-id>.<view-id>`） |
-| `mount` | string | 是 | 挂载点：`sidebar` / `center` / `bottom` / `agent` |
+| `mount` | string | 是 | 挂载点：`sidebar` / `agent` |
 | `title` | string | 是 | 显示标题 |
 | `icon` | IconDef | 否 | 图标定义 |
 | `navGroup` | string | 否 | 导航分组：`top` / `bottom`（sidebar 视图必须） |
@@ -52,8 +52,6 @@
 | 挂载点 | 说明 |
 |--------|------|
 | `sidebar` | 左侧面板。需要设置 `navGroup`。 |
-| `center` | 中央主面板。通常与终端共存。 |
-| `bottom` | 底部面板。显示为底部 Tab。 |
 | `agent` | 右侧 Agent 面板。 |
 
 ### 图标定义
