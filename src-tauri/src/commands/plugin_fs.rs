@@ -29,7 +29,6 @@ pub async fn plugin_fs_read(
 ) -> Result<String, AppError> {
     let config_dir = state.config_dir.clone();
     let file_path = resolve_plugin_path(&config_dir, &plugin_id, &path)?;
-
     std::fs::read_to_string(&file_path)
         .map_err(|e| AppError::Other(format!("failed to read file: {}", e)))
 }

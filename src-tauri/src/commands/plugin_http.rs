@@ -38,6 +38,12 @@ pub struct PluginHttpResponse {
 pub async fn plugin_http_request(
     request: PluginHttpRequest,
 ) -> Result<PluginHttpResponse, AppError> {
+    plugin_http_request_inner(&request).await
+}
+
+async fn plugin_http_request_inner(
+    request: &PluginHttpRequest,
+) -> Result<PluginHttpResponse, AppError> {
     if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
         return Err(AppError::Other(
             "invalid URL: must start with http:// or https://".into(),

@@ -1,6 +1,5 @@
 pub mod agent_loop;
 pub mod approval;
-pub mod audit;
 pub mod conversation;
 pub mod conversation_persister;
 pub mod model_approval;

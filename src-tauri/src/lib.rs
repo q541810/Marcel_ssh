@@ -18,7 +18,6 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock as TokioRwLock;
 
-use crate::agent::audit::AuditLog;
 use crate::agent::conversation::ConversationDb;
 use crate::agent::task::AgentTask;
 use crate::agent::task::AgentTaskPlan;
@@ -55,7 +54,6 @@ pub struct AppState {
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub quick_command_store: std::sync::Arc<TokioRwLock<QuickCommandStore>>,
-    pub audit_log: std::sync::Arc<PlRwLock<AuditLog>>,
     pub conversation_db: std::sync::Arc<ConversationDb>,
     pub skill_store: std::sync::Arc<TokioRwLock<SkillStore>>,
     pub mcp_store: std::sync::Arc<TokioRwLock<McpServerStore>>,
@@ -290,7 +288,6 @@ impl AppState {
             connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
             settings: std::sync::Arc::new(TokioRwLock::new(settings)),
             quick_command_store: std::sync::Arc::new(TokioRwLock::new(quick_command_store)),
-            audit_log: std::sync::Arc::new(PlRwLock::new(AuditLog::new())),
             conversation_db: std::sync::Arc::new(conversation_db),
             skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
             mcp_store: std::sync::Arc::new(TokioRwLock::new(mcp_store)),
