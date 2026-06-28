@@ -44,14 +44,59 @@ pub async fn plugin_webview_create(
     let url = format!("plugin://{}/{}", params.plugin_id, params.entry);
     let webview_url = WebviewUrl::External(url::Url::parse(&url).map_err(|e| e.to_string())?);
 
+    let label_for_loaded = params.label.clone();
+    let plugin_id_for_loaded = params.plugin_id.clone();
+    let app_for_loaded = app.clone();
+    let on_page_load = move |_webview: tauri::Webview,
+                              payload: tauri::webview::PageLoadPayload| {
+        use tauri::Emitter;
+        let event_name = match payload.event() {
+            tauri::webview::PageLoadEvent::Started => "started",
+            tauri::webview::PageLoadEvent::Finished => "finished",
+        };
+        let _ = app_for_loaded.emit(
+            &format!("webview://page-load/{}", label_for_loaded),
+            serde_json::json!({
+                "pluginId": plugin_id_for_loaded,
+                "phase": event_name,
+                "url": payload.url(),
+            }),
+        );
+    };
+
     window
         .add_child(
             WebviewBuilder::new(&params.label, webview_url)
-                .background_color(Color(24, 24, 27, 255)),
+                .background_color(Color(24, 24, 27, 255))
+                .on_page_load(on_page_load),
             LogicalPosition::new(params.x, params.y),
             LogicalSize::new(params.width.max(1.0), params.height.max(1.0)),
         )
         .map_err(|e| e.to_string())?;
+
+    // Register a webview-event listener to surface crashes / navigation
+    // failures to the main window. We resolve the webview by label after
+    // it has been added to the window.
+    let label_for_evt = params.label.clone();
+    let plugin_id_for_evt = params.plugin_id.clone();
+    let app_for_evt = app.clone();
+    if let Some(webview) = app.get_webview(&params.label) {
+        webview.on_webview_event(move |event| {
+            use tauri::Emitter;
+            // WebviewEvent variants are kept opaque here; the JSON payload
+            // includes the Debug representation so the main window can
+            // display it. The key signal is "the webview reported an event
+            // we didn't expect during a steady state".
+            let event_kind = format!("{:?}", event);
+            let _ = app_for_evt.emit(
+                &format!("webview://event/{}", label_for_evt),
+                serde_json::json!({
+                    "pluginId": plugin_id_for_evt,
+                    "event": event_kind,
+                }),
+            );
+        });
+    }
 
     Ok(())
 }

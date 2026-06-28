@@ -5,6 +5,7 @@ import { useViewStore } from '@/stores/viewStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { destroyAll as destroyAllWebviews } from '@/plugins/pluginWebviewPool';
 
 const DEFAULT_PLUGIN_ICON = { kind: 'react' as const, node: <Plug className="w-5 h-5" /> };
 
@@ -64,6 +65,9 @@ export const usePluginStore = create<PluginState>((set) => ({
     try {
       const manifests = await tauri.pluginList();
       const disabled = getDisabledPlugins();
+
+      // 销毁所有池中 WebView，插件刷新时强制重建
+      await destroyAllWebviews();
 
       const viewState = useViewStore.getState();
       const oldPluginIds = new Set(
