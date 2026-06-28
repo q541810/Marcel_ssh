@@ -58,6 +58,7 @@ export interface PluginManifest {
   capabilities: string[];
   views: PluginViewDef[];
   agentTools: PluginAgentToolDef[];
+  configView?: string;
 }
 
 export interface PluginHttpRequest {

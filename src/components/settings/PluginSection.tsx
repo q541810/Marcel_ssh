@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check } from 'lucide-react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getPluginDir, openPluginDir } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
@@ -8,6 +8,7 @@ import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
 import { useSettingsActions } from './SettingsActionsContext';
 import { Card, SettingItem } from './helpers';
+import PluginConfigModal from './PluginConfigModal';
 
 const CAPABILITY_LABELS: Record<string, string> = {
   'ssh.list': '查询 SSH 会话与连接信息',
@@ -81,6 +82,7 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
   const disabledSet = new Set(settings.disabledPlugins ?? []);
   const isDisabled = disabledSet.has(manifest.id);
   const [showCapabilities, setShowCapabilities] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const togglePlugin = () => {
     const current = settings.disabledPlugins ?? [];
@@ -93,28 +95,42 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
   const viewCount = manifest.views.length;
   const toolCount = manifest.agentTools.length;
   const capCount = manifest.capabilities.length;
+  const hasConfigView = !!manifest.configView;
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
-        <div className="flex items-center gap-3 min-w-0">
-          <Puzzle className="w-5 h-5 text-zinc-500 flex-shrink-0" />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-zinc-100 truncate">{manifest.name}</span>
-              <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
+    <>
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+          <div className="flex items-center gap-3 min-w-0">
+            <Puzzle className="w-5 h-5 text-zinc-500 flex-shrink-0" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-zinc-100 truncate">{manifest.name}</span>
+                <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
+              </div>
+              {manifest.publisher && (
+                <div className="text-xs text-zinc-500 mt-0.5">{manifest.publisher}</div>
+              )}
             </div>
-            {manifest.publisher && (
-              <div className="text-xs text-zinc-500 mt-0.5">{manifest.publisher}</div>
-            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!hasConfigView}
+              onClick={() => hasConfigView && setConfigOpen(true)}
+              title={hasConfigView ? '打开配置界面' : '此插件未提供配置界面'}
+            >
+              <Settings className="w-3.5 h-3.5" />
+              配置
+            </Button>
+            <Toggle
+              checked={!isDisabled}
+              onChange={togglePlugin}
+            />
           </div>
         </div>
-        <Toggle
-          checked={!isDisabled}
-          onChange={togglePlugin}
-        />
-      </div>
 
       {/* Description */}
       {manifest.description && (
@@ -197,6 +213,17 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
         )}
       </div>
     </div>
+
+    {hasConfigView && (
+      <PluginConfigModal
+        open={configOpen}
+        onClose={() => setConfigOpen(false)}
+        pluginId={manifest.id}
+        pluginName={manifest.name}
+        configView={manifest.configView!}
+      />
+    )}
+    </>
   );
 }
 
@@ -283,6 +310,7 @@ export function PluginSection() {
       {!loading && !error && manifests.map((m) => (
         <PluginCard key={m.id} manifest={m} />
       ))}
+
     </div>
   );
 }

@@ -399,6 +399,151 @@ const { ok, data } = await res.json();
 
 ---
 
+## 配置 UI 开发
+
+插件可以提供自定义配置界面，用户在设置页点击"配置"按钮即可打开。
+
+### 快速开始
+
+1. 在插件目录下创建 `config.html`
+2. 在 `plugin.json` 中声明 `configView`：
+
+```json
+{
+  "id": "my-plugin",
+  "configView": "config.html",
+  "capabilities": ["fs.read", "fs.write"]
+}
+```
+
+3. 刷新插件，设置页的插件卡片会出现可点击的"配置"按钮
+
+### 配置文件
+
+配置文件固定为 `config.json`（位于插件目录下）。主应用提供专用命令读写此文件：
+
+| 命令 | 说明 |
+|------|------|
+| `config.read` | 读取 `config.json` |
+| `config.write` | 写入 `config.json` |
+| `config.saved` | 通知保存完成，自动关闭弹窗 |
+
+### 安全限制
+
+- 只能读写 `config.json`，无法访问其他文件
+- 路径由主应用硬编码，防止路径穿越
+
+### 完整示例
+
+**plugin.json**：
+```json
+{
+  "id": "server-monitor",
+  "version": "1.0.0",
+  "name": "服务器监控",
+  "configView": "config.html",
+  "capabilities": ["fs.read", "fs.write", "ssh.list", "ssh.exec"],
+  "views": [
+    { "id": "dashboard", "mount": "sidebar", "title": "监控", "navGroup": "top" }
+  ]
+}
+```
+
+**config.html**：
+```html
+<!DOCTYPE html>
+<html>
+<body style="background:#18181b;color:#e4e4e7;padding:24px;font-family:sans-serif">
+  <h3 style="margin:0 0 16px">服务器监控 - 配置</h3>
+  
+  <div style="margin-bottom:12px">
+    <label style="display:block;margin-bottom:4px;font-size:13px;color:#a1a1aa">刷新间隔 (秒)</label>
+    <input id="interval" type="number" value="5" min="1" max="60"
+      style="width:100%;padding:8px;background:#27272a;border:1px solid #3f3f46;border-radius:6px;color:#e4e4e7">
+  </div>
+  
+  <div style="margin-bottom:16px">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input id="notify" type="checkbox">
+      <span style="font-size:13px">状态变化时发送通知</span>
+    </label>
+  </div>
+  
+  <button id="save" style="padding:8px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;cursor:pointer">
+    保存
+  </button>
+  
+  <script>
+    const { emit, listen } = window.__TAURI__.event;
+    let counter = 0;
+
+    // 读取现有配置
+    async function loadConfig() {
+      const id = String(++counter);
+      return new Promise((resolve) => {
+        listen(`plugin-response-${id}`, (e) => {
+          if (e.payload.ok && e.payload.data) {
+            try {
+              const config = JSON.parse(e.payload.data);
+              document.getElementById('interval').value = config.interval ?? 5;
+              document.getElementById('notify').checked = config.notify ?? false;
+            } catch {}
+          }
+          resolve();
+        }).then(() => {
+          emit('plugin-request', {
+            id,
+            pluginId: 'server-monitor',
+            cmd: 'config.read',
+            args: {}
+          });
+        });
+      });
+    }
+
+    // 保存配置
+    document.getElementById('save').onclick = async () => {
+      const config = {
+        interval: parseInt(document.getElementById('interval').value) || 5,
+        notify: document.getElementById('notify').checked
+      };
+
+      const id = String(++counter);
+      await listen(`plugin-response-${id}`, async (e) => {
+        if (e.payload.ok) {
+          // 通知主应用保存完成
+          const saveId = String(++counter);
+          await emit('plugin-request', {
+            id: saveId,
+            pluginId: 'server-monitor',
+            cmd: 'config.saved',
+            args: {}
+          });
+        }
+      });
+
+      await emit('plugin-request', {
+        id,
+        pluginId: 'server-monitor',
+        cmd: 'config.write',
+        args: { content: JSON.stringify(config, null, 2) }
+      });
+    };
+
+    loadConfig();
+  </script>
+</body>
+</html>
+```
+
+### 弹窗行为
+
+- 尺寸：896px 宽，80vh 高
+- 关闭方式：关闭按钮、ESC、点击遮罩、调用 `config.saved`
+- WebView 生命周期：打开时创建，关闭时销毁
+
+---
+
 ## 开发与调试
 
 ### 刷新插件

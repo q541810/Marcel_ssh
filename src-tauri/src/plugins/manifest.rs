@@ -16,6 +16,8 @@ pub struct PluginManifest {
     pub views: Vec<PluginViewDef>,
     #[serde(default)]
     pub agent_tools: Vec<PluginAgentToolDef>,
+    #[serde(default)]
+    pub config_view: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

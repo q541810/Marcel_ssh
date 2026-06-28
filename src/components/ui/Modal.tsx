@@ -1,14 +1,24 @@
 import { useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
+type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
+
+const SIZE_CLASSES: Record<ModalSize, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-4xl h-[80vh] flex flex-col',
+};
+
 interface Props {
   open: boolean;
   onClose: () => void;
   title?: string;
+  size?: ModalSize;
   children: ReactNode;
 }
 
-export default function Modal({ open, onClose, title, children }: Props) {
+export default function Modal({ open, onClose, title, size = 'md', children }: Props) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
@@ -34,10 +44,10 @@ export default function Modal({ open, onClose, title, children }: Props) {
       />
 
       {/* Content */}
-      <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
+      <div className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${SIZE_CLASSES[size]}`}>
         {/* Header */}
         {title && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
             <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
             <button
               onClick={onClose}
@@ -50,7 +60,7 @@ export default function Modal({ open, onClose, title, children }: Props) {
         )}
 
         {/* Body */}
-        <div className={title ? '' : 'pt-4'}>{children}</div>
+        <div className={`${title ? '' : 'pt-4'} ${size === 'xl' ? 'flex-1 overflow-hidden flex flex-col' : ''}`}>{children}</div>
       </div>
     </div>,
     document.body,

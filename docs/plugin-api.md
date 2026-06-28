@@ -15,7 +15,8 @@
   "description": "插件描述",       // 可选。
   "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
   "views": [...],                 // 可选。视图定义。
-  "agentTools": [...]             // 可选。Agent 工具定义。
+  "agentTools": [...],            // 可选。Agent 工具定义。
+  "configView": "config.html"     // 可选。配置视图入口文件。
 }
 ```
 
@@ -29,6 +30,7 @@
 | `capabilities` | string[] | 否 | 声明的权限列表 |
 | `views` | ViewDef[] | 否 | 视图定义列表 |
 | `agentTools` | AgentToolDef[] | 否 | Agent 工具定义列表 |
+| `configView` | string | 否 | 配置视图入口文件路径（相对于插件根目录） |
 
 ---
 
@@ -76,6 +78,89 @@
 | `riskLevel` | string | 否 | 风险等级：`ReadOnly` / `LowRisk` / `Moderate` / `HighRisk`（默认 `Moderate`） |
 
 > Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+---
+
+## 配置视图
+
+插件可以提供自定义配置界面，在设置页的插件卡片中通过"配置"按钮打开。
+
+### 声明配置视图
+
+在 `plugin.json` 中添加 `configView` 字段：
+
+```jsonc
+{
+  "id": "my-plugin",
+  "configView": "config.html",
+  "capabilities": ["fs.read", "fs.write"],
+  // ...
+}
+```
+
+`configView` 是相对于插件根目录的入口文件路径。
+
+### 配置文件
+
+配置文件固定为插件目录下的 `config.json`。插件通过专用命令读写此文件，无需关心路径。
+
+### 配置命令
+
+| 命令 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `config.read` | 无 | `string` | 读取 `config.json` 内容 |
+| `config.write` | `{content}` | `void` | 写入 `config.json` |
+| `config.saved` | 无 | `{ok: true}` | 通知主应用保存完成，自动关闭配置弹窗 |
+
+这些命令需要 `fs.read` / `fs.write` capability。
+
+### 安全限制
+
+- `config.read` / `config.write` **只能**读写 `config.json`，不能访问其他文件
+- 路径由主应用硬编码，插件无法指定其他路径
+- 写入时自动创建 `config.json`（如果不存在）
+
+### 保存流程
+
+```javascript
+const { emit, listen } = window.__TAURI__.event;
+
+async function saveConfig(config) {
+  const id = Date.now().toString();
+  
+  // 1. 写入配置
+  const unlisten = await listen(`plugin-response-${id}`, async (e) => {
+    if (!e.payload.ok) {
+      console.error('保存失败:', e.payload.data);
+      unlisten();
+      return;
+    }
+    
+    // 2. 通知主应用保存完成
+    const saveId = Date.now().toString();
+    await emit('plugin-request', {
+      id: saveId,
+      pluginId: 'my-plugin',
+      cmd: 'config.saved',
+      args: {}
+    });
+    unlisten();
+  });
+  
+  await emit('plugin-request', {
+    id,
+    pluginId: 'my-plugin',
+    cmd: 'config.write',
+    args: { content: JSON.stringify(config, null, 2) }
+  });
+}
+```
+
+### 配置弹窗行为
+
+- 弹窗尺寸：`xl`（896px 宽，80vh 高）
+- 关闭方式：点击关闭按钮、按 ESC、点击遮罩、调用 `config.saved`
+- WebView 生命周期：打开时创建，关闭时销毁
 
 ---
 

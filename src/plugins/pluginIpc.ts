@@ -12,6 +12,18 @@ interface PluginRequest {
   args: Record<string, unknown>;
 }
 
+// ── Config saved callback system ──
+
+const configSavedCallbacks = new Map<string, () => void>();
+
+export function registerConfigSavedCallback(pluginId: string, callback: () => void): void {
+  configSavedCallbacks.set(pluginId, callback);
+}
+
+export function unregisterConfigSavedCallback(pluginId: string): void {
+  configSavedCallbacks.delete(pluginId);
+}
+
 // Backend commands: capability → tauri command
 // These commands pass args directly to invoke without modification
 const CAPABILITY_TO_COMMAND: Record<string, string> = {
@@ -167,6 +179,30 @@ VIRTUAL_COMMANDS['events.unsubscribe'] = (args) => {
   return { unsubscribed };
 };
 
+// Config commands: restricted to config.json only
+const CONFIG_FILE = 'config.json';
+
+VIRTUAL_COMMANDS['config.read'] = (args) => {
+  const pid = args._pluginId as string ?? '';
+  return invoke<string>('plugin_fs_read', { pluginId: pid, path: CONFIG_FILE });
+};
+
+VIRTUAL_COMMANDS['config.write'] = (args) => {
+  const pid = args._pluginId as string ?? '';
+  const content = (args.content as string) ?? '';
+  return invoke('plugin_fs_write', { pluginId: pid, path: CONFIG_FILE, content });
+};
+
+VIRTUAL_COMMANDS['config.saved'] = (args) => {
+  const pid = args._pluginId as string ?? '';
+  const callback = configSavedCallbacks.get(pid);
+  if (callback) {
+    callback();
+    return { ok: true };
+  }
+  return { ok: false, error: 'no callback registered' };
+};
+
 // All valid commands (backend + virtual + plugin-scoped)
 const ALL_COMMANDS = new Set([
   ...Object.values(CAPABILITY_TO_COMMAND),
@@ -183,6 +219,9 @@ const COMMAND_TO_CAPABILITY: Record<string, string> = {
   'connection.list': 'ssh.list',
   'events.subscribe': 'events',
   'events.unsubscribe': 'events',
+  'config.read': 'fs.read',
+  'config.write': 'fs.write',
+  'config.saved': 'fs.write',
 };
 
 function isAuthorized(pluginId: string, cmd: string): boolean {
@@ -234,7 +273,13 @@ export async function initPluginIpc(): Promise<void> {
       if (virtualHandler) {
         // Inject pluginId for event commands
         const argsWithPluginId = { ...req.args, _pluginId: req.pluginId };
-        respond(true, virtualHandler(argsWithPluginId));
+        const result = virtualHandler(argsWithPluginId);
+        // Support async virtual commands (e.g. config.read, config.write)
+        if (result instanceof Promise) {
+          result.then((data) => respond(true, data)).catch((err) => respond(false, String(err)));
+        } else {
+          respond(true, result);
+        }
         return;
       }
 
