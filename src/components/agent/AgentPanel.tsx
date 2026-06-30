@@ -8,8 +8,7 @@ import type { AgentMode, AgentMessage } from '@/lib/types';
 import { normalizeWhipPhrases } from '@/lib/whip';
 import { WhipOverlay } from '@/components/whip/WhipOverlay';
 import Button from '@/components/ui/Button';
-import AgentMessageItem from './AgentMessage';
-import ToolCallCard from './ToolCallCard';
+import AgentMessageList from './AgentMessageList';
 import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
 import ApprovalDialog from './ApprovalDialog';
 import PlanList from './PlanList';
@@ -370,33 +369,16 @@ export default function AgentPanel() {
             </p>
           </div>
         )}
-        {canInteract && renderItems.map((item) =>
-          'kind' in item && item.kind === 'exploration'
-            ? <ExplorationGroup key={`exploration-${item.tools[0].id}`} messages={item.tools} autoExpand={isThinking} />
-            : (() => {
-                const msg = item as AgentMessage;
-                return (msg.role === 'tool' && msg.toolResult) ||
-                  (msg.role === 'assistant' && msg.toolCall)
-                  ? (
-                <div key={msg.id} className="flex justify-start">
-                  <div className="max-w-[85%]">
-                    <ToolCallCard message={msg} autoExpand={isThinking} />
-                  </div>
-                </div>
-              )
-              : (
-                <AgentMessageItem
-                  key={msg.id}
-                  message={msg}
-                  autoExpand={!!msg.isThinking}
-                  rollbackDisabled={isRunning}
-                  onRollback={handleRollbackMessage}
-                  onCopy={handleCopyMessage}
-                />
-              );
-              })(),
+        {canInteract && (
+          <AgentMessageList
+            messages={messages}
+            isThinking={isThinking}
+            isRunning={isRunning}
+            onRollback={handleRollbackMessage}
+            onCopy={handleCopyMessage}
+            messagesEndRef={messagesEndRef}
+          />
         )}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* PlanList - todolist rendered between messages and input */}

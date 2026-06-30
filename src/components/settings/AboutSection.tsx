@@ -8,16 +8,25 @@ import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import Button from '@/components/ui/Button';
 import { Card, SettingItem } from './helpers';
 import { useSettingsStore } from '@/stores/settingsStore';
+import ChatHistoryModal from './ChatHistoryModal';
+import { useConnectionStore } from '@/stores/connectionStore';
 
 export default function AboutSection() {
   const [appVersion, setAppVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<UpdateCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const update = useSettingsStore((s) => s.update);
+  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion('0.1.3'));
+    fetchConnections();
+  }, [fetchConnections]);
+
+  useEffect(() => {
+    import('./ChatHistoryModal');
   }, []);
 
   const handleCheck = useCallback(async () => {
@@ -98,7 +107,19 @@ export default function AboutSection() {
             重新运行引导
           </Button>
         </SettingItem>
+        <SettingItem
+          id="about-chat-history"
+          label="聊天历史记录"
+          description="查看所有 SSH 连接的历史聊天记录"
+          sectionId="settings-about"
+          keywords={['chat', 'history', 'conversation', '聊天', '历史', '会话']}
+        >
+          <Button variant="secondary" onClick={() => setShowHistory(true)}>
+            查看聊天历史
+          </Button>
+        </SettingItem>
       </Card>
+      <ChatHistoryModal open={showHistory} onClose={() => setShowHistory(false)} />
     </>
   );
 }
