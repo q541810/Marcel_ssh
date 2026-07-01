@@ -8,6 +8,8 @@ interface Props {
   description?: string;
   /** When true, show a "记住密码" checkbox. */
   allowRemember?: boolean;
+  /** Label for the submit button. Defaults to "连接". */
+  submitLabel?: string;
   onSubmit: (password: string, remember: boolean) => void;
   onCancel: () => void;
 }
@@ -21,6 +23,7 @@ export default function PasswordPrompt({
   title = '请输入密码',
   description,
   allowRemember = false,
+  submitLabel = '连接',
   onSubmit,
   onCancel,
 }: Props) {
@@ -73,7 +76,7 @@ export default function PasswordPrompt({
             取消
           </Button>
           <Button variant="primary" type="submit" disabled={!password}>
-            连接
+            {submitLabel}
           </Button>
         </div>
       </form>

@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import type { SavedConnection } from '@/lib/types';
 import { DEFAULT_PORT } from '@/lib/constants';
+import * as tauri from '@/lib/tauri';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import PasswordPrompt from './PasswordPrompt';
 
 interface Props {
   connection?: SavedConnection;
@@ -25,6 +27,7 @@ export default function ConnectionForm({
   const [keyPath, setKeyPath] = useState(connection?.keyPath ?? '');
   const [group, setGroup] = useState(connection?.group ?? '');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -111,14 +114,25 @@ export default function ConnectionForm({
         <label className="block text-sm font-medium text-zinc-300 mb-1">
           认证方式
         </label>
-        <select
-          value={authMethod}
-          onChange={(e) => setAuthMethod(e.target.value)}
-          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        >
-          <option value="Password">密码</option>
-          <option value="PrivateKey">私钥</option>
-        </select>
+        <div className="flex gap-2 items-center">
+          <select
+            value={authMethod}
+            onChange={(e) => setAuthMethod(e.target.value)}
+            className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+          >
+            <option value="Password">密码</option>
+            <option value="PrivateKey">私钥</option>
+          </select>
+          {connection?.id && (
+            <Button
+              variant="secondary"
+              onClick={() => setPasswordPromptOpen(true)}
+              className="whitespace-nowrap py-2"
+            >
+              {authMethod === 'Password' ? '重设密码' : '重设密钥密码'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {authMethod === 'PrivateKey' && (
@@ -152,6 +166,25 @@ export default function ConnectionForm({
           保存
         </Button>
       </div>
+
+      {/* Password / passphrase reset prompt (edit mode only) */}
+      {connection?.id && (
+        <PasswordPrompt
+          open={passwordPromptOpen}
+          title={authMethod === 'Password' ? '重设密码' : '重设密钥密码'}
+          description={`${authMethod === 'Password' ? '密码' : '密钥密码'}会保存到系统密钥链，新连接自动使用。`}
+          submitLabel="保存"
+          onSubmit={(password) => {
+            if (authMethod === 'Password') {
+              tauri.savePassword(connection.id, password).catch(console.warn);
+            } else {
+              tauri.savePassphrase(connection.id, password).catch(console.warn);
+            }
+            setPasswordPromptOpen(false);
+          }}
+          onCancel={() => setPasswordPromptOpen(false)}
+        />
+      )}
     </div>
   );
 }
