@@ -4,6 +4,8 @@ import { BOTTOM_TABS, DEFAULT_TERMINAL_COLORS, type BottomTab } from '@/lib/cons
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
+import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
@@ -27,6 +29,7 @@ export default function Terminal() {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const reconnect = useSessionStore((s) => s.reconnect);
+  const mismatch = useHostKeyMismatch();
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
@@ -230,6 +233,16 @@ export default function Terminal() {
                   variant="primary"
                   onClick={() => {
                     reconnect(activeSession.id).catch((err) => {
+                      const m = asHostKeyMismatch(parseAppError(err));
+                      if (m) {
+                        mismatch.prompt({
+                          data: m,
+                          onTrust: () => reconnect(activeSession.id, true).catch((e) => {
+                            console.error('重连失败:', e);
+                          }),
+                        });
+                        return;
+                      }
                       console.error('重连失败:', err);
                     });
                   }}
@@ -302,6 +315,9 @@ export default function Terminal() {
           onCancel={() => terminalInstanceManager.setPasteConfirm(null)}
         />
       )}
+
+      {/* Host key mismatch prompt (raised from reconnect) */}
+      {mismatch.Modal}
     </div>
   );
 }

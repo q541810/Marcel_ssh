@@ -78,11 +78,16 @@ pub async fn ssh_exec(
 
 /// 使用已保存的密码连接 SSH。密码在 Rust 侧从系统密钥链读取，不经过前端。
 /// 安全：密码永远不会暴露给 WebView。
+///
+/// `trust_new_host_key` 默认 false；仅当用户在 HostKeyMismatch 弹窗里
+/// 明确选择「信任新密钥」后才传 true，触发后端 `KnownHostsStore::replace`
+/// 覆盖已记录的指纹而不是拒绝握手。
 #[tauri::command]
 pub async fn ssh_connect_with_saved_password(
     app: AppHandle,
     state: State<'_, AppState>,
     connection_id: String,
+    trust_new_host_key: Option<bool>,
 ) -> Result<String, AppError> {
     let saved = {
         let store = state.connection_store.read().await;
@@ -101,7 +106,7 @@ pub async fn ssh_connect_with_saved_password(
         username: saved.username,
         auth_method: AuthMethod::Password { password },
         connection_id: Some(connection_id),
-        trust_new_host_key: false,
+        trust_new_host_key: trust_new_host_key.unwrap_or(false),
     };
 
     state.ssh_manager.connect(config, app).await
@@ -110,11 +115,15 @@ pub async fn ssh_connect_with_saved_password(
 /// 使用已保存的私钥 passphrase 连接 SSH。passphrase 在 Rust 侧从系统密钥链读取
 /// （account = "pk:{connection_id}"），不经过前端。
 /// 安全：passphrase 永远不会暴露给 WebView。
+///
+/// `trust_new_host_key` 默认 false；仅当用户在 HostKeyMismatch 弹窗里
+/// 明确选择「信任新密钥」后才传 true。
 #[tauri::command]
 pub async fn ssh_connect_with_saved_passphrase(
     app: AppHandle,
     state: State<'_, AppState>,
     connection_id: String,
+    trust_new_host_key: Option<bool>,
 ) -> Result<String, AppError> {
     let saved = {
         let store = state.connection_store.read().await;
@@ -139,11 +148,12 @@ pub async fn ssh_connect_with_saved_passphrase(
             passphrase,
         },
         connection_id: Some(connection_id),
-        trust_new_host_key: false,
+        trust_new_host_key: trust_new_host_key.unwrap_or(false),
     };
 
     state.ssh_manager.connect(config, app).await
 }
+
 ///
 /// 根据 saved connection 的 auth_method 从 keychain 取凭证：
 /// - Password：从 keychain 取密码（account = connection_id）
@@ -151,12 +161,16 @@ pub async fn ssh_connect_with_saved_passphrase(
 ///
 /// 凭证缺失时返回 `AppError::Config`，前端据 `kind === "Config"` 弹窗让用户输入。
 /// 安全：密码/passphrase 都在 Rust 侧从 keychain 读取，不经过前端。
+///
+/// `trust_new_host_key` 默认 false；仅当用户在 HostKeyMismatch 弹窗里
+/// 明确选择「信任新密钥」后才传 true。
 #[tauri::command]
 pub async fn ssh_reconnect(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     connection_id: String,
+    trust_new_host_key: Option<bool>,
 ) -> Result<(), AppError> {
     let saved = {
         let store = state.connection_store.read().await;
@@ -196,7 +210,7 @@ pub async fn ssh_reconnect(
         username: saved.username,
         auth_method,
         connection_id: Some(connection_id),
-        trust_new_host_key: false,
+        trust_new_host_key: trust_new_host_key.unwrap_or(false),
     };
 
     state.ssh_manager.reconnect(session_id, config, app).await

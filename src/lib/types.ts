@@ -84,6 +84,12 @@ export interface ConnectionConfig {
   authMethod: AuthMethod;
   /** Saved connection ID, used by Agent tools for password lookup (sudo auto-fill). */
   connectionId?: string;
+  /**
+   * User has explicitly opted to trust a new (mismatching) host key. Only set
+   * after the user confirms the HostKeyMismatch modal. Drives the backend to
+   * `KnownHostsStore::replace` instead of rejecting the handshake.
+   */
+  trustNewHostKey?: boolean;
 }
 
 export type AuthMethod =
@@ -116,6 +122,20 @@ export interface Session {
 }
 
 export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+
+/**
+ * Data carried by an AppError whose `kind === "HostKeyMismatch"` (see error.rs
+ * Serialize impl). Frontend branches on this to show the trust-new-key modal
+ * instead of a plain error string.
+ */
+export interface HostKeyMismatchData {
+  host: string;
+  port: number;
+  storedAlgorithm: string;
+  storedFingerprint: string;
+  presentedAlgorithm: string;
+  presentedFingerprint: string;
+}
 
 // Quick command types
 

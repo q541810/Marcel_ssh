@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
+import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { asHostKeyMismatch, getErrorMessage, parseAppError } from '@/lib/errors';
 import { DEFAULT_PORT } from '@/lib/constants';
-import { getErrorMessage } from '@/lib/errors';
 import type { ConnectionConfig } from '@/lib/types';
 
 interface ParsedTarget {
@@ -16,6 +17,7 @@ export default function QuickConnect() {
   const [error, setError] = useState('');
   const connect = useSessionStore((s) => s.connect);
   const { prompt: promptPassword, Prompt: PasswordPromptEl } = useConnectWithPassword();
+  const mismatch = useHostKeyMismatch();
 
   const parseConnectionString = (str: string): ParsedTarget | null => {
     // Format: user@host:port or user@host
@@ -53,6 +55,16 @@ export default function QuickConnect() {
           await connect(config);
           setInput('');
         } catch (err) {
+          const m = asHostKeyMismatch(parseAppError(err));
+          if (m) {
+            mismatch.prompt({
+              data: m,
+              onTrust: () => connect({ ...config, trustNewHostKey: true })
+                .then(() => setInput(''))
+                .catch((e) => setError(getErrorMessage(e))),
+            });
+            return;
+          }
           setError(getErrorMessage(err));
         }
       },
@@ -89,6 +101,8 @@ export default function QuickConnect() {
       </form>
 
       {PasswordPromptEl}
+
+      {mismatch.Modal}
     </>
   );
 }

@@ -177,12 +177,18 @@ export async function hasPassword(connectionId: string): Promise<boolean> {
   return invoke<boolean>('config_has_password', { connectionId });
 }
 
-export async function connectWithSavedPassword(connectionId: string): Promise<string> {
-  return invoke<string>('ssh_connect_with_saved_password', { connectionId });
+export async function connectWithSavedPassword(
+  connectionId: string,
+  trustNewHostKey = false,
+): Promise<string> {
+  return invoke<string>('ssh_connect_with_saved_password', { connectionId, trustNewHostKey });
 }
 
-export async function connectWithSavedPassphrase(connectionId: string): Promise<string> {
-  return invoke<string>('ssh_connect_with_saved_passphrase', { connectionId });
+export async function connectWithSavedPassphrase(
+  connectionId: string,
+  trustNewHostKey = false,
+): Promise<string> {
+  return invoke<string>('ssh_connect_with_saved_passphrase', { connectionId, trustNewHostKey });
 }
 
 export async function deletePassword(connectionId: string): Promise<void> {
@@ -192,8 +198,9 @@ export async function deletePassword(connectionId: string): Promise<void> {
 export async function sshReconnect(
   sessionId: string,
   connectionId: string,
+  trustNewHostKey = false,
 ): Promise<void> {
-  return invoke('ssh_reconnect', { sessionId, connectionId });
+  return invoke('ssh_reconnect', { sessionId, connectionId, trustNewHostKey });
 }
 
 export async function savePassphrase(

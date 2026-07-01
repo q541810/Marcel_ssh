@@ -9,9 +9,9 @@ interface SessionState {
   activeSessionId: string | null;
 
   connect: (config: ConnectionConfig) => Promise<string>;
-  connectWithSavedPassword: (connectionId: string, connLabel: string) => Promise<string>;
-  connectWithSavedPassphrase: (connectionId: string, connLabel: string) => Promise<string>;
-  reconnect: (sessionId: string) => Promise<void>;
+  connectWithSavedPassword: (connectionId: string, connLabel: string, trustNewHostKey?: boolean) => Promise<string>;
+  connectWithSavedPassphrase: (connectionId: string, connLabel: string, trustNewHostKey?: boolean) => Promise<string>;
+  reconnect: (sessionId: string, trustNewHostKey?: boolean) => Promise<void>;
   disconnect: (sessionId: string) => Promise<void>;
   setActiveSession: (sessionId: string | null) => void;
   getActiveSession: () => Session | null;
@@ -69,7 +69,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  connectWithSavedPassword: async (connectionId: string, connLabel: string) => {
+  connectWithSavedPassword: async (connectionId: string, connLabel: string, trustNewHostKey = false) => {
     const tempId = crypto.randomUUID();
     const session: Session = {
       id: tempId,
@@ -85,7 +85,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
 
     try {
-      const sessionId = await tauri.connectWithSavedPassword(connectionId);
+      const sessionId = await tauri.connectWithSavedPassword(connectionId, trustNewHostKey);
 
       void attachSessionStatusListener(sessionId);
 
@@ -115,7 +115,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  connectWithSavedPassphrase: async (connectionId: string, connLabel: string) => {
+  connectWithSavedPassphrase: async (connectionId: string, connLabel: string, trustNewHostKey = false) => {
     const tempId = crypto.randomUUID();
     const session: Session = {
       id: tempId,
@@ -131,7 +131,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
 
     try {
-      const sessionId = await tauri.connectWithSavedPassphrase(connectionId);
+      const sessionId = await tauri.connectWithSavedPassphrase(connectionId, trustNewHostKey);
 
       void attachSessionStatusListener(sessionId);
 
@@ -161,7 +161,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  reconnect: async (sessionId: string) => {
+  reconnect: async (sessionId: string, trustNewHostKey = false) => {
     const session = get().sessions[sessionId];
     if (!session) {
       throw new Error(`会话不存在: ${sessionId}`);
@@ -179,7 +179,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
 
     try {
-      await tauri.sshReconnect(sessionId, connectionId);
+      await tauri.sshReconnect(sessionId, connectionId, trustNewHostKey);
       void attachSessionStatusListener(sessionId);
       set((state) => {
         const existing = state.sessions[sessionId];

@@ -3,6 +3,8 @@ import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
+import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
 import type { SavedConnection, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import Modal from '@/components/ui/Modal';
@@ -33,6 +35,7 @@ export default function ConnectionList() {
   const [editingConnection, setEditingConnection] =
     useState<SavedConnection | undefined>(undefined);
   const { prompt: promptPassword, Prompt: PasswordPromptEl } = useConnectWithPassword();
+  const mismatch = useHostKeyMismatch();
 
   useEffect(() => {
     fetchConnections();
@@ -59,8 +62,17 @@ export default function ConnectionList() {
    * Attempt to connect with the given password (or no password for non-Password
    * methods). On password-auth failure with a saved password, the stored entry
    * is purged and the user is prompted to re-enter.
+   *
+   * `trust` is only set true on the retry path after the user confirms the
+   * HostKeyMismatch modal — it drives `KnownHostsStore::replace` in the
+   * backend so the stored fingerprint is overwritten rather than rejected.
    */
-  const doConnect = async (conn: SavedConnection, password?: string, passphrase?: string) => {
+  const doConnect = async (
+    conn: SavedConnection,
+    password?: string,
+    passphrase?: string,
+    trust = false,
+  ) => {
     let authMethod: ConnectionConfig['authMethod'];
     switch (conn.authMethod) {
       case 'Password':
@@ -87,6 +99,7 @@ export default function ConnectionList() {
       username: conn.username,
       authMethod,
       connectionId: conn.id,
+      trustNewHostKey: trust,
     };
     try {
       const sessionId = await connect(config);
@@ -94,6 +107,16 @@ export default function ConnectionList() {
         onConnected(config.connectionId, sessionId);
       }
     } catch (err) {
+      if (!trust) {
+        const m = asHostKeyMismatch(parseAppError(err));
+        if (m) {
+          mismatch.prompt({
+            data: m,
+            onTrust: () => doConnect(conn, password, passphrase, true),
+          });
+          return;
+        }
+      }
       console.error('连接失败:', err);
     }
   };
@@ -151,11 +174,26 @@ export default function ConnectionList() {
             if (connection.id) {
               onConnected(connection.id, sessionId);
             }
+            return;
           } catch (err) {
+            const m = asHostKeyMismatch(parseAppError(err));
+            if (m) {
+              mismatch.prompt({
+                data: m,
+                onTrust: async () => {
+                  try {
+                    const sid = await connectWithSavedPassword(connection.id, connLabel, true);
+                    if (connection.id) onConnected(connection.id, sid);
+                  } catch (e) {
+                    console.error('连接失败:', e);
+                  }
+                },
+              });
+              return;
+            }
             console.warn('连接失败:', err);
             return;
           }
-          return;
         }
       } catch (err) {
         console.warn('检查已保存密码失败:', err);
@@ -175,6 +213,21 @@ export default function ConnectionList() {
           onConnected(connection.id, sessionId);
           return;
         } catch (err) {
+          const m = asHostKeyMismatch(parseAppError(err));
+          if (m) {
+            mismatch.prompt({
+              data: m,
+              onTrust: async () => {
+                try {
+                  const sid = await connectWithSavedPassphrase(connection.id, connLabel, true);
+                  onConnected(connection.id, sid);
+                } catch (e) {
+                  console.error('连接失败:', e);
+                }
+              },
+            });
+            return;
+          }
           console.warn('passphrase 连接失败，尝试无 passphrase:', err);
         }
       }
@@ -192,6 +245,19 @@ export default function ConnectionList() {
         }
         return;
       } catch (err) {
+        const m = asHostKeyMismatch(parseAppError(err));
+        if (m) {
+          mismatch.prompt({
+            data: m,
+            onTrust: () => doConnect(
+              connection,
+              undefined,
+              undefined,
+              true,
+            ),
+          });
+          return;
+        }
         console.warn('无 passphrase 连接失败，可能私钥已加密:', err);
       }
       promptForPassphrase(connection);
@@ -340,6 +406,9 @@ export default function ConnectionList() {
 
       {/* Password prompt */}
       {PasswordPromptEl}
+
+      {/* Host key mismatch prompt */}
+      {mismatch.Modal}
     </ListPanel>
   );
 }
