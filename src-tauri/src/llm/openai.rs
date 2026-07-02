@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::error::Error as StdError;
 use std::time::Duration;
 
@@ -101,8 +100,6 @@ impl OpenAiProvider {
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
-        let allowed_tool_names: HashSet<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        let tool_calling_enabled = !allowed_tool_names.is_empty();
         let req_body = build_request_body(&self.config, messages, tools, true);
 
         let response = self
@@ -145,8 +142,6 @@ impl OpenAiProvider {
                             &mut accumulated_text,
                             &mut accumulated_reasoning,
                             &mut tool_calls,
-                            &allowed_tool_names,
-                            tool_calling_enabled,
                             event_tx,
                         );
                     }
@@ -598,8 +593,6 @@ fn process_chunk(
     accumulated_text: &mut String,
     accumulated_reasoning: &mut String,
     tool_calls: &mut Vec<PartialToolCall>,
-    allowed_tool_names: &HashSet<&str>,
-    tool_calling_enabled: bool,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
 ) {
     for choice in &chunk.choices {
@@ -620,15 +613,13 @@ fn process_chunk(
                     });
                 }
             }
-            if tool_calling_enabled {
-                if let Some(ref tcs) = delta.tool_calls {
-                    for delta_tc in tcs {
-                        let idx = delta_tc.index.unwrap_or(0) as usize;
-                        while tool_calls.len() <= idx {
-                            tool_calls.push(PartialToolCall::default());
-                        }
-                        tool_calls[idx].apply_delta(delta_tc, allowed_tool_names, event_tx);
+            if let Some(ref tcs) = delta.tool_calls {
+                for delta_tc in tcs {
+                    let idx = delta_tc.index.unwrap_or(0) as usize;
+                    while tool_calls.len() <= idx {
+                        tool_calls.push(PartialToolCall::default());
                     }
+                    tool_calls[idx].apply_delta(delta_tc, event_tx);
                 }
             }
         }
@@ -646,7 +637,7 @@ fn assemble_final_message(
         Some(
             tool_calls
                 .into_iter()
-                .filter(|tc| !tc.id.is_empty() && tc.allowed == Some(true))
+                .filter(|tc| !tc.id.is_empty())
                 .map(|tc| {
                     let arguments = serde_json::from_str(&tc.arguments_buf).unwrap_or_else(|_| {
                         serde_json::Value::String(tc.arguments_buf.clone())
@@ -679,63 +670,39 @@ struct PartialToolCall {
     id: String,
     name: String,
     arguments_buf: String,
-    allowed: Option<bool>,
     start_emitted: bool,
-    pending_arguments: Vec<String>,
 }
 
 impl PartialToolCall {
     fn apply_delta(
         &mut self,
         delta_tc: &DeltaToolCall,
-        allowed_tool_names: &HashSet<&str>,
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
     ) {
         if let Some(ref id) = delta_tc.id {
             if self.id.is_empty() {
                 self.id = id.clone();
-                self.maybe_emit_start(event_tx);
             }
         }
         if let Some(ref func) = delta_tc.function {
             if let Some(ref name) = func.name {
                 if self.name.is_empty() {
-                    self.allowed = Some(allowed_tool_names.contains(name.as_str()));
-                    if self.allowed == Some(true) {
-                        self.name = name.clone();
-                        self.maybe_emit_start(event_tx);
-                        for args_delta in self.pending_arguments.drain(..) {
-                            self.arguments_buf.push_str(&args_delta);
-                            let _ = event_tx.send(StreamEvent::ToolCallDelta {
-                                id: self.id.clone(),
-                                arguments_delta: args_delta,
-                            });
-                        }
-                    } else {
-                        self.pending_arguments.clear();
-                    }
+                    self.name = name.clone();
+                    self.maybe_emit_start(event_tx);
                 }
             }
             if let Some(ref args_delta) = func.arguments {
-                if self.allowed == Some(true) {
-                    self.arguments_buf.push_str(args_delta);
-                    let _ = event_tx.send(StreamEvent::ToolCallDelta {
-                        id: self.id.clone(),
-                        arguments_delta: args_delta.clone(),
-                    });
-                } else if self.allowed.is_none() {
-                    self.pending_arguments.push(args_delta.clone());
-                }
+                self.arguments_buf.push_str(args_delta);
+                let _ = event_tx.send(StreamEvent::ToolCallDelta {
+                    id: self.id.clone(),
+                    arguments_delta: args_delta.clone(),
+                });
             }
         }
     }
 
     fn maybe_emit_start(&mut self, event_tx: &mpsc::UnboundedSender<StreamEvent>) {
-        if self.allowed == Some(true)
-            && !self.id.is_empty()
-            && !self.name.is_empty()
-            && !self.start_emitted
-        {
+        if !self.id.is_empty() && !self.name.is_empty() && !self.start_emitted {
             let _ = event_tx.send(StreamEvent::ToolCallStart {
                 id: self.id.clone(),
                 name: self.name.clone(),
@@ -821,7 +788,11 @@ fn build_request_body(
                     .collect()
             }),
             tool_call_id: m.tool_call_id.clone(),
-            reasoning_content: m.reasoning_content.clone(),
+            reasoning_content: if m.tool_calls.is_some() {
+                None
+            } else {
+                m.reasoning_content.clone()
+            },
         })
         .collect();
 
