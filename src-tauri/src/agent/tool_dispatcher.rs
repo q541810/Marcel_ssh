@@ -4,7 +4,7 @@ use tauri::Emitter;
 use crate::emit_event;
 use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
-use crate::agent::sandbox::{assess_risk, RiskLevel};
+use crate::agent::sandbox::{assess_risk, split_command_chain, RiskLevel};
 use crate::agent::task::AgentMode;
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
@@ -95,8 +95,8 @@ impl DispatchResult {
     }
     fn unknown(name: &str) -> Self {
         Self {
-            summary: format!("unknown tool: {}", name),
-            output: format!("Unknown tool: {}", name),
+            summary: format!("{} (not found)", name),
+            output: format!("没有这个tool: {}", name),
             success: false,
             blocked: false,
             was_timeout: false,
@@ -401,31 +401,41 @@ impl ToolDispatcher {
 }
 
 fn command_list_requires_confirm(cmd: &str, settings: &AgentModeSettings) -> bool {
-    let base = cmd
-        .trim()
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .rsplit('/')
-        .next()
-        .unwrap_or("");
-    let in_list = settings.command_list.iter().any(|c| c == base);
-    match settings.list_mode {
-        CommandListMode::Allowlist => {
-            if in_list {
-                settings.confirm_each_command
-            } else {
-                true
+    let segments = match split_command_chain(cmd) {
+        Ok(segs) => segs,
+        Err(_) => return true, // conservative: if we can't parse, require confirm
+    };
+    for seg in &segments {
+        let base = seg
+            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        let in_list = settings.command_list.iter().any(|c| c == base);
+        let needs_confirm = match settings.list_mode {
+            CommandListMode::Allowlist => {
+                if in_list {
+                    settings.confirm_each_command
+                } else {
+                    true
+                }
             }
-        }
-        CommandListMode::Denylist => {
-            if in_list {
-                true
-            } else {
-                settings.confirm_each_command
+            CommandListMode::Denylist => {
+                if in_list {
+                    true
+                } else {
+                    settings.confirm_each_command
+                }
             }
+        };
+        if needs_confirm {
+            return true;
         }
     }
+    false
 }
 
 #[cfg(test)]
@@ -525,5 +535,27 @@ mod tests {
         };
         assert!(command_list_requires_confirm("echo hello", &s));
         assert!(command_list_requires_confirm("git status", &s));
+    }
+
+    #[test]
+    fn detects_denylisted_cmd_after_newline() {
+        let s = default_settings();
+        // "ls\nrm -rf /etc" — rm is hidden behind a newline, must be caught
+        assert!(command_list_requires_confirm("ls\nrm -rf /etc", &s));
+        // CRLF variant
+        assert!(command_list_requires_confirm("ls\r\nrm -rf /etc", &s));
+        // Multiple segments, denylisted cmd is the last one
+        assert!(command_list_requires_confirm("ls\necho hi\nmkfs /dev/sda", &s));
+        // Denylisted cmd after semicolon (already worked, regression test)
+        assert!(command_list_requires_confirm("ls; rm -rf /", &s));
+    }
+
+    #[test]
+    fn conservative_on_unparseable_input() {
+        let s = default_settings();
+        // Subshell detected → conservative: require confirm
+        assert!(command_list_requires_confirm("ls $(rm -rf /)", &s));
+        // Backtick subshell
+        assert!(command_list_requires_confirm("ls `rm -rf /`", &s));
     }
 }

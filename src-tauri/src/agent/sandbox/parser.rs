@@ -2,7 +2,8 @@
 //!
 //! Provides:
 //! - [`split_command_chain`] — splits a command line by `;`, `&&`, `||`, `|`,
-//!   `&` while respecting single/double quotes and `\` escapes; rejects
+//!   `&`, and bare `\n`/`\r` (which bash treats as equivalent to `;`);
+//!   respects single/double quotes and `\` escapes; rejects
 //!   command/process substitution forms.
 //! - [`parse_segment`] — tokenizes a single segment via `shell-words` and
 //!   normalizes the base command (strips path, leading env-var assignments,
@@ -29,7 +30,8 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-/// Split a command line into segments at top-level `;`, `&&`, `||`, `|`, `&`.
+/// Split a command line into segments at top-level `;`, `&&`, `||`, `|`, `&`,
+/// and bare `\n`/`\r`.
 /// Honors `'...'`, `"..."` quoting and `\` escapes. Rejects strings containing
 /// `$(`, backticks, or `<(` / `>(` (process substitution).
 pub fn split_command_chain(input: &str) -> Result<Vec<String>, ParseError> {
@@ -124,6 +126,10 @@ pub fn split_command_chain(input: &str) -> Result<Vec<String>, ParseError> {
                     push_segment(&mut segments, &mut cur);
                     i += 1;
                 }
+            }
+            '\n' | '\r' => {
+                push_segment(&mut segments, &mut cur);
+                i += 1;
             }
             _ => {
                 cur.push(c);
@@ -254,7 +260,8 @@ pub fn parse_segment(seg: &str) -> Result<ParsedSegment, ParseError> {
     // Detect embedded shell evaluation.
     let embedded_eval = detect_embedded_eval(&base_cmd, &args);
 
-    // Collect redirect targets (`>`, `>>`, `tee`).
+    // Collect redirect targets (`>`, `>>`, `tee`, and fd-prefixed variants
+    // like `1>`, `2>`, `&>`, `1>>`, `2>>`, `&>>`).
     let mut redirect_targets = Vec::new();
     let mut iter = args.iter().peekable();
     while let Some(a) = iter.next() {
@@ -262,11 +269,7 @@ pub fn parse_segment(seg: &str) -> Result<ParsedSegment, ParseError> {
             if let Some(t) = iter.next() {
                 redirect_targets.push(t.clone());
             }
-        } else if let Some(rest) = a.strip_prefix(">>") {
-            if !rest.is_empty() {
-                redirect_targets.push(rest.to_string());
-            }
-        } else if let Some(rest) = a.strip_prefix('>') {
+        } else if let Some(rest) = strip_redirect_prefix(a) {
             if !rest.is_empty() {
                 redirect_targets.push(rest.to_string());
             }
@@ -304,6 +307,39 @@ fn is_env_assignment(s: &str) -> bool {
                 .map_or(false, |c| c.is_ascii_alphabetic() || c == '_');
     }
     false
+}
+
+/// Strip shell redirect prefixes from a token and return the target path.
+///
+/// Recognized forms (in priority order):
+/// - `>>` / `>`  (bare redirect)
+/// - `&>>` / `&>` (stdout+stderr redirect)
+/// - `N>>` / `N>` where N is a digit 0-9 (fd redirect)
+fn strip_redirect_prefix(s: &str) -> Option<&str> {
+    if let Some(rest) = s.strip_prefix(">>") {
+        return Some(rest);
+    }
+    if let Some(rest) = s.strip_prefix('>') {
+        return Some(rest);
+    }
+    if let Some(rest) = s.strip_prefix("&>>") {
+        return Some(rest);
+    }
+    if let Some(rest) = s.strip_prefix("&>") {
+        return Some(rest);
+    }
+    // fd prefix: single digit followed by `>>` or `>`
+    let first = s.chars().next()?;
+    if first.is_ascii_digit() {
+        let rest = &s[1..];
+        if let Some(target) = rest.strip_prefix(">>") {
+            return Some(target);
+        }
+        if let Some(target) = rest.strip_prefix('>') {
+            return Some(target);
+        }
+    }
+    None
 }
 
 /// Strip leading `/path/to/`, surrounding quotes, and a leading backslash.
@@ -439,5 +475,63 @@ mod tests {
         assert_eq!(p.redirect_targets, vec!["/etc/passwd".to_string()]);
         let p = parse_segment("echo x >>/etc/hosts").unwrap();
         assert_eq!(p.redirect_targets, vec!["/etc/hosts".to_string()]);
+    }
+
+    #[test]
+    fn split_handles_newlines_as_separators() {
+        // Bare newline acts like `;` in bash
+        assert_eq!(
+            split_command_chain("ls\nrm -rf /etc").unwrap(),
+            vec!["ls".to_string(), "rm -rf /etc".to_string()]
+        );
+        // CRLF
+        assert_eq!(
+            split_command_chain("ls\r\nrm -rf /tmp").unwrap(),
+            vec!["ls".to_string(), "rm -rf /tmp".to_string()]
+        );
+        // Multiple newlines, no empty segments
+        assert_eq!(
+            split_command_chain("a\n\nb\n\nc").unwrap(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        // Newline inside quotes is NOT a separator
+        assert_eq!(
+            split_command_chain("echo \"a\nb\"").unwrap(),
+            vec!["echo \"a\nb\"".to_string()]
+        );
+    }
+
+    #[test]
+    fn strip_redirect_prefix_covers_fd_variants() {
+        assert_eq!(strip_redirect_prefix(">file"), Some("file"));
+        assert_eq!(strip_redirect_prefix(">>file"), Some("file"));
+        assert_eq!(strip_redirect_prefix("1>/etc/passwd"), Some("/etc/passwd"));
+        assert_eq!(strip_redirect_prefix("2>/dev/null"), Some("/dev/null"));
+        assert_eq!(strip_redirect_prefix("1>>/etc/hosts"), Some("/etc/hosts"));
+        assert_eq!(strip_redirect_prefix("2>>file"), Some("file"));
+        assert_eq!(strip_redirect_prefix("&>log"), Some("log"));
+        assert_eq!(strip_redirect_prefix("&>>log"), Some("log"));
+        assert_eq!(strip_redirect_prefix("0>file"), Some("file"));
+        // Not a redirect
+        assert_eq!(strip_redirect_prefix("foo"), None);
+        assert_eq!(strip_redirect_prefix("echo"), None);
+    }
+
+    #[test]
+    fn collects_fd_prefixed_redirect_targets() {
+        let p = parse_segment("echo x 1>/etc/passwd").unwrap();
+        assert_eq!(p.redirect_targets, vec!["/etc/passwd".to_string()]);
+
+        let p = parse_segment("cmd 2>/dev/null").unwrap();
+        assert_eq!(p.redirect_targets, vec!["/dev/null".to_string()]);
+
+        let p = parse_segment("cmd &>log").unwrap();
+        assert_eq!(p.redirect_targets, vec!["log".to_string()]);
+
+        let p = parse_segment("echo x 1>>/etc/hosts").unwrap();
+        assert_eq!(p.redirect_targets, vec!["/etc/hosts".to_string()]);
+
+        let p = parse_segment("cmd &>>log").unwrap();
+        assert_eq!(p.redirect_targets, vec!["log".to_string()]);
     }
 }
