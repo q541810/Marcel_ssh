@@ -14,6 +14,23 @@ export default tseslint.config(
   // TypeScript recommended rules
   ...tseslint.configs.recommended,
 
+  // Plugin content scripts (vanilla JS running in main window)
+  {
+    files: ["plugins/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "script",
+      globals: {
+        ...globals.browser,
+        marcel: "writable",
+      },
+    },
+    rules: {
+      "no-console": "off",
+      "@typescript-eslint/no-unused-vars": "off",
+    },
+  },
+
   // Project-specific configuration
   {
     files: ["**/*.{ts,tsx}"],

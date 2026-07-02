@@ -130,7 +130,7 @@ export default function Settings() {
     <SearchRegistryProvider>
       <SettingsLayoutProvider layout={layout}>
         <SettingsActionsProvider value={actionsValue}>
-          <div ref={shellRef} className="settings-shell flex flex-1 h-full min-w-0">
+          <div ref={shellRef} data-region="settings" className="settings-shell flex flex-1 h-full min-w-0">
             <SettingsSidebar
               activeCategory={activeCategory}
               onChange={setActiveCategory}

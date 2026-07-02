@@ -12,6 +12,7 @@ import {
 import NavRail from '@/components/nav/NavRail';
 import TabBar from '@/components/terminal/TabBar';
 import AppHeader from '@/components/layout/AppHeader';
+import HostKeyWarningToast from '@/components/layout/HostKeyWarningToast';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
@@ -34,6 +35,7 @@ import {
 import { registerBuiltinViews } from '@/plugins/builtinViews';
 import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
 import { initPluginIpc } from '@/plugins/pluginIpc';
+import { initRegionBridge, notifyNavChange } from '@/plugins/injection';
 
 const lazyCache = new Map<string, LazyExoticComponent<ComponentType>>();
 
@@ -80,10 +82,15 @@ export default function App() {
   const setAgentMode = useAgentStore((s) => s.setMode);
   const fetchSkills = useSkillStore((s) => s.fetchSkills);
   const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const syncInjections = usePluginStore((s) => s.syncInjections);
+  const rehydrateInjections = usePluginStore((s) => s.rehydrateInjections);
   const pluginRefreshKey = usePluginStore((s) => s.refreshKey);
 
   const sidebarOpen = workspaceLayout?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen;
   const agentPanelOpen = workspaceLayout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
+  const disabledPlugins = useSettingsStore((s) => s.settings.disabledPlugins);
+  const disableAllInjections = useSettingsStore((s) => s.settings.disableAllInjections);
+  const authorizedCapabilities = useSettingsStore((s) => s.settings.authorizedCapabilities);
   const centerProviders = useMemo(() => byMount(providers, 'center'), [providers]);
   const agentProviders = useMemo(() => byMount(providers, 'agent'), [providers]);
   const activeProvider = useMemo(
@@ -91,13 +98,18 @@ export default function App() {
     [providers, activeId],
   );
   const isExclusive = activeProvider?.exclusive ?? false;
+  // sidebar: 跟随当前激活的 NavRail 项，插件可用（需设置 navGroup 才能出现在导航栏）
   const sidebarProvider =
     !isExclusive && activeProvider?.mount === 'sidebar' ? activeProvider : null;
+  // center: 非 exclusive 时固定取 order 最小者，builtin.terminal(order=10, 不可禁用) 常驻，插件实际无法使用
   const centerProvider = isExclusive ? activeProvider : centerProviders[0];
+  // agent: 固定取 order 最小者，builtin.agent(order=10, 不可禁用) 常驻，
+  // 插件 agent 视图必须 order<10 才能显示（同时顶掉内置 Agent 面板），实际不可用
   const agentProvider = isExclusive ? null : agentProviders[0];
   const effectiveSidebarOpen = sidebarOpen && !isExclusive && sidebarProvider !== null;
   const effectiveAgentPanelOpen = agentPanelOpen && !isExclusive && agentProvider !== null;
   const [agentPanelMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
+  const agentPanelWasUnmountedRef = useRef(!effectiveAgentPanelOpen);
 
   useEffect(() => {
     attachTransferListeners();
@@ -136,6 +148,18 @@ export default function App() {
       agentPanelUnmountTimeoutRef.current = null;
     }, AGENT_PANEL_COLLAPSE_MS);
   }, [effectiveAgentPanelOpen]);
+
+  useEffect(() => {
+    if (!agentPanelMounted) return;
+    if (!agentPanelWasUnmountedRef.current) return;
+    agentPanelWasUnmountedRef.current = false;
+    rehydrateInjections();
+  }, [agentPanelMounted, rehydrateInjections]);
+
+  useEffect(() => {
+    if (agentPanelMounted) return;
+    agentPanelWasUnmountedRef.current = true;
+  }, [agentPanelMounted]);
 
   useEffect(() => {
     const el = mainRowRef.current;
@@ -299,10 +323,29 @@ export default function App() {
     initPluginIpc().catch(err => {
       console.error('Failed to init plugin IPC:', err);
     });
+    initRegionBridge();
     checkUpdate().then(res => {
       if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
     }).catch(() => {});
   }, [loadSettings, fetchSkills, fetchPlugins]);
+
+  // Reconcile content-script injections when plugin enablement / capability
+  // authorization / safe-mode toggle changes. Runs after fetchPlugins (which
+  // does its own sync) and on every settings change that affects injection
+  // eligibility.
+  useEffect(() => {
+    syncInjections();
+  }, [syncInjections, disabledPlugins, disableAllInjections, authorizedCapabilities]);
+
+  // Emit a UI nav-change event to content scripts when the active view
+  // switches. Also fire once on mount so late-loaded plugins learn the
+  // initial view.
+  const activeIdRef = useRef(activeId);
+  activeIdRef.current = activeId;
+  useEffect(() => {
+    notifyNavChange(null, activeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!settingsLoaded) return;
@@ -322,6 +365,7 @@ export default function App() {
     if (id === activeId) return;
 
     setActiveId(id);
+    notifyNavChange(activeId, id);
     const p = providers.find((x) => x.id === id);
     if (p && p.mount === 'sidebar' && !sidebarOpen) {
       persistWorkspaceLayout({ sidebarOpen: true });
@@ -357,6 +401,7 @@ export default function App() {
           <NavRail activeId={activeId} onChange={handleNavChange} />
 
           <aside
+            data-region="sidebar"
             className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
             style={{
               width: effectiveSidebarOpen ? `${sidebarWidth}px` : '0rem',
@@ -385,7 +430,7 @@ export default function App() {
             />
           )}
 
-          <div className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          <div data-region="center" className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
             {isExclusive ? (
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
                 {centerProvider && centerProvider.pluginId !== 'builtin' ? (
@@ -425,6 +470,7 @@ export default function App() {
                   style={{ touchAction: 'none' }}
                 />
                 <aside
+                  data-region="agent"
                   className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
                   style={{ width: `${agentPanelWidth}px` }}
                 >
@@ -449,6 +495,13 @@ export default function App() {
       )}
 
       <SettingsWarningToast />
+      <HostKeyWarningToast />
+
+      {/* Shared overlay container for content-script plugins. Fixed, full
+          screen, no pointer events by default; plugins opt-in via
+          marcel.overlay.create(). Children are tagged data-plugin-id for
+          cleanup on deactivation. */}
+      <div id="marcel-overlays" style={{ position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: 99998 }} />
 
       <OnboardingWizard
         open={showOnboarding}

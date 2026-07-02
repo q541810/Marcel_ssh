@@ -4,6 +4,9 @@ import { useViewStore } from '@/stores/viewStore';
 
 const BUILTIN_PLUGIN_ID = 'builtin';
 
+// 注册内置视图。builtin 不会经过 pluginStore 的 disabledPlugins 过滤，因此不可禁用。
+// 其中 builtin.terminal(center, order=10) 和 builtin.agent(agent, order=10) 会挤占
+// 同 mount 的插件视图（App.tsx 只取 order 最小者），导致插件 center/agent 视图实际无法显示。
 export function registerBuiltinViews(): void {
   const store = useViewStore.getState();
   const providers: ViewProvider[] = [

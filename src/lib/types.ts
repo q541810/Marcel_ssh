@@ -2,6 +2,10 @@ import type { ComponentType, ReactNode } from 'react';
 
 // View Registry types
 
+// 视图挂载点。对外可用的只有 sidebar 和 bottom：
+// - sidebar: 左侧面板，由 NavRail 切换
+// - bottom: 终端底部 tab，由 BottomTabBar 切换
+// center 和 agent 被 builtin 常驻挤占（见 App.tsx 渲染逻辑 + builtinViews.tsx），插件实际无法使用。
 export type MountPoint = 'sidebar' | 'center' | 'bottom' | 'agent';
 export type NavGroup = 'top' | 'bottom';
 
@@ -49,6 +53,31 @@ export interface PluginAgentToolDef {
   riskLevel?: string;
 }
 
+/**
+ * A content-script injection entry. The plugin's JS runs inside the main
+ * window and can manipulate the DOM freely (IPC calls still go through the
+ * capability-checked proxy). CSS is injected as a global `<style>` tag.
+ */
+export interface PluginInjectionDef {
+  /** Unique id within the plugin (e.g. "main-ui"). */
+  id: string;
+  /**
+   * Which main-UI regions this injection targets. Values match `data-region`
+   * attributes: "sidebar" / "center" / "agent" / "terminal" / "settings" /
+   * "sessions" / "skills" / "mcp" / "agent-panel". "*" means always inject.
+   */
+  matches: string[];
+  /** CSS file paths relative to the plugin root, injected as `<style>` tags. */
+  styles: string[];
+  /** JS file paths relative to the plugin root, executed with the `marcel`
+   *  runtime API as the argument. */
+  scripts: string[];
+  /** When to inject: "idle" (default) or "instant". */
+  runAt: string;
+  /** Sort weight for multi-plugin ordering (lower = earlier). */
+  order: number;
+}
+
 export interface PluginManifest {
   id: string;
   version: string;
@@ -59,6 +88,8 @@ export interface PluginManifest {
   views: PluginViewDef[];
   agentTools: PluginAgentToolDef[];
   configView?: string;
+  /** Content-script injections. Requires the `ui.inject` capability. */
+  injections: PluginInjectionDef[];
 }
 
 export interface PluginHttpRequest {
@@ -407,6 +438,10 @@ export interface AppSettings {
    * If a plugin IS in the map, only the listed capabilities are authorized.
    */
   authorizedCapabilities: Record<string, string[]>;
+  /** Safe-mode switch: when true, skip all content-script injections on
+   *  startup. Used to recover from a plugin whose injected JS hangs the
+   *  main window. */
+  disableAllInjections: boolean;
 }
 
 // LLM stream events

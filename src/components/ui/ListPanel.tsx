@@ -9,6 +9,8 @@ interface ListPanelProps {
   searchPlaceholder?: string;
   status?: ReactNode;
   children: ReactNode;
+  /** Forwarded to the root div (e.g. `data-region`). */
+  [key: string]: unknown;
 }
 
 export default function ListPanel({
@@ -20,9 +22,10 @@ export default function ListPanel({
   searchPlaceholder = '搜索...',
   status,
   children,
+  ...rest
 }: ListPanelProps) {
   return (
-    <div className="flex flex-col h-full">
+    <div {...rest} className="flex flex-col h-full">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
         <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">

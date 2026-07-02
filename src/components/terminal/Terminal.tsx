@@ -187,7 +187,7 @@ export default function Terminal() {
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
-    <div ref={terminalRootRef} className="flex flex-col flex-1 h-full bg-zinc-900">
+    <div ref={terminalRootRef} data-region="terminal" className="flex flex-col flex-1 h-full bg-zinc-900">
       <div className="relative flex-1 min-h-0">
         <div ref={wrapperRef} className="absolute inset-0" />
         {!hasSessions && (

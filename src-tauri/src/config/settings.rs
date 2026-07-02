@@ -336,6 +336,11 @@ pub struct AppSettings {
     /// If a plugin IS in the map, only the listed capabilities are authorized.
     #[serde(default)]
     pub authorized_capabilities: HashMap<String, Vec<String>>,
+    /// Safe-mode switch: when true, skip all content-script injections on
+    /// startup. Used to recover from a plugin whose injected JS hangs the
+    /// main window.
+    #[serde(default)]
+    pub disable_all_injections: bool,
 }
 
 fn default_file_manager_path() -> String {
@@ -414,6 +419,7 @@ impl Default for AppSettings {
             has_completed_onboarding: false,
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
+            disable_all_injections: false,
         }
     }
 }
@@ -618,5 +624,29 @@ mod tests {
         let parsed: AppSettings =
             serde_json::from_str(json).expect("missing disabledPlugins should load");
         assert!(parsed.disabled_plugins.is_empty());
+    }
+
+    #[test]
+    fn disable_all_injections_defaults_false() {
+        let s = AppSettings::default();
+        assert!(!s.disable_all_injections);
+    }
+
+    #[test]
+    fn disable_all_injections_loads_missing_as_false() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("missing disableAllInjections should load");
+        assert!(!parsed.disable_all_injections);
+    }
+
+    #[test]
+    fn disable_all_injections_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.disable_all_injections = true;
+        let json = serde_json::to_string(&settings).expect("serialize");
+        assert!(json.contains("\"disableAllInjections\":true"));
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.disable_all_injections);
     }
 }

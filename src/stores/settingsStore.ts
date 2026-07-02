@@ -66,6 +66,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hasCompletedOnboarding: false,
   disabledPlugins: [],
   authorizedCapabilities: {},
+  disableAllInjections: false,
 };
 
 interface SettingsState {

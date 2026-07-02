@@ -69,6 +69,7 @@ export default function McpList() {
 
   return (
     <ListPanel
+      data-region="mcp"
       title="自定义 MCP"
       onAdd={() => { setEditing(null); setModalOpen(true); }}
       addButtonTitle="新建 MCP"

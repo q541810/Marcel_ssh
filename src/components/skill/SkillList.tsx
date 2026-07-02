@@ -121,6 +121,7 @@ export default function SkillList() {
 
   return (
     <ListPanel
+      data-region="skills"
       title="技能"
       onAdd={() => setCreateOpen(true)}
       addButtonTitle="新建技能"

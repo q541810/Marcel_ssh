@@ -22,6 +22,7 @@ const testManifests: PluginManifest[] = [
       { id: 'v1', mount: 'sidebar', title: 'Hello', order: 10, entry: 'index.html' },
     ],
     agentTools: [],
+    injections: [],
   },
   {
     id: 'world',
@@ -34,6 +35,7 @@ const testManifests: PluginManifest[] = [
       { id: 'v1', mount: 'center', title: 'World', order: 20, entry: 'index.html' },
     ],
     agentTools: [],
+    injections: [],
   },
 ];
 
@@ -51,6 +53,7 @@ const testManifestWithIcons: PluginManifest = {
     { id: 'none', mount: 'sidebar', title: 'NONE', order: 40, entry: 'i.html' },
   ],
   agentTools: [],
+  injections: [],
 };
 
 describe('pluginStore', () => {

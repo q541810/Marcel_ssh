@@ -315,6 +315,7 @@ export default function ConnectionList() {
 
   return (
     <ListPanel
+      data-region="sessions"
       title="已保存的连接"
       onAdd={openNewConnectionForm}
       addButtonTitle="新建连接"

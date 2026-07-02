@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings } from 'lucide-react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getPluginDir, openPluginDir } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import type { PluginManifest } from '@/lib/types';
+import { getInjectionStatuses, onStatusChange, retryInjection, type InjectionStatus } from '@/plugins/injection';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
 import { useSettingsActions } from './SettingsActionsContext';
@@ -19,6 +20,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
   'fs.write': '写入本地文件',
   'net.request': '发起网络请求',
   'notification': '发送通知',
+  'events': '订阅应用事件',
+  'ui.inject': '注入主界面（JS/CSS）',
 };
 
 const MOUNT_LABELS: Record<string, string> = {
@@ -27,6 +30,90 @@ const MOUNT_LABELS: Record<string, string> = {
   bottom: '底部面板',
   agent: '右侧面板',
 };
+
+/** Subscribe to injection status changes from the engine and re-render on
+ *  any change (activation, deactivation, error, retry). */
+function useInjectionStatuses(): InjectionStatus[] {
+  const [statuses, setStatuses] = useState<InjectionStatus[]>(() => getInjectionStatuses());
+  useEffect(() => {
+    const update = () => setStatuses(getInjectionStatuses());
+    update();
+    return onStatusChange(update);
+  }, []);
+  return statuses;
+}
+
+/** Inline display of one plugin's content-script injections: per-injection
+ *  active/error state + retry button. Shown only when the manifest declares
+ *  injections. */
+function InjectionDetail({
+  manifest,
+  status,
+}: {
+  manifest: PluginManifest;
+  status?: InjectionStatus;
+}) {
+  const injectionCount = manifest.injections.length;
+  if (injectionCount === 0) return null;
+
+  // Build a lookup by local id so we can show active/error per declared injection.
+  const statusById = new Map((status?.injections ?? []).map((i) => [i.id, i]));
+  const anyError = (status?.injections ?? []).some((i) => i.error);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+        <Syringe className="w-3.5 h-3.5" />
+        <span>{injectionCount} 个注入</span>
+        {anyError && (
+          <span className="inline-flex items-center gap-1 text-red-400">
+            <AlertCircle className="w-3 h-3" />
+            有错误
+          </span>
+        )}
+      </div>
+      {manifest.injections.map((inj) => {
+        const st = statusById.get(inj.id);
+        const err = st?.error;
+        return (
+          <div
+            key={inj.id}
+            className="rounded-md bg-zinc-800/60 px-2 py-1.5 text-[11px] text-zinc-400"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono">{inj.id}</span>
+              <span className={st?.active && !err ? 'text-emerald-400' : err ? 'text-red-400' : 'text-zinc-500'}>
+                {st?.active && !err ? '运行中' : err ? '错误' : '未激活'}
+              </span>
+            </div>
+            <div className="text-zinc-600 mt-0.5">
+              {inj.styles.length} CSS / {inj.scripts.length} JS · targets: {inj.matches.join(', ') || '*'}
+            </div>
+            {err && (
+              <div className="mt-1.5 space-y-1">
+                <pre className="whitespace-pre-wrap break-all text-red-400 font-mono text-[10px] max-h-24 overflow-y-auto">
+                  {err}
+                </pre>
+                <button
+                  type="button"
+                  onClick={() => {
+                    retryInjection(manifest, inj.id).catch((e) => {
+                      console.error('retry injection failed:', e);
+                    });
+                  }}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-700 text-zinc-200 hover:bg-zinc-600 transition-colors"
+                >
+                  <RotateCw className="w-3 h-3" />
+                  重试
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function CapabilityManager({ pluginId, declared }: { pluginId: string; declared: string[] }) {
   const { settings, update } = useSettingsActions();
@@ -77,7 +164,7 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
   );
 }
 
-function PluginCard({ manifest }: { manifest: PluginManifest }) {
+function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; injectionStatus?: InjectionStatus }) {
   const { settings, update } = useSettingsActions();
   const disabledSet = new Set(settings.disabledPlugins ?? []);
   const isDisabled = disabledSet.has(manifest.id);
@@ -96,6 +183,7 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
   const toolCount = manifest.agentTools.length;
   const capCount = manifest.capabilities.length;
   const hasConfigView = !!manifest.configView;
+  const injectionCount = manifest.injections.length;
 
   return (
     <>
@@ -160,6 +248,12 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
               <span>{capCount} 个权限</span>
             </div>
           )}
+          {injectionCount > 0 && (
+            <div className="flex items-center gap-1.5">
+              <Syringe className="w-3.5 h-3.5" />
+              <span>{injectionCount} 个注入</span>
+            </div>
+          )}
         </div>
 
         {/* Views detail */}
@@ -190,6 +284,9 @@ function PluginCard({ manifest }: { manifest: PluginManifest }) {
             ))}
           </div>
         )}
+
+        {/* Injection detail */}
+        <InjectionDetail manifest={manifest} status={injectionStatus} />
 
         {/* Capability management */}
         {capCount > 0 && (
@@ -235,6 +332,14 @@ export function PluginSection() {
   const [pluginDir, setPluginDir] = useState('');
   const [copied, setCopied] = useState(false);
 
+  const injectionStatuses = useInjectionStatuses();
+  const statusByPlugin = new Map(injectionStatuses.map((s) => [s.pluginId, s]));
+
+  // Safe-mode toggle (disableAllInjections) lives in settings via the shared
+  // SettingsActionsContext, same as other settings.
+  const { settings, update } = useSettingsActions();
+  const safeModeOn = settings.disableAllInjections ?? false;
+
   useEffect(() => {
     getPluginDir().then(setPluginDir);
   }, []);
@@ -247,8 +352,8 @@ export function PluginSection() {
 
   return (
     <div className="space-y-6">
-      {/* Plugin directory + refresh */}
-      <Card id="settings-plugins" title="插件" description="管理本地安装的插件">
+      {/* Plugin directory + refresh + safe mode */}
+      <Card id="settings-plugins" title="插件" description="管理本地安装的插件与主界面注入">
         <SettingItem
           id="plugins-directory"
           label="插件目录"
@@ -289,6 +394,19 @@ export function PluginSection() {
             </Button>
           </div>
         </SettingItem>
+
+        <SettingItem
+          id="plugins-safe-mode"
+          label="注入安全模式"
+          description="开启后跳过所有插件内容脚本注入。插件 JS 卡死主界面时用此开关自救，重启后生效。"
+          sectionId="settings-plugins"
+          keywords={['safe', 'mode', 'injection', '安全模式', '注入', 'disable']}
+        >
+          <Toggle
+            checked={safeModeOn}
+            onChange={() => update({ disableAllInjections: !safeModeOn })}
+          />
+        </SettingItem>
       </Card>
 
       {/* Error */}
@@ -308,7 +426,7 @@ export function PluginSection() {
       )}
 
       {!loading && !error && manifests.map((m) => (
-        <PluginCard key={m.id} manifest={m} />
+        <PluginCard key={m.id} manifest={m} injectionStatus={statusByPlugin.get(m.id)} />
       ))}
 
     </div>
