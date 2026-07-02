@@ -10,7 +10,6 @@ import { NotificationSection } from './NotificationSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
-import { WhipSection } from './WhipSection';
 import { PluginSection } from './PluginSection';
 import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS, SETTINGS_SECTION_SPAN } from './settingsNavigation';
 import { useSettingsLayout } from './helpers';
@@ -46,7 +45,6 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
   const allSections = [
     { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
     { id: 'settings-display', element: <ConversationDisplaySection /> },
-    { id: 'settings-whip', element: <WhipSection /> },
     { id: 'settings-llm', element: <ModelServiceSection /> },
     { id: 'settings-llm-retry', element: <ModelRetrySection /> },
     { id: 'settings-command-policy', element: <AgentPolicySection /> },

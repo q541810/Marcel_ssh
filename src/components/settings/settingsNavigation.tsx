@@ -13,7 +13,6 @@ export type SettingsSectionSpan = 'half' | 'full';
 export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-appearance': 'half',
   'settings-display': 'half',
-  'settings-whip': 'half',
   'settings-llm': 'full',
   'settings-llm-retry': 'full',
   'settings-command-policy': 'full',
@@ -30,7 +29,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'interface',
     label: '界面',
     icon: <Monitor className="w-4 h-4" />,
-    sections: ['settings-appearance', 'settings-display', 'settings-whip'],
+    sections: ['settings-appearance', 'settings-display'],
   },
   {
     id: 'model',
@@ -75,7 +74,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 ];
 
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
-  interface: ['settings-appearance', 'settings-display', 'settings-whip'],
+  interface: ['settings-appearance', 'settings-display'],
   model: ['settings-llm', 'settings-llm-retry'],
   agent: [
     'settings-command-policy',

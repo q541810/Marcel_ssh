@@ -300,18 +300,6 @@ pub struct AppSettings {
     /// processed and returned to the API as required by some models.
     #[serde(default)]
     pub hide_thinking_display: bool,
-    /// Whether to enable the whip button in the Agent input area.
-    #[serde(default)]
-    pub whip_enabled: bool,
-    /// Tip velocity threshold for whip crack detection; lower is more sensitive.
-    #[serde(default = "default_whip_crack_speed")]
-    pub whip_crack_speed: u16,
-    /// Whether a whip crack appends text to the Agent input.
-    #[serde(default = "default_true")]
-    pub whip_auto_input_enabled: bool,
-    /// User-editable phrases appended when the whip cracks.
-    #[serde(default = "default_whip_phrases")]
-    pub whip_phrases: Vec<String>,
     /// Notification preferences.
     #[serde(default)]
     pub notification_settings: NotificationSettings,
@@ -361,18 +349,6 @@ fn default_folder_upload_compression_level() -> i64 {
 fn default_panel_height() -> u16 {
     256
 }
-fn default_whip_crack_speed() -> u16 {
-    240
-}
-fn default_whip_phrases() -> Vec<String> {
-    vec![
-        "快点干活，别磨蹭。".into(),
-        "再慢鞭子又要响了。".into(),
-        "别装死，继续。".into(),
-        "速度，别让我等。".into(),
-        "醒醒，该干活了。".into(),
-    ]
-}
 fn default_command_timeout() -> u64 {
     180
 }
@@ -408,10 +384,6 @@ impl Default for AppSettings {
             folder_upload_compression_level: default_folder_upload_compression_level(),
             panel_height: default_panel_height(),
             hide_thinking_display: false,
-            whip_enabled: false,
-            whip_crack_speed: default_whip_crack_speed(),
-            whip_auto_input_enabled: true,
-            whip_phrases: default_whip_phrases(),
             notification_settings: NotificationSettings::default(),
             workspace_layout: WorkspaceLayoutSettings::default(),
             custom_protected_paths: vec![],
@@ -526,10 +498,6 @@ mod tests {
         assert!(!s.file_manager_show_hidden);
         assert_eq!(s.folder_upload_compression_level, 6);
         assert!(!s.hide_thinking_display);
-        assert!(!s.whip_enabled);
-        assert_eq!(s.whip_crack_speed, 240);
-        assert!(s.whip_auto_input_enabled);
-        assert!(s.whip_phrases.contains(&"快点干活，别磨蹭。".to_string()));
     }
 
     /// Old configs (before fileManagerPaths was added) should still load — the

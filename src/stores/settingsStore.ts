@@ -3,7 +3,6 @@ import * as tauri from '@/lib/tauri';
 import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
-import { DEFAULT_WHIP_CRACK_SPEED, DEFAULT_WHIP_PHRASES, normalizeWhipPhrases } from '@/lib/whip';
 import { setNotificationVolume } from '@/lib/notificationSound';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
@@ -55,10 +54,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,
-  whipEnabled: false,
-  whipCrackSpeed: DEFAULT_WHIP_CRACK_SPEED,
-  whipAutoInputEnabled: true,
-  whipPhrases: DEFAULT_WHIP_PHRASES,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   customProtectedPaths: [],
@@ -113,9 +108,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
         experimentalSettings: fromDisk.experimentalSettings ?? DEFAULT_EXPERIMENTAL_SETTINGS,
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
-        whipCrackSpeed: fromDisk.whipCrackSpeed ?? DEFAULT_WHIP_CRACK_SPEED,
-        whipAutoInputEnabled: fromDisk.whipAutoInputEnabled ?? true,
-        whipPhrases: normalizeWhipPhrases(fromDisk.whipPhrases),
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       };
       set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey, warning: resp.warning ?? null });

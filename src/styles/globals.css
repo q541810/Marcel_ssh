@@ -77,27 +77,6 @@
   }
 }
 
-@keyframes whip-crack-text {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) rotate(var(--whip-text-rotate, -12deg)) scale(0.72);
-    filter: blur(3px);
-  }
-  16% {
-    opacity: 1;
-    transform: translate(-50%, -50%) rotate(var(--whip-text-rotate, -12deg)) scale(1.12);
-    filter: blur(0);
-  }
-  72% {
-    opacity: 1;
-    transform: translate(-50%, -50%) rotate(var(--whip-text-rotate, -12deg)) scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -72%) rotate(var(--whip-text-rotate, -12deg)) scale(0.94);
-  }
-}
-
 /* Spring utility classes */
 .spring-bounce {
   animation-timing-function: var(--spring-bounce);
@@ -126,10 +105,6 @@
 
 .animate-exploration-count {
   animation: exploration-count-change 240ms var(--spring-smooth) both;
-}
-
-.animate-whip-crack-text {
-  animation: whip-crack-text 1600ms var(--spring-smooth) both;
 }
 
 /* Smooth transitions only where needed — avoid universal selector performance hit */

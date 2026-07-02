@@ -2,19 +2,14 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useSettingsStore } from '@/stores/settingsStore';
-import { usePluginStore } from '@/stores/pluginStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage } from '@/lib/types';
-import { normalizeWhipPhrases } from '@/lib/whip';
-import { WhipOverlay } from '@/components/whip/WhipOverlay';
 import Button from '@/components/ui/Button';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
 import PlanList from './PlanList';
 
 export default function AgentPanel() {
-  const [whipActive, setWhipActive] = useState(false);
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
@@ -30,27 +25,6 @@ export default function AgentPanel() {
   const reconnect = useSessionStore((s) => s.reconnect);
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
-  const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
-  const disabledPlugins = useSettingsStore((s) => s.settings.disabledPlugins);
-  const disableAllInjections = useSettingsStore((s) => s.settings.disableAllInjections);
-  const authorizedCapabilities = useSettingsStore((s) => s.settings.authorizedCapabilities);
-  const whipPlugin = usePluginStore((s) => s.manifests.find((m) => m.id === 'whip'));
-  const whipCapabilityAuthorized =
-    !whipPlugin ||
-    !(whipPlugin.id in authorizedCapabilities) ||
-    (authorizedCapabilities[whipPlugin.id] ?? []).includes('ui.inject');
-  const whipPluginEnabled =
-    !!whipPlugin &&
-    !disabledPlugins.includes('whip') &&
-    !disableAllInjections &&
-    whipPlugin.capabilities.includes('ui.inject') &&
-    whipPlugin.injections.length > 0 &&
-    whipCapabilityAuthorized;
-  // If the whip plugin is active, hide the built-in button to avoid duplicate UI.
-  const showBuiltinWhip = whipEnabled && !whipPluginEnabled;
-  const whipCrackSpeed = useSettingsStore((s) => s.settings.whipCrackSpeed);
-  const whipFloatingTextEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
-  const whipPhrases = useSettingsStore((s) => s.settings.whipPhrases);
   const {
     messages,
     sendPrompt,
@@ -77,12 +51,6 @@ export default function AgentPanel() {
   );
 
   const canInteract = activeSession?.status === 'connected';
-
-  useEffect(() => {
-    if (!showBuiltinWhip && whipActive) {
-      setWhipActive(false);
-    }
-  }, [whipActive, showBuiltinWhip]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
@@ -239,13 +207,6 @@ export default function AgentPanel() {
 
   return (
     <div data-region="agent-panel" className="relative flex flex-col h-full bg-zinc-900">
-      <WhipOverlay
-        active={showBuiltinWhip && whipActive}
-        crackSpeed={whipCrackSpeed ?? 240}
-        phrases={normalizeWhipPhrases(whipPhrases)}
-        showCrackText={whipFloatingTextEnabled ?? true}
-        onDismiss={() => setWhipActive(false)}
-      />
       {/* Approval Dialog */}
       {pendingApproval && (
         <ApprovalDialog
@@ -399,21 +360,7 @@ export default function AgentPanel() {
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
-        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500" data-whip-slot>
-          {showBuiltinWhip && (
-            <button
-              type="button"
-              onClick={() => setWhipActive(true)}
-              className={`flex-shrink-0 self-center ml-1 px-2 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-                whipActive
-                  ? 'bg-amber-500/20 text-amber-300'
-                  : 'text-zinc-400 hover:text-amber-300 hover:bg-zinc-700/60'
-              }`}
-              title="生成鞭子，右键收起"
-            >
-              鞭
-            </button>
-          )}
+        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button
