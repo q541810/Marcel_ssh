@@ -3,13 +3,13 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { usePluginStore } from '@/stores/pluginStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage } from '@/lib/types';
 import { normalizeWhipPhrases } from '@/lib/whip';
 import { WhipOverlay } from '@/components/whip/WhipOverlay';
 import Button from '@/components/ui/Button';
 import AgentMessageList from './AgentMessageList';
-import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
 import ApprovalDialog from './ApprovalDialog';
 import PlanList from './PlanList';
 
@@ -31,6 +31,23 @@ export default function AgentPanel() {
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
   const whipEnabled = useSettingsStore((s) => s.settings.whipEnabled);
+  const disabledPlugins = useSettingsStore((s) => s.settings.disabledPlugins);
+  const disableAllInjections = useSettingsStore((s) => s.settings.disableAllInjections);
+  const authorizedCapabilities = useSettingsStore((s) => s.settings.authorizedCapabilities);
+  const whipPlugin = usePluginStore((s) => s.manifests.find((m) => m.id === 'whip'));
+  const whipCapabilityAuthorized =
+    !whipPlugin ||
+    !(whipPlugin.id in authorizedCapabilities) ||
+    (authorizedCapabilities[whipPlugin.id] ?? []).includes('ui.inject');
+  const whipPluginEnabled =
+    !!whipPlugin &&
+    !disabledPlugins.includes('whip') &&
+    !disableAllInjections &&
+    whipPlugin.capabilities.includes('ui.inject') &&
+    whipPlugin.injections.length > 0 &&
+    whipCapabilityAuthorized;
+  // If the whip plugin is active, hide the built-in button to avoid duplicate UI.
+  const showBuiltinWhip = whipEnabled && !whipPluginEnabled;
   const whipCrackSpeed = useSettingsStore((s) => s.settings.whipCrackSpeed);
   const whipFloatingTextEnabled = useSettingsStore((s) => s.settings.whipAutoInputEnabled);
   const whipPhrases = useSettingsStore((s) => s.settings.whipPhrases);
@@ -62,10 +79,10 @@ export default function AgentPanel() {
   const canInteract = activeSession?.status === 'connected';
 
   useEffect(() => {
-    if (!whipEnabled && whipActive) {
+    if (!showBuiltinWhip && whipActive) {
       setWhipActive(false);
     }
-  }, [whipActive, whipEnabled]);
+  }, [whipActive, showBuiltinWhip]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
@@ -215,42 +232,15 @@ export default function AgentPanel() {
 
   const currentModeInfo = AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
 
-  // ── Preprocess messages: merge consecutive exploration tools ──
-  const renderItems = useMemo<(AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[]>(() => {
-    const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
-    const visibleMessages = messages.filter((msg) => {
-      if (msg.role !== 'assistant') return true;
-      return msg.isLoading || msg.content || msg.reasoningContent || msg.toolCall;
-    });
-    const n = visibleMessages.length;
-    let i = 0;
-    while (i < n) {
-      if (isExplorationTool(visibleMessages[i])) {
-        let j = i;
-        while (j < n && isExplorationTool(visibleMessages[j])) {
-          j++;
-        }
-        if (j - i >= 4) {
-          result.push({ kind: 'exploration', tools: visibleMessages.slice(i, j) });
-          i = j;
-          continue;
-        }
-      }
-      result.push(visibleMessages[i]);
-      i++;
-    }
-    return result;
-  }, [messages]);
-
   const isThinking = useMemo(
     () => messages.some((m) => m.role === 'assistant' && m.isThinking),
     [messages],
   );
 
   return (
-    <div className="relative flex flex-col h-full bg-zinc-900">
+    <div data-region="agent-panel" className="relative flex flex-col h-full bg-zinc-900">
       <WhipOverlay
-        active={whipEnabled && whipActive}
+        active={showBuiltinWhip && whipActive}
         crackSpeed={whipCrackSpeed ?? 240}
         phrases={normalizeWhipPhrases(whipPhrases)}
         showCrackText={whipFloatingTextEnabled ?? true}
@@ -409,8 +399,8 @@ export default function AgentPanel() {
 
       {/* Input area */}
       <div className="p-3 border-t border-zinc-800">
-        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
-          {whipEnabled && (
+        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500" data-whip-slot>
+          {showBuiltinWhip && (
             <button
               type="button"
               onClick={() => setWhipActive(true)}
