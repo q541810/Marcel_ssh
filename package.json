@@ -1,7 +1,7 @@
 {
   "name": "marcel-ssh",
   "private": true,
-  "version": "0.3.8",
+  "version": "0.4.0",
   "description": "Marcel SSH (玛瑟尔 SSH) — AI-Native SSH Client with Autonomous Agent Operations",
   "type": "module",
   "scripts": {
