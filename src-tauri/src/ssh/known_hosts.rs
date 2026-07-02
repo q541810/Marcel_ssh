@@ -60,6 +60,16 @@ pub struct KnownHostsStore {
 }
 
 impl KnownHostsStore {
+    /// Create a purely in-memory store with no backing file.
+    /// Used as the ultimate fallback when even the temp directory is not writable.
+    /// `record`/`replace`/`forget` update the in-memory map but never persist to disk.
+    pub fn in_memory() -> Arc<Self> {
+        Arc::new(Self {
+            path: PathBuf::new(),
+            inner: RwLock::new(KnownHostsFile::default()),
+        })
+    }
+
     /// Load store from disk. Missing file is treated as empty. Corrupt JSON
     /// is renamed aside (`.corrupt.<ts>.bak`) so that the user is forced to
     /// re-confirm host identities rather than silently re-TOFU on next start.
@@ -202,8 +212,12 @@ impl KnownHostsStore {
             .collect()
     }
 
-    /// Atomic write: tmp + fsync + rename.
+    /// Atomic write: tmp + fsync + rename. Skips write for in-memory stores
+    /// (empty path).
     fn persist_locked(path: &Path, file: &KnownHostsFile) -> Result<(), AppError> {
+        if path.as_os_str().is_empty() {
+            return Ok(()); // in-memory store, nothing to persist
+        }
         let json = serde_json::to_string_pretty(file)
             .map_err(|e| AppError::Config(format!("serialize known_hosts: {}", e)))?;
         crate::config::persist::atomic_write(path, &json)

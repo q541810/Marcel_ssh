@@ -160,12 +160,24 @@ impl AppState {
         let known_hosts = match known_hosts_res {
             Ok(kh) => kh,
             Err(e) => {
-                log::error!("无法加载 known_hosts.json，使用空 store: {}", e);
-                KnownHostsStore::load(
+                log::error!("无法加载 known_hosts.json，尝试 fallback: {}", e);
+                match KnownHostsStore::load(
                     std::env::temp_dir().join("marcel-ssh-known-hosts-fallback.json"),
                 )
                 .await
-                .expect("fallback known_hosts init")
+                {
+                    Ok(store) => {
+                        log::warn!("known_hosts 使用临时目录 fallback");
+                        store
+                    }
+                    Err(e2) => {
+                        log::error!(
+                            "known_hosts fallback 也失败: {}; 使用纯内存 store",
+                            e2
+                        );
+                        KnownHostsStore::in_memory()
+                    }
+                }
             }
         };
 

@@ -165,12 +165,14 @@ impl SshManager {
 
         // Connect TCP + SSH handshake
         let verdict = Arc::new(TokioMutex::new(None));
+        let tofu_record_error = Arc::new(TokioMutex::new(None));
         let client = Client {
             host: host.clone(),
             port,
             store: self.known_hosts.clone(),
             trust_new: config.trust_new_host_key,
             verdict: verdict.clone(),
+            tofu_record_error: tofu_record_error.clone(),
         };
         let mut handle = match client::connect(client_config, (host.as_str(), port), client).await {
             Ok(h) => h,
@@ -192,6 +194,28 @@ impl SshManager {
                 return Err(AppError::Ssh(format!("连接失败: {}", e)));
             }
         };
+
+        // Check if TOFU record/replace failed during the handshake.
+        // Connection is still accepted (availability-first, like OpenSSH),
+        // but we warn the user so they know TOFU pinning may not persist.
+        if let Some(err_msg) = tofu_record_error.lock().await.take() {
+            log::warn!(
+                "主机密钥未持久化 {}: {} — {}",
+                host,
+                port,
+                err_msg
+            );
+            emit_event(
+                &app,
+                "hostKeyWarning",
+                serde_json::json!({
+                    "host": host,
+                    "port": port,
+                    "reason": err_msg,
+                    "message": "主机密钥未能持久化，本次连接安全但不保证未来能检测密钥变更，请检查配置目录可写性"
+                }),
+            );
+        }
 
         // Authenticate
         let auth_success = match &config.auth_method {
@@ -374,40 +398,23 @@ impl SshManager {
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.
+    ///
+    /// Delegates to [`exec_command_timed`] with a 120-second default timeout
+    /// to prevent infinite blocking when remote commands never exit.
     pub async fn exec_command(&self, session_id: &str, command: &str) -> Result<String, AppError> {
-        let conn = {
-            let guard = self.connections.read().await;
-            guard.get(session_id).cloned()
-        };
-        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
-
-        let mut channel = conn
-            .handle
-            .lock()
-            .await
-            .channel_open_session()
-            .await
-            .map_err(|e| AppError::Ssh(format!("打开 exec 通道失败: {}", e)))?;
-
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
-
-        let mut output = String::new();
-        loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    output.push_str(&String::from_utf8_lossy(&data));
-                }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    output.push_str(&String::from_utf8_lossy(&data));
-                }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
-                Some(ChannelMsg::ExitStatus { .. }) => {}
-                Some(_) => {}
-                None => break,
-            }
+        let (output, was_timeout) = self
+            .exec_command_timed(session_id, command, Duration::from_secs(120))
+            .await?;
+        if was_timeout {
+            let preview = if command.len() > 80 {
+                &command[..80]
+            } else {
+                command
+            };
+            return Err(AppError::Ssh(format!(
+                "命令在 120 秒后超时: {}",
+                preview
+            )));
         }
         Ok(output)
     }

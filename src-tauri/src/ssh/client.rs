@@ -15,6 +15,10 @@ pub(crate) struct Client {
     /// Filled in by `check_server_key` so `connect()` can return a structured
     /// `HostKeyMismatch` error after the handshake fails.
     pub(crate) verdict: Arc<TokioMutex<Option<VerifyOutcome>>>,
+    /// Set when `record()` or `replace()` fails during TOFU — the connection
+    /// is still accepted (availability-first), but the caller can read this
+    /// to warn the user that the host key was not persisted.
+    pub(crate) tofu_record_error: Arc<TokioMutex<Option<String>>>,
 }
 
 impl client::Handler for Client {
@@ -41,6 +45,7 @@ impl client::Handler for Client {
             VerifyOutcome::TrustOnFirstUse => {
                 if let Err(e) = self.store.record(&self.host, self.port, entry).await {
                     log::warn!("记录 known_host 失败: {}", e);
+                    *self.tofu_record_error.lock().await = Some(e.to_string());
                 }
                 true
             }
@@ -49,6 +54,7 @@ impl client::Handler for Client {
                 if self.trust_new {
                     if let Err(e) = self.store.replace(&self.host, self.port, entry).await {
                         log::warn!("替换 known_host 失败: {}", e);
+                        *self.tofu_record_error.lock().await = Some(e.to_string());
                     }
                     true
                 } else {
