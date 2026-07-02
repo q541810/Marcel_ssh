@@ -16,6 +16,7 @@
   "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
   "views": [...],                 // 可选。视图定义。
   "agentTools": [...],            // 可选。Agent 工具定义。
+  "injections": [...],            // 可选。内容脚本注入（需 ui.inject 权限）。
   "configView": "config.html"     // 可选。配置视图入口文件。
 }
 ```
@@ -30,6 +31,7 @@
 | `capabilities` | string[] | 否 | 声明的权限列表 |
 | `views` | ViewDef[] | 否 | 视图定义列表 |
 | `agentTools` | AgentToolDef[] | 否 | Agent 工具定义列表 |
+| `injections` | InjectionDef[] | 否 | 内容脚本注入定义列表 |
 | `configView` | string | 否 | 配置视图入口文件路径（相对于插件根目录） |
 
 ---
@@ -39,7 +41,7 @@
 | 字段 | 类型 | 必须 | 说明 |
 |------|------|------|------|
 | `id` | string | 是 | 视图唯一标识（在插件内简短即可，如 `main`。最终 ID 自动拼接为 `<plugin-id>.<view-id>`） |
-| `mount` | string | 是 | 挂载点：`sidebar` / `agent` |
+| `mount` | string | 是 | 挂载点：`sidebar` / `bottom` |
 | `title` | string | 是 | 显示标题 |
 | `icon` | IconDef | 否 | 图标定义 |
 | `navGroup` | string | 否 | 导航分组：`top` / `bottom`（sidebar 视图必须） |
@@ -52,7 +54,9 @@
 | 挂载点 | 说明 |
 |--------|------|
 | `sidebar` | 左侧面板。需要设置 `navGroup`。 |
-| `agent` | 右侧 Agent 面板。 |
+| `bottom` | 终端底部面板，以 tab 形式与内置 tab 共存。需要已连接的 SSH 会话。 |
+
+> `agent` 挂载点被内置 Agent 面板（`builtin.agent`，不可禁用）常驻占用，且代码只取 order 最小的 provider，插件无法实际使用，不对外暴露。`center` 挂载点被内置终端/设置占用，同理不对外暴露。
 
 ### 图标定义
 
@@ -76,6 +80,142 @@
 | `riskLevel` | string | 否 | 风险等级：`ReadOnly` / `LowRisk` / `Moderate` / `HighRisk`（默认 `Moderate`） |
 
 > Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+---
+
+## 内容脚本注入（Content Script）
+
+插件可以像浏览器扩展一样，把 JS/CSS 注入**主窗口**运行，直接操控主界面 DOM（改样式、加浮层、重塑布局、加按钮徽标等）。需要声明 `ui.inject` capability。
+
+### 注入定义
+
+| 字段 | 类型 | 必须 | 说明 |
+|------|------|------|------|
+| `id` | string | 是 | 注入项 ID（插件内唯一，如 `main-ui`） |
+| `matches` | string[] | 否 | 目标区域名（信息性，见下表）；`["*"]` 表示始终注入 |
+| `styles` | string[] | 否 | CSS 文件路径（相对插件根目录），注入为全局 `<style>` |
+| `scripts` | string[] | 否 | JS 文件路径，执行时以 `marcel` 运行时对象为唯一参数 |
+| `runAt` | string | 否 | 注入时机：`idle`（默认，空闲时）/ `instant`（立即） |
+| `order` | number | 否 | 多插件排序权重（越小越早，默认 100） |
+
+```jsonc
+{
+  "injections": [
+    {
+      "id": "main-ui",
+      "matches": ["*"],
+      "styles": ["theme.css"],
+      "scripts": ["content.js"],
+      "runAt": "idle",
+      "order": 100
+    }
+  ]
+}
+```
+
+> `matches` 是信息性字段——JS/CSS 总是全局注入，插件通过 `marcel.events.on('ui:region-mounted', ...)` 决定是否对某区域生效。这避免主应用在区域切换时反复重执行脚本。
+
+### 区域名（`data-region`）
+
+主应用在关键布局区域标记了 `data-region` 属性，`matches` 和 `marcel.dom.waitForRegion()` 使用这些名字：
+
+| 区域名 | 说明 |
+|--------|------|
+| `sidebar` | 左侧面板（顶层布局区域） |
+| `center` | 中央内容区（顶层布局区域） |
+| `agent` | 右侧 Agent 面板（顶层布局区域） |
+| `terminal` | 终端组件根 |
+| `settings` | 设置页根 |
+| `sessions` | 会话/连接列表 |
+| `skills` | 技能列表 |
+| `mcp` | MCP 列表 |
+| `agent-panel` | Agent 面板内容 |
+
+### `marcel` 运行时 API
+
+每个被注入的 JS 文件以 `marcel` 对象为唯一参数执行：
+
+```js
+// content.js
+export default function (marcel) { /* 不支持，见下方说明 */ }
+```
+
+> 注意：注入脚本不是 ES 模块，不能用 `export`/`import`。它是一段普通 JS，通过 `new Function('marcel', code)` 执行，顶层 `await` 可用。
+
+#### `marcel.dom`
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `querySelector(sel)` | `(string) => Element \| null` | 等价 `document.querySelector` |
+| `querySelectorAll(sel)` | `(string) => Element[]` | 等价 `document.querySelectorAll` |
+| `body` | `HTMLElement` | `document.body` |
+| `head` | `HTMLHeadElement` | `document.head` |
+| `ready(cb)` | `(fn) => void` | 空闲回调（`requestIdleCallback` 退化到 `setTimeout`） |
+| `waitForRegion(region, timeoutMs?)` | `(string, number?) => Promise<HTMLElement \| null>` | 等待 `[data-region=...]` 出现，超时返回 null |
+
+#### `marcel.overlay`
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `create(opts?)` | `({className?}) => HTMLDivElement` | 创建浮层 div，挂到共享容器 `#marcel-overlays`，标记 `data-plugin-id` |
+| `dismiss(el)` | `(HTMLElement) => void` | 移除浮层 |
+
+共享容器 `#marcel-overlays` 是 `position:fixed; inset:0; pointer-events:none` 的覆盖层。`create()` 返回的 div 默认 `pointer-events:auto`，插件自行定位/填充。禁用插件时主应用自动清除该插件的所有浮层。
+
+#### `marcel.ipc`
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `call(cmd, args?)` | `(string, object?) => Promise<unknown>` | 调用插件 IPC 命令，走 `plugin-request` 管道，受 capability 检查 |
+
+```js
+const session = await marcel.ipc.call('session.active');
+const out = await marcel.ipc.call('ssh_exec', { sessionId: session.sessionId, command: 'uptime' });
+```
+
+#### `marcel.events`
+
+| 成员 | 类型 | 说明 |
+|------|------|------|
+| `on(eventName, cb)` | `(string, fn) => () => void` | 订阅事件，返回取消函数 |
+| `emit(eventName, data?)` | `(string, unknown?) => void` | 发射本地事件（插件间/自身） |
+
+`on` 统一处理两类事件：
+- **UI 桥事件**（`ui:*`）和插件自定事件（`<pluginId>:*`）：本地内存总线，无网络往返
+- **后端事件**（如 `ssh://status/*`）：自动调用 `events.subscribe` IPC 订阅，按模式匹配转发
+
+##### UI 桥事件
+
+| 事件 | Payload | 说明 |
+|------|---------|------|
+| `ui:nav-change` | `{ from: string \| null, to: string }` | 活跃视图切换 |
+| `ui:region-mounted` | `{ region: string, el: HTMLElement }` | 区域 DOM 节点挂载 |
+| `ui:region-unmounted` | `{ region: string, el: HTMLElement }` | 区域 DOM 节点卸载 |
+
+##### 后端事件
+
+与 `events` capability 的可订阅事件一致（`ssh://status/*`、`agent://stream/*` 等），通配符匹配。
+
+#### `marcel.onCleanup(fn)`
+
+注册清理回调。插件禁用/刷新/重试时按 LIFO 顺序调用。插件应在此移除自己添加的 DOM 节点、监听器、定时器。
+
+```js
+const interval = setInterval(tick, 5000);
+marcel.onCleanup(() => clearInterval(interval));
+```
+
+#### `marcel.log`
+
+| 成员 | 说明 |
+|------|------|
+| `info(...args)` / `warn(...args)` / `error(...args)` | 带 `[plugin:<id>/<injId>]` 前缀的 console 输出，便于排查 |
+
+### 错误隔离边界
+
+- 同步抛错 + 顶层 `await` 的 rejected promise → 捕获并写入注入状态，设置页显示红点 + 重试按钮
+- 插件自己写的裸 `setTimeout(async ...)` / 自由 `fetch` 的未捕获 rejection → **不**被引擎捕获，走浏览器默认行为，不崩溃主 UI
+- 同步死循环会阻塞主窗口 → 开启**注入安全模式**（设置 → 插件）跳过所有注入自救，重启后生效
 
 ---
 
@@ -175,6 +315,7 @@ async function saveConfig(config) {
 | `net.request` | 发起 HTTP/HTTPS 网络请求 | 高 |
 | `notification` | 发送系统通知 | 低 |
 | `events` | 订阅应用事件 | 低 |
+| `ui.inject` | 注入主界面（JS/CSS），访问主窗口 DOM | 高 |
 
 ### `ssh.list` 授权的命令
 
@@ -380,3 +521,4 @@ await emit('plugin-request', {
 | 1.1.0 | 2026-06-27 | 补全 capability 实现；拆分为开发指南 + API 参考 |
 | 1.2.0 | 2026-06-27 | 新增 `events` capability；新增 HTTP API 端点 |
 | 1.3.0 | 2026-06-28 | 新增 `configView` 配置视图功能；支持 `config.read`/`config.write`/`config.saved` 命令 |
+| 1.4.0 | 2026-07-02 | 新增内容脚本注入（`injections` 字段 + `ui.inject` capability + `marcel` 运行时 API + `data-region` 区域标记 + UI 事件桥 + 注入安全模式） |

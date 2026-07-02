@@ -115,7 +115,8 @@
   "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
   "configView": "config.html",     // 可选。配置视图入口文件。
   "views": [...],                 // 可选。视图定义。
-  "agentTools": [...]             // 可选。Agent 工具定义。
+  "agentTools": [...],            // 可选。Agent 工具定义。
+  "injections": [...]             // 可选。内容脚本注入（需 ui.inject）。
 }
 ```
 
@@ -395,6 +396,138 @@ const { ok, data } = await res.json();
 | `HighRisk` | 高风险，沙箱审查后执行 |
 
 > **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+---
+
+## 内容脚本（Content Script）
+
+插件可以像浏览器扩展一样把 JS/CSS 注入主窗口，直接操控主界面 DOM：改外观、加浮层、给现有 UI 加按钮/徽标、重塑布局等。
+
+### 与视图（views）的区别
+
+| | views | injections |
+|--|-------|-----------|
+| 运行环境 | 独立 OS WebView，隔离 | 主窗口内，与 React 共享 DOM |
+| 能力 | 只能通过 IPC 通信 | 可直接 querySelector/改 DOM/加浮层 |
+| 隔离 | 强（崩溃不影响主 UI） | 弱（同步死循环会卡主窗口） |
+| 权限 | 视图挂载即可用 | 需声明 `ui.inject` capability |
+
+一个插件可以同时有 `views` 和 `injections`。
+
+### 快速开始
+
+1. 声明 `ui.inject` 权限和 `injections`：
+
+```json
+{
+  "id": "theme-tweak",
+  "version": "1.0.0",
+  "name": "主题微调",
+  "capabilities": ["ui.inject"],
+  "injections": [
+    {
+      "id": "main",
+      "matches": ["*"],
+      "styles": ["theme.css"],
+      "scripts": ["content.js"]
+    }
+  ]
+}
+```
+
+2. 创建 `theme.css`（全局注入到 `<head>`）：
+
+```css
+/* 给会话列表项加圆角 */
+[data-region="sessions"] .rounded-lg { border-radius: 12px; }
+
+/* 终端区背景微调 */
+[data-region="terminal"] { background: #1a1a1f; }
+```
+
+3. 创建 `content.js`（以 `marcel` 为唯一参数执行）：
+
+```js
+// content.js — 顶层 await 可用，但不是 ES 模块（不能用 import/export）
+
+// 监听导航切换，在进入终端时注入一个状态徽标
+marcel.events.on('ui:nav-change', ({ to }) => {
+  if (to === 'builtin.terminal') injectBadge();
+});
+
+async function injectBadge() {
+  const term = await marcel.dom.waitForRegion('terminal');
+  if (!term) return;
+  if (term.querySelector('[data-theme-tweak-badge]')) return; // 已存在
+
+  const badge = document.createElement('div');
+  badge.setAttribute('data-theme-tweak-badge', '');
+  badge.textContent = '🎨';
+  badge.style.cssText = 'position:absolute;top:8px;right:12px;z-index:50;font-size:14px';
+  term.appendChild(badge);
+
+  // 清理：插件禁用/刷新时移除徽标
+  marcel.onCleanup(() => badge.remove());
+}
+
+// 定时刷新示例
+const timer = setInterval(() => {
+  marcel.log.info('tick');
+}, 10000);
+marcel.onCleanup(() => clearInterval(timer));
+```
+
+4. 刷新插件（设置 → 插件 → 刷新），注入立即生效。
+
+### `marcel` API 速查
+
+详见 [API 参考 - 内容脚本注入](./plugin-api.md#内容脚本注入content-script)。
+
+| 命名空间 | 用途 |
+|----------|------|
+| `marcel.dom` | querySelector / waitForRegion / ready |
+| `marcel.overlay` | 创建/移除浮层（挂到 `#marcel-overlays`） |
+| `marcel.ipc.call(cmd, args)` | 调用插件 IPC（受 capability 检查） |
+| `marcel.events.on(name, cb)` | 订阅 UI 事件（`ui:*`）+ 后端事件（`ssh://status/*` 等） |
+| `marcel.events.emit(name, data)` | 发射本地事件 |
+| `marcel.onCleanup(fn)` | 注册清理回调 |
+| `marcel.log.info/warn/error` | 带前缀的日志 |
+
+### 生命周期
+
+- **激活**：插件启用 + 授权 `ui.inject` + 非安全模式时，按 `runAt` 注入
+- **清理**：插件禁用/刷新/重试时，按 LIFO 调用所有 `onCleanup` 回调，移除 `<style>` 标签，清除该插件的浮层
+- **重试**：设置页插件卡片可对报错的注入点单独重试
+
+### 与 React 共存的注意事项
+
+主界面由 React 管理。直接修改 React 渲染的 DOM 节点会在下次重渲染时被覆盖。推荐做法：
+
+1. **追加而非修改**：用 `appendChild` 在区域节点末尾加自己的元素，不要改 React 生成的节点属性
+2. **监听 `ui:region-mounted` 重注入**：React 卸载/重挂区域时，重新执行你的注入逻辑
+3. **用 `onCleanup` 撤销**：确保你加的元素在清理时移除
+
+```js
+marcel.events.on('ui:region-mounted', ({ region, el }) => {
+  if (region !== 'terminal') return;
+  // el 是 [data-region="terminal"] 节点，在此追加你的 UI
+});
+```
+
+### 浮层示例
+
+```js
+// 创建一个固定在右下角的悬浮按钮
+const btn = marcel.overlay.create();
+btn.style.cssText = 'position:fixed;right:20px;bottom:20px;width:48px;height:48px;border-radius:50%;background:#4f46e5;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:20px';
+btn.textContent = '⚡';
+btn.onclick = () => marcel.ipc.call('session.active').then(console.log);
+marcel.onCleanup(() => marcel.overlay.dismiss(btn));
+```
+
+### 安全模式
+
+插件 JS 同步死循环会卡死主窗口。遇到这种情况：设置 → 插件 → 开启「注入安全模式」→ 重启应用。安全模式跳过所有内容脚本注入，让你能进设置页禁用问题插件。
 
 ---
 
