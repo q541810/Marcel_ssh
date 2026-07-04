@@ -48,9 +48,14 @@ const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) => unknow
     if (!activeSessionId) return null;
     const session = sessions[activeSessionId];
     if (!session) return null;
+    // connectionStore 的 connection.id 是 saved connection 的真实 UUID。
+    // session.connectionId 实际是 "user@host:port" label（不可用于查找），
+    // session.configId 才是真正匹配 connection.id 的 UUID。优先返回 configId，
+    // 这样后续 connection.info 才能在 store 里 find 到。
+    const realConnectionId = session.configId ?? session.connectionId;
     return {
       sessionId: session.id,
-      connectionId: session.connectionId,
+      connectionId: realConnectionId,
       status: session.status,
       configId: session.configId ?? null,
     };
@@ -60,9 +65,11 @@ const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) => unknow
     if (!sessionId) return null;
     const session = useSessionStore.getState().sessions[sessionId];
     if (!session) return null;
+    // 同 session.active：返回真实 connection ID 而非 label。
+    const realConnectionId = session.configId ?? session.connectionId;
     return {
       sessionId: session.id,
-      connectionId: session.connectionId,
+      connectionId: realConnectionId,
       status: session.status,
       createdAt: session.createdAt,
       configId: session.configId ?? null,
@@ -72,15 +79,37 @@ const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) => unknow
     const connectionId = args.connectionId as string;
     if (!connectionId) return null;
     const conn = useConnectionStore.getState().connections.find((c) => c.id === connectionId);
-    if (!conn) return null;
-    return {
-      id: conn.id,
-      name: conn.name,
-      host: conn.host,
-      port: conn.port,
-      username: conn.username,
-      group: conn.group ?? null,
-    };
+    if (conn) {
+      return {
+        id: conn.id,
+        name: conn.name,
+        host: conn.host,
+        port: conn.port,
+        username: conn.username,
+        group: conn.group ?? null,
+      };
+    }
+    // 降级：临时连接（未保存到 connectionStore）的情况，connectionId 实际是
+    // "user@host:port" label。从 label 解析出 host/port，构造一个最小信息返回，
+    // 这样插件面板也能在临时连接场景下工作。
+    const parts = connectionId.split('@');
+    if (parts.length >= 2) {
+      const userPart = parts[0];
+      const hostPort = parts[parts.length - 1];
+      const [host, portStr] = hostPort.split(':');
+      const port = parseInt(portStr, 10);
+      if (host && !isNaN(port)) {
+        return {
+          id: connectionId,
+          name: connectionId,
+          host,
+          port,
+          username: userPart,
+          group: null,
+        };
+      }
+    }
+    return null;
   },
   'connection.list': () => {
     return useConnectionStore.getState().connections.map((c) => ({
@@ -211,8 +240,13 @@ const ALL_COMMANDS = new Set([
 ]);
 
 const COMMAND_TO_CAPABILITY: Record<string, string> = {
-  ...Object.fromEntries(Object.entries(CAPABILITY_TO_COMMAND).map(([cap, cmd]) => [cmd, cap])),
-  ...Object.fromEntries(Object.entries(PLUGIN_SCOPED_COMMANDS).map(([cap, cmd]) => [cmd, cap])),
+  // 插件发的 cmd 名（CAPABILITY_TO_COMMAND / PLUGIN_SCOPED_COMMANDS 的 key）
+  // 本身就是 capability 名（如 'fs.read'、'ssh.list'），key→key 自映射即可。
+  // 旧实现错把后端 tauri 命令名（'plugin_fs_read' 等）反转成 key，导致
+  // isAuthorized 收到 'fs.read' 时永远查不到 capability。
+  ...Object.fromEntries(Object.keys(CAPABILITY_TO_COMMAND).map((cap) => [cap, cap])),
+  ...Object.fromEntries(Object.keys(PLUGIN_SCOPED_COMMANDS).map((cmd) => [cmd, cmd])),
+  // Virtual commands: 命令名与 capability 不同，需显式映射
   'session.active': 'ssh.list',
   'session.info': 'ssh.list',
   'connection.info': 'ssh.list',
@@ -224,26 +258,57 @@ const COMMAND_TO_CAPABILITY: Record<string, string> = {
   'config.saved': 'fs.write',
 };
 
-function isAuthorized(pluginId: string, cmd: string): boolean {
-  const manifest = usePluginStore.getState().manifests.find((m) => m.id === pluginId);
-  if (!manifest) return false;
+interface AuthResult {
+  ok: boolean;
+  reason?: string;
+}
 
-  if (!ALL_COMMANDS.has(cmd)) return false;
+// 把诊断原因放进返回值，便于插件面板的 catch 块也能看到拒绝细节，
+// 不需要打开主窗口 DevTools。
+function isAuthorized(pluginId: string, cmd: string): AuthResult {
+  const manifests = usePluginStore.getState().manifests;
+  const manifest = manifests.find((m) => m.id === pluginId);
+  if (!manifest) {
+    return {
+      ok: false,
+      reason: `manifest not found for pluginId="${pluginId}" (loaded manifests: ${JSON.stringify(manifests.map(m => m.id))})`,
+    };
+  }
+
+  if (!ALL_COMMANDS.has(cmd)) {
+    return { ok: false, reason: `unknown command "${cmd}"` };
+  }
 
   const required = COMMAND_TO_CAPABILITY[cmd];
-  if (!required) return false;
+  if (!required) {
+    return { ok: false, reason: `no capability mapping for "${cmd}"` };
+  }
 
   const settings = useSettingsStore.getState().settings;
   const authorizedMap = settings.authorizedCapabilities ?? {};
 
   // Plugin not in map → all declared capabilities are authorized (backward compatible)
   if (!(pluginId in authorizedMap)) {
-    return manifest.capabilities.includes(required);
+    const ok = manifest.capabilities.includes(required);
+    if (!ok) {
+      return {
+        ok: false,
+        reason: `capability "${required}" not declared by "${pluginId}" (declared: ${JSON.stringify(manifest.capabilities)})`,
+      };
+    }
+    return { ok: true };
   }
 
   // Plugin in map → only listed capabilities are authorized
   const authorizedList = authorizedMap[pluginId] ?? [];
-  return authorizedList.includes(required);
+  const ok = authorizedList.includes(required);
+  if (!ok) {
+    return {
+      ok: false,
+      reason: `capability "${required}" not in authorizedList for "${pluginId}" (authorized: ${JSON.stringify(authorizedList)})`,
+    };
+  }
+  return { ok: true };
 }
 
 function getPluginScopedCommand(cmd: string): string | null {
@@ -262,8 +327,9 @@ export async function initPluginIpc(): Promise<void> {
       emit(`plugin-response-${req.id}`, { ok, data }).catch(console.error);
     };
 
-    if (!isAuthorized(req.pluginId, req.cmd)) {
-      respond(false, `command ${req.cmd} not authorized for plugin ${req.pluginId}`);
+    const auth = isAuthorized(req.pluginId, req.cmd);
+    if (!auth.ok) {
+      respond(false, `command ${req.cmd} not authorized for plugin ${req.pluginId}: ${auth.reason ?? 'unknown'}`);
       return;
     }
 
