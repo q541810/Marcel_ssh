@@ -53,7 +53,7 @@
 | 字段 | 类型 | 必须 | 说明 |
 |------|------|------|------|
 | `id` | string | 是 | 视图唯一标识（在插件内简短即可，如 `main`。最终 ID 自动拼接为 `<plugin-id>.<view-id>`） |
-| `mount` | string | 是 | 挂载点：`sidebar` / `bottom` |
+| `mount` | string | 是 | 挂载点：`sidebar`（左侧面板）/ `settings`（设置页）。未知值在加载时拒绝 |
 | `title` | string | 是 | 显示标题 |
 | `icon` | IconDef | 否 | 图标定义 |
 | `navGroup` | string | 否 | 导航分组：`top` / `bottom`。sidebar 视图需设置此项才会出现在 NavRail 上；不设置则视图仍注册但不显示在导航栏 |
@@ -66,18 +66,19 @@
 | 挂载点 | 说明 |
 |--------|------|
 | `sidebar` | 左侧面板。需要设置 `navGroup`。 |
-| `bottom` | 终端底部面板，以 tab 形式与内置 tab 共存。需要已连接的 SSH 会话。 |
+| `settings` | 设置页面。视图注册为设置页的子页。 |
 
-> `agent` 挂载点被内置 Agent 面板（`builtin.agent`，不可禁用）常驻占用，且代码只取 order 最小的 provider，插件无法实际使用，不对外暴露。`center` 挂载点被内置终端/设置占用，同理不对外暴露。
+> `agent` 和 `center` 挂载点已被内置面板占用，**插件 manifest 中声明将被拒绝加载**。`bottom` 挂载点已移除（原为终端底部 tab）。
 
 ### 图标定义
 
 ```jsonc
 { "kind": "svg", "src": "icon.svg" }   // SVG 图标
 { "kind": "img", "src": "icon.png" }   // 图片图标
+{ "kind": "emoji", "src": "🎉" }       // Emoji 图标
 ```
 
-`src` 是相对于插件根目录的路径，通过 `plugin://<plugin-id>/<src>` 协议加载。
+`src` 是相对于插件根目录的路径，通过 `plugin://<plugin-id>/<src>` 协议加载。`kind` 枚举已严格校验，未知值（如 `"bitmap"`）在 manifest 加载时报错。
 
 ---
 
@@ -87,11 +88,11 @@
 |------|------|------|------|
 | `name` | string | 是 | 工具名称（Agent 调用时使用） |
 | `description` | string | 是 | 工具描述（Agent 可见） |
-| `kind` | string | 否 | 执行类型：`"ssh"`（默认，向后兼容）或 `"local"`。`ssh` 在远程服务器执行命令；`local` 在用户本机调用内核注册的 handler |
+| `kind` | string | 否 | 执行类型：`"ssh"`（默认，在远程服务器执行命令）或 `"local"`（在用户本机调用内核注册的 handler）。未知值在 manifest 加载时报错 |
 | `handler` | string | 否 | `kind=local` 时必填，指向内核注册的通用本地 handler 名称（如 `"fs.read"`）。`kind=ssh` 时忽略。详见 [通用本地 handler](#通用本地-handler) |
-| `command` | string | 否 | `kind=ssh` 时为 SSH 命令模板，`{{param}}` 为参数占位符，命令在**当前活跃 SSH 会话的远程服务器**上执行（通过 SSH exec channel），无活跃会话时调用失败。`kind=local` 时为 **JSON 对象字符串**，解析后作为固定参数（fixed_params）与模型传入的 params 合并后传给 handler，固定参数优先级高于模型参数（防止模型覆盖 `path` 等敏感字段） |
+| `command` | string | 否 | `kind=ssh` 时为 SSH 命令模板；`kind=local` 时为 JSON 对象字符串（fixed_params）。详见下方说明 |
 | `parameters` | JSON Schema | 否 | 参数 JSON Schema |
-| `riskLevel` | string | 否 | 风险等级：`ReadOnly` / `LowRisk` / `Moderate` / `HighRisk`（默认 `Moderate`） |
+| `riskLevel` | string | 否 | 风险等级：`"ReadOnly"` / `"LowRisk"` / `"Moderate"` / `"HighRisk"` / `"Destructive"`（默认 `"Moderate"`）。**严格校验**——未知值（如 `"Medium"`、`"moderate"` 小写）在 manifest 加载时报错，不再静默降级为 `Moderate` |
 
 > Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
 
@@ -293,7 +294,7 @@ Agent 模式下理论上不会无会话。若会话被中途关闭等原因导�
 | `matches` | string[] | 否 | 目标区域名（信息性，见下表）；`["*"]` 表示始终注入 |
 | `styles` | string[] | 否 | CSS 文件路径（相对插件根目录），注入为全局 `<style>` |
 | `scripts` | string[] | 否 | JS 文件路径，执行时以 `marcel` 运行时对象为唯一参数 |
-| `runAt` | string | 否 | 注入时机：`idle`（默认，空闲时）/ `instant`（立即） |
+| `runAt` | string | 否 | 注入时机：`"idle"`（默认，空闲时）或 `"instant"`（立即）。**严格校验**——未知值在 manifest 加载时报错 |
 | `order` | number | 否 | 多插件排序权重（越小越早，默认 100） |
 
 ```jsonc
@@ -694,8 +695,8 @@ HTTP API 仅支持以下命令子集（远少于后端实际命令数）：
 
 其他后端命令（如 `sftp_list_dir`、`sftp_upload`、`agent_start_task` 等）**不支持**通过 HTTP API 调用。
 
-- 虚拟命令（`session.active` 等）通过后端状态实现，**不返回前端 store 派生字段**（如 `createdAt`）
-- HTTP API 的 capability 检查只校验 manifest 声明，**不读取用户在设置页的授权状态**（与事件 IPC 不同，事件 IPC 会同时校验两者）
+- 虚拟命令（`session.active` 等）通过后端状态实现，**不返回前端 store 派生字段**（如 `createdAt`）。如需含 `configId`/`createdAt` 的数据，请使用事件 IPC 通道
+- HTTP API 的 capability 检查**与事件 IPC 一致**：同时校验 manifest 声明、插件启用状态和用户在设置页的授权状态（三层授权，via `plugins::auth` 模块）
 - 同步执行，长时间命令可能阻塞 WebView 网络线程
 
 ### 示例
@@ -723,8 +724,7 @@ await emit('plugin-request', {
 
 ## 安全边界
 
-- 事件 IPC 的 capability 检查在主 WebView 的 IPC 代理层执行，同时校验 manifest 声明和用户在设置页的授权状态
-- HTTP API 的 capability 检查在 Rust 后端执行，**仅校验 manifest 声明，不读取用户授权状态**（即用户在设置页收回的权限对 HTTP API 无效）
+- 事件 IPC 和 HTTP API **均执行相同的三层授权检查**（manifest 声明 + 用户授权 + 插件启用状态），由 `plugins::auth` 模块统一实现
 - 插件无法绕过 manifest 中未声明的 capability
 - `fs.read` / `fs.write` 限制在插件目录内，路径穿越被拒绝
 - `net.request` 支持 HTTP 和 HTTPS，无域名限制
@@ -743,4 +743,5 @@ await emit('plugin-request', {
 | 1.2.0 | 2026-06-27 | 新增 `events` capability；新增 HTTP API 端点 |
 | 1.3.0 | 2026-06-28 | 新增 `configView` 配置视图功能；支持 `config.read`/`config.write`/`config.saved` 命令 |
 | 1.4.0 | 2026-07-02 | 新增内容脚本注入（`injections` 字段 + `ui.inject` capability + `marcel` 运行时 API + `data-region` 区域标记 + UI 事件桥 + 注入安全模式） |
-| 1.5.0 | 2026-07-03 | 新增插件本地工具类型（`kind=local` + `handler`）；新增 6 个通用本地 handler（`fs.read`/`fs.write`/`fs.append`/`session.info`/`connection.info`/`host_port`）；新增 7 个模板上下文变量注入（`{{__host__}}` 等）；新增 `systemPromptSection` 静态段拼接 |
+| 1.5.0 | 2026-07-03 | 新增插件本地工具类型（`kind=local` + `handler`）；新增 6 个通用本地 handler；新增 7 个模板上下文变量；新增 `systemPromptSection` 静态段拼接 |
+| 1.6.0 | 2026-07-04 | **架构重构**：manifest 枚举字段严格校验（`mount`/`kind`/`riskLevel`/`runAt`/icon `kind` 未知值报错，不再静默降级）；挂载点缩减为 `sidebar` + `settings`（移除 `bottom`/`agent`/`center`）；HTTP API 授权与事件 IPC 统一为三层检查（消除用户撤销能力对 HTTP API 无效的安全漏洞）；插件注册表后端有状态化（`PluginRegistry` + mtime 缓存 + diff 刷新）；新增 `plugin_reload` command 和 `plugin-registry-changed` 事件；command→capability 映射改为 Rust 单一真源 |
