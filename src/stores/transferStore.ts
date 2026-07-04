@@ -4,7 +4,7 @@ let uploadTimerId: ReturnType<typeof setTimeout> | null = null;
 let downloadTimerId: ReturnType<typeof setTimeout> | null = null;
 
 export interface UploadState {
-  status: 'uploading' | 'done' | 'error';
+  status: 'uploading' | 'done' | 'error' | 'cancelled';
   fileName: string;
   written: number;
   total: number;

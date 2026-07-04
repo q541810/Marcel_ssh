@@ -2,7 +2,9 @@ use russh_sftp::protocol::OpenFlags;
 use serde::Serialize;
 use serde_json::json;
 use std::path::Path;
-use tauri::{AppHandle, Emitter, State};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::{AppHandle, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::emit_event;
@@ -526,6 +528,37 @@ pub async fn sftp_download_stream(
 }
 
 #[tauri::command]
+pub async fn sftp_cancel_upload(
+    state: State<'_, AppState>,
+    upload_id: String,
+) -> Result<(), AppError> {
+    if let Some(sender) = state.upload_cancel_senders.write().remove(&upload_id) {
+        let _ = sender.send(true);
+    }
+    Ok(())
+}
+
+/// Drop guard that removes the cancel sender from AppState on drop.
+struct UploadCancelGuard {
+    upload_id: String,
+    senders: std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+}
+
+impl Drop for UploadCancelGuard {
+    fn drop(&mut self) {
+        self.senders.write().remove(&self.upload_id);
+    }
+}
+
+fn check_cancelled(cancel_rx: &tokio::sync::watch::Receiver<bool>) -> Result<(), AppError> {
+    if *cancel_rx.borrow() {
+        Err(AppError::Ssh("上传已取消".into()))
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
 pub async fn sftp_upload_stream(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -536,6 +569,13 @@ pub async fn sftp_upload_stream(
 ) -> Result<(), AppError> {
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    state.upload_cancel_senders.write().insert(upload_id.clone(), cancel_tx);
+    let _guard = UploadCancelGuard {
+        upload_id: upload_id.clone(),
+        senders: state.upload_cancel_senders.clone(),
+    };
 
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
@@ -592,6 +632,8 @@ pub async fn sftp_upload_stream(
                 .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
 
             written += n as u64;
+
+            check_cancelled(&cancel_rx)?;
 
             emit_event(
                 &app,
@@ -666,6 +708,7 @@ fn emit_folder_upload_status(
 fn zip_local_folder<F>(
     local_path: &Path,
     compression_level: i64,
+    cancelled: &AtomicBool,
     mut on_progress: F,
 ) -> Result<std::path::PathBuf, AppError>
 where
@@ -694,6 +737,11 @@ where
     let mut processed: usize = 0;
 
     for (rel_path, full_path) in &entries {
+        if cancelled.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&zip_path);
+            return Err(AppError::Ssh("上传已取消".into()));
+        }
+
         if full_path.is_dir() {
             if let Err(e) = zip_writer.add_directory_from_path(Path::new(&rel_path), options) {
                 let _ = std::fs::remove_file(&zip_path);
@@ -895,11 +943,19 @@ pub async fn sftp_upload_folder_stream(
     let local_path = validate_local_path(&local_path)?;
     let remote_path = validate_sftp_remote_path(&remote_path)?;
 
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    state.upload_cancel_senders.write().insert(upload_id.clone(), cancel_tx);
+    let _guard = UploadCancelGuard {
+        upload_id: upload_id.clone(),
+        senders: state.upload_cancel_senders.clone(),
+    };
+
     let local = Path::new(&local_path);
     if !local.is_dir() {
         return Err(AppError::Ssh("本地路径不是目录".into()));
     }
 
+    check_cancelled(&cancel_rx)?;
     emit_folder_upload_status(&app, &upload_id, "checking", 0, 1);
 
     let check_cmd = crate::ssh::sftp_extract::build_unzip_check_cmd();
@@ -912,6 +968,8 @@ pub async fn sftp_upload_folder_stream(
             "远端服务器缺少 unzip，无法解压文件夹上传包。请安装 unzip 后重试。".into(),
         ));
     }
+
+    check_cancelled(&cancel_rx)?;
 
     if flat {
         let local_names = collect_local_top_level_names(local)?;
@@ -928,6 +986,7 @@ pub async fn sftp_upload_folder_stream(
         }
     }
 
+    check_cancelled(&cancel_rx)?;
     emit_folder_upload_status(&app, &upload_id, "zipping", 0, 1);
 
     let compression_level = state
@@ -940,10 +999,34 @@ pub async fn sftp_upload_folder_stream(
     let local_path_owned = local_path.clone();
     let zip_app = app.clone();
     let zip_upload_id = upload_id.clone();
+    let cancelled = std::sync::Arc::new(AtomicBool::new(false));
+    let cancelled_clone = cancelled.clone();
+    let cancelled_weak = Arc::downgrade(&cancelled);
+
+    // Background task: watch for cancellation signal and set the atomic flag
+    {
+        let mut rx = cancel_rx.clone();
+        let weak = cancelled_weak;
+        tokio::spawn(async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    break;
+                }
+                if *rx.borrow() {
+                    if let Some(flag) = weak.upgrade() {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                    break;
+                }
+            }
+        });
+    }
+
     let zip_path = tokio::task::spawn_blocking(move || {
         zip_local_folder(
             Path::new(&local_path_owned),
             compression_level,
+            &cancelled_clone,
             |written, total| {
                 emit_folder_upload_status(&zip_app, &zip_upload_id, "zipping", written, total);
             },
@@ -993,6 +1076,8 @@ pub async fn sftp_upload_folder_stream(
 
     let upload_result: Result<(), AppError> = async {
         loop {
+            check_cancelled(&cancel_rx)?;
+
             let n = local_file
                 .read(&mut buf)
                 .await
@@ -1031,6 +1116,10 @@ pub async fn sftp_upload_folder_stream(
     let _ = tokio::fs::remove_file(&zip_path).await;
 
     if upload_result.is_err() {
+        // Attempt to clean up remote temp file on error/cancel
+        if let Ok(sftp) = state.ssh_manager.open_sftp(&session_id).await {
+            let _ = sftp.remove_file(&tmp_remote).await;
+        }
         return upload_result;
     }
 
@@ -1041,6 +1130,7 @@ pub async fn sftp_upload_folder_stream(
         )));
     }
 
+    check_cancelled(&cancel_rx)?;
     emit_folder_upload_status(&app, &upload_id, "extracting", 0, 1);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_remote, &remote_path);

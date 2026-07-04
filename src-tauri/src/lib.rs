@@ -66,6 +66,8 @@ pub struct AppState {
     /// Cancellation signals for running agent tasks: task_id -> watch sender.
     /// Setting the value to `true` signals the agent loop to abort the current LLM call.
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Cancellation signals for SFTP uploads: upload_id -> watch sender.
+    pub upload_cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -307,6 +309,7 @@ impl AppState {
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
         }
     }
@@ -506,6 +509,7 @@ pub fn run() {
             commands::sftp::sftp_write_file,
             commands::sftp::sftp_download_stream,
             commands::sftp::sftp_upload_stream,
+            commands::sftp::sftp_cancel_upload,
             commands::sftp::sftp_upload_folder_stream,
             commands::sftp::sftp_prepare_drag_upload,
             commands::sftp::sftp_cleanup_temp_dir,
