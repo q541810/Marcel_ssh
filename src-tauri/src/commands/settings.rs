@@ -52,6 +52,7 @@ pub async fn config_get_settings(state: State<'_, AppState>) -> Result<SettingsR
 /// excluded from disk serialization via `skip_serializing` in LlmConfig).
 #[tauri::command]
 pub async fn config_save_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
@@ -107,6 +108,18 @@ pub async fn config_save_settings(
     // Write lock released — perform disk I/O without blocking readers.
     let path = AppSettings::default_file(&state.config_dir);
     tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
+
+    // Settings changes (enable/disable plugin, authorized capabilities) may
+    // affect the plugin registry. Reload and emit so the frontend can
+    // diff-refresh webviews/injections without a nuke-and-rebuild.
+    let config_dir = state.config_dir.clone();
+    let diff = {
+        let mut reg = state.plugin_registry.write().await;
+        reg.reload(&config_dir, &snapshot).await
+    };
+    use tauri::Emitter;
+    let _ = app.emit("plugin-registry-changed", &diff);
+
     Ok(())
 }
 

@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::tools::{LocalHandler, ToolContext, ToolRegistry};
-use crate::commands::plugin_fs::{resolve_read_path, resolve_write_path};
+use crate::plugins::fs::{resolve_read_path, resolve_write_path};
 use crate::error::AppError;
 
 /// Event payload emitted after a plugin-scoped file is modified by a
@@ -48,13 +48,11 @@ fn emit_fs_changed(ctx: &ToolContext, plugin_id: &str, path: &str, op: &'static 
 /// Map a handler name to the capability a plugin must declare to use it.
 /// Returns `None` for unknown handler names (the caller should reject the
 /// tool registration entirely in that case).
+///
+/// Delegates to [`crate::plugins::capability::capability_for`] — the single
+/// source of truth shared by the event IPC, HTTP API, and local handlers.
 pub fn required_capability(handler_name: &str) -> Option<&'static str> {
-    match handler_name {
-        "fs.read" => Some("fs.read"),
-        "fs.write" | "fs.append" => Some("fs.write"),
-        "session.info" | "connection.info" | "host_port" => Some("ssh.list"),
-        _ => None,
-    }
+    crate::plugins::capability::capability_for(handler_name)
 }
 
 // ───────────────────────── fs handlers ─────────────────────────

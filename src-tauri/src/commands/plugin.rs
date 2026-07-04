@@ -1,17 +1,44 @@
+use std::collections::HashMap;
 use std::path::Path;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::error::AppError;
+use crate::plugins::capability::as_hash_map;
 use crate::plugins::manifest::PluginManifest;
-use crate::plugins::scan::scan_plugins;
+use crate::plugins::registry::ReloadDiff;
 use crate::AppState;
 
 #[tauri::command]
 pub async fn plugin_list(state: State<'_, AppState>) -> Result<Vec<PluginManifest>, AppError> {
+    let reg = state.plugin_registry.read().await;
+    Ok(reg.all_manifests())
+}
+
+/// Expose the command→capability map to the frontend so `pluginIpc.ts` can
+/// build its `COMMAND_TO_CAPABILITY` table from a single source of truth
+/// instead of hand-maintaining a parallel copy.
+#[tauri::command]
+pub async fn plugin_capability_map() -> Result<HashMap<String, String>, AppError> {
+    Ok(as_hash_map())
+}
+
+/// Trigger a plugin registry reload (e.g. after the user enables/disables a
+/// plugin or changes authorized capabilities). Emits `plugin-registry-changed`
+/// with the diff so the frontend can refresh webviews/instructions incrementally
+/// instead of nuke-and-rebuild.
+#[tauri::command]
+pub async fn plugin_reload(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ReloadDiff, AppError> {
     let config_dir = state.config_dir.clone();
-    tokio::task::spawn_blocking(move || scan_plugins(&config_dir))
-        .await
-        .map_err(|e| AppError::Other(format!("plugin scan failed: {}", e)))
+    let settings = state.settings.read().await.clone();
+    let diff = {
+        let mut reg = state.plugin_registry.write().await;
+        reg.reload(&config_dir, &settings).await
+    };
+    let _ = app.emit("plugin-registry-changed", &diff);
+    Ok(diff)
 }
 
 #[tauri::command]

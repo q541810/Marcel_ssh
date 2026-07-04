@@ -71,6 +71,10 @@ pub struct AppState {
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
+    /// Plugin registry: single source of truth for plugin manifests + state.
+    /// Reloads on startup and whenever settings change (enable/disable plugin,
+    /// authorized capabilities). Emits `plugin-registry-changed` after reload.
+    pub plugin_registry: crate::plugins::registry::SharedPluginRegistry,
 }
 
 impl AppState {
@@ -311,6 +315,7 @@ impl AppState {
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
+            plugin_registry: crate::plugins::registry::new_shared(),
         }
     }
 }
@@ -385,7 +390,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .register_uri_scheme_protocol("plugin", |app, request| {
-            crate::commands::plugin_webview::handle_plugin_uri(app, request)
+            crate::commands::plugin_uri::handle_plugin_uri(app, request)
         })
         .setup(|app| {
             let config_dir = app
@@ -409,6 +414,30 @@ pub fn run() {
             drop(init_rt);
 
             app.manage(app_state);
+
+            // Load plugin manifests into the registry. Failure degrades to an
+            // empty registry + log; the app still starts so the user can fix
+            // the problem (e.g. bad plugin manifest) via the settings UI.
+            {
+                let state = app.state::<AppState>();
+                let config_dir = state.config_dir.clone();
+                let registry = state.plugin_registry.clone();
+                let settings = state.settings.blocking_read().clone();
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let diff = {
+                        let mut reg = registry.write().await;
+                        reg.reload(&config_dir, &settings).await
+                    };
+                    log::info!(
+                        "插件注册表已加载: {} 个插件, {} 个变更",
+                        diff.all_ids.len(),
+                        diff.changed.len()
+                    );
+                    use tauri::Emitter;
+                    let _ = app_handle.emit("plugin-registry-changed", &diff);
+                });
+            }
 
             // Background: refresh MCP tools for enabled servers without blocking startup.
             let mcp_manager = app.state::<AppState>().mcp_manager.clone();
@@ -517,6 +546,8 @@ pub fn run() {
             commands::plugin_webview::plugin_webview_set_bounds,
             commands::plugin_webview::plugin_webview_close,
             commands::plugin::plugin_list,
+            commands::plugin::plugin_capability_map,
+            commands::plugin::plugin_reload,
             commands::plugin::get_plugin_dir,
             commands::plugin::open_plugin_dir,
             commands::plugin_fs::plugin_fs_read,

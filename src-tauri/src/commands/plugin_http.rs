@@ -41,7 +41,7 @@ pub async fn plugin_http_request(
     plugin_http_request_inner(&request).await
 }
 
-async fn plugin_http_request_inner(
+pub(crate) async fn plugin_http_request_inner(
     request: &PluginHttpRequest,
 ) -> Result<PluginHttpResponse, AppError> {
     if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
