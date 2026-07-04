@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::plugins::manifest::PluginManifest;
+use crate::plugins::manifest::{PluginManifest, ToolKind};
 
 pub fn scan_plugins(config_dir: &Path) -> Vec<PluginManifest> {
     scan_plugins_filtered(config_dir, &[])
@@ -239,7 +239,7 @@ mod tests {
         let result = scan_plugins(tmp.path());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].agent_tools.len(), 1);
-        assert_eq!(result[0].agent_tools[0].kind, "ssh");
+        assert_eq!(result[0].agent_tools[0].kind, ToolKind::Ssh);
     }
 
     #[test]
