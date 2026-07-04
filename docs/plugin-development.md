@@ -35,7 +35,9 @@
     {
       "id": "main",
       "mount": "sidebar",
-      "title": "Hello"
+      "title": "Hello",
+      "navGroup": "top",
+      "entry": "index.html"
     }
   ]
 }
@@ -91,7 +93,7 @@
 <app-config-dir>/plugins/
   <plugin-id>/
     plugin.json          # 必须。插件 manifest。
-    index.html           # 默认入口文件（可在 manifest 中用 entry 指定其他文件）
+    index.html           # 入口文件（由 manifest 的 entry 字段指定，必填）
     style.css            # 可选。样式文件。
     icon.svg             # 可选。插件图标。
     ...                  # 其他前端资源
@@ -149,10 +151,10 @@
 ```
 
 - `id`：在插件内简短即可（如 `main`），最终 ID 自动拼接为 `<plugin-id>.<view-id>`
-- `navGroup`：`sidebar` 视图必须设置，`top` 或 `bottom`
+- `navGroup`：`top` 或 `bottom`。sidebar 视图需设置此项才会出现在 NavRail 上；不设置则视图仍注册但不显示在导航栏
 - `order`：排序权重，越小越靠前，默认 100
-- `entry`：入口文件路径，相对于插件根目录，默认 `index.html`
-- `exclusive`：设为 `true` 独占中央面板（如设置页），默认 `false`
+- `entry`：入口文件路径，相对于插件根目录（必填）
+- `exclusive`：设为 `true` 时该视图通过 NavRail 切换激活后会**独占中央面板**，同时隐藏 sidebar 和 agent 面板（如设置页），默认 `false`
 
 ### 图标
 
@@ -368,6 +370,8 @@ const { ok, data } = await res.json();
 
 ### 命令模板
 
+> **注意**：Agent 工具的 `command` 在**当前活跃 SSH 会话的远程服务器**上执行（通过 SSH exec channel）。无活跃 SSH 会话时调用会失败。
+
 用 `{{param}}` 引用参数：
 
 ```json
@@ -396,6 +400,74 @@ const { ok, data } = await res.json();
 | `HighRisk` | 高风险，沙箱审查后执行 |
 
 > **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+### 本地工具（`kind=local`）
+
+除了在远程服务器执行 SSH 命令（`kind=ssh`，默认），插件工具还可以声明 `kind=local` 在**用户本机**执行，调用内核注册的通用 handler。典型用途：读写插件目录下的本地文件、查询当前会话信息。
+
+| | `kind=ssh`（默认） | `kind=local` |
+|--|-------------------|--------------|
+| 执行位置 | 远程 SSH 服务器 | 用户本机 |
+| 必填字段 | `command`（SSH 命令模板） | `handler`（内核 handler 名）+ `command`（JSON 固定参数） |
+| capability | 由 IPC 命令决定 | 由 handler 决定（如 `fs.read` handler 需声明 `fs.read`） |
+| 适用场景 | 服务器运维命令 | 本地文件 IO、会话查询 |
+
+示例：用 `fs.read` handler 读取插件目录下的 `data.json`，模型无法指定路径。
+
+```json
+{
+  "agentTools": [
+    {
+      "name": "read_data",
+      "description": "读取插件数据文件",
+      "kind": "local",
+      "handler": "fs.read",
+      "command": "{\"path\":\"data.json\"}",
+      "parameters": {},
+      "riskLevel": "ReadOnly"
+    }
+  ],
+  "capabilities": ["fs.read"]
+}
+```
+
+要点：
+
+- **`command` 字段在 `kind=local` 时是 JSON 对象字符串**，解析后作为 fixed_params 与模型参数合并，**fixed_params 优先**——把 `path` 写死在 `command` 里、不暴露给 `parameters` schema，可从根本上防止模型写到任意路径
+- **capability 检查**：插件必须声明 handler 要求的 capability，否则工具调用被拒绝（详见 [API 参考 - 通用本地 handler](./plugin-api.md#通用本地-handler)）
+- **handler 列表**：当前内核注册了 6 个通用 handler（`fs.read`/`fs.write`/`fs.append`/`session.info`/`connection.info`/`host_port`），任何插件都可调用，无需自己实现
+- **上下文变量**：`command` 字段的字符串值支持 `{{__host_port__}}` 等模板变量，可让 path 自动带上当前连接标识（详见 [API 参考 - 模板上下文变量](./plugin-api.md#模板上下文变量)）
+
+完整 handler 列表与 fixed_params 合并顺序详见 [API 参考](./plugin-api.md#通用本地-handler)。
+
+### System Prompt 静态段（`systemPromptSection`）
+
+如果插件希望模型在每次对话开始就"知道某些事"（如"你有这些工具可用"、"会话开始时主动调用某工具"），可以在 manifest 声明 `systemPromptSection` 字段，指向一个静态文本文件：
+
+```json
+{
+  "id": "my-plugin",
+  "systemPromptSection": "system-prompt.md"
+}
+```
+
+`system-prompt.md` 内容是纯静态文本，支持 [上下文变量](./plugin-api.md#模板上下文变量) 替换：
+
+```markdown
+## 我的插件
+
+当前连接为 {{__host_port__}}。会话开始时请主动调用 read_data 加载已有数据。
+```
+
+行为：
+
+- 仅在 **Agent 模式 / Auto 模式**下生效，Chat 模式不拼接
+- 拼接在 system prompt 末尾，模型每次对话开始自动看到
+- 单段上限 2000 字符，超过截断
+- 文件读取失败时跳过该段（warn 日志），不阻塞会话
+- **不支持动态占位符**（如 `{{memory_index}}`），需要动态数据时由模型主动调用工具获取
+
+详见 [API 参考 - systemPromptSection](./plugin-api.md#systempromptsection)。
 
 ---
 
@@ -805,6 +877,151 @@ server-monitor/
 </body>
 </html>
 ```
+
+---
+
+## 示例插件：长期记忆（long-term-memory）
+
+这是一个**完整可分发的示例插件**，演示 `kind=local` 工具 + `systemPromptSection` + 通用 handler 的组合用法。它让 Agent 自己判断哪些关键信息值得"记到小本本上"，并在下次连接同一台服务器时主动想起，避免重复犯错、重复询问。
+
+> 这是 `kind=local` 能力的参考实现——所有 memory 逻辑（数据结构、文件格式、读写规则）都在插件里，内核零 memory 专用代码。
+
+### 功能
+
+- Agent 在对话中调用 `memory_save` 把关键信息追加到当前连接的记忆文件
+- 每次会话开始 Agent 自动 `memory_recall` 查看已记录的记忆
+- 通过 `memory_update` / `memory_delete` 修改或删除记忆（先 recall 再全量写回）
+- 记忆按连接（`host_port`）隔离，A 服务器的记忆不会污染 B 服务器
+- 侧栏面板可手工查看/编辑/新增/删除记忆，配置视图可一键清除当前连接所有记忆
+
+### 安装
+
+将仓库内的示例目录复制到你的插件目录：
+
+```
+<app-config-dir>/plugins/
+  long-term-memory/        ← 从 examples/plugins/long-term-memory/ 复制
+    plugin.json
+    index.html
+    config.html
+    system-prompt.md
+    memories/              ← 运行时自动创建
+      1.2.3.4_22.jsonl
+      ...
+```
+
+> `<app-config-dir>` 因平台而异（详见 [快速开始](#1-创建插件目录)）。复制后在 **设置 → 插件** 点刷新即可。
+
+### manifest 摘要
+
+```json
+{
+  "id": "long-term-memory",
+  "version": "1.0.0",
+  "name": "长期记忆",
+  "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
+  "capabilities": ["ssh.list", "fs.read", "fs.write", "events"],
+  "systemPromptSection": "system-prompt.md",
+  "views": [
+    {
+      "id": "panel",
+      "mount": "sidebar",
+      "title": "记忆",
+      "navGroup": "top",
+      "order": 60,
+      "entry": "index.html"
+    }
+  ],
+  "agentTools": [
+    {
+      "name": "memory_save",
+      "description": "把一条记忆追加到当前连接的小本本...",
+      "kind": "local",
+      "handler": "fs.append",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
+      "riskLevel": "LowRisk"
+    },
+    {
+      "name": "memory_recall",
+      "description": "读取当前连接已记录的所有记忆...",
+      "kind": "local",
+      "handler": "fs.read",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": {},
+      "riskLevel": "ReadOnly"
+    },
+    {
+      "name": "memory_update",
+      "description": "修改已有记忆（需先 recall 再全量写回）...",
+      "kind": "local",
+      "handler": "fs.write",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
+      "riskLevel": "LowRisk"
+    },
+    {
+      "name": "memory_delete",
+      "description": "删除记忆（需先 recall 再全量写回）...",
+      "kind": "local",
+      "handler": "fs.write",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
+      "riskLevel": "LowRisk"
+    }
+  ],
+  "configView": "config.html"
+}
+```
+
+### 工作原理
+
+四个 memory 工具全部用 `kind=local` + 通用 fs handler 组合实现，**没有任何 memory 专用 handler**：
+
+| 工具 | handler | path 模板（固定，模型不能传） | 模型传参 | 行为 |
+|------|---------|------------------------------|----------|------|
+| `memory_save` | `fs.append` | `memories/{{__host_port__}}.jsonl` | `content`（一行 JSON 字符串，即一条 entry） | 追加一行 |
+| `memory_recall` | `fs.read` | `memories/{{__host_port__}}.jsonl` | 无 | 返回文件全文 |
+| `memory_update` | `fs.write` | `memories/{{__host_port__}}.jsonl` | `content`（全量新内容，多行 JSONL） | 全量覆盖 |
+| `memory_delete` | `fs.write` | `memories/{{__host_port__}}.jsonl` | `content`（删除后剩余内容） | 全量覆盖 |
+
+关键设计：
+
+- **`path` 写死在 `command` 字段**（含 `{{__host_port__}}` 上下文变量），不暴露给 `parameters` schema，模型无法写到任意路径
+- **按连接隔离**：`{{__host_port__}}` 自动替换为 `1.2.3.4_22`，每台服务器一个独立的 `.jsonl` 文件
+- **`systemPromptSection`** 静态段在 Agent 模式下自动拼到 system prompt 末尾，引导模型"会话开始主动 recall""遇到用户偏好/服务器事实/坑主动 save"
+
+### 记忆文件格式
+
+每行一个 JSON 对象（JSONL），字段：
+
+```json
+{"id":"mem_1720000000_a1b2","type":"pitfall","title":"systemd 需 --no-block","content":"这台机器 systemctl restart 会卡，需加 --no-block 参数","tags":["systemd"],"createdAt":1720000000,"updatedAt":1720000000}
+```
+
+- `id`：`mem_` + 时间戳 + 4 位随机 hex
+- `type`：`user_preference` / `server_info` / `pitfall`（用户偏好 / 服务器事实 / 注意事项）
+- `title` / `content` / `tags` / `createdAt` / `updatedAt`
+
+### 使用方法
+
+1. **安装插件**：复制示例目录到 `<app-config-dir>/plugins/long-term-memory/`，刷新插件
+2. **连接 SSH 服务器**，切到 Agent 模式
+3. **正常对话**：当你说"以后提交信息用中文"或 Agent 发现"nginx 在 /opt/nginx"时，它会自动调用 `memory_save` 记录
+4. **下次连接同一服务器**：Agent 会话开始时自动 `memory_recall`，看到之前的记忆，主动避免重复询问
+
+侧栏"记忆"按钮可手动浏览/编辑/删除记忆；设置页插件的"配置"按钮可清除当前连接的所有记忆。
+
+### 开发参考
+
+如果你想做一个类似的"按连接隔离的本地数据"插件，可以参考 long-term-memory 的模式：
+
+1. 用 `kind=local` + `fs.read`/`fs.write`/`fs.append` 做本地数据读写
+2. `command` 字段用 `{{__host_port__}}` 模板实现按连接隔离
+3. `systemPromptSection` 引导模型何时调用工具
+4. 工具 `description` 写清楚参数格式和调用时机（这是模型正确使用的关键）
+
+完整字段定义详见 [API 参考](./plugin-api.md)。
 
 ---
 

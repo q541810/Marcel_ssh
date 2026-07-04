@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>长期记忆</title>
+<style>
+  :root {
+    --zinc-950: #09090b;
+    --zinc-900: #18181b;
+    --zinc-800: #27272a;
+    --zinc-700: #3f3f46;
+    --zinc-600: #52525b;
+    --zinc-500: #71717a;
+    --zinc-400: #a1a1aa;
+    --zinc-300: #d4d4d8;
+    --zinc-200: #e4e4e7;
+    --zinc-100: #f4f4f5;
+    --indigo-600: #4f46e5;
+    --indigo-500: #6366f1;
+    --indigo-400: #818cf8;
+    --indigo-900-30: rgba(49,46,129,0.3);
+    --indigo-700: #4338ca;
+    --red-600: #dc2626;
+    --red-500: #ef4444;
+    --red-400: #f87171;
+    --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --spring-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--zinc-900);
+    color: var(--zinc-100);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── 滚动条（对齐全局样式） ── */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--zinc-700); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--zinc-600); }
+
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+
+  /* ── 顶部栏（仿 ListPanel header） ── */
+  .header {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--zinc-800);
+  }
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+  }
+  .header-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--zinc-400);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .header-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+    background: transparent;
+    border: none;
+    color: var(--zinc-400);
+    cursor: pointer;
+    transition: background-color 150ms var(--spring-bounce),
+                color 150ms var(--spring-bounce);
+  }
+  .header-add:hover {
+    background: var(--zinc-800);
+    color: var(--zinc-100);
+  }
+  .header-add:active { transform: scale(0.95); }
+  .header-add svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  /* tabs */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 0 12px 8px;
+  }
+  .tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--zinc-500);
+    padding: 5px 8px;
+    font-size: 12px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    transition: background-color 150ms var(--spring-bounce),
+                color 150ms var(--spring-bounce);
+  }
+  .tab:hover { color: var(--zinc-300); }
+  .tab.active {
+    background: var(--zinc-800);
+    color: var(--zinc-100);
+  }
+  .tab:active { transform: scale(0.97); }
+
+  /* search */
+  .search-wrap {
+    padding: 0 12px 8px;
+  }
+  .search {
+    width: 100%;
+    border-radius: var(--radius-md);
+    background: var(--zinc-800);
+    border: 1px solid var(--zinc-700);
+    color: var(--zinc-100);
+    padding: 6px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 150ms var(--spring-smooth);
+  }
+  .search::placeholder { color: var(--zinc-500); }
+  .search:focus { border-color: var(--indigo-500); }
+
+  /* conn info */
+  .conn-info {
+    padding: 0 12px 8px;
+    font-size: 11px;
+    color: var(--zinc-500);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .conn-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--zinc-500);
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  .conn-dot.online { background: #22c55e; }
+
+  /* status bar */
+  .status-bar {
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--zinc-500);
+    border-bottom: 1px solid var(--zinc-800);
+    flex-shrink: 0;
+    display: none;
+  }
+  .status-bar.warn { color: #fbbf24; display: block; }
+  .status-bar.error { color: var(--red-400); display: block; }
+
+  /* ── 列表区 ── */
+  .list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .group {
+    margin-bottom: 12px;
+  }
+  .group-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--zinc-500);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 4px 4px 6px;
+  }
+
+  /* ── 卡片（仿 ConnectionList 列表项） ── */
+  .card {
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--zinc-800);
+    background: transparent;
+    margin-bottom: 4px;
+    transition: border-color 150ms var(--spring-smooth),
+                background-color 150ms var(--spring-smooth);
+    cursor: default;
+  }
+  .card:hover {
+    border-color: var(--zinc-700);
+    background: rgba(39,39,42,0.3);
+  }
+  .card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .card-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--zinc-200);
+    word-break: break-word;
+    line-height: 1.4;
+  }
+  .card-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 150ms var(--spring-smooth);
+  }
+  .card:hover .card-actions { opacity: 1; }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--zinc-500);
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: inherit;
+    font-weight: 500;
+    transition: background-color 150ms var(--spring-bounce),
+                color 150ms var(--spring-bounce);
+  }
+  .icon-btn:hover {
+    background: var(--zinc-800);
+    color: var(--zinc-200);
+  }
+  .icon-btn.danger:hover {
+    color: var(--red-400);
+    background: rgba(220,38,38,0.1);
+  }
+  .icon-btn:active { transform: scale(0.95); }
+  .card-preview {
+    color: var(--zinc-500);
+    font-size: 12px;
+    margin-top: 4px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    background: var(--zinc-700);
+    color: var(--zinc-300);
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+  }
+  .card-meta {
+    font-size: 11px;
+    color: var(--zinc-600);
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .conn-badge {
+    display: inline-flex;
+    align-items: center;
+    background: var(--indigo-900-30);
+    color: var(--indigo-400);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    font-weight: 500;
+  }
+
+  /* ── 编辑表单 ── */
+  .edit-form {
+    margin-top: 8px;
+    padding: 10px;
+    background: var(--zinc-800);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .form-label {
+    font-size: 12px;
+    color: var(--zinc-400);
+    font-weight: 500;
+  }
+  .form-input, .form-textarea, .form-select {
+    width: 100%;
+    border-radius: var(--radius-md);
+    background: var(--zinc-900);
+    border: 1px solid var(--zinc-700);
+    color: var(--zinc-100);
+    padding: 6px 8px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 150ms var(--spring-smooth);
+  }
+  .form-input:focus, .form-textarea:focus, .form-select:focus {
+    border-color: var(--indigo-500);
+  }
+  .form-input::placeholder, .form-textarea::placeholder { color: var(--zinc-500); }
+  .form-textarea {
+    min-height: 72px;
+    resize: vertical;
+  }
+  .form-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+
+  /* ── 按钮（仿 Button.tsx） ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid transparent;
+    padding: 5px 12px;
+    transition: background-color 150ms var(--spring-bounce),
+                border-color 150ms var(--spring-bounce),
+                color 150ms var(--spring-bounce),
+                transform 150ms var(--spring-bounce);
+  }
+  .btn:active { transform: scale(0.95); }
+  .btn-secondary {
+    background: var(--zinc-700);
+    color: var(--zinc-200);
+  }
+  .btn-secondary:hover { background: var(--zinc-600); }
+  .btn-primary {
+    background: var(--indigo-600);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--indigo-500); }
+  .btn-danger {
+    background: var(--red-600);
+    color: #fff;
+  }
+  .btn-danger:hover { background: var(--red-500); }
+  .btn-ghost {
+    background: transparent;
+    color: var(--zinc-300);
+    border-color: var(--zinc-700);
+  }
+  .btn-ghost:hover {
+    background: var(--zinc-800);
+    color: var(--zinc-100);
+  }
+
+  /* ── 模态框（仿 Modal.tsx） ── */
+  .modal-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal-mask.show { display: flex; }
+  .modal {
+    width: 90%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    background: var(--zinc-800);
+    border: 1px solid var(--zinc-700);
+    border-radius: var(--radius-xl);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: scaleIn 300ms var(--spring-bounce);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--zinc-700);
+  }
+  .modal-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--zinc-100);
+  }
+  .modal-close {
+    background: transparent;
+    border: none;
+    color: var(--zinc-400);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: color 150ms var(--spring-bounce),
+                background-color 150ms var(--spring-bounce);
+  }
+  .modal-close:hover {
+    color: var(--zinc-200);
+    background: var(--zinc-700);
+  }
+  .modal-body {
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 0 16px 16px;
+  }
+
+  @keyframes scaleIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+  }
+
+  /* ── 空状态（仿 ConnectionList） ── */
+  .empty {
+    text-align: center;
+    padding: 48px 16px;
+  }
+  .empty-title {
+    font-size: 13px;
+    color: var(--zinc-500);
+    margin-bottom: 8px;
+  }
+  .empty-action {
+    font-size: 12px;
+    color: var(--indigo-400);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-decoration: underline;
+    font-family: inherit;
+    padding: 0;
+  }
+  .empty-action:hover { color: var(--indigo-500); }
+
+  /* ── loading ── */
+  .loading {
+    text-align: center;
+    color: var(--zinc-500);
+    padding: 32px 16px;
+    font-size: 13px;
+  }
+
+  /* ── 二次确认条 ── */
+  .confirm-bar {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(127,29,29,0.3);
+    border: 1px solid rgba(153,27,27,0.4);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .confirm-bar-text {
+    color: #fecaca;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 顶部栏 -->
+  <div class="header">
+    <div class="header-top">
+      <span class="header-title">记忆</span>
+      <button class="header-add" id="add-btn" type="button" title="新增记忆">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+        </svg>
+      </button>
+    </div>
+    <div class="tabs">
+      <button class="tab active" id="tab-current" type="button">当前连接</button>
+      <button class="tab" id="tab-all" type="button">全部连接</button>
+    </div>
+    <div class="search-wrap">
+      <input class="search" id="search" type="text" placeholder="搜索标题 / 内容 / 标签" autocomplete="off">
+    </div>
+    <div class="conn-info" id="conn-info"><span class="conn-dot"></span>等待连接…</div>
+  </div>
+
+  <!-- 状态条 -->
+  <div class="status-bar" id="status-bar"></div>
+
+  <!-- 列表区 -->
+  <div class="list" id="list"></div>
+</div>
+
+<!-- 新增弹窗 -->
+<div class="modal-mask" id="add-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 class="modal-title">新增记忆</h3>
+      <button class="modal-close" id="add-close" type="button" aria-label="关闭">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <label class="form-label">类型</label>
+        <select class="form-select" id="add-type">
+          <option value="server_info">环境信息</option>
+          <option value="user_preference">用户偏好</option>
+          <option value="pitfall">注意事项</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label class="form-label">标题</label>
+        <input class="form-input" id="add-title" type="text" placeholder="简短标题，如：nginx 路径">
+      </div>
+      <div class="form-row">
+        <label class="form-label">内容</label>
+        <textarea class="form-textarea" id="add-content" placeholder="详细内容，如：nginx 安装在 /opt/nginx&#10;systemd 重启会卡住，需加 --no-block"></textarea>
+      </div>
+      <div class="form-row">
+        <label class="form-label">标签（逗号分隔）</label>
+        <input class="form-input" id="add-tags" type="text" placeholder="nginx, systemd">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="add-cancel" type="button">取消</button>
+      <button class="btn btn-primary" id="add-save" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+(function () {
+  const { emit, listen } = window.__TAURI__.event;
+  const PLUGIN_ID = 'long-term-memory';
+  let counter = 0;
+
+  function pluginCall(cmd, args) {
+    args = args || {};
+    const id = String(++counter);
+    return new Promise((resolve, reject) => {
+      let unlistenFn = null;
+      listen('plugin-response-' + id, function (e) {
+        if (unlistenFn) { try { unlistenFn(); } catch (_) {} }
+        if (e.payload && e.payload.ok) resolve(e.payload.data);
+        else reject(new Error(e.payload ? e.payload.data : 'unknown error'));
+      }).then(function (unl) {
+        unlistenFn = unl;
+        return emit('plugin-request', {
+          id: id,
+          pluginId: PLUGIN_ID,
+          cmd: cmd,
+          args: args
+        });
+      }).catch(reject);
+    });
+  }
+
+  const state = {
+    viewMode: 'current',
+    searchTerm: '',
+    currentHostPort: null,
+    currentConnName: '',
+    memories: [],
+    editingId: null,
+    confirmingId: null,
+    loading: false
+  };
+
+  const TYPE_META = {
+    server_info:     { label: '环境信息',   order: 1 },
+    user_preference: { label: '用户偏好',   order: 2 },
+    pitfall:         { label: '注意事项',   order: 3 }
+  };
+
+  function genId() {
+    const ts = Math.floor(Date.now() / 1000);
+    const hex = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, '0');
+    return 'mem_' + ts + '_' + hex;
+  }
+  function preview(content) {
+    if (!content) return '';
+    return content.length > 100 ? content.slice(0, 100) + '…' : content;
+  }
+  function parseTags(input) {
+    if (!input) return [];
+    return input.split(',').map(function (t) { return t.trim(); }).filter(Boolean);
+  }
+  function tagsToStr(tags) {
+    return Array.isArray(tags) ? tags.join(', ') : '';
+  }
+  function parseJsonl(text) {
+    if (!text || !text.trim()) return { memories: [], errors: 0 };
+    const lines = text.split('\n');
+    const out = [];
+    let errors = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line || !line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj === 'object') out.push(obj);
+        else errors++;
+      } catch (_) { errors++; }
+    }
+    return { memories: out, errors: errors };
+  }
+  function serializeJsonl(memories) {
+    return memories.map(function (m) { return JSON.stringify(m); }).join('\n');
+  }
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getCurrentConnection() {
+    return pluginCall('session.active').then(function (sess) {
+      if (!sess || !sess.connectionId) throw new Error('no active session');
+      return pluginCall('connection.info', { connectionId: sess.connectionId }).then(function (conn) {
+        if (!conn || !conn.host) throw new Error('no connection info');
+        return {
+          host: conn.host,
+          port: conn.port,
+          name: conn.name || (conn.host + ':' + conn.port),
+          connectionId: sess.connectionId
+        };
+      });
+    });
+  }
+  function buildHostPort(conn) {
+    return String(conn.host) + '_' + String(conn.port);
+  }
+  function readMemoriesFile(hostPort) {
+    return pluginCall('fs.read', { path: 'memories/' + hostPort + '.jsonl' });
+  }
+  function writeMemoriesFile(hostPort, content) {
+    return pluginCall('fs.write', { path: 'memories/' + hostPort + '.jsonl', content: content });
+  }
+
+  const elList = document.getElementById('list');
+  const elConnInfo = document.getElementById('conn-info');
+  const elStatusBar = document.getElementById('status-bar');
+
+  function setStatus(type, msg) {
+    elStatusBar.className = 'status-bar' + (type ? ' ' + type : '');
+    elStatusBar.textContent = msg || '';
+  }
+  function setConnInfo(text) {
+    if (!text) {
+      elConnInfo.innerHTML = '<span class="conn-dot"></span>等待连接…';
+      return;
+    }
+    elConnInfo.innerHTML = '<span class="conn-dot online"></span>' + escapeHtml(text);
+  }
+  function filterMemories(list, term) {
+    if (!term) return list;
+    const t = term.toLowerCase();
+    return list.filter(function (m) {
+      if (m.title && String(m.title).toLowerCase().indexOf(t) >= 0) return true;
+      if (m.content && String(m.content).toLowerCase().indexOf(t) >= 0) return true;
+      if (Array.isArray(m.tags) && m.tags.some(function (tag) { return String(tag).toLowerCase().indexOf(t) >= 0; })) return true;
+      return false;
+    });
+  }
+  function renderEmpty(msg) {
+    elList.innerHTML = '<div class="empty"><div class="empty-title">' + escapeHtml(msg) + '</div></div>';
+  }
+  function renderLoading(msg) {
+    elList.innerHTML = '<div class="loading">' + escapeHtml(msg) + '</div>';
+  }
+  function renderCard(m) {
+    const isEditing = state.editingId === m.id;
+    const isConfirming = state.confirmingId === m.id;
+    const showConn = state.viewMode === 'all';
+    const tagsHtml = (Array.isArray(m.tags) && m.tags.length)
+      ? '<div class="card-tags">' + m.tags.map(function (t) { return '<span class="tag">' + escapeHtml(t) + '</span>'; }).join('') + '</div>'
+      : '';
+    const connBadge = showConn
+      ? '<span class="conn-badge">' + escapeHtml(m._connName || m._hostPort || '') + '</span>'
+      : '';
+    const metaText = '<span class="card-meta">' + connBadge + '更新于 ' + new Date((m.updatedAt || m.createdAt || 0) * 1000).toLocaleString() + '</span>';
+
+    let html = '<div class="card" data-id="' + escapeHtml(m.id) + '">';
+    html += '<div class="card-head">';
+    html += '<div class="card-title">' + escapeHtml(m.title || '(无标题)') + '</div>';
+    html += '<div class="card-actions">';
+    html += '<button class="icon-btn" data-act="edit">编辑</button>';
+    html += '<button class="icon-btn danger" data-act="delete">删除</button>';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="card-preview">' + escapeHtml(preview(m.content)) + '</div>';
+    html += tagsHtml;
+    html += metaText;
+    if (isEditing) html += renderEditForm(m);
+    if (isConfirming) {
+      html += '<div class="confirm-bar">' +
+        '<span class="confirm-bar-text">确认删除？此操作不可恢复。</span>' +
+        '<div><button class="btn btn-ghost" data-act="cancel-delete">取消</button> ' +
+        '<button class="btn btn-danger" data-act="confirm-delete">确认删除</button></div>' +
+        '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+  function renderEditForm(m) {
+    return '<div class="edit-form">' +
+      '<div class="form-row"><label class="form-label">类型</label>' +
+      '<select class="form-select" data-field="type">' +
+      '<option value="server_info"' + (m.type === 'server_info' ? ' selected' : '') + '>环境信息</option>' +
+      '<option value="user_preference"' + (m.type === 'user_preference' ? ' selected' : '') + '>用户偏好</option>' +
+      '<option value="pitfall"' + (m.type === 'pitfall' ? ' selected' : '') + '>注意事项</option>' +
+      '</select></div>' +
+      '<div class="form-row"><label class="form-label">标题</label>' +
+      '<input class="form-input" data-field="title" type="text" value="' + escapeHtml(m.title || '') + '"></div>' +
+      '<div class="form-row"><label class="form-label">内容</label>' +
+      '<textarea class="form-textarea" data-field="content">' + escapeHtml(m.content || '') + '</textarea></div>' +
+      '<div class="form-row"><label class="form-label">标签（逗号分隔）</label>' +
+      '<input class="form-input" data-field="tags" type="text" value="' + escapeHtml(tagsToStr(m.tags)) + '"></div>' +
+      '<div class="form-actions">' +
+      '<button class="btn btn-ghost" data-act="cancel-edit">取消</button>' +
+      '<button class="btn btn-primary" data-act="save-edit">保存</button>' +
+      '</div></div>';
+  }
+  function renderList() {
+    if (state.loading) { renderLoading('加载中…'); return; }
+    const filtered = filterMemories(state.memories, state.searchTerm);
+    if (filtered.length === 0) {
+      renderEmpty(state.memories.length === 0 ? '暂无记忆' : '没有匹配的记忆');
+      return;
+    }
+    const groups = {};
+    filtered.forEach(function (m) {
+      const key = m.type || 'other';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(m);
+    });
+    const keys = Object.keys(groups).sort(function (a, b) {
+      const oa = (TYPE_META[a] || { order: 99 }).order;
+      const ob = (TYPE_META[b] || { order: 99 }).order;
+      return oa - ob;
+    });
+    let html = '';
+    keys.forEach(function (key) {
+      const meta = TYPE_META[key] || { label: key };
+      html += '<div class="group"><div class="group-title">' + escapeHtml(meta.label) + '</div>';
+      groups[key].forEach(function (m) { html += renderCard(m); });
+      html += '</div>';
+    });
+    elList.innerHTML = html;
+  }
+
+  function refreshCurrentView() {
+    state.loading = true;
+    renderLoading('加载中…');
+    return getCurrentConnection().then(function (conn) {
+      state.currentHostPort = buildHostPort(conn);
+      state.currentConnName = conn.name;
+      setConnInfo(conn.name + '（' + conn.host + ':' + conn.port + '）');
+      return readMemoriesFile(state.currentHostPort).then(function (text) {
+        const r = parseJsonl(text);
+        r.memories.forEach(function (m) { m._hostPort = state.currentHostPort; m._connName = conn.name; });
+        state.memories = r.memories;
+        state.loading = false;
+        if (r.errors > 0) setStatus('warn', '有 ' + r.errors + ' 条记忆格式错误被跳过');
+        else setStatus('', '');
+        renderList();
+      }, function (err) {
+        state.memories = [];
+        state.loading = false;
+        setStatus('warn', '读取失败：' + (err && err.message ? err.message : String(err)));
+        renderList();
+      });
+    }, function () {
+      state.loading = false;
+      state.memories = [];
+      state.currentHostPort = null;
+      setConnInfo('');
+      renderEmpty('没有活跃的 SSH 连接');
+    });
+  }
+  function refreshAllView() {
+    state.loading = true;
+    renderLoading('加载所有连接的记忆…');
+    setConnInfo('');
+    setStatus('', '');
+    return pluginCall('connection.list').then(function (conns) {
+      if (!conns || conns.length === 0) {
+        state.memories = []; state.loading = false;
+        renderEmpty('还没有保存的连接');
+        return;
+      }
+      const all = []; let totalErrors = 0; let pending = conns.length;
+      const finishOne = function () {
+        pending--;
+        if (pending === 0) {
+          state.memories = all; state.loading = false;
+          if (totalErrors > 0) setStatus('warn', '有 ' + totalErrors + ' 条记忆格式错误被跳过');
+          else setStatus('', '');
+          renderList();
+        }
+      };
+      conns.forEach(function (conn) {
+        const hp = buildHostPort(conn);
+        readMemoriesFile(hp).then(function (text) {
+          const r = parseJsonl(text);
+          r.memories.forEach(function (m) { m._hostPort = hp; m._connName = conn.name || (conn.host + ':' + conn.port); });
+          all.push.apply(all, r.memories);
+          totalErrors += r.errors;
+          finishOne();
+        }, function () { finishOne(); });
+      });
+    }, function () {
+      state.loading = false; state.memories = [];
+      renderEmpty('加载连接列表失败');
+    });
+  }
+  function refresh() {
+    state.editingId = null; state.confirmingId = null;
+    if (state.viewMode === 'current') return refreshCurrentView();
+    return refreshAllView();
+  }
+
+  function saveEdit(cardEl, m) {
+    const newType = cardEl.querySelector('[data-field=type]').value;
+    const newTitle = cardEl.querySelector('[data-field=title]').value.trim();
+    const newContent = cardEl.querySelector('[data-field=content]').value;
+    const newTags = parseTags(cardEl.querySelector('[data-field=tags]').value);
+    if (!newTitle) { alert('标题不能为空'); return; }
+    m.type = newType; m.title = newTitle; m.content = newContent; m.tags = newTags;
+    m.updatedAt = Math.floor(Date.now() / 1000);
+    const hostPort = m._hostPort || state.currentHostPort;
+    const all = state.memories.filter(function (x) { return x._hostPort === hostPort; });
+    writeMemoriesFile(hostPort, serializeJsonl(all)).then(function () {
+      state.editingId = null; renderList();
+    }, function (err) { alert('保存失败：' + (err && err.message ? err.message : err)); });
+  }
+  function deleteMemory(m) {
+    const hostPort = m._hostPort || state.currentHostPort;
+    const remaining = state.memories.filter(function (x) {
+      if (x.id !== m.id) return true;
+      if (state.viewMode === 'all' && x._hostPort !== hostPort) return true;
+      return false;
+    });
+    const hostPortMems = remaining.filter(function (x) { return x._hostPort === hostPort; });
+    writeMemoriesFile(hostPort, serializeJsonl(hostPortMems)).then(function () {
+      state.memories = remaining; state.confirmingId = null; renderList();
+    }, function (err) { alert('删除失败：' + (err && err.message ? err.message : err)); });
+  }
+  function addMemory(type, title, content, tags) {
+    if (!state.currentHostPort) { alert('没有当前连接，无法新增'); return; }
+    const now = Math.floor(Date.now() / 1000);
+    const m = { id: genId(), type: type, title: title, content: content, tags: tags, createdAt: now, updatedAt: now };
+    let existing = '';
+    return readMemoriesFile(state.currentHostPort).then(function (text) { existing = text || ''; }, function () { existing = ''; }).then(function () {
+      const newLine = JSON.stringify(m);
+      const newContent = existing.trimEnd().length > 0 ? existing.trimEnd() + '\n' + newLine : newLine;
+      return writeMemoriesFile(state.currentHostPort, newContent);
+    }).then(function () { hideAddModal(); return refreshCurrentView(); }, function (err) { alert('新增失败：' + (err && err.message ? err.message : err)); });
+  }
+
+  const addModal = document.getElementById('add-modal');
+  function showAddModal() {
+    if (!state.currentHostPort) { alert('没有当前连接，无法新增'); return; }
+    document.getElementById('add-type').value = 'server_info';
+    document.getElementById('add-title').value = '';
+    document.getElementById('add-content').value = '';
+    document.getElementById('add-tags').value = '';
+    addModal.classList.add('show');
+    setTimeout(function () { document.getElementById('add-title').focus(); }, 50);
+  }
+  function hideAddModal() { addModal.classList.remove('show'); }
+
+  document.getElementById('tab-current').addEventListener('click', function () {
+    if (state.viewMode === 'current') return;
+    state.viewMode = 'current';
+    document.getElementById('tab-current').classList.add('active');
+    document.getElementById('tab-all').classList.remove('active');
+    refreshCurrentView();
+  });
+  document.getElementById('tab-all').addEventListener('click', function () {
+    if (state.viewMode === 'all') return;
+    state.viewMode = 'all';
+    document.getElementById('tab-all').classList.add('active');
+    document.getElementById('tab-current').classList.remove('active');
+    refreshAllView();
+  });
+  let searchTimer = null;
+  document.getElementById('search').addEventListener('input', function (e) {
+    const v = e.target.value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () { state.searchTerm = v; renderList(); }, 120);
+  });
+  document.getElementById('add-btn').addEventListener('click', showAddModal);
+  document.getElementById('add-cancel').addEventListener('click', hideAddModal);
+  document.getElementById('add-close').addEventListener('click', hideAddModal);
+  document.getElementById('add-save').addEventListener('click', function () {
+    const type = document.getElementById('add-type').value;
+    const title = document.getElementById('add-title').value.trim();
+    const content = document.getElementById('add-content').value;
+    const tags = parseTags(document.getElementById('add-tags').value);
+    if (!title) { alert('标题不能为空'); return; }
+    addMemory(type, title, content, tags);
+  });
+  addModal.addEventListener('click', function (e) { if (e.target === addModal) hideAddModal(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && addModal.classList.contains('show')) hideAddModal(); });
+
+  elList.addEventListener('click', function (e) {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) return;
+    const cardEl = btn.closest('.card');
+    if (!cardEl) return;
+    const id = cardEl.getAttribute('data-id');
+    const m = state.memories.find(function (x) { return x.id === id; });
+    if (!m) return;
+    const act = btn.getAttribute('data-act');
+    if (act === 'edit') { state.editingId = (state.editingId === id) ? null : id; state.confirmingId = null; renderList(); }
+    else if (act === 'cancel-edit') { state.editingId = null; renderList(); }
+    else if (act === 'save-edit') { saveEdit(cardEl, m); }
+    else if (act === 'delete') { state.confirmingId = id; state.editingId = null; renderList(); }
+    else if (act === 'cancel-delete') { state.confirmingId = null; renderList(); }
+    else if (act === 'confirm-delete') { deleteMemory(m); }
+  });
+
+  function subscribeFsChanged() {
+    listen('plugin-fs-changed', function (e) {
+      const p = e.payload || {};
+      if (p.plugin_id !== PLUGIN_ID) return;
+      const expectedPath = 'memories/' + (state.currentHostPort || '') + '.jsonl';
+      if (p.path !== expectedPath) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(function () {
+        refreshTimer = null;
+        if (state.viewMode === 'current') refreshCurrentView(); else refreshAllView();
+      }, 150);
+    });
+  }
+
+  let lastSeenHostPort = null;
+  let refreshTimer = null;
+  function pollCurrentConnection() {
+    setInterval(function () {
+      if (state.viewMode !== 'current') return;
+      getCurrentConnection().then(function (conn) {
+        const hp = buildHostPort(conn);
+        if (lastSeenHostPort && hp !== lastSeenHostPort) refreshCurrentView();
+        lastSeenHostPort = hp;
+      }, function () {
+        if (lastSeenHostPort !== null) {
+          lastSeenHostPort = null; state.currentHostPort = null; state.memories = [];
+          setConnInfo(''); renderEmpty('没有活跃的 SSH 连接');
+        }
+      });
+    }, 3000);
+  }
+
+  function init() { refreshCurrentView(); subscribeFsChanged(); pollCurrentConnection(); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+</body>
+</html>

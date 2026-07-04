@@ -1,0 +1,89 @@
+{
+  "id": "long-term-memory",
+  "version": "1.0.0",
+  "name": "长期记忆",
+  "publisher": "marcel",
+  "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
+  "capabilities": ["ssh.list", "fs.read", "fs.write", "events"],
+  "systemPromptSection": "system-prompt.md",
+  "views": [
+    {
+      "id": "panel",
+      "mount": "sidebar",
+      "title": "记忆",
+      "navGroup": "top",
+      "order": 60,
+      "entry": "index.html"
+    }
+  ],
+  "agentTools": [
+    {
+      "name": "memory_save",
+      "description": "把一条记忆追加到当前连接的“小本本”上。当前连接由 {{__host_port__}} 自动识别，你不需要传 host/port，path 由工具固定。\n\n何时调用：\n- 用户明确表达偏好时（如“以后提交信息用中文”）→ type=user_preference\n- 发现服务器环境的关键事实时（如“nginx 在 /opt/nginx”）→ type=server_info\n- 踩到坑时（如“systemd 重启会卡住，需要 --no-block”）→ type=pitfall\n\n参数 content 格式（一行合法 JSON 字符串，即一条 entry）：\n{\"id\":\"mem_<timestamp>_<4位随机hex>\",\"type\":\"pitfall\",\"title\":\"<简短标题>\",\"content\":\"<详细内容>\",\"tags\":[\"标签1\"],\"createdAt\":<timestamp>,\"updatedAt\":<timestamp>}\n\n示例：\n{\"id\":\"mem_1720000000_a1b2\",\"type\":\"pitfall\",\"title\":\"systemd 需 --no-block\",\"content\":\"这台机器 systemctl restart 会卡，需加 --no-block 参数\",\"tags\":[\"systemd\"],\"createdAt\":1720000000,\"updatedAt\":1720000000}\n\n注意：\n- id 用 mem_ + 当前时间戳 {{__timestamp__}} + 4 位随机 hex 拼接（如 mem_1720000000_a1b2）\n- 同 type+title 已存在时，请改用 memory_update 而不是重复 save\n- 不要记琐碎信息（如“用户说了你好”），只记长期有用的事实\n- type 枚举：server_info（服务器环境信息）/ user_preference（用户偏好）/ pitfall（踩坑记录）",
+      "kind": "local",
+      "handler": "fs.append",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "一行合法 JSON 字符串，即一条 entry。需包含 id/type/title/content/tags/createdAt/updatedAt 字段。结尾不要加换行符，工具会自动处理追加。"
+          }
+        },
+        "required": ["content"]
+      },
+      "riskLevel": "LowRisk"
+    },
+    {
+      "name": "memory_recall",
+      "description": "查看当前连接已记录的所有记忆。当前连接由 {{__host_port__}} 自动识别，无需传参，path 由工具固定。\n\n何时调用：\n- 会话开始时主动调用一次，了解这台机器之前记过什么，避免重复询问或踩已知坑\n- 用户问到服务器历史信息时（如“之前说过 nginx 装在哪”）\n- 决定是否需要 save 新记忆前，先 recall 避免重复\n- 调用 memory_update 或 memory_delete 之前必须先 recall\n\n返回格式：\n- 成功时返回 memories/<host_port>.jsonl 文件的全文（多行 JSONL，每行一条记忆 entry）\n- 文件不存在或为空时返回空字符串\n\n每行 entry 结构：\n{\"id\":\"mem_...\",\"type\":\"server_info|user_preference|pitfall\",\"title\":\"...\",\"content\":\"...\",\"tags\":[...],\"createdAt\":<ts>,\"updatedAt\":<ts>}\n\n注意：\n- 这是只读操作，不会修改任何文件\n- 返回内容可能为空（首次连接时无记忆）",
+      "kind": "local",
+      "handler": "fs.read",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "riskLevel": "ReadOnly"
+    },
+    {
+      "name": "memory_update",
+      "description": "修改已有记忆（全量覆盖写）。当前连接由 {{__host_port__}} 自动识别，path 由工具固定。\n\n工作流（必须遵守）：\n1. 先调 memory_recall 拿到当前所有记忆（JSONL 全文）\n2. 在内存里逐行 JSON.parse，找到要修改的条目（按 id 或 title 匹配），改其字段（如更新 content/tags/updatedAt）\n3. 把修改后的全部条目重新序列化为多行 JSONL 字符串，作为 content 传给本工具\n4. 本工具全量覆盖写回 memories/<host_port>.jsonl\n\n参数 content：全量新内容（多行 JSONL 字符串），包含所有未删除和已修改的条目，每行一条 entry。\n\n示例（两行，每行一条 entry）：\n{\"id\":\"mem_1720000000_a1b2\",\"type\":\"pitfall\",\"title\":\"systemd 需 --no-block\",\"content\":\"更新后的内容\",\"tags\":[\"systemd\"],\"createdAt\":1720000000,\"updatedAt\":1720001000}\n{\"id\":\"mem_1720000500_c3d4\",\"type\":\"server_info\",\"title\":\"nginx 路径\",\"content\":\"/opt/nginx\",\"tags\":[\"nginx\"],\"createdAt\":1720000500,\"updatedAt\":1720000500}\n\n注意：\n- 必须先 recall 再 update，否则会丢失其他条目\n- updatedAt 字段更新为当前时间戳 {{__timestamp__}}\n- 不要改 id，id 是稳定标识\n- 单连接建议 ≤ 200 条，超过时主动清理陈旧条目\n- 如果只想改一条，其他条目原样保留在 content 里",
+      "kind": "local",
+      "handler": "fs.write",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "全量新内容（多行 JSONL 字符串），包含所有未删除和已修改的条目。每行一条 entry JSON。"
+          }
+        },
+        "required": ["content"]
+      },
+      "riskLevel": "LowRisk"
+    },
+    {
+      "name": "memory_delete",
+      "description": "删除记忆（全量覆盖写）。当前连接由 {{__host_port__}} 自动识别，path 由工具固定。\n\n工作流（必须遵守）：\n1. 先调 memory_recall 拿到当前所有记忆（JSONL 全文）\n2. 在内存里逐行 JSON.parse，找到要删除的条目（按 id 或 title 匹配）\n3. 把删除后剩余的全部条目重新序列化为多行 JSONL 字符串，作为 content 传给本工具\n4. 本工具全量覆盖写回 memories/<host_port>.jsonl\n\n参数 content：删除后剩余的全量内容（多行 JSONL 字符串）。如果要清空所有记忆，传空字符串 \"\"。\n\n示例（删除 id=mem_1720000000_a1b2 后，剩余一条）：\n{\"id\":\"mem_1720000500_c3d4\",\"type\":\"server_info\",\"title\":\"nginx 路径\",\"content\":\"/opt/nginx\",\"tags\":[\"nginx\"],\"createdAt\":1720000500,\"updatedAt\":1720000500}\n\n注意：\n- 必须先 recall 再 delete，否则会丢失其他条目\n- 删除是不可逆的，删除前确认目标条目\n- 如果只想删一条，把其他条目原样保留在 content 里\n- 清空所有记忆时 content 传空字符串 \"\"",
+      "kind": "local",
+      "handler": "fs.write",
+      "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "删除后剩余的全量内容（多行 JSONL 字符串）。清空所有记忆时传空字符串。"
+          }
+        },
+        "required": ["content"]
+      },
+      "riskLevel": "LowRisk"
+    }
+  ],
+  "configView": "config.html"
+}

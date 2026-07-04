@@ -15,9 +15,20 @@
   "description": "插件描述",       // 可选。
   "capabilities": ["ssh.list"],   // 可选。声明需要的权限。
   "views": [...],                 // 可选。视图定义。
-  "agentTools": [...],            // 可选。Agent 工具定义。
+  "agentTools": [                 // 可选。Agent 工具定义。
+    {
+      "name": "read_data",
+      "description": "读取插件目录下的 data.json",
+      "kind": "local",           // 可选，默认 "ssh"。本地执行类型
+      "handler": "fs.read",      // kind=local 时必填，内核注册的 handler 名
+      "command": "{\"path\":\"data.json\"}", // kind=local 时为 JSON 固定参数
+      "parameters": {},
+      "riskLevel": "ReadOnly"
+    }
+  ],
   "injections": [...],            // 可选。内容脚本注入（需 ui.inject 权限）。
-  "configView": "config.html"     // 可选。配置视图入口文件。
+  "configView": "config.html",    // 可选。配置视图入口文件。
+  "systemPromptSection": "system-prompt.md" // 可选。Agent system prompt 静态段文件路径。
 }
 ```
 
@@ -33,6 +44,7 @@
 | `agentTools` | AgentToolDef[] | 否 | Agent 工具定义列表 |
 | `injections` | InjectionDef[] | 否 | 内容脚本注入定义列表 |
 | `configView` | string | 否 | 配置视图入口文件路径（相对于插件根目录） |
+| `systemPromptSection` | string | 否 | Agent system prompt 静态段文件路径（相对插件根目录），详见 [systemPromptSection 章节](#systempromptsection) |
 
 ---
 
@@ -44,10 +56,10 @@
 | `mount` | string | 是 | 挂载点：`sidebar` / `bottom` |
 | `title` | string | 是 | 显示标题 |
 | `icon` | IconDef | 否 | 图标定义 |
-| `navGroup` | string | 否 | 导航分组：`top` / `bottom`（sidebar 视图必须） |
+| `navGroup` | string | 否 | 导航分组：`top` / `bottom`。sidebar 视图需设置此项才会出现在 NavRail 上；不设置则视图仍注册但不显示在导航栏 |
 | `order` | number | 否 | 排序权重（越小越靠前，默认 100） |
-| `entry` | string | 否 | WebView 入口文件路径（相对于插件根目录，默认 `index.html`） |
-| `exclusive` | boolean | 否 | 是否独占模式（如设置页，默认 false） |
+| `entry` | string | 是 | WebView 入口文件路径（相对于插件根目录） |
+| `exclusive` | boolean | 否 | 是否独占模式（默认 false）。设为 `true` 时该视图通过 NavRail 切换激活后会**独占中央面板**，同时隐藏 sidebar 和 agent 面板（如设置页） |
 
 ### 挂载点
 
@@ -75,11 +87,197 @@
 |------|------|------|------|
 | `name` | string | 是 | 工具名称（Agent 调用时使用） |
 | `description` | string | 是 | 工具描述（Agent 可见） |
-| `command` | string | 是 | 命令模板。`{{param}}` 为参数占位符 |
+| `kind` | string | 否 | 执行类型：`"ssh"`（默认，向后兼容）或 `"local"`。`ssh` 在远程服务器执行命令；`local` 在用户本机调用内核注册的 handler |
+| `handler` | string | 否 | `kind=local` 时必填，指向内核注册的通用本地 handler 名称（如 `"fs.read"`）。`kind=ssh` 时忽略。详见 [通用本地 handler](#通用本地-handler) |
+| `command` | string | 否 | `kind=ssh` 时为 SSH 命令模板，`{{param}}` 为参数占位符，命令在**当前活跃 SSH 会话的远程服务器**上执行（通过 SSH exec channel），无活跃会话时调用失败。`kind=local` 时为 **JSON 对象字符串**，解析后作为固定参数（fixed_params）与模型传入的 params 合并后传给 handler，固定参数优先级高于模型参数（防止模型覆盖 `path` 等敏感字段） |
 | `parameters` | JSON Schema | 否 | 参数 JSON Schema |
 | `riskLevel` | string | 否 | 风险等级：`ReadOnly` / `LowRisk` / `Moderate` / `HighRisk`（默认 `Moderate`） |
 
 > Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+
+### `kind=ssh` 示例（默认，远程执行）
+
+```json
+{
+  "name": "server_status",
+  "description": "获取服务器运行状态",
+  "command": "top -bn1 | head -20",
+  "parameters": {},
+  "riskLevel": "ReadOnly"
+}
+```
+
+### `kind=local` 示例（本地执行）
+
+```json
+{
+  "name": "read_data",
+  "description": "读取插件目录下的 data.json",
+  "kind": "local",
+  "handler": "fs.read",
+  "command": "{\"path\":\"data.json\"}",
+  "parameters": {},
+  "riskLevel": "ReadOnly"
+}
+```
+
+`kind=local` 工具的 `command` 字段被解析为 JSON 对象作为 fixed_params，与模型传入的 params 合并后传给 handler。fixed_params 优先级高，可防止模型覆盖 `path` 等敏感字段。`command` 字段中的字符串值支持 [模板上下文变量](#模板上下文变量) 替换（如 `{"path":"memories/{{__host_port__}}.jsonl"}`）。
+
+> `kind=local` 时，handler 调用前会做 capability 检查（插件必须声明对应 handler 要求的 capability）；handler 未注册时该工具被跳过并写 warn 日志，不影响其他工具加载。
+
+---
+
+## 通用本地 handler
+
+内核启动时注册了一组通用本地 handler，任何插件都可以通过 `kind=local` + `handler=<name>` 调用，无需自己实现执行逻辑。当前注册的 handler 列表：
+
+| handler 名 | kind | capability | 参数 | 返回值 | 说明 |
+|---|---|---|---|---|---|
+| `fs.read` | local | `fs.read` | `{path}` | `{content: string}` | 读取插件目录下指定路径文件（路径穿越拒绝），返回文件全文 |
+| `fs.write` | local | `fs.write` | `{path, content}` | `{bytes_written: number}` | 覆盖写插件目录下文件（自动建中间目录，路径穿越拒绝） |
+| `fs.append` | local | `fs.write` | `{path, content}` | `{bytes_written: number}` | 追加写插件目录下文件（自动建父目录，路径穿越拒绝），返回本次追加的字节数 |
+| `session.info` | local | `ssh.list` | 无 | `{session_id, host, port, username, connection_id}` | 当前活跃会话详情。无活跃会话时返回错误 |
+| `connection.info` | local | `ssh.list` | 无 | `{host, port, username, connection_id}` | 当前会话对应的连接详情。无活跃会话时返回错误 |
+| `host_port` | local | `ssh.list` | 无 | `{host_port: string}` | 当前会话的 `host:port` 字符串（如 `"1.2.3.4:22"`），无活跃会话时返回错误 |
+
+> 说明：
+> - `fs.append` 复用 `fs.write` 的 capability（写操作），不新增 capability 类型。它是 `fs.write` 的"追加模式"变体。
+> - `path` 参数相对于插件根目录，由内核拼接 `<app-config-dir>/plugins/<plugin-id>/<path>` 后解析，含 `../` 的路径被拒绝。
+> - handler 内部不感知调用它的插件，`__plugin_id` 由 `PluginAgentTool` 在调用前自动注入到 params，插件 manifest 不需要也无法手动传该字段。
+> - 内核不暴露动态注册接口，handler 列表硬编码在启动时注册（避免安全风险）。如果未来有插件需要新的本地能力，需在内核侧新增 handler。
+
+### `kind=local` 工具的 `command` 字段（fixed_params 机制）
+
+`kind=local` 时，`command` 字段不再被当作 SSH 命令模板，而是被解析为 **JSON 对象字符串**，作为固定参数（fixed_params）：
+
+```json
+{
+  "name": "memory_save",
+  "kind": "local",
+  "handler": "fs.append",
+  "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "entry": { "type": "string" }
+    },
+    "required": ["entry"]
+  }
+}
+```
+
+调用时参数合并顺序：
+
+1. 模型按 `parameters` schema 传入 params（如 `{entry: "..."}`）
+2. 内核将 `command` 解析为 JSON 对象（如 `{path: "memories/...jsonl"}`）
+3. **fixed_params 覆盖模型同名参数**（`model_obj.insert(k, v)`），模型无法覆盖 `path` 等敏感字段
+4. 内核注入 `__plugin_id`（fs handler 用于路径解析）
+5. 对所有顶层字符串值做 [模板上下文变量](#模板上下文变量) 替换
+6. 把合并后的 params 传给 handler
+
+设计意图：插件作者把 `path` 写死在 `command` 字段里（可含上下文变量模板），不暴露给模型的 `parameters` schema，从根本上防止模型写到任意路径。模型只能控制 `entry`/`content` 等业务字段。
+
+> `command` 不是合法 JSON 对象时（如 `kind=local` 但 `command` 是空字符串或非 JSON），fixed_params 退化为空对象并写 warn 日志，工具仍可调用（此时模型参数全部生效，慎用）。
+
+---
+
+## 模板上下文变量
+
+工具的 `command` 字段（`kind=ssh` 的命令模板 / `kind=local` 的 fixed_params 字符串值）渲染时，自动注入当前会话的只读上下文变量，无需模型每次自己传 host/port 等值。共 7 个变量：
+
+| 变量 | 示例值 | 说明 |
+|---|---|---|
+| `{{__host__}}` | `1.2.3.4` | 当前会话 SSH 主机 IP |
+| `{{__port__}}` | `22` | 当前会话 SSH 端口 |
+| `{{__host_port__}}` | `1.2.3.4_22` | `host` 与 `port` 用下划线 `_` 拼接的隔离 key（注意与 `host_port` handler 返回的 `host:port` 形式不同） |
+| `{{__session_id__}}` | `sess_xxx` | 当前会话 ID |
+| `{{__connection_id__}}` | `conn_xxx` | 当前会话对应的保存连接 ID（configId） |
+| `{{__username__}}` | `root` | 登录用户名 |
+| `{{__timestamp__}}` | `1720000000` | 当前 Unix 时间戳（秒），同一工具调用内多次引用返回同一值 |
+
+### 渲染顺序
+
+1. **先注入上下文变量**：把 `{{__host__}}` 等 7 个变量替换为当前会话的真实值
+2. **再替换模型参数**：把 `{{paramName}}` 替换为模型传入的 params
+
+> 顺序很重要：上下文变量先消费掉 `{{__host__}}` 占位符，模型即使传入 `__host: "evil.com"` 也无法覆盖（占位符已被替换，模型参数的 `__host` 找不到对应占位符匹配）。
+
+### 无活跃会话时的行为
+
+Agent 模式下理论上不会无会话。若会话被中途关闭等原因导致无法获取会话信息，所有上下文变量替换为**空字符串**并写一条 warn 日志，工具调用不阻塞（让模型自行判断响应）。
+
+### 示例
+
+```json
+{
+  "name": "memory_save",
+  "kind": "local",
+  "handler": "fs.append",
+  "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "entry": { "type": "string", "description": "一行 JSON 字符串，id 用 mem_<当前时间戳>_4位随机hex" }
+    }
+  }
+}
+```
+
+`{{__host_port__}}` 在调用时被替换为 `1.2.3.4_22`，作为 fixed_params 的 `path` 值传给 `fs.append` handler。
+
+> 上下文变量**只**在 `command` 字段（`kind=ssh` 的命令模板 / `kind=local` 的 fixed_params 字符串值）和 [systemPromptSection](#systempromptsection) 文件内容中替换。工具的 `description`、`parameters` schema 等其他字段**不**做变量替换——请把引导文字写在 description 自然语言里（如上例"用 mem_<当前时间戳>_4位随机hex"），不要依赖占位符。
+
+---
+
+## systemPromptSection
+
+插件可以在 Agent 的 system prompt 末尾追加一段**静态提示文本**，让模型每次开始对话就自动看到（如"你之前可能记过关于这台机器的事情，需要时调 memory_recall 查看"）。
+
+| 属性 | 值 |
+|------|------|
+| manifest 字段 | `systemPromptSection` |
+| 类型 | `string`（文件路径，相对插件根目录） |
+| 必填 | 否 |
+| 生效模式 | Agent 模式 / Auto 模式（Chat 模式下不拼接） |
+| 长度上限 | 单段 2000 字符，超过截断并写 warn 日志 |
+| 支持变量 | [模板上下文变量](#模板上下文变量)（如 `{{__host_port__}}`） |
+| 不支持 | 动态占位符（如 `{{memory_index}}`、`{{user_count}}` 等业务变量），内核不做任何业务数据渲染 |
+
+### 用法
+
+在 manifest 中声明字段，指向插件目录下的一个静态文件（通常用 `.md` 后缀）：
+
+```json
+{
+  "id": "my-plugin",
+  "systemPromptSection": "system-prompt.md"
+}
+```
+
+`system-prompt.md` 内容示例（纯静态文本，含上下文变量）：
+
+```markdown
+## 我的插件
+
+当前连接为 {{__host_port__}}。你拥有以下工具：
+
+- read_data：读取本插件数据
+- write_data：写入本插件数据
+
+会话开始时请主动调用 read_data 加载已有数据。
+```
+
+### 行为规则
+
+- **拼接位置**：在 system prompt 末尾（user_section 之后）追加，多个插件按插件加载顺序依次拼接
+- **变量替换**：读取文件原文后，对 7 个 [上下文变量](#模板上下文变量) 做替换，让段落能引用当前会话信息
+- **静态文本**：内核只做上下文变量替换，**不渲染任何动态占位符**。如果插件需要动态数据（如索引、计数），由模型主动调用工具获取，内核不主动注入
+- **长度截断**：单段超过 2000 字符时截断并写 warn 日志
+- **文件读取失败**：跳过该插件段落，写 warn 日志，不阻塞会话启动
+- **插件禁用 / 未声明该字段**：不注入，不读文件
+- **缓存**：按文件 mtime 失效，避免每次构建 system prompt 都重新读盘
+
+> 与 [agentTools](#agent-工具定义) 一致，`systemPromptSection` 仅在 Agent 模式和 Auto 模式下生效，Chat 模式下不拼接。
 
 ---
 
@@ -388,6 +586,8 @@ async function saveConfig(config) {
 
 #### 可订阅事件
 
+下列是常用事件，**任何通过后端 `emit_event` 发出的事件都可订阅**（支持通配符）：
+
 | 事件模式 | 说明 | Payload |
 |----------|------|---------|
 | `ssh://status/*` | SSH 连接状态变化 | `SshStatus`（connected/disconnected/error） |
@@ -397,6 +597,8 @@ async function saveConfig(config) {
 | `sftp-upload-done` | SFTP 上传完成 | `{uploadId}` |
 | `sftp-download-progress` | SFTP 下载进度 | `{downloadId, written, total}` |
 | `sftp-download-done` | SFTP 下载完成 | `{downloadId}` |
+
+> 上表只列出主要事件。其他未列出的事件（如 `notification-sound`、approval 相关事件等）只要被 `emit_event` 发出，同样可通过 `events.subscribe` 订阅。
 
 #### 接收事件
 
@@ -474,8 +676,26 @@ if (ok) {
 
 #### 限制
 
-- HTTP API 支持所有后端命令和插件域命令
-- 虚拟命令（`session.active` 等）通过后端状态实现，行为可能与前端略有差异
+HTTP API 仅支持以下命令子集（远少于后端实际命令数）：
+
+| 命令 | 对应 capability |
+|------|----------------|
+| `ssh_list_sessions` / `ssh.list` | `ssh.list` |
+| `session.active` / `session.info` | `ssh.list` |
+| `connection.info` / `connection.list` | `ssh.list` |
+| `ssh_exec` | `ssh.exec` |
+| `sftp_read_file` / `sftp.read` | `sftp.read` |
+| `sftp_write_file` / `sftp.write` | `sftp.write` |
+| `plugin_fs_read` / `fs.read` | `fs.read` |
+| `plugin_fs_write` / `fs.write` | `fs.write` |
+| `plugin_http_request` / `net.request` | `net.request` |
+| `plugin_send_notification` / `notification` | `notification` |
+| `events.subscribe` / `events.unsubscribe` | `events` |
+
+其他后端命令（如 `sftp_list_dir`、`sftp_upload`、`agent_start_task` 等）**不支持**通过 HTTP API 调用。
+
+- 虚拟命令（`session.active` 等）通过后端状态实现，**不返回前端 store 派生字段**（如 `createdAt`）
+- HTTP API 的 capability 检查只校验 manifest 声明，**不读取用户在设置页的授权状态**（与事件 IPC 不同，事件 IPC 会同时校验两者）
 - 同步执行，长时间命令可能阻塞 WebView 网络线程
 
 ### 示例
@@ -503,8 +723,9 @@ await emit('plugin-request', {
 
 ## 安全边界
 
-- Capability 检查在主 WebView 的 IPC 代理层执行
-- 插件无法绕过 capability 检查直接调用后端命令
+- 事件 IPC 的 capability 检查在主 WebView 的 IPC 代理层执行，同时校验 manifest 声明和用户在设置页的授权状态
+- HTTP API 的 capability 检查在 Rust 后端执行，**仅校验 manifest 声明，不读取用户授权状态**（即用户在设置页收回的权限对 HTTP API 无效）
+- 插件无法绕过 manifest 中未声明的 capability
 - `fs.read` / `fs.write` 限制在插件目录内，路径穿越被拒绝
 - `net.request` 支持 HTTP 和 HTTPS，无域名限制
 - `sftp.read` / `sftp.write` 需要有效的 SSH 会话 ID
@@ -522,3 +743,4 @@ await emit('plugin-request', {
 | 1.2.0 | 2026-06-27 | 新增 `events` capability；新增 HTTP API 端点 |
 | 1.3.0 | 2026-06-28 | 新增 `configView` 配置视图功能；支持 `config.read`/`config.write`/`config.saved` 命令 |
 | 1.4.0 | 2026-07-02 | 新增内容脚本注入（`injections` 字段 + `ui.inject` capability + `marcel` 运行时 API + `data-region` 区域标记 + UI 事件桥 + 注入安全模式） |
+| 1.5.0 | 2026-07-03 | 新增插件本地工具类型（`kind=local` + `handler`）；新增 6 个通用本地 handler（`fs.read`/`fs.write`/`fs.append`/`session.info`/`connection.info`/`host_port`）；新增 7 个模板上下文变量注入（`{{__host__}}` 等）；新增 `systemPromptSection` 静态段拼接 |
