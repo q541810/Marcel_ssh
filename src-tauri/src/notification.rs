@@ -8,6 +8,7 @@ use crate::config::settings::NotificationSettings;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NotificationKind {
     AgentApproval,
+    AgentQuestion,
     AgentTaskDone,
     AgentTaskFailed,
 }
@@ -16,6 +17,7 @@ impl NotificationKind {
     fn enabled(&self, ns: &NotificationSettings) -> bool {
         match self {
             Self::AgentApproval => ns.agent_approval,
+            Self::AgentQuestion => ns.agent_question,
             Self::AgentTaskDone => ns.agent_task_done,
             Self::AgentTaskFailed => ns.agent_task_failed,
         }

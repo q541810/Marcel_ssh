@@ -95,8 +95,17 @@ async function playTaskFailed(): Promise<void> {
   }
 }
 
+/** Agent 提问 — 一声柔和询问音（叮~） */
+function playQuestion(): void {
+  playSequence([
+    { freq: 660, duration: 0.25, type: 'sine', gain: 0.25, delay: 0 },
+    { freq: 880, duration: 0.35, type: 'sine', gain: 0.25, delay: 0.2 },
+  ]);
+}
+
 const handlers: Record<string, () => void> = {
   AgentApproval: playApproval,
+  AgentQuestion: playQuestion,
   AgentTaskDone: playTaskDone,
   AgentTaskFailed: () => { playTaskFailed(); },
 };

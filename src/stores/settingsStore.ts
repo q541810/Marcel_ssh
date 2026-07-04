@@ -35,6 +35,7 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   agentApproval: true,
+  agentQuestion: true,
   agentTaskDone: true,
   agentTaskFailed: true,
   notificationVolume: 70,

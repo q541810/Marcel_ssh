@@ -404,6 +404,7 @@ export interface ExperimentalSettings {
 
 export interface NotificationSettings {
   agentApproval: boolean;
+  agentQuestion: boolean;
   agentTaskDone: boolean;
   agentTaskFailed: boolean;
   notificationVolume: number;

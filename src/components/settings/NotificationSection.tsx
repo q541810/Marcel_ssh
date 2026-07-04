@@ -107,6 +107,22 @@ export function NotificationSection() {
         </div>
       </SettingItem>
       <SettingItem
+        id="notif-question"
+        label="Agent 提问"
+        description="Agent 向用户提问时提醒"
+        sectionId="settings-notification"
+        keywords={['通知', 'notification', 'question', '提问', 'Agent']}
+        density="compact"
+      >
+        <div className="flex items-center gap-1">
+          <PreviewButton kind="AgentQuestion" />
+          <Toggle
+            checked={ns.agentQuestion}
+            onChange={(checked) => updateNotification({ agentQuestion: checked })}
+          />
+        </div>
+      </SettingItem>
+      <SettingItem
         id="notif-done"
         label="Agent 任务完成"
         description="任务成功结束时提醒"
