@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::mpsc;
 
 use crate::emit_event;
@@ -52,6 +52,9 @@ pub(crate) struct LoopContext {
     /// Watch channel receiver for cancellation signals.
     /// When the value changes to `true`, the LLM call in progress should be aborted.
     pub cancel_rx: tokio::sync::watch::Receiver<bool>,
+    /// Application config dir. Passed to `ToolContext` so plugin local handlers
+    /// (fs.read/fs.write/fs.append) can resolve plugin-relative paths.
+    pub config_dir: std::path::PathBuf,
 }
 
 /// The main agentic loop:
@@ -75,6 +78,7 @@ pub(crate) async fn run_agent_loop(
         conversation_id,
         conv_db,
         mut cancel_rx,
+        config_dir,
     } = ctx;
 
     let persister = ConversationPersister::new(conv_db, conversation_id.clone());
@@ -226,6 +230,8 @@ pub(crate) async fn run_agent_loop(
                     .with_policy(policy)
                     .with_tool_call_id(&tc.id)
                     .with_event_name(&event_name)
+                    .with_config_dir(config_dir.clone())
+                    .with_local_handlers(registry.local_handlers_arc())
             };
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

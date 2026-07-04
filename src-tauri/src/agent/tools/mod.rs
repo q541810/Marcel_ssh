@@ -11,6 +11,7 @@
 //! [`ToolContext`] and the rest is pure logic.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,6 +29,7 @@ pub mod connection_info;
 pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
+pub mod local_handlers;
 pub mod mcp;
 pub mod open_cloud_page;
 pub mod plan;
@@ -40,6 +42,27 @@ pub mod system;
 pub mod web_search;
 
 // ───────────────────────── Public types ─────────────────────────
+
+/// A kernel-registered local handler invoked by plugin tools that declare
+/// `kind: "local"`. Implementations live in [`local_handlers`] and are
+/// registered once at app startup; plugins reference them by name (e.g.
+/// `"fs.read"`, `"fs.append"`) without being able to register their own.
+///
+/// The handler receives the tool parameters (already substituted with
+/// context variables) and the live [`ToolContext`]. It returns a JSON
+/// value that [`PluginAgentTool`] wraps into a [`ToolOutput`].
+///
+/// Capability checks happen *before* the handler is called (in
+/// [`PluginAgentTool::execute`]), so the handler itself can assume the
+/// calling plugin has declared the required capability.
+#[async_trait]
+pub trait LocalHandler: Send + Sync {
+    async fn call(
+        &self,
+        params: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<serde_json::Value, AppError>;
+}
 
 /// Output from a tool execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,12 +124,18 @@ pub struct ToolContext {
     pub ssh: SshManager,
     pub session_id: String,
     pub app_handle: AppHandle,
+    /// Application config directory. Used by local handlers (e.g. `fs.read`)
+    /// to resolve plugin-relative paths.
+    pub config_dir: PathBuf,
     pub tool_call_id: Option<String>,
     pub event_name: Option<String>,
     /// Optional security policy. When set, tools that run a sandbox
     /// (e.g. `execute_command`) should honour it instead of falling back
     /// to [`crate::agent::sandbox::Sandbox::default`].
     pub policy: Option<Arc<crate::agent::sandbox::SecurityPolicy>>,
+    /// Kernel-registered local handlers, keyed by name (e.g. `"fs.read"`).
+    /// Shared via `Arc` so the context can be cloned cheaply per tool call.
+    pub local_handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
 }
 
 impl ToolContext {
@@ -115,9 +144,11 @@ impl ToolContext {
             ssh,
             session_id: session_id.into(),
             app_handle,
+            config_dir: PathBuf::new(),
             tool_call_id: None,
             event_name: None,
             policy: None,
+            local_handlers: Arc::new(HashMap::new()),
         }
     }
 
@@ -136,6 +167,23 @@ impl ToolContext {
     /// Attach the stream event name for streaming tool output.
     pub fn with_event_name(mut self, name: impl Into<String>) -> Self {
         self.event_name = Some(name.into());
+        self
+    }
+
+    /// Attach the application config directory (used by local handlers for
+    /// plugin-relative path resolution).
+    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
+        self.config_dir = dir;
+        self
+    }
+
+    /// Attach the local handler registry (built once at app startup and shared
+    /// across all tool calls).
+    pub fn with_local_handlers(
+        mut self,
+        handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
+    ) -> Self {
+        self.local_handlers = handlers;
         self
     }
 
@@ -228,18 +276,40 @@ pub trait AgentTool: Send + Sync {
 ///   3. Optionally listing it in `AGENTS.md`
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn AgentTool>>,
+    local_handlers: HashMap<String, Arc<dyn LocalHandler>>,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            local_handlers: HashMap::new(),
         }
     }
 
     /// Register a tool. The last registration wins on name collision.
     pub fn register(&mut self, tool: Arc<dyn AgentTool>) {
         self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    /// Register a local handler by name. Plugins reference handlers by name
+    /// via `kind: "local"` + `handler: "<name>"` in their manifest.
+    /// Handlers are registered once at app startup; plugins cannot register
+    /// their own (this is a deliberate security boundary).
+    pub fn register_local_handler(&mut self, name: &str, handler: Arc<dyn LocalHandler>) {
+        self.local_handlers.insert(name.to_string(), handler);
+    }
+
+    /// Look up a local handler by name. Returns a cloned `Arc` so the caller
+    /// can invoke it without holding a borrow on the registry.
+    pub fn get_local_handler(&self, name: &str) -> Option<Arc<dyn LocalHandler>> {
+        self.local_handlers.get(name).cloned()
+    }
+
+    /// Snapshot the local handlers into a shared `Arc<HashMap>` suitable for
+    /// attaching to a [`ToolContext`] via [`ToolContext::with_local_handlers`].
+    pub fn local_handlers_arc(&self) -> Arc<HashMap<String, Arc<dyn LocalHandler>>> {
+        Arc::new(self.local_handlers.clone())
     }
 
     /// Look up a tool by name.
@@ -307,6 +377,11 @@ impl ToolRegistry {
         experimental_settings: &crate::config::settings::ExperimentalSettings,
     ) -> Self {
         let mut registry = Self::with_core_tools();
+        // Register the 6 generic local handlers (fs.read/fs.write/fs.append/
+        // session.info/connection.info/host_port) so any plugin tool declaring
+        // `kind: "local"` + `handler: "<name>"` can invoke them. Without this
+        // call, plugin local tools would always fail with "handler 未注册".
+        local_handlers::register_default_handlers(&mut registry);
         registry.register_skills(enabled_skills);
         if experimental_settings.enable_web_search {
             registry.register(Arc::new(web_search::WebSearchTool::new()));
@@ -508,5 +583,47 @@ mod tests {
         r.register(Arc::new(DummyTool));
         assert_eq!(r.get("execute_command").unwrap().description(), "dummy");
         assert_ne!(old_desc, "dummy");
+    }
+
+    // ── Local handler registry tests (Task 2.4) ──
+
+    /// A trivial LocalHandler that echoes back the `echo` field of its params.
+    struct EchoHandler;
+    #[async_trait]
+    impl LocalHandler for EchoHandler {
+        async fn call(
+            &self,
+            params: serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<serde_json::Value, AppError> {
+            Ok(params)
+        }
+    }
+
+    #[test]
+    fn register_local_handler_then_lookup_succeeds() {
+        let mut r = ToolRegistry::new();
+        r.register_local_handler("echo", Arc::new(EchoHandler));
+        assert!(r.get_local_handler("echo").is_some());
+    }
+
+    #[test]
+    fn get_local_handler_returns_none_for_unregistered() {
+        let r = ToolRegistry::new();
+        assert!(r.get_local_handler("nope").is_none());
+    }
+
+    #[test]
+    fn local_handlers_arc_snapshots_current_handlers() {
+        let mut r = ToolRegistry::new();
+        r.register_local_handler("echo", Arc::new(EchoHandler));
+        let snapshot = r.local_handlers_arc();
+        assert!(snapshot.contains_key("echo"));
+
+        // Registering another handler after snapshot does not affect the snapshot
+        // (it was cloned into a fresh Arc<HashMap>).
+        r.register_local_handler("echo2", Arc::new(EchoHandler));
+        assert!(!snapshot.contains_key("echo2"));
+        assert!(r.local_handlers_arc().contains_key("echo2"));
     }
 }

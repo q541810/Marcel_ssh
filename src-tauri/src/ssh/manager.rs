@@ -395,6 +395,19 @@ impl SshManager {
         guard.get(session_id).map(|c| (c.host.clone(), c.port))
     }
 
+    /// Get all session metadata in a single lock acquisition. Used by agent
+    /// tools and template rendering to avoid multiple round-trips through
+    /// the connections map.
+    pub async fn get_session_info(&self, session_id: &str) -> Option<SessionInfo> {
+        let guard = self.connections.read().await;
+        guard.get(session_id).map(|c| SessionInfo {
+            host: c.host.clone(),
+            port: c.port,
+            username: c.username.clone(),
+            connection_id: c.connection_id.clone(),
+        })
+    }
+
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.
@@ -636,4 +649,15 @@ pub enum SshStatus {
     Connected,
     Disconnected,
     Error(String),
+}
+
+/// Snapshot of an SSH session's connection metadata. Returned by
+/// [`SshManager::get_session_info`] for tools and template rendering that
+/// need host/port/username in a single lookup.
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub connection_id: Option<String>,
 }

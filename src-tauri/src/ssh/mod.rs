@@ -7,6 +7,6 @@ mod manager;
 mod session;
 
 pub mod connection {
-    pub use super::manager::{ConnectionConfig, SshManager, SshStatus};
+    pub use super::manager::{ConnectionConfig, SessionInfo, SshManager, SshStatus};
     pub use super::session::SshConnection;
 }
