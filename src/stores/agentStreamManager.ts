@@ -6,6 +6,7 @@ import type {
   PlanStreamEvent,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
+  QuestionRequestPayload,
 } from '@/lib/types';
 import {
   handleToolResult,
@@ -19,6 +20,7 @@ import {
   handleToolCallDelta,
   handleModelApprovalStart,
   handleModelApprovalDone,
+  handleQuestionRequest,
   type StreamHandler,
   cleanupStreamState,
 } from './agentStreamHandlers';
@@ -82,6 +84,11 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'approvalRequest')) {
         handler.setPendingApproval(ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'questionRequest')) {
+        handleQuestionRequest(handler, ev as unknown as QuestionRequestPayload);
         return;
       }
 

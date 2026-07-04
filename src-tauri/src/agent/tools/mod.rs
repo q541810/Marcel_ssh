@@ -16,8 +16,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use parking_lot::RwLock as PlRwLock;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+use tokio::sync::oneshot;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::error::AppError;
@@ -35,6 +37,7 @@ pub mod open_cloud_page;
 pub mod plan;
 pub mod plugin_tool;
 pub mod process;
+pub mod question;
 pub mod search;
 pub mod sftp_transfer;
 pub mod skill;
@@ -136,6 +139,10 @@ pub struct ToolContext {
     /// Kernel-registered local handlers, keyed by name (e.g. `"fs.read"`).
     /// Shared via `Arc` so the context can be cloned cheaply per tool call.
     pub local_handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
+    /// Pending question requests: (task_id, question_id) -> oneshot sender.
+    /// Used by `ask_user` tool to await user answers.
+    pub pending_questions:
+        Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
 }
 
 impl ToolContext {
@@ -149,6 +156,7 @@ impl ToolContext {
             event_name: None,
             policy: None,
             local_handlers: Arc::new(HashMap::new()),
+            pending_questions: Arc::new(PlRwLock::new(HashMap::new())),
         }
     }
 
@@ -184,6 +192,15 @@ impl ToolContext {
         handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
     ) -> Self {
         self.local_handlers = handlers;
+        self
+    }
+
+    /// Attach the pending questions map so the `ask_user` tool can await answers.
+    pub fn with_pending_questions(
+        mut self,
+        pending: Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
+    ) -> Self {
+        self.pending_questions = pending;
         self
     }
 
@@ -351,7 +368,57 @@ impl ToolRegistry {
         }
     }
 
-    /// Build a registry for the current settings.
+    // ── Mode-aware registry builders ──────────────────────────────────────
+    //
+    // There are three agent modes (Plan / Agent / Auto), each registering a
+    // different set of tools:
+    //
+    //   Plan  — Read-oriented tools only: ask_user, connection_info,
+    //           execute_command, read_file, list_directory, search_files,
+    //           system_info, plus skills, web_search, http_get.  No
+    //           write/edit/create tools.  No plugin tools, no MCP tools.
+    //           Intended for research & planning before execution.
+    //
+    //   Agent — All 12 core tools, skills, experimental tools, plugin
+    //           tools, MCP tools.  Command execution is gated by
+    //           allow/deny lists.
+    //
+    //   Auto  — Same tool set as Agent, but all commands execute without
+    //           confirmation.
+    //
+    // When adding or removing a built-in tool, consider whether it should
+    // be available in Plan mode.  Destructive tools (write_file, edit_file,
+    // process_management) and offline-unavailable tools (open_cloud_page)
+    // should stay out of Plan mode.
+
+    /// Build a Plan-mode registry containing only read-oriented + research
+    /// tools.  Excludes write/edit/process tools, plugin tools, and MCP tools.
+    pub fn build_for_plan_mode(
+        enabled_skills: &[crate::skills::store::Skill],
+        experimental_settings: &crate::config::settings::ExperimentalSettings,
+    ) -> Self {
+        use std::sync::Arc;
+        let mut registry = Self::new();
+        registry.register(Arc::new(question::QuestionTool));
+        registry.register(Arc::new(connection_info::ConnectionInfoTool::new()));
+        registry.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
+        registry.register(Arc::new(file_ops::ReadFileTool::new()));
+        registry.register(Arc::new(file_ops::ListDirectoryTool::new()));
+        registry.register(Arc::new(search::SearchFilesTool::new()));
+        registry.register(Arc::new(system::SystemInfoTool::new()));
+        registry.register_skills(enabled_skills);
+        if experimental_settings.enable_web_search {
+            registry.register(Arc::new(web_search::WebSearchTool::new()));
+        }
+        if experimental_settings.enable_http_fetch {
+            registry.register(Arc::new(http_get::HttpGetTool::new()));
+        }
+        registry
+    }
+
+    /// Build a full registry for Agent/Auto mode from the current settings.
+    /// This method does NOT register local handlers or plugin/MCP tools —
+    /// use [`build_mut_for_mode`] when those are needed.
     pub fn build_for_mode(
         enabled_skills: &[crate::skills::store::Skill],
         experimental_settings: &crate::config::settings::ExperimentalSettings,
@@ -397,17 +464,17 @@ impl ToolRegistry {
         registry
     }
 
-    /// Build a registry pre-populated with all 14 built-in tools.
+    /// Build a registry pre-populated with all 12 built-in core tools.
     ///
     /// Built-ins:
+    /// - `ask_user`                   (question)
+    /// - `connection_info`            (connection_info)
     /// - `execute_command`           (execute_cmd)
     /// - `read_file`, `write_file`,
     ///   `edit_file`, `list_directory` (file_ops)
     /// - `search_files`               (search)
     /// - `process_management`         (process)
     /// - `system_info`                (system)
-    /// - `web_search`                 (web_search)
-    /// - `http_get`                   (http_get)
     /// - `create_plan`                (plan)
     /// - `update_plan_item`           (plan)
     ///
@@ -426,6 +493,7 @@ impl ToolRegistry {
         r.register(Arc::new(system::SystemInfoTool::new()));
         r.register(Arc::new(plan::CreatePlanTool::new()));
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
+        r.register(Arc::new(question::QuestionTool));
         r
     }
 
@@ -459,11 +527,12 @@ mod tests {
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            13,
-            "expected 13 built-in tools, got {:?}",
+            14,
+            "expected 14 built-in tools, got {:?}",
             names
         );
         for expected in [
+            "ask_user",
             "connection_info",
             "execute_command",
             "read_file",

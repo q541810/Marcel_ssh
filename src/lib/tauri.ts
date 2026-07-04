@@ -91,6 +91,14 @@ export async function agentRejectOperation(
   return invoke('agent_reject_operation', { taskId, operationId });
 }
 
+export async function agentAnswerQuestion(
+  taskId: string,
+  questionId: string,
+  answers: { selected: string[]; custom: string }[],
+): Promise<void> {
+  return invoke('agent_answer_question', { taskId, questionId, answers });
+}
+
 // Conversation management commands
 
 export async function agentCreateConversation(
@@ -129,7 +137,7 @@ export async function agentDeleteConversationsBySession(sessionId: string): Prom
 
 export async function agentCheckCommand(
   command: string,
-  mode: 'chat' | 'agent' | 'auto',
+  mode: 'plan' | 'agent' | 'auto',
 ): Promise<CommandCheckResult> {
   return invoke<CommandCheckResult>('agent_check_command', { command, mode });
 }

@@ -48,8 +48,8 @@ describe('taskStore', () => {
     useTaskStore.getState().setMode('auto');
     expect(useTaskStore.getState().mode).toBe('auto');
 
-    useTaskStore.getState().setMode('chat');
-    expect(useTaskStore.getState().mode).toBe('chat');
+    useTaskStore.getState().setMode('plan');
+    expect(useTaskStore.getState().mode).toBe('plan');
   });
 
   it('updateTaskStatus updates existing task', () => {

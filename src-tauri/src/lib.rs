@@ -63,6 +63,9 @@ pub struct AppState {
     /// Pending approval requests: (task_id, operation_id) -> oneshot sender for approval response
     pub pending_approvals:
         std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
+    /// Pending question answers: (task_id, question_id) -> oneshot sender for user answer
+    pub pending_questions:
+        std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
     /// Cancellation signals for running agent tasks: task_id -> watch sender.
     /// Setting the value to `true` signals the agent loop to abort the current LLM call.
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
@@ -312,6 +315,7 @@ impl AppState {
             mcp_manager: std::sync::Arc::new(McpManager::new()),
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            pending_questions: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
@@ -483,6 +487,7 @@ pub fn run() {
             commands::agent_lifecycle::agent_stop_task,
             commands::agent_lifecycle::agent_approve_operation,
             commands::agent_lifecycle::agent_reject_operation,
+            commands::agent_lifecycle::agent_answer_question,
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
             commands::agent_conversation::agent_list_conversations,

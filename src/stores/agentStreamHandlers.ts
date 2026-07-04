@@ -5,6 +5,7 @@ import type {
   AgentTaskPlan,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
+  QuestionRequestPayload,
 } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
@@ -15,6 +16,7 @@ export interface StreamHandler {
   updateMessages(conversationId: string, updater: (msgs: AgentMessage[]) => AgentMessage[]): void;
   updateTaskStatus(taskId: string, status: string): void;
   setPendingApproval(approval: ApprovalRequestPayload | null): void;
+  setPendingQuestion(question: QuestionRequestPayload | null): void;
   getTaskStatus(taskId: string): string | undefined;
   getMessages(conversationId: string): AgentMessage[];
   clearActiveTaskIf(taskId: string): void;
@@ -592,4 +594,13 @@ export function handleModelApprovalDone(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Question request handler
+// ---------------------------------------------------------------------------
 
+export function handleQuestionRequest(
+  handler: StreamHandler,
+  ev: QuestionRequestPayload,
+) {
+  handler.setPendingQuestion(ev);
+}

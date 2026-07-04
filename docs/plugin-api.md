@@ -94,7 +94,7 @@
 | `parameters` | JSON Schema | 否 | 参数 JSON Schema |
 | `riskLevel` | string | 否 | 风险等级：`"ReadOnly"` / `"LowRisk"` / `"Moderate"` / `"HighRisk"` / `"Destructive"`（默认 `"Moderate"`）。**严格校验**——未知值（如 `"Medium"`、`"moderate"` 小写）在 manifest 加载时报错，不再静默降级为 `Moderate` |
 
-> Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+> Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 
 ### `kind=ssh` 示例（默认，远程执行）
 
@@ -239,7 +239,7 @@ Agent 模式下理论上不会无会话。若会话被中途关闭等原因导�
 | manifest 字段 | `systemPromptSection` |
 | 类型 | `string`（文件路径，相对插件根目录） |
 | 必填 | 否 |
-| 生效模式 | Agent 模式 / Auto 模式（Chat 模式下不拼接） |
+| 生效模式 | Agent 模式 / Auto 模式（Plan 模式下不拼接） |
 | 长度上限 | 单段 2000 字符，超过截断并写 warn 日志 |
 | 支持变量 | [模板上下文变量](#模板上下文变量)（如 `{{__host_port__}}`） |
 | 不支持 | 动态占位符（如 `{{memory_index}}`、`{{user_count}}` 等业务变量），内核不做任何业务数据渲染 |
@@ -278,7 +278,7 @@ Agent 模式下理论上不会无会话。若会话被中途关闭等原因导�
 - **插件禁用 / 未声明该字段**：不注入，不读文件
 - **缓存**：按文件 mtime 失效，避免每次构建 system prompt 都重新读盘
 
-> 与 [agentTools](#agent-工具定义) 一致，`systemPromptSection` 仅在 Agent 模式和 Auto 模式下生效，Chat 模式下不拼接。
+> 与 [agentTools](#agent-工具定义) 一致，`systemPromptSection` 仅在 Agent 模式和 Auto 模式下生效，Plan 模式下不拼接。
 
 ---
 

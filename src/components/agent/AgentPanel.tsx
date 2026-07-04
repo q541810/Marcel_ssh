@@ -3,10 +3,11 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { AGENT_MODES } from '@/lib/constants';
-import type { AgentMode, AgentMessage } from '@/lib/types';
+import type { AgentMode, AgentMessage, QuestionAnswer } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
+import QuestionPanel from './QuestionPanel';
 import PlanList from './PlanList';
 
 export default function AgentPanel() {
@@ -35,8 +36,10 @@ export default function AgentPanel() {
     setInputDraft: setInput,
     isRunning,
     pendingApproval,
+    pendingQuestion,
     approveCurrent,
     rejectCurrent,
+    submitAnswer,
     conversations,
     activeConversationId,
     newConversation,
@@ -168,6 +171,18 @@ export default function AgentPanel() {
     if (pendingApproval) {
       await rejectCurrent(pendingApproval.toolCallId);
     }
+  };
+
+  const handleSubmitQuestion = async (questionId: string, answers: QuestionAnswer[]) => {
+    await submitAnswer(questionId, answers);
+  };
+
+  const handleCancelQuestion = async () => {
+    const answers: QuestionAnswer[] = (pendingQuestion?.questions ?? []).map(() => ({
+      selected: [],
+      custom: '',
+    }));
+    await submitAnswer(pendingQuestion!.questionId, answers);
   };
 
   const handleNewConversation = async () => {
@@ -358,9 +373,17 @@ export default function AgentPanel() {
         </div>
       )}
 
-      {/* Input area */}
-      <div className="p-3 border-t border-zinc-800">
-        <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
+      {/* Input area or Question panel */}
+      {pendingQuestion ? (
+        <QuestionPanel
+          questionId={pendingQuestion.questionId}
+          questions={pendingQuestion.questions}
+          onSubmit={handleSubmitQuestion}
+          onCancel={handleCancelQuestion}
+        />
+      ) : (
+        <div className="p-3 border-t border-zinc-800">
+          <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button
@@ -492,6 +515,7 @@ export default function AgentPanel() {
           </button>
         </div>
       </div>
+      )}
 
       {/* History Drawer */}
       {historyDrawerOpen && (

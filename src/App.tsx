@@ -351,7 +351,7 @@ export default function App() {
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    const valid: AgentMode[] = ['chat', 'agent', 'auto'];
+    const valid: AgentMode[] = ['plan', 'agent', 'auto'];
     if ((valid as string[]).includes(defaultAgentMode)) {
       setAgentMode(defaultAgentMode as AgentMode);
     }

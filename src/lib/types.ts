@@ -259,7 +259,7 @@ export interface McpServerListResponse {
 
 // Agent types
 
-export type AgentMode = 'chat' | 'agent' | 'auto';
+export type AgentMode = 'plan' | 'agent' | 'auto';
 
 export type AgentStatus =
   | 'idle'
@@ -471,7 +471,9 @@ export type LlmStreamEvent =
   | ApprovalRequestPayload
   // Model approval progress — shows a distinct step on the tool card
   | ModelApprovalStartPayload
-  | ModelApprovalDonePayload;
+  | ModelApprovalDonePayload
+  // Question request — agent asks user for input
+  | QuestionRequestPayload;
 
 export interface ToolResultPayload {
   type: 'toolResult';
@@ -506,6 +508,33 @@ export interface ModelApprovalDonePayload {
   decision: 'approve' | 'route_to_human' | 'block' | 'error';
   reasons: string[];
 }
+
+// Question tool types
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionItem {
+  question: string;
+  header: string;
+  options?: QuestionOption[];
+  multiple: boolean;
+}
+
+export interface QuestionRequestPayload {
+  type: 'questionRequest';
+  questionId: string;
+  questions: QuestionItem[];
+}
+
+export interface QuestionAnswer {
+  selected: string[];
+  custom: string;
+}
+
+// -- stream event --
 
 // Conversation types
 

@@ -210,11 +210,8 @@ impl ToolDispatcher {
         let requires_default_approval = tool.requires_approval_by_default();
 
         // 1. Compute sandbox/mode-level need for human confirmation.
-        //    `None` means the mode forbids tools entirely (Chat).
         let sandbox_needs_confirm: Option<bool> = match &self.mode {
-            AgentMode::Chat => None,
-            AgentMode::Auto => Some(requires_default_approval),
-            AgentMode::Agent => {
+            AgentMode::Plan | AgentMode::Agent => {
                 if tc.name == "execute_command" {
                     let cmd = tc
                         .arguments
@@ -234,13 +231,14 @@ impl ToolDispatcher {
                     )
                 }
             }
+            AgentMode::Auto => Some(requires_default_approval),
         };
 
         let sandbox_needs_confirm = match sandbox_needs_confirm {
             None => {
                 return DispatchResult::blocked(
                     tc.name.clone(),
-                    "CHAT 模式禁止工具调用".to_string(),
+                    "当前模式禁止工具调用".to_string(),
                     effective_risk,
                 );
             }

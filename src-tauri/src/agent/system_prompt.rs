@@ -11,6 +11,7 @@ pub(crate) fn build_system_prompt(
     has_http_get: bool,
     user_prompt: &str,
     plugin_sections: &[String],
+    plan_mode: bool,
 ) -> String {
     let base = " Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
@@ -67,6 +68,16 @@ pub(crate) fn build_system_prompt(
         format!("\n## 用户附加指令\n\n{}\n", user_prompt)
     };
 
+    let plan_section = if plan_mode {
+        "\n## Plan 模式\n\n\
+当前处于 Plan 模式，write_file、edit_file 等写入/编辑工具不可用。\n\
+你当前不可以开始干活，不能编辑文件，不能做文件操作。\n\
+如果用户要求你开始干而你处于 Plan 模式，请告知用户切换到 Agent 或 Auto 模式。\n\
+使用 execute_command 工具前必须思考：现在是 Plan 模式，执行这个命令有必要吗？\n"
+    } else {
+        ""
+    };
+
     // Plugin-contributed static sections (e.g. long-term-memory guidance).
     // Joined by a blank line; each section already had context variables
     // substituted and was truncated to 2000 chars by the caller.
@@ -77,13 +88,14 @@ pub(crate) fn build_system_prompt(
     };
 
     format!(
-        "{}{}{}当前会话：SSH session id={}\n\n{}{}{}{}",
+        "{}{}{}当前会话：SSH session id={}\n\n{}{}{}{}{}",
         base,
         web_search_hint,
         http_get_hint,
         session_id,
         conventions,
         skills_section,
+        plan_section,
         user_section,
         plugin_section
     )
@@ -95,18 +107,18 @@ mod tests {
 
     #[test]
     fn prompt_omits_disabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", false, false, false, "", &[]);
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[], false);
 
         assert!(!prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(!prompt.contains("skill_"));
-        // No plugin sections injected.
         assert!(!prompt.contains("插件扩展指令"));
+        assert!(!prompt.contains("Plan 模式"));
     }
 
     #[test]
     fn prompt_includes_only_enabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", true, true, false, "", &[]);
+        let prompt = build_system_prompt("session-1", true, true, false, "", &[], false);
 
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
@@ -114,15 +126,29 @@ mod tests {
     }
 
     #[test]
+    fn prompt_includes_plan_section_when_plan_mode() {
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[], true);
+        assert!(prompt.contains("Plan 模式"));
+        assert!(prompt.contains("write_file、edit_file"));
+        assert!(prompt.contains("切换到 Agent 或 Auto 模式"));
+    }
+
+    #[test]
+    fn prompt_omits_plan_section_when_not_plan_mode() {
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[], false);
+        assert!(!prompt.contains("Plan 模式"));
+    }
+
+    #[test]
     fn prompt_with_empty_plugin_sections_omits_section() {
-        let prompt = build_system_prompt("session-1", false, false, false, "", &[]);
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[], false);
         assert!(!prompt.contains("插件扩展指令"));
     }
 
     #[test]
     fn prompt_appends_single_plugin_section() {
         let sections = vec!["记住用户偏好".to_string()];
-        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections, false);
         assert!(prompt.contains("插件扩展指令"));
         assert!(prompt.contains("记住用户偏好"));
     }
@@ -133,7 +159,7 @@ mod tests {
             "插件A 指令".to_string(),
             "插件B 指令".to_string(),
         ];
-        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections, false);
         assert!(prompt.contains("插件A 指令\n\n插件B 指令"));
     }
 
@@ -141,7 +167,7 @@ mod tests {
     fn prompt_plugin_section_appears_after_user_section() {
         let sections = vec!["PLUGIN_MARKER".to_string()];
         let prompt =
-            build_system_prompt("session-1", false, false, false, "USER_MARKER", &sections);
+            build_system_prompt("session-1", false, false, false, "USER_MARKER", &sections, false);
         let user_pos = prompt.find("USER_MARKER").unwrap();
         let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
         assert!(
@@ -152,9 +178,8 @@ mod tests {
 
     #[test]
     fn prompt_with_empty_string_section_still_joins() {
-        // An empty string in the sections vec should not break the join.
         let sections = vec!["".to_string()];
-        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections, false);
         assert!(prompt.contains("插件扩展指令"));
     }
 }

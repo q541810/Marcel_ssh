@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useAgentStore } from '@/stores/agentStore';
-import type { AgentMode } from '@/lib/types';
+import type { AgentMode, QuestionAnswer } from '@/lib/types';
 
 export function useAgent() {
   const store = useAgentStore((s) => ({
@@ -12,6 +12,7 @@ export function useAgent() {
     mode: s.mode,
     inputDraft: s.inputDraft,
     pendingApproval: s.pendingApproval,
+    pendingQuestion: s.pendingQuestion,
     startTask: s.startTask,
     stopTask: s.stopTask,
     approveOperation: s.approveOperation,
@@ -19,6 +20,8 @@ export function useAgent() {
     setMode: s.setMode,
     setInputDraft: s.setInputDraft,
     setPendingApproval: s.setPendingApproval,
+    setPendingQuestion: s.setPendingQuestion,
+    answerQuestion: s.answerQuestion,
     newConversation: s.newConversation,
     switchConversation: s.switchConversation,
     loadConversation: s.loadConversation,
@@ -69,6 +72,16 @@ export function useAgent() {
       }
     },
     [activeTask, store.rejectOperation, store.setPendingApproval],
+  );
+
+  const submitAnswer = useCallback(
+    async (questionId: string, answers: QuestionAnswer[]) => {
+      store.setPendingQuestion(null);
+      if (activeTask) {
+        return store.answerQuestion(activeTask.id, questionId, answers);
+      }
+    },
+    [activeTask, store.answerQuestion, store.setPendingQuestion],
   );
 
   const setMode = useCallback(
@@ -125,6 +138,7 @@ export function useAgent() {
     activeTask,
     isRunning,
     pendingApproval: store.pendingApproval,
+    pendingQuestion: store.pendingQuestion,
     mode: store.mode,
     inputDraft: store.inputDraft,
     conversations: store.conversations,
@@ -133,6 +147,7 @@ export function useAgent() {
     stopActiveTask,
     approveCurrent,
     rejectCurrent,
+    submitAnswer,
     setMode,
     setInputDraft: store.setInputDraft,
     newConversation,

@@ -5,8 +5,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentMode {
-    /// Pure chat — AI only answers, never invokes tools or executes commands.
-    Chat,
+    /// Plan mode — AI may invoke a limited set of read-oriented tools
+    /// (read_file, list_directory, search_files, system_info, connection_info,
+    /// execute_command, ask_user, web_search, http_get, skills) to research
+    /// and plan. No write/edit/create tools. Plugin and MCP tools are not
+    /// registered. Command execution is gated by allow/deny lists.
+    Plan,
     /// AI may invoke tools; command execution is gated by allow/deny lists
     /// configured in `AgentSettings`.
     Agent,

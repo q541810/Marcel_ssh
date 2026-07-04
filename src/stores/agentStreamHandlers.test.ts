@@ -17,17 +17,20 @@ function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandl
   _messages: Record<string, AgentMessage[]>;
   _taskStatuses: Record<string, string>;
   _pendingApprovals: unknown[];
+  _pendingQuestions: unknown[];
   _plans: Record<string, AgentTaskPlan>;
 } {
   const msgs = { ...messages };
   const taskStatuses: Record<string, string> = {};
   let _pendingApproval: unknown = null;
+  let _pendingQuestion: unknown = null;
   const plans: Record<string, AgentTaskPlan> = {};
 
   return {
     _messages: msgs,
     _taskStatuses: taskStatuses,
     _pendingApprovals: [],
+    _pendingQuestions: [],
     _plans: plans,
     updateMessages(convId: string, updater: (msgs: AgentMessage[]) => AgentMessage[]) {
       msgs[convId] = updater(msgs[convId] || []);
@@ -37,6 +40,9 @@ function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandl
     },
     setPendingApproval(approval: unknown | null) {
       _pendingApproval = approval;
+    },
+    setPendingQuestion(question: unknown | null) {
+      _pendingQuestion = question;
     },
     getTaskStatus(taskId: string) {
       return taskStatuses[taskId];

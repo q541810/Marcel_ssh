@@ -6,6 +6,8 @@ import type {
   ApprovalRequestPayload,
   AgentTaskPlan,
   PlanItem,
+  QuestionRequestPayload,
+  QuestionAnswer,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
@@ -19,6 +21,7 @@ export interface TaskState {
   mode: AgentMode;
   inputDraft: string;
   pendingApproval: ApprovalRequestPayload | null;
+  pendingQuestion: QuestionRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
 
@@ -30,6 +33,8 @@ export interface TaskState {
   setInputDraft: (text: string) => void;
   updateTaskStatus: (taskId: string, status: AgentTask['status']) => void;
   setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
+  setPendingQuestion: (question: QuestionRequestPayload | null) => void;
+  answerQuestion: (taskId: string, questionId: string, answers: QuestionAnswer[]) => Promise<void>;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
   updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => void;
   getActivePlan: () => AgentTaskPlan | null;
@@ -46,6 +51,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   mode: 'agent',
   inputDraft: '',
   pendingApproval: null,
+  pendingQuestion: null,
   plans: {},
   plansDirty: false,
 
@@ -128,6 +134,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           tasks: { ...state.tasks, [taskId]: { ...task, status: 'cancelled' } },
           activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
           pendingApproval: null,
+          pendingQuestion: null,
         };
       });
       useConversationStore.getState().clearAllAssistantFlags();
@@ -168,6 +175,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   setPendingApproval: (approval: ApprovalRequestPayload | null) => {
     set({ pendingApproval: approval });
+  },
+
+  setPendingQuestion: (question: QuestionRequestPayload | null) => {
+    set({ pendingQuestion: question });
+  },
+
+  answerQuestion: async (taskId: string, questionId: string, answers: QuestionAnswer[]) => {
+    set({ pendingQuestion: null });
+    await tauri.agentAnswerQuestion(taskId, questionId, answers);
   },
 
   setPlan: (taskId: string, plan: AgentTaskPlan) => {

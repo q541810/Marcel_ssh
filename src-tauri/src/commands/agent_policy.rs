@@ -31,19 +31,7 @@ pub async fn agent_check_command(
     let risk = assess_risk(trimmed);
 
     match mode {
-        AgentMode::Chat => Ok(CommandCheckResult {
-            allowed: false,
-            requires_confirmation: false,
-            risk_level: risk,
-            reason: "CHAT 模式不执行任何命令".into(),
-        }),
-        AgentMode::Auto => Ok(CommandCheckResult {
-            allowed: true,
-            requires_confirmation: false,
-            risk_level: risk,
-            reason: "AUTO 模式自动同意所有命令".into(),
-        }),
-        AgentMode::Agent => {
+        AgentMode::Plan | AgentMode::Agent => {
             let settings = state.settings.read().await;
             let policy = &settings.agent_mode_settings;
             let base = trimmed
@@ -92,5 +80,11 @@ pub async fn agent_check_command(
                 }
             }
         }
+        AgentMode::Auto => Ok(CommandCheckResult {
+            allowed: true,
+            requires_confirmation: false,
+            risk_level: risk,
+            reason: "AUTO 模式自动同意所有命令".into(),
+        }),
     }
 }

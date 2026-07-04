@@ -399,7 +399,7 @@ const { ok, data } = await res.json();
 | `Moderate` | 中等风险（默认） |
 | `HighRisk` | 高风险，沙箱审查后执行 |
 
-> **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Chat 模式下不注册。
+> **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 
 ### 本地工具（`kind=local`）
 
@@ -461,7 +461,7 @@ const { ok, data } = await res.json();
 
 行为：
 
-- 仅在 **Agent 模式 / Auto 模式**下生效，Chat 模式不拼接
+- 仅在 **Agent 模式 / Auto 模式**下生效，Plan 模式不拼接
 - 拼接在 system prompt 末尾，模型每次对话开始自动看到
 - 单段上限 2000 字符，超过截断
 - 文件读取失败时跳过该段（warn 日志），不阻塞会话
@@ -768,7 +768,7 @@ marcel.onCleanup(() => marcel.overlay.dismiss(btn));
 | 视图不出现 | `entry` 文件不存在、`mount` 值拼写错误 |
 | IPC 无响应 | 未声明对应 capability、`pluginId` 不匹配 |
 | 资源加载失败 | 路径含 `../`（被拒绝）、文件不存在 |
-| Agent 工具不生效 | 当前处于 Chat 模式，需切换到 Agent/Auto |
+| Agent 工具不生效 | 当前处于 Plan 模式，需切换到 Agent/Auto |
 | 事件订阅无效果 | 未声明 `events` capability、事件模式拼写错误 |
 
 ---

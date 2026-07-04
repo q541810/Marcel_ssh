@@ -232,6 +232,7 @@ pub(crate) async fn run_agent_loop(
                     .with_event_name(&event_name)
                     .with_config_dir(config_dir.clone())
                     .with_local_handlers(registry.local_handlers_arc())
+                    .with_pending_questions(state.pending_questions.clone())
             };
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

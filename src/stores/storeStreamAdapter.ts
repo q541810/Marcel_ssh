@@ -1,4 +1,4 @@
-import type { AgentMessage, ApprovalRequestPayload, AgentTaskPlan, AgentStatus, PlanItemStatus } from '@/lib/types';
+import type { AgentMessage, ApprovalRequestPayload, QuestionRequestPayload, AgentTaskPlan, AgentStatus, PlanItemStatus } from '@/lib/types';
 import { useTaskStore } from './taskStore';
 import { useConversationStore } from './conversationStore';
 import type { StreamHandler } from './agentStreamHandlers';
@@ -13,6 +13,9 @@ export function createDefaultStreamHandler(): StreamHandler {
     },
     setPendingApproval(approval) {
       useTaskStore.getState().setPendingApproval(approval);
+    },
+    setPendingQuestion(question) {
+      useTaskStore.getState().setPendingQuestion(question);
     },
     getTaskStatus(taskId) {
       return useTaskStore.getState().tasks[taskId]?.status;

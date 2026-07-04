@@ -33,38 +33,42 @@ async fn build_registry(
     experimental_settings: &crate::config::settings::ExperimentalSettings,
     plugin_registry: &PluginRegistry,
 ) -> (Arc<ToolRegistry>, Vec<PluginManifest>) {
-    let AgentMode::Chat = mode else {
-        let mut registry =
-            ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
-
-        // Manifests come from the plugin registry (mtime-cached, single source
-        // of truth) — no per-task filesystem scan.
-        let manifests = plugin_registry.enabled_manifests();
-        for m in &manifests {
-            register_plugin_tools(&mut registry, &m.id, &m.capabilities, &m.agent_tools);
+    match mode {
+        AgentMode::Plan => {
+            let registry =
+                ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
+            (Arc::new(registry), Vec::new())
         }
+        AgentMode::Agent | AgentMode::Auto => {
+            let mut registry =
+                ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
 
-        let mut set = tokio::task::JoinSet::new();
-        for server in enabled_mcp_servers {
-            let mgr = mcp_manager.clone();
-            let server = server.clone();
-            set.spawn(async move {
-                let result = mgr.refresh_tools(&server).await;
-                (server, result)
-            });
-        }
-        while let Some(result) = set.join_next().await {
-            match result {
-                Ok((server, Ok(tools))) => register_mcp_tools(&mut registry, &server, tools),
-                Ok((server, Err(err))) => {
-                    log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err)
-                }
-                Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
+            let manifests = plugin_registry.enabled_manifests();
+            for m in &manifests {
+                register_plugin_tools(&mut registry, &m.id, &m.capabilities, &m.agent_tools);
             }
+
+            let mut set = tokio::task::JoinSet::new();
+            for server in enabled_mcp_servers {
+                let mgr = mcp_manager.clone();
+                let server = server.clone();
+                set.spawn(async move {
+                    let result = mgr.refresh_tools(&server).await;
+                    (server, result)
+                });
+            }
+            while let Some(result) = set.join_next().await {
+                match result {
+                    Ok((server, Ok(tools))) => register_mcp_tools(&mut registry, &server, tools),
+                    Ok((server, Err(err))) => {
+                        log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err)
+                    }
+                    Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
+                }
+            }
+            (Arc::new(registry), manifests)
         }
-        return (Arc::new(registry), manifests);
-    };
-    (Arc::new(ToolRegistry::new()), Vec::new())
+    }
 }
 
 /// Replace all 7 context variables in `s` using the given session info.
@@ -81,7 +85,7 @@ fn apply_section_context_variables(s: &str, info: Option<&SessionInfo>, session_
 
 /// Collect plugin-contributed system-prompt sections from enabled plugins.
 ///
-/// - **Chat mode**: returns an empty vec (no plugin sections injected).
+    /// - **Plan mode**: returns an empty vec (no plugin sections injected).
 /// - **Agent/Auto mode**: for each manifest with a `systemPromptSection`:
 ///   1. Look up the cached section content from the `PluginRegistry`
 ///      (mtime-invalidated, single source of truth). Skip if absent.
@@ -93,8 +97,8 @@ async fn collect_plugin_sections(
     session_id: &str,
     mode: &AgentMode,
 ) -> Vec<String> {
-    // Chat mode: never inject plugin sections (matches agentTools behaviour).
-    if matches!(mode, AgentMode::Chat) {
+    // Plan mode: never inject plugin sections (plugin tools are not registered).
+    if matches!(mode, AgentMode::Plan) {
         return Vec::new();
     }
 
@@ -137,8 +141,7 @@ async fn collect_plugin_sections(
 
 fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<ToolDefinition> {
     match mode {
-        AgentMode::Chat => vec![],
-        AgentMode::Agent | AgentMode::Auto => registry
+        AgentMode::Plan | AgentMode::Agent | AgentMode::Auto => registry
             .definitions()
             .into_iter()
             .map(|d| ToolDefinition {
@@ -157,6 +160,7 @@ fn build_agent_messages(
     prompt: &str,
     agent_system_prompt: &str,
     plugin_sections: &[String],
+    plan_mode: bool,
 ) -> Vec<LlmMessage> {
     let has_tool = |name: &str| tools.iter().any(|t| t.name == name);
     let has_skills = tools.iter().any(|t| t.name.starts_with("skill_"));
@@ -167,6 +171,7 @@ fn build_agent_messages(
         has_tool("http_get"),
         agent_system_prompt,
         plugin_sections,
+        plan_mode,
     );
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
@@ -311,7 +316,7 @@ let plugin_registry_guard = state.plugin_registry.read().await;
     let tools = build_definitions(&tool_registry, &mode);
     let plugin_sections = collect_plugin_sections(&plugin_registry_guard, &state.ssh_manager, &session_id, &mode).await;
     drop(plugin_registry_guard); // release before agent loop runs (no longer needed)
-    let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt, &plugin_sections);
+    let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt, &plugin_sections, matches!(mode, AgentMode::Plan));
 
     spawn_agent_task(
         &state, &app, &task_id, &session_id, &conversation_id, &mode,
@@ -353,5 +358,37 @@ pub async fn agent_reject_operation(
     operation_id: String,
 ) -> Result<(), AppError> {
     send_approval(&state, &task_id, &operation_id, false);
+    Ok(())
+}
+
+fn send_question_answer(
+    state: &AppState,
+    task_id: &str,
+    question_id: &str,
+    answers: Vec<serde_json::Value>,
+) {
+    log::info!(
+        "Question answered: task={}, question={}, answers={}",
+        task_id,
+        question_id,
+        answers.len()
+    );
+    let sender = state
+        .pending_questions
+        .write()
+        .remove(&(task_id.to_string(), question_id.to_string()));
+    if let Some(tx) = sender {
+        let _ = tx.send(answers);
+    }
+}
+
+#[tauri::command]
+pub async fn agent_answer_question(
+    state: State<'_, AppState>,
+    task_id: String,
+    question_id: String,
+    answers: Vec<serde_json::Value>,
+) -> Result<(), AppError> {
+    send_question_answer(&state, &task_id, &question_id, answers);
     Ok(())
 }
