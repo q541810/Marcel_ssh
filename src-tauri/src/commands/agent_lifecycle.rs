@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
+
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
@@ -9,10 +13,27 @@ use crate::agent::tools::{mcp::register_mcp_tools, plugin_tool::register_plugin_
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
+use crate::plugins::manifest::PluginManifest;
 use crate::plugins::scan::scan_plugins_filtered;
+use crate::ssh::connection::SessionInfo;
 use crate::AppState;
 use crate::mcp::manager::McpManager;
 use crate::mcp::store::McpServerConfig;
+
+/// Maximum length (in chars) of a single plugin-contributed system-prompt
+/// section. Sections exceeding this are truncated and a warning is logged.
+const PLUGIN_SECTION_MAX_CHARS: usize = 2000;
+
+/// Process-wide cache of plugin `systemPromptSection` file contents, keyed by
+/// absolute path. Each entry stores `(mtime, content)` so we only re-read a
+/// file when its modification time changes. This avoids re-reading the same
+/// static file on every agent task launch.
+///
+/// Guarded by a plain `std::sync::Mutex` — the critical section is tiny
+/// (HashMap lookup + occasional file read) and never awaits, so it is safe
+/// to hold across the synchronous cache helper below.
+static SECTION_CACHE: std::sync::Mutex<Option<HashMap<PathBuf, (SystemTime, String)>>> =
+    std::sync::Mutex::new(None);
 
 // ── helpers ──
 
@@ -24,7 +45,7 @@ async fn build_registry(
     experimental_settings: &crate::config::settings::ExperimentalSettings,
     config_dir: &std::path::Path,
     disabled_plugins: &[String],
-) -> Arc<ToolRegistry> {
+) -> (Arc<ToolRegistry>, Vec<PluginManifest>) {
     let AgentMode::Chat = mode else {
         let mut registry =
             ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
@@ -37,7 +58,7 @@ async fn build_registry(
         .await
         .unwrap_or_default();
         for m in &manifests {
-            register_plugin_tools(&mut registry, &m.agent_tools);
+            register_plugin_tools(&mut registry, &m.id, &m.capabilities, &m.agent_tools);
         }
 
         let mut set = tokio::task::JoinSet::new();
@@ -58,9 +79,129 @@ async fn build_registry(
                 Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
             }
         }
-        return Arc::new(registry);
+        return (Arc::new(registry), manifests);
     };
-    Arc::new(ToolRegistry::new())
+    (Arc::new(ToolRegistry::new()), Vec::new())
+}
+
+/// Read a plugin `systemPromptSection` file with mtime-based caching.
+/// On a cache hit (unchanged mtime) the cached content is returned without
+/// touching the filesystem. On a miss the file is read and the cache updated.
+fn read_section_cached(path: &Path) -> Result<String, std::io::Error> {
+    let metadata = std::fs::metadata(path)?;
+    let mtime = metadata.modified()?;
+
+    let mut cache_guard = SECTION_CACHE.lock().expect("SECTION_CACHE poisoned");
+    let cache = cache_guard.get_or_insert_with(HashMap::new);
+
+    if let Some((cached_mtime, cached_content)) = cache.get(path) {
+        if *cached_mtime == mtime {
+            return Ok(cached_content.clone());
+        }
+    }
+
+    let content = std::fs::read_to_string(path)?;
+    cache.insert(path.to_path_buf(), (mtime, content.clone()));
+    Ok(content)
+}
+
+/// Replace all 7 context variables in `s` using the given session info.
+/// Missing session info (None) yields empty-string substitutions.
+fn apply_section_context_variables(s: &str, info: Option<&SessionInfo>, session_id: &str) -> String {
+    match info {
+        Some(i) => {
+            let timestamp = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_default();
+            let host_port = format!("{}_{}", i.host, i.port);
+            s.replace("{{__host__}}", &i.host)
+                .replace("{{__port__}}", &i.port.to_string())
+                .replace("{{__host_port__}}", &host_port)
+                .replace("{{__session_id__}}", session_id)
+                .replace(
+                    "{{__connection_id__}}",
+                    &i.connection_id.clone().unwrap_or_default(),
+                )
+                .replace("{{__username__}}", &i.username)
+                .replace("{{__timestamp__}}", &timestamp)
+        }
+        None => {
+            log::warn!("无法获取会话上下文，systemPromptSection 中的上下文变量替换为空字符串");
+            s.replace("{{__host__}}", "")
+                .replace("{{__port__}}", "")
+                .replace("{{__host_port__}}", "")
+                .replace("{{__session_id__}}", "")
+                .replace("{{__connection_id__}}", "")
+                .replace("{{__username__}}", "")
+                .replace("{{__timestamp__}}", "")
+        }
+    }
+}
+
+/// Collect plugin-contributed system-prompt sections from enabled plugins.
+///
+/// - **Chat mode**: returns an empty vec (no plugin sections injected).
+/// - **Agent/Auto mode**: for each manifest with a `systemPromptSection`:
+///   1. Resolve the section file path under the plugin's directory.
+///   2. Read the file (cached by mtime); on failure warn and skip.
+///   3. Substitute the 7 context variables (`{{__host__}}` etc.).
+///   4. Truncate to `PLUGIN_SECTION_MAX_CHARS` chars; warn if truncated.
+async fn collect_plugin_sections(
+    manifests: &[PluginManifest],
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    mode: &AgentMode,
+    config_dir: &Path,
+) -> Vec<String> {
+    // Chat mode: never inject plugin sections (matches agentTools behaviour).
+    if matches!(mode, AgentMode::Chat) {
+        return Vec::new();
+    }
+
+    // Fetch session info once for context-variable substitution.
+    let session_info = ssh.get_session_info(session_id).await;
+
+    let mut sections = Vec::new();
+    for m in manifests {
+        let rel = match m.system_prompt_section.as_ref() {
+            Some(p) if !p.is_empty() => p,
+            _ => continue,
+        };
+        let section_path = config_dir.join("plugins").join(&m.id).join(rel);
+
+        let content = match read_section_cached(&section_path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!(
+                    "插件 {} systemPromptSection 读取失败 ({}): {}",
+                    m.id,
+                    section_path.display(),
+                    e
+                );
+                continue;
+            }
+        };
+
+        let substituted = apply_section_context_variables(&content, session_info.as_ref(), session_id);
+
+        // Enforce per-section length limit (char count, not bytes).
+        let char_count = substituted.chars().count();
+        let truncated: String = if char_count > PLUGIN_SECTION_MAX_CHARS {
+            log::warn!(
+                "插件 {} systemPromptSection 超过 {} 字符（{}），已截断",
+                m.id,
+                PLUGIN_SECTION_MAX_CHARS,
+                char_count
+            );
+            substituted.chars().take(PLUGIN_SECTION_MAX_CHARS).collect()
+        } else {
+            substituted
+        };
+
+        sections.push(truncated);
+    }
+    sections
 }
 
 fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<ToolDefinition> {
@@ -84,6 +225,7 @@ fn build_agent_messages(
     history: &[LlmMessage],
     prompt: &str,
     agent_system_prompt: &str,
+    plugin_sections: &[String],
 ) -> Vec<LlmMessage> {
     let has_tool = |name: &str| tools.iter().any(|t| t.name == name);
     let has_skills = tools.iter().any(|t| t.name.starts_with("skill_"));
@@ -93,6 +235,7 @@ fn build_agent_messages(
         has_tool("web_search"),
         has_tool("http_get"),
         agent_system_prompt,
+        plugin_sections,
     );
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
@@ -139,6 +282,7 @@ fn spawn_agent_task(
         conversation_id: conversation_id.to_string(),
         conv_db: state.conversation_db.clone(),
         cancel_rx,
+        config_dir: state.config_dir.clone(),
     };
 
     let state_for_cleanup = state.clone();
@@ -232,9 +376,10 @@ pub async fn agent_start_task(
     }
     let provider = OpenAiProvider::new(llm_config)?;
 
-    let registry = build_registry(&mode, &enabled_skills, &enabled_mcp_servers, state.mcp_manager.clone(), &experimental_settings, &state.config_dir, &disabled_plugins).await;
+    let (registry, manifests) = build_registry(&mode, &enabled_skills, &enabled_mcp_servers, state.mcp_manager.clone(), &experimental_settings, &state.config_dir, &disabled_plugins).await;
     let tools = build_definitions(&registry, &mode);
-    let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt);
+    let plugin_sections = collect_plugin_sections(&manifests, &state.ssh_manager, &session_id, &mode, &state.config_dir).await;
+    let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt, &plugin_sections);
 
     spawn_agent_task(
         &state, &app, &task_id, &session_id, &conversation_id, &mode,

@@ -1,9 +1,16 @@
+/// Build the agent system prompt.
+///
+/// `plugin_sections` are static text snippets contributed by enabled plugins
+/// (via their `systemPromptSection` manifest field). They are appended after
+/// the user-supplied section. Only non-empty sections are joined; the caller
+/// is responsible for context-variable substitution and length truncation.
 pub(crate) fn build_system_prompt(
     session_id: &str,
     has_skills: bool,
     has_web_search: bool,
     has_http_get: bool,
     user_prompt: &str,
+    plugin_sections: &[String],
 ) -> String {
     let base = " Marcel SSH (玛瑟尔 SSH)\n\
 你是一个 AI 原生的交互式 SSH 工具，内置自主 Agent 系统，帮助用户在远程服务器上完成各种任务。使用下方的说明和可用的工具来协助用户。\n\n\
@@ -30,7 +37,7 @@ pub(crate) fn build_system_prompt(
     };
 
     let http_get_hint = if has_http_get {
-        "同时，在部署网页完成后，请你使用工具 http_get 来确保网页可以正常访问（因为http_get在用户机上运行，不是在远程服务器上运行）。\n"
+        "同时，在部署网页完成后，请你使用工具 http_get 来确保网页可以正常访问（因为http_get在用户机运行，不是在远程服务器上运行）。\n"
     } else {
         ""
     };
@@ -60,9 +67,25 @@ pub(crate) fn build_system_prompt(
         format!("\n## 用户附加指令\n\n{}\n", user_prompt)
     };
 
+    // Plugin-contributed static sections (e.g. long-term-memory guidance).
+    // Joined by a blank line; each section already had context variables
+    // substituted and was truncated to 2000 chars by the caller.
+    let plugin_section = if plugin_sections.is_empty() {
+        String::new()
+    } else {
+        format!("\n## 插件扩展指令\n\n{}\n", plugin_sections.join("\n\n"))
+    };
+
     format!(
-        "{}{}{}当前会话：SSH session id={}\n\n{}{}{}",
-        base, web_search_hint, http_get_hint, session_id, conventions, skills_section, user_section
+        "{}{}{}当前会话：SSH session id={}\n\n{}{}{}{}",
+        base,
+        web_search_hint,
+        http_get_hint,
+        session_id,
+        conventions,
+        skills_section,
+        user_section,
+        plugin_section
     )
 }
 
@@ -72,19 +95,66 @@ mod tests {
 
     #[test]
     fn prompt_omits_disabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", false, false, false, "");
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[]);
 
         assert!(!prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(!prompt.contains("skill_"));
+        // No plugin sections injected.
+        assert!(!prompt.contains("插件扩展指令"));
     }
 
     #[test]
     fn prompt_includes_only_enabled_tool_hints() {
-        let prompt = build_system_prompt("session-1", true, true, false, "");
+        let prompt = build_system_prompt("session-1", true, true, false, "", &[]);
 
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(prompt.contains("skill_"));
+    }
+
+    #[test]
+    fn prompt_with_empty_plugin_sections_omits_section() {
+        let prompt = build_system_prompt("session-1", false, false, false, "", &[]);
+        assert!(!prompt.contains("插件扩展指令"));
+    }
+
+    #[test]
+    fn prompt_appends_single_plugin_section() {
+        let sections = vec!["记住用户偏好".to_string()];
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        assert!(prompt.contains("插件扩展指令"));
+        assert!(prompt.contains("记住用户偏好"));
+    }
+
+    #[test]
+    fn prompt_appends_multiple_plugin_sections_separated_by_blank_line() {
+        let sections = vec![
+            "插件A 指令".to_string(),
+            "插件B 指令".to_string(),
+        ];
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        assert!(prompt.contains("插件A 指令\n\n插件B 指令"));
+    }
+
+    #[test]
+    fn prompt_plugin_section_appears_after_user_section() {
+        let sections = vec!["PLUGIN_MARKER".to_string()];
+        let prompt =
+            build_system_prompt("session-1", false, false, false, "USER_MARKER", &sections);
+        let user_pos = prompt.find("USER_MARKER").unwrap();
+        let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
+        assert!(
+            user_pos < plugin_pos,
+            "plugin section must come after user section"
+        );
+    }
+
+    #[test]
+    fn prompt_with_empty_string_section_still_joins() {
+        // An empty string in the sections vec should not break the join.
+        let sections = vec!["".to_string()];
+        let prompt = build_system_prompt("session-1", false, false, false, "", &sections);
+        assert!(prompt.contains("插件扩展指令"));
     }
 }
