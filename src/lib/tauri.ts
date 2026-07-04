@@ -21,6 +21,7 @@ import type {
   PluginManifest,
   PluginHttpRequest,
   PluginHttpResponse,
+  ReloadDiff,
 } from './types';
 
 // SSH commands
@@ -440,6 +441,19 @@ export async function pluginWebviewClose(label: string): Promise<void> {
 
 export async function pluginList(): Promise<PluginManifest[]> {
   return invoke<PluginManifest[]>('plugin_list');
+}
+
+/** Fetch the command→capability map from the Rust single source of truth.
+ *  Used by `pluginIpc.ts` to build `COMMAND_TO_CAPABILITY` at init time. */
+export async function pluginCapabilityMap(): Promise<Record<string, string>> {
+  return invoke<Record<string, string>>('plugin_capability_map');
+}
+
+/** Trigger a registry reload on the backend. Returns the diff so the caller
+ *  can react to per-plugin changes (destroy/recreate only changed webviews +
+ *  injections). The backend also emits `plugin-registry-changed` separately. */
+export async function pluginReload(): Promise<ReloadDiff> {
+  return invoke<ReloadDiff>('plugin_reload');
 }
 
 export async function getPluginDir(): Promise<string> {

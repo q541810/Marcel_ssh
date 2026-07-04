@@ -29,14 +29,19 @@ export interface ViewProvider {
 
 // Plugin manifest types
 
+export type IconKind = 'svg' | 'img' | 'emoji';
+export type ToolKind = 'ssh' | 'local';
+export type RunAt = 'idle' | 'instant';
+export type PluginViewMount = 'sidebar' | 'settings';
+
 export interface PluginIconDef {
-  kind: string;
+  kind: IconKind;
   src: string;
 }
 
 export interface PluginViewDef {
   id: string;
-  mount: MountPoint;
+  mount: PluginViewMount;
   title: string;
   icon?: PluginIconDef;
   navGroup?: NavGroup;
@@ -49,8 +54,10 @@ export interface PluginAgentToolDef {
   name: string;
   description: string;
   command: string;
+  kind?: ToolKind;
+  handler?: string;
   parameters?: unknown;
-  riskLevel?: string;
+  riskLevel?: RiskLevel;
 }
 
 /**
@@ -73,7 +80,7 @@ export interface PluginInjectionDef {
    *  runtime API as the argument. */
   scripts: string[];
   /** When to inject: "idle" (default) or "instant". */
-  runAt: string;
+  runAt: RunAt;
   /** Sort weight for multi-plugin ordering (lower = earlier). */
   order: number;
 }
@@ -104,6 +111,19 @@ export interface PluginHttpResponse {
   headers: Record<string, string>;
   body: string;
   url: string;
+}
+
+/**
+ * Diff returned by `plugin_reload` / emitted via `plugin-registry-changed`.
+ * `changed` lists plugin ids whose manifest or enabled-state changed since the
+ * previous reload; `removed` lists ids no longer on disk. Callers should
+ * destroy/recreate webviews + injections for these plugins only (incremental
+ * refresh instead of nuke-and-rebuild).
+ */
+export interface ReloadDiff {
+  allIds: string[];
+  changed: string[];
+  removed: string[];
 }
 
 // Connection types

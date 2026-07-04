@@ -1,6 +1,7 @@
 import { emit, listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { bus, type Handler } from './bus';
 import { getRuntime } from './lifecycle';
+import { matchPattern } from '../pattern';
 import type { PluginApi } from './types';
 
 // ── Shared overlay container ──────────────────────────────────────────
@@ -33,14 +34,6 @@ interface BackendDispatcher {
 }
 
 const backendDispatchers = new Map<string, BackendDispatcher>();
-
-function matchPattern(pattern: string, event: string): boolean {
-  if (pattern.endsWith('/*')) {
-    const prefix = pattern.slice(0, -1);
-    return event.startsWith(prefix);
-  }
-  return pattern === event;
-}
 
 async function subscribeBackendEvent(pluginId: string, pattern: string, cb: Handler): Promise<() => void> {
   let disp = backendDispatchers.get(pluginId);
