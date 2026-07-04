@@ -99,3 +99,22 @@ export async function destroyAll(): Promise<void> {
     labels.map((label) => pluginWebviewClose(label).catch(console.error)),
   );
 }
+
+/**
+ * Reconcile the frontend pool with the backend's live plugin set. Any pooled
+ * webview whose plugin is no longer in `livePluginIds` is destroyed. Called
+ * after a registry reload so webviews for deleted/disabled plugins don't
+ * linger on the frontend while the backend has already torn them down.
+ */
+export async function resync(livePluginIds: Set<string>): Promise<void> {
+  const toDestroy: string[] = [];
+  for (const [label, entry] of pool) {
+    if (!livePluginIds.has(entry.pluginId)) {
+      toDestroy.push(label);
+    }
+  }
+  for (const label of toDestroy) {
+    pool.delete(label);
+    pluginWebviewClose(label).catch(console.error);
+  }
+}

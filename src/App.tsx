@@ -35,6 +35,7 @@ import {
 import { registerBuiltinViews } from '@/plugins/builtinViews';
 import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
 import { initPluginIpc } from '@/plugins/pluginIpc';
+import { ensurePluginRegistryListener } from '@/stores/pluginStore';
 import { initRegionBridge, notifyNavChange } from '@/plugins/injection';
 
 const lazyCache = new Map<string, LazyExoticComponent<ComponentType>>();
@@ -323,6 +324,7 @@ export default function App() {
     initPluginIpc().catch(err => {
       console.error('Failed to init plugin IPC:', err);
     });
+    ensurePluginRegistryListener();
     initRegionBridge();
     checkUpdate().then(res => {
       if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });

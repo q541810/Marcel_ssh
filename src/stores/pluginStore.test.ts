@@ -32,7 +32,7 @@ const testManifests: PluginManifest[] = [
     description: 'another plugin',
     capabilities: [],
     views: [
-      { id: 'v1', mount: 'center', title: 'World', order: 20, entry: 'index.html' },
+      { id: 'v1', mount: 'settings', title: 'World', order: 20, entry: 'index.html' },
     ],
     agentTools: [],
     injections: [],

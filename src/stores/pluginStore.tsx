@@ -1,11 +1,16 @@
 import { create } from 'zustand';
 import { Plug } from 'lucide-react';
-import type { PluginManifest, PluginViewDef, ViewProvider } from '@/lib/types';
+import { listen } from '@tauri-apps/api/event';
+import type { PluginManifest, PluginViewDef, ReloadDiff, ViewProvider } from '@/lib/types';
 import { useViewStore } from '@/stores/viewStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
-import { destroyAll as destroyAllWebviews } from '@/plugins/pluginWebviewPool';
+import {
+  destroyAll as destroyAllWebviews,
+  destroyByPlugin as destroyWebviewByPlugin,
+  resync as resyncWebviewPool,
+} from '@/plugins/pluginWebviewPool';
 import {
   activatePluginInjections,
   deactivatePluginInjections,
@@ -27,6 +32,7 @@ function resolvePluginIcon(manifest: PluginManifest, view: PluginViewDef): ViewP
     return { kind: 'img', src: `plugin://${manifest.id}/${view.icon.src}` };
   }
 
+  // 'emoji' kind: no dedicated ViewIcon variant yet; fall back to default.
   return DEFAULT_PLUGIN_ICON;
 }
 
@@ -75,15 +81,77 @@ interface PluginState {
 
   fetchPlugins: () => Promise<void>;
   /** Reconcile active content-script injections with current manifests +
-   *  settings. Deactivates injections for disabled/unauthorized plugins,
-   *  activates for newly-enabled ones. Called after fetchPlugins and on
-   *  settings changes (disabledPlugins / disableAllInjections /
-   *  authorizedCapabilities). */
+    *  settings. Deactivates injections for disabled/unauthorized plugins,
+    *  activates for newly-enabled ones. Called after fetchPlugins and on
+    *  settings changes (disabledPlugins / disableAllInjections /
+    *  authorizedCapabilities). */
   syncInjections: () => void;
   /** Re-run already-active injections after React remounts a region and destroys
-   *  plugin-owned DOM nodes. Unlike syncInjections, this is only for remount
-   *  recovery and intentionally re-executes existing runtimes. */
+    *  plugin-owned DOM nodes. Unlike syncInjections, this is only for remount
+    *  recovery and intentionally re-executes existing runtimes. */
   rehydrateInjections: () => void;
+}
+
+/**
+ * Incremental diff refresh: destroy/recreate webviews, injections and view
+ * providers only for plugins whose manifest changed or were removed/disabled.
+ * Unchanged plugins keep their live webviews and injected scripts, avoiding
+ * the flicker of the previous nuke-and-rebuild `fetchPlugins`.
+ */
+function applyPluginDiff(
+  oldManifests: PluginManifest[],
+  newManifests: PluginManifest[],
+  disabled: Set<string>,
+): void {
+  const oldById = new Map(oldManifests.map((m) => [m.id, m]));
+  const newById = new Map(newManifests.map((m) => [m.id, m]));
+
+  const viewState = useViewStore.getState();
+
+  // Destroy + unregister for: removed, disabled, or changed plugins.
+  for (const [id, oldM] of oldById) {
+    const newM = newById.get(id);
+    const manifestChanged =
+      !newM || JSON.stringify(newM) !== JSON.stringify(oldM);
+    const nowDisabled = disabled.has(id);
+    if (manifestChanged || nowDisabled) {
+      destroyWebviewByPlugin(id).catch(console.error);
+      deactivatePluginInjections(id);
+      viewState.unregister(id);
+    }
+  }
+
+  // Resync the webview pool: drop webviews whose plugin is no longer live.
+  const liveIds = new Set<string>();
+  for (const m of newManifests) {
+    if (!disabled.has(m.id)) liveIds.add(m.id);
+  }
+  resyncWebviewPool(liveIds).catch(console.error);
+
+  // Final-consistency sweep: drop any non-builtin view provider whose plugin
+  // is no longer in the live (enabled) set. This catches providers registered
+  // by a previous `fetchPlugins` whose plugin has since been deleted/disabled,
+  // even if the manifest diff missed them (e.g. store was reset mid-flight).
+  for (const p of viewState.providers) {
+    if (p.pluginId === 'builtin') continue;
+    if (!liveIds.has(p.pluginId)) {
+      viewState.unregister(p.pluginId);
+    }
+  }
+
+  // Register view providers for: newly added, re-enabled (was disabled), or
+  // changed plugins. Already-registered unchanged plugins are left alone.
+  for (const [id, m] of newById) {
+    if (disabled.has(id)) continue;
+    const oldM = oldById.get(id);
+    const isNew = !oldM;
+    const manifestChanged = oldM && JSON.stringify(oldM) !== JSON.stringify(m);
+    if (isNew || manifestChanged) {
+      for (const v of m.views) {
+        viewState.register(manifestViewToProvider(m, v));
+      }
+    }
+  }
 }
 
 export const usePluginStore = create<PluginState>((set, get) => ({
@@ -97,28 +165,12 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     try {
       const manifests = await tauri.pluginList();
       const disabled = getDisabledPlugins();
+      const oldManifests = get().manifests;
 
-      // 销毁所有池中 WebView，插件刷新时强制重建
-      await destroyAllWebviews();
-      // 同样销毁所有 content-script 注入，刷新时按需重建
-      deactivateAllInjections();
-
-      const viewState = useViewStore.getState();
-      const oldPluginIds = new Set(
-        viewState.providers
-          .filter((p) => p.pluginId !== 'builtin')
-          .map((p) => p.pluginId),
-      );
-      oldPluginIds.forEach((id) => {
-        viewState.unregister(id);
-      });
-
-      for (const m of manifests) {
-        if (disabled.has(m.id)) continue;
-        for (const v of m.views) {
-          viewState.register(manifestViewToProvider(m, v));
-        }
-      }
+      // Diff: only destroy/recreate webviews + injections + view providers
+      // for plugins whose manifest changed or were removed/disabled. This
+      // avoids the flicker / state-loss of the previous nuke-and-rebuild.
+      applyPluginDiff(oldManifests, manifests, disabled);
 
       set({ manifests, loading: false, refreshKey: Date.now() });
 
@@ -177,3 +229,28 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     }
   },
 }));
+
+// ── Registry-changed event subscription ───────────────────────────────────
+//
+// The backend emits `plugin-registry-changed` after every registry reload
+// (startup, settings save, explicit `plugin_reload`). We react by re-fetching
+// the manifest list — the diff refresh inside `fetchPlugins` ensures only
+// changed/removed plugins disturb their live webviews/injections.
+//
+// Subscribed once at module load; safe to call during tests (the listener is
+// idempotent and the store starts empty so the first event just populates it).
+
+let registryListenerRegistered = false;
+
+export function ensurePluginRegistryListener(): void {
+  if (registryListenerRegistered) return;
+  registryListenerRegistered = true;
+  listen<ReloadDiff>('plugin-registry-changed', () => {
+    // Fire-and-forget: the diff refresh handles incremental destroy/recreate.
+    usePluginStore.getState().fetchPlugins().catch((err) => {
+      console.error('[pluginStore] fetchPlugins after registry-changed failed:', err);
+    });
+  }).catch((err) => {
+    console.error('[pluginStore] failed to listen for plugin-registry-changed:', err);
+  });
+}
