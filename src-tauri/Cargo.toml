@@ -9,7 +9,7 @@ rust-version = "1.77.2"
 tauri-build = { version = "^2", features = [] }
 
 [dependencies]
-tauri = { version = "^2", features = ["tray-icon", "unstable"] }
+tauri = { version = "^2", features = ["tray-icon", "unstable", "protocol-asset"] }
 tauri-plugin-shell = "^2"
 tauri-plugin-notification = "^2"
 tauri-plugin-clipboard-manager = "^2"

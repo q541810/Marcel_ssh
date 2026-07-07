@@ -407,6 +407,34 @@ export async function sftpCancelDownload(downloadId: string): Promise<void> {
   return invoke('sftp_cancel_download', { downloadId });
 }
 
+// ──────────── 图片预览（下载到临时目录后由 WebView 通过 asset 协议加载） ────────────
+
+export interface SftpPreviewImageResult {
+  localPath: string;
+}
+
+/** 下载远程图片到 marcel-previews/{previewId}/ 临时目录，返回本地路径。 */
+export async function sftpPreviewImage(
+  sessionId: string,
+  remotePath: string,
+  previewId: string,
+): Promise<SftpPreviewImageResult> {
+  return invoke<SftpPreviewImageResult>('sftp_preview_image', {
+    sessionId,
+    remotePath,
+    previewId,
+  });
+}
+
+/**
+ * 清理预览临时文件。
+ * - 传入 localPath：仅清理该文件及其所在 {uuid} 目录
+ * - 不传：扫描整个 marcel-previews 根（应用启动时调用）
+ */
+export async function sftpPreviewCleanup(localPath?: string): Promise<void> {
+  return invoke('sftp_preview_cleanup', { localPath: localPath ?? null });
+}
+
 export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string, flat: boolean): Promise<void> {
   return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId, flat });
 }

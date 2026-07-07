@@ -13,14 +13,15 @@ import {
   sftpExtractArchive,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
-import { formatSize, modeToString, getErrorMessage } from '@/lib/sftp-helpers';
-import { MAX_EDITOR_FILE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
+import { formatSize, modeToString, getErrorMessage, isPreviewableImage } from '@/lib/sftp-helpers';
+import { MAX_EDITOR_FILE_SIZE, MAX_PREVIEW_IMAGE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
 import { useFileDrop } from '@/hooks/useFileDrop';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
 import FileEditorModal from './FileEditorModal';
+import ImagePreviewModal from './ImagePreviewModal';
 
 interface FileManagerPanelProps {
   sessionId: string;
@@ -51,6 +52,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [newFileName, setNewFileName] = useState('');
   const [showNewFile, setShowNewFile] = useState(false);
   const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ path: string; name: string; size: number } | null>(null);
   const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
   const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
   const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
@@ -146,6 +148,16 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       const path = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
       navigateTo(path);
     } else if (entry.is_file) {
+      const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+      // 图片：走预览（先于 BINARY_EXTENSIONS 判断，因为图片扩展名也在 BINARY_EXTENSIONS 里）
+      if (isPreviewableImage(entry.name)) {
+        if (entry.size > MAX_PREVIEW_IMAGE_SIZE) {
+          setError(`图片过大 (${formatSize(entry.size)})，预览上限为 ${formatSize(MAX_PREVIEW_IMAGE_SIZE)}，请使用下载功能`);
+          return;
+        }
+        setPreviewFile({ path: fullPath, name: entry.name, size: entry.size });
+        return;
+      }
       const ext = entry.name.lastIndexOf('.') >= 0 ? entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase() : '';
       if (BINARY_EXTENSIONS.has(ext)) {
         setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
@@ -155,7 +167,6 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         setError(`文件过大 (${formatSize(entry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
         return;
       }
-      const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
       setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
     }
   };
@@ -772,10 +783,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       <div className="flex-1 overflow-auto relative">
 
-        <table className="w-full text-xs table-fixed">
-          <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800">
-            <tr className="text-zinc-500">
-              <th className="py-2 text-center font-medium w-8">
+        <table className="w-full text-xs table-fixed border-separate border-spacing-0">
+          <thead className="sticky top-0 z-10">
+            <tr className="text-zinc-500 bg-zinc-900">
+              <th className="py-2 text-center font-medium w-8 border-b border-zinc-800">
                 <label className="relative inline-flex items-center justify-center cursor-pointer">
                   <input
                     type="checkbox"
@@ -796,9 +807,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   )}
                 </label>
               </th>
-              <th className="px-3 py-2 text-left font-medium">名称</th>
-              <th className="px-3 py-2 text-left font-medium w-24">大小</th>
-              <th className="px-3 py-2 text-left font-medium w-28">权限</th>
+              <th className="px-3 py-2 text-left font-medium border-b border-zinc-800">名称</th>
+              <th className="px-3 py-2 text-left font-medium w-24 border-b border-zinc-800">大小</th>
+              <th className="px-3 py-2 text-left font-medium w-28 border-b border-zinc-800">权限</th>
             </tr>
           </thead>
           <tbody>
@@ -821,7 +832,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               return (
                 <tr
                   key={entryPath}
-                  className={`border-b border-zinc-800/50 hover:bg-zinc-800/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
+                  className={`hover:bg-zinc-800/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
                   onDoubleClick={() => handleNavigate(entry)}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey) {
@@ -835,7 +846,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   }}
                   onContextMenu={(e) => handleContextMenu(e, entry)}
                 >
-                  <td className="py-1.5 text-center">
+                  <td className="py-1.5 text-center border-b border-zinc-800/50">
                     <label className="relative inline-flex items-center justify-center cursor-pointer">
                       <input
                         type="checkbox"
@@ -858,7 +869,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       )}
                     </label>
                   </td>
-                  <td className="px-3 py-1.5 text-zinc-300 truncate">
+                  <td className="px-3 py-1.5 text-zinc-300 truncate border-b border-zinc-800/50">
                     <span className="flex items-center gap-2">
                       {entry.is_dir ? (
                         <svg className="w-4 h-4 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
@@ -876,8 +887,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       <span className="truncate">{entry.name}</span>
                     </span>
                   </td>
-                  <td className="px-3 py-1.5 text-zinc-400">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
-                  <td className="px-3 py-1.5 text-zinc-500 font-mono">{modeToString(entry.mode)}</td>
+                  <td className="px-3 py-1.5 text-zinc-400 border-b border-zinc-800/50">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
+                  <td className="px-3 py-1.5 text-zinc-500 font-mono border-b border-zinc-800/50">{modeToString(entry.mode)}</td>
                 </tr>
               );
             })
@@ -946,28 +957,47 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               )}
               {!menuEntry.is_dir && (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
-                      if (BINARY_EXTENSIONS.has(ext)) {
-                        setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+                  {isPreviewableImage(menuEntry.name) ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (menuEntry.size > MAX_PREVIEW_IMAGE_SIZE) {
+                          setError(`图片过大 (${formatSize(menuEntry.size)})，预览上限为 ${formatSize(MAX_PREVIEW_IMAGE_SIZE)}，请使用下载功能`);
+                          setMenuEntry(null); setMenuTargets([]);
+                          return;
+                        }
+                        const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                        setPreviewFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
                         setMenuEntry(null); setMenuTargets([]);
-                        return;
-                      }
-                      if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
-                        setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+                      }}
+                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                    >
+                      预览
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
+                        if (BINARY_EXTENSIONS.has(ext)) {
+                          setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+                          setMenuEntry(null); setMenuTargets([]);
+                          return;
+                        }
+                        if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
+                          setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+                          setMenuEntry(null); setMenuTargets([]);
+                          return;
+                        }
+                        const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                        setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
                         setMenuEntry(null); setMenuTargets([]);
-                        return;
-                      }
-                      const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
-                      setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
-                      setMenuEntry(null); setMenuTargets([]);
-                    }}
-                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-                  >
-                    编辑
-                  </button>
+                      }}
+                      className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                    >
+                      编辑
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleDownload(menuEntry)}
@@ -1129,6 +1159,17 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             setEditorFile(null);
             loadDirectory(currentPath);
           }}
+        />
+      )}
+
+      {previewFile && (
+        <ImagePreviewModal
+          open={!!previewFile}
+          sessionId={sessionId}
+          filePath={previewFile.path}
+          fileName={previewFile.name}
+          fileSize={previewFile.size}
+          onClose={() => setPreviewFile(null)}
         />
       )}
 

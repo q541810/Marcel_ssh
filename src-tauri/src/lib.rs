@@ -552,6 +552,8 @@ pub fn run() {
             commands::sftp::sftp_upload_folder_stream,
             commands::sftp::sftp_prepare_drag_upload,
             commands::sftp::sftp_cleanup_temp_dir,
+            commands::sftp::sftp_preview_image,
+            commands::sftp::sftp_preview_cleanup,
             commands::plugin_webview::plugin_webview_create,
             commands::plugin_webview::plugin_webview_set_bounds,
             commands::plugin_webview::plugin_webview_close,

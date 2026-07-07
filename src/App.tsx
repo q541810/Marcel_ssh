@@ -22,7 +22,7 @@ import { useSkillStore } from '@/stores/skillStore';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
-import { appReady, checkUpdate } from '@/lib/tauri';
+import { appReady, checkUpdate, sftpPreviewCleanup } from '@/lib/tauri';
 import { playNotificationSound } from '@/lib/notificationSound';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
@@ -302,6 +302,10 @@ export default function App() {
 
   useEffect(() => {
     appReady().catch(console.error);
+    // 清理上次未正常退出的图片预览临时文件
+    sftpPreviewCleanup().catch((err) => {
+      console.warn('清理预览临时文件失败:', err);
+    });
     // 预加载设置页面，消除首次进入的模块加载延迟
     const preload = () => import('@/components/settings/Settings');
     if (typeof requestIdleCallback !== 'undefined') {

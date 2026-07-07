@@ -20,6 +20,17 @@ export const BINARY_EXTENSIONS = new Set([
   '.class', '.jar', '.war', '.pyc', '.pyd',
 ]);
 
+/** 图片预览支持的最大字节数（与后端 MAX_PREVIEW_IMAGE_BYTES 保持一致）。 */
+export const MAX_PREVIEW_IMAGE_SIZE = 50 * 1024 * 1024;
+
+/**
+ * 支持预览的图片扩展名（浏览器原生支持，不含 TIFF/SVG）。
+ * 即使在 BINARY_EXTENSIONS 中，命中此集合的文件也会走图片预览而非"无法编辑"提示。
+ */
+export const IMAGE_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp',
+]);
+
 /** Archive extensions that support remote extraction. Compound extensions (e.g. .tar.gz) first. */
 export const ARCHIVE_EXTENSIONS = [
   '.tar.gz', '.tar.bz2', '.tar.xz',

@@ -1,10 +1,21 @@
 import { getErrorMessage as baseGetErrorMessage } from './errors';
+import { IMAGE_EXTENSIONS } from './constants';
 
 export function formatSize(bytes: number): string {
   if (bytes === 0) return '-';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+}
+
+export function getFileExtension(fileName: string): string {
+  const idx = fileName.lastIndexOf('.');
+  return idx >= 0 ? fileName.slice(idx).toLowerCase() : '';
+}
+
+/** 判断文件是否为浏览器可预览的图片格式（与后端 50MB 限制配合使用）。 */
+export function isPreviewableImage(fileName: string): boolean {
+  return IMAGE_EXTENSIONS.has(getFileExtension(fileName));
 }
 
 export function modeToString(mode: number): string {

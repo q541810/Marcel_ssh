@@ -4,7 +4,7 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, State, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::emit_event;
@@ -1450,4 +1450,226 @@ pub async fn sftp_cleanup_temp_dir(temp_dir: String) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+// ──────────── 图片预览（下载到临时目录后由 WebView 通过 asset 协议加载） ────────────
+
+const MAX_PREVIEW_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+const PREVIEW_TEMP_DIR_PREFIX: &str = "marcel-previews";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewImageResult {
+    pub local_path: String,
+}
+
+/// 下载远程图片到 `temp_dir/marcel-previews/{uuid}/{sanitized_filename}`，
+/// 供前端通过 `convertFileSrc` 转为 asset 协议 URL 后用 `<img>` 渲染。
+///
+/// - 50MB 硬上限，超限拒绝并提示用户走下载
+/// - 文件名取远端 basename 并做 sanitize，避免路径穿越
+/// - 不复用 sftp_download_stream 的进度/取消/原子落盘逻辑：预览场景无需弹保存对话框，
+///   临时文件失败可直接清理；如需进度可前端监听并按需扩展
+#[tauri::command]
+pub async fn sftp_preview_image(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    preview_id: String,
+) -> Result<PreviewImageResult, AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
+
+    // 取远端 basename 并 sanitize，防止路径穿越与非法字符
+    let remote_basename = Path::new(&remote_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::Ssh("无法解析远端文件名".into()))?;
+    // basename 不允许包含路径分隔符或空字节（file_name 已剥离目录，这里二次防御）
+    if remote_basename.contains('/')
+        || remote_basename.contains('\\')
+        || remote_basename.contains('\0')
+        || remote_basename == "."
+        || remote_basename == ".."
+    {
+        return Err(AppError::Ssh("远端文件名包含非法字符".into()));
+    }
+
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+
+    let metadata = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取文件信息失败: {}", e)))?;
+    if !metadata.is_regular() {
+        return Err(AppError::Ssh("只能预览普通文件".into()));
+    }
+    let total = metadata.len();
+    if total > MAX_PREVIEW_IMAGE_BYTES {
+        return Err(AppError::Ssh(format!(
+            "图片过大 ({} MB)，预览上限为 {} MB，请使用下载功能",
+            total / (1024 * 1024),
+            MAX_PREVIEW_IMAGE_BYTES / (1024 * 1024)
+        )));
+    }
+
+    // 准备临时目录：app_data_dir/marcel-previews/{preview_id}/
+    // 用 APPDATA 而非 temp_dir，因为 Tauri assetProtocol 的 $TEMP 变量在某些情况下不被识别
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Ssh(format!("获取 app_data_dir 失败: {}", e)))?;
+    let temp_root = app_data.join(PREVIEW_TEMP_DIR_PREFIX);
+    std::fs::create_dir_all(&temp_root)
+        .map_err(|e| AppError::Ssh(format!("创建预览临时根目录失败: {}", e)))?;
+    let temp_dir = temp_root.join(&preview_id);
+    std::fs::create_dir_all(&temp_dir)
+        .map_err(|e| AppError::Ssh(format!("创建预览临时目录失败: {}", e)))?;
+
+    let local_path = temp_dir.join(&remote_basename);
+    let temp_part_path = format!("{}.part", local_path.to_string_lossy());
+
+    // 流式下载到 .part 文件，完成后 rename
+    let mut remote = sftp
+        .open_with_flags(&remote_path, OpenFlags::READ)
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    let mut local = tokio::fs::File::create(&temp_part_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("创建本地临时文件失败: {}", e)))?;
+
+    let mut buf = vec![0u8; 131072];
+    let mut written: u64 = 0;
+
+    loop {
+        let n = remote
+            .read(&mut buf)
+            .await
+            .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        local
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+        written += n as u64;
+
+        emit_event(
+            &app,
+            "sftp-preview-progress",
+            json!({
+                "previewId": &preview_id,
+                "written": written,
+                "total": total,
+            }),
+        );
+    }
+
+    local
+        .flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+    drop(local);
+    drop(remote);
+
+    if written != total {
+        let _ = tokio::fs::remove_file(&temp_part_path).await;
+        return Err(AppError::Ssh(format!(
+            "下载不完整：预期 {} 字节，实际 {} 字节",
+            total, written
+        )));
+    }
+
+    tokio::fs::rename(&temp_part_path, &local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("保存预览文件失败: {}", e)))?;
+
+    let local_path_str = local_path.to_string_lossy().to_string();
+    log::info!("[sftp_preview_image] preview_id={} local_path={}", preview_id, local_path_str);
+
+    emit_event(
+        &app,
+        "sftp-preview-done",
+        json!({ "previewId": &preview_id }),
+    );
+
+    Ok(PreviewImageResult {
+        local_path: local_path_str,
+    })
+}
+
+/// 清理预览临时文件。
+/// - 传入 `local_path`：仅清理该文件及其所在的 `marcel-previews/{uuid}` 目录
+/// - 不传：扫描 `app_data_dir/marcel-previews/` 下所有子目录全部清理（应用启动时调用）
+#[tauri::command]
+pub async fn sftp_preview_cleanup(
+    app: AppHandle,
+    local_path: Option<String>,
+) -> Result<(), AppError> {
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Ssh(format!("获取 app_data_dir 失败: {}", e)))?;
+    let temp_root = app_data.join(PREVIEW_TEMP_DIR_PREFIX);
+
+    if let Some(p) = local_path {
+        let path = Path::new(&p);
+        // 校验：文件必须位于 marcel-previews 根下，避免被诱导删除任意文件
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| AppError::Ssh(format!("路径解析失败: {}", e)))?;
+        let canonical_root = temp_root
+            .canonicalize()
+            .map_err(|e| AppError::Ssh(format!("预览根目录解析失败: {}", e)))?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(AppError::Ssh("拒绝清理预览目录之外的路径".into()));
+        }
+
+        if path.exists() {
+            tokio::fs::remove_file(path)
+                .await
+                .map_err(|e| AppError::Ssh(format!("清理预览文件失败: {}", e)))?;
+        }
+
+        // 清理所在 {uuid} 目录（若已空）
+        if let Some(parent) = path.parent() {
+            if parent != temp_root.as_path() {
+                let _ = tokio::fs::remove_dir(parent).await;
+            }
+        }
+        return Ok(());
+    }
+
+    // 无参：扫描整个 marcel-previews 根
+    if temp_root.exists() {
+        let mut entries = tokio::fs::read_dir(&temp_root)
+            .await
+            .map_err(|e| AppError::Ssh(format!("读取预览根目录失败: {}", e)))?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| AppError::Ssh(format!("遍历预览根目录失败: {}", e)))?
+        {
+            let _ = tokio::fs::remove_dir_all(entry.path()).await;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_image_size_limit_is_50mb() {
+        assert_eq!(MAX_PREVIEW_IMAGE_BYTES, 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn preview_temp_dir_prefix_is_stable() {
+        assert_eq!(PREVIEW_TEMP_DIR_PREFIX, "marcel-previews");
+    }
 }
