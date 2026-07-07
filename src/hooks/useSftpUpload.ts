@@ -14,6 +14,10 @@ export interface PickedFolder {
 
 const CANCELLED_MSG = '上传已取消';
 
+function createTransferId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export function useSftpUpload(sessionId: string, remotePath: string) {
   const uploadState = useTransferStore((s) => s.upload);
   const folderStatus = useTransferStore((s) => s.folderUpload);
@@ -21,7 +25,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
   const uploadFile = useCallback(
     async (localPath: string, fileName: string, targetPath: string) => {
       const { setUpload, setActiveUploadId, clearUploadAfter } = useTransferStore.getState();
-      const uploadId = `${Date.now()}`;
+      const uploadId = createTransferId();
 
       setActiveUploadId(uploadId);
       setUpload({
@@ -34,6 +38,10 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
 
       try {
         await sftpUploadStream(sessionId, targetPath, localPath, uploadId);
+        const state = useTransferStore.getState();
+        if (state.activeUploadId === uploadId && state.upload?.status !== 'uploading') {
+          setActiveUploadId(null);
+        }
       } catch (err) {
         const msg = getErrorMessage(err);
         if (msg === CANCELLED_MSG) {
@@ -53,6 +61,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
             statusText: `上传失败：${msg}`,
           });
         }
+        setActiveUploadId(null);
         clearUploadAfter(4000);
       }
     },
@@ -74,7 +83,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
   const uploadFolder = useCallback(
     async (localPath: string, folderName: string, mode: FolderUploadMode) => {
       const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
-      const uploadId = `${Date.now()}`;
+      const uploadId = createTransferId();
       const flat = mode === 'flat';
       const targetPath = flat
         ? remotePath
@@ -113,7 +122,7 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
 
   const cancelCurrentUpload = useCallback(async () => {
     const { activeUploadId, activeFolderUploadId, setUpload, upload } = useTransferStore.getState();
-    const id = activeUploadId || activeFolderUploadId;
+    const id = upload?.status === 'uploading' ? activeUploadId : activeFolderUploadId;
     if (!id) return;
 
     if (activeUploadId && upload) {

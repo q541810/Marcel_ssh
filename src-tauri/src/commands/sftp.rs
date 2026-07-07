@@ -419,22 +419,28 @@ pub async fn sftp_write_file(
 ) -> Result<(), AppError> {
     let path = validate_sftp_remote_path(&path)?;
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+    let temp_path = remote_sidecar_path(&path, "edit")?;
 
     let mut file = sftp
         .open_with_flags(
-            &path,
+            &temp_path,
             OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
         )
         .await
         .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
 
-    tokio::io::AsyncWriteExt::write_all(&mut file, content.as_bytes())
-        .await
-        .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+    if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, content.as_bytes()).await {
+        let _ = sftp.remove_file(&temp_path).await;
+        return Err(AppError::Ssh(format!("写入远程文件失败: {}", e)));
+    }
 
-    file.flush()
-        .await
-        .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+    if let Err(e) = file.flush().await {
+        let _ = sftp.remove_file(&temp_path).await;
+        return Err(AppError::Ssh(format!("刷新远程文件失败: {}", e)));
+    }
+
+    drop(file);
+    commit_remote_temp_file(&sftp, &temp_path, &path, true).await?;
 
     Ok(())
 }
@@ -450,6 +456,19 @@ pub async fn sftp_download_stream(
 ) -> Result<(), AppError> {
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
+    let temp_local_path = format!("{}.marcel-download-{}.part", local_path, download_id);
+    let backup_local_path = format!("{}.marcel-download-{}.backup", local_path, download_id);
+
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .download_cancel_senders
+        .write()
+        .insert(download_id.clone(), cancel_tx);
+    let _guard = TransferCancelGuard {
+        transfer_id: download_id.clone(),
+        senders: state.download_cancel_senders.clone(),
+    };
+
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
     let metadata = sftp
@@ -468,7 +487,7 @@ pub async fn sftp_download_stream(
         .await
         .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
 
-    let mut local = tokio::fs::File::create(&local_path)
+    let mut local = tokio::fs::File::create(&temp_local_path)
         .await
         .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
 
@@ -477,19 +496,25 @@ pub async fn sftp_download_stream(
 
     let result: Result<(), AppError> = async {
         loop {
-            let n = remote
-                .read(&mut buf)
-                .await
-                .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
+            check_cancelled(&cancel_rx, "下载已取消")?;
+
+            let n = tokio::select! {
+                result = remote.read(&mut buf) => {
+                    result.map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+            };
 
             if n == 0 {
                 break;
             }
 
-            local
-                .write_all(&buf[..n])
-                .await
-                .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+            tokio::select! {
+                result = local.write_all(&buf[..n]) => {
+                    result.map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+            }
 
             written += n as u64;
 
@@ -500,26 +525,64 @@ pub async fn sftp_download_stream(
             );
         }
 
-        local
-            .flush()
-            .await
-            .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+        tokio::select! {
+            result = local.flush() => {
+                result.map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+            }
+            _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+        }
 
         Ok(())
     }
     .await;
 
     if result.is_err() {
-        let _ = tokio::fs::remove_file(&local_path).await;
+        let _ = tokio::fs::remove_file(&temp_local_path).await;
         return result;
     }
 
     if written != total {
-        let _ = tokio::fs::remove_file(&local_path).await;
+        let _ = tokio::fs::remove_file(&temp_local_path).await;
         return Err(AppError::Ssh(format!(
             "下载不完整：预期 {} 字节，实际写入 {} 字节",
             total, written
         )));
+    }
+
+    if let Err(e) = check_cancelled(&cancel_rx, "下载已取消") {
+        let _ = tokio::fs::remove_file(&temp_local_path).await;
+        return Err(e);
+    }
+
+    let had_existing = match tokio::fs::metadata(&local_path).await {
+        Ok(meta) => {
+            if meta.is_dir() {
+                let _ = tokio::fs::remove_file(&temp_local_path).await;
+                return Err(AppError::Ssh("保存路径已存在同名目录".into()));
+            }
+            true
+        }
+        Err(_) => false,
+    };
+
+    if had_existing {
+        let _ = tokio::fs::remove_file(&backup_local_path).await;
+        if let Err(e) = tokio::fs::rename(&local_path, &backup_local_path).await {
+            let _ = tokio::fs::remove_file(&temp_local_path).await;
+            return Err(AppError::Ssh(format!("备份已有文件失败: {}", e)));
+        }
+    }
+
+    if let Err(e) = tokio::fs::rename(&temp_local_path, &local_path).await {
+        if had_existing {
+            let _ = tokio::fs::rename(&backup_local_path, &local_path).await;
+        }
+        let _ = tokio::fs::remove_file(&temp_local_path).await;
+        return Err(AppError::Ssh(format!("保存下载文件失败: {}", e)));
+    }
+
+    if had_existing {
+        let _ = tokio::fs::remove_file(&backup_local_path).await;
     }
 
     emit_event(&app, "sftp-download-done", json!({ "downloadId": &download_id }));
@@ -538,24 +601,99 @@ pub async fn sftp_cancel_upload(
     Ok(())
 }
 
-/// Drop guard that removes the cancel sender from AppState on drop.
-struct UploadCancelGuard {
-    upload_id: String,
-    senders: std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+#[tauri::command]
+pub async fn sftp_cancel_download(
+    state: State<'_, AppState>,
+    download_id: String,
+) -> Result<(), AppError> {
+    if let Some(sender) = state.download_cancel_senders.write().remove(&download_id) {
+        let _ = sender.send(true);
+    }
+    Ok(())
 }
 
-impl Drop for UploadCancelGuard {
+/// Drop guard that removes the cancel sender from AppState on drop.
+struct TransferCancelGuard {
+    transfer_id: String,
+    senders: std::sync::Arc<
+        parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    >,
+}
+
+impl Drop for TransferCancelGuard {
     fn drop(&mut self) {
-        self.senders.write().remove(&self.upload_id);
+        self.senders.write().remove(&self.transfer_id);
     }
 }
 
-fn check_cancelled(cancel_rx: &tokio::sync::watch::Receiver<bool>) -> Result<(), AppError> {
+fn check_cancelled(
+    cancel_rx: &tokio::sync::watch::Receiver<bool>,
+    message: &str,
+) -> Result<(), AppError> {
     if *cancel_rx.borrow() {
-        Err(AppError::Ssh("上传已取消".into()))
+        Err(AppError::Ssh(message.into()))
     } else {
         Ok(())
     }
+}
+
+fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
+    let normalized = path.trim_end_matches('/');
+    let Some(idx) = normalized.rfind('/') else {
+        return Err(AppError::Ssh("远程路径无效".into()));
+    };
+    let parent = if idx == 0 { "/" } else { &normalized[..idx] };
+    let name = &normalized[idx + 1..];
+    if name.is_empty() {
+        return Err(AppError::Ssh("远程文件名不能为空".into()));
+    }
+    let sidecar = format!(".{}.marcel-{}-{}", name, label, uuid::Uuid::new_v4());
+    Ok(if parent == "/" {
+        format!("/{}", sidecar)
+    } else {
+        format!("{}/{}", parent, sidecar)
+    })
+}
+
+async fn commit_remote_temp_file(
+    sftp: &russh_sftp::client::SftpSession,
+    temp_path: &str,
+    target_path: &str,
+    allow_replace: bool,
+) -> Result<(), AppError> {
+    let existing = sftp.metadata(target_path).await.ok();
+    if let Some(meta) = &existing {
+        if meta.is_dir() {
+            let _ = sftp.remove_file(temp_path).await;
+            return Err(AppError::Ssh("目标路径已存在同名目录".into()));
+        }
+        if !allow_replace {
+            let _ = sftp.remove_file(temp_path).await;
+            return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+        }
+    }
+
+    if existing.is_none() {
+        return sftp
+            .rename(temp_path, target_path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("提交远程文件失败: {}", e)));
+    }
+
+    let backup_path = remote_sidecar_path(target_path, "backup")?;
+    if let Err(e) = sftp.rename(target_path, &backup_path).await {
+        let _ = sftp.remove_file(temp_path).await;
+        return Err(AppError::Ssh(format!("备份远程文件失败: {}", e)));
+    }
+
+    if let Err(e) = sftp.rename(temp_path, target_path).await {
+        let _ = sftp.rename(&backup_path, target_path).await;
+        let _ = sftp.remove_file(temp_path).await;
+        return Err(AppError::Ssh(format!("提交远程文件失败: {}", e)));
+    }
+
+    let _ = sftp.remove_file(&backup_path).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -570,10 +708,13 @@ pub async fn sftp_upload_stream(
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
 
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    state.upload_cancel_senders.write().insert(upload_id.clone(), cancel_tx);
-    let _guard = UploadCancelGuard {
-        upload_id: upload_id.clone(),
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .upload_cancel_senders
+        .write()
+        .insert(upload_id.clone(), cancel_tx);
+    let _guard = TransferCancelGuard {
+        transfer_id: upload_id.clone(),
         senders: state.upload_cancel_senders.clone(),
     };
 
@@ -595,15 +736,11 @@ pub async fn sftp_upload_stream(
         )));
     }
 
-    if sftp.metadata(&remote_path).await.is_ok() {
-        return Err(AppError::Ssh(
-            "远程文件已存在，请先删除或重命名再上传".into(),
-        ));
-    }
+    let temp_remote_path = remote_sidecar_path(&remote_path, "upload")?;
 
     let mut remote_file = sftp
         .open_with_flags(
-            &remote_path,
+            &temp_remote_path,
             OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
         )
         .await
@@ -618,22 +755,27 @@ pub async fn sftp_upload_stream(
 
     let result: Result<(), AppError> = async {
         loop {
-            let n = local_file
-                .read(&mut buf)
-                .await
-                .map_err(|e| AppError::Ssh(format!("读取本地文件失败: {}", e)))?;
+            check_cancelled(&cancel_rx, "上传已取消")?;
+
+            let n = tokio::select! {
+                result = local_file.read(&mut buf) => {
+                    result.map_err(|e| AppError::Ssh(format!("读取本地文件失败: {}", e)))?
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+            };
 
             if n == 0 {
                 break;
             }
 
-            tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n])
-                .await
-                .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+            tokio::select! {
+                result = tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n]) => {
+                    result.map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+            }
 
             written += n as u64;
-
-            check_cancelled(&cancel_rx)?;
 
             emit_event(
                 &app,
@@ -642,27 +784,35 @@ pub async fn sftp_upload_stream(
             );
         }
 
-        remote_file
-            .flush()
-            .await
-            .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+        tokio::select! {
+            result = remote_file.flush() => {
+                result.map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+            }
+            _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+        }
 
         Ok(())
     }
     .await;
 
     if result.is_err() {
-        let _ = sftp.remove_file(&remote_path).await;
+        let _ = sftp.remove_file(&temp_remote_path).await;
         return result;
     }
 
     if written != total {
-        let _ = sftp.remove_file(&remote_path).await;
+        let _ = sftp.remove_file(&temp_remote_path).await;
         return Err(AppError::Ssh(format!(
             "上传不完整：预期 {} 字节，实际上传 {} 字节",
             total, written
         )));
     }
+
+    if let Err(e) = check_cancelled(&cancel_rx, "上传已取消") {
+        let _ = sftp.remove_file(&temp_remote_path).await;
+        return Err(e);
+    }
+    commit_remote_temp_file(&sftp, &temp_remote_path, &remote_path, false).await?;
 
     emit_event(&app, "sftp-upload-done", json!({ "uploadId": &upload_id }));
 
@@ -943,10 +1093,13 @@ pub async fn sftp_upload_folder_stream(
     let local_path = validate_local_path(&local_path)?;
     let remote_path = validate_sftp_remote_path(&remote_path)?;
 
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    state.upload_cancel_senders.write().insert(upload_id.clone(), cancel_tx);
-    let _guard = UploadCancelGuard {
-        upload_id: upload_id.clone(),
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .upload_cancel_senders
+        .write()
+        .insert(upload_id.clone(), cancel_tx);
+    let _guard = TransferCancelGuard {
+        transfer_id: upload_id.clone(),
         senders: state.upload_cancel_senders.clone(),
     };
 
@@ -955,7 +1108,7 @@ pub async fn sftp_upload_folder_stream(
         return Err(AppError::Ssh("本地路径不是目录".into()));
     }
 
-    check_cancelled(&cancel_rx)?;
+    check_cancelled(&cancel_rx, "上传已取消")?;
     emit_folder_upload_status(&app, &upload_id, "checking", 0, 1);
 
     let check_cmd = crate::ssh::sftp_extract::build_unzip_check_cmd();
@@ -969,7 +1122,7 @@ pub async fn sftp_upload_folder_stream(
         ));
     }
 
-    check_cancelled(&cancel_rx)?;
+    check_cancelled(&cancel_rx, "上传已取消")?;
 
     if flat {
         let local_names = collect_local_top_level_names(local)?;
@@ -984,9 +1137,16 @@ pub async fn sftp_upload_folder_stream(
                 collisions.join("、")
             )));
         }
+    } else {
+        let sftp_check = state.ssh_manager.open_sftp(&session_id).await?;
+        if sftp_check.metadata(&remote_path).await.is_ok() {
+            return Err(AppError::Ssh(
+                "远端已存在同名目录，请重命名或选择上传到当前目录".into(),
+            ));
+        }
     }
 
-    check_cancelled(&cancel_rx)?;
+    check_cancelled(&cancel_rx, "上传已取消")?;
     emit_folder_upload_status(&app, &upload_id, "zipping", 0, 1);
 
     let compression_level = state
@@ -1076,20 +1236,25 @@ pub async fn sftp_upload_folder_stream(
 
     let upload_result: Result<(), AppError> = async {
         loop {
-            check_cancelled(&cancel_rx)?;
+            check_cancelled(&cancel_rx, "上传已取消")?;
 
-            let n = local_file
-                .read(&mut buf)
-                .await
-                .map_err(|e| AppError::Ssh(format!("读取本地zip文件失败: {}", e)))?;
+            let n = tokio::select! {
+                result = local_file.read(&mut buf) => {
+                    result.map_err(|e| AppError::Ssh(format!("读取本地zip文件失败: {}", e)))?
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+            };
 
             if n == 0 {
                 break;
             }
 
-            tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n])
-                .await
-                .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+            tokio::select! {
+                result = tokio::io::AsyncWriteExt::write_all(&mut remote_file, &buf[..n]) => {
+                    result.map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+                }
+                _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+            }
 
             written += n as u64;
 
@@ -1101,10 +1266,12 @@ pub async fn sftp_upload_folder_stream(
             emit_folder_upload_status(&app, &upload_id, "uploading", written, total);
         }
 
-        remote_file
-            .flush()
-            .await
-            .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+        tokio::select! {
+            result = remote_file.flush() => {
+                result.map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+            }
+            _ = cancel_rx.changed() => return Err(AppError::Ssh("上传已取消".into())),
+        }
 
         Ok(())
     }
@@ -1130,7 +1297,7 @@ pub async fn sftp_upload_folder_stream(
         )));
     }
 
-    check_cancelled(&cancel_rx)?;
+    check_cancelled(&cancel_rx, "上传已取消")?;
     emit_folder_upload_status(&app, &upload_id, "extracting", 0, 1);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_remote, &remote_path);

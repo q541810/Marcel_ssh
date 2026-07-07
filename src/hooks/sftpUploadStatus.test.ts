@@ -28,7 +28,7 @@ describe('formatFolderUploadStatus', () => {
 
   it('formats extracting status with overall percent', () => {
     expect(formatFolderUploadStatus({ uploadId: '1', phase: 'extracting', percent: 90 })).toBe(
-      '正在远端解压 90%',
+      '正在远端解压，暂不可取消 90%',
     );
   });
 });

@@ -14,7 +14,7 @@ const PHASE_LABELS: Record<FolderUploadPhase, string> = {
   checking: '正在检查远端解压工具',
   zipping: '正在压缩文件夹',
   uploading: '正在上传压缩包',
-  extracting: '正在远端解压',
+  extracting: '正在远端解压，暂不可取消',
 };
 
 export function formatFolderUploadStatus(payload: FolderStatusPayload): string {

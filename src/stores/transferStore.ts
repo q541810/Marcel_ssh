@@ -12,7 +12,7 @@ export interface UploadState {
 }
 
 export interface DownloadState {
-  status: 'idle' | 'downloading' | 'done' | 'error';
+  status: 'idle' | 'downloading' | 'done' | 'error' | 'cancelled';
   fileName: string;
   written: number;
   total: number;

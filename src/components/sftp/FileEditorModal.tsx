@@ -21,6 +21,8 @@ interface FileEditorModalProps {
   onSaved: () => void;
 }
 
+type SaveResult = 'saved' | 'blocked' | 'failed';
+
 const LANGUAGE_LOADERS: Record<string, () => Promise<Extension>> = {
   '.json': () => import('@codemirror/lang-json').then((m) => m.json()),
   '.yaml': () => import('@codemirror/lang-yaml').then((m) => m.yaml()),
@@ -69,8 +71,8 @@ export default function FileEditorModal({
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [lineCount, setLineCount] = useState(0);
 
-  const doSave = useCallback(async () => {
-    if (!viewRef.current) return;
+  const doSave = useCallback(async (): Promise<SaveResult> => {
+    if (!viewRef.current) return 'blocked';
     setSaving(true);
     setError(null);
     try {
@@ -87,30 +89,32 @@ export default function FileEditorModal({
       setSavedIndicator(true);
       setTimeout(() => setSavedIndicator(false), 2000);
       onSaved();
+      return 'saved';
     } catch (err) {
       setError(`保存失败：${getErrorMessage(err)}`);
+      return 'failed';
     } finally {
       setSaving(false);
     }
   }, [sessionId, filePath, onSaved]);
 
-  const handleSave = useCallback(async () => {
-    if (!viewRef.current) return;
+  const handleSave = useCallback(async (): Promise<SaveResult> => {
+    if (!viewRef.current) return 'blocked';
     try {
       const currentMtime = await sftpGetMtime(sessionId, filePath);
       if (currentMtime !== mtimeRef.current) {
         setShowOverwriteConfirm(true);
-        return;
+        return 'blocked';
       }
     } catch (err) {
       const msg = getErrorMessage(err);
       if (msg.includes('No such file') || msg.includes('不存在') || msg.includes('not found')) {
         setError('文件已不存在，无法保存');
-        return;
+        return 'failed';
       }
       // Other errors: proceed with save attempt
     }
-    await doSave();
+    return doSave();
   }, [sessionId, filePath, doSave]);
 
   saveRef.current = handleSave;
@@ -372,8 +376,8 @@ export default function FileEditorModal({
                   type="button"
                   onClick={async () => {
                     setShowCloseConfirm(false);
-                    await handleSave();
-                    onClose();
+                    const result = await handleSave();
+                    if (result === 'saved') onClose();
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
                 >

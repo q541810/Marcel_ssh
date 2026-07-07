@@ -71,6 +71,9 @@ pub struct AppState {
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Cancellation signals for SFTP uploads: upload_id -> watch sender.
     pub upload_cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Cancellation signals for SFTP downloads: download_id -> watch sender.
+    pub download_cancel_senders:
+        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -318,6 +321,7 @@ impl AppState {
             pending_questions: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
         }
@@ -544,6 +548,7 @@ pub fn run() {
             commands::sftp::sftp_download_stream,
             commands::sftp::sftp_upload_stream,
             commands::sftp::sftp_cancel_upload,
+            commands::sftp::sftp_cancel_download,
             commands::sftp::sftp_upload_folder_stream,
             commands::sftp::sftp_prepare_drag_upload,
             commands::sftp::sftp_cleanup_temp_dir,

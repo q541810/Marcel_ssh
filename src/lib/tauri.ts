@@ -403,6 +403,10 @@ export async function sftpCancelUpload(uploadId: string): Promise<void> {
   return invoke('sftp_cancel_upload', { uploadId });
 }
 
+export async function sftpCancelDownload(downloadId: string): Promise<void> {
+  return invoke('sftp_cancel_download', { downloadId });
+}
+
 export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string, flat: boolean): Promise<void> {
   return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId, flat });
 }

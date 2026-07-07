@@ -23,6 +23,7 @@ vi.mock('@/lib/tauri', () => ({
   sftpWriteFile: vi.fn(),
   sftpUploadStream: vi.fn(),
   sftpDownloadStream: vi.fn(),
+  sftpCancelDownload: vi.fn(),
   sftpExtractArchive: vi.fn(),
 }));
 
@@ -84,12 +85,14 @@ describe('FileManagerPanel upload button disable', () => {
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
       uploadState: null,
       folderStatus: null,
     });
     useSftpDownloadMock.mockReturnValue({
       downloadState: null,
       startDownload: vi.fn(),
+      cancelCurrentDownload: vi.fn(),
     });
   });
 
@@ -107,6 +110,7 @@ describe('FileManagerPanel upload button disable', () => {
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
       uploadState: makeUploadState({ statusText: 'uploading a.txt' }),
       folderStatus: null,
     });
@@ -130,6 +134,7 @@ describe('FileManagerPanel upload button disable', () => {
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
       uploadState: null,
       folderStatus: '正在压缩文件夹 50%',
     });
@@ -142,17 +147,36 @@ describe('FileManagerPanel upload button disable', () => {
     expect(html).toContain('正在压缩文件夹 50%');
   });
 
+  it('hides folder upload cancel button while remote extraction cannot be interrupted', () => {
+    useSftpUploadMock.mockReturnValue({
+      uploadFile: vi.fn(),
+      pickFolder: vi.fn(),
+      uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
+      uploadState: null,
+      folderStatus: '正在远端解压，暂不可取消 90%',
+    });
+
+    const html = renderToStaticMarkup(
+      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
+    );
+    expect(html).toContain('正在远端解压，暂不可取消 90%');
+    expect(html).not.toContain('title="取消上传"');
+  });
+
   it('keeps download button enabled when only upload is active', () => {
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
       uploadState: makeUploadState(),
       folderStatus: null,
     });
     useSftpDownloadMock.mockReturnValue({
       downloadState: makeDownloadState({ status: 'idle' }),
       startDownload: vi.fn(),
+      cancelCurrentDownload: vi.fn(),
     });
 
     const html = renderToStaticMarkup(
@@ -168,6 +192,7 @@ describe('FileManagerPanel upload button disable', () => {
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
+      cancelCurrentUpload: vi.fn(),
       uploadState: null,
       folderStatus: null,
     });
@@ -178,5 +203,19 @@ describe('FileManagerPanel upload button disable', () => {
     expect(html).toContain('title="上传文件"');
     expect(html).toContain('title="上传文件夹"');
     expect(html).not.toContain('title="正在上传，请等待"');
+  });
+
+  it('shows a cancel button while download is active', () => {
+    useSftpDownloadMock.mockReturnValue({
+      downloadState: makeDownloadState({ statusText: 'downloading b.txt' }),
+      startDownload: vi.fn(),
+      cancelCurrentDownload: vi.fn(),
+    });
+
+    const html = renderToStaticMarkup(
+      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
+    );
+    expect(html).toContain('downloading b.txt');
+    expect(html).toContain('title="取消下载"');
   });
 });

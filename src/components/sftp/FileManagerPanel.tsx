@@ -56,19 +56,24 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const loadSeqRef = useRef(0);
   const toolbarWidth = useContainerWidth(toolbarRef);
   const mode = toolbarWidth >= 870 ? 'full' : toolbarWidth >= 750 ? 'compact' : 'icon-only';
 
   const loadDirectory = useCallback(async (path: string) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setEntries([]);
     setError(null);
     try {
       const items = await sftpListDir(sessionId, path);
+      if (seq !== loadSeqRef.current) return;
       setEntries(items);
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       setError(`加载失败：${getErrorMessage(err)}`);
     } finally {
+      if (seq !== loadSeqRef.current) return;
       setLoading(false);
     }
   }, [sessionId]);
@@ -197,7 +202,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   };
 
   const { uploadFile, pickFolder, uploadFolder: doUploadFolder, cancelCurrentUpload, uploadState, folderStatus } = useSftpUpload(sessionId, currentPath);
-  const { downloadState, startDownload } = useSftpDownload(sessionId);
+  const { downloadState, startDownload, cancelCurrentDownload } = useSftpDownload(sessionId);
 
   const isUploading =
     (uploadState !== null && uploadState.status !== 'cancelled' && uploadState.status !== 'done' && uploadState.status !== 'error') ||
@@ -244,8 +249,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     const { sftpPrepareDragUpload, sftpUploadFolderStream, sftpCleanupTempDir } = await import('@/lib/tauri');
     const { useTransferStore } = await import('@/stores/transferStore');
     const { formatFolderUploadStatus } = await import('@/hooks/sftpUploadStatus');
+    const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
 
-    const uploadId = `${Date.now()}`;
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let tempDir: string | null = null;
 
     try {
@@ -253,23 +259,30 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       tempDir = await sftpPrepareDragUpload(paths);
 
       // 2. 上传（解压到当前目录）
-      const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
       setActiveFolderUploadId(uploadId);
       setFolderUpload(
         formatFolderUploadStatus({ uploadId, phase: 'checking' as const, percent: 0 }),
       );
 
       const targetPath = currentPath;
-      try {
-        await sftpUploadFolderStream(sessionId, tempDir, targetPath, uploadId, true);
-      } finally {
-        setFolderUpload(null);
-        setActiveFolderUploadId(null);
-      }
+      await sftpUploadFolderStream(sessionId, tempDir, targetPath, uploadId, true);
+      setFolderUpload(null);
+      setActiveFolderUploadId(null);
 
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`打包上传失败：${getErrorMessage(err)}`);
+      const msg = getErrorMessage(err);
+      if (msg === '上传已取消') {
+        setFolderUpload('上传已取消');
+        setTimeout(() => {
+          setFolderUpload(null);
+          setActiveFolderUploadId(null);
+        }, 3000);
+      } else {
+        setFolderUpload(null);
+        setActiveFolderUploadId(null);
+        setError(`打包上传失败：${msg}`);
+      }
     } finally {
       // 3. 清理临时目录
       if (tempDir) {
@@ -627,7 +640,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             </svg>
           )}
           <span className="text-xs text-indigo-300 flex-1">{folderStatus}</span>
-          {!folderStatus.includes('已取消') && (
+          {!folderStatus.includes('已取消') && !folderStatus.includes('暂不可取消') && (
             <button
               type="button"
               onClick={cancelCurrentUpload}
@@ -708,9 +721,24 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             )}
-            <span className={`text-xs ${downloadState.status === 'error' ? 'text-red-300' : 'text-emerald-300'}`}>
+            {downloadState.status === 'cancelled' && (
+              <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
+            <span className={`flex-1 text-xs ${downloadState.status === 'error' ? 'text-red-300' : downloadState.status === 'cancelled' ? 'text-zinc-400' : 'text-emerald-300'}`}>
               {downloadState.statusText}
             </span>
+            {downloadState.status === 'downloading' && (
+              <button
+                type="button"
+                onClick={cancelCurrentDownload}
+                className="rounded-md bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300 hover:bg-red-900/60 hover:text-red-300 transition-colors"
+                title="取消下载"
+              >
+                取消
+              </button>
+            )}
           </div>
           {downloadState.status === 'downloading' && downloadState.total > 0 && (
             <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">

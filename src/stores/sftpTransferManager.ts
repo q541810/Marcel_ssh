@@ -60,6 +60,7 @@ export async function attachTransferListeners() {
       if (uploadId === state.activeUploadId) {
         const current = state.upload;
         if (!current) return;
+        if (current.status !== 'uploading') return;
         state.setUpload({
           status: 'uploading',
           fileName: current.fileName,
@@ -88,6 +89,7 @@ export async function attachTransferListeners() {
       if (uploadId === state.activeUploadId) {
         const current = state.upload;
         if (!current) return;
+        if (current.status !== 'uploading') return;
         state.setUpload({
           status: 'done',
           fileName: current.fileName,
@@ -95,6 +97,7 @@ export async function attachTransferListeners() {
           total: 0,
           statusText: `${current.fileName} 上传完成`,
         });
+        state.setActiveUploadId(null);
         state.clearUploadAfter(3000);
       } else if (uploadId === state.activeFolderUploadId) {
         state.setFolderUpload(null);
@@ -121,6 +124,7 @@ export async function attachTransferListeners() {
       if (downloadId !== state.activeDownloadId) return;
       const current = state.download;
       if (!current) return;
+      if (current.status !== 'downloading') return;
       const pct = total > 0 ? Math.round((written * 100) / total) : 0;
       state.setDownload({
         status: 'downloading',
@@ -140,6 +144,7 @@ export async function attachTransferListeners() {
       if (downloadId !== state.activeDownloadId) return;
       const current = state.download;
       if (!current) return;
+      if (current.status !== 'downloading') return;
       state.setDownload({
         status: 'done',
         fileName: current.fileName,
@@ -147,6 +152,7 @@ export async function attachTransferListeners() {
         total: current.total,
         statusText: `${current.fileName} 下载完成`,
       });
+      state.setActiveDownloadId(null);
       state.clearDownloadAfter(3000);
     },
   );

@@ -32,17 +32,24 @@ pub(crate) fn get_archive_type(filename: &str) -> Option<ArchiveType> {
 /// Build a shell command to extract an archive to a target dir.
 ///
 /// Returns "OK" on success.
-pub(crate) fn build_extract_to_dir_cmd(archive_path: &str, target_dir: &str, kind: ArchiveType) -> String {
+pub(crate) fn build_extract_to_dir_cmd(
+    archive_path: &str,
+    target_dir: &str,
+    kind: ArchiveType,
+) -> String {
     let dir = crate::util::shell_escape(target_dir);
     let arc = crate::util::shell_escape(archive_path);
+    let tmp = "$(mktemp -d /tmp/marcel-extract-XXXXXX)";
     let extract = match kind {
-        ArchiveType::Zip => format!("unzip -o -q {arc} -d {dir}"),
-        ArchiveType::TarGz => format!("tar xzf {arc} -C {dir}"),
-        ArchiveType::TarBz2 => format!("tar xjf {arc} -C {dir}"),
-        ArchiveType::TarXz => format!("tar xJf {arc} -C {dir}"),
-        ArchiveType::Tar => format!("tar xf {arc} -C {dir}"),
+        ArchiveType::Zip => format!("unzip -q {arc} -d \"$tmp\""),
+        ArchiveType::TarGz => format!("tar xzf {arc} -C \"$tmp\""),
+        ArchiveType::TarBz2 => format!("tar xjf {arc} -C \"$tmp\""),
+        ArchiveType::TarXz => format!("tar xJf {arc} -C \"$tmp\""),
+        ArchiveType::Tar => format!("tar xf {arc} -C \"$tmp\""),
     };
-    format!("mkdir -p {dir} && {extract} && echo OK || (exit 1)")
+    format!(
+        "tmp={tmp} && trap 'rm -rf \"$tmp\"' EXIT && {extract} && mkdir -p {dir} && cd \"$tmp\" && conflict_file=\"$tmp/.marcel-conflict\" && find . -mindepth 1 -print | while IFS= read -r p; do rel=${{p#./}}; if [ -e {dir}/\"$rel\" ]; then echo CONFLICT: \"$rel\" > \"$conflict_file\"; break; fi; done && if [ -s \"$conflict_file\" ]; then cat \"$conflict_file\"; exit 1; fi && cp -a \"$tmp\"/. {dir}/ && echo OK"
+    )
 }
 
 pub(crate) fn build_unzip_check_cmd() -> &'static str {
@@ -129,7 +136,9 @@ mod tests {
     #[test]
     fn build_extract_cmd_produces_valid_zip_command() {
         let cmd = build_extract_cmd("/tmp/a.zip", "/home/user");
-        assert!(cmd.contains("unzip -o -q"));
-        assert!(cmd.contains("-d"));
+        assert!(cmd.contains("unzip -q"));
+        assert!(!cmd.contains("unzip -o"));
+        assert!(cmd.contains("CONFLICT"));
+        assert!(cmd.contains("cp -a"));
     }
 }
