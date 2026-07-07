@@ -110,7 +110,10 @@ async fn execute_command<R: Runtime>(
             }
         }
         "connection.info" => {
-            let cid = args.get("connectionId").and_then(|v| v.as_str()).unwrap_or("");
+            let cid = args
+                .get("connectionId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if cid.is_empty() {
                 return Ok(serde_json::Value::Null);
             }
@@ -130,16 +133,20 @@ async fn execute_command<R: Runtime>(
         }
         "connection.list" => {
             let store = state.connection_store.read().await;
-            let list: Vec<_> = store.connections.iter().map(|c| {
-                serde_json::json!({
-                    "id": c.id,
-                    "name": c.name,
-                    "host": c.host,
-                    "port": c.port,
-                    "username": c.username,
-                    "group": c.group,
+            let list: Vec<_> = store
+                .connections
+                .iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "name": c.name,
+                        "host": c.host,
+                        "port": c.port,
+                        "username": c.username,
+                        "group": c.group,
+                    })
                 })
-            }).collect();
+                .collect();
             Ok(serde_json::Value::Array(list))
         }
 
@@ -154,7 +161,10 @@ async fn execute_command<R: Runtime>(
             if sid.is_empty() || command.is_empty() {
                 return Err("sessionId and command required".into());
             }
-            let output = state.ssh_manager.exec_command(sid, command).await
+            let output = state
+                .ssh_manager
+                .exec_command(sid, command)
+                .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::Value::String(output))
         }
@@ -163,20 +173,19 @@ async fn execute_command<R: Runtime>(
         "plugin_fs_read" | "fs.read" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let config_dir = config_dir_for(app);
-            let file_path = resolve_read_path(&config_dir, plugin_id, path)
-                .map_err(|e| e.to_string())?;
-            let content = std::fs::read_to_string(&file_path)
-                .map_err(|e| format!("read failed: {}", e))?;
+            let file_path =
+                resolve_read_path(&config_dir, plugin_id, path).map_err(|e| e.to_string())?;
+            let content =
+                std::fs::read_to_string(&file_path).map_err(|e| format!("read failed: {}", e))?;
             Ok(serde_json::Value::String(content))
         }
         "plugin_fs_write" | "fs.write" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let config_dir = config_dir_for(app);
-            let file_path = resolve_write_path(&config_dir, plugin_id, path)
-                .map_err(|e| e.to_string())?;
-            std::fs::write(&file_path, content)
-                .map_err(|e| format!("write failed: {}", e))?;
+            let file_path =
+                resolve_write_path(&config_dir, plugin_id, path).map_err(|e| e.to_string())?;
+            std::fs::write(&file_path, content).map_err(|e| format!("write failed: {}", e))?;
             Ok(serde_json::Value::Null)
         }
         "plugin_http_request" | "net.request" => {
@@ -191,7 +200,10 @@ async fn execute_command<R: Runtime>(
                         .collect()
                 })
                 .unwrap_or_default();
-            let body = args.get("body").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let body = args
+                .get("body")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             let request = crate::commands::plugin_http::PluginHttpRequest {
                 url: url.to_string(),
@@ -224,7 +236,9 @@ async fn execute_command<R: Runtime>(
 }
 
 fn config_dir_for<R: Runtime>(app: &tauri::AppHandle<R>) -> PathBuf {
-    app.path().app_config_dir().unwrap_or_else(|_| PathBuf::from("."))
+    app.path()
+        .app_config_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn json_ok(data: serde_json::Value) -> Response<std::borrow::Cow<'static, [u8]>> {

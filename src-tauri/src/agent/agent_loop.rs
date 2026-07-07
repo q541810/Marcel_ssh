@@ -1,7 +1,6 @@
 use tauri::AppHandle;
 use tokio::sync::mpsc;
 
-use crate::emit_event;
 use crate::agent::conversation::ConversationDb;
 use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
@@ -10,6 +9,7 @@ use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
+use crate::emit_event;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
@@ -220,12 +220,11 @@ pub(crate) async fn run_agent_loop(
         for tc in tool_calls {
             let tool_ctx = {
                 let settings = state.settings.read().await;
-                let policy = std::sync::Arc::new(
-                    crate::agent::sandbox::SecurityPolicy::from_user_settings(
+                let policy =
+                    std::sync::Arc::new(crate::agent::sandbox::SecurityPolicy::from_user_settings(
                         &settings.custom_protected_paths,
                         settings.command_timeout_secs,
-                    ),
-                );
+                    ));
                 ToolContext::new(ssh.clone(), session_id.clone(), app.clone())
                     .with_policy(policy)
                     .with_tool_call_id(&tc.id)
@@ -243,7 +242,9 @@ pub(crate) async fn run_agent_loop(
                 return;
             }
 
-            let exec = dispatcher.dispatch(&tc, &tool_ctx, &event_name, &messages).await;
+            let exec = dispatcher
+                .dispatch(&tc, &tool_ctx, &event_name, &messages)
+                .await;
 
             if is_task_cancelled(&state, &task_id) {
                 log::info!(

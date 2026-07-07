@@ -12,7 +12,10 @@ use crate::AppState;
 
 /// Async variant: for Tauri commands that are already async. Reads the
 /// registry's in-memory state — never touches disk.
-pub async fn is_plugin_enabled_async<R: Runtime>(app: &tauri::AppHandle<R>, plugin_id: &str) -> bool {
+pub async fn is_plugin_enabled_async<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    plugin_id: &str,
+) -> bool {
     let state = app.state::<AppState>();
     let reg = state.plugin_registry.read().await;
     reg.is_enabled(plugin_id)

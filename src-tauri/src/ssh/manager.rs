@@ -199,12 +199,7 @@ impl SshManager {
         // Connection is still accepted (availability-first, like OpenSSH),
         // but we warn the user so they know TOFU pinning may not persist.
         if let Some(err_msg) = tofu_record_error.lock().await.take() {
-            log::warn!(
-                "主机密钥未持久化 {}: {} — {}",
-                host,
-                port,
-                err_msg
-            );
+            log::warn!("主机密钥未持久化 {}: {} — {}", host, port, err_msg);
             emit_event(
                 &app,
                 "hostKeyWarning",
@@ -295,7 +290,11 @@ impl SshManager {
             .insert(session_id.clone(), connection);
 
         // Notify frontend that the session is ready
-        emit_event(&app, &format!("ssh://status/{}", session_id), SshStatus::Connected);
+        emit_event(
+            &app,
+            &format!("ssh://status/{}", session_id),
+            SshStatus::Connected,
+        );
 
         // Spawn the driver task: owns the channel and the session handle
         let sid = session_id.clone();
@@ -314,16 +313,18 @@ impl SshManager {
             // A reconnect increments the generation, so a stale driver
             // that exits after reconnect will see a mismatch and skip.
             let mut guard = manager_connections.write().await;
-            let dominated = guard
-                .get(&sid)
-                .map_or(true, |c| c.generation == generation);
+            let dominated = guard.get(&sid).map_or(true, |c| c.generation == generation);
             if dominated {
                 guard.remove(&sid);
                 drop(guard);
                 let _ = app_clone.emit(&format!("ssh://status/{}", sid), SshStatus::Disconnected);
                 log::info!("SSH session {} cleaned up", sid);
             } else {
-                log::info!("SSH session {} stale driver exited (gen {} vs current), skipping cleanup", sid, generation);
+                log::info!(
+                    "SSH session {} stale driver exited (gen {} vs current), skipping cleanup",
+                    sid,
+                    generation
+                );
             }
         });
 
@@ -424,10 +425,7 @@ impl SshManager {
             } else {
                 command
             };
-            return Err(AppError::Ssh(format!(
-                "命令在 120 秒后超时: {}",
-                preview
-            )));
+            return Err(AppError::Ssh(format!("命令在 120 秒后超时: {}", preview)));
         }
         Ok(output)
     }

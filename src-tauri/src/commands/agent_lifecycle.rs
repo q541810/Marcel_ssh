@@ -7,17 +7,19 @@ use uuid::Uuid;
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
-use crate::agent::tools::{mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry};
+use crate::agent::tools::{
+    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
+};
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
+use crate::mcp::manager::McpManager;
+use crate::mcp::store::McpServerConfig;
 use crate::plugins::context::{apply_to_string, SessionContext};
 use crate::plugins::manifest::PluginManifest;
 use crate::plugins::registry::PluginRegistry;
 use crate::ssh::connection::SessionInfo;
 use crate::AppState;
-use crate::mcp::manager::McpManager;
-use crate::mcp::store::McpServerConfig;
 
 /// Maximum length (in chars) of a single plugin-contributed system-prompt
 /// section. Sections exceeding this are truncated and a warning is logged.
@@ -35,8 +37,7 @@ async fn build_registry(
 ) -> (Arc<ToolRegistry>, Vec<PluginManifest>) {
     match mode {
         AgentMode::Plan => {
-            let registry =
-                ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
+            let registry = ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
             (Arc::new(registry), Vec::new())
         }
         AgentMode::Agent | AgentMode::Auto => {
@@ -73,7 +74,11 @@ async fn build_registry(
 
 /// Replace all 7 context variables in `s` using the given session info.
 /// Missing session info (None) yields empty-string substitutions.
-fn apply_section_context_variables(s: &str, info: Option<&SessionInfo>, session_id: &str) -> String {
+fn apply_section_context_variables(
+    s: &str,
+    info: Option<&SessionInfo>,
+    session_id: &str,
+) -> String {
     match info {
         Some(i) => apply_to_string(s, &SessionContext::from_session(i, session_id)),
         None => {
@@ -85,7 +90,7 @@ fn apply_section_context_variables(s: &str, info: Option<&SessionInfo>, session_
 
 /// Collect plugin-contributed system-prompt sections from enabled plugins.
 ///
-    /// - **Plan mode**: returns an empty vec (no plugin sections injected).
+/// - **Plan mode**: returns an empty vec (no plugin sections injected).
 /// - **Agent/Auto mode**: for each manifest with a `systemPromptSection`:
 ///   1. Look up the cached section content from the `PluginRegistry`
 ///      (mtime-invalidated, single source of truth). Skip if absent.
@@ -118,7 +123,8 @@ async fn collect_plugin_sections(
             None => continue, // declared but file missing/unreadable — already warned at reload
         };
 
-        let substituted = apply_section_context_variables(&content, session_info.as_ref(), session_id);
+        let substituted =
+            apply_section_context_variables(&content, session_info.as_ref(), session_id);
 
         // Enforce per-section length limit (char count, not bytes).
         let char_count = substituted.chars().count();
@@ -249,12 +255,7 @@ fn spawn_agent_task(
     log::info!("Agent task started: {} ({:?})", task_id_log, mode_log);
 }
 
-fn send_approval(
-    state: &AppState,
-    task_id: &str,
-    operation_id: &str,
-    approved: bool,
-) {
+fn send_approval(state: &AppState, task_id: &str, operation_id: &str, approved: bool) {
     let label = if approved { "approved" } else { "rejected" };
     log::info!("Operation {}: task={}, op={}", label, task_id, operation_id);
     let sender = state
@@ -280,15 +281,18 @@ pub async fn agent_start_task(
 ) -> Result<String, AppError> {
     let task_id = Uuid::new_v4().to_string();
 
-    state.agent_tasks.write().insert(task_id.clone(), AgentTask {
-        id: task_id.clone(),
-        session_id: session_id.clone(),
-        prompt: prompt.clone(),
-        mode: mode.clone(),
-        status: AgentStatus::Planning,
-        has_plan: false,
-        created_at: chrono::Utc::now(),
-    });
+    state.agent_tasks.write().insert(
+        task_id.clone(),
+        AgentTask {
+            id: task_id.clone(),
+            session_id: session_id.clone(),
+            prompt: prompt.clone(),
+            mode: mode.clone(),
+            status: AgentStatus::Planning,
+            has_plan: false,
+            created_at: chrono::Utc::now(),
+        },
+    );
 
     let (llm_config, agent_settings, experimental_settings, enabled_skills, enabled_mcp_servers) = {
         let settings = state.settings.read().await;
@@ -298,8 +302,18 @@ pub async fn agent_start_task(
             settings.llm_config.clone(),
             settings.agent_mode_settings.clone(),
             settings.experimental_settings.clone(),
-            skills.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
-            mcp_store.list().iter().filter(|s| s.enabled).cloned().collect::<Vec<_>>(),
+            skills
+                .list()
+                .iter()
+                .filter(|s| s.enabled)
+                .cloned()
+                .collect::<Vec<_>>(),
+            mcp_store
+                .list()
+                .iter()
+                .filter(|s| s.enabled)
+                .cloned()
+                .collect::<Vec<_>>(),
         )
     };
 
@@ -311,16 +325,47 @@ pub async fn agent_start_task(
     }
     let provider = OpenAiProvider::new(llm_config)?;
 
-let plugin_registry_guard = state.plugin_registry.read().await;
-    let (tool_registry, _manifests) = build_registry(&mode, &enabled_skills, &enabled_mcp_servers, state.mcp_manager.clone(), &experimental_settings, &plugin_registry_guard).await;
+    let plugin_registry_guard = state.plugin_registry.read().await;
+    let (tool_registry, _manifests) = build_registry(
+        &mode,
+        &enabled_skills,
+        &enabled_mcp_servers,
+        state.mcp_manager.clone(),
+        &experimental_settings,
+        &plugin_registry_guard,
+    )
+    .await;
     let tools = build_definitions(&tool_registry, &mode);
-    let plugin_sections = collect_plugin_sections(&plugin_registry_guard, &state.ssh_manager, &session_id, &mode).await;
+    let plugin_sections = collect_plugin_sections(
+        &plugin_registry_guard,
+        &state.ssh_manager,
+        &session_id,
+        &mode,
+    )
+    .await;
     drop(plugin_registry_guard); // release before agent loop runs (no longer needed)
-    let messages = build_agent_messages(&session_id, &tools, &history, &prompt, &agent_settings.system_prompt, &plugin_sections, matches!(mode, AgentMode::Plan));
+    let messages = build_agent_messages(
+        &session_id,
+        &tools,
+        &history,
+        &prompt,
+        &agent_settings.system_prompt,
+        &plugin_sections,
+        matches!(mode, AgentMode::Plan),
+    );
 
     spawn_agent_task(
-        &state, &app, &task_id, &session_id, &conversation_id, &mode,
-        provider, messages, tools, agent_settings, tool_registry,
+        &state,
+        &app,
+        &task_id,
+        &session_id,
+        &conversation_id,
+        &mode,
+        provider,
+        messages,
+        tools,
+        agent_settings,
+        tool_registry,
     );
 
     Ok(task_id)

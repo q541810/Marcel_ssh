@@ -160,7 +160,10 @@ mod tests {
         let s = settings_with(&[], &[("test-plugin", &["fs.read"])]);
         let r = authorize("test-plugin", "fs.write", Some(&m), &s);
         assert!(!r.ok());
-        assert!(r.reason().unwrap().contains("not in authorizedCapabilities"));
+        assert!(r
+            .reason()
+            .unwrap()
+            .contains("not in authorizedCapabilities"));
     }
 
     #[test]

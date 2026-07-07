@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::agent::tools::{LocalHandler, ToolContext, ToolRegistry};
-use crate::plugins::fs::{resolve_read_path, resolve_write_path};
 use crate::error::AppError;
+use crate::plugins::fs::{resolve_read_path, resolve_write_path};
 
 /// Event payload emitted after a plugin-scoped file is modified by a
 /// `kind=local` handler. Plugin WebViews can listen on `plugin-fs-changed`
@@ -139,7 +139,9 @@ impl LocalHandler for FsAppendHandler {
         // exists and its last byte is not a newline (e.g. externally edited),
         // prepend one before appending to avoid gluing two entries together.
         let needs_leading_newline = file_path.exists()
-            && std::fs::metadata(&file_path).map(|m| m.len() > 0).unwrap_or(false)
+            && std::fs::metadata(&file_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
             && match std::fs::File::open(&file_path) {
                 Ok(mut f) => {
                     use std::io::{Read, Seek, SeekFrom};
@@ -351,7 +353,9 @@ mod tests {
 
         // Replicate the handler's leading-newline detection logic.
         let needs_leading_newline = resolved.exists()
-            && std::fs::metadata(&resolved).map(|m| m.len() > 0).unwrap_or(false)
+            && std::fs::metadata(&resolved)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
             && match std::fs::File::open(&resolved) {
                 Ok(mut f) => {
                     use std::io::{Read, Seek, SeekFrom};
@@ -362,10 +366,17 @@ mod tests {
                 }
                 Err(_) => false,
             };
-        assert!(needs_leading_newline, "should detect missing trailing newline");
+        assert!(
+            needs_leading_newline,
+            "should detect missing trailing newline"
+        );
 
         // Append with the leading newline prepended.
-        let mut file = OpenOptions::new().create(true).append(true).open(&resolved).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&resolved)
+            .unwrap();
         if needs_leading_newline {
             file.write_all(b"\n").unwrap();
         }

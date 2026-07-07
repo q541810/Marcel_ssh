@@ -108,7 +108,9 @@ mod tests {
                 capability_for(cap),
                 Some(cap),
                 "capability \"{}\" must self-map (\"{}\", \"{}\")",
-                cap, cap, cap
+                cap,
+                cap,
+                cap
             );
         }
     }

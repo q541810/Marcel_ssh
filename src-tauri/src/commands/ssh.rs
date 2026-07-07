@@ -196,12 +196,7 @@ pub async fn ssh_reconnect(
                 passphrase,
             }
         }
-        other => {
-            return Err(AppError::Config(format!(
-                "不支持的认证方式: {}",
-                other
-            )))
-        }
+        other => return Err(AppError::Config(format!("不支持的认证方式: {}", other))),
     };
 
     let config = ConnectionConfig {

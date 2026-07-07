@@ -228,11 +228,7 @@ impl AgentTool for PluginAgentTool {
         self.risk_level
     }
 
-    async fn execute(
-        &self,
-        params: Value,
-        ctx: &ToolContext,
-    ) -> Result<ToolOutput, AppError> {
+    async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
         // kind=local: dispatch to the registered local handler.
         if self.kind == ToolKind::Local {
             return self.execute_local(params, ctx).await;
@@ -340,14 +336,22 @@ mod tests {
 
     #[test]
     fn render_command_replaces_placeholders() {
-        let tool = PluginAgentTool::new(&make_def("test", "echo {{arg}}", RiskLevel::ReadOnly), "p", &[]);
+        let tool = PluginAgentTool::new(
+            &make_def("test", "echo {{arg}}", RiskLevel::ReadOnly),
+            "p",
+            &[],
+        );
         let cmd = tool.render_command(&serde_json::json!({ "arg": "hello" }), None);
         assert_eq!(cmd, "echo hello");
     }
 
     #[test]
     fn render_command_handles_missing_params() {
-        let tool = PluginAgentTool::new(&make_def("test", "echo {{arg}}", RiskLevel::ReadOnly), "p", &[]);
+        let tool = PluginAgentTool::new(
+            &make_def("test", "echo {{arg}}", RiskLevel::ReadOnly),
+            "p",
+            &[],
+        );
         let cmd = tool.render_command(&serde_json::json!({}), None);
         assert_eq!(cmd, "echo {{arg}}");
     }
@@ -385,7 +389,11 @@ mod tests {
     #[test]
     fn render_command_injects_context_variables() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "echo {{__host__}}:{{__port__}}", RiskLevel::ReadOnly),
+            &make_def(
+                "test",
+                "echo {{__host__}}:{{__port__}}",
+                RiskLevel::ReadOnly,
+            ),
             "p",
             &[],
         );
@@ -416,17 +424,18 @@ mod tests {
             &[],
         );
         let sctx = make_session_ctx();
-        let cmd = tool.render_command(
-            &serde_json::json!({ "__host__": "evil.com" }),
-            Some(&sctx),
-        );
+        let cmd = tool.render_command(&serde_json::json!({ "__host__": "evil.com" }), Some(&sctx));
         assert_eq!(cmd, "echo 1.2.3.4");
     }
 
     #[test]
     fn render_command_no_session_replaces_with_empty() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "echo {{__host__}}:{{__port__}}", RiskLevel::ReadOnly),
+            &make_def(
+                "test",
+                "echo {{__host__}}:{{__port__}}",
+                RiskLevel::ReadOnly,
+            ),
             "p",
             &[],
         );
@@ -457,27 +466,24 @@ mod tests {
         );
         let tool = PluginAgentTool::new(&def, "mem-plugin", &[]);
         assert!(tool.fixed_params.is_object());
-        assert_eq!(tool.fixed_params["path"], "memories/{{__host_port__}}.jsonl");
+        assert_eq!(
+            tool.fixed_params["path"],
+            "memories/{{__host_port__}}.jsonl"
+        );
     }
 
     #[test]
     fn local_tool_invalid_json_command_yields_empty_fixed_params() {
         let def = make_local_def("bad", "fs.read", "not valid json");
         let tool = PluginAgentTool::new(&def, "p", &[]);
-        assert!(tool
-            .fixed_params
-            .as_object()
-            .is_some_and(|o| o.is_empty()));
+        assert!(tool.fixed_params.as_object().is_some_and(|o| o.is_empty()));
     }
 
     #[test]
     fn local_tool_empty_command_yields_empty_fixed_params() {
         let def = make_local_def("empty", "fs.read", "");
         let tool = PluginAgentTool::new(&def, "p", &[]);
-        assert!(tool
-            .fixed_params
-            .as_object()
-            .is_some_and(|o| o.is_empty()));
+        assert!(tool.fixed_params.as_object().is_some_and(|o| o.is_empty()));
     }
 
     #[test]
@@ -486,10 +492,7 @@ mod tests {
         // as command_template verbatim and fixed_params stays empty.
         let def = make_def("ssh_tool", "echo {{arg}}", RiskLevel::ReadOnly);
         let tool = PluginAgentTool::new(&def, "p", &[]);
-        assert!(tool
-            .fixed_params
-            .as_object()
-            .is_some_and(|o| o.is_empty()));
+        assert!(tool.fixed_params.as_object().is_some_and(|o| o.is_empty()));
         assert_eq!(tool.command_template, "echo {{arg}}");
     }
 

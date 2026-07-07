@@ -409,7 +409,11 @@ async fn read_error_body(response: reqwest::Response) -> String {
     match response.text().await {
         Ok(body) => {
             if body.len() > max_bytes {
-                format!("{}...（已截断，原始大小 {} 字节）", &body[..max_bytes], body.len())
+                format!(
+                    "{}...（已截断，原始大小 {} 字节）",
+                    &body[..max_bytes],
+                    body.len()
+                )
             } else {
                 body
             }
@@ -608,9 +612,7 @@ fn process_chunk(
             if let Some(ref text) = delta.content {
                 if !text.is_empty() {
                     accumulated_text.push_str(text);
-                    let _ = event_tx.send(StreamEvent::TextDelta {
-                        text: text.clone(),
-                    });
+                    let _ = event_tx.send(StreamEvent::TextDelta { text: text.clone() });
                 }
             }
             if let Some(ref tcs) = delta.tool_calls {
@@ -639,9 +641,8 @@ fn assemble_final_message(
                 .into_iter()
                 .filter(|tc| !tc.id.is_empty())
                 .map(|tc| {
-                    let arguments = serde_json::from_str(&tc.arguments_buf).unwrap_or_else(|_| {
-                        serde_json::Value::String(tc.arguments_buf.clone())
-                    });
+                    let arguments = serde_json::from_str(&tc.arguments_buf)
+                        .unwrap_or_else(|_| serde_json::Value::String(tc.arguments_buf.clone()));
                     ToolCall {
                         id: tc.id,
                         name: tc.name,
@@ -922,10 +923,7 @@ mod models_tests {
         };
         let json = serde_json::to_value(&info).expect("serialize");
         assert_eq!(json.get("id").and_then(|v| v.as_str()), Some("gpt-4"));
-        assert_eq!(
-            json.get("ownedBy").and_then(|v| v.as_str()),
-            Some("openai")
-        );
+        assert_eq!(json.get("ownedBy").and_then(|v| v.as_str()), Some("openai"));
         assert_eq!(
             json.get("created").and_then(|v| v.as_i64()),
             Some(1687882411)

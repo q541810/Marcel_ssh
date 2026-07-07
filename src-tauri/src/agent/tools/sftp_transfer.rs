@@ -396,7 +396,11 @@ impl Default for UploadFileTool {
     }
 }
 
-fn resolve_upload_remote_path(local_path_buf: &Path, remote_path: &str, params: &serde_json::Value) -> String {
+fn resolve_upload_remote_path(
+    local_path_buf: &Path,
+    remote_path: &str,
+    params: &serde_json::Value,
+) -> String {
     if params
         .get("file_name")
         .and_then(|v| v.as_str())
@@ -412,7 +416,10 @@ fn resolve_upload_remote_path(local_path_buf: &Path, remote_path: &str, params: 
                 remote_path.to_string()
             }
         };
-        let name = params.get("file_name").and_then(|v| v.as_str()).unwrap_or("");
+        let name = params
+            .get("file_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if dir.ends_with('/') {
             format!("{}{}", dir, name)
         } else {
@@ -580,14 +587,16 @@ async fn sftp_read_file(
     session_id: &str,
     remote_path: &str,
 ) -> Result<Vec<u8>, String> {
-    let sftp = ssh.open_sftp(session_id).await.map_err(|e| format!("SFTP unavailable: {}", e))?;
-    sftp.read(remote_path).await.map_err(|e| format!("SFTP read failed: {}", e))
+    let sftp = ssh
+        .open_sftp(session_id)
+        .await
+        .map_err(|e| format!("SFTP unavailable: {}", e))?;
+    sftp.read(remote_path)
+        .await
+        .map_err(|e| format!("SFTP read failed: {}", e))
 }
 
-async fn ensure_parent_in_sandbox(
-    resolved: &Path,
-    policy: &LocalPathPolicy,
-) -> Result<(), String> {
+async fn ensure_parent_in_sandbox(resolved: &Path, policy: &LocalPathPolicy) -> Result<(), String> {
     let Some(parent) = resolved.parent() else {
         return Ok(());
     };
@@ -672,12 +681,7 @@ impl AgentTool for DownloadFileTool {
 
         let bytes = match sftp_read_file(&ctx.ssh, &ctx.session_id, remote_path).await {
             Ok(data) => data,
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("download {}", remote_path),
-                    e,
-                ))
-            }
+            Err(e) => return Ok(ToolOutput::fail(format!("download {}", remote_path), e)),
         };
 
         let size = bytes.len() as u64;

@@ -71,11 +71,7 @@ impl PluginRegistry {
     /// update state based on `AppSettings.disabled_plugins`, refresh section
     /// cache, and return the diff. Emits `plugin-registry-changed` on the
     /// `AppHandle` so the frontend can diff-refresh.
-    pub async fn reload(
-        &mut self,
-        config_dir: &Path,
-        settings: &AppSettings,
-    ) -> ReloadDiff {
+    pub async fn reload(&mut self, config_dir: &Path, settings: &AppSettings) -> ReloadDiff {
         let scanned = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             move || scan_plugins(&config_dir)
@@ -86,8 +82,7 @@ impl PluginRegistry {
         let disabled: std::collections::HashSet<&String> =
             settings.disabled_plugins.iter().collect();
 
-        let new_ids: std::collections::HashSet<&String> =
-            scanned.iter().map(|m| &m.id).collect();
+        let new_ids: std::collections::HashSet<&String> = scanned.iter().map(|m| &m.id).collect();
         let old_ids: std::collections::HashSet<&String> = self.entries.keys().collect();
 
         let mut changed = Vec::new();
@@ -139,9 +134,9 @@ impl PluginRegistry {
                     None
                 } else {
                     let section_path = config_dir.join("plugins").join(id).join(rel);
-                    match std::fs::metadata(&section_path).and_then(|md| {
-                        md.modified().map(|mtime| (section_path.clone(), mtime))
-                    }) {
+                    match std::fs::metadata(&section_path)
+                        .and_then(|md| md.modified().map(|mtime| (section_path.clone(), mtime)))
+                    {
                         Ok((path, mtime)) => {
                             let need_refresh = prev
                                 .and_then(|e| e.section_cache.as_ref())
@@ -285,7 +280,8 @@ mod tests {
         write_plugin(&tmp, "a");
         write_plugin(&tmp, "b");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &settings_with_disabled(&["a"])).await;
+        reg.reload(tmp.path(), &settings_with_disabled(&["a"]))
+            .await;
         assert!(!reg.is_enabled("a"));
         assert!(reg.is_enabled("b"));
         assert_eq!(reg.enabled_manifests().len(), 1);
@@ -311,7 +307,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &settings_with_disabled(&["a"])).await;
+        reg.reload(tmp.path(), &settings_with_disabled(&["a"]))
+            .await;
         // Enable plugin a
         let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
         assert!(diff.changed.contains(&"a".to_string()));

@@ -5,8 +5,8 @@ use russh::{Channel, ChannelMsg};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
-use crate::emit_event;
 use super::client::Client;
+use crate::emit_event;
 
 /// Commands sent to the per-session driver task.
 pub(crate) enum SessionCommand {

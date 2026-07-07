@@ -1,8 +1,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::emit_event;
 use crate::agent::task::{AgentTaskPlan, PlanItem, PlanItemStatus};
+use crate::emit_event;
 use crate::AppState;
 
 /// Events emitted during agent planning and step execution.

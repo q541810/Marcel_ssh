@@ -25,11 +25,7 @@ pub fn scan_plugins_filtered(config_dir: &Path, disabled: &[String]) -> Vec<Plug
         let mut m: PluginManifest = match serde_json::from_str(&content) {
             Ok(m) => m,
             Err(e) => {
-                log::warn!(
-                    "插件 manifest 解析失败 {}: {}",
-                    manifest_path.display(),
-                    e
-                );
+                log::warn!("插件 manifest 解析失败 {}: {}", manifest_path.display(), e);
                 continue;
             }
         };
@@ -199,7 +195,11 @@ mod tests {
 
         let result = scan_plugins(tmp.path());
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].agent_tools.len(), 1, "only the valid ssh tool remains");
+        assert_eq!(
+            result[0].agent_tools.len(),
+            1,
+            "only the valid ssh tool remains"
+        );
         assert_eq!(result[0].agent_tools[0].name, "ok");
     }
 
@@ -219,7 +219,10 @@ mod tests {
         let result = scan_plugins(tmp.path());
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].agent_tools.len(), 1);
-        assert_eq!(result[0].agent_tools[0].handler.as_deref(), Some("fs.append"));
+        assert_eq!(
+            result[0].agent_tools[0].handler.as_deref(),
+            Some("fs.append")
+        );
     }
 
     #[test]

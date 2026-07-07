@@ -43,8 +43,7 @@ pub async fn plugin_webview_create(
     let label_for_loaded = params.label.clone();
     let plugin_id_for_loaded = params.plugin_id.clone();
     let app_for_loaded = app.clone();
-    let on_page_load = move |_webview: tauri::Webview,
-                              payload: tauri::webview::PageLoadPayload| {
+    let on_page_load = move |_webview: tauri::Webview, payload: tauri::webview::PageLoadPayload| {
         use tauri::Emitter;
         let event_name = match payload.event() {
             tauri::webview::PageLoadEvent::Started => "started",
@@ -115,10 +114,7 @@ pub async fn plugin_webview_set_bounds(
 }
 
 #[tauri::command]
-pub async fn plugin_webview_close(
-    app: tauri::AppHandle,
-    label: String,
-) -> Result<(), String> {
+pub async fn plugin_webview_close(app: tauri::AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {
         webview.close().map_err(|e| e.to_string())?;
     }

@@ -2,8 +2,8 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tauri_plugin_notification::NotificationExt;
 
-use crate::emit_event;
 use crate::config::settings::NotificationSettings;
+use crate::emit_event;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum NotificationKind {

@@ -83,7 +83,10 @@ async fn sftp_write(
         .await
         .map_err(|e| format!("SFTP unavailable: {}", e))?;
     let mut file = sftp
-        .open_with_flags(path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .open_with_flags(
+            path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
         .await
         .map_err(|e| format!("open failed: {}", e))?;
     file.write_all(bytes)

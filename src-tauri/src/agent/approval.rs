@@ -5,8 +5,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::oneshot;
 
-use crate::emit_event;
 use crate::agent::sandbox::RiskLevel;
+use crate::emit_event;
 use crate::notification::{send_notification, NotificationKind};
 
 /// Event requesting user approval for a tool call.

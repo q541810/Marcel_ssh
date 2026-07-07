@@ -64,7 +64,10 @@ pub async fn config_save_settings(
         if llm.max_retries > 10 {
             return Err(AppError::Config("最大重试次数须为 0-10 的整数".into()));
         }
-        if !llm.retry_delay_secs.is_finite() || llm.retry_delay_secs < 1.0 || llm.retry_delay_secs > 60.0 {
+        if !llm.retry_delay_secs.is_finite()
+            || llm.retry_delay_secs < 1.0
+            || llm.retry_delay_secs > 60.0
+        {
             return Err(AppError::Config("重试间隔须为 1-60 的有限数字".into()));
         }
     }
