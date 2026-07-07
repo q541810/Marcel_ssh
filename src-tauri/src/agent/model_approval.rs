@@ -51,13 +51,19 @@ pub(crate) trait CommandApprover: Send + Sync {
 pub(crate) struct ModelApprover {
     provider: Arc<OpenAiProvider>,
     custom_prompt: String,
+    plan_mode: bool,
 }
 
 impl ModelApprover {
-    pub(crate) fn new(provider: Arc<OpenAiProvider>, custom_prompt: String) -> Self {
+    pub(crate) fn new(
+        provider: Arc<OpenAiProvider>,
+        custom_prompt: String,
+        plan_mode: bool,
+    ) -> Self {
         Self {
             provider,
             custom_prompt,
+            plan_mode,
         }
     }
 }
@@ -77,6 +83,13 @@ const APPROVAL_SYSTEM_PROMPT: &str = "\
 - route_to_human：需要人工审批，reasons 写明需要人审的原因。
 - block：应当阻止，reasons 写明阻止原因。";
 
+const APPROVAL_PLAN_MODE_HINT: &str = "\
+\n当前 Agent 处于 Plan 模式。在此模式下：
+- Agent 只能使用只读类工具（read_file、list_directory、search_files、system_info、execute_command 等），不可写文件、不可编辑系统。
+- execute_command 仅应用于信息收集和研究，而非实际修改系统。
+- 如果 agent 命令涉及修改系统、删除文件、安装软件等操作。无论用户是否同意，直接拒绝。除非这条命令在 Plan 阶段非常必要。
+- Agent 不知道自己在 Plan 模式，你需要替它把关：该模式下不应执行会改变系统状态的命令。";
+
 #[async_trait]
 impl CommandApprover for ModelApprover {
     async fn evaluate(
@@ -93,13 +106,19 @@ impl CommandApprover for ModelApprover {
         );
 
         let system_prompt = if self.custom_prompt.is_empty() {
-            APPROVAL_SYSTEM_PROMPT
+            if self.plan_mode {
+                format!("{}{}", APPROVAL_SYSTEM_PROMPT, APPROVAL_PLAN_MODE_HINT)
+            } else {
+                APPROVAL_SYSTEM_PROMPT.to_string()
+            }
+        } else if self.plan_mode {
+            format!("{}\n{}", self.custom_prompt, APPROVAL_PLAN_MODE_HINT)
         } else {
-            &self.custom_prompt
+            self.custom_prompt.clone()
         };
 
         let messages = vec![
-            LlmMessage::system(system_prompt.to_string()),
+            LlmMessage::system(system_prompt),
             LlmMessage::user(user_prompt),
         ];
         let tools: Vec<ToolDefinition> = vec![];
@@ -185,9 +204,8 @@ struct ApprovalResponse {
 
 fn parse_decision(content: &str) -> Result<ModelApprovalDecision, AppError> {
     let json_str = extract_json(content);
-    let parsed: ApprovalResponse = serde_json::from_str(&json_str).map_err(|e| {
-        AppError::Llm(format!("模型审批响应解析失败: {} | 原文: {}", e, content))
-    })?;
+    let parsed: ApprovalResponse = serde_json::from_str(&json_str)
+        .map_err(|e| AppError::Llm(format!("模型审批响应解析失败: {} | 原文: {}", e, content)))?;
     match parsed.decision.as_str() {
         "approve" => Ok(ModelApprovalDecision::Approve),
         "route_to_human" => Ok(ModelApprovalDecision::RouteToHuman(parsed.reasons)),
@@ -228,8 +246,8 @@ mod tests {
 
     #[test]
     fn parse_route_to_human_with_reasons() {
-        let d =
-            parse_decision(r#"{"decision":"route_to_human","reasons":["可能删除重要文件"]}"#).unwrap();
+        let d = parse_decision(r#"{"decision":"route_to_human","reasons":["可能删除重要文件"]}"#)
+            .unwrap();
         assert_eq!(
             d,
             ModelApprovalDecision::RouteToHuman(vec!["可能删除重要文件".into()])
@@ -239,7 +257,10 @@ mod tests {
     #[test]
     fn parse_block_with_reasons() {
         let d = parse_decision(r#"{"decision":"block","reasons":["rm -rf / 不可逆"]}"#).unwrap();
-        assert_eq!(d, ModelApprovalDecision::Block(vec!["rm -rf / 不可逆".into()]));
+        assert_eq!(
+            d,
+            ModelApprovalDecision::Block(vec!["rm -rf / 不可逆".into()])
+        );
     }
 
     #[test]
@@ -356,6 +377,9 @@ mod tests {
         let s = "你好世界"; // each char is 3 bytes in UTF-8
         let t = truncate(s, 4); // 4 bytes would split a char
         assert!(t.ends_with("已截断）"));
-        assert!(!t.contains('\u{FFFD}'), "no replacement char from splitting");
+        assert!(
+            !t.contains('\u{FFFD}'),
+            "no replacement char from splitting"
+        );
     }
 }

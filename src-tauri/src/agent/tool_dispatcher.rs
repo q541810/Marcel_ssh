@@ -1,13 +1,13 @@
 use serde::Serialize;
 use tauri::Emitter;
 
-use crate::emit_event;
 use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
 use crate::agent::sandbox::{assess_risk, split_command_chain, RiskLevel};
 use crate::agent::task::AgentMode;
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
+use crate::emit_event;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, ToolCall};
 use crate::AppState;
@@ -131,29 +131,29 @@ impl ToolDispatcher {
     ) -> Self {
         let enable = agent_settings.enable_model_command_approval;
         let approver: Option<std::sync::Arc<dyn CommandApprover>> = if enable {
-            let approval_provider =
-                if !agent_settings.model_approval_model.is_empty() {
-                    let mut cfg = provider.config().clone();
-                    cfg.model = agent_settings.model_approval_model.clone();
-                    match OpenAiProvider::new(cfg) {
-                        Ok(p) => {
-                            log::info!(
-                                "模型审批使用独立模型: {}",
-                                agent_settings.model_approval_model
-                            );
-                            std::sync::Arc::new(p)
-                        }
-                        Err(e) => {
-                            log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
-                            provider.clone()
-                        }
+            let approval_provider = if !agent_settings.model_approval_model.is_empty() {
+                let mut cfg = provider.config().clone();
+                cfg.model = agent_settings.model_approval_model.clone();
+                match OpenAiProvider::new(cfg) {
+                    Ok(p) => {
+                        log::info!(
+                            "模型审批使用独立模型: {}",
+                            agent_settings.model_approval_model
+                        );
+                        std::sync::Arc::new(p)
                     }
-                } else {
-                    provider.clone()
-                };
+                    Err(e) => {
+                        log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
+                        provider.clone()
+                    }
+                }
+            } else {
+                provider.clone()
+            };
             Some(std::sync::Arc::new(ModelApprover::new(
                 approval_provider,
                 agent_settings.model_approval_prompt.clone(),
+                matches!(mode, AgentMode::Plan),
             )))
         } else {
             None
@@ -271,9 +271,7 @@ impl ToolDispatcher {
                     },
                 );
 
-                let eval_result = approver
-                    .evaluate(cmd, recent_messages)
-                    .await;
+                let eval_result = approver.evaluate(cmd, recent_messages).await;
 
                 match eval_result {
                     Ok(ModelApprovalDecision::Block(rs)) => {
@@ -375,11 +373,7 @@ impl ToolDispatcher {
                 } else {
                     tc.name.clone()
                 };
-                return DispatchResult::blocked(
-                    summary,
-                    "用户拒绝",
-                    effective_risk,
-                );
+                return DispatchResult::blocked(summary, "用户拒绝", effective_risk);
             }
         }
 
@@ -543,7 +537,10 @@ mod tests {
         // CRLF variant
         assert!(command_list_requires_confirm("ls\r\nrm -rf /etc", &s));
         // Multiple segments, denylisted cmd is the last one
-        assert!(command_list_requires_confirm("ls\necho hi\nmkfs /dev/sda", &s));
+        assert!(command_list_requires_confirm(
+            "ls\necho hi\nmkfs /dev/sda",
+            &s
+        ));
         // Denylisted cmd after semicolon (already worked, regression test)
         assert!(command_list_requires_confirm("ls; rm -rf /", &s));
     }

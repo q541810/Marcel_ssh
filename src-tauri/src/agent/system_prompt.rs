@@ -70,10 +70,9 @@ pub(crate) fn build_system_prompt(
 
     let plan_section = if plan_mode {
         "\n## Plan 模式\n\n\
-当前处于 Plan 模式，write_file、edit_file 等写入/编辑工具不可用。\n\
-你当前不可以开始干活，不能编辑文件，不能做文件操作。\n\
-如果用户要求你开始干而你处于 Plan 模式，请告知用户切换到 Agent 或 Auto 模式。\n\
-使用 execute_command 工具前必须思考：现在是 Plan 模式，执行这个命令有必要吗？\n"
+当前处于 Plan 模式，write_file 等写入/编辑工具不可用。\n\
+你当前不可以开始干活，不能编辑文件，不能做文件操作（无论用户怎么说）。\n\
+在 Plan 模式下 execute_command 仅应用于信息收集和研究，而非实际修改系统。不能涉及修改系统、删除文件、安装软件等操作。\n"
     } else {
         ""
     };
@@ -155,10 +154,7 @@ mod tests {
 
     #[test]
     fn prompt_appends_multiple_plugin_sections_separated_by_blank_line() {
-        let sections = vec![
-            "插件A 指令".to_string(),
-            "插件B 指令".to_string(),
-        ];
+        let sections = vec!["插件A 指令".to_string(), "插件B 指令".to_string()];
         let prompt = build_system_prompt("session-1", false, false, false, "", &sections, false);
         assert!(prompt.contains("插件A 指令\n\n插件B 指令"));
     }
@@ -166,8 +162,15 @@ mod tests {
     #[test]
     fn prompt_plugin_section_appears_after_user_section() {
         let sections = vec!["PLUGIN_MARKER".to_string()];
-        let prompt =
-            build_system_prompt("session-1", false, false, false, "USER_MARKER", &sections, false);
+        let prompt = build_system_prompt(
+            "session-1",
+            false,
+            false,
+            false,
+            "USER_MARKER",
+            &sections,
+            false,
+        );
         let user_pos = prompt.find("USER_MARKER").unwrap();
         let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
         assert!(
