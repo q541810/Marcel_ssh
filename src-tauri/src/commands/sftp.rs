@@ -280,6 +280,221 @@ pub async fn sftp_extract_archive(
     Ok(())
 }
 
+/// 系统目录黑名单：禁止压缩这些目录，防止意外打包整个系统或敏感数据。
+const SYSTEM_PATH_BLACKLIST: &[&str] = &[
+    "/",
+    "/usr",
+    "/usr/local",
+    "/var",
+    "/var/log",
+    "/var/lib",
+    "/var/lib/docker",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/boot",
+    "/run",
+    "/snap",
+    "/opt",
+];
+
+/// 检查路径是否在系统目录黑名单内（精确匹配或前缀匹配）。
+fn is_system_path(path: &str) -> bool {
+    let normalized = path.trim_end_matches('/');
+    if normalized.is_empty() {
+        return true; // 根目录
+    }
+    SYSTEM_PATH_BLACKLIST
+        .iter()
+        .any(|blocked| *blocked == normalized || normalized.starts_with(&format!("{}/", blocked)))
+}
+
+/// 压缩远程目录为 tar.gz 或 zip 归档。
+///
+/// 安全：
+/// - 源路径和目标路径均经过 `validate_sftp_remote_path` 校验（拒绝 `..`、空字节）
+/// - 源路径经过系统目录黑名单过滤（拒绝 `/`、`/usr`、`/proc` 等）
+/// - 目标路径不能在源目录内（避免递归包含）
+/// - 所有路径用 `shell_escape` 转义，防命令注入
+/// - 执行前检查 `tar` / `zip` 工具是否存在
+///
+/// 进度：通过 `ssh-long-output` 事件实时透传 tar/zip 输出，通过 `task_id` 路由。
+/// 取消：前端调 `ssh_exec_long_cancel(task_id)` 即可取消。
+#[tauri::command]
+pub async fn sftp_compress_archive(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    session_id: String,
+    remote_dir: String,
+    format: String,
+    target_path: String,
+    overwrite: bool,
+    task_id: String,
+) -> Result<(), AppError> {
+    let remote_dir = validate_sftp_remote_path(&remote_dir)?;
+    let target_path = validate_sftp_remote_path(&target_path)?;
+
+    // 系统目录黑名单
+    if is_system_path(&remote_dir) {
+        return Err(AppError::Ssh(format!(
+            "拒绝压缩系统目录「{}」，请选择用户目录下的文件夹",
+            remote_dir
+        )));
+    }
+
+    // 递归包含检测：目标路径不能在源目录内
+    // 例如 source=/home/user/foo, target=/home/user/foo/bar.tar.gz 应拒绝
+    let remote_dir_normalized = remote_dir.trim_end_matches('/');
+    let target_normalized = target_path.trim_end_matches('/');
+    if target_normalized.starts_with(&format!("{}/", remote_dir_normalized)) {
+        return Err(AppError::Ssh(format!(
+            "目标路径「{}」位于源目录「{}」内，会导致递归压缩，请改用其他路径",
+            target_path,
+            remote_dir
+        )));
+    }
+
+    // 格式校验 + 工具检查
+    let kind = match format.as_str() {
+        "tar.gz" => crate::ssh::sftp_extract::ArchiveType::TarGz,
+        "zip" => crate::ssh::sftp_extract::ArchiveType::Zip,
+        other => {
+            return Err(AppError::Ssh(format!(
+                "不支持的压缩格式「{}」，仅支持 tar.gz 和 zip",
+                other
+            )));
+        }
+    };
+
+    let check_cmd = match kind {
+        crate::ssh::sftp_extract::ArchiveType::Zip => {
+            crate::ssh::sftp_extract::build_zip_check_cmd()
+        }
+        _ => crate::ssh::sftp_extract::build_tar_check_cmd(),
+    };
+    let check_output = state
+        .ssh_manager
+        .exec_command(&session_id, check_cmd)
+        .await?;
+    if !crate::ssh::sftp_extract::has_tool(&check_output) {
+        let tool = match kind {
+            crate::ssh::sftp_extract::ArchiveType::Zip => "zip",
+            _ => "tar",
+        };
+        return Err(AppError::Ssh(format!(
+            "远端服务器缺少 {}，无法压缩。请安装后重试。",
+            tool
+        )));
+    }
+
+    // 目标已存在检查（不 overwrite 时拒绝）
+    // 用 shell test 检查，瞬时返回，120s 超时足够
+    if !overwrite {
+        let target_esc = shell_escape(&target_path);
+        let check_cmd = format!("test -e {} && echo EXISTS || echo MISSING", target_esc);
+        let check_output = state
+            .ssh_manager
+            .exec_command(&session_id, &check_cmd)
+            .await?;
+        if check_output.trim().contains("EXISTS") {
+            return Err(AppError::Ssh(format!(
+                "目标文件「{}」已存在。请勾选「覆盖」或修改目标路径",
+                target_path
+            )));
+        }
+    }
+
+    // 构造压缩命令
+    let cmd = crate::ssh::sftp_extract::build_compress_to_archive_cmd(
+        &remote_dir,
+        &target_path,
+        kind,
+    )
+    .map_err(|e| AppError::Ssh(e.to_string()))?;
+
+    // 用 ssh_exec_long 内核执行（30 分钟超时 + 取消 + 流式输出）
+    // 直接调 exec_command_streamed，事件用 task_id 路由
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .long_exec_cancel_senders
+        .write()
+        .insert(task_id.clone(), cancel_tx);
+    let _guard = TransferCancelGuard::new(task_id.clone(), state.long_exec_cancel_senders.clone());
+
+    let timeout = std::time::Duration::from_secs(1800);
+    let event_name = "ssh-long-output";
+
+    let exec_fut = state.ssh_manager.exec_command_streamed(
+        &session_id,
+        &cmd,
+        timeout,
+        &app,
+        event_name,
+        &task_id,
+    );
+
+    let result = tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => {
+            emit_event(
+                &app,
+                "ssh-long-cancelled",
+                &json!({ "taskId": &task_id }),
+            );
+            return Err(AppError::Ssh("压缩已取消".into()));
+        }
+        res = exec_fut => res,
+    };
+
+    match result {
+        Ok((output, was_timeout)) => {
+            if was_timeout {
+                emit_event(
+                    &app,
+                    "ssh-long-error",
+                    &json!({ "taskId": &task_id, "message": "压缩超时（30 分钟）" }),
+                );
+                return Err(AppError::Ssh("压缩超时，文件夹可能过大".into()));
+            }
+            // 检查 OK/FAILED 标记
+            if output.lines().any(|line| line.trim() == "OK") {
+                emit_event(
+                    &app,
+                    "ssh-long-done",
+                    &json!({ "taskId": &task_id }),
+                );
+                Ok(())
+            } else {
+                let trimmed = output.trim();
+                let preview = if trimmed.len() > 500 {
+                    format!("{}...", &trimmed[..500])
+                } else {
+                    trimmed.to_string()
+                };
+                emit_event(
+                    &app,
+                    "ssh-long-error",
+                    &json!({ "taskId": &task_id, "message": preview }),
+                );
+                Err(AppError::Ssh(format!("压缩失败: {}", preview)))
+            }
+        }
+        Err(e) => {
+            emit_event(
+                &app,
+                "ssh-long-error",
+                &json!({ "taskId": &task_id, "message": e.to_string() }),
+            );
+            Err(e)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn sftp_upload_folder(
     state: State<'_, AppState>,
@@ -613,11 +828,25 @@ pub async fn sftp_cancel_download(
 }
 
 /// Drop guard that removes the cancel sender from AppState on drop.
-struct TransferCancelGuard {
+pub(crate) struct TransferCancelGuard {
     transfer_id: String,
     senders: std::sync::Arc<
         parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
     >,
+}
+
+impl TransferCancelGuard {
+    pub(crate) fn new(
+        transfer_id: String,
+        senders: std::sync::Arc<
+            parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
+        >,
+    ) -> Self {
+        Self {
+            transfer_id,
+            senders,
+        }
+    }
 }
 
 impl Drop for TransferCancelGuard {

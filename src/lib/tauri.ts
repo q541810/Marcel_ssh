@@ -451,6 +451,33 @@ export async function sftpExtractArchive(sessionId: string, remotePath: string, 
   return invoke('sftp_extract_archive', { sessionId, remotePath, targetDir });
 }
 
+/**
+ * 压缩远程目录为 tar.gz 或 zip 归档。
+ * 进度通过 `ssh-long-output` 事件实时透传，取消调 `sshExecLongCancel(taskId)`。
+ */
+export async function sftpCompressArchive(
+  sessionId: string,
+  remoteDir: string,
+  format: 'tar.gz' | 'zip',
+  targetPath: string,
+  overwrite: boolean,
+  taskId: string,
+): Promise<void> {
+  return invoke('sftp_compress_archive', {
+    sessionId,
+    remoteDir,
+    format,
+    targetPath,
+    overwrite,
+    taskId,
+  });
+}
+
+/** 取消正在运行的 ssh_exec_long / sftp_compress_archive 任务。 */
+export async function sshExecLongCancel(taskId: string): Promise<void> {
+  return invoke('ssh_exec_long_cancel', { taskId });
+}
+
 // Plugin webview commands
 
 export async function pluginWebviewCreate(

@@ -60,6 +60,59 @@ pub(crate) fn build_tar_check_cmd() -> &'static str {
     "command -v tar >/dev/null 2>&1 && echo OK || echo MISSING_TAR"
 }
 
+pub(crate) fn build_zip_check_cmd() -> &'static str {
+    "command -v zip >/dev/null 2>&1 && echo OK || echo MISSING_ZIP"
+}
+
+/// Build a shell command to compress a directory into an archive.
+///
+/// `source_dir` must be an absolute path. It is split into parent + basename
+/// so that `tar -C <parent> <basename>` / `zip` produces an archive containing
+/// the directory itself (not its contents flattened).
+///
+/// Returns "OK" on success, "FAILED" on non-zero exit. The caller checks for
+/// the "OK" marker to determine success (same convention as extract).
+pub(crate) fn build_compress_to_archive_cmd(
+    source_dir: &str,
+    target_path: &str,
+    kind: ArchiveType,
+) -> Result<String, &'static str> {
+    // Trim trailing '/' so rsplit_once gives the correct basename.
+    // Root "/" is rejected upstream by the system-path blacklist.
+    let trimmed = source_dir.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("源路径无效");
+    }
+    let (parent, dirname) = trimmed
+        .rsplit_once('/')
+        .map(|(p, n)| (p, n))
+        .unwrap_or(("", trimmed));
+    if dirname.is_empty() {
+        return Err("源路径无效");
+    }
+    // parent == "" means source is a top-level dir like /home; tar -C "" fails,
+    // so normalize to "/".
+    let parent = if parent.is_empty() { "/" } else { parent };
+
+    let parent_esc = crate::util::shell_escape(parent);
+    let dirname_esc = crate::util::shell_escape(dirname);
+    let target_esc = crate::util::shell_escape(target_path);
+
+    let compress = match kind {
+        ArchiveType::TarGz => {
+            format!("tar -czf {target_esc} -C {parent_esc} {dirname_esc}")
+        }
+        ArchiveType::Zip => {
+            // zip needs to chdir to parent first; -r recursive, -q quiet (we
+            // still want stderr for errors), -y store symlinks as-is.
+            format!("cd {parent_esc} && zip -rqy {target_esc} {dirname_esc}")
+        }
+        _ => return Err("压缩仅支持 tar.gz 和 zip"),
+    };
+
+    Ok(format!("{compress} && echo OK || echo FAILED"))
+}
+
 pub(crate) fn has_tool(check_output: &str) -> bool {
     check_output.lines().any(|line| line.trim() == "OK")
 }
@@ -134,11 +187,89 @@ mod tests {
     }
 
     #[test]
-    fn build_extract_cmd_produces_valid_zip_command() {
-        let cmd = build_extract_cmd("/tmp/a.zip", "/home/user");
-        assert!(cmd.contains("unzip -q"));
-        assert!(!cmd.contains("unzip -o"));
-        assert!(cmd.contains("CONFLICT"));
-        assert!(cmd.contains("cp -a"));
-    }
+fn build_extract_cmd_produces_valid_zip_command() {
+    let cmd = build_extract_cmd("/tmp/a.zip", "/home/user");
+    assert!(cmd.contains("unzip -q"));
+    assert!(!cmd.contains("unzip -o"));
+    assert!(cmd.contains("CONFLICT"));
+    assert!(cmd.contains("cp -a"));
+}
+
+#[test]
+fn zip_check_command_works() {
+    let cmd = build_zip_check_cmd();
+    assert!(cmd.contains("command -v zip"));
+    assert!(has_tool("OK\n"));
+    assert!(!has_tool("MISSING_ZIP\n"));
+}
+
+#[test]
+fn compress_cmd_tar_gz_splits_parent_and_basename() {
+    let cmd =
+        build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.tar.gz", ArchiveType::TarGz)
+            .unwrap();
+    assert!(cmd.contains("tar -czf"));
+    assert!(cmd.contains("-C '/home/user'"));
+    assert!(cmd.contains("'foo'"));
+    assert!(cmd.contains("'/tmp/foo.tar.gz'"));
+    assert!(cmd.ends_with("&& echo OK || echo FAILED"));
+}
+
+#[test]
+fn compress_cmd_zip_uses_cd_and_zip_rqy() {
+    let cmd =
+        build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.zip", ArchiveType::Zip).unwrap();
+    assert!(cmd.contains("cd '/home/user'"));
+    assert!(cmd.contains("zip -rqy"));
+    assert!(cmd.contains("'/tmp/foo.zip'"));
+    assert!(cmd.contains("'foo'"));
+}
+
+#[test]
+fn compress_cmd_normalizes_root_parent() {
+    // /home (top-level dir) → parent should be "/"
+    let cmd =
+        build_compress_to_archive_cmd("/home", "/tmp/home.tar.gz", ArchiveType::TarGz).unwrap();
+    assert!(cmd.contains("-C '/'"));
+    assert!(cmd.contains("'home'"));
+}
+
+#[test]
+fn compress_cmd_trims_trailing_slash() {
+    let cmd = build_compress_to_archive_cmd(
+        "/home/user/foo/",
+        "/tmp/foo.tar.gz",
+        ArchiveType::TarGz,
+    )
+    .unwrap();
+    // trailing / must not produce empty basename
+    assert!(cmd.contains("'foo'"));
+    assert!(!cmd.contains("''"));
+}
+
+#[test]
+fn compress_cmd_rejects_invalid_paths() {
+    // empty after trim → root "/"
+    assert!(build_compress_to_archive_cmd("/", "/x.tar.gz", ArchiveType::TarGz).is_err());
+    // unsupported format
+    assert!(build_compress_to_archive_cmd(
+        "/home/user/foo",
+        "/tmp/foo.tar",
+        ArchiveType::Tar
+    )
+    .is_err());
+}
+
+#[test]
+fn compress_cmd_escapes_special_chars_in_dirname() {
+    // dirname with space and quote must be shell-escaped
+    let cmd = build_compress_to_archive_cmd(
+        "/home/user/my dir",
+        "/tmp/out.tar.gz",
+        ArchiveType::TarGz,
+    )
+    .unwrap();
+    // 'my dir' is the escaped form of "my dir"
+    assert!(cmd.contains("'my dir'"));
+}
 }

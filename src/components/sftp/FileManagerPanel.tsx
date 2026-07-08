@@ -22,6 +22,7 @@ import { useFileDrop } from '@/hooks/useFileDrop';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
 import FileEditorModal from './FileEditorModal';
 import ImagePreviewModal from './ImagePreviewModal';
+import CompressModal from './CompressModal';
 
 interface FileManagerPanelProps {
   sessionId: string;
@@ -56,6 +57,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
   const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
   const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
+  const [compressEntry, setCompressEntry] = useState<SftpFileEntry | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const loadSeqRef = useRef(0);
@@ -107,6 +109,22 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // 菜单展开后测实际尺寸，超出窗口边界时反向调整
+  useEffect(() => {
+    if (!menuEntry || menuTargets.length === 0) return;
+    const node = menuRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const overflowY = rect.bottom - window.innerHeight;
+    const overflowX = rect.right - window.innerWidth;
+    if (overflowY > 0 || overflowX > 0) {
+      setMenuPos((prev) => ({
+        x: overflowX > 0 ? Math.max(0, prev.x - overflowX) : prev.x,
+        y: overflowY > 0 ? Math.max(0, prev.y - overflowY) : prev.y,
+      }));
+    }
+  }, [menuEntry, menuTargets]);
 
   const filteredEntries = useMemo(() => {
     const result = showHidden ? [...entries] : entries.filter((e) => !e.name.startsWith('.'));
@@ -947,13 +965,25 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           {menuTargets.length === 1 ? (
             <>
               {menuEntry.is_dir && (
-                <button
-                  type="button"
-                  onClick={() => { handleNavigate(menuEntry); setMenuEntry(null); setMenuTargets([]); }}
-                  className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
-                >
-                  打开
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { handleNavigate(menuEntry); setMenuEntry(null); setMenuTargets([]); }}
+                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    打开
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompressEntry(menuEntry);
+                      setMenuEntry(null); setMenuTargets([]);
+                    }}
+                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    压缩为...
+                  </button>
+                </>
               )}
               {!menuEntry.is_dir && (
                 <>
@@ -1170,6 +1200,23 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           fileName={previewFile.name}
           fileSize={previewFile.size}
           onClose={() => setPreviewFile(null)}
+        />
+      )}
+
+      {compressEntry && (
+        <CompressModal
+          open={!!compressEntry}
+          sessionId={sessionId}
+          remoteDir={
+            currentPath === '/'
+              ? `/${compressEntry.name}`
+              : `${currentPath}/${compressEntry.name}`
+          }
+          onClose={() => setCompressEntry(null)}
+          onCompressed={() => {
+            setCompressEntry(null);
+            loadDirectory(currentPath);
+          }}
         />
       )}
 

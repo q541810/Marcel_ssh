@@ -74,6 +74,9 @@ pub struct AppState {
     /// Cancellation signals for SFTP downloads: download_id -> watch sender.
     pub download_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Cancellation signals for long-running SSH commands (compress, etc.): task_id -> watch sender.
+    pub long_exec_cancel_senders:
+        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -322,6 +325,7 @@ impl AppState {
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
         }
@@ -487,6 +491,8 @@ pub fn run() {
             commands::ssh::ssh_resize,
             commands::ssh::ssh_list_sessions,
             commands::ssh::ssh_exec,
+            commands::ssh::ssh_exec_long,
+            commands::ssh::ssh_exec_long_cancel,
             commands::agent_lifecycle::agent_start_task,
             commands::agent_lifecycle::agent_stop_task,
             commands::agent_lifecycle::agent_approve_operation,
@@ -541,6 +547,7 @@ pub fn run() {
             commands::sftp::sftp_remove_via_shell,
             commands::sftp::sftp_rename,
             commands::sftp::sftp_extract_archive,
+            commands::sftp::sftp_compress_archive,
             commands::sftp::sftp_upload_folder,
             commands::sftp::sftp_read_file,
             commands::sftp::sftp_get_mtime,

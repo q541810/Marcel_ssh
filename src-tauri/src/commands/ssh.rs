@@ -1,10 +1,15 @@
 use tauri::{AppHandle, State};
 
+use crate::commands::sftp::TransferCancelGuard;
 use crate::config::keychain;
+use crate::emit_event;
 use crate::error::AppError;
 use crate::ssh::auth::AuthMethod;
 use crate::ssh::connection::ConnectionConfig;
 use crate::AppState;
+use serde_json::json;
+use std::time::Duration;
+use tokio::sync::watch;
 
 /// Establish a new SSH connection. Returns the session ID.
 ///
@@ -74,6 +79,100 @@ pub async fn ssh_exec(
     command: String,
 ) -> Result<String, AppError> {
     state.ssh_manager.exec_command(&session_id, &command).await
+}
+
+/// 执行长时间运行的 SSH 命令，支持取消和流式输出。
+///
+/// 与 `ssh_exec` 的区别：
+/// - 默认 30 分钟超时（`ssh_exec` 是 120 秒）
+/// - 通过 `task_id` 支持取消（前端调 `ssh_exec_long_cancel`）
+/// - 实时 emit `ssh-long-output` 事件（含 chunk）
+/// - 完成/取消/超时分别 emit `ssh-long-done` / `ssh-long-cancelled` / `ssh-long-error`
+///
+/// 安全：与 `ssh_exec` 同级，不走沙箱。调用方（如压缩功能）负责命令构造和路径校验。
+///
+/// 返回值：命令完整输出（合并 stdout+stderr）。命令本身非零退出不算 Err——
+/// 调用方需通过输出内容（如 OK/FAILED 标记）判断业务成功与否。
+#[tauri::command]
+pub async fn ssh_exec_long(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+    task_id: String,
+    timeout_secs: Option<u64>,
+) -> Result<String, AppError> {
+    // 注册取消信号
+    let (cancel_tx, mut cancel_rx) = watch::channel(false);
+    state
+        .long_exec_cancel_senders
+        .write()
+        .insert(task_id.clone(), cancel_tx);
+    let _guard = TransferCancelGuard::new(
+        task_id.clone(),
+        state.long_exec_cancel_senders.clone(),
+    );
+
+    let timeout = Duration::from_secs(timeout_secs.unwrap_or(1800)); // 默认 30 分钟
+    let event_name = "ssh-long-output";
+
+    let exec_fut = state
+        .ssh_manager
+        .exec_command_streamed(&session_id, &command, timeout, &app, event_name, &task_id);
+
+    let result = tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => {
+            // 用户取消
+            emit_event(
+                &app,
+                "ssh-long-cancelled",
+                &json!({ "taskId": &task_id }),
+            );
+            return Err(AppError::Ssh("命令已取消".into()));
+        }
+        res = exec_fut => res,
+    };
+
+    match result {
+        Ok((output, was_timeout)) => {
+            if was_timeout {
+                emit_event(
+                    &app,
+                    "ssh-long-error",
+                    &json!({ "taskId": &task_id, "message": "命令超时" }),
+                );
+                Err(AppError::Ssh("命令在超时后未完成".into()))
+            } else {
+                emit_event(
+                    &app,
+                    "ssh-long-done",
+                    &json!({ "taskId": &task_id }),
+                );
+                Ok(output)
+            }
+        }
+        Err(e) => {
+            emit_event(
+                &app,
+                "ssh-long-error",
+                &json!({ "taskId": &task_id, "message": e.to_string() }),
+            );
+            Err(e)
+        }
+    }
+}
+
+/// 取消正在运行的 `ssh_exec_long` 任务。
+#[tauri::command]
+pub async fn ssh_exec_long_cancel(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<(), AppError> {
+    if let Some(sender) = state.long_exec_cancel_senders.write().remove(&task_id) {
+        let _ = sender.send(true);
+    }
+    Ok(())
 }
 
 /// 使用已保存的密码连接 SSH。密码在 Rust 侧从系统密钥链读取，不经过前端。
