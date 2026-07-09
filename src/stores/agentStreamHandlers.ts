@@ -21,8 +21,6 @@ export interface StreamHandler {
   getMessages(conversationId: string): AgentMessage[];
   clearActiveTaskIf(taskId: string): void;
   setPlan(taskId: string, plan: AgentTaskPlan): void;
-  updatePlanItem(taskId: string, itemId: string, status: string, error?: string): void;
-  getPlan(taskId: string): AgentTaskPlan | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -464,7 +462,9 @@ export function handleDone(
     });
   });
 
-  handler.clearActiveTaskIf(taskId);
+  // 不在此处清空 activeTaskId：保留它让 PlanList 能继续展示已完成的计划。
+  // activeTaskId 会在用户发新消息（agentStartTask 生成新 taskId）或切换会话
+  // （conversationStore.switchConversation → clearActiveTask）时自然更新。
   handler.setPendingApproval(null);
 }
 
@@ -507,7 +507,7 @@ export function handleError(
     ];
   });
 
-  handler.clearActiveTaskIf(taskId);
+  // 不在此处清空 activeTaskId（同 handleDone 的理由）
   handler.setPendingApproval(null);
 }
 

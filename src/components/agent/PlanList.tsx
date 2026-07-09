@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAgentStore } from '@/stores/agentStore';
 import type { PlanItem, PlanItemStatus } from '@/lib/types';
 
@@ -82,14 +82,59 @@ const STATUS_LABEL: Record<PlanItemStatus, { text: string; className: string } |
 // ────────────────────────── PlanList Component ──────────────────────────
 
 export default function PlanList() {
-  // Bug9 fix: subscribe directly to the plan slice instead of calling getActivePlan()
-  // which returns a new object reference on every render and bypasses selector memoization.
-  const plan = useAgentStore((s) =>
-    s.activeTaskId ? (s.plans[s.activeTaskId] ?? null) : null
-  );
+  // PlanList 跟随"当前对话"：展示该对话下最近一个有 plan 的 task 的 plan。
+  // 这样跨轮次任务（第一轮调研、第二轮执行）能保留 plan 展示，新任务调
+  // create_plan 后自然切到新 plan。selector 返回的是 store 里的 plan 对象，
+  // 引用稳定，sort 产生的中间数组不影响 memoization。
+  //
+  // 隐藏条件：task 已完成（终态 status）且 plan 全终态 → 返回 null，UI 消失。
+  // 占位 task（sessionId 为空，重启残留）的 status 已是 'completed'，同样走
+  // 隐藏检查——重启前已全完成的 plan 重启后不应再显示；只有中断（有非终态
+  // item）的 plan 才会因 allTerminal=false 而保留。
+  const plan = useAgentStore((s) => {
+    const convId = s.activeConversationId;
+    if (!convId) return null;
+    const tasksForConv = Object.values(s.tasks)
+      .filter((t) => t.conversationId === convId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    for (const t of tasksForConv) {
+      const p = s.plans[t.id];
+      if (p) {
+        const taskDone =
+          t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled';
+        const allTerminal =
+          p.items.length > 0 &&
+          p.items.every(
+            (item) =>
+              item.status === 'completed' ||
+              item.status === 'failed' ||
+              item.status === 'skipped',
+          );
+        if (taskDone && allTerminal) {
+          return null;
+        }
+        return p;
+      }
+    }
+    return null;
+  });
   // Subscribe to plansDirty to force re-render on plan item updates
   useAgentStore((s) => s.plansDirty);
   const [collapsed, setCollapsed] = useState(false);
+
+  // 检测 plan 全部进入终态时自动折叠（plan-completed 事件触发后 plansDirty
+  // 翻转，useEffect 依赖 plansDirty 重新检测）。用户可手动展开查看。
+  const allTerminal = plan
+    ? plan.items.length > 0 &&
+      plan.items.every((item) =>
+        ['completed', 'failed', 'skipped'].includes(item.status),
+      )
+    : false;
+  useEffect(() => {
+    if (allTerminal) {
+      setCollapsed(true);
+    }
+  }, [allTerminal]);
 
   if (!plan || plan.items.length === 0) return null;
 
@@ -146,8 +191,8 @@ export default function PlanList() {
       {/* Steps list (collapsible) */}
       {!collapsed && (
         <div className="px-2 pb-2 space-y-0.5 max-h-48 overflow-y-auto overflow-x-hidden">
-          {plan.items.map((item, index) => (
-            <StepItem key={item.id} item={item} index={index + 1} />
+          {plan.items.map((item) => (
+            <StepItem key={item.id} item={item} />
           ))}
         </div>
       )}
@@ -157,7 +202,7 @@ export default function PlanList() {
 
 // ────────────────────────── StepItem Component ──────────────────────────
 
-function StepItem({ item, index }: { item: PlanItem; index: number }) {
+function StepItem({ item }: { item: PlanItem }) {
   const label = STATUS_LABEL[item.status];
   const icon = STATUS_ICONS[item.status];
   const colorClass = STATUS_COLORS[item.status];
@@ -180,14 +225,14 @@ function StepItem({ item, index }: { item: PlanItem; index: number }) {
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          {/* Index badge */}
+          {/* Index badge — 用 item.id 作为编号，与 LLM 看到的编号一致 */}
           <span
             className={`
               flex-shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[10px] font-medium
               ${isCompleted ? 'bg-zinc-700 text-zinc-500' : 'bg-zinc-800 text-zinc-400'}
             `}
           >
-            {index}
+            {item.id}
           </span>
 
           {/* Title */}

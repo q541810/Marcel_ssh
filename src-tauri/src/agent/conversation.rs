@@ -96,6 +96,15 @@ impl ConversationDb {
 
             CREATE INDEX IF NOT EXISTS idx_conversations_connection ON conversations(connection_id);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+
+            CREATE TABLE IF NOT EXISTS plans (
+                task_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_plans_conversation ON plans(conversation_id);
             ",
         )
         .map_err(|e| ConversationError::SchemaError { source: e })?;
@@ -261,6 +270,10 @@ impl ConversationDb {
             "DELETE FROM messages WHERE conversation_id = ?1",
             [conversation_id],
         )?;
+        conn.execute(
+            "DELETE FROM plans WHERE conversation_id = ?1",
+            [conversation_id],
+        )?;
         conn.execute("DELETE FROM conversations WHERE id = ?1", [conversation_id])?;
         Ok(())
     }
@@ -319,6 +332,82 @@ impl ConversationDb {
             "UPDATE conversations SET updated_at = ?1 WHERE id = ?2",
             (Utc::now().to_rfc3339(), conversation_id),
         )?;
+        Ok(())
+    }
+
+    /// 保存或更新 plan（按 task_id upsert）。
+    /// plan_json 是 AgentTaskPlan 序列化后的 JSON 字符串。
+    pub fn save_plan(
+        &self,
+        task_id: &str,
+        conversation_id: &str,
+        plan_json: &str,
+    ) -> RusqliteResult<()> {
+        let conn = self.conn.lock().unwrap();
+        // 先清理同 conversation 下旧 task_id 的 stale 行（重启后新 task 恢复了
+        // 旧 plan 并继续更新，旧 task_id 的行不再需要）。
+        conn.execute(
+            "DELETE FROM plans WHERE conversation_id = ?1 AND task_id != ?2",
+            (conversation_id, task_id),
+        )?;
+        conn.execute(
+            "INSERT INTO plans (task_id, conversation_id, plan_json, updated_at) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(task_id) DO UPDATE SET \
+             conversation_id = excluded.conversation_id, \
+             plan_json = excluded.plan_json, \
+             updated_at = excluded.updated_at",
+            (task_id, conversation_id, plan_json, Utc::now().to_rfc3339()),
+        )?;
+        Ok(())
+    }
+
+    /// 加载某对话下所有 plan（按 updated_at 倒序），返回 (task_id, plan_json, updated_at) 列表。
+    pub fn load_plans_by_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Vec<(String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT task_id, plan_json, updated_at FROM plans WHERE conversation_id = ?1 \
+             ORDER BY updated_at DESC",
+        )?;
+        let rows = stmt
+            .query_map([conversation_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// 加载某对话下最近一条 plan（按 updated_at 倒序取第一条），返回 plan_json。
+    /// 用于新 task 启动时恢复旧 plan 到后端内存，避免 LLM 重复 create_plan。
+    pub fn load_latest_plan_by_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT plan_json FROM plans WHERE conversation_id = ?1 \
+             ORDER BY updated_at DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([conversation_id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(plan_json)) => Ok(Some(plan_json)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    /// 删除单个 plan（按 task_id）。
+    pub fn delete_plan(&self, task_id: &str) -> RusqliteResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM plans WHERE task_id = ?1", [task_id])?;
         Ok(())
     }
 

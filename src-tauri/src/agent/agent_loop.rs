@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
 use crate::agent::conversation_persister::ConversationPersister;
-use crate::agent::plan_handler::{build_plan_context, handle_plan_tool_output};
+use crate::agent::plan_handler::{build_plan_context, emit_final_plan_normalized, handle_plan_tool_output};
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
@@ -108,11 +108,17 @@ pub(crate) async fn run_agent_loop(
 
         if is_task_cancelled(&state, &task_id) {
             log::info!("Agent task {} cancelled, stopping loop", task_id);
+            emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
             return;
         }
 
         // 0. Inject plan context before LLM call
+        // 移除上一轮注入的 plan context（以 "当前计划:" 开头的 user message），
+        // 避免多轮累积污染 history、浪费 token。
+        messages.retain(|m| {
+            !(m.role == LlmRole::User && m.content.starts_with("当前计划:"))
+        });
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
             messages.push(LlmMessage::user(plan_context));
         }
@@ -145,6 +151,7 @@ pub(crate) async fn run_agent_loop(
                 // Cancelled during LLM call
                 log::info!("Agent task {} cancelled during LLM call", task_id);
                 let _ = forwarder.await;
+                emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
                 return;
             }
@@ -155,6 +162,7 @@ pub(crate) async fn run_agent_loop(
             Ok(msg) => msg,
             Err(e) => {
                 let err_msg = e.to_string();
+                emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(
                     &app,
                     &event_name,
@@ -192,6 +200,7 @@ pub(crate) async fn run_agent_loop(
                 cleaned_msg.reasoning_content.as_deref(),
             );
             messages.push(cleaned_msg);
+            emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
             {
                 let ns = state.settings.read().await.notification_settings.clone();
@@ -238,11 +247,12 @@ pub(crate) async fn run_agent_loop(
                     "Agent task {} cancelled before tool execution, stopping",
                     task_id
                 );
+                emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
                 return;
             }
 
-            let exec = dispatcher
+            let mut exec = dispatcher
                 .dispatch(&tc, &tool_ctx, &event_name, &messages)
                 .await;
 
@@ -251,8 +261,24 @@ pub(crate) async fn run_agent_loop(
                     "Agent task {} cancelled after tool execution, stopping",
                     task_id
                 );
+                emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
                 return;
+            }
+
+            // Handle plan-related tool outputs (borrows tc fields).
+            // 返回 Option<String>：反思提醒或错误提示文本。若返回 Some，需要覆盖
+            // tool output（丢弃 tool 层返回的误导性文本），让前端 tool 卡片和 LLM
+            // 都只看到实际状态。必须在 emit ToolResultEvent 之前执行，否则前端
+            // tool 卡片会显示被覆盖前的内容。
+            let plan_override = if let Some(meta) = exec.metadata {
+                handle_plan_tool_output(&tc.name, &tc.id, &task_id, &meta, &app, &state).await
+            } else {
+                None
+            };
+            if let Some(override_text) = plan_override {
+                exec.output = override_text;
+                exec.summary = "plan 处理提示".to_string();
             }
 
             // Emit result to frontend (requires owned strings for serialization).
@@ -271,11 +297,6 @@ pub(crate) async fn run_agent_loop(
                     was_timeout: exec.was_timeout,
                 },
             );
-
-            // Handle plan-related tool outputs (borrows tc fields).
-            if let Some(meta) = exec.metadata {
-                handle_plan_tool_output(&tc.name, &tc.id, &task_id, &meta, &app, &state).await;
-            }
 
             // Persist tool result — move remaining tc fields to avoid redundant clones.
             let tool_result_json = serde_json::to_string(&PersistedToolResult {
@@ -309,6 +330,7 @@ pub(crate) async fn run_agent_loop(
 
     // Exceeded max rounds
     let msg = format!("Agent 达到最大执行轮数 ({max_rounds})，已停止");
+    emit_final_plan_normalized(&app, &state, &task_id);
     emit_event(
         &app,
         &event_name,

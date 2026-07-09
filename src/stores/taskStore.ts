@@ -5,7 +5,6 @@ import type {
   AgentMode,
   ApprovalRequestPayload,
   AgentTaskPlan,
-  PlanItem,
   QuestionRequestPayload,
   QuestionAnswer,
 } from '@/lib/types';
@@ -36,8 +35,9 @@ export interface TaskState {
   setPendingQuestion: (question: QuestionRequestPayload | null) => void;
   answerQuestion: (taskId: string, questionId: string, answers: QuestionAnswer[]) => Promise<void>;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
-  updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => void;
   getActivePlan: () => AgentTaskPlan | null;
+  loadPersistedPlans: (conversationId: string, storedPlans: { taskId: string; plan: AgentTaskPlan; updatedAt: string }[]) => void;
+  clearPlansByConversation: (conversationId: string) => void;
 
   clearActiveTask: () => void;
   clearActiveTaskIf: (taskId: string) => void;
@@ -100,6 +100,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const task: AgentTask = {
       id: taskId,
       sessionId,
+      conversationId,
       prompt,
       mode,
       status: 'planning',
@@ -193,24 +194,61 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }));
   },
 
-  updatePlanItem: (taskId: string, itemId: string, status: PlanItem['status'], error?: string) => {
-    set((state) => {
-      const plan = state.plans[taskId];
-      if (!plan) return state;
-      const updatedItems = plan.items.map((item) =>
-        item.id === itemId ? { ...item, status, error: error ?? item.error } : item
-      );
-      return {
-        plans: { ...state.plans, [taskId]: { ...plan, items: updatedItems } },
-        plansDirty: !state.plansDirty,
-      };
-    });
-  },
-
   getActivePlan: () => {
     const activeTaskId = get().activeTaskId;
     if (!activeTaskId) return null;
     return get().plans[activeTaskId] || null;
+  },
+
+  loadPersistedPlans: (conversationId, storedPlans) => {
+    set((state) => {
+      const newPlans = { ...state.plans };
+      const newTasks = { ...state.tasks };
+      // 先清理当前 conversationId 下的旧占位 task 和对应 plan，
+      // 避免切换对话时旧数据累积。真实 task（sessionId 非空）保留。
+      for (const [tid, t] of Object.entries(newTasks)) {
+        if (t.conversationId === conversationId && !t.sessionId) {
+          delete newTasks[tid];
+          delete newPlans[tid];
+        }
+      }
+      for (const sp of storedPlans) {
+        // 原样加载 plan，完全还原重启前状态（包括 in_progress item 的旋转
+        // 图标——这符合事实，task 确实中断在那一步）。
+        newPlans[sp.taskId] = sp.plan;
+        // 为重启前的 task 创建轻量占位条目，使 PlanList selector 能按
+        // conversationId 找到对应 plan。sessionId 用空字符串标记占位 task，
+        // PlanList 据此跳过"task 完成 + plan 全终态 → 隐藏"检查。
+        if (!newTasks[sp.taskId]) {
+          newTasks[sp.taskId] = {
+            id: sp.taskId,
+            sessionId: '',
+            conversationId,
+            prompt: '',
+            mode: 'agent',
+            status: 'completed',
+            createdAt: sp.updatedAt,
+          };
+        }
+      }
+      return { plans: newPlans, tasks: newTasks };
+    });
+  },
+
+  clearPlansByConversation: (conversationId) => {
+    set((state) => {
+      const newPlans = { ...state.plans };
+      const newTasks = { ...state.tasks };
+      let changed = false;
+      for (const [tid, t] of Object.entries(newTasks)) {
+        if (t.conversationId === conversationId) {
+          delete newTasks[tid];
+          delete newPlans[tid];
+          changed = true;
+        }
+      }
+      return changed ? { plans: newPlans, tasks: newTasks } : state;
+    });
   },
 
   clearActiveTask: () => {

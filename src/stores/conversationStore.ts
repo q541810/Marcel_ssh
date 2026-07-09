@@ -78,22 +78,30 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   switchConversation: async (conversationId: string) => {
-    const stored = await tauri.agentLoadConversation(conversationId);
+    const [stored, storedPlans] = await Promise.all([
+      tauri.agentLoadConversation(conversationId),
+      tauri.agentLoadPlansByConversation(conversationId),
+    ]);
     const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
     }));
+    useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans);
     useTaskStore.getState().clearActiveTask();
   },
 
   loadConversation: async (conversationId: string) => {
-    const stored = await tauri.agentLoadConversation(conversationId);
+    const [stored, storedPlans] = await Promise.all([
+      tauri.agentLoadConversation(conversationId),
+      tauri.agentLoadPlansByConversation(conversationId),
+    ]);
     const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
     set((state) => ({
       messages: { ...state.messages, [conversationId]: msgs },
       activeConversationId: conversationId,
     }));
+    useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans);
     useTaskStore.getState().clearActiveTask();
   },
 
@@ -111,6 +119,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             : state.activeConversationId,
       };
     });
+    // 级联清理 taskStore 中该 conversation 的 plans 和 tasks
+    useTaskStore.getState().clearPlansByConversation(conversationId);
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {

@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AgentConversation,
   StoredMessage,
+  AgentTaskPlan,
   Skill,
   QuickCommand,
   QuickCommandInput,
@@ -118,6 +119,15 @@ export async function agentListConversationsByConnection(connectionId: string): 
 
 export async function agentLoadConversation(conversationId: string): Promise<StoredMessage[]> {
   return invoke<StoredMessage[]>('agent_load_conversation', { conversationId });
+}
+
+export async function agentLoadPlansByConversation(
+  conversationId: string,
+): Promise<{ taskId: string; plan: AgentTaskPlan; updatedAt: string }[]> {
+  return invoke<{ taskId: string; plan: AgentTaskPlan; updatedAt: string }[]>(
+    'agent_load_plans_by_conversation',
+    { conversationId },
+  );
 }
 
 export async function agentDeleteConversation(conversationId: string): Promise<void> {

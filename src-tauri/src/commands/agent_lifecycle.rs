@@ -286,6 +286,7 @@ pub async fn agent_start_task(
         AgentTask {
             id: task_id.clone(),
             session_id: session_id.clone(),
+            conversation_id: conversation_id.clone(),
             prompt: prompt.clone(),
             mode: mode.clone(),
             status: AgentStatus::Planning,
@@ -293,6 +294,49 @@ pub async fn agent_start_task(
             created_at: chrono::Utc::now(),
         },
     );
+
+    // 恢复旧 plan 到新 task_id：重启后 state.plans 为空，若不恢复，LLM 看不到
+    // 旧 plan context 会重复 create_plan。从 SQLite 加载该 conversation 最近一条
+    // plan，更新 task_id 字段挂到新 task 下。reflection_reminded 保留原值，
+    // 避免对已反思过的 plan 重复触发反思。
+    if state.plans.read().get(&task_id).is_none() {
+        match state
+            .conversation_db
+            .load_latest_plan_by_conversation(&conversation_id)
+        {
+            Ok(Some(plan_json)) => {
+                match serde_json::from_str::<crate::agent::task::AgentTaskPlan>(&plan_json) {
+                    Ok(mut plan) => {
+                        plan.task_id = task_id.clone();
+                        state.plans.write().insert(task_id.clone(), plan);
+                        if let Some(task) = state.agent_tasks.write().get_mut(&task_id) {
+                            task.has_plan = true;
+                        }
+                        log::info!(
+                            "Restored plan for new task {} from conversation {}",
+                            task_id,
+                            conversation_id
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to deserialize plan for conversation {}: {}",
+                            conversation_id,
+                            e
+                        );
+                    }
+                }
+            }
+            Ok(None) => {} // 该 conversation 没有 plan，正常流程
+            Err(e) => {
+                log::warn!(
+                    "Failed to load latest plan for conversation {}: {}",
+                    conversation_id,
+                    e
+                );
+            }
+        }
+    }
 
     let (llm_config, agent_settings, experimental_settings, enabled_skills, enabled_mcp_servers) = {
         let settings = state.settings.read().await;

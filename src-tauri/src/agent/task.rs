@@ -32,7 +32,7 @@ pub enum AgentStatus {
 
 /// Status of an individual item in the agent task plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum PlanItemStatus {
     Pending,
     InProgress,
@@ -42,7 +42,8 @@ pub enum PlanItemStatus {
 }
 
 /// A single step in the agent task plan.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct PlanItem {
     pub id: String,
     pub title: String,
@@ -52,10 +53,18 @@ pub struct PlanItem {
 
 /// The agent task plan — a sequence of steps to fulfill a user request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentTaskPlan {
     pub task_id: String,
     pub items: Vec<PlanItem>,
     pub current_index: usize,
+    /// 下一个新增 item 的序号，用于生成 `item-{seq}` id。
+    /// 删除 item 时不复用旧 id，避免 id 漂移导致 LLM 混淆。
+    pub next_item_seq: usize,
+    /// 反思提醒是否已触发过一次。
+    /// 第一次把所有 item 标记为终态时，会回滚状态并提醒 LLM 反思。
+    /// LLM 再次调用 update_plan_item 把最后一个 item 标记为终态时，不再拦截。
+    pub reflection_reminded: bool,
 }
 
 /// Represents a single agent task — one user intent being fulfilled.
@@ -63,9 +72,10 @@ pub struct AgentTaskPlan {
 pub struct AgentTask {
     pub id: String,
     pub session_id: String,
+    pub conversation_id: String,
     pub prompt: String,
     pub mode: AgentMode,
     pub status: AgentStatus,
     pub has_plan: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }

@@ -58,6 +58,7 @@ describe('taskStore', () => {
         'task-1': {
           id: 'task-1',
           sessionId: 's1',
+          conversationId: 'conv-1',
           prompt: 'test',
           mode: 'agent',
           status: 'planning',
@@ -103,37 +104,6 @@ describe('taskStore', () => {
     expect(stored.items[0].status).toBe('pending');
   });
 
-  it('updatePlanItem updates item status', () => {
-    const plan: AgentTaskPlan = {
-      taskId: 'task-1',
-      currentIndex: 0,
-      items: [
-        { id: 'item-1', title: 'Step 1', status: 'pending' },
-        { id: 'item-2', title: 'Step 2', status: 'pending' },
-      ],
-    };
-    useTaskStore.getState().setPlan('task-1', plan);
-
-    useTaskStore.getState().updatePlanItem('task-1', 'item-1', 'completed');
-    const items = useTaskStore.getState().plans['task-1'].items;
-    expect(items[0].status).toBe('completed');
-    expect(items[1].status).toBe('pending');
-  });
-
-  it('updatePlanItem sets error', () => {
-    const plan: AgentTaskPlan = {
-      taskId: 'task-1',
-      currentIndex: 0,
-      items: [{ id: 'item-1', title: 'Step', status: 'pending' }],
-    };
-    useTaskStore.getState().setPlan('task-1', plan);
-
-    useTaskStore.getState().updatePlanItem('task-1', 'item-1', 'failed', 'oops');
-    const item = useTaskStore.getState().plans['task-1'].items[0];
-    expect(item.status).toBe('failed');
-    expect(item.error).toBe('oops');
-  });
-
   it('getActivePlan returns plan for active task', () => {
     const plan: AgentTaskPlan = {
       taskId: 'task-1',
@@ -169,6 +139,7 @@ describe('taskStore', () => {
           'task-1': {
             id: 'task-1',
             sessionId: 's1',
+            conversationId: 'conv-1',
             prompt: 'p',
             mode: 'agent',
             status: 'executing',
@@ -208,6 +179,7 @@ describe('taskStore', () => {
           'task-1': {
             id: 'task-1',
             sessionId: 's1',
+            conversationId: 'conv-1',
             prompt: 'p',
             mode: 'agent',
             status: 'executing',
@@ -245,6 +217,7 @@ describe('taskStore', () => {
           'task-1': {
             id: 'task-1',
             sessionId: 's1',
+            conversationId: 'conv-1',
             prompt: 'p',
             mode: 'agent',
             status: 'executing',

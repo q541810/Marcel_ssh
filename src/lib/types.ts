@@ -273,6 +273,7 @@ export type AgentStatus =
 export interface AgentTask {
   id: string;
   sessionId: string;
+  conversationId: string;
   prompt: string;
   mode: AgentMode;
   status: AgentStatus;
@@ -588,15 +589,20 @@ export interface AgentTaskPlan {
   taskId: string;
   items: PlanItem[];
   currentIndex: number;
+  /** 下一个新增 item 的序号（后端持久化字段，前端可选） */
+  nextItemSeq?: number;
+  /** 反思提醒是否已触发（后端持久化字段，前端可选） */
+  reflectionReminded?: boolean;
 }
 
 export type PlanStreamEvent =
   | { type: 'plan-created'; items: PlanItem[] }
-  | { type: 'plan-item-started'; itemId: string; title: string; index: number; total: number }
-  | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number }
-  | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number }
-  | { type: 'plan-item-skipped'; itemId: string; title: string; index: number; total: number }
-  | { type: 'plan-completed'; completed: number; total: number; failed: number };
+  | { type: 'plan-item-started'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
+  | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
+  | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
+  | { type: 'plan-item-skipped'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
+  | { type: 'plan-completed'; completed: number; total: number; failed: number; items: PlanItem[]; currentIndex: number }
+  | { type: 'plan-edited'; ops: unknown[]; items: PlanItem[]; currentIndex: number };
 
 // File manager types
 

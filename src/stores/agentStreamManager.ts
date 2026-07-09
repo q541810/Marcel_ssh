@@ -175,32 +175,19 @@ export async function attachPlanListener(taskId: string) {
           });
           break;
         }
-        case 'plan-item-started': {
-          handler.updatePlanItem(taskId, ev.itemId, 'in_progress');
-          break;
-        }
-        case 'plan-item-completed': {
-          handler.updatePlanItem(taskId, ev.itemId, 'completed');
-          const latestPlan = handler.getPlan(taskId);
-          if (latestPlan) {
-            const nextIndex = latestPlan.items.findIndex(
-              (item, index) => index > latestPlan.currentIndex && item.status === 'pending'
-            );
-            const newCurrentIndex = nextIndex !== -1 ? nextIndex : latestPlan.currentIndex;
-            handler.setPlan(taskId, { ...latestPlan, currentIndex: newCurrentIndex });
-          }
-          break;
-        }
-        case 'plan-item-failed': {
-          handler.updatePlanItem(taskId, ev.itemId, 'failed', ev.error);
-          break;
-        }
-        case 'plan-item-skipped': {
-          handler.updatePlanItem(taskId, ev.itemId, 'skipped');
-          break;
-        }
-        case 'plan-completed': {
-          console.log(`[agent] Plan completed for task ${taskId}: ${ev.completed}/${ev.total}`);
+        case 'plan-item-started':
+        case 'plan-item-completed':
+        case 'plan-item-failed':
+        case 'plan-item-skipped':
+        case 'plan-completed':
+        case 'plan-edited': {
+          // 全量推送：后端在每个 plan-* 事件里都带完整 items 和 currentIndex，
+          // 前端直接 setPlan 覆盖，无需增量合并，避免状态不一致。
+          handler.setPlan(taskId, {
+            taskId,
+            items: ev.items,
+            currentIndex: ev.currentIndex,
+          });
           break;
         }
       }

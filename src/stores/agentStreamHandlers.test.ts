@@ -54,10 +54,6 @@ function mockHandler(messages: Record<string, AgentMessage[]> = {}): StreamHandl
     setPlan(taskId: string, plan: AgentTaskPlan) {
       plans[taskId] = plan;
     },
-    updatePlanItem(_taskId: string, _itemId: string, _status: string, _error?: string) {},
-    getPlan(taskId: string) {
-      return plans[taskId];
-    },
   };
 }
 

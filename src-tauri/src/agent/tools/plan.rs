@@ -19,6 +19,9 @@ pub const PLAN_CREATED_KEY: &str = "plan_created";
 /// Key in tool output metadata that signals a plan item was updated.
 pub const PLAN_ITEM_UPDATED_KEY: &str = "plan_item_updated";
 
+/// Key in tool output metadata that signals a plan was edited (structure change).
+pub const PLAN_EDITED_KEY: &str = "plan_edited";
+
 // ───────────────────── create_plan ─────────────────────
 
 pub struct CreatePlanTool;
@@ -99,7 +102,9 @@ impl AgentTool for CreatePlanTool {
             ));
         }
 
-        // Build plan items array for metadata
+        // Build plan items array for metadata.
+        // id 用 1-based 数字字符串（"1", "2", ...），与用户在 PlanList UI 看到的
+        // 编号一致，避免 LLM 看到 "item-0" 而用户看到 "1" 的歧义。
         let mut plan_items = Vec::with_capacity(items_array.len());
         for (i, item_val) in items_array.iter().enumerate() {
             let title = item_val
@@ -107,7 +112,7 @@ impl AgentTool for CreatePlanTool {
                 .and_then(|v| v.as_str())
                 .unwrap_or("未命名步骤");
             plan_items.push(json!({
-                "id": format!("item-{}", i),
+                "id": format!("{}", i + 1),
                 "title": title,
                 "status": "pending",
                 "error": null
@@ -169,7 +174,7 @@ impl AgentTool for UpdatePlanItemTool {
             "properties": {
                 "item_id": {
                     "type": "string",
-                    "description": "The ID of the step to update (e.g. 'item-0', 'item-1')"
+                    "description": "The ID of the step to update (e.g. '1', '2', '3'). IDs are 1-based numbers matching the step number shown to the user."
                 },
                 "status": {
                     "type": "string",
@@ -234,5 +239,156 @@ impl AgentTool for UpdatePlanItemTool {
                 "error": error
             })),
         )
+    }
+}
+
+// ───────────────────── edit_plan ─────────────────────
+
+pub struct EditPlanTool;
+impl EditPlanTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+impl Default for EditPlanTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl AgentTool for EditPlanTool {
+    fn name(&self) -> &str {
+        "edit_plan"
+    }
+
+    fn description(&self) -> &str {
+        "Adjust the structure of the current plan (add / remove / rename items) \
+         when the initial plan is found to be wrong after investigation. This is \
+         a low-frequency fallback tool — for routine status updates, use \
+         update_plan_item instead. Ops are applied in order; invalid ops are \
+         skipped without aborting the batch."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "ops": {
+                    "type": "array",
+                    "description": "Batch of structural edits to apply in order",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["add", "remove", "rename"],
+                                "description": "Operation type"
+                            },
+                            "after_item_id": {
+                                "type": "string",
+                                "description": "Required for 'add': insert the new item immediately after this item id"
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Required for 'add' and 'rename': new item title / new title"
+                            },
+                            "item_id": {
+                                "type": "string",
+                                "description": "Required for 'remove' and 'rename': target item id"
+                            }
+                        },
+                        "required": ["action"]
+                    }
+                }
+            },
+            "required": ["ops"]
+        })
+    }
+
+    fn risk_level(&self) -> RiskLevel {
+        RiskLevel::ReadOnly
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Result<ToolOutput, AppError> {
+        let ops = params
+            .get("ops")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| AppError::Agent("edit_plan: missing or invalid 'ops' parameter".into()))?;
+
+        if ops.is_empty() {
+            return Ok(ToolOutput::fail(
+                "edit_plan",
+                "ops 不能为空，请至少提供一个操作",
+            ));
+        }
+
+        if ops.len() > 20 {
+            return Ok(ToolOutput::fail(
+                "edit_plan",
+                "ops 过多（最多 20 个），请拆分调用",
+            ));
+        }
+
+        // 参数校验：每个 op 的必填字段是否齐全
+        for (i, op) in ops.iter().enumerate() {
+            let action = op.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            match action {
+                "add" => {
+                    if op.get("after_item_id").and_then(|v| v.as_str()).is_none() {
+                        return Ok(ToolOutput::fail(
+                            "edit_plan",
+                            format!("ops[{}]: 'add' 操作缺少必填字段 'after_item_id'", i),
+                        ));
+                    }
+                    if op.get("title").and_then(|v| v.as_str()).is_none() {
+                        return Ok(ToolOutput::fail(
+                            "edit_plan",
+                            format!("ops[{}]: 'add' 操作缺少必填字段 'title'", i),
+                        ));
+                    }
+                }
+                "remove" => {
+                    if op.get("item_id").and_then(|v| v.as_str()).is_none() {
+                        return Ok(ToolOutput::fail(
+                            "edit_plan",
+                            format!("ops[{}]: 'remove' 操作缺少必填字段 'item_id'", i),
+                        ));
+                    }
+                }
+                "rename" => {
+                    if op.get("item_id").and_then(|v| v.as_str()).is_none() {
+                        return Ok(ToolOutput::fail(
+                            "edit_plan",
+                            format!("ops[{}]: 'rename' 操作缺少必填字段 'item_id'", i),
+                        ));
+                    }
+                    if op.get("title").and_then(|v| v.as_str()).is_none() {
+                        return Ok(ToolOutput::fail(
+                            "edit_plan",
+                            format!("ops[{}]: 'rename' 操作缺少必填字段 'title'", i),
+                        ));
+                    }
+                }
+                other => {
+                    return Ok(ToolOutput::fail(
+                        "edit_plan",
+                        format!("ops[{}]: 未知 action '{}'", i, other),
+                    ));
+                }
+            }
+        }
+
+        let summary = format!("编辑计划 ({} 个操作)", ops.len());
+        let output = format!("已应用 {} 个计划编辑操作", ops.len());
+
+        Ok(ToolOutput::ok(summary, output).with_metadata(json!({
+            PLAN_EDITED_KEY: true,
+            "ops": ops
+        })))
     }
 }
