@@ -36,7 +36,6 @@ pub mod mcp;
 pub mod open_cloud_page;
 pub mod plan;
 pub mod plugin_tool;
-pub mod process;
 pub mod question;
 pub mod search;
 pub mod sftp_transfer;
@@ -387,12 +386,12 @@ impl ToolRegistry {
     //           confirmation.
     //
     // When adding or removing a built-in tool, consider whether it should
-    // be available in Plan mode.  Destructive tools (write_file, edit_file,
-    // process_management) and offline-unavailable tools (open_cloud_page)
-    // should stay out of Plan mode.
+    // be available in Plan mode.  Destructive tools (write_file, edit_file)
+    // and offline-unavailable tools (open_cloud_page) should stay out of
+    // Plan mode.
 
     /// Build a Plan-mode registry containing only read-oriented + research
-    /// tools.  Excludes write/edit/process tools, plugin tools, and MCP tools.
+    /// tools.  Excludes write/edit tools, plugin tools, and MCP tools.
     pub fn build_for_plan_mode(
         enabled_skills: &[crate::skills::store::Skill],
         experimental_settings: &crate::config::settings::ExperimentalSettings,
@@ -473,10 +472,10 @@ impl ToolRegistry {
     /// - `read_file`, `write_file`,
     ///   `edit_file`, `list_directory` (file_ops)
     /// - `search_files`               (search)
-    /// - `process_management`         (process)
     /// - `system_info`                (system)
     /// - `create_plan`                (plan)
     /// - `update_plan_item`           (plan)
+    /// - `edit_plan`                  (plan)
     ///
     /// Skills are NOT registered here — register them separately via
     /// [`register_skills`] for progressive disclosure.
@@ -489,10 +488,10 @@ impl ToolRegistry {
         r.register(Arc::new(file_ops::EditFileTool::new()));
         r.register(Arc::new(file_ops::ListDirectoryTool::new()));
         r.register(Arc::new(search::SearchFilesTool::new()));
-        r.register(Arc::new(process::ProcessManagementTool::new()));
         r.register(Arc::new(system::SystemInfoTool::new()));
         r.register(Arc::new(plan::CreatePlanTool::new()));
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
+        r.register(Arc::new(plan::EditPlanTool::new()));
         r.register(Arc::new(question::QuestionTool));
         r
     }
@@ -540,12 +539,12 @@ mod tests {
             "edit_file",
             "list_directory",
             "search_files",
-            "process_management",
             "system_info",
             "web_search",
             "http_get",
             "create_plan",
             "update_plan_item",
+            "edit_plan",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
