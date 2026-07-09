@@ -45,7 +45,17 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
       }}
       title="点击编辑路径"
     >
-      <span className="text-zinc-400">/</span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onNavigate('/');
+        }}
+        className="text-zinc-400 hover:text-indigo-400 transition-colors px-0.5"
+        title="根目录"
+      >
+        /
+      </button>
       {pathParts.map((part, i) => (
         <span key={i} className="flex items-center">
           <span className="text-zinc-600">&gt;</span>
