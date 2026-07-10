@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::llm::provider::TokenUsage;
 
 /// Events emitted while streaming an LLM response. Tagged so the frontend
 /// can use a discriminated union for type-safe handling.
@@ -17,6 +18,8 @@ pub enum StreamEvent {
     ToolCallStart { id: String, name: String },
     /// Incremental arguments fragment for an in-flight tool call.
     ToolCallDelta { id: String, arguments_delta: String },
+    /// Token usage info from the LLM provider's API response.
+    Usage { usage: TokenUsage },
     /// Stream finished cleanly.
     Done,
     /// Stream terminated with an error.

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
-use crate::llm::provider::{LlmConfig, LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition};
+use crate::llm::provider::{LlmConfig, LlmMessage, LlmProvider, LlmRole, TokenUsage, ToolCall, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
 
 /// OpenAI / OpenAI-compatible LLM provider with streaming support.
@@ -144,6 +144,11 @@ impl OpenAiProvider {
                             &mut tool_calls,
                             event_tx,
                         );
+                        if let Some(usage) = chunk.usage {
+                            let _ = event_tx.send(StreamEvent::Usage {
+                                usage: TokenUsage::from(usage),
+                            });
+                        }
                     }
                     Err(e) => {
                         consecutive_parse_errors += 1;
@@ -722,6 +727,13 @@ struct ChatCompletionRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<RequestTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Serialize)]
@@ -821,12 +833,58 @@ fn build_request_body(
         temperature: config.temperature,
         stream,
         tools,
+        stream_options: if stream {
+            Some(StreamOptions { include_usage: true })
+        } else {
+            None
+        },
     }
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatChunk {
     choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<ApiUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+    #[serde(default)]
+    completion_tokens_details: Option<CompletionTokensDetails>,
+    #[serde(default)]
+    prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
+}
+
+impl From<ApiUsage> for TokenUsage {
+    fn from(u: ApiUsage) -> Self {
+        TokenUsage {
+            prompt_tokens: u.prompt_tokens,
+            completion_tokens: u.completion_tokens,
+            total_tokens: u.total_tokens,
+            reasoning_tokens: u
+                .completion_tokens_details
+                .and_then(|d| d.reasoning_tokens),
+            cached_read_tokens: u
+                .prompt_tokens_details
+                .and_then(|d| d.cached_tokens),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

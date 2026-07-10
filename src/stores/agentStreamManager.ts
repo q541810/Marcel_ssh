@@ -7,6 +7,7 @@ import type {
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
   QuestionRequestPayload,
+  TokenUsage,
 } from '@/lib/types';
 import {
   handleToolResult,
@@ -25,6 +26,7 @@ import {
   cleanupStreamState,
 } from './agentStreamHandlers';
 import { createDefaultStreamHandler } from './storeStreamAdapter';
+import { useTaskStore } from './taskStore';
 
 // ---------------------------------------------------------------------------
 // Listener maps
@@ -143,6 +145,12 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'retrying')) {
         handleRetrying(handler, taskId, conversationId, ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'usage')) {
+        const usageEv = ev as unknown as { type: 'usage'; usage: TokenUsage };
+        useTaskStore.getState().accumulateTokenUsage(usageEv.usage);
         return;
       }
 

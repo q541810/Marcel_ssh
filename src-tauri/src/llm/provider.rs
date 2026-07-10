@@ -167,6 +167,35 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value,
 }
 
+/// Token usage statistics returned by the LLM provider in its API response.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    /// Reasoning/thinking tokens (e.g. DeepSeek R1, OpenAI o-series)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_tokens: Option<u32>,
+    /// Cache read tokens
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cached_read_tokens: Option<u32>,
+}
+
+impl TokenUsage {
+    pub fn accumulate(&mut self, other: &TokenUsage) {
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.total_tokens += other.total_tokens;
+        if let Some(v) = other.reasoning_tokens {
+            *self.reasoning_tokens.get_or_insert(0) += v;
+        }
+        if let Some(v) = other.cached_read_tokens {
+            *self.cached_read_tokens.get_or_insert(0) += v;
+        }
+    }
+}
+
 /// Trait for LLM provider implementations.
 #[async_trait::async_trait]
 pub trait LlmProvider: Send + Sync {

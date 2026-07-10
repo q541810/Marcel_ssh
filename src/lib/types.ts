@@ -294,8 +294,11 @@ export interface AgentMessage {
     success: boolean;
     blocked: boolean;
     wasTimeout?: boolean;
+    wasAborted?: boolean;
     /** Tool call arguments, for display in the tool card */
     arguments?: Record<string, unknown>;
+    /** Tool call ID from the LLM, used to reconstruct LLM context history */
+    toolCallId?: string;
   };
   /** True when waiting for LLM response */
   isLoading?: boolean;
@@ -351,6 +354,8 @@ export interface AgentModeSettings {
   modelApprovalPrompt: string;
   systemPrompt: string;
   maxToolRounds: number;
+  /** Enable LLM context compression to stay within model window limits */
+  compactContext: boolean;
 }
 
 export type LlmProviderType = 'openai';
@@ -458,12 +463,22 @@ export interface AppSettings {
   disableAllInjections: boolean;
 }
 
+// LLM token usage — returned by the LLM provider in its API response
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens?: number;
+  cachedReadTokens?: number;
+}
+
 // LLM stream events
 export type LlmStreamEvent =
   | { type: 'textDelta'; text: string }
   | { type: 'thinkingDelta'; text: string }
   | { type: 'toolCallStart'; id: string; name: string }
   | { type: 'toolCallDelta'; id: string; argumentsDelta: string }
+  | { type: 'usage'; usage: TokenUsage }
   | { type: 'done' }
   | { type: 'error'; message: string }
   | { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string }
@@ -486,6 +501,7 @@ export interface ToolResultPayload {
   success: boolean;
   blocked: boolean;
   wasTimeout?: boolean;
+  wasAborted?: boolean;
   arguments: Record<string, unknown>;
 }
 

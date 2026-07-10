@@ -2,9 +2,11 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage, QuestionAnswer } from '@/lib/types';
 import Button from '@/components/ui/Button';
+import ChatHistoryModal from '@/components/settings/ChatHistoryModal';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
 import QuestionPanel from './QuestionPanel';
@@ -13,6 +15,8 @@ import PlanList from './PlanList';
 export default function AgentPanel() {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [tokenPopoverOpen, setTokenPopoverOpen] = useState(false);
   const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastScrolledMessageRef = useRef<string | null>(null);
@@ -24,6 +28,7 @@ export default function AgentPanel() {
     return session ?? null;
   });
   const reconnect = useSessionStore((s) => s.reconnect);
+  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
   const {
@@ -46,6 +51,8 @@ export default function AgentPanel() {
     switchConversation,
     deleteConversation,
     rollbackToMessage,
+    sessionTokenUsage,
+    taskTokenUsage,
   } = useAgent();
 
   const sessionConversations = useMemo(
@@ -54,6 +61,10 @@ export default function AgentPanel() {
   );
 
   const canInteract = activeSession?.status === 'connected';
+
+  useEffect(() => {
+    fetchConnections();
+  }, [fetchConnections]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
@@ -240,7 +251,75 @@ export default function AgentPanel() {
       )}
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-200">智能助手</h2>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-sm font-semibold text-zinc-200">智能助手</h2>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setTokenPopoverOpen((v) => !v)}
+              className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-medium transition-colors ${
+                tokenPopoverOpen
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'
+              }`}
+              title="Token 用量"
+            >
+              T
+            </button>
+            {tokenPopoverOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setTokenPopoverOpen(false)}
+                />
+                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl z-50 py-2 animate-fadeIn">
+                  <div className="px-3 py-1 text-xs font-semibold text-zinc-300 border-b border-zinc-700 pb-1.5 mb-1">
+                    Token 用量
+                  </div>
+                  <div className="px-3 py-0.5 text-xs text-zinc-400 space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>会话总计</span>
+                      <span className="text-zinc-200 tabular-nums">
+                        {sessionTokenUsage ? sessionTokenUsage.totalTokens.toLocaleString() : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>本次输入</span>
+                      <span className="text-zinc-200 tabular-nums">
+                        {taskTokenUsage ? taskTokenUsage.promptTokens.toLocaleString() : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>本次输出</span>
+                      <span className="text-zinc-200 tabular-nums">
+                        {taskTokenUsage ? taskTokenUsage.completionTokens.toLocaleString() : '—'}
+                      </span>
+                    </div>
+                    {taskTokenUsage?.reasoningTokens != null && (
+                      <div className="flex justify-between">
+                        <span>本次推理</span>
+                        <span className="text-zinc-200 tabular-nums">
+                          {taskTokenUsage.reasoningTokens.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {taskTokenUsage?.cachedReadTokens != null && (
+                      <div className="flex justify-between">
+                        <span>缓存读取</span>
+                        <span className="text-zinc-200 tabular-nums">
+                          {taskTokenUsage.cachedReadTokens.toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="px-3 pt-1.5 mt-1 border-t border-zinc-700">
+                    <p className="text-[10px] text-zinc-600">数据来源：LLM供应商返回的Usage</p>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
@@ -255,9 +334,14 @@ export default function AgentPanel() {
           </button>
           <button
             type="button"
-            onClick={() => setHistoryDrawerOpen((v) => !v)}
-            disabled={!canInteract}
-            className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            onClick={() => {
+              if (canInteract) {
+                setHistoryDrawerOpen((v) => !v);
+              } else {
+                setShowHistoryModal(true);
+              }
+            }}
+            className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition-colors"
             title="历史会话"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -581,6 +665,8 @@ export default function AgentPanel() {
           </div>
         </>
       )}
+
+      <ChatHistoryModal open={showHistoryModal} onClose={() => setShowHistoryModal(false)} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import type {
   AgentTaskPlan,
   QuestionRequestPayload,
   QuestionAnswer,
+  TokenUsage,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
@@ -23,6 +24,8 @@ export interface TaskState {
   pendingQuestion: QuestionRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
+  sessionTokenUsage: TokenUsage | null;
+  taskTokenUsage: TokenUsage | null;
 
   startTask: (sessionId: string, prompt: string, connectionId?: string) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
@@ -38,6 +41,7 @@ export interface TaskState {
   getActivePlan: () => AgentTaskPlan | null;
   loadPersistedPlans: (conversationId: string, storedPlans: { taskId: string; plan: AgentTaskPlan; updatedAt: string }[]) => void;
   clearPlansByConversation: (conversationId: string) => void;
+  accumulateTokenUsage: (usage: TokenUsage) => void;
 
   clearActiveTask: () => void;
   clearActiveTaskIf: (taskId: string) => void;
@@ -54,6 +58,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   pendingQuestion: null,
   plans: {},
   plansDirty: false,
+  sessionTokenUsage: null,
+  taskTokenUsage: null,
 
   startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
     const { mode } = get();
@@ -109,6 +115,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => ({
       tasks: { ...state.tasks, [taskId]: task },
       activeTaskId: taskId,
+      taskTokenUsage: null,
     }));
 
     void attachStreamListener(taskId, conversationId, loadingAssistantId);
@@ -121,12 +128,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       await tauri.agentStopTask(taskId);
     } finally {
-      // Clear in-flight tool cards before unlistening. The backend only sends a cancel
-      // signal and a late StreamEvent::Done after the in-progress tool finishes; the
-      // listener cleanup below would close the channel before that Done arrives, so
-      // handleDone's defensive filter never runs and isExecuting tool messages would
-      // stay stuck on their spinner.
-      useConversationStore.getState().clearExecutingToolFlags();
+      // Mark in-flight tool cards as aborted before unlistening. The backend only
+      // sends a cancel signal — exec_streamed does not watch it, so the in-progress
+      // tool keeps running until it finishes or times out; only then does the agent
+      // loop hit its post-exec cancellation checkpoint and stop. Meanwhile the
+      // listener cleanup below closes the channel before the late toolResult event
+      // (or StreamEvent::Done) would arrive, so we synchronously mark the card here
+      // with wasAborted + an interruption note. The backend persists the same note
+      // separately, keeping the LLM history chain complete.
+      useConversationStore.getState().markAbortedToolFlags();
       cleanupTaskListeners(taskId);
       set((state) => {
         const task = state.tasks[taskId];
@@ -248,6 +258,42 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         }
       }
       return changed ? { plans: newPlans, tasks: newTasks } : state;
+    });
+  },
+
+  accumulateTokenUsage: (usage: TokenUsage) => {
+    set((state) => {
+      const taskUsage = state.taskTokenUsage
+        ? {
+            promptTokens: state.taskTokenUsage.promptTokens + usage.promptTokens,
+            completionTokens: state.taskTokenUsage.completionTokens + usage.completionTokens,
+            totalTokens: state.taskTokenUsage.totalTokens + usage.totalTokens,
+            reasoningTokens:
+              state.taskTokenUsage.reasoningTokens !== undefined || usage.reasoningTokens !== undefined
+                ? (state.taskTokenUsage.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0)
+                : undefined,
+            cachedReadTokens:
+              state.taskTokenUsage.cachedReadTokens !== undefined || usage.cachedReadTokens !== undefined
+                ? (state.taskTokenUsage.cachedReadTokens ?? 0) + (usage.cachedReadTokens ?? 0)
+                : undefined,
+          }
+        : { ...usage };
+      const sessionUsage = state.sessionTokenUsage
+        ? {
+            promptTokens: state.sessionTokenUsage.promptTokens + usage.promptTokens,
+            completionTokens: state.sessionTokenUsage.completionTokens + usage.completionTokens,
+            totalTokens: state.sessionTokenUsage.totalTokens + usage.totalTokens,
+            reasoningTokens:
+              state.sessionTokenUsage.reasoningTokens !== undefined || usage.reasoningTokens !== undefined
+                ? (state.sessionTokenUsage.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0)
+                : undefined,
+            cachedReadTokens:
+              state.sessionTokenUsage.cachedReadTokens !== undefined || usage.cachedReadTokens !== undefined
+                ? (state.sessionTokenUsage.cachedReadTokens ?? 0) + (usage.cachedReadTokens ?? 0)
+                : undefined,
+          }
+        : { ...usage };
+      return { taskTokenUsage: taskUsage, sessionTokenUsage: sessionUsage };
     });
   },
 
