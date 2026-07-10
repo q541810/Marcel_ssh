@@ -69,7 +69,13 @@ export async function agentStartTask(
   prompt: string,
   mode: string,
   conversationId: string,
-  history: { role: string; content: string; reasoningContent?: string }[],
+  history: {
+    role: string;
+    content: string;
+    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+    toolCallId?: string;
+    reasoningContent?: string;
+  }[],
 ): Promise<string> {
   return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
 }

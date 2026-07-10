@@ -29,6 +29,8 @@ pub(crate) struct PersistedToolResult {
     pub blocked: bool,
     #[serde(default)]
     pub was_timeout: bool,
+    #[serde(default)]
+    pub was_aborted: bool,
 }
 
 /// Checks if a task has been cancelled by the user.
@@ -261,6 +263,71 @@ pub(crate) async fn run_agent_loop(
                     "Agent task {} cancelled after tool execution, stopping",
                     task_id
                 );
+                // Mark the tool as manually aborted. The tool has already finished
+                // executing (exec_streamed does not watch cancel), so exec.output
+                // holds the actual result. We keep it and append an interruption note
+                // so the LLM understands: the tool ran, but the user chose to stop
+                // waiting rather than abort the action itself.
+                exec.was_aborted = true;
+                // Distinguish streaming (execute_command) versus non-streaming tools:
+                // streaming emits partial output incrementally to the frontend, so the
+                // user has seen progress; non-streaming tools are invisible to the user
+                // until completion, so phrasing reflects that.
+                if tc.name == "execute_command" {
+                    if !exec.output.is_empty() {
+                        exec.output.push_str(
+                            "\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]",
+                        );
+                    } else {
+                        exec.output = String::from(
+                            "[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]",
+                        );
+                    }
+                } else {
+                    if !exec.output.is_empty() {
+                        exec.output
+                            .push_str("\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]");
+                    } else {
+                        exec.output =
+                            String::from("[用户手动中断，已停止等待结果；工具可能已执行完成]");
+                    }
+                }
+                exec.success = false;
+                exec.summary = format!("{} (aborted)", tc.name);
+
+                // Persist + push a tool message so the conversation history (and any
+                // future continuation) sees a complete assistant(tool_calls) → tool(result)
+                // chain. We intentionally do NOT emit a toolResult event here: the
+                // frontend has already been notified synchronously by markAbortedToolFlags
+                // (see taskStore.stopTask) and unlistens before this point.
+                let tool_result_json = serde_json::to_string(&PersistedToolResult {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                    risk_level: exec.risk_level,
+                    summary: exec.summary.clone(),
+                    success: exec.success,
+                    blocked: exec.blocked,
+                    was_timeout: exec.was_timeout,
+                    was_aborted: exec.was_aborted,
+                })
+                .ok();
+
+                let tool_msg = LlmMessage {
+                    role: LlmRole::Tool,
+                    content: exec.output,
+                    tool_calls: None,
+                    tool_call_id: Some(tc.id),
+                    reasoning_content: None,
+                };
+                let _ = persister.save_msg(
+                    "tool",
+                    &tool_msg.content,
+                    tool_result_json.as_deref(),
+                    None,
+                );
+                messages.push(tool_msg);
+
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
                 return;
@@ -295,6 +362,7 @@ pub(crate) async fn run_agent_loop(
                     success: exec.success,
                     blocked: exec.blocked,
                     was_timeout: exec.was_timeout,
+                    was_aborted: exec.was_aborted,
                 },
             );
 
@@ -308,6 +376,7 @@ pub(crate) async fn run_agent_loop(
                 success: exec.success,
                 blocked: exec.blocked,
                 was_timeout: exec.was_timeout,
+                was_aborted: exec.was_aborted,
             })
             .ok();
 
@@ -369,5 +438,25 @@ mod tests {
         let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
 
         assert!(!result.was_timeout);
+        assert!(!result.was_aborted);
+    }
+
+    #[test]
+    fn persisted_tool_result_reads_was_aborted() {
+        let raw = r#"{
+            "id": "call-2",
+            "name": "execute_command",
+            "arguments": {"command": "ls"},
+            "risk_level": "Moderate",
+            "summary": "$ ls (aborted)",
+            "success": false,
+            "blocked": false,
+            "was_timeout": false,
+            "was_aborted": true
+        }"#;
+
+        let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
+
+        assert!(result.was_aborted);
     }
 }

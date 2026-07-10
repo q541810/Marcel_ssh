@@ -108,6 +108,10 @@ pub struct AgentModeSettings {
     /// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: usize,
+    /// When true, tool results in LLM history are compressed when
+    /// cumulative token count exceeds configured thresholds.
+    #[serde(default)]
+    pub compact_context: bool,
 }
 
 fn default_max_tool_rounds() -> usize {
@@ -131,6 +135,7 @@ impl Default for AgentModeSettings {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
+            compact_context: false,
         }
     }
 }
@@ -379,6 +384,7 @@ impl Default for AppSettings {
                 model_approval_prompt: String::new(),
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
+                compact_context: false,
             },
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),

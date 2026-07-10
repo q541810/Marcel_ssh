@@ -190,6 +190,7 @@ describe('storedMessageToAgentMessage', () => {
       expect(result.toolResult!.success).toBe(true);
       expect(result.toolResult!.blocked).toBe(false);
       expect(result.toolResult!.arguments).toEqual({ command: 'ls' });
+      expect(result.toolResult!.toolCallId).toBe('call-1');
     });
 
     it('should use content as fallback summary', () => {
@@ -292,6 +293,7 @@ describe('storedMessageToAgentMessage', () => {
       expect(result.toolResult).toBeDefined();
       expect(result.toolResult!.toolName).toBe('execute_command');
       expect(result.toolResult!.arguments).toEqual({ command: 'pwd' });
+      expect(result.toolResult!.toolCallId).toBe('call-1');
     });
 
     it('should detect blocked status from content in legacy format', () => {

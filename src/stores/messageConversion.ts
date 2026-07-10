@@ -159,6 +159,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       success?: boolean;
       blocked?: boolean;
       was_timeout?: boolean;
+      was_aborted?: boolean;
     },
     message: StoredMessage,
     base: AgentMessage
@@ -170,7 +171,9 @@ class ToolResultStrategy implements MessageConversionStrategy {
       success: tr.success ?? true,
       blocked: tr.blocked ?? false,
       wasTimeout: tr.was_timeout,
+      wasAborted: tr.was_aborted,
       arguments: tr.arguments,
+      toolCallId: tr.id,
     };
     return base;
   }
@@ -192,6 +195,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       success: determineSuccess(message.content),
       blocked: isBlockedContent(message.content),
       arguments: raw[0].arguments,
+      toolCallId: raw[0].id,
     };
     return base;
   }

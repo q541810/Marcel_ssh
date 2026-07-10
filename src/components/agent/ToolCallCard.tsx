@@ -188,7 +188,7 @@ function ToolCallCard({ message, autoExpand }: Props) {
     const showOutput = (isExecuting && hasOutput) || expanded;
 
     return (
-      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : tr.wasTimeout ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : (tr.wasTimeout || tr.wasAborted) ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
         <button
           onClick={() => !isExecuting && setExpanded((v) => !v)}
           className="group w-full text-left"
@@ -205,7 +205,10 @@ function ToolCallCard({ message, autoExpand }: Props) {
               {tr.blocked && (
                 <span className="flex-shrink-0 text-xs text-red-400 font-medium">已阻止</span>
               )}
-              {tr.wasTimeout && (
+              {!tr.blocked && tr.wasAborted && (
+                <span className="flex-shrink-0 text-xs text-amber-400 font-medium">已中断</span>
+              )}
+              {!tr.blocked && !tr.wasAborted && tr.wasTimeout && (
                 <span className="flex-shrink-0 text-xs text-amber-400 font-medium">超时</span>
               )}
             </div>

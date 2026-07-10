@@ -14,6 +14,7 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   modelApprovalPrompt: '',
   systemPrompt: '',
   maxToolRounds: 80,
+  compactContext: false,
 };
 
 const DEFAULT_LLM_CONFIG: LlmConfig = {

@@ -121,7 +121,7 @@ describe('taskStore', () => {
   });
 
   describe('stopTask', () => {
-    it('clears executing tool messages before unlistening stream events', async () => {
+    it('marks executing tool messages as aborted before unlistening stream events', async () => {
       agentStopTask.mockResolvedValue(undefined);
       const runningTool: AgentMessage = {
         id: 'tool-1',
@@ -129,6 +129,13 @@ describe('taskStore', () => {
         content: 'executing',
         timestamp: new Date().toISOString(),
         isExecuting: true,
+        toolResult: {
+          toolName: 'execute_command',
+          summary: '',
+          result: 'partial output',
+          success: true,
+          blocked: false,
+        },
       };
       useConversationStore.setState({
         activeConversationId: 'conv-1',
@@ -151,25 +158,77 @@ describe('taskStore', () => {
 
       await useTaskStore.getState().stopTask('task-1');
 
-      // Tool message's isExecuting was cleared
-      expect(useConversationStore.getState().messages['conv-1'][0].isExecuting).toBe(false);
-      // The clear happened BEFORE cleanupTaskListeners
+      // Tool message was marked aborted: isExecuting cleared, wasAborted set,
+      // result appended with streaming interruption note.
+      const toolMsg = useConversationStore.getState().messages['conv-1'][0];
+      expect(toolMsg.isExecuting).toBe(false);
+      expect(toolMsg.toolResult?.wasAborted).toBe(true);
+      expect(toolMsg.toolResult?.success).toBe(false);
+      expect(toolMsg.toolResult?.result).toContain('用户手动中断');
+      expect(toolMsg.toolResult?.result).toContain('远端命令');
+
+      // The mark happened BEFORE cleanupTaskListeners
       const clearOrder: string[] = [];
       cleanupTaskListenersMock.mockImplementation(() => {
         clearOrder.push('cleanup');
       });
-      const origClear = useConversationStore.getState().clearExecutingToolFlags;
+      const origMark = useConversationStore.getState().markAbortedToolFlags;
       useConversationStore.setState({
-        clearExecutingToolFlags: () => {
-          clearOrder.push('clear');
-          origClear();
+        markAbortedToolFlags: () => {
+          clearOrder.push('mark');
+          origMark();
         },
       });
 
       await useTaskStore.getState().stopTask('task-1');
 
-      expect(clearOrder.indexOf('clear')).toBeLessThan(clearOrder.indexOf('cleanup'));
+      expect(clearOrder.indexOf('mark')).toBeLessThan(clearOrder.indexOf('cleanup'));
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+    });
+
+    it('marks non-streaming tool messages as aborted with non-streaming note', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      const runningTool: AgentMessage = {
+        id: 'tool-2',
+        role: 'tool',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'read_file',
+          summary: '',
+          result: '',
+          success: true,
+          blocked: false,
+        },
+      };
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: { 'conv-1': [runningTool] },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      const toolMsg = useConversationStore.getState().messages['conv-1'][0];
+      expect(toolMsg.toolResult?.wasAborted).toBe(true);
+      expect(toolMsg.toolResult?.result).toContain('用户手动中断');
+      expect(toolMsg.toolResult?.result).toContain('工具可能已执行完成');
+      // Should NOT mention remote command phrasing
+      expect(toolMsg.toolResult?.result).not.toContain('远端命令');
     });
 
     it('marks the task as cancelled and clears active', async () => {
@@ -196,7 +255,7 @@ describe('taskStore', () => {
       expect(useTaskStore.getState().activeTaskId).toBeNull();
     });
 
-    it('clears tool messages even when agentStopTask throws', async () => {
+    it('marks tool messages even when agentStopTask throws', async () => {
       agentStopTask.mockRejectedValue(new Error('backend gone'));
       useConversationStore.setState({
         activeConversationId: 'conv-1',
@@ -208,6 +267,13 @@ describe('taskStore', () => {
               content: 'executing',
               timestamp: new Date().toISOString(),
               isExecuting: true,
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '',
+                result: '',
+                success: true,
+                blocked: false,
+              },
             },
           ],
         },
@@ -229,7 +295,9 @@ describe('taskStore', () => {
 
       await expect(useTaskStore.getState().stopTask('task-1')).rejects.toThrow('backend gone');
 
-      expect(useConversationStore.getState().messages['conv-1'][0].isExecuting).toBe(false);
+      const toolMsg = useConversationStore.getState().messages['conv-1'][0];
+      expect(toolMsg.isExecuting).toBe(false);
+      expect(toolMsg.toolResult?.wasAborted).toBe(true);
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
     });
   });

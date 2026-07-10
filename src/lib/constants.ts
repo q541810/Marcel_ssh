@@ -303,3 +303,20 @@ export const BOTTOM_TABS: BottomTab[] = [
   { id: 'process', icon: 'M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z', label: '进程管理' },
   { id: 'file-manager', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', label: '文件管理' },
 ];
+
+// ───────────────────── 上下文压缩常量 ─────────────────────
+
+/** 累计 token 超此阈值且轮数超限时，截断超长 tool result */
+export const COMPACT_MAX_CONTEXT_TOKENS = 80_000;
+/** 累计 token 超此阈值时，完全替换 tool result */
+export const COMPACT_AGGRESSIVE_TOKENS = 130_000;
+/** 触发截断的最小对话轮数 */
+export const COMPACT_MIN_ROUNDS = 5;
+/** tool result 超过此行数才触发截断 */
+export const COMPACT_MAX_LINES = 20;
+/** 截断保留的首尾行数 */
+export const COMPACT_HEAD_TAIL_LINES = 5;
+/** 截断占位文案 */
+export const COMPACT_TRUNCATION_MSG = '旧Tool Result，部分内容已清除';
+/** token 估算：每字符约等于的 token 数 */
+export const CHARS_PER_TOKEN = 4;

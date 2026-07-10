@@ -26,6 +26,8 @@ pub(crate) struct ToolResultEvent {
     pub success: bool,
     pub blocked: bool,
     pub was_timeout: bool,
+    #[serde(default)]
+    pub was_aborted: bool,
 }
 
 /// Event emitted when model-based approval check starts.
@@ -56,6 +58,7 @@ pub(crate) struct DispatchResult {
     pub success: bool,
     pub blocked: bool,
     pub was_timeout: bool,
+    pub was_aborted: bool,
     pub metadata: Option<serde_json::Value>,
     pub risk_level: RiskLevel,
 }
@@ -74,6 +77,7 @@ impl DispatchResult {
             success: o.success,
             blocked: false,
             was_timeout,
+            was_aborted: false,
             metadata: o.metadata,
             risk_level,
         }
@@ -89,6 +93,7 @@ impl DispatchResult {
             success: false,
             blocked: true,
             was_timeout: false,
+            was_aborted: false,
             metadata: None,
             risk_level,
         }
@@ -100,6 +105,7 @@ impl DispatchResult {
             success: false,
             blocked: false,
             was_timeout: false,
+            was_aborted: false,
             metadata: None,
             risk_level: RiskLevel::Moderate,
         }
@@ -385,6 +391,7 @@ impl ToolDispatcher {
                 success: false,
                 blocked: false,
                 was_timeout: false,
+                was_aborted: false,
                 metadata: None,
                 risk_level: effective_risk,
             },
@@ -444,6 +451,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
+            compact_context: false,
         }
     }
 
@@ -476,6 +484,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
+            compact_context: false,
         };
         assert!(!command_list_requires_confirm("ls -la", &s));
 
@@ -495,6 +504,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
+            compact_context: false,
         };
         assert!(command_list_requires_confirm("rm -rf /tmp", &s));
     }
@@ -524,6 +534,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
+            compact_context: false,
         };
         assert!(command_list_requires_confirm("echo hello", &s));
         assert!(command_list_requires_confirm("git status", &s));

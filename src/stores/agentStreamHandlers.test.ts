@@ -127,6 +127,7 @@ describe('agentStreamHandlers', () => {
       expect(msgs[0].role).toBe('tool');
       expect(msgs[0].isExecuting).toBe(true);
       expect(msgs[0].toolResult?.toolName).toBe('execute_command');
+      expect(msgs[0].toolResult?.toolCallId).toBe('tc-start-1');
     });
 
     it('clears reasoning from last assistant message', () => {
@@ -175,6 +176,7 @@ describe('agentStreamHandlers', () => {
       const msgs = handler._messages[convId];
       expect(msgs[0].isExecuting).toBe(false);
       expect(msgs[0].toolResult?.summary).toBe('read done');
+      expect(msgs[0].toolResult?.toolCallId).toBe('tc-match-1');
     });
 
     it('passes wasTimeout flag', () => {
@@ -193,6 +195,7 @@ describe('agentStreamHandlers', () => {
       }));
 
       expect(handler._messages[convId][0].toolResult?.wasTimeout).toBe(true);
+      expect(handler._messages[convId][0].toolResult?.toolCallId).toBe('tc-timeout-1');
     });
 
     it('creates fallback message when no pending match', () => {
@@ -204,6 +207,8 @@ describe('agentStreamHandlers', () => {
       const msgs = handler._messages[convId];
       expect(msgs.length).toBeGreaterThanOrEqual(1);
       expect(msgs.some((m) => m.role === 'tool')).toBe(true);
+      const toolMsg = msgs.find((m) => m.role === 'tool');
+      expect(toolMsg?.toolResult?.toolCallId).toBe('no-match');
     });
   });
 

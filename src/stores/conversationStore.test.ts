@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentMessage } from '@/lib/types';
 
 const { agentListConversationsByConnection, agentLoadConversation, agentTruncateConversation } = vi.hoisted(() => ({
@@ -276,6 +277,699 @@ describe('conversationStore', () => {
       const state = useConversationStore.getState();
       expect(state.messages['conv-1'][0].isLoading).toBeUndefined();
       expect(state.messages['conv-1'][1].isLoading).toBe(true);
+    });
+  });
+
+  describe('markAbortedToolFlags', () => {
+    it('marks executing streaming tool messages with wasAborted and streaming note', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({
+              id: 'm1',
+              role: 'tool',
+              content: '',
+              isExecuting: true,
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '',
+                result: 'partial stdout',
+                success: true,
+                blocked: false,
+              },
+            }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags();
+
+      const m = useConversationStore.getState().messages['conv-1'][0];
+      expect(m.isExecuting).toBe(false);
+      expect(m.toolResult?.wasAborted).toBe(true);
+      expect(m.toolResult?.success).toBe(false);
+      expect(m.toolResult?.result).toContain('partial stdout');
+      expect(m.toolResult?.result).toContain('用户手动中断');
+      expect(m.toolResult?.result).toContain('远端命令');
+    });
+
+    it('marks executing non-streaming tool messages with non-streaming note', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({
+              id: 'm2',
+              role: 'tool',
+              content: '',
+              isExecuting: true,
+              toolResult: {
+                toolName: 'read_file',
+                summary: '',
+                result: '',
+                success: true,
+                blocked: false,
+              },
+            }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags();
+
+      const m = useConversationStore.getState().messages['conv-1'][0];
+      expect(m.toolResult?.wasAborted).toBe(true);
+      expect(m.toolResult?.success).toBe(false);
+      expect(m.toolResult?.result).toContain('用户手动中断');
+      expect(m.toolResult?.result).toContain('工具可能已执行完成');
+      expect(m.toolResult?.result).not.toContain('远端命令');
+    });
+
+    it('clears modelApproval in addition to isExecuting', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              isExecuting: false,
+              modelApproval: { status: 'checking' },
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '',
+                result: '',
+                success: true,
+                blocked: false,
+              },
+            }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags();
+
+      const m = useConversationStore.getState().messages['conv-1'][0];
+      expect(m.modelApproval).toBeUndefined();
+      expect(m.toolResult?.wasAborted).toBe(true);
+    });
+
+    it('leaves completed tool messages untouched', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm4', role: 'tool', content: 'done', isExecuting: false, toolResult: { toolName: 'list_directory', summary: '', result: 'a\nb', success: true, blocked: false } }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags();
+
+      const m = useConversationStore.getState().messages['conv-1'][0];
+      expect(m.toolResult?.wasAborted).toBeUndefined();
+      expect(m.toolResult?.result).toBe('a\nb');
+    });
+
+    it('handles tool messages without toolResult without crashing', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm5', role: 'tool', content: 'running', isExecuting: true }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags();
+
+      const m = useConversationStore.getState().messages['conv-1'][0];
+      expect(m.isExecuting).toBe(false);
+      // No toolResult so wasAborted can't be set; just no crash
+    });
+  });
+
+  describe('buildLlmHistory', () => {
+    it('returns empty array for unknown conversation', () => {
+      useConversationStore.setState({ messages: {}, activeConversationId: null });
+      const history = useConversationStore.getState().buildLlmHistory('nonexistent');
+      expect(history).toEqual([]);
+    });
+
+    it('returns plain user+assistant conversation unchanged', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm1', role: 'user', content: 'hello' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'hi there', reasoningContent: 'thought' }),
+            makeMessage({ id: 'm3', role: 'user', content: 'what is 2+2?' }),
+            makeMessage({ id: 'm4', role: 'assistant', content: '4' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-1');
+      expect(history).toEqual([
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: '', reasoningContent: 'thought' },
+        { role: 'user', content: 'what is 2+2?' },
+        { role: 'assistant', content: '4' },
+      ]);
+    });
+
+    it('excludes loading messages', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-2': [
+            makeMessage({ id: 'm1', role: 'user', content: 'run task' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: '', isLoading: true }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-2');
+      expect(history).toEqual([{ role: 'user', content: 'run task' }]);
+    });
+
+    it('excludes system messages', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-3': [
+            makeMessage({ id: 'm1', role: 'user', content: 'hi' }),
+            makeMessage({ id: 'm2', role: 'system', content: 'retrying...' }),
+            makeMessage({ id: 'm3', role: 'assistant', content: 'answer' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-3');
+      expect(history).toEqual([
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'answer' },
+      ]);
+    });
+
+    it('synthesizes assistant(tool_calls)+tool from tool message with preceding assistant text', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-4': [
+            makeMessage({ id: 'm1', role: 'user', content: 'list files' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'Let me check the directory...' }),
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '$ ls',
+                result: 'file.txt\ndir/',
+                success: true,
+                blocked: false,
+                arguments: { command: 'ls' },
+                toolCallId: 'call-1',
+              },
+            }),
+            makeMessage({ id: 'm4', role: 'assistant', content: 'Found 2 items.' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-4');
+      expect(history).toEqual([
+        { role: 'user', content: 'list files' },
+        {
+          role: 'assistant',
+          content: 'Let me check the directory...',
+          toolCalls: [{ id: 'call-1', name: 'execute_command', arguments: { command: 'ls' } }],
+        },
+        { role: 'tool', content: 'file.txt\ndir/', toolCallId: 'call-1' },
+        { role: 'assistant', content: 'Found 2 items.' },
+      ]);
+    });
+
+    it('synthesizes with empty content when no preceding assistant', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-5': [
+            makeMessage({ id: 'm1', role: 'user', content: 'do thing' }),
+            makeMessage({
+              id: 'm2',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'read_file',
+                summary: 'done',
+                result: 'content here',
+                success: true,
+                blocked: false,
+                arguments: { path: '/tmp/x' },
+                toolCallId: 'call-2',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-5');
+      expect(history).toEqual([
+        { role: 'user', content: 'do thing' },
+        {
+          role: 'assistant',
+          content: '',
+          toolCalls: [{ id: 'call-2', name: 'read_file', arguments: { path: '/tmp/x' } }],
+        },
+        { role: 'tool', content: 'content here', toolCallId: 'call-2' },
+      ]);
+    });
+
+    it('skips tool message without toolCallId', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-6': [
+            makeMessage({ id: 'm1', role: 'user', content: 'do' }),
+            makeMessage({
+              id: 'm2',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'old_tool',
+                summary: '',
+                result: 'legacy',
+                success: true,
+                blocked: false,
+              },
+            }),
+            makeMessage({ id: 'm3', role: 'assistant', content: 'done' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-6');
+      expect(history).toEqual([
+        { role: 'user', content: 'do' },
+        { role: 'assistant', content: 'done' },
+      ]);
+    });
+
+    it('handles multiple tool calls in one conversation', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-7': [
+            makeMessage({ id: 'm1', role: 'user', content: 'check files' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'Checking...' }),
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '$ ls',
+                result: 'a.txt\nb.txt',
+                success: true,
+                blocked: false,
+                arguments: { command: 'ls' },
+                toolCallId: 'call-a',
+              },
+            }),
+            makeMessage({ id: 'm4', role: 'assistant', content: 'Now reading...' }),
+            makeMessage({
+              id: 'm5',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'read_file',
+                summary: 'done',
+                result: 'content of a.txt',
+                success: true,
+                blocked: false,
+                arguments: { path: 'a.txt' },
+                toolCallId: 'call-b',
+              },
+            }),
+            makeMessage({ id: 'm6', role: 'assistant', content: 'All done!' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-7');
+      expect(history).toEqual([
+        { role: 'user', content: 'check files' },
+        {
+          role: 'assistant',
+          content: 'Checking...',
+          toolCalls: [{ id: 'call-a', name: 'execute_command', arguments: { command: 'ls' } }],
+        },
+        { role: 'tool', content: 'a.txt\nb.txt', toolCallId: 'call-a' },
+        {
+          role: 'assistant',
+          content: 'Now reading...',
+          toolCalls: [{ id: 'call-b', name: 'read_file', arguments: { path: 'a.txt' } }],
+        },
+        { role: 'tool', content: 'content of a.txt', toolCallId: 'call-b' },
+        { role: 'assistant', content: 'All done!' },
+      ]);
+    });
+
+    it('uses toolResult.arguments for toolCalls, falling back to empty object', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-9': [
+            makeMessage({ id: 'm1', role: 'user', content: 'go' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'Running...' }),
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'web_search',
+                summary: 'searched',
+                result: 'search results',
+                success: true,
+                blocked: false,
+                toolCallId: 'call-3',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-9');
+      expect(history[1].toolCalls![0].arguments).toEqual({});
+    });
+
+    it('handles tool with toolResult.result taking precedence over tool message content', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-10': [
+            makeMessage({ id: 'm1', role: 'user', content: 'hi' }),
+            makeMessage({
+              id: 'm2',
+              role: 'tool',
+              content: 'stale content',
+              toolResult: {
+                toolName: 'cmd',
+                summary: '',
+                result: 'fresh result',
+                success: true,
+                blocked: false,
+                toolCallId: 'call-4',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-10');
+      expect(history[1].toolCalls![0].arguments).toEqual({});
+      expect(history[2].content).toBe('fresh result');
+    });
+  });
+
+  describe('buildLlmHistory compression', () => {
+    function makeRoundMessages(
+      round: number,
+      toolResultContent: string,
+    ): AgentMessage[] {
+      return [
+        makeMessage({ id: `u${round}`, role: 'user', content: `prompt ${round}` }),
+        makeMessage({ id: `a${round}`, role: 'assistant', content: `Let me check round ${round}...` }),
+        makeMessage({
+          id: `t${round}`,
+          role: 'tool',
+          content: '',
+          toolResult: {
+            toolName: 'execute_command',
+            summary: `$ cmd ${round}`,
+            result: toolResultContent,
+            success: true,
+            blocked: false,
+            arguments: { command: `ls ${round}` },
+            toolCallId: `call-${round}`,
+          },
+        }),
+        makeMessage({ id: `a2-${round}`, role: 'assistant', content: `Result for round ${round} done.` }),
+      ];
+    }
+
+    function enableCompactContext() {
+      const current = useSettingsStore.getState().settings;
+      useSettingsStore.setState({
+        settings: {
+          ...current,
+          agentModeSettings: {
+            ...current.agentModeSettings,
+            compactContext: true,
+          },
+        },
+      });
+    }
+
+    function disableCompactContext() {
+      const current = useSettingsStore.getState().settings;
+      useSettingsStore.setState({
+        settings: {
+          ...current,
+          agentModeSettings: {
+            ...current.agentModeSettings,
+            compactContext: false,
+          },
+        },
+      });
+    }
+
+    it('does not compress when compactContext is off', () => {
+      disableCompactContext();
+      const manyLines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join('\n');
+      const msgs = [
+        ...makeRoundMessages(1, manyLines),
+      ];
+      useConversationStore.setState({ messages: { 'comp-1': msgs } });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-1');
+      const toolMsg = history.find((m) => m.role === 'tool');
+      expect(toolMsg!.content).toBe(manyLines);
+      expect(toolMsg!.content).not.toContain('旧Tool Result');
+    });
+
+    it('does not compress when cumulative tokens under 80k', () => {
+      enableCompactContext();
+      const manyLines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join('\n');
+      useConversationStore.setState({
+        messages: {
+          'comp-2': [
+            makeMessage({ id: 'u1', role: 'user', content: 'go' }),
+            makeMessage({ id: 'a1', role: 'assistant', content: 'OK' }),
+            makeMessage({
+              id: 't1',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'cmd',
+                summary: '',
+                result: manyLines,
+                success: true,
+                blocked: false,
+                toolCallId: 'call-x',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-2');
+      const toolMsg = history.find((m) => m.role === 'tool');
+      expect(toolMsg!.content).toBe(manyLines);
+    });
+
+    it('does not compress when rounds <= 5 even if over 80k', () => {
+      enableCompactContext();
+      // Need > 80k tokens = 320_001+ chars
+      const bigToolResult = 'x'.repeat(320_100);
+
+      useConversationStore.setState({
+        messages: {
+          'comp-3': [
+            makeMessage({ id: 'u1', role: 'user', content: 'r1' }),
+            makeMessage({ id: 'a1', role: 'assistant', content: 'Check...' }),
+            makeMessage({
+              id: 't1',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'cmd',
+                summary: '',
+                result: bigToolResult,
+                success: true,
+                blocked: false,
+                toolCallId: 'call-b1',
+              },
+            }),
+            makeMessage({ id: 'a1b', role: 'assistant', content: 'Done round 1.' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-3');
+      // Only 1 round, cumulative > 80k but rounds <= 5 → no compression
+      const toolMsg = history.find((m) => m.role === 'tool');
+      expect(toolMsg!.content).toBe(bigToolResult);
+    });
+
+    it('truncates tool result when over 80k and over 5 rounds and content > 20 lines', () => {
+      enableCompactContext();
+      // 6 rounds, each with a big tool result so cumulative > 80k
+      // Total: 6 * 55k = 330k chars = 82.5k tokens > 80k
+      const roundToolContent = 'x'.repeat(55_000);
+
+      const msgs: AgentMessage[] = [];
+      for (let r = 1; r <= 6; r++) {
+        msgs.push(...makeRoundMessages(r, roundToolContent));
+      }
+      useConversationStore.setState({ messages: { 'comp-4': msgs } });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-4');
+
+      // Tool results from rounds 1-5: under 80k threshold during build → not compressed
+      // Last round: cumulative passed 80k and rounds > 5 → but content is 1 line (not > 20) → not compressed
+      // So verify the last tool result is also not compressed (single line)
+      const toolMsgs = history.filter((m) => m.role === 'tool');
+      expect(toolMsgs.length).toBe(6);
+      // All tool results are single-line (one long 'x'...) → no truncation
+      for (const tm of toolMsgs) {
+        expect(tm.content).not.toContain('旧Tool Result');
+      }
+    });
+
+    it('truncates multi-line tool result when over 80k and over 5 rounds', () => {
+      enableCompactContext();
+      // 6 rounds, each with multi-line content so cumulative > 80k
+      const multiLines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
+      const multiLineChars = multiLines.length; // ~250 chars
+      // Need total > 320k chars: each round has ~250 chars in tool result + ~50 chars other
+      // 320k / 300 = ~1067 rounds. That's way too many.
+      // Let's make the tool result longer.
+      // Use multi-line with long lines: 30 lines * 200 chars/line = 6000 chars per tool result
+      const longLine = 'x'.repeat(200);
+      const longMultiLines = Array.from({ length: 30 }, (_, i) => `${longLine} ${i}`).join('\n');
+      // ~6000 chars per tool result. Need 320k / 6200 ≈ 52 rounds. Still too many.
+      
+      // Better approach: pad with a long prefix to reach threshold quickly
+      // 3 rounds of pad + 3 rounds of actual content (total 6 rounds below threshold line for earlier ones)
+      // Actually, let me think differently. The cumulative builds up over ALL messages.
+      // I'll use 6 rounds × ~55k chars = 330k chars
+      const padContent = 'x'.repeat(55_000 - 500); // most of this is a single long line
+      const multiLineContent = [
+        padContent + '\n',
+        ...Array.from({ length: 30 }, (_, i) => `result line ${i + 1}`),
+      ].join('\n');
+
+      const msgs: AgentMessage[] = [];
+      for (let r = 1; r <= 6; r++) {
+        msgs.push(...makeRoundMessages(r, multiLineContent));
+      }
+      useConversationStore.setState({ messages: { 'comp-5': msgs } });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-5');
+
+      // Rounds 1-5: cumulative < 80k until round 6
+      // Round 6: cumulative > 80k, rounds = 6 > 5, lines = 31 > 20 → truncated
+      const lastTool = [...history].reverse().find((m) => m.role === 'tool');
+      expect(lastTool!.content).toContain('旧Tool Result，部分内容已清除');
+      expect(lastTool!.content).toContain('result line 1');
+      expect(lastTool!.content).toContain('result line 30');
+    });
+
+    it('replaces tool result completely when cumulative exceeds aggressive threshold', () => {
+      enableCompactContext();
+      // Need > 130k tokens = 520_001+ chars. 6 rounds × 90k = 540k.
+      const roundContent = 'x'.repeat(90_000);
+
+      const msgs: AgentMessage[] = [];
+      for (let r = 1; r <= 6; r++) {
+        msgs.push(...makeRoundMessages(r, roundContent));
+      }
+      useConversationStore.setState({ messages: { 'comp-6': msgs } });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-6');
+
+      // Last tool result: cumulative > 130k (aggressive threshold) → replaced
+      const lastTool = [...history].reverse().find((m) => m.role === 'tool');
+      expect(lastTool!.content).toBe('旧Tool Result，部分内容已清除');
+      // Assistant tool_calls message should still exist
+      const assistants = history.filter((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistants.length).toBe(6);
+    });
+
+    it('consecutive user messages do not increase round count', () => {
+      enableCompactContext();
+      const bigContent = 'x'.repeat(320_000);
+      useConversationStore.setState({
+        messages: {
+          'comp-7': [
+            makeMessage({ id: 'u1', role: 'user', content: 'rounds here' }),
+            makeMessage({ id: 'u2', role: 'user', content: 'still same round' }),
+            makeMessage({ id: 'a1', role: 'assistant', content: 'OK...' }),
+            makeMessage({
+              id: 't1',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'cmd',
+                summary: '',
+                result: bigContent,
+                success: true,
+                blocked: false,
+                toolCallId: 'call-zz',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-7');
+      // Only 1 round (2 consecutive user messages count as 1)
+      // Cumulative > 80k but rounds = 1 ≤ 5 → no compression
+      const toolMsg = history.find((m) => m.role === 'tool');
+      expect(toolMsg!.content).toBe(bigContent);
+    });
+
+    it('never compresses skill tool results regardless of thresholds', () => {
+      enableCompactContext();
+      // Push way past aggressive threshold
+      const content = 'x'.repeat(200_000);
+
+      // 6 rounds to cross everything
+      const msgs: AgentMessage[] = [];
+      for (let r = 1; r <= 6; r++) {
+        msgs.push(
+          makeMessage({ id: `u${r}`, role: 'user', content: `p ${r}` }),
+          makeMessage({ id: `a${r}`, role: 'assistant', content: `OK ${r}` }),
+          makeMessage({
+            id: `ts${r}`,
+            role: 'tool',
+            content: '',
+            toolResult: {
+              toolName: `skill_my_skill`,
+              summary: '',
+              result: content,
+              success: true,
+              blocked: false,
+              toolCallId: `call-sk-${r}`,
+            },
+          }),
+          makeMessage({ id: `a2-${r}`, role: 'assistant', content: `done ${r}` }),
+        );
+      }
+      useConversationStore.setState({ messages: { 'comp-8': msgs } });
+
+      const history = useConversationStore.getState().buildLlmHistory('comp-8');
+      const toolMsgs = history.filter((m) => m.role === 'tool');
+      for (const tm of toolMsgs) {
+        expect(tm.content).toBe(content);
+        expect(tm.content).not.toContain('旧Tool Result');
+      }
     });
   });
 });

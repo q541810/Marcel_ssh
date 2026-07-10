@@ -55,6 +55,7 @@ export function handleToolCallStart(
       result: '',
       success: true,
       blocked: false,
+      toolCallId: ev.id,
     },
   };
 
@@ -268,7 +269,9 @@ export function handleToolResult(
             success: tr.success,
             blocked: tr.blocked,
             wasTimeout: tr.wasTimeout,
+            wasAborted: tr.wasAborted,
             arguments: tr.arguments,
+            toolCallId: tr.toolCallId,
           },
         };
         streamState.pendingToolCalls.delete(tr.toolCallId);
@@ -293,7 +296,9 @@ export function handleToolResult(
         success: tr.success,
         blocked: tr.blocked,
         wasTimeout: tr.wasTimeout,
+        wasAborted: tr.wasAborted,
         arguments: tr.arguments,
+        toolCallId: tr.toolCallId,
       },
     };
 

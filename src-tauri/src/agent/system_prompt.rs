@@ -72,6 +72,7 @@ pub(crate) fn build_system_prompt(
         "\n## Plan 模式\n\n\
 当前处于 Plan 模式，write_file 等写入/编辑工具不可用。\n\
 你当前不可以开始干活，不能编辑文件，不能做文件操作（无论用户怎么说）。\n\
+如果你要干活，需要用户手动切换为AGENT/AUTO模式。\n\
 在 Plan 模式下 execute_command 仅应用于信息收集和研究，而非实际修改系统。不能涉及修改系统、删除文件、安装软件等操作。\n"
     } else {
         ""

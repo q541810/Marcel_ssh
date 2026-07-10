@@ -7,6 +7,16 @@ import type {
 import * as tauri from '@/lib/tauri';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import { useTaskStore } from './taskStore';
+import { useSettingsStore } from './settingsStore';
+import {
+  COMPACT_MAX_CONTEXT_TOKENS,
+  COMPACT_AGGRESSIVE_TOKENS,
+  COMPACT_MIN_ROUNDS,
+  COMPACT_MAX_LINES,
+  COMPACT_HEAD_TAIL_LINES,
+  COMPACT_TRUNCATION_MSG,
+  CHARS_PER_TOKEN,
+} from '@/lib/constants';
 
 export interface ConversationState {
   conversations: Record<string, AgentConversation>;
@@ -29,7 +39,14 @@ export interface ConversationState {
   updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => void;
   clearAllAssistantFlags: () => void;
   clearExecutingToolFlags: () => void;
-  buildLlmHistory: (conversationId: string) => Array<{role: string, content: string, reasoningContent?: string}>;
+  markAbortedToolFlags: () => void;
+  buildLlmHistory: (conversationId: string) => Array<{
+    role: string;
+    content: string;
+    reasoningContent?: string;
+    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+    toolCallId?: string;
+  }>;
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
@@ -302,9 +319,163 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }));
   },
 
+  markAbortedToolFlags: () => {
+    // 用户点停止时调用。把所有正在执行的 tool 卡片标记为「已中断」：
+    // - isExecuting=false, modelApproval 清除
+    // - wasAborted=true
+    // - 流式工具（execute_command，前端通过 toolOutput 事件已累积部分 result）：
+    //   追加「远端命令可能已执行完成或仍在后台运行」提示
+    // - 非流式工具（前端 result 为空）：用「工具可能已执行完成」提示
+    // 与后端 agent_loop 检查点4 的中断文案保持一致，确保 UI 与 LLM 视角同步。
+    // 注意：非流式工具后端有完整 output 但前端不可能收到（listener 已卸载），
+    // 这里只反映用户视角的 UI 状态；LLM 历史由后端持久化保证完整。
+    set((state) => ({
+      messages: Object.fromEntries(
+        Object.entries(state.messages).map(([convId, msgs]) => [
+          convId,
+          msgs.map((m) => {
+            if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
+            const isStreaming = m.toolResult?.toolName === 'execute_command';
+            const STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]';
+            const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
+            const existing = m.toolResult?.result ?? '';
+            // 已有流式输出时追加，否则整体替换为提示
+            const result = isStreaming
+              ? (existing ? existing + STREAMING_SUFFIX : STREAMING_SUFFIX.trimStart())
+              : (existing ? existing + NON_STREAMING_SUFFIX : NON_STREAMING_SUFFIX.trimStart());
+            return {
+              ...m,
+              isExecuting: false,
+              modelApproval: undefined,
+              toolResult: m.toolResult
+                ? { ...m.toolResult, wasAborted: true, success: false, result }
+                : m.toolResult,
+            };
+          }),
+        ]),
+      ),
+    }));
+  },
+
   buildLlmHistory: (conversationId: string) => {
-    return (get().messages[conversationId] || [])
-      .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isLoading)
-      .map((m) => ({ role: m.role, content: m.content, reasoningContent: m.reasoningContent }));
+    const msgs = get().messages[conversationId] || [];
+    const settings = useSettingsStore.getState().settings;
+    const { compactContext } = settings.agentModeSettings;
+
+    const output: ReturnType<ConversationState['buildLlmHistory']> = [];
+    let pendingAssistantIndex: number | null = null;
+    let roundCount = 0;
+    let cumulativeTokens = 0;
+    let prevOutputRole: string | null = null;
+
+    function estimateTokens(text: string): number {
+      return Math.ceil(text.length / CHARS_PER_TOKEN);
+    }
+
+    function compressToolContent(rawContent: string, toolName: string): string {
+      if (!compactContext) return rawContent;
+
+      // Skills are user-supplied content and should never be truncated
+      if (toolName.startsWith('skill_')) return rawContent;
+
+      if (cumulativeTokens > COMPACT_AGGRESSIVE_TOKENS) {
+        return COMPACT_TRUNCATION_MSG;
+      }
+
+      if (cumulativeTokens > COMPACT_MAX_CONTEXT_TOKENS && roundCount > COMPACT_MIN_ROUNDS) {
+        const lines = rawContent.split('\n');
+        if (lines.length > COMPACT_MAX_LINES) {
+          const head = lines.slice(0, COMPACT_HEAD_TAIL_LINES).join('\n');
+          const tail = lines.slice(-COMPACT_HEAD_TAIL_LINES).join('\n');
+          return head + '\n' + COMPACT_TRUNCATION_MSG + '\n' + tail;
+        }
+      }
+
+      return rawContent;
+    }
+
+    for (const m of msgs) {
+      if (m.isLoading) continue;
+
+      if (m.role === 'system') continue;
+
+      if (m.role === 'user') {
+        if (prevOutputRole !== 'user') roundCount++;
+        output.push({ role: 'user', content: m.content });
+        pendingAssistantIndex = null;
+        cumulativeTokens += estimateTokens(m.content);
+        prevOutputRole = 'user';
+        continue;
+      }
+
+      if (m.role === 'assistant') {
+        cumulativeTokens += estimateTokens(m.content);
+        if (m.toolCall) {
+          output.push({
+            role: 'assistant',
+            content: m.content,
+            toolCalls: [{ id: m.toolCall.id, name: m.toolCall.name, arguments: m.toolCall.arguments }],
+          });
+          pendingAssistantIndex = null;
+        } else if (m.reasoningContent) {
+          output.push({ role: 'assistant', content: '', reasoningContent: m.reasoningContent });
+          pendingAssistantIndex = null;
+        } else {
+          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = { role: 'assistant', content: m.content };
+          if (m.reasoningContent) {
+            item.reasoningContent = m.reasoningContent;
+          }
+          output.push(item);
+          pendingAssistantIndex = output.length - 1;
+        }
+        prevOutputRole = 'assistant';
+        continue;
+      }
+
+      if (m.role === 'tool' && m.toolResult && m.toolResult.toolCallId) {
+        const rawToolContent = m.toolResult.result || m.content;
+        cumulativeTokens += estimateTokens(rawToolContent);
+        const toolContent = compressToolContent(rawToolContent, m.toolResult.toolName);
+
+        const preamble =
+          pendingAssistantIndex != null ? output[pendingAssistantIndex].content : '';
+
+        if (pendingAssistantIndex != null) {
+          output[pendingAssistantIndex] = {
+            role: 'assistant',
+            content: preamble,
+            toolCalls: [
+              {
+                id: m.toolResult.toolCallId,
+                name: m.toolResult.toolName,
+                arguments: m.toolResult.arguments || {},
+              },
+            ],
+          };
+        } else {
+          output.push({
+            role: 'assistant',
+            content: '',
+            toolCalls: [
+              {
+                id: m.toolResult.toolCallId,
+                name: m.toolResult.toolName,
+                arguments: m.toolResult.arguments || {},
+              },
+            ],
+          });
+        }
+
+        output.push({
+          role: 'tool',
+          content: toolContent,
+          toolCallId: m.toolResult.toolCallId,
+        });
+        pendingAssistantIndex = null;
+        prevOutputRole = 'tool';
+      }
+    }
+
+    return output;
   },
 }));
