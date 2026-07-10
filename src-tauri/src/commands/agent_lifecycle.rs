@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
+use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
     mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
 };
@@ -160,6 +161,7 @@ fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<Tool
 }
 
 fn build_agent_messages(
+    template_manager: &TemplateManager,
     session_id: &str,
     tools: &[ToolDefinition],
     history: &[LlmMessage],
@@ -167,10 +169,11 @@ fn build_agent_messages(
     agent_system_prompt: &str,
     plugin_sections: &[String],
     plan_mode: bool,
-) -> Vec<LlmMessage> {
+) -> Result<Vec<LlmMessage>, AppError> {
     let has_tool = |name: &str| tools.iter().any(|t| t.name == name);
     let has_skills = tools.iter().any(|t| t.name.starts_with("skill_"));
     let system_prompt = build_system_prompt(
+        template_manager,
         session_id,
         has_skills,
         has_tool("web_search"),
@@ -178,7 +181,7 @@ fn build_agent_messages(
         agent_system_prompt,
         plugin_sections,
         plan_mode,
-    );
+    )?;
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
     messages.push(LlmMessage::system(system_prompt));
     for msg in history {
@@ -193,7 +196,7 @@ fn build_agent_messages(
     {
         messages.push(LlmMessage::user(prompt.to_string()));
     }
-    messages
+    Ok(messages)
 }
 
 fn spawn_agent_task(
@@ -388,7 +391,9 @@ pub async fn agent_start_task(
     )
     .await;
     drop(plugin_registry_guard); // release before agent loop runs (no longer needed)
+    let template_manager = TemplateManager;
     let messages = build_agent_messages(
+        &template_manager,
         &session_id,
         &tools,
         &history,
@@ -396,7 +401,7 @@ pub async fn agent_start_task(
         &agent_settings.system_prompt,
         &plugin_sections,
         matches!(mode, AgentMode::Plan),
-    );
+    )?;
 
     spawn_agent_task(
         &state,

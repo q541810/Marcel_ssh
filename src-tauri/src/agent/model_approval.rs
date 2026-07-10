@@ -22,6 +22,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use crate::agent::templates::TemplateManager;
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
 use crate::llm::provider::{LlmMessage, LlmProvider, LlmRole, ToolDefinition};
@@ -68,28 +69,6 @@ impl ModelApprover {
     }
 }
 
-const APPROVAL_SYSTEM_PROMPT: &str = "\
-你是一个命令执行审批助手。Agent 即将在远程服务器上执行一条 shell 命令，你需要结合上下文判断这条命令是否可以安全放行。
-
-判断原则：
-- 大多数常规命令（查看状态、列目录、读取文件等）应当放行，不要过度紧张。
-- 只在命令存在真实风险时才转人工审批或阻止：不可逆的破坏、越权操作、与用户当前任务明显不符等。
-- 你只能判定，不能改写命令。
-- 沙箱已做过静态风险分析，其结论供你参考：沙箱要求人工审批的命令，你无法放行使其绕过人审，最多维持人审。
-
-输出严格的 JSON，不要添加任何额外文字：
-{\"decision\": \"approve\" 或 \"route_to_human\" 或 \"block\", \"reasons\": [\"问题点1\", \"问题点2\"]}
-- approve：放行，reasons 可为空数组。
-- route_to_human：需要人工审批，reasons 写明需要人审的原因。
-- block：应当阻止，reasons 写明阻止原因。";
-
-const APPROVAL_PLAN_MODE_HINT: &str = "\
-\n当前 Agent 处于 Plan 模式。在此模式下：
-- Agent 只能使用只读类工具（read_file、list_directory、search_files、system_info、execute_command 等），不可写文件、不可编辑系统。
-- execute_command 仅应用于信息收集和研究，而非实际修改系统。
-- 如果 agent 命令涉及修改系统、删除文件、安装软件等操作。无论用户是否同意，直接拒绝。除非这条命令在 Plan 阶段非常必要。
-- Agent 不知道自己在 Plan 模式，你需要替它把关：该模式下不应执行会改变系统状态的命令。";
-
 #[async_trait]
 impl CommandApprover for ModelApprover {
     async fn evaluate(
@@ -106,13 +85,18 @@ impl CommandApprover for ModelApprover {
         );
 
         let system_prompt = if self.custom_prompt.is_empty() {
+            let mgr = TemplateManager;
+            let mut prompt = mgr.render_approval_base();
             if self.plan_mode {
-                format!("{}{}", APPROVAL_SYSTEM_PROMPT, APPROVAL_PLAN_MODE_HINT)
-            } else {
-                APPROVAL_SYSTEM_PROMPT.to_string()
+                prompt.push_str(&mgr.render_approval_plan());
             }
+            prompt
         } else if self.plan_mode {
-            format!("{}\n{}", self.custom_prompt, APPROVAL_PLAN_MODE_HINT)
+            format!(
+                "{}\n{}",
+                self.custom_prompt,
+                TemplateManager.render_approval_plan()
+            )
         } else {
             self.custom_prompt.clone()
         };

@@ -41,6 +41,7 @@ shell-words = "^1.1"
 url = "2"
 dirs = "^5"
 semver = "^1"
+handlebars = "6"
 
 [dev-dependencies]
 tempfile = "^3"

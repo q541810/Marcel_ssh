@@ -8,6 +8,7 @@ pub mod risk;
 pub mod sandbox;
 pub mod system_prompt;
 pub mod task;
+pub mod templates;
 pub mod thinking_filter;
 pub mod tool_dispatcher;
 pub mod tools;
