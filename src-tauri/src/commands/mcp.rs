@@ -74,7 +74,8 @@ pub async fn mcp_toggle_server(state: State<'_, AppState>, id: String) -> Result
         store.toggle(&id)?;
         store.save_to_path(&path)?;
     }
-    state.mcp_manager.clear_cache(&id).await;
+    // enabled 不进 tools cache key；Agent 只注册 store 里 enabled 的 server。
+    // 不清 cache，避免关/开闪空与无意义重刷。
     Ok(())
 }
 

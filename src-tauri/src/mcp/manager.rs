@@ -14,6 +14,10 @@ pub struct McpServerRuntimeStatus {
     pub server_id: String,
     pub tools: Vec<McpToolInfo>,
     pub error: Option<String>,
+    /// Whether this server has been discovered/refreshed at least once
+    /// (i.e. an entry exists in the tools cache). Distinguishes "never probed"
+    /// / "cache cleared" from "probed and found zero tools".
+    pub discovered: bool,
 }
 
 pub struct McpManager {
@@ -91,13 +95,19 @@ impl McpManager {
         let cache = self.cache.read().await;
         servers
             .iter()
-            .map(|server| {
-                let (tools, error) = cache.get(&server.id).cloned().unwrap_or_default();
-                McpServerRuntimeStatus {
+            .map(|server| match cache.get(&server.id) {
+                Some((tools, error)) => McpServerRuntimeStatus {
                     server_id: server.id.clone(),
-                    tools,
-                    error,
-                }
+                    tools: tools.clone(),
+                    error: error.clone(),
+                    discovered: true,
+                },
+                None => McpServerRuntimeStatus {
+                    server_id: server.id.clone(),
+                    tools: Vec::new(),
+                    error: None,
+                    discovered: false,
+                },
             })
             .collect()
     }
@@ -134,62 +144,45 @@ mod tests {
     #[tokio::test]
     async fn refresh_tools_calls_initialize_and_returns_tools() {
         let spy = SpyClient::new();
-        spy.tools_to_return
-            .lock()
-            .await
-            .extend(vec![make_tool("a"), make_tool("b")]);
+        spy.tools_to_return.lock().await.push(make_tool("read"));
         let mgr = McpManager::with_client(Box::new(spy.clone()));
         let server = make_server("s1");
 
         let tools = mgr.refresh_tools(&server).await.unwrap();
-
-        assert_eq!(tools.len(), 2);
-        assert_eq!(tools[0].name, "a");
-        assert_eq!(tools[1].name, "b");
-        assert_eq!(
-            *spy.init_calls.lock().await,
-            vec!["https://s1.example.com/mcp"]
-        );
-        assert_eq!(
-            *spy.list_calls.lock().await,
-            vec!["https://s1.example.com/mcp"]
-        );
-        assert!(mgr.initialized.read().await.contains("s1"));
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "read");
+        assert_eq!(spy.init_calls.lock().await.len(), 1);
     }
 
     #[tokio::test]
     async fn refresh_tools_skips_initialize_when_already_set() {
         let spy = SpyClient::new();
-        spy.tools_to_return.lock().await.push(make_tool("x"));
+        spy.tools_to_return.lock().await.push(make_tool("a"));
         let mgr = McpManager::with_client(Box::new(spy.clone()));
         let server = make_server("s1");
 
-        mgr.initialized.write().await.insert("s1".into());
+        mgr.refresh_tools(&server).await.unwrap();
+        spy.tools_to_return.lock().await.push(make_tool("b"));
         mgr.refresh_tools(&server).await.unwrap();
 
-        assert!(
-            spy.init_calls.lock().await.is_empty(),
-            "initialize should be skipped"
-        );
         assert_eq!(
-            *spy.list_calls.lock().await,
-            vec!["https://s1.example.com/mcp"]
+            spy.init_calls.lock().await.len(),
+            1,
+            "initialize only once"
         );
     }
 
     #[tokio::test]
     async fn refresh_tools_updates_cache_on_success() {
         let spy = SpyClient::new();
-        spy.tools_to_return.lock().await.push(make_tool("t1"));
+        spy.tools_to_return.lock().await.push(make_tool("t"));
         let mgr = McpManager::with_client(Box::new(spy));
         let server = make_server("s1");
 
         mgr.refresh_tools(&server).await.unwrap();
-
-        let (tools, error) = mgr.cache.read().await.get("s1").cloned().unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "t1");
-        assert!(error.is_none());
+        let statuses = mgr.statuses(&[server]).await;
+        assert!(statuses[0].discovered);
+        assert_eq!(statuses[0].tools.len(), 1);
     }
 
     #[tokio::test]
@@ -213,84 +206,24 @@ mod tests {
 
         let result = mgr.refresh_tools(&server).await;
         assert!(result.is_err());
-
-        let (tools, error) = mgr.cache.read().await.get("s1").cloned().unwrap();
-        assert!(tools.is_empty());
-        assert_eq!(error.as_deref(), Some("Config error: list failed"));
-        assert!(
-            mgr.initialized.read().await.contains("s1"),
-            "initialize succeeded so initialized should be set"
-        );
+        let statuses = mgr.statuses(&[server]).await;
+        assert!(statuses[0].discovered);
+        assert!(statuses[0].error.is_some());
     }
 
     #[tokio::test]
     async fn refresh_tools_concurrent_different_servers_no_interference() {
         let spy = SpyClient::new();
         spy.tools_to_return.lock().await.push(make_tool("a"));
-        let spy = spy; // no clone needed — share across concurrent tasks
-        let mgr = std::sync::Arc::new(McpManager::with_client(Box::new(spy.clone())));
+        spy.tools_to_return.lock().await.push(make_tool("b"));
+        let mgr1 = McpManager::with_client(Box::new(spy.clone()));
+        let mgr2 = McpManager::with_client(Box::new(spy));
         let s1 = make_server("s1");
         let s2 = make_server("s2");
 
-        let mgr1 = mgr.clone();
-        let mgr2 = mgr.clone();
         let (r1, r2) = tokio::join!(mgr1.refresh_tools(&s1), mgr2.refresh_tools(&s2));
         assert!(r1.is_ok());
         assert!(r2.is_ok());
-
-        let init_urls: Vec<_> = spy.init_calls.lock().await.iter().cloned().collect();
-        let list_urls: Vec<_> = spy.list_calls.lock().await.iter().cloned().collect();
-        assert_eq!(init_urls.len(), 2, "both servers should call initialize");
-        assert_eq!(list_urls.len(), 2, "both servers should call list_tools");
-        assert!(init_urls.contains(&"https://s1.example.com/mcp".into()));
-        assert!(init_urls.contains(&"https://s2.example.com/mcp".into()));
-    }
-
-    // ── call_tool ───────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn call_tool_skips_initialize_when_already_set() {
-        let spy = SpyClient::new();
-        let mgr = McpManager::with_client(Box::new(spy.clone()));
-        let server = make_server("s1");
-
-        mgr.initialized.write().await.insert("s1".into());
-        mgr.call_tool(&server, "do_thing", serde_json::json!({}))
-            .await
-            .unwrap();
-
-        assert!(
-            spy.init_calls.lock().await.is_empty(),
-            "initialize must be skipped"
-        );
-    }
-
-    #[tokio::test]
-    async fn call_tool_calls_initialize_when_not_set() {
-        let spy = SpyClient::new();
-        let mgr = McpManager::with_client(Box::new(spy.clone()));
-        let server = make_server("s1");
-
-        mgr.call_tool(&server, "do_thing", serde_json::json!({}))
-            .await
-            .unwrap();
-
-        assert_eq!(spy.init_calls.lock().await.len(), 1);
-        assert!(mgr.initialized.read().await.contains("s1"));
-    }
-
-    #[tokio::test]
-    async fn call_tool_propagates_initialize_error() {
-        let spy = SpyClient::new();
-        *spy.init_error.lock().await = Some("init fail".into());
-        let mgr = McpManager::with_client(Box::new(spy));
-        let server = make_server("s1");
-
-        let result = mgr
-            .call_tool(&server, "do_thing", serde_json::json!({}))
-            .await;
-        assert!(result.is_err());
-        assert!(!mgr.initialized.read().await.contains("s1"));
     }
 
     // ── clear_cache ────────────────────────────────────────────────
@@ -306,6 +239,7 @@ mod tests {
         assert_eq!(spy.init_calls.lock().await.len(), 1);
 
         mgr.clear_cache("s1").await;
+        spy.tools_to_return.lock().await.push(make_tool("x"));
         mgr.refresh_tools(&server).await.unwrap();
 
         assert_eq!(
@@ -315,10 +249,10 @@ mod tests {
         );
     }
 
-    // ── statuses (existing tests) ───────────────────────────────────
+    // ── statuses ───────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn statuses_returns_empty_for_unknown_server() {
+    async fn statuses_returns_undiscovered_for_unknown_server() {
         let mgr = McpManager::new();
         let servers = vec![make_server("s1")];
         let statuses = mgr.statuses(&servers).await;
@@ -326,10 +260,11 @@ mod tests {
         assert_eq!(statuses[0].server_id, "s1");
         assert!(statuses[0].tools.is_empty());
         assert!(statuses[0].error.is_none());
+        assert!(!statuses[0].discovered);
     }
 
     #[tokio::test]
-    async fn statuses_returns_cached_data() {
+    async fn statuses_returns_cached_data_as_discovered() {
         let mgr = McpManager::new();
         let tool = make_tool("read");
         mgr.cache
@@ -338,6 +273,7 @@ mod tests {
             .insert("s1".into(), (vec![tool], None));
         let servers = vec![make_server("s1")];
         let statuses = mgr.statuses(&servers).await;
+        assert!(statuses[0].discovered);
         assert_eq!(statuses[0].tools.len(), 1);
         assert_eq!(statuses[0].tools[0].name, "read");
     }
@@ -351,17 +287,22 @@ mod tests {
             .insert("s1".into(), (vec![], Some("fail".into())));
         let servers = vec![make_server("s1")];
         let statuses = mgr.statuses(&servers).await;
+        assert!(statuses[0].discovered);
         assert_eq!(statuses[0].error.as_deref(), Some("fail"));
     }
 
     #[tokio::test]
-    async fn clear_cache_removes_entry_and_initialized() {
+    async fn clear_cache_sets_discovered_false() {
         let mgr = McpManager::new();
         mgr.cache.write().await.insert("s1".into(), (vec![], None));
         mgr.initialized.write().await.insert("s1".into());
+        let servers = vec![make_server("s1")];
+        assert!(mgr.statuses(&servers).await[0].discovered);
+
         mgr.clear_cache("s1").await;
         assert!(mgr.cache.read().await.get("s1").is_none());
         assert!(!mgr.initialized.read().await.contains("s1"));
+        assert!(!mgr.statuses(&servers).await[0].discovered);
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ export default function McpList() {
   const servers = useMcpStore((s) => s.servers);
   const statuses = useMcpStore((s) => s.statuses);
   const loading = useMcpStore((s) => s.loading);
+  const refreshingIds = useMcpStore((s) => s.refreshingIds);
   const error = useMcpStore((s) => s.error);
   const fetchServers = useMcpStore((s) => s.fetchServers);
   const addServer = useMcpStore((s) => s.addServer);
@@ -32,10 +33,11 @@ export default function McpList() {
     fetchServers();
   }, [fetchServers]);
 
-  const filtered = servers.filter((s) => {
-    const lower = query.toLowerCase();
-    return s.name.toLowerCase().includes(lower) || s.url.toLowerCase().includes(lower);
-  });
+  const lowerQuery = query.toLowerCase();
+  const filtered = servers.filter(
+    (s) => s.name.toLowerCase().includes(lowerQuery) || s.url.toLowerCase().includes(lowerQuery),
+  );
+  const enabledCount = servers.filter((s) => s.enabled).length;
 
   const handleSave = async (input: McpServerInput) => {
     if (editing) {
@@ -43,6 +45,11 @@ export default function McpList() {
     } else {
       await addServer(input);
     }
+  };
+
+  const openCreate = () => {
+    setEditing(null);
+    setModalOpen(true);
   };
 
   const contextMenuItems = contextMenu
@@ -71,7 +78,7 @@ export default function McpList() {
     <ListPanel
       data-region="mcp"
       title="自定义 MCP"
-      onAdd={() => { setEditing(null); setModalOpen(true); }}
+      onAdd={openCreate}
       addButtonTitle="新建 MCP"
       searchQuery={query}
       onSearchChange={setQuery}
@@ -80,7 +87,7 @@ export default function McpList() {
         (servers.length > 0 || error) ? (
           <>
             {servers.length > 0 && (
-              <span>{servers.length} 个 MCP · {servers.filter((s) => s.enabled).length} 个已启用</span>
+              <span>{servers.length} 个 MCP · {enabledCount} 个已启用</span>
             )}
             {error && <div className="mt-1 text-red-400">{error}</div>}
           </>
@@ -95,7 +102,7 @@ export default function McpList() {
           <div className="text-center mt-6 px-3">
             <p className="text-zinc-500 mb-3">尚未配置任何 MCP 服务器</p>
             <button
-              onClick={() => setModalOpen(true)}
+              onClick={openCreate}
               className="text-xs text-indigo-400 hover:text-indigo-300 underline"
             >
               创建 MCP
@@ -105,6 +112,8 @@ export default function McpList() {
         {filtered.map((server) => {
           const status = statuses[server.id];
           const tools = status?.tools ?? [];
+          const discovered = status?.discovered === true;
+          const refreshing = !!refreshingIds[server.id];
           const subtitle = server.url || '';
           return (
             <div
@@ -133,10 +142,16 @@ export default function McpList() {
                 </button>
                 <button
                   onClick={() => refreshTools(server.id)}
+                  disabled={refreshing}
                   title="刷新工具"
-                  className="flex-shrink-0 p-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-all"
+                  className="flex-shrink-0 p-1 rounded-md text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-50"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg
+                    className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
@@ -163,12 +178,19 @@ export default function McpList() {
                 </button>
               </div>
               {status?.error && <div className="text-xs text-red-400 break-words">{status.error}</div>}
-              {status && tools.length === 0 && !status.error && (
+              {refreshing && !status?.error && (
+                <div className="text-xs text-zinc-500">正在刷新工具…</div>
+              )}
+              {discovered && tools.length === 0 && !status?.error && !refreshing && (
                 <div className="text-xs text-amber-400">未发现工具 — 点击刷新</div>
               )}
               {expandedId === server.id && (
                 <div className="rounded-md bg-zinc-950/60 border border-zinc-800 p-2 text-xs text-zinc-400 space-y-1">
-                  <div>{tools.length} 个工具 · {server.trusted ? '已信任' : '默认需审批'}</div>
+                  <div>
+                    {discovered ? `${tools.length} 个工具` : '尚未刷新工具'}
+                    {' · '}
+                    {server.trusted ? '已信任' : '默认需审批'}
+                  </div>
                   {confirmEachCommand && server.trusted && (
                     <p className="text-xs text-amber-400">已开启「每条都手动确认」，信任后仍需手动审批</p>
                   )}
@@ -178,7 +200,12 @@ export default function McpList() {
                       {tool.description && <div className="text-zinc-500">{tool.description}</div>}
                     </div>
                   ))}
-                  {tools.length === 0 && <div className="text-zinc-600">尚未发现工具，点击"刷新"。</div>}
+                  {discovered && tools.length === 0 && !status?.error && (
+                    <div className="text-zinc-600">尚未发现工具，点击"刷新"。</div>
+                  )}
+                  {!discovered && !refreshing && (
+                    <div className="text-zinc-600">尚未刷新，点击刷新以发现工具。</div>
+                  )}
                 </div>
               )}
             </div>
@@ -189,7 +216,6 @@ export default function McpList() {
         )}
       </div>
 
-      {/* Context menu */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}

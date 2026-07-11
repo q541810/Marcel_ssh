@@ -250,6 +250,8 @@ export interface McpServerRuntimeStatus {
   serverId: string;
   tools: McpTool[];
   error?: string | null;
+  /** True when tools have been probed at least once (cache entry exists). */
+  discovered: boolean;
 }
 
 export interface McpServerListResponse {
@@ -286,6 +288,8 @@ export interface AgentMessage {
   content: string;
   timestamp: string;
   toolCall?: ToolCallInfo;
+  /** 本轮 assistant 的完整并行 tool_calls（reload / 重建 LLM history 用） */
+  toolCalls?: ToolCallInfo[];
   /** Populated for role==='tool' messages created from ToolResultPayload */
   toolResult?: {
     toolName: string;
@@ -609,6 +613,15 @@ export interface AgentTaskPlan {
   nextItemSeq?: number;
   /** 反思提醒是否已触发（后端持久化字段，前端可选） */
   reflectionReminded?: boolean;
+}
+
+/** 撤回消息后后端返回：消息截断 + 可选 plan 调整 */
+export interface TruncateConversationResult {
+  deletedMessages: number;
+  /** true：已按快照恢复或清空；false：旧数据无快照，plan 未动 */
+  planAdjusted: boolean;
+  plan: AgentTaskPlan | null;
+  planTaskId: string | null;
 }
 
 export type PlanStreamEvent =
