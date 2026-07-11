@@ -51,7 +51,6 @@ export default function AgentPanel() {
     switchConversation,
     deleteConversation,
     rollbackToMessage,
-    sessionTokenUsage,
     taskTokenUsage,
   } = useAgent();
 
@@ -278,12 +277,6 @@ export default function AgentPanel() {
                   </div>
                   <div className="px-3 py-0.5 text-xs text-zinc-400 space-y-0.5">
                     <div className="flex justify-between">
-                      <span>会话总计</span>
-                      <span className="text-zinc-200 tabular-nums">
-                        {sessionTokenUsage ? sessionTokenUsage.totalTokens.toLocaleString() : '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
                       <span>本次输入</span>
                       <span className="text-zinc-200 tabular-nums">
                         {taskTokenUsage ? taskTokenUsage.promptTokens.toLocaleString() : '—'}
@@ -304,12 +297,35 @@ export default function AgentPanel() {
                       </div>
                     )}
                     {taskTokenUsage?.cachedReadTokens != null && (
-                      <div className="flex justify-between">
-                        <span>缓存读取</span>
-                        <span className="text-zinc-200 tabular-nums">
-                          {taskTokenUsage.cachedReadTokens.toLocaleString()}
-                        </span>
-                      </div>
+                      <>
+                        <div className="flex justify-between">
+                          <span>缓存读取</span>
+                          <span className="text-zinc-200 tabular-nums">
+                            {taskTokenUsage.cachedReadTokens.toLocaleString()}
+                          </span>
+                        </div>
+                        {taskTokenUsage.promptTokens > 0 && (() => {
+                          const rate = taskTokenUsage.cachedReadTokens / taskTokenUsage.promptTokens * 100;
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex justify-between">
+                                <span>缓存命中率</span>
+                                <span className="text-zinc-200 tabular-nums">
+                                  {Math.round(rate)}%
+                                </span>
+                              </div>
+                              {rate > 0 && (
+                                <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-indigo-500 rounded-full transition-all"
+                                    style={{ width: `${Math.min(rate, 100)}%` }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </>
                     )}
                   </div>
                   <div className="px-3 pt-1.5 mt-1 border-t border-zinc-700">
