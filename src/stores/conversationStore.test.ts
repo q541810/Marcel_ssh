@@ -3,21 +3,29 @@ import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentMessage } from '@/lib/types';
 
-const { agentListConversationsByConnection, agentLoadConversation, agentTruncateConversation } = vi.hoisted(() => ({
+const {
+  agentListConversationsByConnection,
+  agentLoadConversation,
+  agentTruncateConversation,
+  agentLoadPlansByConversation,
+} = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
   agentTruncateConversation: vi.fn(),
+  agentLoadPlansByConversation: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
   agentListConversationsByConnection,
   agentLoadConversation,
   agentTruncateConversation,
+  agentLoadPlansByConversation,
 }));
 
 describe('conversationStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    agentLoadPlansByConversation.mockResolvedValue([]);
     useConversationStore.setState({
       conversations: {},
       messages: {},
@@ -154,7 +162,12 @@ describe('conversationStore', () => {
   });
 
   it('rolls back a user message and deletes it plus later messages', async () => {
-    agentTruncateConversation.mockResolvedValue(3);
+    agentTruncateConversation.mockResolvedValue({
+      deletedMessages: 3,
+      planAdjusted: false,
+      plan: null,
+      planTaskId: null,
+    });
     useConversationStore.setState({
       activeConversationId: 'conv-1',
       messages: {
@@ -433,7 +446,7 @@ describe('conversationStore', () => {
       const history = useConversationStore.getState().buildLlmHistory('conv-1');
       expect(history).toEqual([
         { role: 'user', content: 'hello' },
-        { role: 'assistant', content: '', reasoningContent: 'thought' },
+        { role: 'assistant', content: 'hi there', reasoningContent: 'thought' },
         { role: 'user', content: 'what is 2+2?' },
         { role: 'assistant', content: '4' },
       ]);
@@ -630,6 +643,136 @@ describe('conversationStore', () => {
         { role: 'tool', content: 'content of a.txt', toolCallId: 'call-b' },
         { role: 'assistant', content: 'All done!' },
       ]);
+    });
+
+    it('并行 tool 保留在同一条 assistant（live UI：文案 assistant + 连续 tool）', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-parallel': [
+            makeMessage({ id: 'm1', role: 'user', content: 'check both' }),
+            makeMessage({ id: 'm2', role: 'assistant', content: 'Checking...' }),
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '$ ls',
+                result: 'a.txt',
+                success: true,
+                blocked: false,
+                arguments: { command: 'ls' },
+                toolCallId: 'call-a',
+              },
+            }),
+            makeMessage({
+              id: 'm4',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'read_file',
+                summary: 'done',
+                result: 'file body',
+                success: true,
+                blocked: false,
+                arguments: { path: 'a.txt' },
+                toolCallId: 'call-b',
+              },
+            }),
+            makeMessage({ id: 'm5', role: 'assistant', content: 'Done.' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-parallel');
+      expect(history).toEqual([
+        { role: 'user', content: 'check both' },
+        {
+          role: 'assistant',
+          content: 'Checking...',
+          toolCalls: [
+            { id: 'call-a', name: 'execute_command', arguments: { command: 'ls' } },
+            { id: 'call-b', name: 'read_file', arguments: { path: 'a.txt' } },
+          ],
+        },
+        { role: 'tool', content: 'a.txt', toolCallId: 'call-a' },
+        { role: 'tool', content: 'file body', toolCallId: 'call-b' },
+        { role: 'assistant', content: 'Done.' },
+      ]);
+    });
+
+    it('reload 后使用 assistant.toolCalls，不把并行 tool 拆成多条 assistant', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-reload': [
+            makeMessage({ id: 'm1', role: 'user', content: 'go' }),
+            makeMessage({
+              id: 'm2',
+              role: 'assistant',
+              content: 'Running...',
+              toolCalls: [
+                {
+                  id: 'call-a',
+                  name: 'execute_command',
+                  arguments: { command: 'ls' },
+                  riskLevel: 'LowRisk',
+                },
+                {
+                  id: 'call-b',
+                  name: 'system_info',
+                  arguments: { category: 'os' },
+                  riskLevel: 'ReadOnly',
+                },
+              ],
+            }),
+            makeMessage({
+              id: 'm3',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'execute_command',
+                summary: '$ ls',
+                result: 'ok',
+                success: true,
+                blocked: false,
+                arguments: { command: 'ls' },
+                toolCallId: 'call-a',
+              },
+            }),
+            makeMessage({
+              id: 'm4',
+              role: 'tool',
+              content: '',
+              toolResult: {
+                toolName: 'system_info',
+                summary: 'system_info os',
+                result: 'Linux',
+                success: true,
+                blocked: false,
+                arguments: { category: 'os' },
+                toolCallId: 'call-b',
+              },
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-reload');
+      expect(history).toEqual([
+        { role: 'user', content: 'go' },
+        {
+          role: 'assistant',
+          content: 'Running...',
+          toolCalls: [
+            { id: 'call-a', name: 'execute_command', arguments: { command: 'ls' } },
+            { id: 'call-b', name: 'system_info', arguments: { category: 'os' } },
+          ],
+        },
+        { role: 'tool', content: 'ok', toolCallId: 'call-a' },
+        { role: 'tool', content: 'Linux', toolCallId: 'call-b' },
+      ]);
+      // 两个 tool 之间不得再合成一条空 content 的 assistant
+      expect(history.filter((m) => m.role === 'assistant')).toHaveLength(1);
     });
 
     it('uses toolResult.arguments for toolCalls, falling back to empty object', () => {

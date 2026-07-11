@@ -153,7 +153,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
 
     const removedCount = msgs.length - index;
-    await tauri.agentTruncateConversation(conversationId, target.timestamp);
+    const truncateResult = await tauri.agentTruncateConversation(
+      conversationId,
+      target.timestamp,
+    );
 
     set((state) => ({
       messages: {
@@ -162,7 +165,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
     }));
 
-    return { prompt: target.content, removedCount };
+    // 仅当后端按快照调整过 plan 时同步 UI；旧数据无快照则不动 plan
+    if (truncateResult.planAdjusted) {
+      useTaskStore.getState().applyPlanAfterTruncate(
+        conversationId,
+        truncateResult.plan ?? null,
+        truncateResult.planTaskId ?? null,
+      );
+    }
+
+    return {
+      prompt: target.content,
+      removedCount: truncateResult.deletedMessages || removedCount,
+    };
   },
 
   clearConnectionConversations: (connectionId: string) => {
@@ -364,6 +379,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const output: ReturnType<ConversationState['buildLlmHistory']> = [];
     let pendingAssistantIndex: number | null = null;
+    /** 为 true 时，后续连续 tool 消息追加到同一条 assistant 的 toolCalls */
+    let openToolGroup = false;
     let roundCount = 0;
     let cumulativeTokens = 0;
     let prevOutputRole: string | null = null;
@@ -375,7 +392,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     function compressToolContent(rawContent: string, toolName: string): string {
       if (!compactContext) return rawContent;
 
-      // Skills are user-supplied content and should never be truncated
+      // skill 是用户自定义内容，压缩时绝不裁剪
       if (toolName.startsWith('skill_')) return rawContent;
 
       if (cumulativeTokens > COMPACT_AGGRESSIVE_TOKENS) {
@@ -403,6 +420,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         if (prevOutputRole !== 'user') roundCount++;
         output.push({ role: 'user', content: m.content });
         pendingAssistantIndex = null;
+        openToolGroup = false;
         cumulativeTokens += estimateTokens(m.content);
         prevOutputRole = 'user';
         continue;
@@ -410,23 +428,37 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
       if (m.role === 'assistant') {
         cumulativeTokens += estimateTokens(m.content);
-        if (m.toolCall) {
+        const fullCalls =
+          m.toolCalls && m.toolCalls.length > 0
+            ? m.toolCalls
+            : m.toolCall
+              ? [m.toolCall]
+              : null;
+
+        if (fullCalls) {
           output.push({
             role: 'assistant',
             content: m.content,
-            toolCalls: [{ id: m.toolCall.id, name: m.toolCall.name, arguments: m.toolCall.arguments }],
+            toolCalls: fullCalls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments || {},
+            })),
           });
+          // assistant 已带完整 tool_calls，后续 tool 只负责 result
           pendingAssistantIndex = null;
-        } else if (m.reasoningContent) {
-          output.push({ role: 'assistant', content: '', reasoningContent: m.reasoningContent });
-          pendingAssistantIndex = null;
+          openToolGroup = true;
         } else {
-          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = { role: 'assistant', content: m.content };
+          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
+            role: 'assistant',
+            content: m.content,
+          };
           if (m.reasoningContent) {
             item.reasoningContent = m.reasoningContent;
           }
           output.push(item);
           pendingAssistantIndex = output.length - 1;
+          openToolGroup = false;
         }
         prevOutputRole = 'assistant';
         continue;
@@ -436,34 +468,43 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const rawToolContent = m.toolResult.result || m.content;
         cumulativeTokens += estimateTokens(rawToolContent);
         const toolContent = compressToolContent(rawToolContent, m.toolResult.toolName);
-
-        const preamble =
-          pendingAssistantIndex != null ? output[pendingAssistantIndex].content : '';
+        const callEntry = {
+          id: m.toolResult.toolCallId,
+          name: m.toolResult.toolName,
+          arguments: m.toolResult.arguments || {},
+        };
 
         if (pendingAssistantIndex != null) {
+          // 纯文案 assistant 后的第一个 tool：把 toolCalls 挂上去
+          const preamble = output[pendingAssistantIndex].content;
           output[pendingAssistantIndex] = {
             role: 'assistant',
             content: preamble,
-            toolCalls: [
-              {
-                id: m.toolResult.toolCallId,
-                name: m.toolResult.toolName,
-                arguments: m.toolResult.arguments || {},
-              },
-            ],
+            toolCalls: [callEntry],
           };
+          pendingAssistantIndex = null;
+          openToolGroup = true;
+        } else if (openToolGroup) {
+          // 并行/连续 tool：追加到最近一条带 toolCalls 的 assistant
+          for (let i = output.length - 1; i >= 0; i--) {
+            const prev = output[i];
+            if (prev.role === 'assistant' && prev.toolCalls) {
+              const exists = prev.toolCalls.some((tc) => tc.id === callEntry.id);
+              if (!exists) {
+                prev.toolCalls = [...prev.toolCalls, callEntry];
+              }
+              break;
+            }
+            if (prev.role === 'user') break;
+          }
         } else {
+          // 孤立 tool（UI store 里没有前导 assistant）：合成一条单 call 的 assistant
           output.push({
             role: 'assistant',
             content: '',
-            toolCalls: [
-              {
-                id: m.toolResult.toolCallId,
-                name: m.toolResult.toolName,
-                arguments: m.toolResult.arguments || {},
-              },
-            ],
+            toolCalls: [callEntry],
           });
+          openToolGroup = true;
         }
 
         output.push({
@@ -471,8 +512,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           content: toolContent,
           toolCallId: m.toolResult.toolCallId,
         });
-        pendingAssistantIndex = null;
         prevOutputRole = 'tool';
+      } else {
+        openToolGroup = false;
       }
     }
 

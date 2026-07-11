@@ -6,6 +6,10 @@ use crate::agent::task::{AgentTaskPlan, PlanItem, PlanItemStatus};
 use crate::emit_event;
 use crate::AppState;
 
+/// 每轮 agent loop 注入的「当前计划状态」system 消息前缀。
+/// 构建与清理共用同一前缀，避免多轮累积污染 history。
+pub(crate) const PLAN_CONTEXT_PREFIX: &str = "当前计划:";
+
 /// 把 plan 序列化存盘。在 create/update/edit 改完内存 plan 后调用。
 /// 失败只记日志，不影响主流程（plan 持久化是 best-effort）。
 fn persist_plan(state: &AppState, task_id: &str, plan: &AgentTaskPlan) {
@@ -25,6 +29,19 @@ fn persist_plan(state: &AppState, task_id: &str, plan: &AgentTaskPlan) {
                 .save_plan(task_id, &conversation_id, &plan_json)
             {
                 log::warn!("persist_plan: save_plan failed for task {}: {}", task_id, e);
+                return;
+            }
+            // 成功落盘后写时间点快照，供撤回消息时恢复 plan
+            if let Err(e) = state.conversation_db.insert_plan_snapshot(
+                &conversation_id,
+                task_id,
+                &plan_json,
+            ) {
+                log::warn!(
+                    "persist_plan: insert_plan_snapshot failed for task {}: {}",
+                    task_id,
+                    e
+                );
             }
         }
         Err(e) => {
@@ -169,8 +186,10 @@ pub(crate) fn emit_final_plan_normalized(
     emit_plan_event(app, task_id, &event);
 }
 
-/// Build a plan context string for injection into the LLM conversation.
-/// Returns `None` if no plan exists or the plan is fully completed.
+/// 构建注入 LLM 对话的 plan 上下文文本。
+/// 无 plan 或全部步骤已终态时返回 `None`。
+///
+/// 以临时 **system** 消息注入（不是 user），避免模型把计划状态当成用户新发言。
 pub(crate) fn build_plan_context(state: &AppState, task_id: &str) -> Option<String> {
     let plans = state.plans.read();
     let plan = plans.get(task_id)?;
@@ -196,7 +215,7 @@ pub(crate) fn build_plan_context(state: &AppState, task_id: &str) -> Option<Stri
     };
 
     let mut lines = Vec::with_capacity(plan.items.len() + 2);
-    lines.push("当前计划:".to_string());
+    lines.push(PLAN_CONTEXT_PREFIX.to_string());
     for item in plan.items.iter() {
         let symbol = status_symbol(&item.status);
         // 用 item.id 作为编号，与用户在 PlanList UI 看到的编号一致。

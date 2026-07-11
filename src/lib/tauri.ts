@@ -23,6 +23,7 @@ import type {
   PluginHttpRequest,
   PluginHttpResponse,
   ReloadDiff,
+  TruncateConversationResult,
 } from './types';
 
 // SSH commands
@@ -143,8 +144,11 @@ export async function agentDeleteConversation(conversationId: string): Promise<v
 export async function agentTruncateConversation(
   conversationId: string,
   fromTimestamp: string,
-): Promise<number> {
-  return invoke<number>('agent_truncate_conversation', { conversationId, fromTimestamp });
+): Promise<TruncateConversationResult> {
+  return invoke<TruncateConversationResult>('agent_truncate_conversation', {
+    conversationId,
+    fromTimestamp,
+  });
 }
 
 export async function agentDeleteConversationsBySession(sessionId: string): Promise<void> {

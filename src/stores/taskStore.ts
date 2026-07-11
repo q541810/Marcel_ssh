@@ -24,7 +24,6 @@ export interface TaskState {
   pendingQuestion: QuestionRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
-  sessionTokenUsage: TokenUsage | null;
   taskTokenUsage: TokenUsage | null;
 
   startTask: (sessionId: string, prompt: string, connectionId?: string) => Promise<string>;
@@ -41,6 +40,12 @@ export interface TaskState {
   getActivePlan: () => AgentTaskPlan | null;
   loadPersistedPlans: (conversationId: string, storedPlans: { taskId: string; plan: AgentTaskPlan; updatedAt: string }[]) => void;
   clearPlansByConversation: (conversationId: string) => void;
+  /** 撤回消息后应用后端返回的 plan（null = 清空该对话 plan） */
+  applyPlanAfterTruncate: (
+    conversationId: string,
+    plan: AgentTaskPlan | null,
+    planTaskId: string | null,
+  ) => void;
   accumulateTokenUsage: (usage: TokenUsage) => void;
 
   clearActiveTask: () => void;
@@ -58,7 +63,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   pendingQuestion: null,
   plans: {},
   plansDirty: false,
-  sessionTokenUsage: null,
   taskTokenUsage: null,
 
   startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
@@ -261,6 +265,40 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
   },
 
+  applyPlanAfterTruncate: (conversationId, plan, planTaskId) => {
+    set((state) => {
+      const newPlans = { ...state.plans };
+      const newTasks = { ...state.tasks };
+      for (const [tid, t] of Object.entries(newTasks)) {
+        if (t.conversationId === conversationId) {
+          delete newTasks[tid];
+          delete newPlans[tid];
+        }
+      }
+      if (plan && planTaskId) {
+        const restored = { ...plan, taskId: planTaskId };
+        newPlans[planTaskId] = restored;
+        if (!newTasks[planTaskId]) {
+          newTasks[planTaskId] = {
+            id: planTaskId,
+            sessionId: '',
+            conversationId,
+            prompt: '',
+            mode: 'agent',
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+          };
+        } else {
+          newTasks[planTaskId] = {
+            ...newTasks[planTaskId],
+            conversationId,
+          };
+        }
+      }
+      return { plans: newPlans, tasks: newTasks, plansDirty: !state.plansDirty };
+    });
+  },
+
   accumulateTokenUsage: (usage: TokenUsage) => {
     set((state) => {
       const taskUsage = state.taskTokenUsage
@@ -278,22 +316,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 : undefined,
           }
         : { ...usage };
-      const sessionUsage = state.sessionTokenUsage
-        ? {
-            promptTokens: state.sessionTokenUsage.promptTokens + usage.promptTokens,
-            completionTokens: state.sessionTokenUsage.completionTokens + usage.completionTokens,
-            totalTokens: state.sessionTokenUsage.totalTokens + usage.totalTokens,
-            reasoningTokens:
-              state.sessionTokenUsage.reasoningTokens !== undefined || usage.reasoningTokens !== undefined
-                ? (state.sessionTokenUsage.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0)
-                : undefined,
-            cachedReadTokens:
-              state.sessionTokenUsage.cachedReadTokens !== undefined || usage.cachedReadTokens !== undefined
-                ? (state.sessionTokenUsage.cachedReadTokens ?? 0) + (usage.cachedReadTokens ?? 0)
-                : undefined,
-          }
-        : { ...usage };
-      return { taskTokenUsage: taskUsage, sessionTokenUsage: sessionUsage };
+      return { taskTokenUsage: taskUsage };
     });
   },
 

@@ -15,6 +15,19 @@ pub struct StoredPlan {
     pub updated_at: String,
 }
 
+/// 截断会话消息后的结果：消息删除数 + 可选的 plan 调整。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TruncateConversationResult {
+    pub deleted_messages: usize,
+    /// true：已按快照恢复或清空 plan；false：无可用快照（旧数据），plan 未改动
+    pub plan_adjusted: bool,
+    /// 恢复后的 plan；仅当 plan_adjusted 且非清空时有值
+    pub plan: Option<AgentTaskPlan>,
+    /// 与 plan.task_id 一致；清空或未调整时为 null
+    pub plan_task_id: Option<String>,
+}
+
 /// Create a new AI conversation for the given SSH session.
 #[tauri::command]
 pub async fn agent_create_conversation(
@@ -87,24 +100,157 @@ pub async fn agent_delete_conversation(
     Ok(())
 }
 
-/// Delete a message and all messages after it from a conversation.
+/// Delete a message and all messages after it from a conversation,
+/// and restore plan from the last snapshot before `from_timestamp` when possible.
+///
+/// Plan 策略：
+/// - 有 `created_at < from_timestamp` 的快照 → 恢复到该快照
+/// - 无此前快照，但对话里已有任意快照（plan 全是截断点之后产生的）→ 清空 plan
+/// - 完全无快照（升级前旧数据）→ **不改动 plan**
 #[tauri::command]
 pub async fn agent_truncate_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
     from_timestamp: String,
-) -> Result<usize, AppError> {
+) -> Result<TruncateConversationResult, AppError> {
     let deleted = state
         .conversation_db
         .delete_messages_from_timestamp(&conversation_id, &from_timestamp)
         .map_err(|e| AppError::Agent(format!("Failed to truncate conversation: {}", e)))?;
+
+    let mut task_ids_to_clear: std::collections::HashSet<String> = state
+        .conversation_db
+        .list_plan_task_ids(&conversation_id)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    {
+        let tasks = state.agent_tasks.read();
+        for (tid, task) in tasks.iter() {
+            if task.conversation_id == conversation_id {
+                task_ids_to_clear.insert(tid.clone());
+            }
+        }
+    }
+
+    let snapshot = state
+        .conversation_db
+        .load_plan_snapshot_before(&conversation_id, &from_timestamp)
+        .map_err(|e| AppError::Agent(format!("Failed to load plan snapshot: {}", e)))?;
+
+    let has_any_snapshot = state
+        .conversation_db
+        .has_any_plan_snapshot(&conversation_id)
+        .unwrap_or(false);
+
+    let (plan_adjusted, restored_plan, restored_task_id) = match snapshot {
+        Some((task_id, plan_json)) => match serde_json::from_str::<AgentTaskPlan>(&plan_json) {
+            Ok(mut plan) => {
+                plan.task_id = task_id.clone();
+                // 撤回时任务不在跑：与 load_plans 一致，in_progress → pending，避免 UI 永久转圈
+                let plan = crate::agent::plan_handler::normalize_plan_for_frontend(&plan, false);
+                match serde_json::to_string(&plan) {
+                    Ok(json) => {
+                        if let Err(e) =
+                            state
+                                .conversation_db
+                                .save_plan(&task_id, &conversation_id, &json)
+                        {
+                            log::warn!(
+                                "truncate: save restored plan failed for conv {}: {}",
+                                conversation_id,
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "truncate: re-serialize restored plan failed for conv {}: {}",
+                            conversation_id,
+                            e
+                        );
+                    }
+                }
+                {
+                    let mut plans = state.plans.write();
+                    for tid in &task_ids_to_clear {
+                        plans.remove(tid);
+                    }
+                    plans.insert(task_id.clone(), plan.clone());
+                }
+                // 丢掉截断点及之后的快照，避免「未来」进度再次被选中
+                let _ = state
+                    .conversation_db
+                    .delete_plan_snapshots_from(&conversation_id, &from_timestamp);
+                (true, Some(plan), Some(task_id))
+            }
+            Err(e) => {
+                log::warn!(
+                    "truncate: corrupt plan snapshot for conv {}: {}",
+                    conversation_id,
+                    e
+                );
+                if has_any_snapshot {
+                    clear_conversation_plans(&state, &conversation_id, &task_ids_to_clear);
+                    let _ = state
+                        .conversation_db
+                        .delete_plan_snapshots_from(&conversation_id, &from_timestamp);
+                    (true, None, None)
+                } else {
+                    (false, None, None)
+                }
+            }
+        },
+        None if has_any_snapshot => {
+            // 有快照体系，但截断点之前没有 → plan 全是该 user 消息之后产生的，应清空
+            clear_conversation_plans(&state, &conversation_id, &task_ids_to_clear);
+            let _ = state
+                .conversation_db
+                .delete_plan_snapshots_from(&conversation_id, &from_timestamp);
+            (true, None, None)
+        }
+        None => {
+            // 旧数据：从未写过快照 → 不碰 plan
+            (false, None, None)
+        }
+    };
+
     log::info!(
-        "Truncated conversation: {} from {} (deleted={})",
+        "Truncated conversation: {} from {} (deleted={}, plan_adjusted={}, plan_restored={})",
         conversation_id,
         from_timestamp,
-        deleted
+        deleted,
+        plan_adjusted,
+        restored_plan.is_some()
     );
-    Ok(deleted)
+
+    Ok(TruncateConversationResult {
+        deleted_messages: deleted,
+        plan_adjusted,
+        plan: restored_plan,
+        plan_task_id: restored_task_id,
+    })
+}
+
+fn clear_conversation_plans(
+    state: &AppState,
+    conversation_id: &str,
+    task_ids: &std::collections::HashSet<String>,
+) {
+    if let Err(e) = state
+        .conversation_db
+        .delete_plans_by_conversation(conversation_id)
+    {
+        log::warn!(
+            "truncate: delete_plans_by_conversation failed for {}: {}",
+            conversation_id,
+            e
+        );
+    }
+    let mut plans = state.plans.write();
+    for tid in task_ids {
+        plans.remove(tid);
+    }
 }
 
 /// List all conversations for a given connection config ID (persistent, works without active session).
