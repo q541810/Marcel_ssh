@@ -150,7 +150,7 @@ impl AgentTool for QuestionTool {
             QuestionRequestEvent {
                 event_type: "questionRequest".to_string(),
                 question_id: question_id.clone(),
-                questions,
+                questions: questions.clone(),
             },
         );
 
@@ -172,10 +172,16 @@ impl AgentTool for QuestionTool {
             }
         };
 
-        // Build formatted output for LLM
+        // 回喂 LLM：直接输出回答内容，不加「补充说明/自定义回复」等字段标签。
+        // 前端单选会把选项写在 custom；多选选项在 selected，文本在 custom。
         let mut lines = Vec::new();
         for (i, answer_val) in answers.iter().enumerate() {
             let num = i + 1;
+            let header = questions
+                .get(i)
+                .map(|q| q.header.as_str())
+                .filter(|h| !h.is_empty())
+                .unwrap_or("回答");
             let selected: Vec<String> = answer_val
                 .get("selected")
                 .and_then(|v| v.as_array())
@@ -189,20 +195,26 @@ impl AgentTool for QuestionTool {
                 .get("custom")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
-                .to_string();
+                .trim();
 
-            if !selected.is_empty() || !custom.is_empty() {
-                lines.push(format!("{}. {}", num, "用户回答"));
-                if !selected.is_empty() {
-                    for s in &selected {
-                        lines.push(format!("   - {}", s));
-                    }
-                }
-                if !custom.is_empty() {
-                    lines.push(format!("   补充说明: {}", custom));
-                }
-            } else {
-                lines.push(format!("{}. 用户未回答", num));
+            if selected.is_empty() && custom.is_empty() {
+                lines.push(format!("{}. [{}] 用户未回答", num, header));
+                continue;
+            }
+
+            // 仅 custom（含单选点选项）：一行写完，无字段前缀
+            if selected.is_empty() {
+                lines.push(format!("{}. [{}] {}", num, header, custom));
+                continue;
+            }
+
+            // 多选：列表；若有额外文本直接跟在后面，不加「补充说明」标签
+            lines.push(format!("{}. [{}]", num, header));
+            for s in &selected {
+                lines.push(format!("   - {}", s));
+            }
+            if !custom.is_empty() {
+                lines.push(format!("   {}", custom));
             }
         }
 
@@ -214,10 +226,10 @@ impl AgentTool for QuestionTool {
                 .unwrap_or(false)
                 || a.get("custom")
                     .and_then(|v| v.as_str())
-                    .map(|s| !s.is_empty())
+                    .map(|s| !s.trim().is_empty())
                     .unwrap_or(false)
         }) {
-            "用户已回答所有问题".to_string()
+            "用户已回答".to_string()
         } else {
             "用户取消了提问".to_string()
         };

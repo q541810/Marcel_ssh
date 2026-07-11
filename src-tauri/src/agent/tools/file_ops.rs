@@ -290,9 +290,9 @@ impl AgentTool for WriteFileTool {
     }
 
     fn description(&self) -> &str {
-        "Write content to a file on the remote server, creating or overwriting it. \
-         Content is transferred via base64 so binary data and embedded heredoc \
-         markers are safe. Maximum size: 1 MB."
+        "Write UTF-8 text to a file on the remote server via SFTP, creating or \
+         overwriting it. Maximum size: 1 MB per call; split larger writes. \
+         Prefer absolute paths. Pass plain text content (not base64-encoded)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
