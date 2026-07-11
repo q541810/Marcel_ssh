@@ -44,7 +44,7 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={handleClose} title='编辑技能'>
+    <Modal open={open} onClose={handleClose} title='编辑 Skill'>
       <div className='px-4 pb-4 space-y-4'>
         {saveError && (
           <div className='rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-400 whitespace-pre-wrap break-words'>

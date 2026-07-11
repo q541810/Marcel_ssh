@@ -36,7 +36,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
     onClose();
   };
 
-  // 从文件路径读取内容并导入技能
+  // 从文件路径读取内容并导入 skill
   const handleFilePath = useCallback(async (filePath: string) => {
     setImportError(null);
     try {
@@ -53,7 +53,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
     }
   }, []);
 
-  // 从 File 对象读取内容并导入技能（用于文件选择器）
+  // 从 File 对象读取内容并导入 skill（用于文件选择器）
   const handleFile = async (file: File) => {
     setImportError(null);
     try {
@@ -99,7 +99,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={handleClose} title='创建技能'>
+    <Modal open={open} onClose={handleClose} title='创建 Skill'>
       <div className='px-4 pb-4 space-y-4'>
         {/* Upload zone */}
         <div
@@ -116,7 +116,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
               d='M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' />
           </svg>
           <span className='text-sm text-zinc-300 font-medium'>
-            {isDragging ? '松手导入技能' : '上传进行智能解析'}
+            {isDragging ? '松手导入 skill' : '上传进行智能解析'}
           </span>
           <span className='text-xs text-zinc-500 text-center leading-relaxed'>
             支持 .md 文件或 .zip / .skill 压缩包<br />

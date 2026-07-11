@@ -326,7 +326,7 @@ Agent 模式下理论上不会无会话。若会话被中途关闭等原因导�
 | `terminal` | 终端组件根 |
 | `settings` | 设置页根 |
 | `sessions` | 会话/连接列表 |
-| `skills` | 技能列表 |
+| `skills` | Skill 列表 |
 | `mcp` | MCP 列表 |
 | `agent-panel` | Agent 面板内容 |
 

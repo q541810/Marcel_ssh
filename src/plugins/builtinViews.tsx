@@ -26,7 +26,7 @@ export function registerBuiltinViews(): void {
       id: 'builtin.skills',
       pluginId: BUILTIN_PLUGIN_ID,
       mount: 'sidebar',
-      title: '技能',
+      title: 'Skill',
       icon: { kind: 'react', node: <Wand className="w-5 h-5" /> },
       navGroup: 'top',
       order: 20,

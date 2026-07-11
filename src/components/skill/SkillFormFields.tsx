@@ -10,8 +10,8 @@ interface Props {
   disabled?: boolean;
 }
 
-const PLACEHOLDER_NAME = '为该技能起一个简短、易识别的名称（例如 codemap）';
-const PLACEHOLDER_DESC = '该技能应该在何时使用？例如：当用户询问项目结构或文件关系时';
+const PLACEHOLDER_NAME = '为该 skill 起一个简短、易识别的名称（例如 codemap）';
+const PLACEHOLDER_DESC = '该 skill 应该在何时使用？例如：当用户询问项目结构或文件关系时';
 const PLACEHOLDER_PROMPT =
   'Commands:\n  -\nWhen to Use:\n  -\nOutput Interpretation:\n  -\nExamples:\n  -';
 
@@ -32,7 +32,7 @@ export default function SkillFormFields({
     <div className='space-y-4'>
       <div>
         <label className='block text-xs text-zinc-400 mb-1'>
-          <span className='text-red-400'>*</span> 技能名称
+          <span className='text-red-400'>*</span> Skill 名称
         </label>
         <input
           type='text'

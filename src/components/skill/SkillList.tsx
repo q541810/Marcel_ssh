@@ -111,7 +111,7 @@ export default function SkillList() {
           label: '删除',
           variant: 'danger' as const,
           onClick: () => {
-            if (confirm('确定删除技能 ' + contextMenu.skill.name + ' ?')) {
+            if (confirm('确定删除 skill ' + contextMenu.skill.name + ' ?')) {
               deleteSkill(contextMenu.skill.id);
             }
           },
@@ -122,17 +122,17 @@ export default function SkillList() {
   return (
     <ListPanel
       data-region="skills"
-      title="技能"
+      title="Skill"
       onAdd={() => setCreateOpen(true)}
-      addButtonTitle="新建技能"
+      addButtonTitle="新建 Skill"
       searchQuery={searchQuery}
       onSearchChange={setSearchQuery}
-      searchPlaceholder="搜索技能..."
+      searchPlaceholder="搜索 skill..."
       status={
         (skills.length > 0 || error) ? (
           <>
             {skills.length > 0 && (
-              <span>{skills.length} 个技能 · {enabledCount} 个已启用</span>
+              <span>{skills.length} 个 skill · {enabledCount} 个已启用</span>
             )}
             {error && <div className="mt-1 text-red-400">{error}</div>}
           </>
@@ -146,12 +146,12 @@ export default function SkillList() {
 
         {!loading && skills.length === 0 && (
           <div className='text-center mt-6 px-3'>
-            <p className='text-sm text-zinc-500 mb-3'>暂无技能</p>
+            <p className='text-sm text-zinc-500 mb-3'>暂无 skill</p>
             <button
               onClick={() => setCreateOpen(true)}
               className='text-xs text-indigo-400 hover:text-indigo-300 underline'
             >
-              创建技能
+              创建 Skill
             </button>
           </div>
         )}
@@ -162,7 +162,7 @@ export default function SkillList() {
             skill={skill}
             onToggle={() => toggleSkill(skill.id)}
             onDelete={() => {
-              if (confirm('确定删除技能 ' + skill.name + ' ?')) deleteSkill(skill.id);
+              if (confirm('确定删除 skill ' + skill.name + ' ?')) deleteSkill(skill.id);
             }}
             onEdit={() => setEditingSkill(skill)}
             onContextMenu={(e, s) => {
@@ -173,7 +173,7 @@ export default function SkillList() {
         ))}
 
         {!loading && skills.length > 0 && filtered.length === 0 && (
-          <p className='text-sm text-zinc-500 text-center mt-4'>无匹配技能</p>
+          <p className='text-sm text-zinc-500 text-center mt-4'>无匹配 skill</p>
         )}
       </div>
 
