@@ -3,7 +3,9 @@ use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
 use crate::agent::conversation_persister::ConversationPersister;
-use crate::agent::plan_handler::{build_plan_context, emit_final_plan_normalized, handle_plan_tool_output};
+use crate::agent::plan_handler::{
+    build_plan_context, emit_final_plan_normalized, handle_plan_tool_output, PLAN_CONTEXT_PREFIX,
+};
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
@@ -31,6 +33,16 @@ pub(crate) struct PersistedToolResult {
     pub was_timeout: bool,
     #[serde(default)]
     pub was_aborted: bool,
+}
+
+/// 持久化的 assistant tool_calls 列表（存入 role=assistant 的 tool_calls_json）。
+/// 与 PersistedToolResult 区分：assistant 侧是完整并行 tool call 列表，
+/// 用于跨 task 重建 LLM history，避免被拆成多条假 assistant。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedAssistantToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Checks if a task has been cancelled by the user.
@@ -115,14 +127,25 @@ pub(crate) async fn run_agent_loop(
             return;
         }
 
-        // 0. Inject plan context before LLM call
-        // 移除上一轮注入的 plan context（以 "当前计划:" 开头的 user message），
-        // 避免多轮累积污染 history、浪费 token。
+        // 0. 注入 plan 上下文：用临时 system 消息（不是 user），避免模型当成用户新发言。
+        //    按前缀清掉上一轮注入；同时清掉旧版本可能残留的 User 角色 plan 消息。
         messages.retain(|m| {
-            !(m.role == LlmRole::User && m.content.starts_with("当前计划:"))
+            let is_plan_inject = m.content.starts_with(PLAN_CONTEXT_PREFIX)
+                && (m.role == LlmRole::System || m.role == LlmRole::User);
+            !is_plan_inject
         });
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
-            messages.push(LlmMessage::user(plan_context));
+            // 主 system 保持在首位，plan 状态紧跟其后。
+            let insert_at = if messages
+                .first()
+                .map(|m| m.role == LlmRole::System)
+                .unwrap_or(false)
+            {
+                1
+            } else {
+                0
+            };
+            messages.insert(insert_at, LlmMessage::system(plan_context));
         }
 
         // 1. Call LLM (streaming) — with cancellation support
@@ -217,12 +240,29 @@ pub(crate) async fn run_agent_loop(
             return;
         }
 
-        // 3. Add assistant message (with tool_calls) to history.
-        //    Do NOT persist reasoning_content here — the thinking that preceded
-        //    this tool call is ephemeral and should not survive a reload.
-        //    (The live-streaming frontend clears it via handleToolCallStart;
-        //    persisting None keeps the DB consistent with that behaviour.)
-        let _ = persister.save_msg("assistant", &assistant_msg.content, None, None);
+        // 3. 将带 tool_calls 的 assistant 消息写入 history。
+        //    完整持久化 tool_calls 列表，跨 task 重建 history 时才能把并行调用
+        //    保留在同一条 assistant 上，避免被拆成多条假 assistant。
+        //    此处不持久化 reasoning_content —— tool call 前的 thinking 是临时的，
+        //    不应在 reload 后残留。（前端 live 流里 handleToolCallStart 会清掉；
+        //    落库写 None 与前端行为一致。）
+        let tool_calls_json = serde_json::to_string(
+            &tool_calls
+                .iter()
+                .map(|tc| PersistedAssistantToolCall {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .ok();
+        let _ = persister.save_msg(
+            "assistant",
+            &assistant_msg.content,
+            tool_calls_json.as_deref(),
+            None,
+        );
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the dispatcher.
@@ -421,7 +461,7 @@ pub(crate) async fn run_agent_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::PersistedToolResult;
+    use super::{PersistedAssistantToolCall, PersistedToolResult};
 
     #[test]
     fn persisted_tool_result_defaults_missing_timeout_to_false() {
@@ -458,5 +498,26 @@ mod tests {
         let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
 
         assert!(result.was_aborted);
+    }
+
+    #[test]
+    fn persisted_assistant_tool_calls_roundtrip() {
+        let calls = vec![
+            PersistedAssistantToolCall {
+                id: "call-a".into(),
+                name: "execute_command".into(),
+                arguments: serde_json::json!({"command": "ls"}),
+            },
+            PersistedAssistantToolCall {
+                id: "call-b".into(),
+                name: "system_info".into(),
+                arguments: serde_json::json!({"category": "os"}),
+            },
+        ];
+        let json = serde_json::to_string(&calls).unwrap();
+        let parsed: Vec<PersistedAssistantToolCall> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "call-a");
+        assert_eq!(parsed[1].name, "system_info");
     }
 }

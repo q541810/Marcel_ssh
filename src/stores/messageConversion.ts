@@ -76,19 +76,22 @@ class AssistantMessageStrategy implements MessageConversionStrategy {
         id: string;
         name: string;
         arguments: Record<string, unknown>;
-        risk_level: RiskLevel;
+        risk_level?: RiskLevel;
       }> = Array.isArray(raw) ? raw : [raw];
 
       if (persistedCalls.length > 0) {
-        base.toolCall = {
-          id: persistedCalls[0].id,
-          name: persistedCalls[0].name,
-          arguments: persistedCalls[0].arguments,
-          riskLevel: persistedCalls[0].risk_level,
-        };
+        // 只填 toolCalls（复数），供 buildLlmHistory 跨 task 还原并行调用。
+        // 不设 toolCall：AgentMessageList 会对 assistant+toolCall 再渲一张 ToolCallCard，
+        // 与后续 role=tool 卡片重复，且会盖住 assistant 文案。
+        base.toolCalls = persistedCalls.map((c) => ({
+          id: c.id,
+          name: c.name,
+          arguments: c.arguments || {},
+          riskLevel: c.risk_level || ('Moderate' as RiskLevel),
+        }));
       }
     } catch {
-      // Ignore parse error - return base message without tool call info
+      // 解析失败则返回不含 tool 信息的 base 消息
     }
 
     return base;
@@ -255,7 +258,7 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
     if (!next) return msg;
     const nextIsTool =
       (next.role === 'tool' && !!next.toolResult) ||
-      (next.role === 'assistant' && !!next.toolCall);
+      (next.role === 'assistant' && (!!next.toolCall || !!next.toolCalls?.length));
     if (!nextIsTool) return msg;
     return { ...msg, reasoningContent: undefined, isThinking: false };
   });

@@ -451,7 +451,7 @@ export function handleDone(
       // Remove the loading placeholder
       if (m.id === loadingAssistantId) return false;
       // Remove empty assistant messages without content, tool calls, or reasoning
-      if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.reasoningContent) return false;
+      if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.toolCalls?.length && !m.reasoningContent) return false;
       // Remove tool messages that are still executing (tool call never completed)
       if (m.role === 'tool' && m.isExecuting) return false;
       // Remove retrying indicator (stale if we got a final response)

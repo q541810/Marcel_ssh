@@ -128,11 +128,39 @@ describe('storedMessageToAgentMessage', () => {
       });
       const result = storedMessageToAgentMessage(stored);
 
-      expect(result.toolCall).toBeDefined();
-      expect(result.toolCall!.id).toBe('call-1');
-      expect(result.toolCall!.name).toBe('execute_command');
-      expect(result.toolCall!.arguments).toEqual({ command: 'ls -la' });
-      expect(result.toolCall!.riskLevel).toBe('Moderate');
+      // reload 只恢复 toolCalls，不设 toolCall（避免 UI 重复 tool 卡片）
+      expect(result.toolCall).toBeUndefined();
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls![0].id).toBe('call-1');
+      expect(result.toolCalls![0].name).toBe('execute_command');
+      expect(result.toolCalls![0].arguments).toEqual({ command: 'ls -la' });
+      expect(result.toolCalls![0].riskLevel).toBe('Moderate');
+    });
+
+    it('应把并行 tool calls 全部保留在 assistant.toolCalls', () => {
+      const toolCalls = [
+        {
+          id: 'call-a',
+          name: 'execute_command',
+          arguments: { command: 'ls' },
+        },
+        {
+          id: 'call-b',
+          name: 'system_info',
+          arguments: { category: 'os' },
+        },
+      ];
+      const stored = createStoredMessage({
+        role: 'assistant',
+        content: 'Checking...',
+        toolCallsJson: JSON.stringify(toolCalls),
+      });
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.toolCalls).toHaveLength(2);
+      expect(result.toolCalls![0].name).toBe('execute_command');
+      expect(result.toolCalls![1].name).toBe('system_info');
+      expect(result.toolCall).toBeUndefined();
     });
 
     it('should handle single tool call (not array)', () => {
@@ -149,8 +177,9 @@ describe('storedMessageToAgentMessage', () => {
       });
       const result = storedMessageToAgentMessage(stored);
 
-      expect(result.toolCall).toBeDefined();
-      expect(result.toolCall!.name).toBe('read_file');
+      expect(result.toolCall).toBeUndefined();
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls![0].name).toBe('read_file');
     });
 
     it('should handle empty tool calls array', () => {
