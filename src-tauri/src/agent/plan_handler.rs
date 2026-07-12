@@ -456,7 +456,7 @@ pub(crate) async fn handle_update_plan_item(
             original_status
         );
 
-        let reminder = "你刚把最后一个 plan item 标记为完成。请反思：任务真的都完成了吗？\n\
+        let reminder = "你刚尝试把最后一个 plan item 标记为完成的行动已被系统拦截，这个 plan item 仍非完成状态。请反思：任务真的都完成了吗？\n\
              - 如果确实完成，请再次调用 update_plan_item 把该 item 标记为终态，届时不会被拦截。\n\
              - 如果还有未完成的工作，请用 update_plan_item 把对应 item 改回 in_progress 继续执行，\n\
                或用 edit_plan 增补新步骤。"

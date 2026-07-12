@@ -135,17 +135,7 @@ pub(crate) async fn run_agent_loop(
             !is_plan_inject
         });
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
-            // 主 system 保持在首位，plan 状态紧跟其后。
-            let insert_at = if messages
-                .first()
-                .map(|m| m.role == LlmRole::System)
-                .unwrap_or(false)
-            {
-                1
-            } else {
-                0
-            };
-            messages.insert(insert_at, LlmMessage::system(plan_context));
+            messages.push(LlmMessage::system(plan_context));
         }
 
         // 1. Call LLM (streaming) — with cancellation support
