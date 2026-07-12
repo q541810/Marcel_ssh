@@ -49,6 +49,15 @@ export interface ConversationState {
   }>;
 }
 
+function reorderByUpdatedAt(convs: Record<string, AgentConversation>): Record<string, AgentConversation> {
+  const sorted = Object.values(convs).sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+  const reordered: Record<string, AgentConversation> = {};
+  for (const c of sorted) reordered[c.id] = c;
+  return reordered;
+}
+
 export const useConversationStore = create<ConversationState>((set, get) => ({
   conversations: {},
   messages: {},
@@ -232,7 +241,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       activeConversationId = isActiveStillValid ? state.activeConversationId : (firstConvId || state.activeConversationId || null);
 
       return {
-        conversations: newConversations,
+        conversations: reorderByUpdatedAt(newConversations),
         messages: newMessages,
         activeConversationId,
       };
@@ -258,7 +267,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const newId = await tauri.agentCreateConversation(sessionId, newTitle);
       conversationId = newId;
       set((state) => ({
-        conversations: {
+        conversations: reorderByUpdatedAt({
           ...state.conversations,
           [newId]: {
             id: newId,
@@ -267,7 +276,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           },
-        },
+        }),
         messages: { ...state.messages, [newId]: [] },
         activeConversationId: newId,
       }));
