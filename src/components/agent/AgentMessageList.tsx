@@ -1,4 +1,4 @@
-import { useMemo, type RefObject } from 'react';
+import { useMemo, useState, type RefObject } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
@@ -46,6 +46,7 @@ export default function AgentMessageList({
   messagesEndRef,
 }: Props) {
   const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   return (
     <>
@@ -61,8 +62,19 @@ export default function AgentMessageList({
           return (msg.role === 'tool' && msg.toolResult) ||
             (msg.role === 'assistant' && msg.toolCall) ? (
             <div key={msg.id} className="flex justify-start">
-              <div className="max-w-[85%]">
-                <ToolCallCard message={msg} autoExpand={isThinking} />
+              <div className={expandedIds.has(msg.id) ? '' : 'max-w-[85%]'}>
+                <ToolCallCard
+                  message={msg}
+                  autoExpand={isThinking}
+                  onExpandChange={(e) => {
+                    setExpandedIds((prev) => {
+                      const next = new Set(prev);
+                      if (e) next.add(msg.id);
+                      else next.delete(msg.id);
+                      return next;
+                    });
+                  }}
+                />
               </div>
             </div>
           ) : (

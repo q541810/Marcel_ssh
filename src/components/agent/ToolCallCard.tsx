@@ -1,9 +1,11 @@
 import { memo, useState, useEffect, useRef } from 'react';
 import type { AgentMessage } from '@/lib/types';
+import FileChangeView from './FileChangeView';
 
 interface Props {
   message: AgentMessage;
   autoExpand?: boolean;
+  onExpandChange?: (expanded: boolean) => void;
 }
 
 const TOOL_ICONS: Record<string, JSX.Element> = {
@@ -146,10 +148,14 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
   return '';
 }
 
-function ToolCallCard({ message, autoExpand }: Props) {
+function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
   const wasExecutingRef = useRef(message.isExecuting);
   const outputRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    onExpandChange?.(expanded);
+  }, [expanded, onExpandChange]);
 
   // Auto-scroll output when at bottom
   useEffect(() => {
@@ -289,11 +295,15 @@ function ToolCallCard({ message, autoExpand }: Props) {
           </div>
         )}
         {expanded && !isExecuting && (
-          <div className="border-t border-zinc-700/50 px-3 py-1.5">
-            <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
-              {tr.result || 'no output'}
-            </pre>
-          </div>
+          (tr.toolName === 'write_file' || tr.toolName === 'edit_file') ? (
+            <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
+          ) : (
+            <div className="border-t border-zinc-700/50 px-3 py-1.5">
+              <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
+                {tr.result || 'no output'}
+              </pre>
+            </div>
+          )
         )}
       </div>
     );
