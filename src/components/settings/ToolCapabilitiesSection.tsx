@@ -7,6 +7,7 @@ import type {
 } from '@/lib/types';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
+import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -85,15 +86,16 @@ export function ToolCapabilitiesSection() {
             sectionId="settings-experimental"
             keywords={['web', 'search', 'browser', 'api', 'bing', '搜索方式', '浏览器']}
           >
-            <select
+            <Select
               value={searchMode}
-              onChange={(e) => updateExperimental({ webSearchMode: e.target.value as WebSearchMode })}
-              className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-            >
-              <option value="browser">本机浏览器（推荐）</option>
-              <option value="api">搜索 API</option>
-              <option value="html">裸抓 Bing HTML</option>
-            </select>
+              onChange={(v) => updateExperimental({ webSearchMode: v as WebSearchMode })}
+              options={[
+                { value: 'browser', label: '本机浏览器（推荐）' },
+                { value: 'api', label: '搜索 API' },
+                { value: 'html', label: '裸抓 Bing HTML' },
+              ]}
+              className="w-52"
+            />
           </SettingItem>
 
           {searchMode === 'api' && (
@@ -105,16 +107,15 @@ export function ToolCapabilitiesSection() {
                 sectionId="settings-experimental"
                 keywords={['brave', 'tavily', 'serpapi', '搜索 API']}
               >
-                <select
+                <Select
                   value={apiProvider}
-                  onChange={(e) =>
-                    updateExperimental({ webSearchApiProvider: e.target.value as WebSearchApiProvider })
-                  }
-                  className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="brave">Brave Search</option>
-                  <option value="tavily">Tavily</option>
-                </select>
+                  onChange={(v) => updateExperimental({ webSearchApiProvider: v as WebSearchApiProvider })}
+                  options={[
+                    { value: 'brave', label: 'Brave Search' },
+                    { value: 'tavily', label: 'Tavily' },
+                  ]}
+                  className="w-52"
+                />
               </SettingItem>
               <SettingItem
                 id="exp-websearch-api-key"
@@ -168,14 +169,15 @@ export function ToolCapabilitiesSection() {
           sectionId="settings-experimental"
           keywords={['http', 'fetch', 'browser', 'html', '网页获取', '浏览器']}
         >
-          <select
+          <Select
             value={httpFetchMode}
-            onChange={(e) => updateExperimental({ httpFetchMode: e.target.value as HttpFetchMode })}
-            className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-          >
-            <option value="browser">本机浏览器（推荐）</option>
-            <option value="html">裸 HTTP GET</option>
-          </select>
+            onChange={(v) => updateExperimental({ httpFetchMode: v as HttpFetchMode })}
+            options={[
+              { value: 'browser', label: '本机浏览器（推荐）' },
+              { value: 'html', label: '裸 HTTP GET' },
+            ]}
+            className="w-52"
+          />
         </SettingItem>
       )}
 

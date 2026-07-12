@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { LlmConfig, AgentModeSettings } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
+import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import ModelListModal from './ModelListModal';
@@ -29,15 +30,16 @@ export function ModelServiceSection() {
   return (
     <Card id="settings-llm" title="模型服务" description="配置 OpenAI 兼容的大语言模型接入">
       <SettingItem id="llm-provider" label="Provider" description="选择 LLM 提供商" sectionId="settings-llm" keywords={['provider', '模型提供商', '模型服务']}>
-        <select
+        <Select
           value={llmConfig.providerType}
-          onChange={(e) => updateLlm({ providerType: e.target.value as LlmConfig['providerType'] })}
-          className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        >
-          <option value="openai">OpenAI 兼容</option>
-          <option value="anthropic" disabled>Anthropic (暂未实现)</option>
-          <option value="ollama" disabled>Ollama (暂未实现)</option>
-        </select>
+          onChange={(v) => updateLlm({ providerType: v as LlmConfig['providerType'] })}
+          options={[
+            { value: 'openai', label: 'OpenAI 兼容' },
+            { value: 'anthropic', label: 'Anthropic (暂未实现)', disabled: true },
+            { value: 'ollama', label: 'Ollama (暂未实现)', disabled: true },
+          ]}
+          className="w-52"
+        />
       </SettingItem>
       <SettingItem id="llm-baseurl" label="Base URL" description="API 基础地址" sectionId="settings-llm" keywords={['url', '地址', '模型服务']}>
         <input

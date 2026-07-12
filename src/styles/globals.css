@@ -378,7 +378,7 @@ button:active {
 /* Dropdown animations */
 [role="listbox"],
 [role="menu"] {
-  animation: slideDown 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
+  animation: slideDown 100ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Smooth hover effects */

@@ -1,3 +1,4 @@
+import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 
@@ -22,17 +23,12 @@ export function TransferSection() {
         sectionId="settings-transfer"
         keywords={['zip', 'compression', '压缩', '上传', '文件夹', 'folder upload', '文件传输', 'SFTP']}
       >
-        <select
-          value={currentLevel}
-          onChange={(e) => update({ folderUploadCompressionLevel: Number(e.target.value) })}
-          className="rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
-        >
-          {COMPRESSION_LEVELS.map((level) => (
-            <option key={level.value} value={level.value}>
-              {level.label}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={String(currentLevel)}
+          onChange={(v) => update({ folderUploadCompressionLevel: Number(v) })}
+          options={COMPRESSION_LEVELS.map((l) => ({ value: String(l.value), label: l.label }))}
+          className="w-52"
+        />
       </SettingItem>
     </Card>
   );
