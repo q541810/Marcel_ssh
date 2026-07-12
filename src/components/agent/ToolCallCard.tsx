@@ -75,6 +75,16 @@ function asStrArray(v: unknown): string[] | undefined {
   return undefined;
 }
 
+const PLAN_TOOL_LABELS: Record<string, string> = {
+  create_plan: '创建plan',
+  update_plan_item: '更新plan步骤',
+  edit_plan: '编辑plan',
+};
+
+function isPlanTool(toolName: string): boolean {
+  return toolName in PLAN_TOOL_LABELS;
+}
+
 /** Extract a short command preview from tool arguments */
 function formatToolName(toolName: string): { display: string; isSkill: boolean } {
   if (toolName.startsWith('skill_')) {
@@ -177,6 +187,16 @@ function ToolCallCard({ message, autoExpand }: Props) {
         <div className="flex justify-start my-1">
           <div className="flex items-center gap-1 text-xs text-zinc-500">
             <span>{tr.summary || displayName}</span>
+          </div>
+        </div>
+      );
+    }
+    // Plan tools render as lightweight status text (plan state shown in PlanList)
+    if (isPlanTool(tr.toolName)) {
+      return (
+        <div className="flex justify-start my-1">
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <span>{PLAN_TOOL_LABELS[tr.toolName]}</span>
           </div>
         </div>
       );
@@ -289,6 +309,16 @@ function ToolCallCard({ message, autoExpand }: Props) {
         <div className="flex justify-start my-1">
           <div className="flex items-center gap-1 text-xs text-zinc-500">
             <span>{displayName}</span>
+          </div>
+        </div>
+      );
+    }
+    // Plan tools render as lightweight status text
+    if (isPlanTool(tc.name)) {
+      return (
+        <div className="flex justify-start my-1">
+          <div className="flex items-center gap-1 text-xs text-zinc-500">
+            <span>{PLAN_TOOL_LABELS[tc.name]}</span>
           </div>
         </div>
       );
