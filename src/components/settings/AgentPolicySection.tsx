@@ -161,13 +161,6 @@ export function AgentPolicySection() {
           <span className="text-sm font-mono text-zinc-300 w-16 text-right">{settings.commandTimeoutSecs ?? 120}s</span>
         </div>
       </SettingItem>
-      <SettingItem id="cmd-compact-context" label="压缩上下文" description="历史累积 token 过多时自动裁剪旧工具结果" sectionId="settings-command-policy" keywords={['compact', '压缩', 'token', '上下文', 'Agent']}>
-        <Toggle
-          checked={agent.compactContext ?? false}
-          onChange={(checked) => updateAgent({ compactContext: checked })}
-          label="上下文超过 80k tokens 且对话超过 5 轮时截断超长结果；超过 130k tokens 时清除旧结果"
-        />
-      </SettingItem>
       <SettingItem id="cmd-confirm" label="每条都手动确认" description="每条命令都需要用户确认" sectionId="settings-command-policy" keywords={['confirm', '确认', '命令执行策略', 'Agent']}>
         <Toggle
           checked={agent.confirmEachCommand}

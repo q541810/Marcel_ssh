@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
-import type { LlmConfig } from '@/lib/types';
+import type { LlmConfig, AgentModeSettings } from '@/lib/types';
+import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import ModelListModal from './ModelListModal';
@@ -79,6 +80,13 @@ export function ModelServiceSection() {
             获取模型列表
           </button>
         </div>
+      </SettingItem>
+      <SettingItem id="llm-compact-context" label="压缩上下文" description="历史累积 token 过多时自动裁剪旧工具结果" sectionId="settings-llm" keywords={['compact', '压缩', 'token', '上下文']}>
+        <Toggle
+          checked={settings.agentModeSettings?.compactContext ?? false}
+          onChange={(checked) => update({ agentModeSettings: { ...(settings.agentModeSettings ?? {}), compactContext: checked } as AgentModeSettings })}
+          label="上下文超过 80k tokens 且对话超过 5 轮时截断超长结果；超过 130k tokens 时清除旧结果"
+        />
       </SettingItem>
       <ModelListModal
         open={modelsOpen}
