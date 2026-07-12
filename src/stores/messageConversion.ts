@@ -134,6 +134,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
     summary?: string;
     success?: boolean;
     blocked?: boolean;
+    metadata?: Record<string, unknown>;
   } {
     return (
       typeof raw === 'object' &&
@@ -163,6 +164,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       blocked?: boolean;
       was_timeout?: boolean;
       was_aborted?: boolean;
+      metadata?: Record<string, unknown>;
     },
     message: StoredMessage,
     base: AgentMessage
@@ -177,6 +179,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       wasAborted: tr.was_aborted,
       arguments: tr.arguments,
       toolCallId: tr.id,
+      metadata: tr.metadata,
     };
     return base;
   }

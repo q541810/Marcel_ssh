@@ -139,6 +139,30 @@ fn parse_edit_params(params: &serde_json::Value) -> Result<EditParams, String> {
     })
 }
 
+fn find_line_position(content: &str, target: &str) -> usize {
+    match content.find(target) {
+        Some(pos) => content[..pos].lines().count() + 1,
+        None => 1,
+    }
+}
+
+fn extract_display_content(
+    content: &str,
+    line_position: usize,
+    target_line_count: usize,
+    context_lines: usize,
+    max_bytes: usize,
+) -> String {
+    if content.len() <= max_bytes {
+        return content.to_string();
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    let line_idx = line_position.saturating_sub(1);
+    let start = line_idx.saturating_sub(context_lines);
+    let end = (line_idx + target_line_count + context_lines).min(lines.len());
+    lines[start..end].join("\n")
+}
+
 fn try_replace(
     current: &str,
     old_content: &str,
@@ -434,6 +458,11 @@ impl AgentTool for EditFileTool {
             Err(e) => return Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         };
 
+        let line_position = find_line_position(&current, &edit.old_content);
+        let new_line_count = edit.new_content.lines().count();
+        let display_content = extract_display_content(&updated, line_position, new_line_count, 30, 16_000);
+        let line_count = updated.lines().count();
+
         match sftp_write(&ctx.ssh, &ctx.session_id, &edit.path, updated.as_bytes()).await {
             Ok(()) => Ok(ToolOutput::ok(
                 format!(
@@ -455,6 +484,9 @@ impl AgentTool for EditFileTool {
                 "occurrences": occurrences,
                 "old_bytes": current.len(),
                 "new_bytes": updated.len(),
+                "line_position": line_position,
+                "line_count": line_count,
+                "file_content": display_content,
             }))),
             Err(e) => Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         }

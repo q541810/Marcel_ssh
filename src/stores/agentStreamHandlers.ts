@@ -272,6 +272,7 @@ export function handleToolResult(
             wasAborted: tr.wasAborted,
             arguments: tr.arguments,
             toolCallId: tr.toolCallId,
+            metadata: tr.metadata,
           },
         };
         streamState.pendingToolCalls.delete(tr.toolCallId);
@@ -299,6 +300,7 @@ export function handleToolResult(
         wasAborted: tr.wasAborted,
         arguments: tr.arguments,
         toolCallId: tr.toolCallId,
+        metadata: tr.metadata,
       },
     };
 

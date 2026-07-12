@@ -303,6 +303,8 @@ export interface AgentMessage {
     arguments?: Record<string, unknown>;
     /** Tool call ID from the LLM, used to reconstruct LLM context history */
     toolCallId?: string;
+    /** Backend metadata (e.g. line_position, file_content for edit_file) */
+    metadata?: Record<string, unknown>;
   };
   /** True when waiting for LLM response */
   isLoading?: boolean;
@@ -519,6 +521,7 @@ export interface ToolResultPayload {
   wasTimeout?: boolean;
   wasAborted?: boolean;
   arguments: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ApprovalRequestPayload {

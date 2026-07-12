@@ -28,6 +28,8 @@ pub(crate) struct ToolResultEvent {
     pub was_timeout: bool,
     #[serde(default)]
     pub was_aborted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Event emitted when model-based approval check starts.

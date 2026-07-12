@@ -33,6 +33,8 @@ pub(crate) struct PersistedToolResult {
     pub was_timeout: bool,
     #[serde(default)]
     pub was_aborted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// 持久化的 assistant tool_calls 列表（存入 role=assistant 的 tool_calls_json）。
@@ -340,6 +342,7 @@ pub(crate) async fn run_agent_loop(
                     blocked: exec.blocked,
                     was_timeout: exec.was_timeout,
                     was_aborted: exec.was_aborted,
+                    metadata: exec.metadata.clone(),
                 })
                 .ok();
 
@@ -368,8 +371,8 @@ pub(crate) async fn run_agent_loop(
             // tool output（丢弃 tool 层返回的误导性文本），让前端 tool 卡片和 LLM
             // 都只看到实际状态。必须在 emit ToolResultEvent 之前执行，否则前端
             // tool 卡片会显示被覆盖前的内容。
-            let plan_override = if let Some(meta) = exec.metadata {
-                handle_plan_tool_output(&tc.name, &tc.id, &task_id, &meta, &app, &state).await
+            let plan_override = if let Some(ref meta) = exec.metadata {
+                handle_plan_tool_output(&tc.name, &tc.id, &task_id, meta, &app, &state).await
             } else {
                 None
             };
@@ -393,6 +396,7 @@ pub(crate) async fn run_agent_loop(
                     blocked: exec.blocked,
                     was_timeout: exec.was_timeout,
                     was_aborted: exec.was_aborted,
+                    metadata: exec.metadata.clone(),
                 },
             );
 
@@ -407,6 +411,7 @@ pub(crate) async fn run_agent_loop(
                 blocked: exec.blocked,
                 was_timeout: exec.was_timeout,
                 was_aborted: exec.was_aborted,
+                metadata: exec.metadata,
             })
             .ok();
 
