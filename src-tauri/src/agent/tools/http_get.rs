@@ -1,8 +1,12 @@
-//! `http_get` — fetch the full content of one or more web pages via HTTP GET.
+//! `http_get` — fetch the full content of one or more web pages.
+//!
+//! Backend follows settings → experimentalSettings.httpFetchMode:
+//! - `browser`: local headless Chrome/Edge via CDP (rendered DOM)
+//! - `html`: bare HTTP GET via reqwest
 //!
 //! Supports batch fetching: pass a single `url` or an array of `urls`.
-//! When multiple URLs are provided, they are fetched concurrently (up to 5
-//! at a time), and results are concatenated in order.
+//! When multiple URLs are provided, they are fetched concurrently (HTTP)
+//! or sequentially in one browser session (browser mode).
 //!
 //! Typical workflow:
 //!   1. Call `web_search` to find relevant URLs
@@ -14,10 +18,15 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde_json::json;
+use tauri::Manager;
 
 use crate::agent::sandbox::RiskLevel;
+use crate::agent::tools::browser_cdp;
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
+use crate::config::settings::HttpFetchMode;
 use crate::error::AppError;
+
+
 
 const MAX_OUTPUT_BYTES: usize = 24_000;
 const TIMEOUT_SECS: u64 = 20;
@@ -70,15 +79,19 @@ impl AgentTool for HttpGetTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch the full content of one or more web pages via HTTP GET. \
-         Pass a single `url` OR an array of `urls` to fetch multiple pages concurrently \
-         (much faster than fetching one at a time). \
+        "Fetch the full content of one or more web pages. \
+         Pass a single `url` OR an array of `urls` to fetch multiple pages \
+         (HTTP mode is concurrent; browser mode reuses one local browser session). \
          Use this to read detailed content from URLs returned by the `web_search` tool. \
+         Backend follows Settings → 网页获取方式: browser uses local Chrome/Edge, \
+         html uses bare HTTP GET. \
          IMPORTANT: When you need to read multiple pages, ALWAYS use the `urls` array \
          instead of calling this tool repeatedly. Returns readable Markdown by default, \
          preserving headings, lists, code blocks, tables, links, and basic HTTP metadata. \
          For long pages, use `offset` and `chunk_size` with a single `url` to continue reading."
     }
+
+
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
@@ -130,7 +143,7 @@ impl AgentTool for HttpGetTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolOutput, AppError> {
         let chunk_size = params
             .get("chunk_size")
@@ -185,17 +198,36 @@ impl AgentTool for HttpGetTool {
             }
         }
 
+        let mode = resolve_fetch_mode(ctx).await;
+        let provider = match mode {
+            HttpFetchMode::Browser => "browser",
+            HttpFetchMode::Html => "html",
+        };
+
         // Batch mode treats chunk_size as a per-page limit. The final combined
         // output still has a safety cap to avoid flooding the model context.
         let combined_output_limit = chunk_size
             .saturating_mul(urls_to_fetch.len().max(1))
             .min(96_000);
-        let fetches: Vec<_> = urls_to_fetch
-            .iter()
-            .map(|u| fetch_page(u, format))
-            .collect();
 
-        let results = join_all(fetches).await;
+        let results: Vec<Result<FetchedPage, AppError>> = match mode {
+            HttpFetchMode::Browser => {
+                let owned: Vec<String> = urls_to_fetch.iter().map(|u| (*u).to_string()).collect();
+                browser_cdp::fetch_html_many(&owned)
+                    .await
+                    .into_iter()
+                    .map(|r| r.map(|page| browser_page_to_fetched(page, format)))
+                    .collect()
+            }
+            HttpFetchMode::Html => {
+                let fetches: Vec<_> = urls_to_fetch
+                    .iter()
+                    .map(|u| fetch_page_http(u, format))
+                    .collect();
+                join_all(fetches).await
+            }
+        };
+
 
         // Build combined output
         let mut sections = Vec::new();
@@ -245,7 +277,7 @@ impl AgentTool for HttpGetTool {
                     } else {
                         return Ok(ToolOutput::fail(
                             format!("http_get {}", domain),
-                            format!("fetch failed: {}", e),
+                            format!("fetch failed (provider={}): {}", provider, e),
                         ));
                     }
                 }
@@ -260,21 +292,24 @@ impl AgentTool for HttpGetTool {
 
         let summary = if urls_to_fetch.len() == 1 {
             format!(
-                "http_get {} ({})",
+                "http_get {} ({} via {})",
                 extract_domain(urls_to_fetch[0]),
-                format_bytes(total_content_bytes)
+                format_bytes(total_content_bytes),
+                provider
             )
         } else {
             format!(
-                "http_get ({} pages: {} ok, {} failed, {} total)",
+                "http_get ({} pages: {} ok, {} failed, {} via {})",
                 urls_to_fetch.len(),
                 success_count,
                 fail_count,
-                format_bytes(total_content_bytes)
+                format_bytes(total_content_bytes),
+                provider
             )
         };
 
         let metadata = json!({
+            "provider": provider,
             "urls_fetched": urls_to_fetch.len(),
             "success": success_count,
             "failed": fail_count,
@@ -295,7 +330,48 @@ impl AgentTool for HttpGetTool {
     }
 }
 
-async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppError> {
+async fn resolve_fetch_mode(ctx: &ToolContext) -> HttpFetchMode {
+    if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
+        let settings = state.settings.read().await;
+        return settings.experimental_settings.http_fetch_mode;
+    }
+    HttpFetchMode::default()
+}
+
+
+fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat) -> FetchedPage {
+    let source_bytes = page.html.len();
+    let title = page
+        .title
+        .or_else(|| extract_title(&page.html));
+    let content = {
+        let readable_html = extract_readable_html(&page.html);
+        match format {
+            OutputFormat::Markdown => html_to_markdown(&readable_html),
+            OutputFormat::Text => strip_html(&readable_html, usize::MAX),
+        }
+    };
+    let content = cleanup_markdown(&content);
+    let markdown_bytes = content.len();
+    let redirected =
+        normalize_url_for_compare(&page.requested_url) != normalize_url_for_compare(&page.final_url);
+
+    FetchedPage {
+        requested_url: page.requested_url,
+        final_url: page.final_url,
+        status: 200,
+        status_text: "OK (browser)".to_string(),
+        content_type: "text/html; charset=utf-8".to_string(),
+        title,
+        content,
+        source_bytes,
+        markdown_bytes,
+        redirected,
+        http_error: false,
+    }
+}
+
+async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage, AppError> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
         .redirect(reqwest::redirect::Policy::limited(5))
@@ -357,6 +433,7 @@ async fn fetch_page(url: &str, format: OutputFormat) -> Result<FetchedPage, AppE
         http_error,
     })
 }
+
 
 fn parse_output_format(format: Option<&str>) -> OutputFormat {
     match format
@@ -933,4 +1010,253 @@ mod tests {
         assert!(!cleaned.contains("<meta"), "{cleaned}");
         assert!(!cleaned.contains("<link"), "{cleaned}");
     }
+
+    #[test]
+    fn browser_page_to_fetched_converts_html_and_detects_redirect() {
+        let page = browser_cdp::BrowserPage {
+            requested_url: "https://example.com/a".into(),
+            final_url: "https://example.com/b".into(),
+            title: Some("Hello".into()),
+            html: r#"
+                <html><head><title>Ignored</title></head>
+                <body><main><h1>Title</h1><p>Readable body with enough text for extraction path.</p></main></body></html>
+            "#
+            .into(),
+        };
+        let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
+        assert!(fetched.redirected);
+        assert_eq!(fetched.title.as_deref(), Some("Hello"));
+        assert_eq!(fetched.status, 200);
+        assert!(fetched.content.contains("Title") || fetched.content.contains("Readable"));
+        assert!(!fetched.http_error);
+        assert_eq!(fetched.content_type, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn browser_page_to_fetched_falls_back_to_html_title() {
+        let page = browser_cdp::BrowserPage {
+            requested_url: "https://example.com/".into(),
+            final_url: "https://example.com/".into(),
+            title: None,
+            html: "<html><head><title>From HTML</title></head><body><main><p>Body text long enough here.</p></main></body></html>".into(),
+        };
+        let fetched = browser_page_to_fetched(page, OutputFormat::Text);
+        assert_eq!(fetched.title.as_deref(), Some("From HTML"));
+        assert!(!fetched.redirected);
+    }
+
+    #[test]
+    fn http_fetch_mode_default_is_browser() {
+        assert_eq!(
+            crate::config::settings::HttpFetchMode::default(),
+            crate::config::settings::HttpFetchMode::Browser
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_page_http_reads_local_server() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let body = r#"<!DOCTYPE html><html><head><title>Local</title></head>
+                <body><main><h1>Hello Local</h1><p>Content from local fixture server.</p></main></body></html>"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+
+        let url = format!("http://{}/page", addr);
+        let page = fetch_page_http(&url, OutputFormat::Markdown)
+            .await
+            .expect("fetch local");
+        assert_eq!(page.status, 200);
+        assert!(!page.http_error);
+        assert!(page.content.contains("Hello Local") || page.title.as_deref() == Some("Local"));
+        handle.join().expect("server thread");
+    }
+
+    #[tokio::test]
+    async fn fetch_page_http_marks_404_as_http_error() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            let body = "<html><body><h1>Not Found</h1></body></html>";
+            let resp = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+
+        let url = format!("http://{}/missing", addr);
+        let page = fetch_page_http(&url, OutputFormat::Markdown)
+            .await
+            .expect("fetch 404 body");
+        assert_eq!(page.status, 404);
+        assert!(page.http_error);
+        assert!(page.content.contains("Not Found") || page.title.is_some());
+        handle.join().expect("server thread");
+    }
+
+    // ── Per-mode coverage for http_get ─────────────────────────────────
+
+    #[test]
+    fn http_mode_html_pipeline_via_local_page_struct() {
+        // Html mode: raw HTTP body → FetchedPage fields used by tool output.
+        // We simulate the post-fetch conversion path used after fetch_page_http.
+        let page = FetchedPage {
+            requested_url: "https://example.com/doc".into(),
+            final_url: "https://example.com/doc".into(),
+            status: 200,
+            status_text: "OK".into(),
+            content_type: "text/html".into(),
+            title: Some("Doc".into()),
+            content: "# Doc\n\nBody".into(),
+            source_bytes: 100,
+            markdown_bytes: 12,
+            redirected: false,
+            http_error: false,
+        };
+        let chunk = make_chunk(&page.content, 0, 2000);
+        let meta = page_metadata(&page, &chunk);
+        assert_eq!(meta["status"], 200);
+        assert_eq!(meta["http_error"], false);
+        let out = format_page_output(&page, &chunk, true);
+        assert!(out.contains("Doc"));
+        assert!(out.contains("Status: 200"));
+    }
+
+    #[test]
+    fn http_mode_browser_pipeline_provider_and_status() {
+        // Browser mode: BrowserPage → browser_page_to_fetched → metadata path.
+        let page = browser_cdp::BrowserPage {
+            requested_url: "https://example.com/a".into(),
+            final_url: "https://example.com/a".into(),
+            title: Some("Browser Page".into()),
+            html: r#"
+                <html><head><title>Browser Page</title></head>
+                <body><main><h1>Rendered</h1><p>SPA content long enough for readable extract.</p></main></body></html>
+            "#
+            .into(),
+        };
+        let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
+        assert_eq!(fetched.status_text, "OK (browser)");
+        assert_eq!(fetched.status, 200);
+        assert!(!fetched.http_error);
+        let chunk = make_chunk(&fetched.content, 0, 4000);
+        let meta = page_metadata(&fetched, &chunk);
+        assert_eq!(meta["status"], 200);
+        assert!(fetched.content.contains("Rendered") || fetched.title.as_deref() == Some("Browser Page"));
+    }
+
+    #[test]
+    fn http_fetch_mode_labels_for_tool_metadata() {
+        // Tool metadata provider strings must match mode enum.
+        for (mode, expected) in [
+            (HttpFetchMode::Browser, "browser"),
+            (HttpFetchMode::Html, "html"),
+        ] {
+            let provider = match mode {
+                HttpFetchMode::Browser => "browser",
+                HttpFetchMode::Html => "html",
+            };
+            assert_eq!(provider, expected);
+            assert_eq!(
+                format!("{:?}", mode).to_ascii_lowercase(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn http_mode_html_and_browser_produce_different_status_text() {
+        let html_page = FetchedPage {
+            requested_url: "https://e.com".into(),
+            final_url: "https://e.com".into(),
+            status: 200,
+            status_text: "OK".into(),
+            content_type: "text/html".into(),
+            title: None,
+            content: "x".into(),
+            source_bytes: 1,
+            markdown_bytes: 1,
+            redirected: false,
+            http_error: false,
+        };
+        let browser_page = browser_page_to_fetched(
+            browser_cdp::BrowserPage {
+                requested_url: "https://e.com".into(),
+                final_url: "https://e.com".into(),
+                title: None,
+                html: "<html><body><main><p>Enough text for the readable html extractor path here.</p></main></body></html>".into(),
+            },
+            OutputFormat::Text,
+        );
+        assert_eq!(html_page.status_text, "OK");
+        assert_eq!(browser_page.status_text, "OK (browser)");
+    }
+
+    #[tokio::test]
+    async fn http_mode_html_live_local_server_end_to_end() {
+        // Full html-mode fetch path (fetch_page_http) already covered above;
+        // this asserts multi-URL concurrent join path shape with one URL.
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let body = "<html><body><main><h1>Batch</h1><p>ok page content here</p></main></body></html>";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        });
+
+        let url = format!("http://{}/one", addr);
+        let results = futures::future::join_all(vec![fetch_page_http(&url, OutputFormat::Markdown)]).await;
+        assert_eq!(results.len(), 1);
+        let page = results[0].as_ref().expect("ok");
+        assert!(!page.http_error);
+        assert!(page.content.contains("Batch") || page.title.is_some());
+        handle.join().expect("join");
+    }
+
+    /// Optional live browser fetch — ignored by default.
+    #[tokio::test]
+    #[ignore = "live Chrome/Edge; run with --ignored when available"]
+    async fn http_mode_browser_live_fetch_smoke() {
+        let pages = browser_cdp::fetch_html_many(&["https://example.com/".into()]).await;
+        assert_eq!(pages.len(), 1);
+        let page = pages.into_iter().next().unwrap().expect("browser fetch");
+        let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
+        assert_eq!(fetched.status_text, "OK (browser)");
+        assert!(!fetched.content.is_empty() || fetched.title.is_some());
+    }
 }
+
+

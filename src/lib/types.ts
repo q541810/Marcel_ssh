@@ -406,11 +406,23 @@ export interface TerminalColors {
   brightWhite: string;
 }
 
+export type WebSearchMode = 'browser' | 'api' | 'html';
+export type HttpFetchMode = 'browser' | 'html';
+export type WebSearchApiProvider = 'brave' | 'tavily';
+
 export interface ExperimentalSettings {
   enableWebSearch: boolean;
   enableHttpFetch: boolean;
   enableCloudPage: boolean;
+  /** web_search backend; default browser */
+  webSearchMode?: WebSearchMode;
+  /** used when webSearchMode === 'api' */
+  webSearchApiProvider?: WebSearchApiProvider;
+  /** http_get backend; independent of webSearchMode; default browser */
+  httpFetchMode?: HttpFetchMode;
 }
+
+
 
 export interface NotificationSettings {
   agentApproval: boolean;

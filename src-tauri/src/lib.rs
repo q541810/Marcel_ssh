@@ -526,6 +526,9 @@ pub fn run() {
             commands::quick_command::quick_command_delete,
             commands::keychain::config_save_llm_api_key,
             commands::keychain::config_delete_llm_api_key,
+            commands::keychain::config_save_web_search_api_key,
+            commands::keychain::config_delete_web_search_api_key,
+
             commands::skill::skill_list,
             commands::skill::skill_add,
             commands::skill::skill_update,

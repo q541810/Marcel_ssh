@@ -32,7 +32,12 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableWebSearch: true,
   enableHttpFetch: true,
   enableCloudPage: false,
+  webSearchMode: 'browser',
+  webSearchApiProvider: 'brave',
+  httpFetchMode: 'browser',
 };
+
+
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   agentApproval: true,
@@ -71,6 +76,8 @@ interface SettingsState {
   loaded: boolean;
   /** True if a key is currently stored in the system keychain. */
   hasApiKey: boolean;
+  /** True if a web search API key is stored in the system keychain. */
+  hasWebSearchApiKey: boolean;
   /** Non-fatal warning from the backend (e.g. settings.json was backed up). */
   warning: string | null;
 
@@ -94,6 +101,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
   hasApiKey: false,
+  hasWebSearchApiKey: false,
   warning: null,
   preview: null,
 
@@ -108,11 +116,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
-        experimentalSettings: fromDisk.experimentalSettings ?? DEFAULT_EXPERIMENTAL_SETTINGS,
+        experimentalSettings: {
+          ...DEFAULT_EXPERIMENTAL_SETTINGS,
+          ...(fromDisk.experimentalSettings ?? {}),
+        },
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       };
-      set({ settings: merged, loaded: true, hasApiKey: resp.hasApiKey, warning: resp.warning ?? null });
+      set({
+        settings: merged,
+        loaded: true,
+        hasApiKey: resp.hasApiKey,
+        hasWebSearchApiKey: resp.hasWebSearchApiKey ?? false,
+        warning: resp.warning ?? null,
+      });
       setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);
     } catch (err) {
       console.error('加载设置失败:', err);

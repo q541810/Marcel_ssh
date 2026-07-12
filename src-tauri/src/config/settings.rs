@@ -140,6 +140,37 @@ impl Default for AgentModeSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WebSearchMode {
+    /// Local headless Chrome/Edge via CDP (best quality, default).
+    #[default]
+    Browser,
+    /// Independent search-engine HTTP API (Brave / Tavily).
+    Api,
+    /// Bare Bing HTML scrape (zero config, lower quality).
+    Html,
+}
+
+/// Backend for `http_get`. Independent from [`WebSearchMode`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum HttpFetchMode {
+    /// Local headless Chrome/Edge via CDP (rendered DOM, default).
+    #[default]
+    Browser,
+    /// Bare HTTP GET via reqwest.
+    Html,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WebSearchApiProvider {
+    #[default]
+    Brave,
+    Tavily,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ExperimentalSettings {
@@ -148,6 +179,15 @@ pub struct ExperimentalSettings {
     /// When enabled, the Agent can open the cloud gaming page in the main UI.
     #[serde(default)]
     pub enable_cloud_page: bool,
+    /// Which backend `web_search` uses. Defaults to browser for quality.
+    #[serde(default)]
+    pub web_search_mode: WebSearchMode,
+    /// Which search API vendor to use when `web_search_mode == Api`.
+    #[serde(default)]
+    pub web_search_api_provider: WebSearchApiProvider,
+    /// Which backend `http_get` uses. Independent of search mode.
+    #[serde(default)]
+    pub http_fetch_mode: HttpFetchMode,
 }
 
 impl Default for ExperimentalSettings {
@@ -156,9 +196,14 @@ impl Default for ExperimentalSettings {
             enable_web_search: true,
             enable_http_fetch: true,
             enable_cloud_page: false,
+            web_search_mode: WebSearchMode::Browser,
+            web_search_api_provider: WebSearchApiProvider::Brave,
+            http_fetch_mode: HttpFetchMode::Browser,
         }
     }
 }
+
+
 
 /// Notification preferences.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -488,7 +533,50 @@ mod tests {
         assert!(s.enable_web_search);
         assert!(s.enable_http_fetch);
         assert!(!s.enable_cloud_page);
+        assert_eq!(s.web_search_mode, WebSearchMode::Browser);
+        assert_eq!(s.web_search_api_provider, WebSearchApiProvider::Brave);
+        assert_eq!(s.http_fetch_mode, HttpFetchMode::Browser);
     }
+
+    #[test]
+    fn experimental_settings_loads_old_format_without_web_search_mode() {
+        let json = r#"{"enableWebSearch":true,"enableHttpFetch":true}"#;
+        let parsed: ExperimentalSettings =
+            serde_json::from_str(json).expect("old experimental settings should load");
+        assert!(parsed.enable_web_search);
+        assert_eq!(parsed.web_search_mode, WebSearchMode::Browser);
+        assert_eq!(parsed.web_search_api_provider, WebSearchApiProvider::Brave);
+        assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Browser);
+    }
+
+    #[test]
+    fn experimental_settings_http_fetch_mode_independent_of_search() {
+        let json = r#"{
+            "enableWebSearch": true,
+            "enableHttpFetch": true,
+            "webSearchMode": "api",
+            "webSearchApiProvider": "tavily",
+            "httpFetchMode": "html"
+        }"#;
+        let parsed: ExperimentalSettings =
+            serde_json::from_str(json).expect("mixed modes should load");
+        assert_eq!(parsed.web_search_mode, WebSearchMode::Api);
+        assert_eq!(parsed.web_search_api_provider, WebSearchApiProvider::Tavily);
+        assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Html);
+    }
+
+    #[test]
+    fn experimental_settings_http_fetch_mode_roundtrip() {
+        let mut s = ExperimentalSettings::default();
+        s.http_fetch_mode = HttpFetchMode::Html;
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"httpFetchMode\":\"html\""));
+        let parsed: ExperimentalSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Html);
+        assert_eq!(parsed.web_search_mode, WebSearchMode::Browser);
+    }
+
+
 
     #[test]
     fn command_list_mode_default_is_denylist() {

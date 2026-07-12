@@ -66,3 +66,16 @@ pub async fn config_save_llm_api_key(api_key: String) -> Result<(), AppError> {
 pub async fn config_delete_llm_api_key() -> Result<(), AppError> {
     keychain::delete_llm_api_key()
 }
+
+/// Save the web search API key to the system keychain.
+#[tauri::command]
+pub async fn config_save_web_search_api_key(api_key: String) -> Result<(), AppError> {
+    keychain::save_web_search_api_key(&api_key)
+}
+
+/// Remove the web search API key from the system keychain.
+#[tauri::command]
+pub async fn config_delete_web_search_api_key() -> Result<(), AppError> {
+    keychain::delete_web_search_api_key()
+}
+

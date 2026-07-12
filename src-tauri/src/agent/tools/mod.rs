@@ -27,6 +27,7 @@ use crate::ssh::connection::SshManager;
 
 #[cfg(test)]
 pub mod base64;
+pub mod browser_cdp;
 pub mod connection_info;
 pub mod execute_cmd;
 pub mod file_ops;
@@ -42,6 +43,7 @@ pub mod sftp_transfer;
 pub mod skill;
 pub mod system;
 pub mod web_search;
+
 
 // ───────────────────────── Public types ─────────────────────────
 
@@ -560,6 +562,9 @@ mod tests {
             enable_web_search: false,
             enable_http_fetch: false,
             enable_cloud_page: false,
+            web_search_mode: crate::config::settings::WebSearchMode::Browser,
+            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
         };
         let r = ToolRegistry::build_for_mode(&[], &disabled);
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
@@ -579,7 +584,12 @@ mod tests {
             enable_web_search: true,
             enable_http_fetch: true,
             enable_cloud_page: true,
+            web_search_mode: crate::config::settings::WebSearchMode::Browser,
+            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
         };
+
+
         let r = ToolRegistry::build_for_mode(&[], &enabled);
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
 
@@ -587,6 +597,42 @@ mod tests {
         assert!(names.iter().any(|n| n == "http_get"));
         assert!(names.iter().any(|n| n == "open_cloud_page"));
     }
+
+    #[test]
+    fn registry_toggles_web_search_and_http_get_independently() {
+        let only_search = crate::config::settings::ExperimentalSettings {
+            enable_web_search: true,
+            enable_http_fetch: false,
+            enable_cloud_page: false,
+            web_search_mode: crate::config::settings::WebSearchMode::Html,
+            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            http_fetch_mode: crate::config::settings::HttpFetchMode::Html,
+        };
+        let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_search)
+            .definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(names.iter().any(|n| n == "web_search"));
+        assert!(!names.iter().any(|n| n == "http_get"));
+
+        let only_http = crate::config::settings::ExperimentalSettings {
+            enable_web_search: false,
+            enable_http_fetch: true,
+            enable_cloud_page: false,
+            web_search_mode: crate::config::settings::WebSearchMode::Browser,
+            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
+        };
+        let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_http)
+            .definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert!(!names.iter().any(|n| n == "web_search"));
+        assert!(names.iter().any(|n| n == "http_get"));
+    }
+
 
     #[test]
     fn tool_output_ok_builder() {

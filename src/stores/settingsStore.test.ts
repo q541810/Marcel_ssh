@@ -12,6 +12,7 @@ describe('settingsStore', () => {
       settings: useSettingsStore.getInitialState().settings,
       loaded: false,
       hasApiKey: false,
+      hasWebSearchApiKey: false,
       preview: null,
     });
   });
@@ -50,7 +51,12 @@ describe('settingsStore', () => {
     expect(es?.enableWebSearch).toBe(true);
     expect(es?.enableHttpFetch).toBe(true);
     expect(es?.enableCloudPage).toBe(false);
+    expect(es?.webSearchMode).toBe('browser');
+    expect(es?.webSearchApiProvider).toBe('brave');
+    expect(es?.httpFetchMode).toBe('browser');
   });
+
+
 
   it('default terminal colors are defined', () => {
     const c = useSettingsStore.getState().settings.terminalColors;

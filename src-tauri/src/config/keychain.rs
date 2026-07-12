@@ -67,3 +67,36 @@ pub fn delete_llm_api_key() -> Result<(), AppError> {
         Err(e) => Err(AppError::Config(format!("删除密钥链条目失败：{}", e))),
     }
 }
+
+/// Store the web search API key in the system keychain.
+pub fn save_web_search_api_key(api_key: &str) -> Result<(), AppError> {
+    let entry = keyring::Entry::new(SERVICE, "web_search_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    entry
+        .set_password(api_key)
+        .map_err(|e| AppError::Config(format!("保存搜索 API Key 到密钥链失败：{}", e)))?;
+    Ok(())
+}
+
+/// Retrieve the web search API key. Returns `Ok(None)` if not found.
+pub fn get_web_search_api_key() -> Result<Option<String>, AppError> {
+    let entry = keyring::Entry::new(SERVICE, "web_search_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    match entry.get_password() {
+        Ok(key) => Ok(Some(key)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(AppError::Config(format!("读取搜索 API Key 失败：{}", e))),
+    }
+}
+
+/// Remove the web search API key from the system keychain.
+pub fn delete_web_search_api_key() -> Result<(), AppError> {
+    let entry = keyring::Entry::new(SERVICE, "web_search_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(AppError::Config(format!("删除搜索 API Key 失败：{}", e))),
+    }
+}
+

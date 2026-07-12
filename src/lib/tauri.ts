@@ -176,9 +176,15 @@ export async function deleteConnection(id: string): Promise<void> {
   return invoke('config_delete_connection', { id });
 }
 
-export async function getSettings(): Promise<{ settings: AppSettings; hasApiKey: boolean; warning?: string }> {
+export async function getSettings(): Promise<{
+  settings: AppSettings;
+  hasApiKey: boolean;
+  hasWebSearchApiKey?: boolean;
+  warning?: string;
+}> {
   return invoke('config_get_settings');
 }
+
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
   return invoke('config_save_settings', { settings });
@@ -300,6 +306,15 @@ export async function saveLlmApiKey(apiKey: string): Promise<void> {
 export async function deleteLlmApiKey(): Promise<void> {
   return invoke('config_delete_llm_api_key');
 }
+
+export async function saveWebSearchApiKey(apiKey: string): Promise<void> {
+  return invoke('config_save_web_search_api_key', { apiKey });
+}
+
+export async function deleteWebSearchApiKey(): Promise<void> {
+  return invoke('config_delete_web_search_api_key');
+}
+
 
 // LLM model discovery
 
