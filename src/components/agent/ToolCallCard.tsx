@@ -295,7 +295,7 @@ function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
           </div>
         )}
         {expanded && !isExecuting && (
-          (tr.toolName === 'write_file' || tr.toolName === 'edit_file') ? (
+          tr.success && (tr.toolName === 'write_file' || tr.toolName === 'edit_file') ? (
             <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
             <div className="border-t border-zinc-700/50 px-3 py-1.5">
