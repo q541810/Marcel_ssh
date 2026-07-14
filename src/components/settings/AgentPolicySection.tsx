@@ -168,6 +168,13 @@ export function AgentPolicySection() {
           label="即使通过列表过滤，仍要求用户确认每条命令"
         />
       </SettingItem>
+      <SettingItem id="cmd-edit-file" label="编辑文件审批" description="edit_file 工具执行前需要用户确认" sectionId="settings-command-policy" keywords={['edit', 'file', '编辑', '审批', '文件操作', 'Agent']}>
+        <Toggle
+          checked={agent.confirmEditFile ?? true}
+          onChange={(checked) => updateAgent({ confirmEditFile: checked })}
+          label="Agent 编辑文件时需要用户确认"
+        />
+      </SettingItem>
       <SettingItem
         id="cmd-model-approval"
         label="执行前模型审批"

@@ -1,8 +1,9 @@
 import { useEffect, useCallback } from 'react';
 import type { ToolCallInfo } from '@/lib/types';
-import { RISK_LEVEL_COLORS, RISK_LEVEL_LABELS } from '@/lib/constants';
+import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
+import FileChangeView from './FileChangeView';
 
 interface Props {
   toolCall: ToolCallInfo;
@@ -40,17 +41,21 @@ export default function ApprovalDialog({
 
   if (!open) return null;
 
+  const isEditFile = toolCall.name === 'edit_file';
+  const path = typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
 
-      {/* Dialog */}
-      <div className="relative w-full max-w-md mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
-        {/* Header */}
+      <div
+        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${
+          isEditFile ? 'max-w-3xl' : 'max-w-md'
+        }`}
+      >
         <div className="flex items-center justify-between p-4 border-b border-zinc-700">
           <h3 className="text-lg font-semibold text-zinc-100">
             需要操作批准
@@ -63,9 +68,7 @@ export default function ApprovalDialog({
           </button>
         </div>
 
-        {/* Content */}
         <div className="p-4 space-y-4">
-          {/* Risk level */}
           <div className="flex items-center gap-2">
             <span className="text-sm text-zinc-400">风险级别：</span>
             <Badge variant={toolCall.riskLevel} size="md">
@@ -73,7 +76,6 @@ export default function ApprovalDialog({
             </Badge>
           </div>
 
-          {/* Model reasons — shown when the model approval routed to human */}
           {toolCall.reasons && toolCall.reasons.length > 0 && (
             <div className="rounded-lg border border-amber-700/60 bg-amber-950/40 px-3 py-2">
               <div className="text-xs font-medium text-amber-300 mb-1">模型提示</div>
@@ -85,7 +87,6 @@ export default function ApprovalDialog({
             </div>
           )}
 
-          {/* Tool name */}
           <div>
             <span className="text-sm text-zinc-400">工具：</span>
             <span className="ml-2 font-mono text-sm text-zinc-200">
@@ -93,15 +94,30 @@ export default function ApprovalDialog({
             </span>
           </div>
 
-          {/* Arguments */}
-          <div>
-            <span className="text-sm text-zinc-400">参数：</span>
-            <pre className="mt-1 p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40">
-              {JSON.stringify(toolCall.arguments, null, 2)}
-            </pre>
-          </div>
+          {isEditFile ? (
+            <div className="space-y-2">
+              {path && (
+                <div className="text-xs font-mono text-zinc-300 truncate" title={path}>
+                  {path}
+                </div>
+              )}
+              <div className="rounded-lg border border-zinc-700 overflow-hidden bg-zinc-900">
+                <FileChangeView
+                  toolName="edit_file"
+                  arguments={toolCall.arguments || {}}
+                  metadata={toolCall.metadata}
+                />
+              </div>
+            </div>
+          ) : (
+            <div>
+              <span className="text-sm text-zinc-400">参数：</span>
+              <pre className="mt-1 p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40">
+                {JSON.stringify(toolCall.arguments, null, 2)}
+              </pre>
+            </div>
+          )}
 
-          {/* Keyboard hints */}
           <div className="text-xs text-zinc-500 flex gap-4">
             <span>
               <kbd className="px-1 py-0.5 rounded-lg bg-zinc-700 text-zinc-300">Enter</kbd>{' '}
@@ -114,7 +130,6 @@ export default function ApprovalDialog({
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex justify-end gap-2 p-4 border-t border-zinc-700">
           <Button variant="secondary" onClick={onReject}>
             拒绝

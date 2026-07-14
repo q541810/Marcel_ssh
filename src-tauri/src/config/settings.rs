@@ -112,6 +112,9 @@ pub struct AgentModeSettings {
     /// cumulative token count exceeds configured thresholds.
     #[serde(default)]
     pub compact_context: bool,
+    /// When true, edit_file requires human confirmation before execution.
+    #[serde(default = "default_true")]
+    pub confirm_edit_file: bool,
 }
 
 fn default_max_tool_rounds() -> usize {
@@ -136,6 +139,7 @@ impl Default for AgentModeSettings {
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
+            confirm_edit_file: true,
         }
     }
 }
@@ -430,6 +434,7 @@ impl Default for AppSettings {
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
                 compact_context: false,
+                confirm_edit_file: true,
             },
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),

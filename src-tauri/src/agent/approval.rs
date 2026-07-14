@@ -23,6 +23,9 @@ pub(crate) struct ApprovalRequestEvent {
     /// Surfaced in the approval dialog so the user sees why human review is needed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasons: Option<Vec<String>>,
+    /// Optional preview metadata (e.g. edit_file file_content / line_position).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Manages user approval flow for tool execution.
@@ -53,6 +56,7 @@ impl ApprovalManager {
         arguments: serde_json::Value,
         risk: RiskLevel,
         model_reasons: Option<&[String]>,
+        metadata: Option<serde_json::Value>,
     ) -> bool {
         let approval_id = tool_call_id.clone();
         emit_event(
@@ -65,6 +69,7 @@ impl ApprovalManager {
                 arguments,
                 risk_level: risk,
                 reasons: model_reasons.map(|r| r.to_vec()),
+                metadata,
             },
         );
 

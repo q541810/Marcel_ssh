@@ -341,6 +341,8 @@ export interface ToolCallInfo {
   approved?: boolean;
   /** Reasons from the model approval step, shown when the model routed to human. */
   reasons?: string[];
+  /** Preview metadata for approval (e.g. edit_file file_content). */
+  metadata?: Record<string, unknown>;
 }
 
 export type RiskLevel = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
@@ -362,6 +364,7 @@ export interface AgentModeSettings {
   maxToolRounds: number;
   /** Enable LLM context compression to stay within model window limits */
   compactContext: boolean;
+  confirmEditFile: boolean;
 }
 
 export type LlmProviderType = 'openai';
@@ -532,6 +535,8 @@ export interface ApprovalRequestPayload {
   riskLevel: RiskLevel;
   /** Reasons from the model approval step (when it routed to human). */
   reasons?: string[];
+  /** Preview metadata (e.g. edit_file file_content / line_position). */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ModelApprovalStartPayload {

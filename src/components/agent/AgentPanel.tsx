@@ -241,6 +241,7 @@ export default function AgentPanel() {
             arguments: pendingApproval.arguments,
             riskLevel: pendingApproval.riskLevel,
             reasons: pendingApproval.reasons,
+            metadata: pendingApproval.metadata,
           }}
           onApprove={handleApprove}
           onReject={handleReject}

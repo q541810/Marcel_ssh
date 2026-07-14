@@ -139,11 +139,54 @@ fn parse_edit_params(params: &serde_json::Value) -> Result<EditParams, String> {
     })
 }
 
-fn find_line_position(content: &str, target: &str) -> usize {
-    match content.find(target) {
-        Some(pos) => content[..pos].lines().count() + 1,
-        None => 1,
+const EDIT_DISPLAY_MAX_BYTES: usize = 16_000;
+const EDIT_DISPLAY_CONTEXT_LINES: usize = 30;
+
+fn line_number_at_byte(content: &str, byte_pos: usize) -> usize {
+    let pos = byte_pos.min(content.len());
+    content[..pos].lines().count() + 1
+}
+
+/// Non-overlapping left-to-right match starts (same as `str::replace`).
+fn match_byte_positions(content: &str, target: &str) -> Vec<usize> {
+    if target.is_empty() {
+        return Vec::new();
     }
+    let mut positions = Vec::new();
+    let mut search_from = 0;
+    while search_from <= content.len() {
+        if let Some(rel) = content[search_from..].find(target) {
+            let abs = search_from + rel;
+            positions.push(abs);
+            search_from = abs + target.len();
+        } else {
+            break;
+        }
+    }
+    positions
+}
+
+fn match_line_positions(content: &str, target: &str) -> Vec<usize> {
+    match_byte_positions(content, target)
+        .into_iter()
+        .map(|p| line_number_at_byte(content, p))
+        .collect()
+}
+
+fn extract_window_around(
+    content: &str,
+    center_line_1: usize,
+    span_lines: usize,
+    context_lines: usize,
+) -> (usize, String) {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() {
+        return (1, String::new());
+    }
+    let idx = center_line_1.saturating_sub(1).min(lines.len().saturating_sub(1));
+    let start = idx.saturating_sub(context_lines);
+    let end = (idx + span_lines.max(1) + context_lines).min(lines.len());
+    (start + 1, lines[start..end].join("\n"))
 }
 
 fn extract_display_content(
@@ -192,6 +235,161 @@ fn try_replace(
         ));
     }
     Ok((updated, occurrences))
+}
+
+/// Summary + message for failed edit (same strings as `EditFileTool::execute`).
+pub(crate) struct EditPreviewError {
+    pub summary: String,
+    pub message: String,
+}
+
+fn build_edit_display_metadata(
+    path: &str,
+    current: &str,
+    updated: &str,
+    old_content: &str,
+    new_content: &str,
+    occurrences: usize,
+) -> serde_json::Value {
+    let byte_positions = match_byte_positions(current, old_content);
+    let match_lines = match_line_positions(current, old_content);
+    let line_position = match_lines.first().copied().unwrap_or(1);
+    let line_count = updated.lines().count();
+    let old_line_span = old_content.lines().count().max(1);
+    let new_line_span = new_content.lines().count().max(1);
+    let delta_bytes = new_content.len() as isize - old_content.len() as isize;
+
+    let small_enough =
+        current.len() <= EDIT_DISPLAY_MAX_BYTES && updated.len() <= EDIT_DISPLAY_MAX_BYTES;
+
+    if small_enough {
+        return json!({
+            "path": path,
+            "occurrences": occurrences,
+            "old_bytes": current.len(),
+            "new_bytes": updated.len(),
+            "line_position": line_position,
+            "line_count": line_count,
+            "match_line_positions": match_lines,
+            "before": current,
+            "after": updated,
+            // Compat for older FileChangeView fallback
+            "file_content": updated,
+        });
+    }
+
+    // Large file: per-match context windows on before/after.
+    let mut hunks = Vec::new();
+    for (i, &byte_pos) in byte_positions.iter().enumerate() {
+        let before_line = line_number_at_byte(current, byte_pos);
+        let (start_line, before_snip) = extract_window_around(
+            current,
+            before_line,
+            old_line_span,
+            EDIT_DISPLAY_CONTEXT_LINES,
+        );
+        let updated_byte = (byte_pos as isize + i as isize * delta_bytes).max(0) as usize;
+        let updated_byte = updated_byte.min(updated.len());
+        let after_line = line_number_at_byte(updated, updated_byte);
+        let (_after_start, after_snip) = extract_window_around(
+            updated,
+            after_line,
+            new_line_span,
+            EDIT_DISPLAY_CONTEXT_LINES,
+        );
+        // Cap each snip so a single huge line cannot blow the event payload.
+        let before_snip = if before_snip.len() > EDIT_DISPLAY_MAX_BYTES {
+            extract_display_content(
+                &before_snip,
+                1,
+                old_line_span,
+                EDIT_DISPLAY_CONTEXT_LINES,
+                EDIT_DISPLAY_MAX_BYTES,
+            )
+        } else {
+            before_snip
+        };
+        let after_snip = if after_snip.len() > EDIT_DISPLAY_MAX_BYTES {
+            extract_display_content(
+                &after_snip,
+                1,
+                new_line_span,
+                EDIT_DISPLAY_CONTEXT_LINES,
+                EDIT_DISPLAY_MAX_BYTES,
+            )
+        } else {
+            after_snip
+        };
+        hunks.push(json!({
+            "startLine": start_line,
+            "before": before_snip,
+            "after": after_snip,
+        }));
+    }
+
+    let first_after = hunks
+        .first()
+        .and_then(|h| h.get("after"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    json!({
+        "path": path,
+        "occurrences": occurrences,
+        "old_bytes": current.len(),
+        "new_bytes": updated.len(),
+        "line_position": line_position,
+        "line_count": line_count,
+        "match_line_positions": match_lines,
+        "hunks": hunks,
+        "file_content": first_after,
+    })
+}
+
+/// Read remote file and validate the edit would succeed (no write).
+/// Used before human approval so the dialog can show full-file context diff.
+pub(crate) async fn preview_edit_for_approval(
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    params: &serde_json::Value,
+) -> Result<serde_json::Value, EditPreviewError> {
+    let edit = parse_edit_params(params).map_err(|e| EditPreviewError {
+        summary: "edit_file".into(),
+        message: e,
+    })?;
+
+    let current_bytes = sftp_read(ssh, session_id, &edit.path)
+        .await
+        .map_err(|e| EditPreviewError {
+            summary: format!("edit {}", edit.path),
+            message: e,
+        })?;
+
+    let current = String::from_utf8(current_bytes).map_err(|_| EditPreviewError {
+        summary: format!("edit {}", edit.path),
+        message: "file is not valid UTF-8; edit_file requires text files".into(),
+    })?;
+
+    let (updated, occurrences) = try_replace(
+        &current,
+        &edit.old_content,
+        &edit.new_content,
+        edit.replace_all,
+    )
+    .map_err(|e| EditPreviewError {
+        summary: format!("edit {}", edit.path),
+        message: e,
+    })?;
+
+    Ok(build_edit_display_metadata(
+        &edit.path,
+        &current,
+        &updated,
+        &edit.old_content,
+        &edit.new_content,
+        occurrences,
+    ))
 }
 
 pub struct ReadFileTool;
@@ -458,10 +656,14 @@ impl AgentTool for EditFileTool {
             Err(e) => return Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         };
 
-        let line_position = find_line_position(&current, &edit.old_content);
-        let new_line_count = edit.new_content.lines().count();
-        let display_content = extract_display_content(&updated, line_position, new_line_count, 30, 16_000);
-        let line_count = updated.lines().count();
+        let metadata = build_edit_display_metadata(
+            &edit.path,
+            &current,
+            &updated,
+            &edit.old_content,
+            &edit.new_content,
+            occurrences,
+        );
 
         match sftp_write(&ctx.ssh, &ctx.session_id, &edit.path, updated.as_bytes()).await {
             Ok(()) => Ok(ToolOutput::ok(
@@ -479,15 +681,7 @@ impl AgentTool for EditFileTool {
                     updated.len()
                 ),
             )
-            .with_metadata(json!({
-                "path": edit.path,
-                "occurrences": occurrences,
-                "old_bytes": current.len(),
-                "new_bytes": updated.len(),
-                "line_position": line_position,
-                "line_count": line_count,
-                "file_content": display_content,
-            }))),
+            .with_metadata(metadata)),
             Err(e) => Ok(ToolOutput::fail(format!("edit {}", edit.path), e)),
         }
     }
@@ -786,6 +980,43 @@ fn directory_entries_metadata(entries: &[DirectoryEntryView]) -> Vec<serde_json:
 mod tests {
     use super::*;
     use crate::agent::tools::base64;
+
+    // ── edit display metadata ──
+
+    #[test]
+    fn match_byte_positions_non_overlapping() {
+        let positions = match_byte_positions("aa aa aa", "aa");
+        assert_eq!(positions, vec![0, 3, 6]);
+    }
+
+    #[test]
+    fn build_metadata_small_file_has_before_after() {
+        let current = "x\nfoo\ny\nfoo\nz\n";
+        let (updated, n) = try_replace(current, "foo", "bar", true).unwrap();
+        assert_eq!(n, 2);
+        let meta = build_edit_display_metadata("/t", current, &updated, "foo", "bar", n);
+        assert_eq!(meta["occurrences"], 2);
+        assert_eq!(meta["before"], current);
+        assert_eq!(meta["after"], updated);
+        let lines = meta["match_line_positions"].as_array().unwrap();
+        assert_eq!(lines.len(), 2);
+        assert!(meta.get("hunks").is_none());
+    }
+
+    #[test]
+    fn build_metadata_large_file_emits_hunks() {
+        let pad = "line\n".repeat(4000); // ~20k
+        let current = format!("{pad}TARGET\nmiddle\nTARGET\n{pad}");
+        let (updated, n) = try_replace(&current, "TARGET", "DONE", true).unwrap();
+        assert_eq!(n, 2);
+        assert!(current.len() > EDIT_DISPLAY_MAX_BYTES);
+        let meta = build_edit_display_metadata("/big", &current, &updated, "TARGET", "DONE", n);
+        let hunks = meta["hunks"].as_array().expect("hunks");
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0]["before"].as_str().unwrap().contains("TARGET"));
+        assert!(hunks[0]["after"].as_str().unwrap().contains("DONE"));
+        assert!(meta.get("before").is_none());
+    }
 
     // ── try_replace tests ──
 

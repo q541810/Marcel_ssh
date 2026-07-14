@@ -43,6 +43,7 @@ describe('settingsStore', () => {
     expect(am.enableModelCommandApproval).toBe(false);
     expect(am.modelApprovalModel).toBe('');
     expect(am.modelApprovalPrompt).toBe('');
+    expect(am.confirmEditFile).toBe(true);
   });
 
   it('default experimental settings are correct', () => {

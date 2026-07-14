@@ -228,15 +228,17 @@ impl ToolDispatcher {
                         .unwrap_or("");
                     Some(command_list_requires_confirm(cmd, &self.agent_settings))
                 } else {
-                    Some(
-                        requires_default_approval
-                            || match effective_risk {
-                                RiskLevel::ReadOnly => false,
-                                RiskLevel::LowRisk => self.agent_settings.confirm_each_command,
-                                RiskLevel::Moderate => self.agent_settings.confirm_each_command,
-                                RiskLevel::HighRisk | RiskLevel::Destructive => true,
-                            },
-                    )
+                    let mut needs_confirm = requires_default_approval
+                        || match effective_risk {
+                            RiskLevel::ReadOnly => false,
+                            RiskLevel::LowRisk => self.agent_settings.confirm_each_command,
+                            RiskLevel::Moderate => self.agent_settings.confirm_each_command,
+                            RiskLevel::HighRisk | RiskLevel::Destructive => true,
+                        };
+                    if tc.name == "edit_file" && self.agent_settings.confirm_edit_file {
+                        needs_confirm = true;
+                    }
+                    Some(needs_confirm)
                 }
             }
             AgentMode::Auto => Some(requires_default_approval),
@@ -358,6 +360,34 @@ impl ToolDispatcher {
 
         // 3. Human approval (if the sandbox or the model requires it).
         if final_needs_confirm {
+            let mut approval_metadata: Option<serde_json::Value> = None;
+
+            // edit_file: pre-read + validate before asking the user. Failures
+            // that would make execute() fail must not open the approval dialog.
+            if tc.name == "edit_file" {
+                match crate::agent::tools::file_ops::preview_edit_for_approval(
+                    &ctx.ssh,
+                    &ctx.session_id,
+                    &tc.arguments,
+                )
+                .await
+                {
+                    Ok(meta) => approval_metadata = Some(meta),
+                    Err(e) => {
+                        return DispatchResult {
+                            summary: e.summary,
+                            output: e.message,
+                            success: false,
+                            blocked: false,
+                            was_timeout: false,
+                            was_aborted: false,
+                            metadata: None,
+                            risk_level: effective_risk,
+                        };
+                    }
+                }
+            }
+
             let approved = self
                 .approval
                 .request_approval(
@@ -368,6 +398,7 @@ impl ToolDispatcher {
                     tc.arguments.clone(),
                     effective_risk,
                     model_reasons.as_deref(),
+                    approval_metadata,
                 )
                 .await;
             if !approved {
@@ -454,6 +485,7 @@ mod tests {
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
+            confirm_edit_file: false,
         }
     }
 
@@ -487,6 +519,7 @@ mod tests {
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
+            confirm_edit_file: false,
         };
         assert!(!command_list_requires_confirm("ls -la", &s));
 
@@ -507,6 +540,7 @@ mod tests {
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
+            confirm_edit_file: false,
         };
         assert!(command_list_requires_confirm("rm -rf /tmp", &s));
     }
@@ -537,6 +571,7 @@ mod tests {
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
+            confirm_edit_file: false,
         };
         assert!(command_list_requires_confirm("echo hello", &s));
         assert!(command_list_requires_confirm("git status", &s));
