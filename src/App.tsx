@@ -316,14 +316,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // 必须先 loadSettings 再 fetchPlugins：视图注册依赖 disabledPlugins，
+    // 并行启动时 settings 仍是默认 []，会把已禁用插件注册进 NavRail。
     loadSettings().catch(err => {
       console.error('Failed to load settings:', err);
     });
     fetchSkills().catch(err => {
       console.error('Failed to load skills:', err);
-    });
-    fetchPlugins().catch(err => {
-      console.error('Failed to load plugins:', err);
     });
     initPluginIpc().catch(err => {
       console.error('Failed to init plugin IPC:', err);
@@ -333,15 +332,23 @@ export default function App() {
     checkUpdate().then(res => {
       if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
     }).catch(() => {});
-  }, [loadSettings, fetchSkills, fetchPlugins]);
+  }, [loadSettings, fetchSkills]);
 
-  // Reconcile content-script injections when plugin enablement / capability
-  // authorization / safe-mode toggle changes. Runs after fetchPlugins (which
-  // does its own sync) and on every settings change that affects injection
-  // eligibility.
+  // 设置加载完成、或 disabledPlugins 变化时再拉插件并对齐 viewStore。
+  // 覆盖：启动竞态、设置页保存禁用、错误页「禁用」等路径。
   useEffect(() => {
+    if (!settingsLoaded) return;
+    fetchPlugins().catch(err => {
+      console.error('Failed to load plugins:', err);
+    });
+  }, [settingsLoaded, disabledPlugins, fetchPlugins]);
+
+  // Reconcile content-script injections when capability authorization / safe-mode
+  // toggle changes. fetchPlugins already syncs on enablement changes.
+  useEffect(() => {
+    if (!settingsLoaded) return;
     syncInjections();
-  }, [syncInjections, disabledPlugins, disableAllInjections, authorizedCapabilities]);
+  }, [syncInjections, settingsLoaded, disableAllInjections, authorizedCapabilities]);
 
   // Emit a UI nav-change event to content scripts when the active view
   // switches. Also fire once on mount so late-loaded plugins learn the

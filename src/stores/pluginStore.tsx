@@ -18,6 +18,7 @@ import {
   rehydratePluginInjections,
   getAllRuntimes,
 } from '@/plugins/injection';
+import { removePluginSubscriptions } from '@/plugins/ipc/eventFanout';
 
 const DEFAULT_PLUGIN_ICON = { kind: 'react' as const, node: <Plug className="w-5 h-5" /> };
 
@@ -106,9 +107,9 @@ function applyPluginDiff(
   const oldById = new Map(oldManifests.map((m) => [m.id, m]));
   const newById = new Map(newManifests.map((m) => [m.id, m]));
 
-  const viewState = useViewStore.getState();
-
   // Destroy + unregister for: removed, disabled, or changed plugins.
+  // Always re-read viewStore — unregister/register mutate the store; a
+  // snapshot taken at the start would be stale for later sweeps.
   for (const [id, oldM] of oldById) {
     const newM = newById.get(id);
     const manifestChanged =
@@ -116,8 +117,13 @@ function applyPluginDiff(
     const nowDisabled = disabled.has(id);
     if (manifestChanged || nowDisabled) {
       destroyWebviewByPlugin(id).catch(console.error);
-      deactivatePluginInjections(id);
-      viewState.unregister(id);
+      try {
+        deactivatePluginInjections(id);
+      } catch (err) {
+        console.error(`[pluginStore] deactivate injections failed for ${id}:`, err);
+      }
+      removePluginSubscriptions(id);
+      useViewStore.getState().unregister(id);
     }
   }
 
@@ -132,25 +138,27 @@ function applyPluginDiff(
   // is no longer in the live (enabled) set. This catches providers registered
   // by a previous `fetchPlugins` whose plugin has since been deleted/disabled,
   // even if the manifest diff missed them (e.g. store was reset mid-flight).
-  for (const p of viewState.providers) {
+  for (const p of useViewStore.getState().providers) {
     if (p.pluginId === 'builtin') continue;
     if (!liveIds.has(p.pluginId)) {
-      viewState.unregister(p.pluginId);
+      removePluginSubscriptions(p.pluginId);
+      useViewStore.getState().unregister(p.pluginId);
     }
   }
 
-  // Register view providers for: newly added, re-enabled (was disabled), or
-  // changed plugins. Already-registered unchanged plugins are left alone.
+  // Register view providers for enabled plugins that are not yet registered.
+  // Covers: newly added, re-enabled (manifest unchanged so old diff missed them),
+  // and re-register after manifest change (first loop already unregistered).
+  const registeredPluginIds = new Set(
+    useViewStore.getState().providers.map((p) => p.pluginId),
+  );
   for (const [id, m] of newById) {
     if (disabled.has(id)) continue;
-    const oldM = oldById.get(id);
-    const isNew = !oldM;
-    const manifestChanged = oldM && JSON.stringify(oldM) !== JSON.stringify(m);
-    if (isNew || manifestChanged) {
-      for (const v of m.views) {
-        viewState.register(manifestViewToProvider(m, v));
-      }
+    if (registeredPluginIds.has(id)) continue;
+    for (const v of m.views) {
+      useViewStore.getState().register(manifestViewToProvider(m, v));
     }
+    registeredPluginIds.add(id);
   }
 }
 

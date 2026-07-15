@@ -2,13 +2,14 @@
  * Plugin capability authorization — frontend mirror of the Rust
  * `plugins::auth::authorize` three-layer policy.
  *
- *   1. manifest declares the capability
- *   2. user has authorized the capability for this plugin
+ *   1. plugin is enabled (not in `disabledPlugins`)
+ *   2. manifest declares the capability
+ *   3. user has authorized the capability for this plugin
  *      (plugin absent from `authorizedCapabilities` → all declared ok)
  *
- * (Plugin-enabled check is implicit: `pluginStore.manifests` only contains
- * enabled plugins, so a disabled plugin's manifest is absent and auth fails
- * at layer 1 with "manifest not found".)
+ * Note: `pluginStore.manifests` intentionally includes disabled plugins
+ * (settings UI needs them). Disable is enforced here at layer 1, not by
+ * manifest absence.
  *
  * The `COMMAND_TO_CAPABILITY` map is populated at init time from the Rust
  * single source of truth by `pluginIpc.ts`. A static fallback is used only
@@ -58,6 +59,14 @@ export function setCapabilityMap(map: Record<string, string>): void {
  * denial so plugin DevTools can surface it without opening the main window.
  */
 export function isAuthorized(pluginId: string, cmd: string): AuthResult {
+  const settings = useSettingsStore.getState().settings;
+
+  // Layer 1: plugin enabled (mirror Rust `auth.rs`)
+  const disabled = settings.disabledPlugins ?? [];
+  if (disabled.includes(pluginId)) {
+    return { ok: false, reason: `plugin "${pluginId}" is disabled` };
+  }
+
   const manifests = usePluginStore.getState().manifests;
   const manifest = manifests.find((m) => m.id === pluginId);
   if (!manifest) {
@@ -76,7 +85,6 @@ export function isAuthorized(pluginId: string, cmd: string): AuthResult {
     return { ok: false, reason: `no capability mapping for "${cmd}"` };
   }
 
-  const settings = useSettingsStore.getState().settings;
   const authorizedMap = settings.authorizedCapabilities ?? {};
 
   // Plugin not in map → all declared capabilities are authorized (backward compatible)

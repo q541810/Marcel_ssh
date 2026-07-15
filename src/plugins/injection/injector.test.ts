@@ -221,4 +221,37 @@ describe('injection injector', () => {
     expect(events.length).toBeGreaterThanOrEqual(2);
     off();
   });
+
+  it('deactivate cancels pending idle injection before run', async () => {
+    vi.useFakeTimers();
+    const idleManifest: InjectionManifest = {
+      id: 'test-plug',
+      name: 'Test Plugin',
+      injections: [
+        {
+          id: 'main',
+          matches: ['*'],
+          styles: ['style.css'],
+          scripts: ['content.js'],
+          runAt: 'idle',
+          order: 100,
+        },
+      ],
+    };
+
+    // No requestIdleCallback in node — falls back to setTimeout(1).
+    const activatePromise = activatePluginInjections(idleManifest);
+    // activate returns after scheduling idle work (no await on run).
+    await activatePromise;
+    expect(getRuntime('test-plug.main')).toBeDefined();
+    expect(stub.headChildren).toHaveLength(0);
+
+    deactivatePluginInjections('test-plug');
+    expect(getRuntime('test-plug.main')).toBeUndefined();
+
+    await vi.runAllTimersAsync();
+    // Idle callback was cancelled — no styles injected after deactivate.
+    expect(stub.headChildren).toHaveLength(0);
+    vi.useRealTimers();
+  });
 });

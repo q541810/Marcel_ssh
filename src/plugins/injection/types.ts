@@ -74,7 +74,7 @@ export interface PluginApi {
 /** Internal record of one active injection. */
 export interface InjectionRuntime {
   pluginId: string;
-  /** Full id: `${pluginId}.${injectionDef.id}`. */
+  /** Full id: `${pluginId}.${def.id}`. */
   injectionId: string;
   def: PluginInjectionDef;
   styleElements: HTMLStyleElement[];
@@ -82,6 +82,8 @@ export interface InjectionRuntime {
   /** Last error caught during execution / cleanup. Null if healthy. */
   error: string | null;
   active: boolean;
+  /** Cancel pending idle-scheduled activation (requestIdleCallback / setTimeout). */
+  cancelPending?: () => void;
 }
 
 /** Snapshot of a plugin's injection status, surfaced to the settings UI. */

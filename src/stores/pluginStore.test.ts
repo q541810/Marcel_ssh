@@ -87,6 +87,38 @@ describe('pluginStore', () => {
     expect(providerIds).toContain('world.v1');
   });
 
+  it('fetchPlugins unregisters providers when a plugin becomes disabled', async () => {
+    vi.mocked(tauri.pluginList).mockResolvedValue(testManifests);
+    // Simulate startup race: first fetch with empty disabled list.
+    await usePluginStore.getState().fetchPlugins();
+    expect(useViewStore.getState().providers.map((p) => p.id)).toContain('hello.v1');
+
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, disabledPlugins: ['hello'] },
+    });
+    await usePluginStore.getState().fetchPlugins();
+
+    const providerIds = useViewStore.getState().providers.map((p) => p.id);
+    expect(providerIds).not.toContain('hello.v1');
+    expect(providerIds).toContain('world.v1');
+  });
+
+  it('fetchPlugins re-registers providers when a plugin is re-enabled', async () => {
+    vi.mocked(tauri.pluginList).mockResolvedValue(testManifests);
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, disabledPlugins: ['hello'] },
+    });
+    await usePluginStore.getState().fetchPlugins();
+    expect(useViewStore.getState().providers.map((p) => p.id)).not.toContain('hello.v1');
+
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, disabledPlugins: [] },
+    });
+    await usePluginStore.getState().fetchPlugins();
+
+    expect(useViewStore.getState().providers.map((p) => p.id)).toContain('hello.v1');
+  });
+
   it('fetchPlugins stores all manifests regardless of disabled state', async () => {
     vi.mocked(tauri.pluginList).mockResolvedValue(testManifests);
     useSettingsStore.setState({

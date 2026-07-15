@@ -58,6 +58,7 @@ async function injectScript(pluginId: string, injectionId: string, scriptPath: s
 /** Remove overlay children belonging to a plugin (safety net for plugins
  *  that forgot to clean up in `onCleanup`). */
 function sweepPluginOverlays(pluginId: string): void {
+  if (typeof document === 'undefined') return;
   const container = document.getElementById(OVERLAY_CONTAINER_ID);
   if (!container) return;
   container.querySelectorAll(`[data-plugin-id="${pluginId}"]`).forEach((el) => el.remove());
@@ -89,12 +90,18 @@ export async function activatePluginInjections(manifest: InjectionManifest): Pro
     const api = buildPluginApi(manifest.id, injectionId);
 
     const run = async () => {
+      // Deactivate may have removed this runtime before idle/async work finishes.
+      if (!getRuntimesByPlugin(manifest.id).some((r) => r.injectionId === injectionId && r.active)) {
+        return;
+      }
       // CSS first so the script sees its styles applied.
       for (const stylePath of def.styles) {
+        if (!rt.active) return;
         const el = await injectStyle(manifest.id, injectionId, stylePath);
         if (el) rt.styleElements.push(el);
       }
       for (const scriptPath of def.scripts) {
+        if (!rt.active) return;
         await injectScript(manifest.id, injectionId, scriptPath, api);
       }
     };
@@ -103,17 +110,31 @@ export async function activatePluginInjections(manifest: InjectionManifest): Pro
       await run();
     } else {
       // 'idle' (default) — defer to idle callback so plugin JS doesn't block
-      // the first paint of the main UI.
-      const scheduleIdle = (cb: () => void) => {
-        if ('requestIdleCallback' in window) {
-          (window as unknown as { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(cb);
-        } else {
-          setTimeout(cb, 1);
-        }
+      // the first paint of the main UI. Store a cancel handle so deactivate
+      // can abort before run() injects into a dead runtime.
+      const g = globalThis as typeof globalThis & {
+        requestIdleCallback?: (cb: () => void) => number;
+        cancelIdleCallback?: (id: number) => void;
       };
-      scheduleIdle(() => {
-        run().catch((err) => reportError(manifest.id, injectionId, err));
-      });
+      if (typeof g.requestIdleCallback === 'function') {
+        const idleId = g.requestIdleCallback(() => {
+          rt.cancelPending = undefined;
+          run().catch((err) => reportError(manifest.id, injectionId, err));
+        });
+        rt.cancelPending = () => {
+          g.cancelIdleCallback?.(idleId);
+          rt.cancelPending = undefined;
+        };
+      } else {
+        const timerId = setTimeout(() => {
+          rt.cancelPending = undefined;
+          run().catch((err) => reportError(manifest.id, injectionId, err));
+        }, 1);
+        rt.cancelPending = () => {
+          clearTimeout(timerId);
+          rt.cancelPending = undefined;
+        };
+      }
     }
   }
 }
@@ -142,10 +163,13 @@ export async function rehydratePluginInjections(manifest: InjectionManifest): Pr
   await activatePluginInjections(manifest);
 }
 
-/** Deactivate all injections for a plugin: run cleanups, remove styles,
- *  sweep overlays, drop from registry. Safe to call on a non-active plugin. */
+/** Deactivate all injections for a plugin: cancel pending idle work, run
+ *  cleanups, remove styles, sweep overlays, drop from registry. Safe to call
+ *  on a non-active plugin. */
 export function deactivatePluginInjections(pluginId: string): void {
   for (const rt of getRuntimesByPlugin(pluginId)) {
+    rt.cancelPending?.();
+    rt.cancelPending = undefined;
     runCleanup(rt);
     for (const style of rt.styleElements) {
       style.remove();
