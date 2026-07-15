@@ -16,6 +16,20 @@ pub struct SavedConnection {
     pub key_path: Option<String>,
     pub group: Option<String>,
     pub last_connected: Option<DateTime<Utc>>,
+    /// Whether ProxyJump is enabled. Missing on old data = disabled.
+    #[serde(default)]
+    pub use_jump: bool,
+    #[serde(default)]
+    pub jump_host: Option<String>,
+    #[serde(default)]
+    pub jump_port: Option<u16>,
+    #[serde(default)]
+    pub jump_username: Option<String>,
+    /// `withTarget` | `Password` | `PrivateKey`
+    #[serde(default)]
+    pub jump_auth_method: Option<String>,
+    #[serde(default)]
+    pub jump_key_path: Option<String>,
 }
 
 /// Store for managing saved SSH connections.

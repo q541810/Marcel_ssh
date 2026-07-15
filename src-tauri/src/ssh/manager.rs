@@ -39,6 +39,10 @@ pub struct ConnectionConfig {
     /// fingerprint is replaced rather than the connection being rejected.
     #[serde(default)]
     pub trust_new_host_key: bool,
+    /// Optional ProxyJump hop. When set, connect jump first, open
+    /// direct-tcpip to the target, then handshake SSH over that stream.
+    #[serde(default)]
+    pub jump: Option<crate::ssh::auth::JumpConfig>,
 }
 
 impl fmt::Debug for ConnectionConfig {
@@ -50,6 +54,7 @@ impl fmt::Debug for ConnectionConfig {
             .field("auth_method", &self.auth_method)
             .field("connection_id", &self.connection_id)
             .field("trust_new_host_key", &self.trust_new_host_key)
+            .field("jump", &self.jump)
             .finish()
     }
 }
@@ -141,6 +146,17 @@ impl SshManager {
         if config.port == 0 {
             return Err(AppError::Ssh("端口不能为 0".into()));
         }
+        if let Some(ref jump) = config.jump {
+            if jump.host.is_empty() {
+                return Err(AppError::Ssh("跳板机地址不能为空".into()));
+            }
+            if jump.username.is_empty() {
+                return Err(AppError::Ssh("跳板机用户名不能为空".into()));
+            }
+            if jump.port == 0 {
+                return Err(AppError::Ssh("跳板机端口不能为 0".into()));
+            }
+        }
 
         let host = config.host.clone();
         let port = config.port;
@@ -148,14 +164,14 @@ impl SshManager {
         let connection_id = config.connection_id.clone();
 
         log::info!(
-            "SSH connecting to {}@{}:{} (session={})",
+            "SSH connecting to {}@{}:{} jump={:?} (session={})",
             username,
             host,
             port,
+            config.jump.as_ref().map(|j| format!("{}@{}:{}", j.username, j.host, j.port)),
             session_id
         );
 
-        // Build client config
         let client_config = Arc::new(client::Config {
             inactivity_timeout: Some(Duration::from_secs(600)),
             keepalive_interval: Some(Duration::from_secs(30)),
@@ -163,80 +179,93 @@ impl SshManager {
             ..Default::default()
         });
 
-        // Connect TCP + SSH handshake
-        let verdict = Arc::new(TokioMutex::new(None));
-        let tofu_record_error = Arc::new(TokioMutex::new(None));
-        let client = Client {
-            host: host.clone(),
-            port,
-            store: self.known_hosts.clone(),
-            trust_new: config.trust_new_host_key,
-            verdict: verdict.clone(),
-            tofu_record_error: tofu_record_error.clone(),
-        };
-        let mut handle = match client::connect(client_config, (host.as_str(), port), client).await {
-            Ok(h) => h,
-            Err(e) => {
-                // If the handshake failed because of a host-key mismatch,
-                // report a structured error so the frontend can prompt the
-                // user. Otherwise return the generic SSH error.
-                let v = verdict.lock().await.take();
-                if let Some(VerifyOutcome::Mismatch { stored, presented }) = v {
-                    return Err(AppError::HostKeyMismatch {
-                        host: host.clone(),
-                        port,
-                        stored_algorithm: stored.algorithm,
-                        stored_fingerprint: stored.fingerprint_sha256,
-                        presented_algorithm: presented.algorithm,
-                        presented_fingerprint: presented.fingerprint_sha256,
-                    });
-                }
-                return Err(AppError::Ssh(format!("连接失败: {}", e)));
-            }
-        };
-
-        // Check if TOFU record/replace failed during the handshake.
-        // Connection is still accepted (availability-first, like OpenSSH),
-        // but we warn the user so they know TOFU pinning may not persist.
-        if let Some(err_msg) = tofu_record_error.lock().await.take() {
-            log::warn!("主机密钥未持久化 {}: {} — {}", host, port, err_msg);
-            emit_event(
-                &app,
-                "hostKeyWarning",
-                serde_json::json!({
-                    "host": host,
-                    "port": port,
-                    "reason": err_msg,
-                    "message": "主机密钥未能持久化，本次连接安全但不保证未来能检测密钥变更，请检查配置目录可写性"
-                }),
-            );
-        }
-
-        // Authenticate
-        let auth_success = match &config.auth_method {
-            AuthMethod::Password { password } => handle
-                .authenticate_password(&username, password)
-                .await
-                .map_err(|e| AppError::Ssh(format!("密码认证错误: {}", e)))?,
-            AuthMethod::PrivateKey {
-                key_path,
-                passphrase,
-            } => {
-                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                    .map_err(|e| AppError::Ssh(format!("加载私钥失败: {}", e)))?;
-                handle
-                    .authenticate_publickey(
-                        &username,
-                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+        // ── Jump hop (optional) ──────────────────────────────────────────
+        // Keep jump_handle alive for the whole target session so the
+        // direct-tcpip tunnel stream does not die when the jump Handle drops.
+        let jump_handle: Option<Arc<TokioMutex<client::Handle<Client>>>> =
+            if let Some(jump) = config.jump.clone() {
+                let mut jh = self
+                    .ssh_handshake(
+                        client_config.clone(),
+                        &jump.host,
+                        jump.port,
+                        config.trust_new_host_key,
+                        &app,
+                        "jump",
                     )
                     .await
-                    .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?
-            }
+                    .map_err(|e| match e {
+                        AppError::HostKeyMismatch { .. } => e,
+                        other => AppError::Ssh(format!(
+                            "跳板机 {} 连接失败：{}",
+                            jump.host,
+                            strip_ssh_prefix(&other.to_string())
+                        )),
+                    })?;
+
+                Self::authenticate(&mut jh, &jump.username, &jump.auth_method)
+                    .await
+                    .map_err(|e| {
+                        AppError::Ssh(format!(
+                            "跳板机 {} 连接失败：{}",
+                            jump.host,
+                            strip_ssh_prefix(&e.to_string())
+                        ))
+                    })?;
+
+                Some(Arc::new(TokioMutex::new(jh)))
+            } else {
+                None
+            };
+
+        // ── Target hop ───────────────────────────────────────────────────
+        let via_jump = jump_handle.is_some();
+        let mut handle = if let Some(ref jh) = jump_handle {
+            let jump_guard = jh.lock().await;
+            let channel = jump_guard
+                .channel_open_direct_tcpip(
+                    host.as_str(),
+                    port as u32,
+                    "127.0.0.1",
+                    0,
+                )
+                .await
+                .map_err(|e| {
+                    AppError::Ssh(format!(
+                        "跳板机隧道到 {}:{} 失败：{}",
+                        host, port, e
+                    ))
+                })?;
+            drop(jump_guard);
+
+            let stream = channel.into_stream();
+            self.ssh_handshake_stream(
+                client_config,
+                stream,
+                &host,
+                port,
+                config.trust_new_host_key,
+                &app,
+                "target",
+            )
+            .await
+            .map_err(|e| map_target_err(e, &host, true))?
+        } else {
+            self.ssh_handshake(
+                client_config,
+                &host,
+                port,
+                config.trust_new_host_key,
+                &app,
+                "target",
+            )
+            .await
+            .map_err(|e| map_target_err(e, &host, false))?
         };
 
-        if !auth_success.success() {
-            return Err(AppError::Ssh("认证失败：用户名或密码/密钥错误".into()));
-        }
+        Self::authenticate(&mut handle, &username, &config.auth_method)
+            .await
+            .map_err(|e| map_target_err(e, &host, via_jump))?;
 
         // Open session channel
         let channel = handle
@@ -244,28 +273,19 @@ impl SshManager {
             .await
             .map_err(|e| AppError::Ssh(format!("打开会话通道失败: {}", e)))?;
 
-        // Request a PTY so interactive apps work correctly
         channel
             .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
             .await
             .map_err(|e| AppError::Ssh(format!("分配 PTY 失败: {}", e)))?;
 
-        // Request a shell
         channel
             .request_shell(false)
             .await
             .map_err(|e| AppError::Ssh(format!("启动 shell 失败: {}", e)))?;
 
-        // Set up the command channel (frontend -> driver task)
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
-
-        // We need the handle both for the interactive driver task and for
-        // opening exec channels (agent tool calls). Wrap in Arc<Mutex> so
-        // both can use it without move conflicts.
         let shared_handle = Arc::new(TokioMutex::new(handle));
 
-        // Increment generation so any stale driver task for the same
-        // session_id will skip cleanup (it captured an older generation).
         let generation = {
             let mut gens = self.generations.write().await;
             let g = gens.get(&session_id).copied().unwrap_or(0) + 1;
@@ -282,6 +302,7 @@ impl SshManager {
             generation,
             cmd_tx,
             handle: shared_handle.clone(),
+            jump_handle,
         });
 
         self.connections
@@ -289,14 +310,12 @@ impl SshManager {
             .await
             .insert(session_id.clone(), connection);
 
-        // Notify frontend that the session is ready
         emit_event(
             &app,
             &format!("ssh://status/{}", session_id),
             SshStatus::Connected,
         );
 
-        // Spawn the driver task: owns the channel and the session handle
         let sid = session_id.clone();
         let app_clone = app.clone();
         let manager_connections = self.connections.clone();
@@ -309,9 +328,6 @@ impl SshManager {
                 app_clone.clone(),
             )
             .await;
-            // Cleanup: only remove if the generation still matches.
-            // A reconnect increments the generation, so a stale driver
-            // that exits after reconnect will see a mismatch and skip.
             let mut guard = manager_connections.write().await;
             let dominated = guard.get(&sid).map_or(true, |c| c.generation == generation);
             if dominated {
@@ -331,6 +347,145 @@ impl SshManager {
             }
         });
 
+        Ok(())
+    }
+
+    /// TCP connect + SSH handshake to `host:port` with host-key verification.
+    async fn ssh_handshake(
+        &self,
+        client_config: Arc<client::Config>,
+        host: &str,
+        port: u16,
+        trust_new: bool,
+        app: &AppHandle,
+        role: &str,
+    ) -> Result<client::Handle<Client>, AppError> {
+        let verdict = Arc::new(TokioMutex::new(None));
+        let tofu_record_error = Arc::new(TokioMutex::new(None));
+        let client = Client {
+            host: host.to_string(),
+            port,
+            store: self.known_hosts.clone(),
+            trust_new,
+            verdict: verdict.clone(),
+            tofu_record_error: tofu_record_error.clone(),
+        };
+        let handle = match client::connect(client_config, (host, port), client).await {
+            Ok(h) => h,
+            Err(e) => {
+                let v = verdict.lock().await.take();
+                if let Some(VerifyOutcome::Mismatch { stored, presented }) = v {
+                    return Err(AppError::HostKeyMismatch {
+                        host: host.to_string(),
+                        port,
+                        stored_algorithm: stored.algorithm,
+                        stored_fingerprint: stored.fingerprint_sha256,
+                        presented_algorithm: presented.algorithm,
+                        presented_fingerprint: presented.fingerprint_sha256,
+                    });
+                }
+                return Err(AppError::Ssh(format!("连接失败: {}", e)));
+            }
+        };
+        Self::emit_tofu_warning(app, host, port, tofu_record_error, role).await;
+        Ok(handle)
+    }
+
+    /// SSH handshake over an existing stream (e.g. jump tunnel).
+    async fn ssh_handshake_stream<R>(
+        &self,
+        client_config: Arc<client::Config>,
+        stream: R,
+        host: &str,
+        port: u16,
+        trust_new: bool,
+        app: &AppHandle,
+        role: &str,
+    ) -> Result<client::Handle<Client>, AppError>
+    where
+        R: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        let verdict = Arc::new(TokioMutex::new(None));
+        let tofu_record_error = Arc::new(TokioMutex::new(None));
+        let client = Client {
+            host: host.to_string(),
+            port,
+            store: self.known_hosts.clone(),
+            trust_new,
+            verdict: verdict.clone(),
+            tofu_record_error: tofu_record_error.clone(),
+        };
+        let handle = match client::connect_stream(client_config, stream, client).await {
+            Ok(h) => h,
+            Err(e) => {
+                let v = verdict.lock().await.take();
+                if let Some(VerifyOutcome::Mismatch { stored, presented }) = v {
+                    return Err(AppError::HostKeyMismatch {
+                        host: host.to_string(),
+                        port,
+                        stored_algorithm: stored.algorithm,
+                        stored_fingerprint: stored.fingerprint_sha256,
+                        presented_algorithm: presented.algorithm,
+                        presented_fingerprint: presented.fingerprint_sha256,
+                    });
+                }
+                return Err(AppError::Ssh(format!("连接失败: {}", e)));
+            }
+        };
+        Self::emit_tofu_warning(app, host, port, tofu_record_error, role).await;
+        Ok(handle)
+    }
+
+    async fn emit_tofu_warning(
+        app: &AppHandle,
+        host: &str,
+        port: u16,
+        tofu_record_error: Arc<TokioMutex<Option<String>>>,
+        _role: &str,
+    ) {
+        if let Some(err_msg) = tofu_record_error.lock().await.take() {
+            log::warn!("主机密钥未持久化 {}: {} — {}", host, port, err_msg);
+            emit_event(
+                app,
+                "hostKeyWarning",
+                serde_json::json!({
+                    "host": host,
+                    "port": port,
+                    "reason": err_msg,
+                    "message": "主机密钥未能持久化，本次连接安全但不保证未来能检测密钥变更，请检查配置目录可写性"
+                }),
+            );
+        }
+    }
+
+    async fn authenticate(
+        handle: &mut client::Handle<Client>,
+        username: &str,
+        auth_method: &AuthMethod,
+    ) -> Result<(), AppError> {
+        let auth_success = match auth_method {
+            AuthMethod::Password { password } => handle
+                .authenticate_password(username, password)
+                .await
+                .map_err(|e| AppError::Ssh(format!("密码认证错误: {}", e)))?,
+            AuthMethod::PrivateKey {
+                key_path,
+                passphrase,
+            } => {
+                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
+                    .map_err(|e| AppError::Ssh(format!("加载私钥失败: {}", e)))?;
+                handle
+                    .authenticate_publickey(
+                        username,
+                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                    )
+                    .await
+                    .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?
+            }
+        };
+        if !auth_success.success() {
+            return Err(AppError::Ssh("认证失败：用户名或密码/密钥错误".into()));
+        }
         Ok(())
     }
 
@@ -661,4 +816,28 @@ pub struct SessionInfo {
     pub port: u16,
     pub username: String,
     pub connection_id: Option<String>,
+}
+
+fn strip_ssh_prefix(msg: &str) -> String {
+    const PREFIXES: &[&str] = &["SSH error: ", "SSH 错误: "];
+    for p in PREFIXES {
+        if let Some(rest) = msg.strip_prefix(p) {
+            return rest.to_string();
+        }
+    }
+    msg.to_string()
+}
+
+/// Map target-hop errors: preserve HostKeyMismatch; with jump, prefix
+/// `目标服务器 {host}`；direct keeps legacy wording for compatibility.
+fn map_target_err(e: AppError, host: &str, via_jump: bool) -> AppError {
+    match e {
+        AppError::HostKeyMismatch { .. } => e,
+        other if via_jump => AppError::Ssh(format!(
+            "目标服务器 {} 连接失败：{}",
+            host,
+            strip_ssh_prefix(&other.to_string())
+        )),
+        other => other,
+    }
 }

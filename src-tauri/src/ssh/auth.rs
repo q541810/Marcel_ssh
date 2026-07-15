@@ -18,6 +18,27 @@ pub enum AuthMethod {
     },
 }
 
+/// Runtime ProxyJump configuration (credentials included).
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JumpConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub auth_method: AuthMethod,
+}
+
+impl fmt::Debug for JumpConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JumpConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_method", &self.auth_method)
+            .finish()
+    }
+}
+
 impl fmt::Debug for AuthMethod {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

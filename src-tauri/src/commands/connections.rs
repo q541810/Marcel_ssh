@@ -59,5 +59,11 @@ pub async fn config_delete_connection(
     if let Err(e) = keychain::delete_password(&format!("pk:{}", id)) {
         log::warn!("清除密钥链 passphrase 条目失败（id={}): {}", id, e);
     }
+    if let Err(e) = keychain::delete_password(&format!("jump:{}", id)) {
+        log::warn!("清除跳板机密码密钥链条目失败（id={}): {}", id, e);
+    }
+    if let Err(e) = keychain::delete_password(&format!("jump:pk:{}", id)) {
+        log::warn!("清除跳板机 passphrase 密钥链条目失败（id={}): {}", id, e);
+    }
     Ok(())
 }

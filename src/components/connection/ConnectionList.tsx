@@ -93,6 +93,7 @@ export default function ConnectionList() {
       default:
         authMethod = { type: 'Agent' };
     }
+    // Jump secrets are loaded on the Rust side from keychain when connectionId is set.
     const config: ConnectionConfig = {
       host: conn.host,
       port: conn.port,

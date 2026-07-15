@@ -52,6 +52,56 @@ pub async fn config_delete_passphrase(connection_id: String) -> Result<(), AppEr
     keychain::delete_password(&format!("pk:{}", connection_id))
 }
 
+/// Save jump-host password (`jump:{connection_id}`).
+#[tauri::command]
+pub async fn config_save_jump_password(
+    connection_id: String,
+    password: String,
+) -> Result<(), AppError> {
+    keychain::save_password(&format!("jump:{}", connection_id), &password)
+}
+
+/// Check whether a jump-host password is stored.
+#[tauri::command]
+pub async fn config_has_jump_password(connection_id: String) -> Result<bool, AppError> {
+    match keychain::get_password(&format!("jump:{}", connection_id)) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove jump-host password from keychain.
+#[tauri::command]
+pub async fn config_delete_jump_password(connection_id: String) -> Result<(), AppError> {
+    keychain::delete_password(&format!("jump:{}", connection_id))
+}
+
+/// Save jump-host private-key passphrase (`jump:pk:{connection_id}`).
+#[tauri::command]
+pub async fn config_save_jump_passphrase(
+    connection_id: String,
+    passphrase: String,
+) -> Result<(), AppError> {
+    keychain::save_password(&format!("jump:pk:{}", connection_id), &passphrase)
+}
+
+/// Check whether a jump-host passphrase is stored.
+#[tauri::command]
+pub async fn config_has_jump_passphrase(connection_id: String) -> Result<bool, AppError> {
+    match keychain::get_password(&format!("jump:pk:{}", connection_id)) {
+        Ok(Some(_)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Remove jump-host passphrase from keychain.
+#[tauri::command]
+pub async fn config_delete_jump_passphrase(connection_id: String) -> Result<(), AppError> {
+    keychain::delete_password(&format!("jump:pk:{}", connection_id))
+}
+
 /// Save the LLM API key to the system keychain.
 #[tauri::command]
 pub async fn config_save_llm_api_key(api_key: String) -> Result<(), AppError> {

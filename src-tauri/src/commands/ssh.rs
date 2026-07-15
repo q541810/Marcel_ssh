@@ -1,27 +1,128 @@
 use tauri::{AppHandle, State};
 
 use crate::commands::sftp::TransferCancelGuard;
+use crate::config::connections::SavedConnection;
 use crate::config::keychain;
 use crate::emit_event;
 use crate::error::AppError;
-use crate::ssh::auth::AuthMethod;
+use crate::ssh::auth::{AuthMethod, JumpConfig};
 use crate::ssh::connection::ConnectionConfig;
 use crate::AppState;
 use serde_json::json;
 use std::time::Duration;
 use tokio::sync::watch;
 
+/// Keychain account for jump host password: `jump:{connection_id}`
+fn jump_password_account(connection_id: &str) -> String {
+    format!("jump:{}", connection_id)
+}
+
+/// Keychain account for jump host private-key passphrase: `jump:pk:{connection_id}`
+fn jump_passphrase_account(connection_id: &str) -> String {
+    format!("jump:pk:{}", connection_id)
+}
+
+/// Build runtime jump config from a saved connection + keychain secrets.
+/// Returns `Ok(None)` when jump is not enabled.
+fn build_jump_config(
+    saved: &SavedConnection,
+    connection_id: &str,
+    target_auth: &AuthMethod,
+) -> Result<Option<JumpConfig>, AppError> {
+    if !saved.use_jump {
+        return Ok(None);
+    }
+    let host = saved
+        .jump_host
+        .as_deref()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| AppError::Config("已启用跳板机但未配置主机".into()))?
+        .to_string();
+    let port = saved.jump_port.unwrap_or(22);
+    let username = saved
+        .jump_username
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| AppError::Config("已启用跳板机但未配置用户名".into()))?
+        .to_string();
+
+    let method = saved.jump_auth_method.as_deref().unwrap_or("withTarget");
+    let auth_method = match method {
+        "withTarget" => clone_auth_method(target_auth),
+        "Password" => {
+            let password = keychain::get_password(&jump_password_account(connection_id))?
+                .ok_or_else(|| AppError::Config("未找到已保存的跳板机密码".into()))?;
+            AuthMethod::Password { password }
+        }
+        "PrivateKey" => {
+            let key_path = saved
+                .jump_key_path
+                .clone()
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| AppError::Config("未配置跳板机私钥路径".into()))?;
+            let passphrase = keychain::get_password(&jump_passphrase_account(connection_id))?;
+            AuthMethod::PrivateKey {
+                key_path,
+                passphrase,
+            }
+        }
+        other => {
+            return Err(AppError::Config(format!(
+                "不支持的跳板机认证方式: {}",
+                other
+            )));
+        }
+    };
+
+    Ok(Some(JumpConfig {
+        host,
+        port,
+        username,
+        auth_method,
+    }))
+}
+
+fn clone_auth_method(auth: &AuthMethod) -> AuthMethod {
+    match auth {
+        AuthMethod::Password { password } => AuthMethod::Password {
+            password: password.clone(),
+        },
+        AuthMethod::PrivateKey {
+            key_path,
+            passphrase,
+        } => AuthMethod::PrivateKey {
+            key_path: key_path.clone(),
+            passphrase: passphrase.clone(),
+        },
+    }
+}
+
 /// Establish a new SSH connection. Returns the session ID.
 ///
 /// On success, the backend spawns a background task that emits
 /// `ssh://output/{session_id}` events with terminal data and
 /// `ssh://status/{session_id}` events with connection lifecycle updates.
+///
+/// If `config.jump` is absent but `connection_id` points to a saved connection
+/// with `useJump`, jump credentials are loaded from the keychain here so the
+/// frontend never needs to handle jump secrets.
 #[tauri::command]
 pub async fn ssh_connect(
     app: AppHandle,
     state: State<'_, AppState>,
-    config: ConnectionConfig,
+    mut config: ConnectionConfig,
 ) -> Result<String, AppError> {
+    if config.jump.is_none() {
+        if let Some(ref connection_id) = config.connection_id {
+            let saved = {
+                let store = state.connection_store.read().await;
+                store.get_by_id(connection_id).cloned()
+            };
+            if let Some(saved) = saved {
+                config.jump = build_jump_config(&saved, connection_id, &config.auth_method)?;
+            }
+        }
+    }
     state.ssh_manager.connect(config, app).await
 }
 
@@ -199,13 +300,17 @@ pub async fn ssh_connect_with_saved_password(
     let password = keychain::get_password(&connection_id)?
         .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
 
+    let auth_method = AuthMethod::Password { password };
+    let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
+
     let config = ConnectionConfig {
         host: saved.host,
         port: saved.port,
         username: saved.username,
-        auth_method: AuthMethod::Password { password },
+        auth_method,
         connection_id: Some(connection_id),
         trust_new_host_key: trust_new_host_key.unwrap_or(false),
+        jump,
     };
 
     state.ssh_manager.connect(config, app).await
@@ -234,20 +339,25 @@ pub async fn ssh_connect_with_saved_passphrase(
 
     let key_path = saved
         .key_path
+        .clone()
         .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
 
     let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
+
+    let auth_method = AuthMethod::PrivateKey {
+        key_path,
+        passphrase,
+    };
+    let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
 
     let config = ConnectionConfig {
         host: saved.host,
         port: saved.port,
         username: saved.username,
-        auth_method: AuthMethod::PrivateKey {
-            key_path,
-            passphrase,
-        },
+        auth_method,
         connection_id: Some(connection_id),
         trust_new_host_key: trust_new_host_key.unwrap_or(false),
+        jump,
     };
 
     state.ssh_manager.connect(config, app).await
@@ -288,6 +398,7 @@ pub async fn ssh_reconnect(
         "PrivateKey" => {
             let key_path = saved
                 .key_path
+                .clone()
                 .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
             let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
             AuthMethod::PrivateKey {
@@ -298,6 +409,8 @@ pub async fn ssh_reconnect(
         other => return Err(AppError::Config(format!("不支持的认证方式: {}", other))),
     };
 
+    let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
+
     let config = ConnectionConfig {
         host: saved.host,
         port: saved.port,
@@ -305,6 +418,7 @@ pub async fn ssh_reconnect(
         auth_method,
         connection_id: Some(connection_id),
         trust_new_host_key: trust_new_host_key.unwrap_or(false),
+        jump,
     };
 
     state.ssh_manager.reconnect(session_id, config, app).await

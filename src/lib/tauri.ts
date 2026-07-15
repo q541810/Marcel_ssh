@@ -264,6 +264,38 @@ export async function deletePassphrase(connectionId: string): Promise<void> {
   return invoke('config_delete_passphrase', { connectionId });
 }
 
+// Jump host keychain
+
+export async function saveJumpPassword(
+  connectionId: string,
+  password: string,
+): Promise<void> {
+  return invoke('config_save_jump_password', { connectionId, password });
+}
+
+export async function hasJumpPassword(connectionId: string): Promise<boolean> {
+  return invoke<boolean>('config_has_jump_password', { connectionId });
+}
+
+export async function deleteJumpPassword(connectionId: string): Promise<void> {
+  return invoke('config_delete_jump_password', { connectionId });
+}
+
+export async function saveJumpPassphrase(
+  connectionId: string,
+  passphrase: string,
+): Promise<void> {
+  return invoke('config_save_jump_passphrase', { connectionId, passphrase });
+}
+
+export async function hasJumpPassphrase(connectionId: string): Promise<boolean> {
+  return invoke<boolean>('config_has_jump_passphrase', { connectionId });
+}
+
+export async function deleteJumpPassphrase(connectionId: string): Promise<void> {
+  return invoke('config_delete_jump_passphrase', { connectionId });
+}
+
 // Quick command commands
 
 export async function quickCommandList(sessionKey?: string | null): Promise<QuickCommand[]> {

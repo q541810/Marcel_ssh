@@ -35,6 +35,10 @@ pub struct SshConnection {
     /// Shared russh Handle — used to open additional exec channels for
     /// Agent tool calls (separate from the interactive PTY channel).
     pub(crate) handle: Arc<tokio::sync::Mutex<client::Handle<Client>>>,
+    /// Jump host handle kept alive for the lifetime of the target session so
+    /// the direct-tcpip tunnel does not close. `None` for direct connections.
+    #[allow(dead_code)]
+    pub(crate) jump_handle: Option<Arc<tokio::sync::Mutex<client::Handle<Client>>>>,
 }
 
 /// Drive a single SSH session: multiplex incoming channel messages

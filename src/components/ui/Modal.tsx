@@ -44,7 +44,9 @@ export default function Modal({ open, onClose, title, size = 'md', children }: P
       />
 
       {/* Content */}
-      <div className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${SIZE_CLASSES[size]}`}>
+      <div
+        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${SIZE_CLASSES[size]}`}
+      >
         {/* Header */}
         {title && (
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
@@ -59,8 +61,16 @@ export default function Modal({ open, onClose, title, size = 'md', children }: P
           </div>
         )}
 
-        {/* Body */}
-        <div className={`${title ? '' : 'pt-4'} ${size === 'xl' ? 'flex-1 overflow-hidden flex flex-col' : ''}`}>{children}</div>
+        {/* Body：表单变高时可滚动，避免跳板等区块把密码/按钮裁切掉 */}
+        <div
+          className={`${title ? '' : 'pt-4'} ${
+            size === 'xl'
+              ? 'flex-1 overflow-hidden flex flex-col min-h-0'
+              : 'overflow-y-auto min-h-0'
+          }`}
+        >
+          {children}
+        </div>
       </div>
     </div>,
     document.body,

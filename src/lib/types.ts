@@ -128,6 +128,13 @@ export interface ReloadDiff {
 
 // Connection types
 
+export interface JumpConfig {
+  host: string;
+  port: number;
+  username: string;
+  authMethod: AuthMethod;
+}
+
 export interface ConnectionConfig {
   host: string;
   port: number;
@@ -141,12 +148,17 @@ export interface ConnectionConfig {
    * `KnownHostsStore::replace` instead of rejecting the handshake.
    */
   trustNewHostKey?: boolean;
+  /** Optional ProxyJump hop. */
+  jump?: JumpConfig;
 }
 
 export type AuthMethod =
   | { type: 'Password'; password: string }
   | { type: 'PrivateKey'; keyPath: string; passphrase?: string }
   | { type: 'Agent' };
+
+/** Jump auth mode stored on SavedConnection (not runtime credentials). */
+export type JumpAuthMethod = 'withTarget' | 'Password' | 'PrivateKey';
 
 export interface SavedConnection {
   id: string;
@@ -158,6 +170,13 @@ export interface SavedConnection {
   keyPath?: string;
   group?: string;
   lastConnected?: string;
+  /** ProxyJump — missing on old data means disabled. */
+  useJump?: boolean;
+  jumpHost?: string;
+  jumpPort?: number;
+  jumpUsername?: string;
+  jumpAuthMethod?: JumpAuthMethod;
+  jumpKeyPath?: string;
 }
 
 // Session types
