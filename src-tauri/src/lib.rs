@@ -505,6 +505,7 @@ pub fn run() {
             commands::agent_conversation::agent_delete_conversation,
             commands::agent_conversation::agent_truncate_conversation,
             commands::agent_conversation::agent_list_conversations_by_connection,
+            commands::agent_conversation::agent_search_conversations,
             commands::agent_conversation::agent_delete_conversations_by_session,
             commands::agent_conversation::agent_load_plans_by_conversation,
             commands::connections::config_get_connections,

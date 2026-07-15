@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::agent::conversation::Conversation;
+use crate::agent::conversation::{Conversation, ConversationSearchResult};
 use crate::agent::task::AgentTaskPlan;
 use crate::error::AppError;
 use crate::AppState;
@@ -264,6 +264,26 @@ pub async fn agent_list_conversations_by_connection(
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
     Ok(conversations)
+}
+
+/// 全文搜索聊天历史（消息 content），按会话聚合。
+/// keyword 为空返回空列表；可选 connection_id 限定连接。
+#[tauri::command]
+pub async fn agent_search_conversations(
+    state: State<'_, AppState>,
+    keyword: String,
+    connection_id: Option<String>,
+) -> Result<Vec<ConversationSearchResult>, AppError> {
+    log::info!(
+        "agent_search_conversations: keyword_len={}, connection_filter={}",
+        keyword.trim().chars().count(),
+        connection_id.is_some()
+    );
+    let results = state
+        .conversation_db
+        .search_conversations(&keyword, connection_id.as_deref())
+        .map_err(|e| AppError::Agent(format!("Failed to search conversations: {}", e)))?;
+    Ok(results)
 }
 
 /// Delete all conversations for a given SSH session.

@@ -599,6 +599,18 @@ export interface StoredMessage {
   reasoningContent?: string | null;
 }
 
+/** 聊天历史全文搜索的单条会话聚合结果 */
+export interface ConversationSearchResult {
+  conversationId: string;
+  title: string;
+  connectionId: string;
+  matchedSnippet: string;
+  matchCount: number;
+  /** 匹配消息 id，按时间升序，最多 200 条 */
+  matchedMessageIds: string[];
+  updatedAt: string;
+}
+
 // Update check types
 
 export interface UpdateCheckResult {

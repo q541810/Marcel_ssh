@@ -5,6 +5,10 @@ import ToolCallCard from './ToolCallCard';
 interface Props {
   messages: AgentMessage[];
   autoExpand?: boolean;
+  /** 搜索命中组内消息时强制展开，便于定位 */
+  forceExpand?: boolean;
+  matchedIds?: Set<string>;
+  flashId?: string | null;
 }
 
 const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory', 'system_info'];
@@ -16,14 +20,24 @@ export function isExplorationTool(msg: AgentMessage): boolean {
   return false;
 }
 
-function ExplorationGroup({ messages, autoExpand }: Props) {
-  const [expanded, setExpanded] = useState(autoExpand ?? false);
+function ExplorationGroup({
+  messages,
+  autoExpand,
+  forceExpand = false,
+  matchedIds,
+  flashId = null,
+}: Props) {
+  const [expanded, setExpanded] = useState(Boolean(autoExpand || forceExpand));
 
   useEffect(() => {
+    if (forceExpand) {
+      setExpanded(true);
+      return;
+    }
     if (!autoExpand) {
       setExpanded(false);
     }
-  }, [autoExpand]);
+  }, [autoExpand, forceExpand]);
 
   return (
     <div className="flex justify-start">
@@ -55,9 +69,27 @@ function ExplorationGroup({ messages, autoExpand }: Props) {
         </button>
         {expanded && (
           <div className="mt-1.5 space-y-1">
-            {messages.map((msg) => (
-              <ToolCallCard key={msg.id} message={msg} autoExpand={autoExpand} />
-            ))}
+            {messages.map((msg) => {
+              const isMatch = matchedIds?.has(msg.id) ?? false;
+              const isFlash = flashId === msg.id;
+              return (
+                <div
+                  key={msg.id}
+                  data-message-id={msg.id}
+                  className={`relative rounded-lg transition-colors duration-500 ${
+                    isFlash ? 'bg-indigo-500/20 ring-1 ring-indigo-400/30' : ''
+                  } ${isMatch ? 'pl-2' : ''}`}
+                >
+                  {isMatch && (
+                    <span
+                      className="absolute left-0 top-2 bottom-2 w-1 rounded-full bg-indigo-400/70"
+                      aria-hidden
+                    />
+                  )}
+                  <ToolCallCard message={msg} autoExpand={autoExpand || forceExpand} />
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

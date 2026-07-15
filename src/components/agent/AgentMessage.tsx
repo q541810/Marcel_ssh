@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef } from "react";
+import { memo, useState, useEffect, useRef, type ReactNode } from "react";
 import type { AgentMessage as AgentMessageType } from "@/lib/types";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -12,6 +12,36 @@ interface Props {
   rollbackDisabled?: boolean;
   onRollback?: (message: AgentMessageType) => void;
   onCopy?: (message: AgentMessageType) => void;
+  /** 搜索关键词：用户消息正文高亮 */
+  searchKeyword?: string;
+}
+
+function highlightPlainText(text: string, keyword?: string): ReactNode {
+  const q = keyword?.trim();
+  if (!q) return text;
+  const lower = text.toLowerCase();
+  const qLower = q.toLowerCase();
+  const parts: ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const idx = lower.indexOf(qLower, i);
+    if (idx < 0) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (idx > i) parts.push(text.slice(i, idx));
+    parts.push(
+      <mark
+        key={key++}
+        className="rounded bg-indigo-400/30 text-indigo-100 px-0.5"
+      >
+        {text.slice(idx, idx + q.length)}
+      </mark>,
+    );
+    i = idx + q.length;
+  }
+  return parts.length ? parts : text;
 }
 
 const MARKDOWN_CLASS =
@@ -107,7 +137,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
   );
 }
 
-function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCopy }: Props) {
+function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCopy, searchKeyword }: Props) {
   const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay);
   const [thinkingExpanded, setThinkingExpanded] = useState(autoExpand ?? false);
   const [copied, setCopied] = useState(false);
@@ -146,7 +176,7 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
       <div className="group flex justify-end my-1">
         <div className="flex max-w-[80%] flex-col items-end">
         <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
-          {message.content}
+          {highlightPlainText(message.content, searchKeyword)}
         </div>
           <div className="mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0">
             <span className="min-w-0 truncate">

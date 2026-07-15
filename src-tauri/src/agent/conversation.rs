@@ -48,6 +48,20 @@ pub struct StoredMessage {
     pub reasoning_content: Option<String>,
 }
 
+/// 聊天历史全文搜索的单条会话聚合结果。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationSearchResult {
+    pub conversation_id: String,
+    pub title: String,
+    pub connection_id: String,
+    pub matched_snippet: String,
+    pub match_count: i64,
+    /// 匹配消息 id，按时间升序，最多 200 条
+    pub matched_message_ids: Vec<String>,
+    pub updated_at: chrono::DateTime<Utc>,
+}
+
 pub struct ConversationDb {
     conn: Mutex<Connection>,
 }
@@ -228,12 +242,128 @@ impl ConversationDb {
         Ok(conversations)
     }
 
+    /// 全文搜索消息内容，按会话聚合。
+    /// - keyword 为空返回空列表
+    /// - 每会话最多 200 条匹配 message id（按消息时间升序）
+    /// - 最多返回 100 个会话，按 conversations.updated_at 倒序
+    pub fn search_conversations(
+        &self,
+        keyword: &str,
+        connection_id: Option<&str>,
+    ) -> RusqliteResult<Vec<ConversationSearchResult>> {
+        const MAX_MESSAGE_IDS: usize = 200;
+        const MAX_CONVERSATIONS: usize = 100;
+
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let pattern = format!("%{}%", escape_like(keyword));
+        let conn = self.conn.lock().unwrap();
+
+        // 先按会话 updated_at 倒序、消息 created_at 升序取出匹配行，再在内存聚合
+        let sql = if connection_id.is_some() {
+            "SELECT m.id, m.content, m.created_at,
+                    c.id, c.title, c.connection_id, c.updated_at
+             FROM messages m
+             INNER JOIN conversations c ON c.id = m.conversation_id
+             WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+               AND c.connection_id = ?2
+             ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+        } else {
+            "SELECT m.id, m.content, m.created_at,
+                    c.id, c.title, c.connection_id, c.updated_at
+             FROM messages m
+             INNER JOIN conversations c ON c.id = m.conversation_id
+             WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+             ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+
+        type RowTuple = (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+        );
+
+        let rows: Vec<RowTuple> = if let Some(cid) = connection_id {
+            stmt.query_map(rusqlite::params![pattern, cid], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })?
+            .collect::<RusqliteResult<Vec<_>>>()?
+        } else {
+            stmt.query_map([&pattern], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })?
+            .collect::<RusqliteResult<Vec<_>>>()?
+        };
+
+        let mut results: Vec<ConversationSearchResult> = Vec::new();
+        let mut index_by_conv: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+
+        for (msg_id, content, _msg_created, conv_id, title, conn_id, updated_at) in rows {
+            if let Some(&idx) = index_by_conv.get(&conv_id) {
+                let item = &mut results[idx];
+                item.match_count += 1;
+                if item.matched_message_ids.len() < MAX_MESSAGE_IDS {
+                    item.matched_message_ids.push(msg_id);
+                }
+            } else {
+                if results.len() >= MAX_CONVERSATIONS {
+                    // 相同 updated_at 时可能交错，跳过未入选会话即可
+                    continue;
+                }
+                let snippet = make_match_snippet(&content, keyword);
+                let updated = updated_at
+                    .parse()
+                    .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC);
+                index_by_conv.insert(conv_id.clone(), results.len());
+                results.push(ConversationSearchResult {
+                    conversation_id: conv_id,
+                    title,
+                    connection_id: conn_id,
+                    matched_snippet: snippet,
+                    match_count: 1,
+                    matched_message_ids: vec![msg_id],
+                    updated_at: updated,
+                });
+            }
+        }
+
+        // 结果已按首次出现顺序（即 updated_at DESC）构建
+        Ok(results)
+    }
+
     pub fn load_messages(&self, conversation_id: &str) -> RusqliteResult<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content
              FROM messages
-             WHERE conversation_id = ?1",
+             WHERE conversation_id = ?1
+             ORDER BY created_at ASC, rowid ASC",
         )?;
 
         let messages = stmt
@@ -553,6 +683,55 @@ impl ConversationDb {
     }
 }
 
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// 在匹配处前后约 50 字符截取摘要；按 Unicode 字符计。
+fn make_match_snippet(content: &str, keyword: &str) -> String {
+    const RADIUS: usize = 50;
+    let chars: Vec<char> = content.chars().collect();
+    if chars.is_empty() {
+        return String::new();
+    }
+
+    let key_lower: Vec<char> = keyword.chars().flat_map(|c| c.to_lowercase()).collect();
+    let hay_lower: Vec<char> = chars.iter().flat_map(|c| c.to_lowercase()).collect();
+
+    let mut match_start = 0usize;
+    let mut match_len = key_lower.len().max(1);
+    let mut found = false;
+    if !key_lower.is_empty() && hay_lower.len() >= key_lower.len() {
+        for i in 0..=(hay_lower.len() - key_lower.len()) {
+            if hay_lower[i..i + key_lower.len()] == key_lower[..] {
+                match_start = i;
+                match_len = key_lower.len();
+                found = true;
+                break;
+            }
+        }
+    }
+    if !found {
+        // 回退：取开头
+        match_start = 0;
+        match_len = 0;
+    }
+
+    // hay_lower 与 chars 长度在多数语言一致；大小写扩展极少见，按 chars 下标钳制
+    let start = match_start.saturating_sub(RADIUS).min(chars.len());
+    let end = (match_start + match_len + RADIUS).min(chars.len());
+    let mut snippet: String = chars[start..end].iter().collect();
+    if start > 0 {
+        snippet = format!("…{}", snippet);
+    }
+    if end < chars.len() {
+        snippet = format!("{}…", snippet);
+    }
+    snippet
+}
+
 fn column_exists(conn: &rusqlite::Connection, table: &str, column: &str) -> bool {
     conn.prepare(&format!("PRAGMA table_info({})", table))
         .and_then(|mut stmt| {
@@ -573,6 +752,71 @@ mod tests {
 
     fn create_test_db() -> ConversationDb {
         ConversationDb::in_memory().expect("Failed to create in-memory database")
+    }
+
+    #[test]
+    fn test_search_conversations() {
+        let db = create_test_db();
+        let c1 = db
+            .create_conversation("conn_1", "Alpha")
+            .expect("create c1");
+        let c2 = db
+            .create_conversation("conn_2", "Beta")
+            .expect("create c2");
+
+        db.save_message(&c1.id, "user", "hello world", "2026-01-01T00:00:00Z", None, None)
+            .expect("msg");
+        db.save_message(
+            &c1.id,
+            "assistant",
+            "reply about world peace",
+            "2026-01-01T00:01:00Z",
+            None,
+            None,
+        )
+        .expect("msg");
+        db.save_message(
+            &c2.id,
+            "user",
+            "unrelated topic",
+            "2026-01-01T00:02:00Z",
+            None,
+            None,
+        )
+        .expect("msg");
+        db.save_message(
+            &c2.id,
+            "user",
+            "another world mention",
+            "2026-01-01T00:03:00Z",
+            None,
+            None,
+        )
+        .expect("msg");
+
+        let empty = db.search_conversations("   ", None).expect("search empty");
+        assert!(empty.is_empty());
+
+        let all = db.search_conversations("world", None).expect("search");
+        assert_eq!(all.len(), 2);
+        // c2 was touched later via save_message → higher updated_at
+        assert_eq!(all[0].conversation_id, c2.id);
+        assert_eq!(all[0].match_count, 1);
+        assert_eq!(all[0].matched_message_ids.len(), 1);
+        assert!(all[0].matched_snippet.to_lowercase().contains("world"));
+
+        assert_eq!(all[1].conversation_id, c1.id);
+        assert_eq!(all[1].match_count, 2);
+        assert_eq!(all[1].matched_message_ids.len(), 2);
+
+        let only_c1 = db
+            .search_conversations("world", Some("conn_1"))
+            .expect("filter");
+        assert_eq!(only_c1.len(), 1);
+        assert_eq!(only_c1[0].conversation_id, c1.id);
+
+        let none = db.search_conversations("zzzzz", None).expect("none");
+        assert!(none.is_empty());
     }
 
     #[test]
