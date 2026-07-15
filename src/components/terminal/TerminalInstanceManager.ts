@@ -1,6 +1,7 @@
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
@@ -16,6 +17,8 @@ export interface TerminalInstance {
   lastResize?: { cols: number; rows: number };
   unlistenOutput?: UnlistenFn;
   onDataDisposable?: { dispose: () => void };
+  webglAddon?: WebglAddon;
+  webglContextLossDisposable?: { dispose: () => void };
   domListeners: Array<() => void>;
   /** Prevents duplicate disconnect banners for the same session lifecycle. */
   disconnectBannerShown?: boolean;
@@ -90,6 +93,24 @@ class TerminalInstanceManager {
       container,
       domListeners: [],
     };
+
+    // WebGL renderer (GPU); fall back to Canvas 2D if context unavailable.
+    try {
+      const webglAddon = new WebglAddon();
+      terminal.loadAddon(webglAddon);
+      instance.webglAddon = webglAddon;
+      instance.webglContextLossDisposable = webglAddon.onContextLoss(() => {
+        try {
+          webglAddon.dispose();
+        } catch {
+          // already disposed
+        }
+        instance.webglAddon = undefined;
+        instance.webglContextLossDisposable = undefined;
+      });
+    } catch (err) {
+      console.warn('WebGL terminal renderer unavailable, using Canvas 2D:', err);
+    }
 
     // SSH input
     const onDataDisposable = terminal.onData((data: string) => {
@@ -214,6 +235,20 @@ class TerminalInstanceManager {
     }
     if (instance.unlistenOutput) {
       instance.unlistenOutput();
+    }
+    if (instance.webglContextLossDisposable) {
+      try {
+        instance.webglContextLossDisposable.dispose();
+      } catch {
+        // ignore
+      }
+    }
+    if (instance.webglAddon) {
+      try {
+        instance.webglAddon.dispose();
+      } catch {
+        // ignore
+      }
     }
     instance.terminal.dispose();
     instance.container.remove();
