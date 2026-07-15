@@ -301,7 +301,7 @@ impl SshManager {
         let app_clone = app.clone();
         let manager_connections = self.connections.clone();
         tokio::spawn(async move {
-            session::drive_session(
+            let reason = session::drive_session(
                 sid.clone(),
                 channel,
                 shared_handle.clone(),
@@ -317,7 +317,10 @@ impl SshManager {
             if dominated {
                 guard.remove(&sid);
                 drop(guard);
-                let _ = app_clone.emit(&format!("ssh://status/{}", sid), SshStatus::Disconnected);
+                let _ = app_clone.emit(
+                    &format!("ssh://status/{}", sid),
+                    SshStatus::Disconnected { reason },
+                );
                 log::info!("SSH session {} cleaned up", sid);
             } else {
                 log::info!(
@@ -645,7 +648,7 @@ impl Default for SshManager {
 #[serde(rename_all = "lowercase")]
 pub enum SshStatus {
     Connected,
-    Disconnected,
+    Disconnected { reason: String },
     Error(String),
 }
 

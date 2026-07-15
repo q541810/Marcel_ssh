@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use russh::client;
 use russh::{Channel, ChannelMsg};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::mpsc;
 
 use super::client::Client;
@@ -40,15 +40,17 @@ pub struct SshConnection {
 /// Drive a single SSH session: multiplex incoming channel messages
 /// and outgoing user commands on the same task. This guarantees there is
 /// exactly one owner of the channel and avoids any locking deadlocks.
+///
+/// Returns a user-facing disconnect reason for the status event.
 pub(crate) async fn drive_session(
     session_id: String,
     mut channel: Channel<russh::client::Msg>,
     handle: Arc<tokio::sync::Mutex<client::Handle<Client>>>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     app: AppHandle,
-) {
+) -> String {
     let event_name = format!("ssh://output/{}", session_id);
-    loop {
+    let reason = loop {
         tokio::select! {
             // Incoming data from the SSH server
             msg = channel.wait() => {
@@ -70,7 +72,7 @@ pub(crate) async fn drive_session(
                     }
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
                         log::info!("SSH session {} closed by remote", session_id);
-                        break;
+                        break "远程关闭了连接".to_string();
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         log::info!(
@@ -82,7 +84,7 @@ pub(crate) async fn drive_session(
                     Some(_) => { /* ignore other messages */ }
                     None => {
                         // Channel ended
-                        break;
+                        break "连接已关闭".to_string();
                     }
                 }
             }
@@ -93,7 +95,7 @@ pub(crate) async fn drive_session(
                     Some(SessionCommand::Input(data)) => {
                         if let Err(e) = channel.data(&data[..]).await {
                             log::warn!("写入 SSH 通道失败: {:?}", e);
-                            break;
+                            break format_io_reason(&e);
                         }
                     }
                     Some(SessionCommand::Resize { cols, rows }) => {
@@ -105,21 +107,42 @@ pub(crate) async fn drive_session(
                         log::info!("SSH session {} disconnect requested", session_id);
                         let _ = channel.eof().await;
                         let _ = channel.close().await;
-                        break;
+                        break "已主动断开连接".to_string();
                     }
                     None => {
                         // All senders dropped — connection was force-removed
                         log::info!("SSH session {} command channel closed", session_id);
-                        break;
+                        break "已主动断开连接".to_string();
                     }
                 }
             }
         }
-    }
+    };
     // Best-effort: close the underlying SSH session
     let _ = handle
         .lock()
         .await
         .disconnect(russh::Disconnect::ByApplication, "client disconnect", "")
         .await;
+    reason
+}
+
+fn format_io_reason(err: &impl std::fmt::Display) -> String {
+    let msg = err.to_string();
+    let lower = msg.to_lowercase();
+    if lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("forcibly closed")
+        || lower.contains("connection aborted")
+    {
+        "网络连接已中断".to_string()
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "连接超时".to_string()
+    } else if lower.contains("not connected") || lower.contains("disconnected") {
+        "连接已断开".to_string()
+    } else if msg.chars().count() > 120 {
+        format!("{}…", msg.chars().take(120).collect::<String>())
+    } else {
+        msg
+    }
 }

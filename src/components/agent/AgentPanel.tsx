@@ -5,7 +5,6 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage, QuestionAnswer } from '@/lib/types';
-import Button from '@/components/ui/Button';
 import ChatHistoryModal from '@/components/settings/ChatHistoryModal';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
@@ -27,7 +26,6 @@ export default function AgentPanel() {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
     return session ?? null;
   });
-  const reconnect = useSessionStore((s) => s.reconnect);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
@@ -388,36 +386,12 @@ export default function AgentPanel() {
         )}
         {activeSession?.status === 'error' && (
           <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>连接失败。</p>
-            {activeSession.errorMessage && (
-              <p className="mt-1 text-zinc-600 break-words [overflow-wrap:anywhere]">
-                {activeSession.errorMessage}
-              </p>
-            )}
+            <p>连接失败，请在标签栏重新连接。</p>
           </div>
         )}
         {activeSession?.status === 'disconnected' && (
-          <div className="text-center text-zinc-500 text-sm mt-8 space-y-3">
-            <div>
-              <p>SSH 连接已断开。</p>
-              <p className="mt-1">
-                请重新连接服务器后继续使用智能助手。
-              </p>
-            </div>
-            {activeSession.configId ? (
-              <Button
-                variant="primary"
-                onClick={() => {
-                  reconnect(activeSession.id).catch((err) => {
-                    console.error('重连失败:', err);
-                  });
-                }}
-              >
-                重新连接
-              </Button>
-            ) : (
-              <p className="text-zinc-600">临时连接无法自动重连，请去侧边栏重新连接。</p>
-            )}
+          <div className="text-center text-zinc-500 text-sm mt-8">
+            <p>连接已断开，请在标签栏重新连接。</p>
           </div>
         )}
         {canInteract && messages.length === 0 && !activeConversationId && (

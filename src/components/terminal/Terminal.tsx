@@ -4,9 +4,6 @@ import { BOTTOM_TABS, DEFAULT_TERMINAL_COLORS, type BottomTab } from '@/lib/cons
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
-import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
-import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
-import Button from '@/components/ui/Button';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
@@ -28,8 +25,6 @@ export default function Terminal() {
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
-  const reconnect = useSessionStore((s) => s.reconnect);
-  const mismatch = useHostKeyMismatch();
   const activeSession = activeSessionId ? sessions[activeSessionId] : null;
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
@@ -106,10 +101,29 @@ export default function Terminal() {
   useEffect(() => {
     const currentIds = new Set(Object.keys(sessions));
 
-    // Create new terminals for new sessions
+    // Create new terminals for new sessions; apply status if already terminal
     for (const sessionId of currentIds) {
-      if (!terminalInstanceManager.has(sessionId)) {
+      const justCreated = !terminalInstanceManager.has(sessionId);
+      if (justCreated) {
         terminalInstanceManager.create(sessionId);
+      }
+      // Cover races where status became error/disconnected before xterm existed
+      // (e.g. initial connect failure on tempId). Idempotent via banner flag.
+      const session = sessions[sessionId];
+      if (session?.status === 'error') {
+        terminalInstanceManager.showDisconnectBanner(
+          sessionId,
+          'error',
+          session.errorMessage ?? '未知错误',
+        );
+      } else if (session?.status === 'disconnected') {
+        terminalInstanceManager.showDisconnectBanner(
+          sessionId,
+          session.errorMessage === '已主动断开连接' ? 'manual' : 'disconnected',
+          session.errorMessage ?? '连接已关闭',
+        );
+      } else if (session?.status === 'connecting') {
+        terminalInstanceManager.setStdinEnabled(sessionId, false);
       }
     }
 
@@ -205,58 +219,6 @@ export default function Terminal() {
             <div className="text-zinc-400">请选择一个会话</div>
           </div>
         )}
-        {activeSession?.status === 'error' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/95 z-10 pointer-events-none px-6">
-            <div className="w-full max-w-2xl rounded-2xl border border-red-500/25 bg-red-500/10 p-5 shadow-2xl shadow-red-950/20 pointer-events-auto">
-              <div className="mb-2 text-lg font-medium text-red-200">连接失败</div>
-              <div className="mb-3 text-sm text-zinc-400">
-                {activeSession.connectionId}
-              </div>
-              <div className="max-h-52 overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-red-500/20 bg-zinc-950/50 p-3 font-mono text-xs leading-relaxed text-red-100 [overflow-wrap:anywhere]">
-                {activeSession.errorMessage ?? '未知错误'}
-              </div>
-              <div className="mt-3 text-xs text-zinc-500">
-                请检查主机、端口、网络和认证信息后重新连接。
-              </div>
-            </div>
-          </div>
-        )}
-        {activeSession?.status === 'disconnected' && (
-          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/85 z-10 px-6">
-            <div className="w-full max-w-md rounded-2xl border border-amber-500/25 bg-amber-500/10 p-5 shadow-2xl shadow-amber-950/20 text-center">
-              <div className="mb-2 text-lg font-medium text-amber-200">SSH 连接已断开</div>
-              <div className="mb-4 text-sm text-zinc-400">
-                {activeSession.connectionId}
-              </div>
-              {activeSession.configId ? (
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    reconnect(activeSession.id).catch((err) => {
-                      const m = asHostKeyMismatch(parseAppError(err));
-                      if (m) {
-                        mismatch.prompt({
-                          data: m,
-                          onTrust: () => reconnect(activeSession.id, true).catch((e) => {
-                            console.error('重连失败:', e);
-                          }),
-                        });
-                        return;
-                      }
-                      console.error('重连失败:', err);
-                    });
-                  }}
-                >
-                  重新连接
-                </Button>
-              ) : (
-                <div className="text-sm text-zinc-500">
-                  临时连接无法自动重连，请去侧边栏重新连接。
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {hasSessions && activeSessionId && activeSession?.status === 'connected' && (
@@ -315,9 +277,6 @@ export default function Terminal() {
           onCancel={() => terminalInstanceManager.setPasteConfirm(null)}
         />
       )}
-
-      {/* Host key mismatch prompt (raised from reconnect) */}
-      {mismatch.Modal}
     </div>
   );
 }

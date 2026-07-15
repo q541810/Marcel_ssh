@@ -17,6 +17,8 @@ export interface TerminalInstance {
   unlistenOutput?: UnlistenFn;
   onDataDisposable?: { dispose: () => void };
   domListeners: Array<() => void>;
+  /** Prevents duplicate disconnect banners for the same session lifecycle. */
+  disconnectBannerShown?: boolean;
 }
 
 export type PasteConfirmCallback = (text: string, sessionId: string) => void;
@@ -231,6 +233,79 @@ class TerminalInstanceManager {
 
   getIds(): string[] {
     return Array.from(this.instances.keys());
+  }
+
+  /** Write local (non-SSH) text into the terminal. No-op if instance is gone. */
+  writeLocal(sessionId: string, text: string) {
+    const instance = this.instances.get(sessionId);
+    if (!instance) return;
+    try {
+      instance.terminal.write(text);
+    } catch {
+      // Instance may be mid-dispose
+    }
+  }
+
+  setStdinEnabled(sessionId: string, enabled: boolean) {
+    const instance = this.instances.get(sessionId);
+    if (!instance) return;
+    try {
+      instance.terminal.options.disableStdin = !enabled;
+    } catch {
+      // Instance may be mid-dispose
+    }
+  }
+
+  /**
+   * Append a disconnect/error banner once per disconnect cycle, and disable input.
+   * Safe when the xterm instance is already destroyed (no-op).
+   */
+  showDisconnectBanner(
+    sessionId: string,
+    kind: 'disconnected' | 'error' | 'manual',
+    detail: string,
+  ) {
+    const instance = this.instances.get(sessionId);
+    if (!instance) return;
+    if (instance.disconnectBannerShown) {
+      this.setStdinEnabled(sessionId, false);
+      return;
+    }
+    instance.disconnectBannerShown = true;
+    this.setStdinEnabled(sessionId, false);
+
+    const title =
+      kind === 'error'
+        ? '--- 连接失败 ---'
+        : kind === 'manual'
+          ? '--- 已断开连接 ---'
+          : '--- 连接已断开 ---';
+    const safeDetail = detail.trim() || (kind === 'error' ? '未知错误' : '连接已关闭');
+    // Red title + gray detail, looks like terminal output
+    const banner =
+      `\r\n\x1b[31m${title}\x1b[0m\r\n` +
+      `\x1b[90m详细信息：${safeDetail}\x1b[0m\r\n` +
+      `\x1b[90m若您想要尝试重新连接，请点击 SSH 会话标签上的重试按钮\x1b[0m\r\n`;
+    this.writeLocal(sessionId, banner);
+  }
+
+  /**
+   * Enter reconnecting: keep stdin off, allow a new banner if reconnect fails.
+   * Does not write any text (history stays intact).
+   */
+  prepareReconnect(sessionId: string) {
+    const instance = this.instances.get(sessionId);
+    if (!instance) return;
+    instance.disconnectBannerShown = false;
+    this.setStdinEnabled(sessionId, false);
+  }
+
+  /** Clear banner flag and re-enable stdin after a successful reconnect. */
+  onReconnected(sessionId: string) {
+    const instance = this.instances.get(sessionId);
+    if (!instance) return;
+    instance.disconnectBannerShown = false;
+    this.setStdinEnabled(sessionId, true);
   }
 }
 
