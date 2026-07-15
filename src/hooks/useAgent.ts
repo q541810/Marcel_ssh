@@ -29,6 +29,7 @@ export function useAgent() {
     deleteConversation: s.deleteConversation,
     rollbackToMessage: s.rollbackToMessage,
     loadConnectionConversations: s.loadConnectionConversations,
+    syncActiveToConnection: s.syncActiveToConnection,
   }));
 
   const activeTask = store.activeTaskId ? (store.tasks[store.activeTaskId] ?? null) : null;
@@ -43,8 +44,13 @@ export function useAgent() {
     activeTask?.status === 'waiting_approval';
 
   const sendPrompt = useCallback(
-    async (sessionId: string, prompt: string, connectionId?: string) => {
-      return store.startTask(sessionId, prompt, connectionId);
+    async (
+      sessionId: string,
+      prompt: string,
+      connectionId?: string,
+      imageDataUrls?: string[],
+    ) => {
+      return store.startTask(sessionId, prompt, connectionId, imageDataUrls);
     },
     [store.startTask],
   );
@@ -134,6 +140,13 @@ export function useAgent() {
     [store.loadConnectionConversations],
   );
 
+  const syncActiveToConnection = useCallback(
+    async (connectionId: string) => {
+      return store.syncActiveToConnection(connectionId);
+    },
+    [store.syncActiveToConnection],
+  );
+
   return {
     messages,
     activeTask,
@@ -158,5 +171,6 @@ export function useAgent() {
     deleteConversation,
     rollbackToMessage,
     loadConnectionConversations,
+    syncActiveToConnection,
   };
 }

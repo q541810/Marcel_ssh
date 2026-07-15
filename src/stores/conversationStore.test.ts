@@ -8,11 +8,13 @@ const {
   agentLoadConversation,
   agentTruncateConversation,
   agentLoadPlansByConversation,
+  agentCreateConversation,
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
   agentTruncateConversation: vi.fn(),
   agentLoadPlansByConversation: vi.fn(),
+  agentCreateConversation: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
@@ -20,6 +22,7 @@ vi.mock('@/lib/tauri', () => ({
   agentLoadConversation,
   agentTruncateConversation,
   agentLoadPlansByConversation,
+  agentCreateConversation,
 }));
 
 describe('conversationStore', () => {
@@ -30,6 +33,7 @@ describe('conversationStore', () => {
       conversations: {},
       messages: {},
       activeConversationId: null,
+      activeConversationByConnection: {},
     });
   });
 
@@ -161,6 +165,122 @@ describe('conversationStore', () => {
     expect(agentLoadConversation).toHaveBeenCalledWith('latest');
   });
 
+  it('loadConnectionConversations does not keep active from another connection', async () => {
+    agentListConversationsByConnection.mockResolvedValue([
+      { id: 'b1', connectionId: 'conn-b', title: 'B', createdAt: '', updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    agentLoadConversation.mockResolvedValue([]);
+    useConversationStore.setState({
+      conversations: {
+        a1: { id: 'a1', connectionId: 'conn-a', title: 'A', createdAt: '', updatedAt: '' },
+      },
+      messages: { a1: [makeMessage({ content: 'on A' })] },
+      activeConversationId: 'a1',
+      activeConversationByConnection: { 'conn-a': 'a1' },
+    });
+
+    await useConversationStore.getState().loadConnectionConversations('conn-b');
+
+    const state = useConversationStore.getState();
+    // load 合并列表但不抢 active（仍在 conn-a）
+    expect(state.activeConversationId).toBe('a1');
+    expect(state.conversations.b1).toBeDefined();
+    expect(state.activeConversationByConnection['conn-b']).toBe('b1');
+    expect(agentLoadConversation).not.toHaveBeenCalled();
+  });
+
+  it('syncActiveToConnection switches active conversation to target connection', async () => {
+    agentListConversationsByConnection.mockResolvedValue([
+      { id: 'b1', connectionId: 'conn-b', title: 'B', createdAt: '', updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    agentLoadConversation.mockResolvedValue([
+      {
+        id: 'msg-b',
+        conversationId: 'b1',
+        role: 'user',
+        content: 'on B',
+        timestamp: '2026-01-02T00:00:00Z',
+        createdAt: '2026-01-02T00:00:00Z',
+      },
+    ]);
+    useConversationStore.setState({
+      conversations: {
+        a1: { id: 'a1', connectionId: 'conn-a', title: 'A', createdAt: '', updatedAt: '' },
+      },
+      messages: { a1: [makeMessage({ content: 'on A' })] },
+      activeConversationId: 'a1',
+      activeConversationByConnection: { 'conn-a': 'a1' },
+    });
+
+    await useConversationStore.getState().syncActiveToConnection('conn-b');
+
+    const state = useConversationStore.getState();
+    expect(state.activeConversationId).toBe('b1');
+    expect(state.messages.b1?.[0]?.content).toBe('on B');
+    expect(state.activeConversationByConnection['conn-b']).toBe('b1');
+  });
+
+  it('syncActiveToConnection restores remembered conversation for connection', async () => {
+    agentListConversationsByConnection.mockResolvedValue([
+      { id: 'b-new', connectionId: 'conn-b', title: 'newer', createdAt: '', updatedAt: '2026-01-03T00:00:00Z' },
+      { id: 'b-old', connectionId: 'conn-b', title: 'older', createdAt: '', updatedAt: '2026-01-01T00:00:00Z' },
+    ]);
+    agentLoadConversation.mockResolvedValue([]);
+    useConversationStore.setState({
+      conversations: {
+        a1: { id: 'a1', connectionId: 'conn-a', title: 'A', createdAt: '', updatedAt: '' },
+        'b-old': { id: 'b-old', connectionId: 'conn-b', title: 'older', createdAt: '', updatedAt: '2026-01-01T00:00:00Z' },
+        'b-new': { id: 'b-new', connectionId: 'conn-b', title: 'newer', createdAt: '', updatedAt: '2026-01-03T00:00:00Z' },
+      },
+      messages: {
+        a1: [makeMessage({ content: 'A' })],
+        'b-old': [makeMessage({ content: 'remembered B' })],
+        'b-new': [makeMessage({ content: 'latest B' })],
+      },
+      activeConversationId: 'a1',
+      activeConversationByConnection: { 'conn-a': 'a1', 'conn-b': 'b-old' },
+    });
+
+    await useConversationStore.getState().syncActiveToConnection('conn-b');
+
+    expect(useConversationStore.getState().activeConversationId).toBe('b-old');
+  });
+
+  it('ensureConversation does not reuse active conversation from another connection', async () => {
+    agentCreateConversation.mockResolvedValue('b-new');
+    useConversationStore.setState({
+      conversations: {
+        a1: { id: 'a1', connectionId: 'conn-a', title: 'A', createdAt: '', updatedAt: '' },
+      },
+      messages: { a1: [] },
+      activeConversationId: 'a1',
+      activeConversationByConnection: { 'conn-a': 'a1' },
+    });
+
+    const id = await useConversationStore.getState().ensureConversation('sess-b', 'conn-b', 'hello on B');
+
+    expect(id).toBe('b-new');
+    expect(agentCreateConversation).toHaveBeenCalledWith('sess-b', 'hello on B');
+    expect(useConversationStore.getState().activeConversationId).toBe('b-new');
+    expect(useConversationStore.getState().conversations['b-new']?.connectionId).toBe('conn-b');
+  });
+
+  it('ensureConversation reuses matching conversation on same connection', async () => {
+    useConversationStore.setState({
+      conversations: {
+        b1: { id: 'b1', connectionId: 'conn-b', title: 'B', createdAt: '', updatedAt: '' },
+      },
+      messages: { b1: [] },
+      activeConversationId: 'b1',
+      activeConversationByConnection: { 'conn-b': 'b1' },
+    });
+
+    const id = await useConversationStore.getState().ensureConversation('sess-b', 'conn-b', 'hello');
+
+    expect(id).toBe('b1');
+    expect(agentCreateConversation).not.toHaveBeenCalled();
+  });
+
   it('rolls back a user message and deletes it plus later messages', async () => {
     agentTruncateConversation.mockResolvedValue({
       deletedMessages: 3,
@@ -173,7 +293,13 @@ describe('conversationStore', () => {
       messages: {
         'conv-1': [
           makeMessage({ id: 'm1', role: 'user', content: 'keep', timestamp: '2026-01-01T00:00:00Z' }),
-          makeMessage({ id: 'm2', role: 'user', content: 'rewrite me', timestamp: '2026-01-01T00:01:00Z' }),
+          makeMessage({
+            id: 'm2',
+            role: 'user',
+            content: 'rewrite me',
+            timestamp: '2026-01-01T00:01:00Z',
+            imagePaths: ['conv-1/m2_0.webp'],
+          }),
           makeMessage({ id: 'm3', role: 'assistant', content: 'answer', timestamp: '2026-01-01T00:02:00Z' }),
           makeMessage({ id: 'm4', role: 'tool', content: 'tool output', timestamp: '2026-01-01T00:03:00Z' }),
         ],
@@ -182,7 +308,11 @@ describe('conversationStore', () => {
 
     const result = await useConversationStore.getState().rollbackToMessage('conv-1', 'm2');
 
-    expect(result).toEqual({ prompt: 'rewrite me', removedCount: 3 });
+    expect(result).toEqual({
+      prompt: 'rewrite me',
+      removedCount: 3,
+      imagePaths: ['conv-1/m2_0.webp'],
+    });
     expect(agentTruncateConversation).toHaveBeenCalledWith('conv-1', '2026-01-01T00:01:00Z');
     expect(useConversationStore.getState().messages['conv-1'].map((m) => m.id)).toEqual(['m1']);
   });

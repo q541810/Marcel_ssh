@@ -1,10 +1,20 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage, QuestionAnswer } from '@/lib/types';
+import {
+  type PendingImage,
+  filesToPendingImages,
+  revokePendingImages,
+  compressImageFile,
+  pendingImageFromDataUrl,
+  MAX_ATTACH_IMAGES,
+} from '@/lib/imageAttach';
+import * as tauri from '@/lib/tauri';
 import ChatHistoryModal from '@/components/settings/ChatHistoryModal';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
@@ -17,11 +27,16 @@ export default function AgentPanel() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [tokenPopoverOpen, setTokenPopoverOpen] = useState(false);
   const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [attachHint, setAttachHint] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastScrolledMessageRef = useRef<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
+  const attachHintTimerRef = useRef<number | null>(null);
+  const visionEnabled = useSettingsStore((s) => s.settings.llmConfig?.vision ?? false);
   const activeSession = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
     return session ?? null;
@@ -50,6 +65,7 @@ export default function AgentPanel() {
     deleteConversation,
     rollbackToMessage,
     taskTokenUsage,
+    syncActiveToConnection,
   } = useAgent();
 
   const sessionConversations = useMemo(
@@ -62,6 +78,12 @@ export default function AgentPanel() {
   useEffect(() => {
     fetchConnections();
   }, [fetchConnections]);
+
+  // SSH tab 切换时，把 Agent 聊天同步到对应 connection 的对话
+  useEffect(() => {
+    if (!activeConfigId) return;
+    void syncActiveToConnection(activeConfigId);
+  }, [activeConfigId, syncActiveToConnection]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize = (lastMessage?.content.length ?? 0) + (lastMessage?.reasoningContent?.length ?? 0);
@@ -88,18 +110,135 @@ export default function AgentPanel() {
     if (rollbackNoticeTimerRef.current !== null) {
       window.clearTimeout(rollbackNoticeTimerRef.current);
     }
+    if (attachHintTimerRef.current !== null) {
+      window.clearTimeout(attachHintTimerRef.current);
+    }
   }, []);
+
+  const showAttachHint = useCallback((msg: string) => {
+    setAttachHint(msg);
+    if (attachHintTimerRef.current !== null) {
+      window.clearTimeout(attachHintTimerRef.current);
+    }
+    attachHintTimerRef.current = window.setTimeout(() => {
+      setAttachHint(null);
+      attachHintTimerRef.current = null;
+    }, 3200);
+  }, []);
+
+  const clearPendingImages = useCallback(() => {
+    setPendingImages((prev) => {
+      revokePendingImages(prev);
+      return [];
+    });
+  }, []);
+
+  // Vision OFF：清空已挂起图片（产品要求）
+  useEffect(() => {
+    if (!visionEnabled && pendingImages.length > 0) {
+      clearPendingImages();
+      showAttachHint('当前模型未开启「视觉 / 支持图片」');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
+  }, [visionEnabled]);
+
+  const addPendingFromFiles = useCallback(
+    async (files: FileList | File[]) => {
+      if (!visionEnabled) {
+        clearPendingImages();
+        showAttachHint('当前模型未开启「视觉 / 支持图片」');
+        return;
+      }
+      const { images, rejected } = await filesToPendingImages(files, pendingImages.length);
+      if (rejected && images.length === 0) {
+        showAttachHint(rejected);
+        return;
+      }
+      if (rejected) showAttachHint(rejected);
+      if (images.length > 0) {
+        setPendingImages((prev) => [...prev, ...images].slice(0, MAX_ATTACH_IMAGES));
+      }
+    },
+    [visionEnabled, pendingImages.length, clearPendingImages, showAttachHint],
+  );
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length === 0) return;
+    e.preventDefault();
+    if (!visionEnabled) {
+      clearPendingImages();
+      showAttachHint('当前模型未开启「视觉 / 支持图片」');
+      return;
+    }
+    if (pendingImages.length >= MAX_ATTACH_IMAGES) {
+      showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张图片`);
+      return;
+    }
+    const room = MAX_ATTACH_IMAGES - pendingImages.length;
+    const added: PendingImage[] = [];
+    for (const file of imageFiles.slice(0, room)) {
+      try {
+        const { dataUrl, previewUrl } = await compressImageFile(file);
+        added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
+      } catch {
+        // skip
+      }
+    }
+    if (added.length === 0) {
+      showAttachHint('图片处理失败');
+      return;
+    }
+    setPendingImages((prev) => [...prev, ...added].slice(0, MAX_ATTACH_IMAGES));
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    if (!canInteract) return;
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    await addPendingFromFiles(files);
+  };
 
   const handleSend = async () => {
     const prompt = input.trim();
-    if (!prompt || !canInteract) return;
+    const images = visionEnabled ? pendingImages : [];
+    if ((!prompt && images.length === 0) || !canInteract) return;
+    if (!visionEnabled && pendingImages.length > 0) {
+      clearPendingImages();
+      showAttachHint('当前模型未开启「视觉 / 支持图片」');
+      return;
+    }
+    const dataUrls = images.map((i) => i.dataUrl);
     setInput('');
-    // Reset textarea height after sending
+    clearPendingImages();
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
     try {
-      await sendPrompt(activeSessionId!, prompt, activeConfigId);
+      await sendPrompt(activeSessionId!, prompt, activeConfigId, dataUrls);
     } catch (err) {
       console.error('Failed to start task:', err);
     }
@@ -147,6 +286,31 @@ export default function AgentPanel() {
     try {
       const result = await rollbackToMessage(activeConversationId, message.id);
       setInput(result.prompt);
+
+      // 文字回填的同时恢复图片到输入区（磁盘上的 message 图未删，可再读）
+      clearPendingImages();
+      const paths = result.imagePaths?.length
+        ? result.imagePaths
+        : (message.imagePaths ?? []);
+      if (paths.length > 0 && visionEnabled) {
+        const restored: PendingImage[] = [];
+        for (const path of paths.slice(0, MAX_ATTACH_IMAGES)) {
+          try {
+            const dataUrl = await tauri.agentReadMessageImage(path);
+            restored.push(pendingImageFromDataUrl(dataUrl));
+          } catch (err) {
+            console.warn('Failed to restore image after rollback:', path, err);
+          }
+        }
+        if (restored.length > 0) {
+          setPendingImages(restored);
+        } else if (paths.length > 0) {
+          showAttachHint('原消息图片恢复失败');
+        }
+      } else if (paths.length > 0 && !visionEnabled) {
+        showAttachHint('当前模型未开启「视觉 / 支持图片」，图片未恢复');
+      }
+
       showRollbackNotice(result.removedCount);
       requestAnimationFrame(() => {
         resizeInput();
@@ -457,8 +621,49 @@ export default function AgentPanel() {
           onCancel={handleCancelQuestion}
         />
       ) : (
-        <div className="p-3 border-t border-zinc-800">
-          <div className="agent-input relative flex items-start rounded-lg bg-zinc-800 border border-zinc-700 focus-within:border-indigo-500">
+        <div
+          className="p-3 border-t border-zinc-800"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {attachHint && (
+            <div className="mb-2 px-2 py-1.5 rounded-md bg-amber-950/60 border border-amber-800/50 text-xs text-amber-200">
+              {attachHint}
+            </div>
+          )}
+          {pendingImages.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {pendingImages.map((img) => (
+                <div key={img.id} className="relative h-14 w-14">
+                  <img
+                    src={img.previewUrl}
+                    alt=""
+                    className="h-full w-full object-cover rounded-md border border-zinc-600"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingImages((prev) => {
+                        const next = prev.filter((p) => p.id !== img.id);
+                        URL.revokeObjectURL(img.previewUrl);
+                        return next;
+                      });
+                    }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-600 text-zinc-300 hover:text-white hover:bg-red-600 flex items-center justify-center text-[10px] leading-none"
+                    title="移除"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            className={`agent-input relative flex items-start rounded-lg bg-zinc-800 border focus-within:border-indigo-500 ${
+              dragOver ? 'border-indigo-400 ring-1 ring-indigo-500/40' : 'border-zinc-700'
+            }`}
+          >
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button
@@ -553,6 +758,7 @@ export default function AgentPanel() {
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={
               activeSession?.status === 'connecting'
                 ? '正在连接服务器...'
@@ -568,7 +774,10 @@ export default function AgentPanel() {
           <button
             type="button"
             onClick={isRunning ? handleStop : handleSend}
-            disabled={!isRunning && (!input.trim() || !canInteract)}
+            disabled={
+              !isRunning &&
+              ((!input.trim() && pendingImages.length === 0) || !canInteract)
+            }
             className={`
               flex-shrink-0 p-2 mr-1 self-center rounded-md transition-all
               ${isRunning
