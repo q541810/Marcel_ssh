@@ -335,6 +335,8 @@ export interface AgentMessage {
   isRetrying?: boolean;
   /** Reasoning/thinking content from the model (DeepSeek thinking mode). Passed back to API. */
   reasoningContent?: string;
+  /** Relative paths under config images/ for user-attached images */
+  imagePaths?: string[];
   /** Current retry attempt number (1-based) for isRetrying messages */
   retryAttempt?: number;
   /** Max retry attempts for isRetrying messages */
@@ -397,6 +399,8 @@ export interface LlmConfig {
   maxRetries: number;
   retryDelaySecs: number;
   retryHttpStatuses: string;
+  /** Whether the model accepts image inputs (multimodal / vision). Default false. */
+  vision?: boolean;
 }
 
 /** A model entry returned by the provider's /models endpoint. */
@@ -616,6 +620,8 @@ export interface StoredMessage {
   createdAt: string;
   toolCallsJson?: string | null;
   reasoningContent?: string | null;
+  /** JSON array of relative image paths */
+  imagePathsJson?: string | null;
 }
 
 /** 聊天历史全文搜索的单条会话聚合结果 */

@@ -21,6 +21,7 @@ export function ModelServiceSection() {
     maxRetries: 1,
     retryDelaySecs: 5,
     retryHttpStatuses: '408, 429, 500-599',
+    vision: false,
   };
 
   const updateLlm = (patch: Partial<LlmConfig>) => {
@@ -82,6 +83,13 @@ export function ModelServiceSection() {
             获取模型列表
           </button>
         </div>
+      </SettingItem>
+      <SettingItem id="llm-vision" label="视觉 / 支持图片" description="开启后可粘贴或拖入图片发给模型（需模型本身支持多模态）" sectionId="settings-llm" keywords={['vision', '视觉', '图片', 'image', '多模态']}>
+        <Toggle
+          checked={llmConfig.vision ?? false}
+          onChange={(checked) => updateLlm({ vision: checked })}
+          label="允许向模型发送图片（Ctrl+V / 拖拽）"
+        />
       </SettingItem>
       <SettingItem id="llm-compact-context" label="压缩上下文" description="历史累积 token 过多时自动裁剪旧工具结果" sectionId="settings-llm" keywords={['compact', '压缩', 'token', '上下文']}>
         <Toggle

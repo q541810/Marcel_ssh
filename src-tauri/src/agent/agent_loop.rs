@@ -352,6 +352,7 @@ pub(crate) async fn run_agent_loop(
                     tool_calls: None,
                     tool_call_id: Some(tc.id),
                     reasoning_content: None,
+                    image_paths: None,
                 };
                 let _ = persister.save_msg(
                     "tool",
@@ -422,6 +423,7 @@ pub(crate) async fn run_agent_loop(
                 tool_calls: None,
                 tool_call_id: Some(tc.id),
                 reasoning_content: None,
+                image_paths: None,
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).

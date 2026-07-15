@@ -27,6 +27,7 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   maxRetries: 1,
   retryDelaySecs: 5,
   retryHttpStatuses: '408, 429, 500-599',
+  vision: false,
 };
 
 const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {

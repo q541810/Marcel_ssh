@@ -2,6 +2,7 @@ pub mod agent_loop;
 pub mod approval;
 pub mod conversation;
 pub mod conversation_persister;
+pub mod image_store;
 pub mod model_approval;
 pub mod plan_handler;
 pub mod risk;

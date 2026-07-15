@@ -41,6 +41,10 @@ pub struct LlmMessage {
     /// Must be passed back to the API unchanged in subsequent requests.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub reasoning_content: Option<String>,
+    /// Relative paths under config `images/` for user-attached images.
+    /// Serialized to multimodal content only when vision is enabled.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub image_paths: Option<Vec<String>>,
 }
 
 impl LlmRole {
@@ -62,6 +66,7 @@ impl LlmMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            image_paths: None,
         }
     }
 
@@ -72,6 +77,7 @@ impl LlmMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            image_paths: None,
         }
     }
 
@@ -82,7 +88,79 @@ impl LlmMessage {
             tool_calls: None,
             tool_call_id: None,
             reasoning_content: None,
+            image_paths: None,
         }
+    }
+}
+
+/// How many recent user turns may still carry real images in the API payload.
+/// `1` = only the current user turn keeps real images; older history is `[image]` text.
+pub const VISION_RECENT_USER_TURNS: usize = 1;
+
+/// Placeholder injected into text when an image is not sent as multimodal content.
+pub const IMAGE_PLACEHOLDER: &str = "[image]";
+
+/// Apply vision policy before sending to the provider:
+/// - Vision OFF: never send images; append `[image]` placeholders.
+/// - Vision ON: only the latest `VISION_RECENT_USER_TURNS` user messages keep images;
+///   older ones are degraded to `[image]` text.
+pub fn apply_vision_policy(messages: &mut [LlmMessage], vision: bool) {
+    let user_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == LlmRole::User)
+        .map(|(i, _)| i)
+        .collect();
+
+    let keep_from = if vision && user_indices.len() > VISION_RECENT_USER_TURNS {
+        user_indices.len() - VISION_RECENT_USER_TURNS
+    } else {
+        0
+    };
+
+    for (rank, &idx) in user_indices.iter().enumerate() {
+        let keep_images = vision && rank >= keep_from;
+        let msg = &mut messages[idx];
+        let has_images = msg
+            .image_paths
+            .as_ref()
+            .map(|p| !p.is_empty())
+            .unwrap_or(false);
+        if !has_images {
+            continue;
+        }
+        if keep_images {
+            continue;
+        }
+        let count = msg.image_paths.as_ref().map(|p| p.len()).unwrap_or(0);
+        msg.image_paths = None;
+        append_image_placeholders(&mut msg.content, count);
+    }
+
+    if !vision {
+        for msg in messages.iter_mut() {
+            if let Some(paths) = msg.image_paths.take() {
+                if !paths.is_empty() {
+                    append_image_placeholders(&mut msg.content, paths.len());
+                }
+            }
+        }
+    }
+}
+
+fn append_image_placeholders(content: &mut String, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let block = std::iter::repeat(IMAGE_PLACEHOLDER)
+        .take(count)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if content.is_empty() {
+        *content = block;
+    } else if !content.contains(IMAGE_PLACEHOLDER) {
+        content.push('\n');
+        content.push_str(&block);
     }
 }
 
@@ -111,6 +189,9 @@ pub struct LlmConfig {
     /// Examples: "408, 429, 500-599"
     #[serde(default = "default_retry_http_statuses")]
     pub retry_http_statuses: String,
+    /// Whether the configured model accepts image inputs (multimodal / vision).
+    #[serde(default)]
+    pub vision: bool,
 }
 
 fn default_provider() -> ProviderType {
@@ -148,6 +229,7 @@ impl Default for LlmConfig {
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            vision: false,
         }
     }
 }
@@ -222,6 +304,7 @@ mod tests {
             max_retries: 3,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            vision: false,
         };
 
         // Serialize to JSON
@@ -297,5 +380,44 @@ mod tests {
 
         // Model can have a safe default (not a secret)
         assert!(!config.model.is_empty(), "Model should have a value");
+        assert!(!config.vision, "Default vision should be false");
+    }
+
+    #[test]
+    fn apply_vision_policy_keeps_only_latest_user_when_on() {
+        let mut msgs: Vec<LlmMessage> = (0..7)
+            .map(|i| {
+                let mut m = LlmMessage::user(format!("u{i}"));
+                m.image_paths = Some(vec![format!("c/m{i}_0.webp")]);
+                m
+            })
+            .collect();
+        // insert assistants between users so indices are sparse
+        let mut full = Vec::new();
+        for m in msgs.drain(..) {
+            full.push(m);
+            full.push(LlmMessage::assistant("ok"));
+        }
+        apply_vision_policy(&mut full, true);
+        let users: Vec<_> = full.iter().filter(|m| m.role == LlmRole::User).collect();
+        assert_eq!(users.len(), 7);
+        for (i, u) in users.iter().enumerate() {
+            if i + 1 == users.len() {
+                assert!(u.image_paths.is_some(), "latest user should keep images");
+            } else {
+                assert!(u.image_paths.is_none(), "history user {i} should drop images");
+                assert!(u.content.contains(IMAGE_PLACEHOLDER));
+            }
+        }
+    }
+
+    #[test]
+    fn apply_vision_policy_strips_all_when_off() {
+        let mut m = LlmMessage::user("see");
+        m.image_paths = Some(vec!["c/a.webp".into()]);
+        let mut msgs = vec![m];
+        apply_vision_policy(&mut msgs, false);
+        assert!(msgs[0].image_paths.is_none());
+        assert!(msgs[0].content.contains(IMAGE_PLACEHOLDER));
     }
 }

@@ -668,6 +668,7 @@ fn assemble_final_message(
         } else {
             Some(accumulated_reasoning)
         },
+        image_paths: None,
     }
 }
 
@@ -737,9 +738,31 @@ struct StreamOptions {
 }
 
 #[derive(Serialize)]
+#[serde(untagged)]
+enum RequestContent {
+    Text(String),
+    Parts(Vec<RequestContentPart>),
+}
+
+#[derive(Serialize)]
+struct RequestContentPart {
+    #[serde(rename = "type")]
+    part_type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_url: Option<RequestImageUrl>,
+}
+
+#[derive(Serialize)]
+struct RequestImageUrl {
+    url: String,
+}
+
+#[derive(Serialize)]
 struct RequestMessage {
     role: &'static str,
-    content: String,
+    content: RequestContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<RequestToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -782,11 +805,36 @@ fn build_request_body(
     tools: &[ToolDefinition],
     stream: bool,
 ) -> ChatCompletionRequest {
+    use crate::llm::provider::VISION_RECENT_USER_TURNS;
+
+    let user_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == LlmRole::User)
+        .map(|(i, _)| i)
+        .collect();
+    let keep_from = if config.vision && user_indices.len() > VISION_RECENT_USER_TURNS {
+        user_indices.len() - VISION_RECENT_USER_TURNS
+    } else {
+        0
+    };
+    let recent_user: std::collections::HashSet<usize> = if config.vision {
+        user_indices
+            .iter()
+            .enumerate()
+            .filter(|(rank, _)| *rank >= keep_from)
+            .map(|(_, &idx)| idx)
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+
     let messages = messages
         .iter()
-        .map(|m| RequestMessage {
+        .enumerate()
+        .map(|(idx, m)| RequestMessage {
             role: m.role.to_string(),
-            content: m.content.clone(),
+            content: build_request_content(m, config.vision && recent_user.contains(&idx)),
             tool_calls: m.tool_calls.as_ref().map(|tcs| {
                 tcs.iter()
                     .map(|tc| RequestToolCall {
@@ -838,6 +886,79 @@ fn build_request_body(
         } else {
             None
         },
+    }
+}
+
+/// `send_images`: true only for recent user turns when vision is enabled.
+fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
+    use crate::llm::provider::IMAGE_PLACEHOLDER;
+
+    let paths = m.image_paths.as_ref().filter(|p| !p.is_empty());
+    let Some(paths) = paths else {
+        return RequestContent::Text(m.content.clone());
+    };
+
+    if !send_images || m.role != LlmRole::User {
+        let mut text = m.content.clone();
+        let block = std::iter::repeat(IMAGE_PLACEHOLDER)
+            .take(paths.len())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if text.is_empty() {
+            text = block;
+        } else if !text.contains(IMAGE_PLACEHOLDER) {
+            text.push('\n');
+            text.push_str(&block);
+        }
+        return RequestContent::Text(text);
+    }
+
+    let mut parts: Vec<RequestContentPart> = Vec::new();
+    if !m.content.is_empty() {
+        parts.push(RequestContentPart {
+            part_type: "text",
+            text: Some(m.content.clone()),
+            image_url: None,
+        });
+    }
+
+    let mut loaded = 0usize;
+    for rel in paths {
+        match crate::agent::image_store::read_image_data_url(rel) {
+            Ok(url) => {
+                loaded += 1;
+                parts.push(RequestContentPart {
+                    part_type: "image_url",
+                    text: None,
+                    image_url: Some(RequestImageUrl { url }),
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to load image for LLM request ({}): {}", rel, e);
+            }
+        }
+    }
+
+    if loaded == 0 {
+        // Missing files: degrade to placeholder text
+        let mut text = m.content.clone();
+        let block = std::iter::repeat(IMAGE_PLACEHOLDER)
+            .take(paths.len())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if text.is_empty() {
+            text = block;
+        } else if !text.contains(IMAGE_PLACEHOLDER) {
+            text.push('\n');
+            text.push_str(&block);
+        }
+        return RequestContent::Text(text);
+    }
+
+    if parts.len() == 1 && parts[0].part_type == "text" {
+        RequestContent::Text(m.content.clone())
+    } else {
+        RequestContent::Parts(parts)
     }
 }
 

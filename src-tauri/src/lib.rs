@@ -94,6 +94,8 @@ impl AppState {
     /// runtime is never stalled. Settings-dependent work (keychain, llm_config
     /// backfill) runs sequentially after settings are loaded.
     pub async fn new(config_dir: PathBuf) -> Self {
+        crate::agent::image_store::init(&config_dir);
+
         // Pre-compute file paths so each `spawn_blocking` closure can own its
         // own copy without borrowing `config_dir`.
         let known_hosts_path = config_dir.join("known_hosts.json");
@@ -503,6 +505,9 @@ pub fn run() {
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
             commands::agent_conversation::agent_delete_conversation,
+            commands::agent_conversation::agent_save_message_images,
+            commands::agent_conversation::agent_resolve_image_path,
+            commands::agent_conversation::agent_read_message_image,
             commands::agent_conversation::agent_truncate_conversation,
             commands::agent_conversation::agent_list_conversations_by_connection,
             commands::agent_conversation::agent_search_conversations,

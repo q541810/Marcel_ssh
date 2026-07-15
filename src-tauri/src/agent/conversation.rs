@@ -46,6 +46,8 @@ pub struct StoredMessage {
     /// Reasoning/thinking content from the model (DeepSeek thinking mode).
     /// Must be passed back to the API unchanged in subsequent requests.
     pub reasoning_content: Option<String>,
+    /// JSON array of relative image paths under `images/` (user messages).
+    pub image_paths_json: Option<String>,
 }
 
 /// 聊天历史全文搜索的单条会话聚合结果。
@@ -161,6 +163,14 @@ impl ConversationDb {
             conn.execute("ALTER TABLE messages ADD COLUMN reasoning_content TEXT", [])
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete: reasoning_content column added");
+        }
+
+        // Migration: add image_paths_json for vision attachments
+        if !column_exists(&conn, "messages", "image_paths_json") {
+            log::info!("Migrating conversation database: adding image_paths_json column");
+            conn.execute("ALTER TABLE messages ADD COLUMN image_paths_json TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: image_paths_json column added");
         }
 
         // Migration: plan_snapshots for older DBs that already had plans table only
@@ -360,7 +370,7 @@ impl ConversationDb {
     pub fn load_messages(&self, conversation_id: &str) -> RusqliteResult<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content
+            "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
              FROM messages
              WHERE conversation_id = ?1
              ORDER BY created_at ASC, rowid ASC",
@@ -380,6 +390,7 @@ impl ConversationDb {
                         .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                     tool_calls_json: row.get(6).ok(),
                     reasoning_content: row.get(7).ok(),
+                    image_paths_json: row.get(8).ok(),
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -396,15 +407,46 @@ impl ConversationDb {
         tool_calls_json: Option<&str>,
         reasoning_content: Option<&str>,
     ) -> RusqliteResult<StoredMessage> {
+        self.save_message_with_images(
+            conversation_id,
+            role,
+            content,
+            timestamp,
+            tool_calls_json,
+            reasoning_content,
+            None,
+        )
+    }
+
+    pub fn save_message_with_images(
+        &self,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        timestamp: &str,
+        tool_calls_json: Option<&str>,
+        reasoning_content: Option<&str>,
+        image_paths_json: Option<&str>,
+    ) -> RusqliteResult<StoredMessage> {
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
         let now_str = now.to_rfc3339();
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            (&id, conversation_id, role, content, timestamp, &now_str, tool_calls_json, reasoning_content),
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (
+                &id,
+                conversation_id,
+                role,
+                content,
+                timestamp,
+                &now_str,
+                tool_calls_json,
+                reasoning_content,
+                image_paths_json,
+            ),
         )?;
         drop(conn);
 
@@ -419,6 +461,7 @@ impl ConversationDb {
             created_at: now,
             tool_calls_json: tool_calls_json.map(String::from),
             reasoning_content: reasoning_content.map(String::from),
+            image_paths_json: image_paths_json.map(String::from),
         })
     }
 
@@ -437,6 +480,8 @@ impl ConversationDb {
             [conversation_id],
         )?;
         conn.execute("DELETE FROM conversations WHERE id = ?1", [conversation_id])?;
+        drop(conn);
+        crate::agent::image_store::delete_conversation_images(conversation_id);
         Ok(())
     }
 

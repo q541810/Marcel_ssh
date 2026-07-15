@@ -100,6 +100,49 @@ pub async fn agent_delete_conversation(
     Ok(())
 }
 
+/// Save compressed user images for a message. Returns relative paths under `images/`.
+/// `images_base64` items are raw base64 or data URLs (frontend already compressed).
+#[tauri::command]
+pub async fn agent_save_message_images(
+    conversation_id: String,
+    message_id: String,
+    images_base64: Vec<String>,
+) -> Result<Vec<String>, AppError> {
+    if conversation_id.is_empty() || message_id.is_empty() {
+        return Err(AppError::Agent("conversation_id / message_id 不能为空".into()));
+    }
+    if images_base64.len() > 5 {
+        return Err(AppError::Agent("单次最多 5 张图片".into()));
+    }
+    let mut paths = Vec::with_capacity(images_base64.len());
+    for (i, data) in images_base64.iter().enumerate() {
+        let rel = crate::agent::image_store::save_image_base64(
+            &conversation_id,
+            &message_id,
+            i,
+            data,
+        )
+        .map_err(|e| AppError::Agent(format!("保存图片失败: {}", e)))?;
+        paths.push(rel);
+    }
+    Ok(paths)
+}
+
+/// Resolve absolute filesystem path for a relative image path (for asset protocol).
+#[tauri::command]
+pub async fn agent_resolve_image_path(relative_path: String) -> Result<String, AppError> {
+    let abs = crate::agent::image_store::absolute_path(&relative_path)
+        .map_err(|e| AppError::Agent(e))?;
+    Ok(abs.to_string_lossy().to_string())
+}
+
+/// Read a persisted message image as a data URL (for restore-to-input after rollback).
+#[tauri::command]
+pub async fn agent_read_message_image(relative_path: String) -> Result<String, AppError> {
+    crate::agent::image_store::read_image_data_url(&relative_path)
+        .map_err(|e| AppError::Agent(format!("读取图片失败: {}", e)))
+}
+
 /// Delete a message and all messages after it from a conversation,
 /// and restore plan from the last snapshot before `from_timestamp` when possible.
 ///

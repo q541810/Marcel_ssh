@@ -26,7 +26,12 @@ export interface TaskState {
   plansDirty: boolean;
   taskTokenUsage: TokenUsage | null;
 
-  startTask: (sessionId: string, prompt: string, connectionId?: string) => Promise<string>;
+  startTask: (
+    sessionId: string,
+    prompt: string,
+    connectionId?: string,
+    imageDataUrls?: string[],
+  ) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
   approveOperation: (taskId: string, operationId: string) => Promise<void>;
   rejectOperation: (taskId: string, operationId: string) => Promise<void>;
@@ -65,17 +70,49 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   plansDirty: false,
   taskTokenUsage: null,
 
-  startTask: async (sessionId: string, prompt: string, connectionId?: string) => {
+  startTask: async (
+    sessionId: string,
+    prompt: string,
+    connectionId?: string,
+    imageDataUrls?: string[],
+  ) => {
     const { mode } = get();
     const conversationStore = useConversationStore.getState();
+    const vision = useSettingsStore.getState().settings.llmConfig?.vision ?? false;
+    const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
 
-    const conversationId = await conversationStore.ensureConversation(sessionId, connectionId ?? '', prompt);
+    const titleSeed = prompt.trim() || (images.length > 0 ? '[image]' : '');
+    const conversationId = await conversationStore.ensureConversation(
+      sessionId,
+      connectionId ?? '',
+      titleSeed || '新会话',
+    );
+
+    const userMessageId = crypto.randomUUID();
+    let imagePaths: string[] | undefined;
+    if (images.length > 0) {
+      try {
+        imagePaths = await tauri.agentSaveMessageImages(conversationId, userMessageId, images);
+      } catch (err) {
+        conversationStore.updateConversationMessages(conversationId, (msgs) => [
+          ...msgs,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `保存图片失败：${getErrorMessage(err)}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+        throw err;
+      }
+    }
 
     const userMessage: AgentMessage = {
-      id: crypto.randomUUID(),
+      id: userMessageId,
       role: 'user',
       content: prompt,
       timestamp: new Date().toISOString(),
+      imagePaths,
     };
 
     const loadingAssistantId = crypto.randomUUID();

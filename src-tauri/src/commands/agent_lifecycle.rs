@@ -194,6 +194,8 @@ fn build_agent_messages(
         .last()
         .map_or(false, |m| m.role == LlmRole::User && m.content == prompt)
     {
+        // History from frontend already includes the current user turn (with
+        // optional image_paths). Only append a text-only fallback when missing.
         messages.push(LlmMessage::user(prompt.to_string()));
     }
     Ok(messages)

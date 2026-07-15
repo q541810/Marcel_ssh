@@ -227,6 +227,19 @@ const conversionStrategies: MessageConversionStrategy[] = [
  * - Tool results with new format (PersistedToolResult)
  * - Tool results with legacy format (PersistedToolCall[])
  */
+function parseImagePaths(json?: string | null): string[] | undefined {
+  if (!json) return undefined;
+  try {
+    const parsed = JSON.parse(json);
+    if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+      return parsed.length > 0 ? parsed : undefined;
+    }
+  } catch {
+    // ignore corrupt legacy data
+  }
+  return undefined;
+}
+
 export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
   const base: AgentMessage = {
     id: m.id,
@@ -234,6 +247,7 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     content: m.content,
     timestamp: m.timestamp,
     reasoningContent: m.reasoningContent || undefined,
+    imagePaths: parseImagePaths(m.imagePathsJson),
   };
 
   for (const strategy of conversionStrategies) {

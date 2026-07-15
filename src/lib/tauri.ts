@@ -77,9 +77,33 @@ export async function agentStartTask(
     toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
     toolCallId?: string;
     reasoningContent?: string;
+    imagePaths?: string[];
   }[],
 ): Promise<string> {
   return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
+}
+
+/** Save compressed images for a user message; returns relative paths under images/. */
+export async function agentSaveMessageImages(
+  conversationId: string,
+  messageId: string,
+  imagesBase64: string[],
+): Promise<string[]> {
+  return invoke<string[]>('agent_save_message_images', {
+    conversationId,
+    messageId,
+    imagesBase64,
+  });
+}
+
+/** Resolve absolute path for asset protocol display. */
+export async function agentResolveImagePath(relativePath: string): Promise<string> {
+  return invoke<string>('agent_resolve_image_path', { relativePath });
+}
+
+/** Read a persisted message image as data URL (rollback restore). */
+export async function agentReadMessageImage(relativePath: string): Promise<string> {
+  return invoke<string>('agent_read_message_image', { relativePath });
 }
 
 export async function agentStopTask(taskId: string): Promise<void> {

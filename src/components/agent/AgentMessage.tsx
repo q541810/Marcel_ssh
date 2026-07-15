@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useRef, type ReactNode } from "react";
 import type { AgentMessage as AgentMessageType } from "@/lib/types";
+import MessageImageThumb from "./MessageImageThumb";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -172,12 +173,26 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
   // ─── User message: right-aligned bubble ──
   if (isUser) {
     const sentAt = new Date(message.timestamp).toLocaleString();
+    const images = message.imagePaths ?? [];
     return (
       <div className="group flex justify-end my-1">
         <div className="flex max-w-[80%] flex-col items-end">
-        <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
-          {highlightPlainText(message.content, searchKeyword)}
-        </div>
+          {images.length > 0 && (
+            <div className="mb-1.5 flex flex-wrap justify-end gap-1.5 max-w-full">
+              {images.map((path) => (
+                <MessageImageThumb
+                  key={path}
+                  relativePath={path}
+                  className="h-16 w-16"
+                />
+              ))}
+            </div>
+          )}
+          {message.content ? (
+            <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
+              {highlightPlainText(message.content, searchKeyword)}
+            </div>
+          ) : null}
           <div className="mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0">
             <span className="min-w-0 truncate">
               {sentAt}
