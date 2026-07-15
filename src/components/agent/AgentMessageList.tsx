@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
@@ -62,6 +62,17 @@ export default function AgentMessageList({
   );
   const [flashId, setFlashId] = useState<string | null>(null);
 
+  const handleToolExpandChange = useCallback((messageId: string, expanded: boolean) => {
+    setExpandedIds((prev) => {
+      const has = prev.has(messageId);
+      if (expanded === has) return prev;
+      const next = new Set(prev);
+      if (expanded) next.add(messageId);
+      else next.delete(messageId);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (!highlightMessageId) return;
     let cancelled = false;
@@ -104,7 +115,7 @@ export default function AgentMessageList({
       <div
         key={msg.id}
         data-message-id={msg.id}
-        className={`relative rounded-lg transition-colors duration-500 ${
+        className={`relative min-w-0 rounded-lg transition-colors duration-500 ${
           isFlash ? 'bg-indigo-500/20 ring-1 ring-indigo-400/30' : ''
         } ${isMatch ? 'pl-2' : ''}`}
       >
@@ -141,19 +152,15 @@ export default function AgentMessageList({
           ) {
             return wrapMessage(
               msg,
-              <div className="flex justify-start">
-                <div className={expandedIds.has(msg.id) ? '' : 'max-w-[85%]'}>
+              <div className="flex justify-start min-w-0">
+                <div
+                  className={`min-w-0 ${expandedIds.has(msg.id) ? 'w-full' : 'max-w-[85%]'}`}
+                >
                   <ToolCallCard
                     message={msg}
                     autoExpand={isThinking}
-                    onExpandChange={(e) => {
-                      setExpandedIds((prev) => {
-                        const next = new Set(prev);
-                        if (e) next.add(msg.id);
-                        else next.delete(msg.id);
-                        return next;
-                      });
-                    }}
+                    messageId={msg.id}
+                    onExpandChange={handleToolExpandChange}
                   />
                 </div>
               </div>,

@@ -5,7 +5,9 @@ import FileChangeView from './FileChangeView';
 interface Props {
   message: AgentMessage;
   autoExpand?: boolean;
-  onExpandChange?: (expanded: boolean) => void;
+  /** Stable id for parent expand tracking (avoids inline closures). */
+  messageId?: string;
+  onExpandChange?: (messageId: string, expanded: boolean) => void;
 }
 
 const TOOL_ICONS: Record<string, JSX.Element> = {
@@ -148,14 +150,22 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
   return '';
 }
 
-function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
+function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
   const wasExecutingRef = useRef(message.isExecuting);
   const outputRef = useRef<HTMLPreElement>(null);
+  const onExpandChangeRef = useRef(onExpandChange);
+  const lastNotifiedExpandedRef = useRef<boolean | null>(null);
+  const expandNotifyId = messageId ?? message.id;
 
+  onExpandChangeRef.current = onExpandChange;
+
+  // Notify parent only when expanded actually changes (not on every parent re-render).
   useEffect(() => {
-    onExpandChange?.(expanded);
-  }, [expanded, onExpandChange]);
+    if (lastNotifiedExpandedRef.current === expanded) return;
+    lastNotifiedExpandedRef.current = expanded;
+    onExpandChangeRef.current?.(expandNotifyId, expanded);
+  }, [expanded, expandNotifyId]);
 
   // Auto-scroll output when at bottom
   useEffect(() => {
@@ -214,12 +224,12 @@ function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
     const showOutput = (isExecuting && hasOutput) || expanded;
 
     return (
-      <div className={`rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : (tr.wasTimeout || tr.wasAborted) ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+      <div className={`min-w-0 max-w-full rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : (tr.wasTimeout || tr.wasAborted) ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
         <button
           onClick={() => !isExecuting && setExpanded((v) => !v)}
-          className="group w-full text-left"
+          className="group w-full min-w-0 text-left"
         >
-          <div className="flex items-center justify-between px-3 py-1.5">
+          <div className="flex items-center justify-between px-3 py-1.5 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
                 {icon}
@@ -288,8 +298,11 @@ function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
           </div>
         )}
         {showOutput && (
-          <div className={`border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
-            <pre ref={outputRef} className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-[120px] overflow-y-auto font-mono leading-relaxed">
+          <div className={`min-w-0 border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
+            <pre
+              ref={outputRef}
+              className="text-xs text-zinc-400 whitespace-pre max-h-[120px] max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed"
+            >
               {tr.result || ''}
             </pre>
           </div>
@@ -298,8 +311,8 @@ function ToolCallCard({ message, autoExpand, onExpandChange }: Props) {
           tr.success && (tr.toolName === 'write_file' || tr.toolName === 'edit_file') ? (
             <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
-            <div className="border-t border-zinc-700/50 px-3 py-1.5">
-              <pre className="text-xs text-zinc-400 whitespace-pre-wrap break-words max-h-64 overflow-y-auto font-mono leading-relaxed">
+            <div className="min-w-0 border-t border-zinc-700/50 px-3 py-1.5">
+              <pre className="text-xs text-zinc-400 whitespace-pre max-h-64 max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed">
                 {tr.result || 'no output'}
               </pre>
             </div>

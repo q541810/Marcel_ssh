@@ -367,7 +367,7 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-1">
+      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 space-y-1">
         {!activeSession && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>请先连接 SSH 服务器。</p>
