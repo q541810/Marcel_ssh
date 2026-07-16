@@ -490,6 +490,42 @@ impl ConversationDb {
         conversation_id: &str,
         from_timestamp: &str,
     ) -> RusqliteResult<usize> {
+        // 截断前收集磁盘图：保留「回撤目标」那条 user 的图（前端要恢复到输入框），
+        // 其余被删消息的图全部回收，避免孤儿文件。
+        let paths_to_delete: Vec<String> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT role, image_paths_json FROM messages
+                 WHERE conversation_id = ?1 AND timestamp >= ?2
+                 ORDER BY timestamp ASC, rowid ASC",
+            )?;
+            let rows: Vec<(String, Option<String>)> = stmt
+                .query_map((conversation_id, from_timestamp), |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+
+            let mut keep_first_user_images = true;
+            let mut to_delete = Vec::new();
+            for (role, image_json) in rows {
+                let is_rollback_target = keep_first_user_images && role == "user";
+                if is_rollback_target {
+                    keep_first_user_images = false;
+                    continue;
+                }
+                if role == "user" {
+                    keep_first_user_images = false;
+                }
+                if let Some(json) = image_json {
+                    if let Ok(paths) = serde_json::from_str::<Vec<String>>(&json) {
+                        to_delete.extend(paths);
+                    }
+                }
+            }
+            to_delete
+        };
+
         let deleted = {
             let conn = self.conn.lock().unwrap();
             conn.execute(
@@ -497,6 +533,10 @@ impl ConversationDb {
                 (conversation_id, from_timestamp),
             )?
         };
+
+        for path in paths_to_delete {
+            let _ = crate::agent::image_store::delete_image(&path);
+        }
 
         self.touch_conversation(conversation_id)?;
         Ok(deleted)
@@ -1009,6 +1049,72 @@ mod tests {
             .expect("Failed to load messages");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "keep");
+    }
+
+    #[test]
+    fn truncate_deletes_later_images_keeps_rollback_target() {
+        use crate::agent::image_store;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        image_store::init(dir.path());
+        let db = create_test_db();
+        let conversation = db
+            .create_conversation("conn_1", "ImgRollback")
+            .expect("create");
+
+        let keep_path =
+            image_store::save_image_bytes(&conversation.id, "m0", 0, b"keep-bytes").unwrap();
+        let target_path =
+            image_store::save_image_bytes(&conversation.id, "m1", 0, b"target-bytes").unwrap();
+        let later_path =
+            image_store::save_image_bytes(&conversation.id, "m2", 0, b"later-bytes").unwrap();
+
+        db.save_message_with_images(
+            &conversation.id,
+            "user",
+            "keep",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+            Some(&format!(r#"["{}"]"#, keep_path)),
+        )
+        .expect("save keep");
+        db.save_message_with_images(
+            &conversation.id,
+            "user",
+            "rewrite",
+            "2026-01-01T00:01:00Z",
+            None,
+            None,
+            Some(&format!(r#"["{}"]"#, target_path)),
+        )
+        .expect("save target");
+        db.save_message_with_images(
+            &conversation.id,
+            "user",
+            "later",
+            "2026-01-01T00:02:00Z",
+            None,
+            None,
+            Some(&format!(r#"["{}"]"#, later_path)),
+        )
+        .expect("save later");
+
+        let deleted = db
+            .delete_messages_from_timestamp(&conversation.id, "2026-01-01T00:01:00Z")
+            .expect("truncate");
+        assert_eq!(deleted, 2);
+
+        let exists = |rel: &str| {
+            image_store::absolute_path(rel)
+                .map(|p| p.exists())
+                .unwrap_or(false)
+        };
+        // 回撤目标图保留（前端恢复预览），之后轮次图删除
+        assert!(exists(&keep_path), "pre-truncate image should remain");
+        assert!(exists(&target_path), "rollback target image should remain");
+        assert!(!exists(&later_path), "later-turn image should be deleted");
     }
 
     #[test]

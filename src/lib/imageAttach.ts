@@ -4,6 +4,8 @@ export interface PendingImage {
   previewUrl: string;
   /** data:image/webp;base64,... or raw base64 */
   dataUrl: string;
+  /** 撤回恢复的落盘相对路径；新粘贴图无此字段 */
+  persistedPath?: string;
 }
 
 export const MAX_ATTACH_IMAGES = 5;
@@ -136,10 +138,28 @@ export function revokePendingImages(images: PendingImage[]) {
 }
 
 /** Restore a pending attachment from a persisted data URL (e.g. after rollback). */
-export function pendingImageFromDataUrl(dataUrl: string): PendingImage {
+export function pendingImageFromDataUrl(dataUrl: string, persistedPath?: string): PendingImage {
   return {
     id: crypto.randomUUID(),
     previewUrl: dataUrl,
     dataUrl,
+    persistedPath,
   };
+}
+
+/** Best-effort delete of persisted paths on disk. */
+export async function deletePersistedImagePaths(
+  paths: Array<string | undefined | null>,
+  deleteFn: (relativePath: string) => Promise<void>,
+): Promise<void> {
+  const unique = [...new Set(paths.filter((p): p is string => !!p))];
+  await Promise.all(
+    unique.map(async (path) => {
+      try {
+        await deleteFn(path);
+      } catch {
+        // best-effort
+      }
+    }),
+  );
 }

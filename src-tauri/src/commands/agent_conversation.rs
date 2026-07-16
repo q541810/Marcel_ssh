@@ -116,16 +116,54 @@ pub async fn agent_save_message_images(
     }
     let mut paths = Vec::with_capacity(images_base64.len());
     for (i, data) in images_base64.iter().enumerate() {
-        let rel = crate::agent::image_store::save_image_base64(
+        match crate::agent::image_store::save_image_base64(
             &conversation_id,
             &message_id,
             i,
             data,
-        )
-        .map_err(|e| AppError::Agent(format!("保存图片失败: {}", e)))?;
-        paths.push(rel);
+        ) {
+            Ok(rel) => paths.push(rel),
+            Err(e) => {
+                // 中途失败：回滚已写入的文件，避免半成功孤儿图
+                for written in &paths {
+                    let _ = crate::agent::image_store::delete_image(written);
+                }
+                return Err(AppError::Agent(format!("保存图片失败: {}", e)));
+            }
+        }
     }
     Ok(paths)
+}
+
+/// Persist a user message (e.g. after images saved but agent_start_task failed).
+#[tauri::command]
+pub async fn agent_save_user_message(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    content: String,
+    timestamp: String,
+    image_paths: Option<Vec<String>>,
+) -> Result<(), AppError> {
+    if conversation_id.is_empty() {
+        return Err(AppError::Agent("conversation_id 不能为空".into()));
+    }
+    let image_paths_json = image_paths
+        .as_ref()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| serde_json::to_string(p).ok());
+    state
+        .conversation_db
+        .save_message_with_images(
+            &conversation_id,
+            "user",
+            &content,
+            &timestamp,
+            None,
+            None,
+            image_paths_json.as_deref(),
+        )
+        .map_err(|e| AppError::Agent(format!("保存用户消息失败: {}", e)))?;
+    Ok(())
 }
 
 /// Resolve absolute filesystem path for a relative image path (for asset protocol).
@@ -141,6 +179,13 @@ pub async fn agent_resolve_image_path(relative_path: String) -> Result<String, A
 pub async fn agent_read_message_image(relative_path: String) -> Result<String, AppError> {
     crate::agent::image_store::read_image_data_url(&relative_path)
         .map_err(|e| AppError::Agent(format!("读取图片失败: {}", e)))
+}
+
+/// Delete a single persisted message image by relative path (idempotent).
+#[tauri::command]
+pub async fn agent_delete_message_image(relative_path: String) -> Result<(), AppError> {
+    crate::agent::image_store::delete_image(&relative_path)
+        .map_err(|e| AppError::Agent(format!("删除图片失败: {}", e)))
 }
 
 /// Delete a message and all messages after it from a conversation,

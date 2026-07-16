@@ -131,6 +131,16 @@ fn guess_mime(path: &Path, bytes: &[u8]) -> &'static str {
     }
 }
 
+/// Delete a single image file by relative path. Missing file is success (idempotent).
+pub fn delete_image(rel: &str) -> Result<(), String> {
+    let path = resolve_relative(rel)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("delete image: {}", e)),
+    }
+}
+
 /// Delete all images for a conversation (`images/{conversation_id}/`).
 pub fn delete_conversation_images(conversation_id: &str) {
     let Some(root) = IMAGES_ROOT.get() else {
@@ -181,5 +191,17 @@ mod tests {
         init(dir.path());
         assert!(resolve_relative("../secret").is_err());
         assert!(resolve_relative("a/../../b").is_err());
+        assert!(delete_image("../secret").is_err());
+    }
+
+    #[test]
+    fn delete_image_is_idempotent() {
+        let dir = tempdir().unwrap();
+        init(dir.path());
+        let rel = save_image_bytes("conv1", "msg1", 0, b"fake-webp-bytes").unwrap();
+        assert!(images_root().join(&rel).exists());
+        delete_image(&rel).unwrap();
+        assert!(!images_root().join(&rel).exists());
+        delete_image(&rel).unwrap();
     }
 }

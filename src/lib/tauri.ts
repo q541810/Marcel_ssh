@@ -96,6 +96,21 @@ export async function agentSaveMessageImages(
   });
 }
 
+/** Persist a user message when start_task failed after images were saved. */
+export async function agentSaveUserMessage(
+  conversationId: string,
+  content: string,
+  timestamp: string,
+  imagePaths?: string[],
+): Promise<void> {
+  return invoke('agent_save_user_message', {
+    conversationId,
+    content,
+    timestamp,
+    imagePaths: imagePaths ?? null,
+  });
+}
+
 /** Resolve absolute path for asset protocol display. */
 export async function agentResolveImagePath(relativePath: string): Promise<string> {
   return invoke<string>('agent_resolve_image_path', { relativePath });
@@ -104,6 +119,11 @@ export async function agentResolveImagePath(relativePath: string): Promise<strin
 /** Read a persisted message image as data URL (rollback restore). */
 export async function agentReadMessageImage(relativePath: string): Promise<string> {
   return invoke<string>('agent_read_message_image', { relativePath });
+}
+
+/** Delete a single persisted message image (idempotent). */
+export async function agentDeleteMessageImage(relativePath: string): Promise<void> {
+  return invoke('agent_delete_message_image', { relativePath });
 }
 
 export async function agentStopTask(taskId: string): Promise<void> {

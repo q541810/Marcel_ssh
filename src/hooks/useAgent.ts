@@ -49,8 +49,9 @@ export function useAgent() {
       prompt: string,
       connectionId?: string,
       imageDataUrls?: string[],
+      replaceImagePaths?: string[],
     ) => {
-      return store.startTask(sessionId, prompt, connectionId, imageDataUrls);
+      return store.startTask(sessionId, prompt, connectionId, imageDataUrls, replaceImagePaths);
     },
     [store.startTask],
   );

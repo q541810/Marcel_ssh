@@ -12,6 +12,7 @@ import {
   revokePendingImages,
   compressImageFile,
   pendingImageFromDataUrl,
+  deletePersistedImagePaths,
   MAX_ATTACH_IMAGES,
 } from '@/lib/imageAttach';
 import * as tauri from '@/lib/tauri';
@@ -36,6 +37,7 @@ export default function AgentPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
   const attachHintTimerRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
   const visionEnabled = useSettingsStore((s) => s.settings.llmConfig?.vision ?? false);
   const activeSession = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
@@ -126,17 +128,53 @@ export default function AgentPanel() {
     }, 3200);
   }, []);
 
-  const clearPendingImages = useCallback(() => {
-    setPendingImages((prev) => {
-      revokePendingImages(prev);
-      return [];
-    });
+  const deletePersistedPaths = useCallback(async (paths: Array<string | undefined | null>) => {
+    await deletePersistedImagePaths(paths, tauri.agentDeleteMessageImage);
   }, []);
 
-  // Vision OFF：清空已挂起图片（产品要求）
+  /** 清空预览；deleteDisk=true 时删除撤回恢复的落盘图 */
+  const clearPendingImages = useCallback(
+    (options?: { deleteDisk?: boolean }) => {
+      const deleteDisk = options?.deleteDisk ?? false;
+      setPendingImages((prev) => {
+        if (deleteDisk) {
+          void deletePersistedPaths(prev.map((p) => p.persistedPath));
+        }
+        revokePendingImages(prev);
+        return [];
+      });
+    },
+    [deletePersistedPaths],
+  );
+
+  const removePendingImage = useCallback(
+    (id: string) => {
+      setPendingImages((prev) => {
+        const target = prev.find((p) => p.id === id);
+        if (target?.persistedPath) {
+          void deletePersistedPaths([target.persistedPath]);
+        }
+        if (target) revokePendingImages([target]);
+        return prev.filter((p) => p.id !== id);
+      });
+    },
+    [deletePersistedPaths],
+  );
+
+  // 切换对话/主机时丢掉草稿附件，避免把 A 的撤回图带到 B
+  const prevConversationIdRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevConversationIdRef.current;
+    prevConversationIdRef.current = activeConversationId;
+    if (prev === undefined) return; // 首次挂载
+    if (prev === activeConversationId) return;
+    clearPendingImages({ deleteDisk: true });
+  }, [activeConversationId, clearPendingImages]);
+
+  // Vision OFF：清空已挂起图片并删落盘图（未保留在预览）
   useEffect(() => {
     if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages();
+      clearPendingImages({ deleteDisk: true });
       showAttachHint('当前模型未开启「视觉 / 支持图片」');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
@@ -145,7 +183,7 @@ export default function AgentPanel() {
   const addPendingFromFiles = useCallback(
     async (files: FileList | File[]) => {
       if (!visionEnabled) {
-        clearPendingImages();
+        clearPendingImages({ deleteDisk: true });
         showAttachHint('当前模型未开启「视觉 / 支持图片」');
         return;
       }
@@ -175,7 +213,7 @@ export default function AgentPanel() {
     if (imageFiles.length === 0) return;
     e.preventDefault();
     if (!visionEnabled) {
-      clearPendingImages();
+      clearPendingImages({ deleteDisk: true });
       showAttachHint('当前模型未开启「视觉 / 支持图片」');
       return;
     }
@@ -223,24 +261,45 @@ export default function AgentPanel() {
   };
 
   const handleSend = async () => {
+    if (isRunning || sendingRef.current) return;
     const prompt = input.trim();
     const images = visionEnabled ? pendingImages : [];
     if ((!prompt && images.length === 0) || !canInteract) return;
     if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages();
+      clearPendingImages({ deleteDisk: true });
       showAttachHint('当前模型未开启「视觉 / 支持图片」');
       return;
     }
+    sendingRef.current = true;
+    const snapshotImages = images;
     const dataUrls = images.map((i) => i.dataUrl);
+    const oldPersisted = images.map((i) => i.persistedPath).filter((p): p is string => !!p);
     setInput('');
-    clearPendingImages();
+    // 只清 UI 状态，blob URL 等成功后再 revoke；save 失败可原样回滚
+    setPendingImages([]);
     if (inputRef.current) {
       inputRef.current.style.height = 'auto';
     }
     try {
-      await sendPrompt(activeSessionId!, prompt, activeConfigId, dataUrls);
+      await sendPrompt(activeSessionId!, prompt, activeConfigId, dataUrls, oldPersisted);
+      revokePendingImages(snapshotImages);
     } catch (err) {
       console.error('Failed to start task:', err);
+      const stage = (err as Error & { stage?: string })?.stage;
+      if (stage === 'start_task') {
+        // 消息（含新图）已进会话；旧落盘图已在 save 后删除
+        revokePendingImages(snapshotImages);
+        return;
+      }
+      // save 失败或其它：恢复输入与预览，旧落盘图保留
+      setInput(prompt);
+      setPendingImages(snapshotImages);
+      requestAnimationFrame(() => {
+        resizeInput();
+        inputRef.current?.focus();
+      });
+    } finally {
+      sendingRef.current = false;
     }
   };
 
@@ -287,20 +346,29 @@ export default function AgentPanel() {
       const result = await rollbackToMessage(activeConversationId, message.id);
       setInput(result.prompt);
 
-      // 文字回填的同时恢复图片到输入区（磁盘上的 message 图未删，可再读）
-      clearPendingImages();
+      // 先清当前预览（若有撤回恢复的落盘图也删掉）
+      clearPendingImages({ deleteDisk: true });
       const paths = result.imagePaths?.length
         ? result.imagePaths
         : (message.imagePaths ?? []);
       if (paths.length > 0 && visionEnabled) {
         const restored: PendingImage[] = [];
+        const failedPaths: string[] = [];
         for (const path of paths.slice(0, MAX_ATTACH_IMAGES)) {
           try {
             const dataUrl = await tauri.agentReadMessageImage(path);
-            restored.push(pendingImageFromDataUrl(dataUrl));
+            restored.push(pendingImageFromDataUrl(dataUrl, path));
           } catch (err) {
             console.warn('Failed to restore image after rollback:', path, err);
+            failedPaths.push(path);
           }
+        }
+        // 超出上限的路径也视为未进预览，删掉
+        if (paths.length > MAX_ATTACH_IMAGES) {
+          failedPaths.push(...paths.slice(MAX_ATTACH_IMAGES));
+        }
+        if (failedPaths.length > 0) {
+          void deletePersistedPaths(failedPaths);
         }
         if (restored.length > 0) {
           setPendingImages(restored);
@@ -308,6 +376,8 @@ export default function AgentPanel() {
           showAttachHint('原消息图片恢复失败');
         }
       } else if (paths.length > 0 && !visionEnabled) {
+        // 未回到预览：清磁盘
+        void deletePersistedPaths(paths);
         showAttachHint('当前模型未开启「视觉 / 支持图片」，图片未恢复');
       }
 
@@ -643,13 +713,7 @@ export default function AgentPanel() {
                   />
                   <button
                     type="button"
-                    onClick={() => {
-                      setPendingImages((prev) => {
-                        const next = prev.filter((p) => p.id !== img.id);
-                        URL.revokeObjectURL(img.previewUrl);
-                        return next;
-                      });
-                    }}
+                    onClick={() => removePendingImage(img.id)}
                     className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-600 text-zinc-300 hover:text-white hover:bg-red-600 flex items-center justify-center text-[10px] leading-none"
                     title="移除"
                   >

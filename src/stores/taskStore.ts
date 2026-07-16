@@ -31,6 +31,8 @@ export interface TaskState {
     prompt: string,
     connectionId?: string,
     imageDataUrls?: string[],
+    /** 撤回恢复图重发成功后要删除的旧落盘路径 */
+    replaceImagePaths?: string[],
   ) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
   approveOperation: (taskId: string, operationId: string) => Promise<void>;
@@ -75,6 +77,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     prompt: string,
     connectionId?: string,
     imageDataUrls?: string[],
+    replaceImagePaths?: string[],
   ) => {
     const { mode } = get();
     const conversationStore = useConversationStore.getState();
@@ -93,6 +96,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (images.length > 0) {
       try {
         imagePaths = await tauri.agentSaveMessageImages(conversationId, userMessageId, images);
+        // 新图已落盘：旧撤回路径可删（start 失败也不回滚新图）
+        if (replaceImagePaths?.length) {
+          await Promise.all(
+            [...new Set(replaceImagePaths)].map(async (p) => {
+              try {
+                await tauri.agentDeleteMessageImage(p);
+              } catch {
+                // best-effort
+              }
+            }),
+          );
+        }
       } catch (err) {
         conversationStore.updateConversationMessages(conversationId, (msgs) => [
           ...msgs,
@@ -103,7 +118,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             timestamp: new Date().toISOString(),
           },
         ]);
-        throw err;
+        const e = err instanceof Error ? err : new Error(getErrorMessage(err));
+        (e as Error & { stage?: string }).stage = 'save_images';
+        throw e;
       }
     }
 
@@ -132,6 +149,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
       taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId, llmHistory);
     } catch (err) {
+      // start 失败时 agent_loop 不会落库 user 消息；补写 DB，避免重载丢消息/孤儿图
+      try {
+        await tauri.agentSaveUserMessage(
+          conversationId,
+          prompt,
+          userMessage.timestamp,
+          imagePaths,
+        );
+      } catch (persistErr) {
+        console.warn('Failed to persist user message after start_task error:', persistErr);
+      }
       conversationStore.updateConversationMessages(conversationId, (msgs) => [
         ...msgs.filter((m) => m.id !== loadingAssistantId),
         {
@@ -141,7 +169,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           timestamp: new Date().toISOString(),
         },
       ]);
-      throw err;
+      const e = err instanceof Error ? err : new Error(getErrorMessage(err));
+      (e as Error & { stage?: string }).stage = 'start_task';
+      throw e;
     }
 
     const task: AgentTask = {
