@@ -7,7 +7,7 @@ use russh::client::{self};
 use russh::keys::PrivateKeyWithHashAlg;
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
 
@@ -333,7 +333,8 @@ impl SshManager {
             if dominated {
                 guard.remove(&sid);
                 drop(guard);
-                let _ = app_clone.emit(
+                emit_event(
+                    &app_clone,
                     &format!("ssh://status/{}", sid),
                     SshStatus::Disconnected { reason },
                 );
