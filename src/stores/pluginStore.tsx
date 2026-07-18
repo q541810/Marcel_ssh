@@ -40,11 +40,14 @@ function resolvePluginIcon(manifest: PluginManifest, view: PluginViewDef): ViewP
 function manifestViewToProvider(
   manifest: PluginManifest,
   view: PluginViewDef,
-): ViewProvider {
+): ViewProvider | null {
+  // viewStore / NavRail only host MountPoint mounts; plugin `settings` views
+  // are not registered here (configView + settings UI handle configuration).
+  if (view.mount !== 'sidebar') return null;
   return {
     id: `${manifest.id}.${view.id}`,
     pluginId: manifest.id,
-    mount: view.mount,
+    mount: 'sidebar',
     title: view.title,
     icon: resolvePluginIcon(manifest, view),
     navGroup: view.navGroup,
@@ -156,7 +159,8 @@ function applyPluginDiff(
     if (disabled.has(id)) continue;
     if (registeredPluginIds.has(id)) continue;
     for (const v of m.views) {
-      useViewStore.getState().register(manifestViewToProvider(m, v));
+      const provider = manifestViewToProvider(m, v);
+      if (provider) useViewStore.getState().register(provider);
     }
     registeredPluginIds.add(id);
   }

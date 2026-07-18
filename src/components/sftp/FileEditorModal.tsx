@@ -61,7 +61,7 @@ export default function FileEditorModal({
   const viewRef = useRef<EditorView | null>(null);
   const originalContentRef = useRef<string>('');
   const mtimeRef = useRef<number>(0);
-  const saveRef = useRef<() => Promise<void>>(async () => {});
+  const saveRef = useRef<() => Promise<SaveResult>>(async () => 'blocked');
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -72,7 +72,8 @@ describe('pluginStore', () => {
 
     const providerIds = useViewStore.getState().providers.map((p) => p.id);
     expect(providerIds).toContain('hello.v1');
-    expect(providerIds).toContain('world.v1');
+    // settings mount is not a NavRail ViewProvider
+    expect(providerIds).not.toContain('world.v1');
   });
 
   it('fetchPlugins skips disabled plugins', async () => {
@@ -84,7 +85,7 @@ describe('pluginStore', () => {
 
     const providerIds = useViewStore.getState().providers.map((p) => p.id);
     expect(providerIds).not.toContain('hello.v1');
-    expect(providerIds).toContain('world.v1');
+    expect(providerIds).not.toContain('world.v1');
   });
 
   it('fetchPlugins unregisters providers when a plugin becomes disabled', async () => {
@@ -100,7 +101,7 @@ describe('pluginStore', () => {
 
     const providerIds = useViewStore.getState().providers.map((p) => p.id);
     expect(providerIds).not.toContain('hello.v1');
-    expect(providerIds).toContain('world.v1');
+    expect(providerIds).not.toContain('world.v1');
   });
 
   it('fetchPlugins re-registers providers when a plugin is re-enabled', async () => {
