@@ -587,11 +587,12 @@ async function saveConfig(config) {
 
 #### 可订阅事件
 
-下列是常用事件，**任何通过后端 `emit_event` 发出的事件都可订阅**（支持通配符）：
+下列是常用事件，**任何进入插件事件扇出的事件都可订阅**（支持通配符）。来源包括后端 `emit_event`，以及前端桥接（如会话 Tab 切换）：
 
 | 事件模式 | 说明 | Payload |
 |----------|------|---------|
 | `ssh://status/*` | SSH 连接状态变化 | `SshStatus`（connected/disconnected/error） |
+| `ssh://session-active` | 当前激活的 SSH 会话 Tab 变化（点 Tab / 新连接激活 / 断开后自动切下一个） | `{ sessionId, connectionId, previousSessionId, previousConnectionId }`（无会话时 `sessionId`/`connectionId` 为 `null`） |
 | `agent://stream/*` | Agent 任务流 | `StreamEvent`（textDelta/toolCall/done/error） |
 | `agent://plan/*` | Agent 计划流 | `PlanStreamEvent` |
 | `sftp-upload-progress` | SFTP 上传进度 | `{uploadId, written, total}` |
@@ -599,7 +600,7 @@ async function saveConfig(config) {
 | `sftp-download-progress` | SFTP 下载进度 | `{downloadId, written, total}` |
 | `sftp-download-done` | SFTP 下载完成 | `{downloadId}` |
 
-> 上表只列出主要事件。其他未列出的事件（如 `notification-sound`、approval 相关事件等）只要被 `emit_event` 发出，同样可通过 `events.subscribe` 订阅。
+> 上表只列出主要事件。其他未列出的后端事件（如 `notification-sound`、approval 相关事件等）只要进入 `plugin://events`，同样可通过 `events.subscribe` 订阅。
 
 #### 接收事件
 

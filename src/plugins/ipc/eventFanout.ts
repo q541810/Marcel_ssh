@@ -5,6 +5,9 @@
  *
  * Pattern matching: `prefix/*` matches any event starting with `prefix/`;
  * otherwise exact string match.
+ *
+ * Frontend bridges (e.g. session-active) should call `dispatchPluginEvent`
+ * directly — do not rely on emit→listen round-trip in the same webview.
  */
 
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
@@ -21,11 +24,18 @@ const pluginSubscriptions = new Map<string, Set<string>>();
 /** Single listener for all plugin events from the backend. */
 let pluginEventsListener: Promise<UnlistenFn> | null = null;
 
-function ensurePluginEventsListener(): void {
-  if (pluginEventsListener) return;
-  pluginEventsListener = listen<{ event: string; data: unknown }>('plugin://events', (e) => {
-    forwardToPlugins(e.payload.event, e.payload.data);
-  });
+export async function ensurePluginEventsListener(): Promise<void> {
+  if (!pluginEventsListener) {
+    pluginEventsListener = listen<{ event: string; data: unknown }>('plugin://events', (e) => {
+      const p = e.payload;
+      if (!p || typeof p.event !== 'string') return;
+      forwardToPlugins(p.event, p.data);
+    }).catch((err) => {
+      pluginEventsListener = null;
+      throw err;
+    });
+  }
+  await pluginEventsListener;
 }
 
 function forwardToPlugins(event: string, data: unknown): void {
@@ -37,6 +47,16 @@ function forwardToPlugins(event: string, data: unknown): void {
       }
     }
   }
+}
+
+/**
+ * In-process fanout to subscribed plugins (emits `plugin-event-<id>`).
+ * Additive path for frontend-originated events (e.g. session-active).
+ * Does not change backend `plugin://events` routing or existing payload shapes.
+ */
+export function dispatchPluginEvent(event: string, data: unknown): void {
+  if (typeof event !== 'string' || !event) return;
+  forwardToPlugins(event, data);
 }
 
 /** Subscribe a plugin to a set of event patterns. Returns the subscribed list. */
@@ -53,7 +73,9 @@ export function subscribeEvents(pluginId: string, events: string[]): string[] {
   }
 
   if (subscribed.length > 0) {
-    ensurePluginEventsListener();
+    void ensurePluginEventsListener().catch((err) => {
+      console.error('[eventFanout] failed to listen for plugin events', err);
+    });
   }
 
   return subscribed;

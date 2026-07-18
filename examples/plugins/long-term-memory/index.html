@@ -601,6 +601,7 @@
     viewMode: 'current',
     searchTerm: '',
     currentHostPort: null,
+    currentSessionId: null,
     currentConnName: '',
     memories: [],
     editingId: null,
@@ -662,13 +663,18 @@
   function getCurrentConnection() {
     return pluginCall('session.active').then(function (sess) {
       if (!sess || !sess.connectionId) throw new Error('no active session');
+      if (sess.status === 'disconnected' || sess.status === 'error') {
+        throw new Error('no active session');
+      }
       return pluginCall('connection.info', { connectionId: sess.connectionId }).then(function (conn) {
         if (!conn || !conn.host) throw new Error('no connection info');
         return {
           host: conn.host,
           port: conn.port,
           name: conn.name || (conn.host + ':' + conn.port),
-          connectionId: sess.connectionId
+          connectionId: sess.connectionId,
+          sessionId: sess.sessionId || null,
+          status: sess.status || null
         };
       });
     });
@@ -795,41 +801,53 @@
     elList.innerHTML = html;
   }
 
+  let refreshGeneration = 0;
+
   function refreshCurrentView() {
+    const generation = ++refreshGeneration;
     state.loading = true;
     renderLoading('加载中…');
     return getCurrentConnection().then(function (conn) {
-      state.currentHostPort = buildHostPort(conn);
+      if (generation !== refreshGeneration || state.viewMode !== 'current') return;
+      const hostPort = buildHostPort(conn);
+      state.currentHostPort = hostPort;
+      state.currentSessionId = conn.sessionId || null;
       state.currentConnName = conn.name;
       setConnInfo(conn.name + '（' + conn.host + ':' + conn.port + '）');
-      return readMemoriesFile(state.currentHostPort).then(function (text) {
+      return readMemoriesFile(hostPort).then(function (text) {
+        if (generation !== refreshGeneration || state.viewMode !== 'current') return;
         const r = parseJsonl(text);
-        r.memories.forEach(function (m) { m._hostPort = state.currentHostPort; m._connName = conn.name; });
+        r.memories.forEach(function (m) { m._hostPort = hostPort; m._connName = conn.name; });
         state.memories = r.memories;
         state.loading = false;
         if (r.errors > 0) setStatus('warn', '有 ' + r.errors + ' 条记忆格式错误被跳过');
         else setStatus('', '');
         renderList();
       }, function (err) {
+        if (generation !== refreshGeneration || state.viewMode !== 'current') return;
         state.memories = [];
         state.loading = false;
         setStatus('warn', '读取失败：' + (err && err.message ? err.message : String(err)));
         renderList();
       });
     }, function () {
+      if (generation !== refreshGeneration || state.viewMode !== 'current') return;
       state.loading = false;
       state.memories = [];
       state.currentHostPort = null;
+      state.currentSessionId = null;
       setConnInfo('');
       renderEmpty('没有活跃的 SSH 连接');
     });
   }
   function refreshAllView() {
+    const generation = ++refreshGeneration;
     state.loading = true;
     renderLoading('加载所有连接的记忆…');
     setConnInfo('');
     setStatus('', '');
     return pluginCall('connection.list').then(function (conns) {
+      if (generation !== refreshGeneration || state.viewMode !== 'all') return;
       if (!conns || conns.length === 0) {
         state.memories = []; state.loading = false;
         renderEmpty('还没有保存的连接');
@@ -837,6 +855,7 @@
       }
       const all = []; let totalErrors = 0; let pending = conns.length;
       const finishOne = function () {
+        if (generation !== refreshGeneration || state.viewMode !== 'all') return;
         pending--;
         if (pending === 0) {
           state.memories = all; state.loading = false;
@@ -848,14 +867,19 @@
       conns.forEach(function (conn) {
         const hp = buildHostPort(conn);
         readMemoriesFile(hp).then(function (text) {
+          if (generation !== refreshGeneration || state.viewMode !== 'all') return;
           const r = parseJsonl(text);
           r.memories.forEach(function (m) { m._hostPort = hp; m._connName = conn.name || (conn.host + ':' + conn.port); });
           all.push.apply(all, r.memories);
           totalErrors += r.errors;
           finishOne();
-        }, function () { finishOne(); });
+        }, function () {
+          if (generation !== refreshGeneration || state.viewMode !== 'all') return;
+          finishOne();
+        });
       });
     }, function () {
+      if (generation !== refreshGeneration || state.viewMode !== 'all') return;
       state.loading = false; state.memories = [];
       renderEmpty('加载连接列表失败');
     });
@@ -967,6 +991,18 @@
     else if (act === 'confirm-delete') { deleteMemory(m); }
   });
 
+  let refreshTimer = null;
+  let sessionEventsReady = false;
+
+  function scheduleCurrentRefresh(delay) {
+    if (state.viewMode !== 'current') return;
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(function () {
+      refreshTimer = null;
+      refreshCurrentView();
+    }, delay == null ? 50 : delay);
+  }
+
   function subscribeFsChanged() {
     listen('plugin-fs-changed', function (e) {
       const p = e.payload || {};
@@ -981,25 +1017,82 @@
     });
   }
 
-  let lastSeenHostPort = null;
-  let refreshTimer = null;
-  function pollCurrentConnection() {
+  function statusKind(data) {
+    if (data === 'connected' || data === 'disconnected' || data === 'error') return data;
+    if (!data || typeof data !== 'object') return null;
+    if (typeof data.status === 'string') return data.status;
+    if ('connected' in data) return 'connected';
+    if ('disconnected' in data) return 'disconnected';
+    if ('error' in data) return 'error';
+    return null;
+  }
+
+  /** 订阅 SSH Tab 切换 + 连接状态，自动刷新「当前连接」 */
+  function subscribeSessionEvents() {
+    // 先挂 listener，再 subscribe，避免漏事件
+    return listen('plugin-event-' + PLUGIN_ID, function (e) {
+      const payload = e.payload || {};
+      const ev = payload.event || '';
+      // Tab 切换：无条件刷新（同机多 Tab 的 hostPort 相同，不能靠 host 判断）
+      if (ev === 'ssh://session-active') {
+        scheduleCurrentRefresh(0);
+        return;
+      }
+      if (typeof ev === 'string' && ev.indexOf('ssh://status/') === 0) {
+        const st = statusKind(payload.data);
+        if (st === 'connected' || st === 'disconnected' || st === 'error') {
+          scheduleCurrentRefresh(0);
+        }
+      }
+    }).then(function () {
+      return pluginCall('events.subscribe', {
+        events: ['ssh://session-active', 'ssh://status/*']
+      });
+    }).then(function () {
+      sessionEventsReady = true;
+      // 订阅完成后再拉一次，覆盖订阅前的切换
+      scheduleCurrentRefresh(0);
+    }, function (err) {
+      console.warn('[long-term-memory] events.subscribe failed, using poll fallback', err);
+      sessionEventsReady = false;
+      return Promise.reject(err);
+    });
+  }
+
+  let pollStarted = false;
+  /**
+   * 兜底：按 sessionId 比较（同机双 Tab hostPort 相同，旧逻辑永远不刷）
+   */
+  function startPollFallback() {
+    if (pollStarted) return;
+    pollStarted = true;
+    // 事件通时仅低频校验；失败时保持旧版 3 秒轮询节奏
+    const intervalMs = sessionEventsReady ? 10000 : 3000;
     setInterval(function () {
       if (state.viewMode !== 'current') return;
       getCurrentConnection().then(function (conn) {
+        const sid = conn.sessionId || null;
         const hp = buildHostPort(conn);
-        if (lastSeenHostPort && hp !== lastSeenHostPort) refreshCurrentView();
-        lastSeenHostPort = hp;
+        if (sid !== state.currentSessionId || hp !== state.currentHostPort) {
+          scheduleCurrentRefresh(0);
+        }
       }, function () {
-        if (lastSeenHostPort !== null) {
-          lastSeenHostPort = null; state.currentHostPort = null; state.memories = [];
-          setConnInfo(''); renderEmpty('没有活跃的 SSH 连接');
+        if (state.currentSessionId !== null || state.currentHostPort !== null) {
+          scheduleCurrentRefresh(0);
         }
       });
-    }, 3000);
+    }, intervalMs);
   }
 
-  function init() { refreshCurrentView(); subscribeFsChanged(); pollCurrentConnection(); }
+  function init() {
+    refreshCurrentView();
+    subscribeFsChanged();
+    subscribeSessionEvents().then(function () {
+      startPollFallback();
+    }, function () {
+      startPollFallback();
+    });
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 </script>

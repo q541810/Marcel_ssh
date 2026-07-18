@@ -22,15 +22,13 @@ import {
   registerStatefulVirtualCommands,
 } from './ipc/commandRegistry';
 import { setCapabilityMap, isAuthorized } from './ipc/auth';
-import {
-  subscribeEvents,
-  unsubscribeEvents,
-} from './ipc/eventFanout';
+import { subscribeEvents, unsubscribeEvents, ensurePluginEventsListener } from './ipc/eventFanout';
 import {
   registerConfigSavedCallback,
   unregisterConfigSavedCallback,
   getConfigSavedCallback,
 } from './ipc/configCallbacks';
+import { initSessionActiveBridge } from './ipc/sessionActiveBridge';
 
 // Re-export the public registration API (consumed by plugin config views).
 export { registerConfigSavedCallback, unregisterConfigSavedCallback };
@@ -50,11 +48,17 @@ export async function initPluginIpc(): Promise<void> {
 
   // Wire event + config virtual commands (they depend on the fanout and
   // callback modules, which are only available after this point).
-  registerStatefulVirtualCommands(
-    subscribeEvents,
-    unsubscribeEvents,
-    getConfigSavedCallback,
-  );
+  registerStatefulVirtualCommands(subscribeEvents, unsubscribeEvents, getConfigSavedCallback);
+
+  // Start fanout listener early (before any plugin subscribes).
+  try {
+    await ensurePluginEventsListener();
+  } catch (err) {
+    initialized = false;
+    throw err;
+  }
+  // SSH tab active session → plugin events (in-process dispatch + fanout)
+  initSessionActiveBridge();
 
   // Pull the command→capability map from the Rust single source of truth so
   // the frontend and backend never drift. The static fallback in `auth.ts`
@@ -95,7 +99,10 @@ export async function initPluginIpc(): Promise<void> {
       // Plugin-scoped commands: inject pluginId as first argument
       const scopedCommand = getPluginScopedCommand(req.cmd);
       if (scopedCommand) {
-        const result = await invoke(scopedCommand, { pluginId: req.pluginId, ...req.args });
+        const result = await invoke(scopedCommand, {
+          pluginId: req.pluginId,
+          ...req.args,
+        });
         respond(true, result);
         return;
       }

@@ -294,6 +294,7 @@ async function listSessions() {
 | 事件模式 | 说明 |
 |----------|------|
 | `ssh://status/*` | SSH 连接状态变化 |
+| `ssh://session-active` | 当前激活的 SSH 会话 Tab 变化（payload：`sessionId` / `connectionId` / `previous*`） |
 | `agent://stream/*` | Agent 任务流 |
 | `agent://plan/*` | Agent 计划流 |
 | `sftp-upload-progress` | SFTP 上传进度 |
@@ -1012,6 +1013,8 @@ server-monitor/
 
 侧栏"记忆"按钮可手动浏览/编辑/删除记忆；设置页插件的"配置"按钮可清除当前连接的所有记忆。
 
+侧栏「当前连接」列表会订阅 `ssh://session-active` 与 `ssh://status/*`（`events` 能力），在切换 SSH Tab、连接成功/断开时自动刷新，并以低频状态校验作为丢事件兜底。
+
 ### 开发参考
 
 如果你想做一个类似的"按连接隔离的本地数据"插件，可以参考 long-term-memory 的模式：
@@ -1020,6 +1023,7 @@ server-monitor/
 2. `command` 字段用 `{{__host_port__}}` 模板实现按连接隔离
 3. `systemPromptSection` 引导模型何时调用工具
 4. 工具 `description` 写清楚参数格式和调用时机（这是模型正确使用的关键）
+5. 侧栏 UI 用 `events.subscribe` 订阅 `ssh://session-active`（及可选 `ssh://status/*`）跟随当前会话
 
 完整字段定义详见 [API 参考](./plugin-api.md)。
 
