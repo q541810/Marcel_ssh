@@ -250,7 +250,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       {menuProcess && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-50 w-36 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+          className="context-menu-enter fixed z-50 w-36 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
           style={{
             top: menuPos.y,
             left: menuPos.x,
@@ -278,8 +278,8 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       )}
 
       {killConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-red-300 mb-2">确认终止进程</h3>
             <p className="text-xs text-zinc-400 mb-1">
               PID: <span className="text-zinc-200">{killConfirm.pid}</span>

@@ -959,7 +959,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       {menuEntry && menuTargets.length > 0 && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-50 w-40 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+          className="context-menu-enter fixed z-50 w-40 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
           style={{ top: menuPos.y, left: menuPos.x }}
         >
           {menuTargets.length === 1 ? (
@@ -1089,8 +1089,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {renameEntry && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-3">重命名</h3>
             <input
               type="text"
@@ -1125,8 +1125,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {deleteConfirm.length > 0 && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-red-300 mb-2">
               确认删除 {deleteConfirm.length > 1 ? `${deleteConfirm.length} 个文件` : ''}
             </h3>
@@ -1222,8 +1222,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {/* Upload mode selection dialog for multiple files */}
       {pendingDropFiles && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传多个文件</h3>
             <p className="text-xs text-zinc-400 mb-4">
               检测到 {pendingDropFiles.length} 个文件，选择上传方式：
@@ -1270,8 +1270,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {/* Upload mode selection dialog for folder upload */}
       {pendingFolderUpload && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传文件夹</h3>
             <p className="text-xs text-zinc-400 mb-4">
               将「{pendingFolderUpload.folderName}」上传到 <span className="text-zinc-300">{currentPath}</span>，选择上传方式：
@@ -1309,8 +1309,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {extractConfirm && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">解压文件</h3>
             <p className="text-xs text-zinc-400 mb-4">
               将「{extractConfirm.name}」解压到 <span className="text-zinc-300">{currentPath}</span>，选择解压位置：

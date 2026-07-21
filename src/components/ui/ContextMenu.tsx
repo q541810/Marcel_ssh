@@ -23,7 +23,8 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
 
   return createPortal(
     <div
-      className="fixed z-50 bg-zinc-800 border border-zinc-700 rounded-xl shadow-lg py-1 min-w-32"
+      role="menu"
+      className="context-menu-enter fixed z-50 bg-zinc-800 border border-zinc-700 rounded-xl shadow-lg py-1 min-w-32"
       style={{ top: y, left: x }}
       onClick={(e) => e.stopPropagation()}
     >

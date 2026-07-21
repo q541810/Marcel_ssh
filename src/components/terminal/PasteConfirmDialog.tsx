@@ -10,8 +10,8 @@ interface Props {
 export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCancel }: Props) {
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
+      <div className="modal-backdrop-enter absolute inset-0 bg-black/60 backdrop-blur-sm" />
+      <div className="modal-panel-enter relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
         {/* Header with warning */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
           <div className="flex items-center gap-2">

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { sftpCompressArchive, sshExecLongCancel } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/sftp-helpers';
+import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 
 interface CompressModalProps {
   open: boolean;
@@ -199,12 +200,18 @@ export default function CompressModal({
     }
   }, []);
 
+  const {
+    closing,
+    requestClose,
+    onAnimationEnd: onExitAnimationEnd,
+  } = useAnimatedClose(onClose);
+
   const handleClose = useCallback(() => {
     // 压缩中不允许直接关闭，必须先取消
     if (phase === 'compressing') return;
     cleanup();
-    onClose();
-  }, [phase, cleanup, onClose]);
+    requestClose();
+  }, [phase, cleanup, requestClose]);
 
   if (!open) return null;
 
@@ -218,11 +225,18 @@ export default function CompressModal({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
+          closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
+        }`}
         onClick={() => !isRunning && handleClose()}
       />
 
-      <div className="relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl">
+      <div
+        onAnimationEnd={onExitAnimationEnd}
+        className={`relative w-full max-w-lg mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${
+          closing ? 'modal-panel-exit' : 'modal-panel-enter'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
           <div className="flex items-center gap-2">

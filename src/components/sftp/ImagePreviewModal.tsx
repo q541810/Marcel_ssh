@@ -5,6 +5,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { sftpPreviewImage, sftpPreviewCleanup } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 import { MAX_PREVIEW_IMAGE_SIZE } from '@/lib/constants';
+import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 
 interface ImagePreviewModalProps {
   open: boolean;
@@ -70,6 +71,11 @@ export default function ImagePreviewModal({
   const localPathRef = useRef<string | null>(null);
   const cancelledRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const {
+    closing,
+    requestClose,
+    onAnimationEnd: onExitAnimationEnd,
+  } = useAnimatedClose(onClose);
   const imgRef = useRef<HTMLImageElement>(null);
   const dragStartRef = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const viewRef = useRef<ViewState>(INITIAL_STATE);
@@ -317,7 +323,7 @@ export default function ImagePreviewModal({
     const handler = (e: KeyboardEvent) => {
       switch (e.key) {
         case 'Escape':
-          onClose();
+          requestClose();
           break;
         case '+':
         case '=':
@@ -376,11 +382,9 @@ export default function ImagePreviewModal({
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [open, onClose, zoomAtCenter, applyFit, applyActual, rotate, flipH, flipV]);
+  }, [open, requestClose, zoomAtCenter, applyFit, applyActual, rotate, flipH, flipV]);
 
-  const handleClose = useCallback(() => {
-    onClose();
-  }, [onClose]);
+  const handleClose = requestClose;
 
   if (!open) return null;
 
@@ -396,9 +400,19 @@ export default function ImagePreviewModal({
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
+      <div
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
+          closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
+        }`}
+        onClick={handleClose}
+      />
 
-      <div className="relative w-full max-w-6xl mx-4 h-[88vh] rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl flex flex-col overflow-hidden">
+      <div
+        onAnimationEnd={onExitAnimationEnd}
+        className={`relative w-full max-w-6xl mx-4 h-[88vh] rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl flex flex-col overflow-hidden ${
+          closing ? 'modal-panel-exit' : 'modal-panel-enter'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">

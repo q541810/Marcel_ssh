@@ -7,6 +7,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { searchKeymap } from '@codemirror/search';
 import { sftpReadFile, sftpWriteFile, sftpGetMtime } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
+import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
@@ -70,6 +71,11 @@ export default function FileEditorModal({
   const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
   const [lineCount, setLineCount] = useState(0);
+  const {
+    closing,
+    requestClose,
+    onAnimationEnd: onExitAnimationEnd,
+  } = useAnimatedClose(onClose);
 
   const doSave = useCallback(async (): Promise<SaveResult> => {
     if (!viewRef.current) return 'blocked';
@@ -228,40 +234,46 @@ export default function FileEditorModal({
     };
   }, [open, sessionId, filePath, createEditor, destroyEditor]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) {
-        if (isDirty()) {
-          setShowCloseConfirm(true);
-        } else {
-          onClose();
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, onClose, isDirty]);
-
   const handleClose = useCallback(() => {
     if (isDirty()) {
       setShowCloseConfirm(true);
     } else {
-      onClose();
+      requestClose();
     }
-  }, [isDirty, onClose]);
+  }, [isDirty, requestClose]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && open) {
+        handleClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, handleClose]);
 
   const handleCloseWithoutSaving = useCallback(() => {
     setShowCloseConfirm(false);
-    onClose();
-  }, [onClose]);
+    requestClose();
+  }, [requestClose]);
 
   if (!open) return null;
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
+      <div
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
+          closing ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
+        }`}
+        onClick={handleClose}
+      />
 
-      <div className="relative w-full max-w-5xl mx-4 h-[85vh] rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl flex flex-col overflow-hidden">
+      <div
+        onAnimationEnd={onExitAnimationEnd}
+        className={`relative w-full max-w-5xl mx-4 h-[85vh] rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl flex flex-col overflow-hidden ${
+          closing ? 'modal-panel-exit' : 'modal-panel-enter'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -358,8 +370,8 @@ export default function FileEditorModal({
 
         {/* Close confirmation dialog */}
         {showCloseConfirm && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+          <div className="modal-backdrop-enter absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
               <h3 className="text-sm font-semibold text-zinc-200 mb-2">未保存的修改</h3>
               <p className="text-xs text-zinc-400 mb-4">
                 文件有未保存的修改，是否在关闭前保存？
@@ -377,7 +389,7 @@ export default function FileEditorModal({
                   onClick={async () => {
                     setShowCloseConfirm(false);
                     const result = await handleSave();
-                    if (result === 'saved') onClose();
+                    if (result === 'saved') requestClose();
                   }}
                   className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
                 >
@@ -397,8 +409,8 @@ export default function FileEditorModal({
 
         {/* Overwrite confirmation dialog */}
         {showOverwriteConfirm && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+          <div className="modal-backdrop-enter absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
               <h3 className="text-sm font-semibold text-amber-300 mb-2">文件已被外部修改</h3>
               <p className="text-xs text-zinc-400 mb-4">
                 此文件在编辑期间被其他程序修改过。覆盖将丢失外部修改。

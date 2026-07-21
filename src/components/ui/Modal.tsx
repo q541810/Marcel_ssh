@@ -1,5 +1,6 @@
 import { useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
@@ -19,6 +20,8 @@ interface Props {
 }
 
 export default function Modal({ open, onClose, title, size = 'md', children }: Props) {
+  const presence = useAnimatedPresence(open);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
@@ -33,19 +36,27 @@ export default function Modal({ open, onClose, title, size = 'md', children }: P
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  if (!open) return null;
+  if (!presence.mounted) return null;
+  const exiting = presence.phase === 'exit';
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
+          exiting ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
+        }`}
         onClick={onClose}
       />
 
       {/* Content */}
       <div
-        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${SIZE_CLASSES[size]}`}
+        role="dialog"
+        aria-modal="true"
+        onAnimationEnd={presence.onAnimationEnd}
+        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${
+          exiting ? 'modal-panel-exit' : 'modal-panel-enter'
+        } ${SIZE_CLASSES[size]}`}
       >
         {/* Header */}
         {title && (

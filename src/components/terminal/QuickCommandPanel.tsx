@@ -281,8 +281,8 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
       </div>
 
       {form && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
+        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-3">
               {form.id ? '编辑快捷指令' : '新建快捷指令'}
             </h3>

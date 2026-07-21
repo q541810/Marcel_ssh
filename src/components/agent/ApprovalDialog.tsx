@@ -47,12 +47,12 @@ export default function ApprovalDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="modal-backdrop-enter absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
       />
 
       <div
-        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${
+        className={`modal-panel-enter relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl ${
           isEditFile ? 'max-w-3xl' : 'max-w-md'
         }`}
       >
