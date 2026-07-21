@@ -93,7 +93,11 @@ export default function MobileSheet({
         className={`relative flex w-full flex-col rounded-t-2xl border-t border-zinc-700 bg-zinc-900 shadow-2xl ${
           exiting ? 'mobile-sheet-exit' : 'mobile-sheet-enter'
         } ${maxHeightClassName}`}
-        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        style={{
+          marginBottom: 'var(--ime-bottom, 0px)',
+          paddingBottom:
+            'max(env(safe-area-inset-bottom, 0px), var(--ime-bottom, 0px))',
+        }}
         role="dialog"
         aria-modal="true"
       >
