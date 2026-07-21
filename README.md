@@ -18,7 +18,6 @@ QQ:1101255501
 
 ***
 
-
 ## 核心功能
 
 **AI-Native 设计，从底层架构为 Agent 而生**
@@ -29,6 +28,7 @@ QQ:1101255501
 - **Skills**：自定义提示词模板，渐进式披露，按需启用/禁用
 - **SFTP 文件管理**：拖拽上传、批量操作、在线解压、可上传文件夹、文件编辑
 - **插件系统**：自定义插件扩展功能，支持 WebView 面板挂载（[开发指南](docs/plugin-development.md)）
+- **双端支持**：Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端(Preview)**，工作随时迁移(自动同步功能开发中)
 
 ***
 
@@ -42,9 +42,8 @@ QQ:1101255501
 
 **补充安全机制**：
 
-- **密钥链隔离**：API Key、SSH 密码存储在系统密钥链，前端永远拿不到明文
+- **密钥链隔离**：API Key、SSH 密码存储在系统密钥链，前端永远拿不到明文(移动版为Android Keystore + SharedPreferences)
 - **内存清零**：密码、敏感命令执行后立即清零内存（zeroize crate）
-
 
 ***
 
@@ -58,8 +57,25 @@ QQ:1101255501
 | 选中文字后 `Ctrl+C` | 复制选中内容（Windows 逻辑） |
 | 右键点击终端         | 粘贴剪贴板内容            |
 
-
 ***
+
+## 双端支持
+
+Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端(Preview)**，两端共用同一套核心：SSH 终端、Agent 自动化、SFTP 文件管理、Skills、MCP、设置。
+
+|                                | Windows                                | Android                                     |
+| ------------------------------ | -------------------------------------- | ------------------------------------------- |
+| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名） |
+| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                           |
+| 插件系统                           | ✓                                      | ✗（移动端不兼容插件）                                 |
+| 自定义MCP                         | ✓                                      | ✗                                           |
+| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences        |
+| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                    |
+| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                 |
+
+Android APK 在 [Release 页面](https://github.com/q541810/Marcel_ssh/releases) 与 Windows 安装包一同发布。
+
+****
 
 ## 快速开始
 
@@ -69,6 +85,20 @@ QQ:1101255501
 4. 开始使用！
 
 （想要体验最新内容请自行拉取仓库后运行dev.cmd或打包成安装包使用，并在有新commit后pull）
+
+***
+
+### 自行编译 Android 包
+
+需要 Android SDK + NDK 27 + JDK，然后：
+
+```powershell
+$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+$env:NDK_HOME="$env:LOCALAPPDATA\Android\Sdk\ndk\27.0.12077973"
+pnpm tauri android build --apk --target aarch64
+```
+
+产物在 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`。release 构建会自动用仓库外的正式 keystore 签名；没有配置 `key.properties` 时退化为未签名 APK，可手动用 `apksigner` 签 debug key 自测。
 
 ***
 
