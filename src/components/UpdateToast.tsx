@@ -1,4 +1,5 @@
 import { openExternalLink } from '@/lib/externalLinks';
+import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 
 interface Props {
   version: string;
@@ -7,8 +8,14 @@ interface Props {
 }
 
 export default function UpdateToast({ version, url, onDismiss }: Props) {
+  const { closing, requestClose, onAnimationEnd } = useAnimatedClose(onDismiss);
   return (
-    <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+    <div
+      onAnimationEnd={onAnimationEnd}
+      className={`fixed bottom-4 right-4 z-50 ${
+        closing ? 'animate-slide-down-out' : 'animate-slide-up'
+      }`}
+    >
       <div className="bg-black text-white rounded-xl shadow-2xl border border-zinc-700 px-4 py-3">
         <div className="flex items-start gap-3">
           <button
@@ -25,7 +32,7 @@ export default function UpdateToast({ version, url, onDismiss }: Props) {
             </div>
           </button>
           <button
-            onClick={onDismiss}
+            onClick={requestClose}
             className="flex-shrink-0 p-0.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
             aria-label="关闭"
           >

@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import HostKeyMismatchModal from '@/components/connection/HostKeyMismatchModal';
 import type { HostKeyMismatchData } from '@/lib/types';
+import { registerBackHandler } from '@/mobile/backHandler';
 
 interface PromptConfig {
   data: HostKeyMismatchData;
@@ -31,6 +32,14 @@ export function useHostKeyMismatch() {
     setOpen(false);
     onTrustRef.current = null;
   }, []);
+
+  // Android back gesture cancels the prompt (same as the cancel button).
+  // Harmless on desktop: the handler stack is only consulted by the Android
+  // activity's back dispatcher.
+  useEffect(() => {
+    if (!open) return;
+    return registerBackHandler(cancel);
+  }, [open, cancel]);
 
   const handleTrust = useCallback(async () => {
     const cb = onTrustRef.current;

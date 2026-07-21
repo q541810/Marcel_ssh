@@ -120,7 +120,7 @@ export function ToolCapabilitiesSection() {
               <SettingItem
                 id="exp-websearch-api-key"
                 label="搜索 API Key"
-                description="保存在系统密钥链，不会写入配置文件"
+                description="加密保存在本设备，不会写入配置文件"
                 sectionId="settings-experimental"
                 keywords={['key', '密钥', 'brave', 'tavily']}
               >

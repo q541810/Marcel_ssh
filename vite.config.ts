@@ -31,8 +31,9 @@ export default defineConfig({
     },
   },
 
-  // Expose TAURI_* env vars to the client
-  envPrefix: ["TAURI_"],
+  // Default Vite is only VITE_; Tauri needs TAURI_* too. Both required —
+  // otherwise VITE_FORCE_PLATFORM from .env.mobile never reaches the client.
+  envPrefix: ["VITE_", "TAURI_"],
 
   build: {
     // Tauri uses Chromium on Windows/Linux and WebKit on macOS

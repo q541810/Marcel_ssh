@@ -385,7 +385,7 @@ export default function ConnectionForm({
         <PasswordPrompt
           open={passwordPromptOpen}
           title={authMethod === 'Password' ? '重设密码' : '重设密钥密码'}
-          description={`${authMethod === 'Password' ? '密码' : '密钥密码'}会保存到系统密钥链，新连接自动使用。`}
+          description={`${authMethod === 'Password' ? '密码' : '密钥密码'}会加密保存到本设备，新连接自动使用。`}
           submitLabel="保存"
           onSubmit={(password) => {
             if (authMethod === 'Password') {

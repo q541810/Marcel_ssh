@@ -1,0 +1,20 @@
+{
+  "build": {
+    "beforeDevCommand": "node node_modules/vite/bin/vite.js --mode mobile",
+    "devUrl": "http://localhost:1420"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Marcel SSH (Mobile)",
+        "width": 390,
+        "height": 844,
+        "minWidth": 320,
+        "minHeight": 480,
+        "decorations": false,
+        "transparent": false,
+        "visible": false
+      }
+    ]
+  }
+}

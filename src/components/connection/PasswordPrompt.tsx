@@ -68,7 +68,7 @@ export default function PasswordPrompt({
               onChange={(e) => setRemember(e.target.checked)}
               className="w-4 h-4 accent-indigo-500"
             />
-            记住密码（保存到系统密钥链）
+            记住密码（加密保存到本设备）
           </label>
         )}
         <div className="flex justify-end gap-2 pt-2">

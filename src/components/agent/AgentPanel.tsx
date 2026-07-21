@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAgent } from '@/hooks/useAgent';
+import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -25,6 +26,7 @@ import PlanList from './PlanList';
 export default function AgentPanel() {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const historyDrawerPresence = useAnimatedPresence(historyDrawerOpen);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [tokenPopoverOpen, setTokenPopoverOpen] = useState(false);
   const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
@@ -866,13 +868,24 @@ export default function AgentPanel() {
       )}
 
       {/* History Drawer */}
-      {historyDrawerOpen && (
+      {historyDrawerPresence.mounted && (
         <>
           <div
-            className="absolute inset-0 bg-black/40 z-20 animate-fadeIn"
+            className={`absolute inset-0 bg-black/40 z-20 ${
+              historyDrawerPresence.phase === 'exit'
+                ? 'animate-fadeOut'
+                : 'animate-fadeIn'
+            }`}
             onClick={() => setHistoryDrawerOpen(false)}
           />
-          <div className="absolute top-0 right-0 h-full w-72 bg-zinc-950 border-l border-zinc-800 z-30 flex flex-col shadow-2xl animate-slideInRight">
+          <div
+            onAnimationEnd={historyDrawerPresence.onAnimationEnd}
+            className={`absolute top-0 right-0 h-full w-72 bg-zinc-950 border-l border-zinc-800 z-30 flex flex-col shadow-2xl ${
+              historyDrawerPresence.phase === 'exit'
+                ? 'animate-slideOutRight'
+                : 'animate-slideInRight'
+            }`}
+          >
             <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
               <h3 className="text-sm font-semibold text-zinc-200">历史会话</h3>
               <button

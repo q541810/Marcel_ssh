@@ -1,11 +1,11 @@
-import { memo, useState, useEffect, useRef, type ReactNode } from "react";
-import type { AgentMessage as AgentMessageType } from "@/lib/types";
-import MessageImageThumb from "./MessageImageThumb";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import { useSettingsStore } from "@/stores/settingsStore";
-import { openExternalLink } from "@/lib/externalLinks";
+import { memo, useState, useEffect, useRef, type ReactNode } from 'react';
+import type { AgentMessage as AgentMessageType } from '@/lib/types';
+import MessageImageThumb from './MessageImageThumb';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { openExternalLink } from '@/lib/externalLinks';
 
 interface Props {
   message: AgentMessageType;
@@ -15,6 +15,8 @@ interface Props {
   onCopy?: (message: AgentMessageType) => void;
   /** 搜索关键词：用户消息正文高亮 */
   searchKeyword?: string;
+  /** 触屏端无 hover：时间/撤回/复制操作行常显 */
+  alwaysShowActions?: boolean;
 }
 
 function highlightPlainText(text: string, keyword?: string): ReactNode {
@@ -46,7 +48,7 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
 }
 
 const MARKDOWN_CLASS =
-  "text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic";
+  'text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic';
 
 // ─── Retry indicator: 倒计时 + 错误折叠 ───
 // 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs
@@ -83,7 +85,10 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
 
   // 错误展示：首行截断 80 字符
   const errorFirstLine = lastError.split('\n')[0] ?? '';
-  const errorSummary = errorFirstLine.length > 80 ? errorFirstLine.slice(0, 80) + '…' : errorFirstLine;
+  const errorSummary =
+    errorFirstLine.length > 80
+      ? errorFirstLine.slice(0, 80) + '…'
+      : errorFirstLine;
   const hasMore = errorFirstLine.length > 80 || lastError.includes('\n');
 
   return (
@@ -98,15 +103,40 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
         >
           {waiting ? (
             // 时钟图标：等待阶段
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg
+              className="w-3 h-3"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
               <circle cx="12" cy="12" r="9" strokeWidth={2} />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 7v5l3 2" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 7v5l3 2"
+              />
             </svg>
           ) : (
             // spinner：正在重试阶段
-            <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            <svg
+              className="w-3 h-3 animate-spin"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+              />
             </svg>
           )}
           {waiting ? (
@@ -128,7 +158,13 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
             className={`text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors max-w-full text-left break-words [overflow-wrap:anywhere] ${
               hasMore ? 'cursor-pointer' : 'cursor-default'
             }`}
-            title={hasMore ? (errorExpanded ? '点击折叠' : '点击展开完整错误') : undefined}
+            title={
+              hasMore
+                ? errorExpanded
+                  ? '点击折叠'
+                  : '点击展开完整错误'
+                : undefined
+            }
           >
             {errorExpanded ? lastError : errorSummary}
           </button>
@@ -138,8 +174,18 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
   );
 }
 
-function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCopy, searchKeyword }: Props) {
-  const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay);
+function AgentMessage({
+  message,
+  autoExpand,
+  rollbackDisabled,
+  onRollback,
+  onCopy,
+  searchKeyword,
+  alwaysShowActions = false,
+}: Props) {
+  const hideThinkingDisplay = useSettingsStore(
+    (s) => s.settings.hideThinkingDisplay,
+  );
   const [thinkingExpanded, setThinkingExpanded] = useState(autoExpand ?? false);
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -152,9 +198,9 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
     setTimeout(() => setCopied(false), 1300);
   };
 
-  const isUser = message.role === "user";
-  const isSystem = message.role === "system";
-  const isTool = message.role === "tool";
+  const isUser = message.role === 'user';
+  const isSystem = message.role === 'system';
+  const isTool = message.role === 'tool';
   const hasReasoning = !!message.reasoningContent && !hideThinkingDisplay;
 
   // Hide empty assistant messages without loading, tool calls, or visible reasoning
@@ -193,20 +239,36 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
               {highlightPlainText(message.content, searchKeyword)}
             </div>
           ) : null}
-          <div className="mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 opacity-0 translate-y-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-y-0 focus-within:opacity-100 focus-within:translate-y-0">
-            <span className="min-w-0 truncate">
-              {sentAt}
-            </span>
+          <div
+            className={`mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 transition-all duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${
+              alwaysShowActions
+                ? 'opacity-100 translate-y-0'
+                : 'opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0'
+            }`}
+          >
+            <span className="min-w-0 truncate">{sentAt}</span>
             <div className="flex items-center gap-0.5">
               <button
                 type="button"
                 onClick={() => onRollback?.(message)}
                 disabled={rollbackDisabled}
                 className="p-1 rounded text-zinc-500 hover:text-amber-300 hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                title={rollbackDisabled ? '任务运行中，暂不能撤回' : '撤回到这条消息'}
+                title={
+                  rollbackDisabled ? '任务运行中，暂不能撤回' : '撤回到这条消息'
+                }
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
+                  />
                 </svg>
               </button>
               <button
@@ -224,7 +286,12 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                    />
                   </svg>
                   <svg
                     className={`w-3.5 h-3.5 text-green-400 absolute inset-0 transition-all duration-120 ${
@@ -234,7 +301,12 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
                     stroke="currentColor"
                     viewBox="0 0 24 24"
                   >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 13l4 4L19 7"
+                    />
                   </svg>
                 </span>
               </button>
@@ -277,7 +349,7 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
               className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               <svg
-                className={`w-3 h-3 transition-transform ${thinkingExpanded ? "rotate-90" : ""}`}
+                className={`w-3 h-3 transition-transform ${thinkingExpanded ? 'rotate-90' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -289,7 +361,7 @@ function AgentMessage({ message, autoExpand, rollbackDisabled, onRollback, onCop
                   d="M9 5l7 7-7 7"
                 />
               </svg>
-              <span>{message.isThinking ? "思考中" : "已思考"}</span>
+              <span>{message.isThinking ? '思考中' : '已思考'}</span>
               {message.isThinking && (
                 <svg
                   className="animate-spin h-3 w-3"

@@ -307,7 +307,24 @@ button:active {
 }
 
 .animate-slide-up {
-  animation: slideInRight 250ms cubic-bezier(0.4, 0, 0.2, 1), fadeIn 250ms ease-out;
+  animation: slideUp 250ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes slideDownOut {
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+.animate-slide-down-out {
+  animation: slideDownOut 200ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-down-out {
+    animation-duration: 1ms;
+  }
 }
 
 @keyframes slideDown {
@@ -369,15 +386,54 @@ button:active {
   }
 }
 
-/* Apply animations to modals */
-[role="dialog"],
-.modal {
-  animation: scaleIn 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1));
+/* ── Modal / dialog enter & exit（配合 useAnimatedPresence 延迟卸载） ── */
+@keyframes scaleOut {
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
 }
 
-/* Dropdown animations */
-[role="listbox"],
-[role="menu"] {
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+  }
+}
+
+.modal-panel-enter {
+  animation: scaleIn 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+.modal-panel-exit {
+  animation: scaleOut 180ms ease-in both;
+}
+
+.modal-backdrop-enter {
+  animation: fadeIn 200ms ease-out both;
+}
+
+.modal-backdrop-exit {
+  animation: fadeOut 180ms ease-in both;
+}
+
+/* Context menu：快进快出，退出直接卸载（贴近原生菜单行为） */
+.context-menu-enter {
+  animation: scaleIn 120ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  transform-origin: top left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-panel-enter,
+  .modal-panel-exit,
+  .modal-backdrop-enter,
+  .modal-backdrop-exit,
+  .context-menu-enter {
+    animation-duration: 1ms;
+  }
+}
+
+/* Dropdown animations（menu 由 .context-menu-enter 单独控制） */
+[role="listbox"] {
   animation: slideDown 100ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -510,6 +566,27 @@ button,
   animation: fadeIn 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+@keyframes slideOutRight {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.animate-slideOutRight {
+  animation: slideOutRight 180ms ease-in both;
+}
+
+.animate-fadeOut {
+  animation: fadeOut 180ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slideOutRight,
+  .animate-fadeOut {
+    animation-duration: 1ms;
+  }
+}
+
 /* ── Onboarding wizard step transitions ──
    方向感知的入场动画：前进时新内容从右滑入，后退时从左滑入。
    通过给容器加 key={step} 强制重挂载触发动画。 */
@@ -603,4 +680,166 @@ button,
 
 .main-row-enter {
   animation: mainRowEnter 900ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+/* ── Mobile shell animations ── */
+@keyframes mobileSheetEnter {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.mobile-sheet-enter {
+  animation: mobileSheetEnter 320ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes mobileSheetExit {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+.mobile-sheet-exit {
+  animation: mobileSheetExit 240ms ease-in both;
+}
+
+@keyframes mobileBackdropEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.mobile-backdrop-enter {
+  animation: mobileBackdropEnter 220ms ease-out both;
+}
+
+@keyframes mobileBackdropExit {
+  to {
+    opacity: 0;
+  }
+}
+
+.mobile-backdrop-exit {
+  animation: mobileBackdropExit 240ms ease-in both;
+}
+
+@keyframes mobilePanelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mobile-panel-enter {
+  animation: mobilePanelEnter 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes mobilePopoverEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.mobile-popover-enter {
+  transform-origin: bottom left;
+  animation: mobilePopoverEnter 200ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1)) both;
+}
+
+@keyframes mobileFullscreenEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.mobile-fullscreen-enter {
+  animation: mobileFullscreenEnter 240ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes mobileFullscreenExit {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+.mobile-fullscreen-exit {
+  animation: mobileFullscreenExit 200ms ease-in both;
+}
+
+@keyframes mobileOverlayEnter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.mobile-overlay-enter {
+  animation: mobileOverlayEnter 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+
+@keyframes mobileOverlayExit {
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.mobile-overlay-exit {
+  animation: mobileOverlayExit 200ms ease-in both;
+}
+
+@keyframes mobilePopoverExit {
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+}
+
+.mobile-popover-exit {
+  transform-origin: bottom left;
+  animation: mobilePopoverExit 160ms ease-in both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-sheet-enter,
+  .mobile-backdrop-enter,
+  .mobile-panel-enter,
+  .mobile-popover-enter,
+  .mobile-fullscreen-enter,
+  .mobile-overlay-enter {
+    animation: none;
+  }
+
+  /* 退出动画保留 1ms：useAnimatedPresence 依赖 animationend 事件卸载 */
+  .mobile-sheet-exit,
+  .mobile-backdrop-exit,
+  .mobile-fullscreen-exit,
+  .mobile-overlay-exit,
+  .mobile-popover-exit {
+    animation-duration: 1ms;
+  }
 }

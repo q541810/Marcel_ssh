@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode, type RefObject } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import type { AgentMessage } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
@@ -17,10 +24,15 @@ interface Props {
   matchedMessageIds?: string[];
   /** 搜索关键词（用于正文高亮，可选） */
   searchKeyword?: string;
+  /** 触屏端无 hover：消息操作行常显（透传 AgentMessage） */
+  alwaysShowActions?: boolean;
 }
 
 function buildRenderItems(messages: AgentMessage[]) {
-  const result: (AgentMessage | { kind: 'exploration'; tools: AgentMessage[] })[] = [];
+  const result: (
+    | AgentMessage
+    | { kind: 'exploration'; tools: AgentMessage[] }
+  )[] = [];
   const visibleMessages = messages.filter((msg) => {
     if (msg.role !== 'assistant') return true;
     return msg.isLoading || msg.content || msg.reasoningContent || msg.toolCall;
@@ -32,7 +44,10 @@ function buildRenderItems(messages: AgentMessage[]) {
       let j = i;
       while (j < n && isExplorationTool(visibleMessages[j])) j++;
       if (j - i >= 4) {
-        result.push({ kind: 'exploration', tools: visibleMessages.slice(i, j) });
+        result.push({
+          kind: 'exploration',
+          tools: visibleMessages.slice(i, j),
+        });
         i = j;
         continue;
       }
@@ -53,6 +68,7 @@ export default function AgentMessageList({
   highlightMessageId = null,
   matchedMessageIds,
   searchKeyword,
+  alwaysShowActions = false,
 }: Props) {
   const renderItems = useMemo(() => buildRenderItems(messages), [messages]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -62,16 +78,19 @@ export default function AgentMessageList({
   );
   const [flashId, setFlashId] = useState<string | null>(null);
 
-  const handleToolExpandChange = useCallback((messageId: string, expanded: boolean) => {
-    setExpandedIds((prev) => {
-      const has = prev.has(messageId);
-      if (expanded === has) return prev;
-      const next = new Set(prev);
-      if (expanded) next.add(messageId);
-      else next.delete(messageId);
-      return next;
-    });
-  }, []);
+  const handleToolExpandChange = useCallback(
+    (messageId: string, expanded: boolean) => {
+      setExpandedIds((prev) => {
+        const has = prev.has(messageId);
+        if (expanded === has) return prev;
+        const next = new Set(prev);
+        if (expanded) next.add(messageId);
+        else next.delete(messageId);
+        return next;
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!highlightMessageId) return;
@@ -144,40 +163,43 @@ export default function AgentMessageList({
             matchedIds={matchedSet}
             flashId={flashId}
           />
-        ) : (() => {
-          const msg = item as AgentMessage;
-          if (
-            (msg.role === 'tool' && msg.toolResult) ||
-            (msg.role === 'assistant' && msg.toolCall)
-          ) {
+        ) : (
+          (() => {
+            const msg = item as AgentMessage;
+            if (
+              (msg.role === 'tool' && msg.toolResult) ||
+              (msg.role === 'assistant' && msg.toolCall)
+            ) {
+              return wrapMessage(
+                msg,
+                <div className="flex justify-start min-w-0">
+                  <div
+                    className={`min-w-0 ${expandedIds.has(msg.id) ? 'w-full' : 'max-w-[85%]'}`}
+                  >
+                    <ToolCallCard
+                      message={msg}
+                      autoExpand={isThinking}
+                      messageId={msg.id}
+                      onExpandChange={handleToolExpandChange}
+                    />
+                  </div>
+                </div>,
+              );
+            }
             return wrapMessage(
               msg,
-              <div className="flex justify-start min-w-0">
-                <div
-                  className={`min-w-0 ${expandedIds.has(msg.id) ? 'w-full' : 'max-w-[85%]'}`}
-                >
-                  <ToolCallCard
-                    message={msg}
-                    autoExpand={isThinking}
-                    messageId={msg.id}
-                    onExpandChange={handleToolExpandChange}
-                  />
-                </div>
-              </div>,
+              <AgentMessageItem
+                message={msg}
+                autoExpand={!!msg.isThinking}
+                rollbackDisabled={isRunning}
+                onRollback={onRollback}
+                onCopy={onCopy}
+                searchKeyword={searchKeyword}
+                alwaysShowActions={alwaysShowActions}
+              />,
             );
-          }
-          return wrapMessage(
-            msg,
-            <AgentMessageItem
-              message={msg}
-              autoExpand={!!msg.isThinking}
-              rollbackDisabled={isRunning}
-              onRollback={onRollback}
-              onCopy={onCopy}
-              searchKeyword={searchKeyword}
-            />,
-          );
-        })()
+          })()
+        ),
       )}
       {messagesEndRef && <div ref={messagesEndRef} />}
     </>

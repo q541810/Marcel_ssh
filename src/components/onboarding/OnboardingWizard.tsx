@@ -213,9 +213,9 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
     <SearchRegistryProvider>
       <SettingsActionsProvider value={providerValue}>
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-zinc-900/95 backdrop-blur-sm" />
+          <div className="modal-backdrop-enter absolute inset-0 bg-zinc-900/95 backdrop-blur-sm" />
 
-          <div className="relative w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
+          <div className="modal-panel-enter relative w-full max-w-2xl mx-4 flex flex-col max-h-[80vh]">
             {/* Progress bar */}
             <div className="flex items-center justify-center gap-2 mb-6 flex-shrink-0">
               {STEPS.map((step, index) => (
