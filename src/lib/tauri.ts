@@ -525,6 +525,20 @@ export async function sftpCancelUpload(uploadId: string): Promise<void> {
   return invoke('sftp_cancel_upload', { uploadId });
 }
 
+/**
+ * 解析本地文件的展示名。
+ * Android SAF content:// URI 无法从最后一段取文件名（是编码后的 document id），
+ * 后端经 ContentResolver 查询 DISPLAY_NAME；普通路径取 basename。
+ */
+export async function sftpLocalFileName(path: string): Promise<string> {
+  return invoke<string>('sftp_local_file_name', { path });
+}
+
+/** Android SAF 返回的 content:// URI（文件选择器/保存对话框产物）。 */
+export function isContentUri(path: string): boolean {
+  return path.startsWith('content://');
+}
+
 export async function sftpCancelDownload(downloadId: string): Promise<void> {
   return invoke('sftp_cancel_download', { downloadId });
 }

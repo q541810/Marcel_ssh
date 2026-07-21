@@ -36,6 +36,20 @@ export function modeToString(mode: number): string {
   return chars + perms;
 }
 
+/**
+ * Android 上 dialog 插件在用户取消文件选择/保存对话框时 reject
+ * （桌面是返回 null），用于把"用户取消"与真实错误区分开。
+ */
+export function isDialogCancelled(err: unknown): boolean {
+  const msg =
+    typeof err === 'string'
+      ? err
+      : err instanceof Error
+        ? err.message
+        : String(err ?? '');
+  return msg.includes('File picker cancelled');
+}
+
 export function getErrorMessage(err: unknown): string {
   if (err && typeof err === 'object') {
     const obj = err as Record<string, unknown>;
