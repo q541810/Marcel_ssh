@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::emit_event;
 use crate::error::AppError;
-use crate::util::{shell_escape, validate_local_path, validate_sftp_remote_path};
+use crate::util::{is_content_uri, shell_escape, validate_local_path, validate_sftp_remote_path};
 use crate::AppState;
 
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
@@ -660,6 +660,67 @@ pub async fn sftp_write_file(
     Ok(())
 }
 
+/// 远程 → 本地文件的分块拷贝循环（含取消、进度事件、结尾 flush）。
+/// 返回实际写入字节数；上层负责对目标文件做失败清理。
+async fn stream_remote_to_local_file(
+    app: &AppHandle,
+    remote: &mut russh_sftp::client::fs::File,
+    local: &mut tokio::fs::File,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    download_id: &str,
+    total: u64,
+) -> Result<u64, AppError> {
+    let mut buf = vec![0u8; 131072];
+    let mut written: u64 = 0;
+
+    loop {
+        check_cancelled(cancel_rx, "下载已取消")?;
+
+        let n = tokio::select! {
+            result = remote.read(&mut buf) => {
+                result.map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?
+            }
+            _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+        };
+
+        if n == 0 {
+            break;
+        }
+
+        tokio::select! {
+            result = local.write_all(&buf[..n]) => {
+                result.map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+            }
+            _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+        }
+
+        written += n as u64;
+
+        emit_event(
+            app,
+            "sftp-download-progress",
+            json!({ "downloadId": download_id, "written": written, "total": total }),
+        );
+    }
+
+    tokio::select! {
+        result = local.flush() => {
+            result.map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+        }
+        _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
+    }
+
+    Ok(written)
+}
+
+/// content:// 目标的失败清理：SAF 文档无法从应用侧删除，退化为截断到 0，
+/// 避免留下半截内容被误当作完整文件。
+async fn truncate_content_target(app: &AppHandle, uri: &str) {
+    if let Ok(file) = open_content_uri_file(app, uri.to_string(), ContentOpenMode::WriteTruncate).await {
+        let _ = file.sync_all().await;
+    }
+}
+
 #[tauri::command]
 pub async fn sftp_download_stream(
     app: AppHandle,
@@ -671,8 +732,6 @@ pub async fn sftp_download_stream(
 ) -> Result<(), AppError> {
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
-    let temp_local_path = format!("{}.marcel-download-{}.part", local_path, download_id);
-    let backup_local_path = format!("{}.marcel-download-{}.backup", local_path, download_id);
 
     let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     state
@@ -702,59 +761,77 @@ pub async fn sftp_download_stream(
         .await
         .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
 
+    // Android SAF content:// 目标：由 ACTION_CREATE_DOCUMENT 刚创建的文档本身就是
+    // 新文件，且 content URI 无法拼 .part 兄弟路径，直接写入目标；
+    // 失败时截断为 0 作为降级（SAF 不允许应用删除该文档）。
+    if is_content_uri(&local_path) {
+        let mut local =
+            open_content_uri_file(&app, local_path.clone(), ContentOpenMode::WriteTruncate)
+                .await
+                .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
+
+        let written = match stream_remote_to_local_file(
+            &app,
+            &mut remote,
+            &mut local,
+            &mut cancel_rx,
+            &download_id,
+            total,
+        )
+        .await
+        {
+            Ok(written) => written,
+            Err(e) => {
+                drop(local);
+                truncate_content_target(&app, &local_path).await;
+                return Err(e);
+            }
+        };
+
+        if written != total {
+            drop(local);
+            truncate_content_target(&app, &local_path).await;
+            return Err(AppError::Ssh(format!(
+                "下载不完整：预期 {} 字节，实际写入 {} 字节",
+                total, written
+            )));
+        }
+
+        if let Err(e) = check_cancelled(&cancel_rx, "下载已取消") {
+            drop(local);
+            truncate_content_target(&app, &local_path).await;
+            return Err(e);
+        }
+
+        let _ = local.sync_all().await;
+        emit_event(&app, "sftp-download-done", json!({ "downloadId": &download_id }));
+        return Ok(());
+    }
+
+    let temp_local_path = format!("{}.marcel-download-{}.part", local_path, download_id);
+    let backup_local_path = format!("{}.marcel-download-{}.backup", local_path, download_id);
+
     let mut local = tokio::fs::File::create(&temp_local_path)
         .await
         .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
 
-    let mut buf = vec![0u8; 131072];
-    let mut written: u64 = 0;
-
-    let result: Result<(), AppError> = async {
-        loop {
-            check_cancelled(&cancel_rx, "下载已取消")?;
-
-            let n = tokio::select! {
-                result = remote.read(&mut buf) => {
-                    result.map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?
-                }
-                _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
-            };
-
-            if n == 0 {
-                break;
-            }
-
-            tokio::select! {
-                result = local.write_all(&buf[..n]) => {
-                    result.map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
-                }
-                _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
-            }
-
-            written += n as u64;
-
-            emit_event(
-                &app,
-                "sftp-download-progress",
-                json!({ "downloadId": &download_id, "written": written, "total": total }),
-            );
-        }
-
-        tokio::select! {
-            result = local.flush() => {
-                result.map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
-            }
-            _ = cancel_rx.changed() => return Err(AppError::Ssh("下载已取消".into())),
-        }
-
-        Ok(())
-    }
+    let result = stream_remote_to_local_file(
+        &app,
+        &mut remote,
+        &mut local,
+        &mut cancel_rx,
+        &download_id,
+        total,
+    )
     .await;
 
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temp_local_path).await;
-        return result;
-    }
+    let written = match result {
+        Ok(written) => written,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&temp_local_path).await;
+            return Err(e);
+        }
+    };
 
     if written != total {
         let _ = tokio::fs::remove_file(&temp_local_path).await;
@@ -855,6 +932,78 @@ impl Drop for TransferCancelGuard {
     }
 }
 
+/// content:// URI 的打开模式（Android SAF）。
+#[derive(Clone, Copy)]
+enum ContentOpenMode {
+    /// 只读（上传源）。
+    Read,
+    /// 写入并截断（下载目标；SAF ACTION_CREATE_DOCUMENT 创建的文档直接覆写）。
+    WriteTruncate,
+}
+
+/// 通过 tauri-plugin-fs 的 `FsExt::fs().open()` 打开 content:// URI。
+/// Android 上底层走 ContentResolver.openAssetFileDescriptor 拿真实 fd，
+/// 返回 std::fs::File；这里用 spawn_blocking 包 JNI 往返，再转 tokio File。
+async fn open_content_uri_file(
+    app: &AppHandle,
+    uri: String,
+    mode: ContentOpenMode,
+) -> Result<tokio::fs::File, AppError> {
+    use std::str::FromStr;
+    use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+
+    let app = app.clone();
+    let std_file = tokio::task::spawn_blocking(move || {
+        // FromStr 是 Infallible；content:// 一定解析为 FilePath::Url
+        let path = FilePath::from_str(&uri).expect("FilePath::from_str is infallible");
+        let mut opts = OpenOptions::new();
+        match mode {
+            ContentOpenMode::Read => {
+                opts.read(true);
+            }
+            ContentOpenMode::WriteTruncate => {
+                opts.write(true).truncate(true);
+            }
+        }
+        app.fs().open(path, opts)
+    })
+    .await
+    .map_err(|e| AppError::Ssh(format!("打开文件任务失败: {}", e)))?
+    .map_err(|e| AppError::Ssh(format!("打开文件失败: {}", e)))?;
+
+    Ok(tokio::fs::File::from_std(std_file))
+}
+
+/// 解析本地文件的展示名：content:// URI 查 ContentResolver DISPLAY_NAME
+/// （失败退化为 URI 最后一段解码），普通路径取 basename。
+/// 供移动端上传前确定远端文件名。
+#[tauri::command]
+pub async fn sftp_local_file_name(path: String) -> Result<String, AppError> {
+    let path = validate_local_path(&path)?;
+
+    if is_content_uri(&path) {
+        #[cfg(target_os = "android")]
+        {
+            let uri = path.clone();
+            let queried = tokio::task::spawn_blocking(move || {
+                crate::util::query_content_display_name(&uri)
+            })
+            .await
+            .map_err(|e| AppError::Ssh(format!("查询文件名任务失败: {}", e)))?;
+            if let Some(name) = queried {
+                return Ok(name);
+            }
+        }
+        return crate::util::content_uri_fallback_name(&path)
+            .ok_or_else(|| AppError::Ssh("无法从所选文件解析文件名".into()));
+    }
+
+    Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| AppError::Ssh("无法从路径解析文件名".into()))
+}
+
 fn check_cancelled(
     cancel_rx: &tokio::sync::watch::Receiver<bool>,
     message: &str,
@@ -949,15 +1098,35 @@ pub async fn sftp_upload_stream(
 
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
-    let local_meta = tokio::fs::metadata(&local_path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("无法读取本地文件信息: {}", e)))?;
+    // content:// URI（Android SAF）：经 fs 插件按 fd 打开，大小从 fd 的 metadata 取
+    // （ContentResolver 通常返回真实文件 fd，fstat 可得 size；个别 provider 返回
+    // pipe，size 恒为 0，此时视为总量未知，跳过完整性校验，前端进度条降级隐藏）。
+    // 普通路径保持原逻辑。
+    let (mut local_file, total, size_known) = if is_content_uri(&local_path) {
+        let file = open_content_uri_file(&app, local_path.clone(), ContentOpenMode::Read)
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
+        let size = file
+            .metadata()
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
+        (file, size, size > 0)
+    } else {
+        let local_meta = tokio::fs::metadata(&local_path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("无法读取本地文件信息: {}", e)))?;
 
-    if local_meta.is_dir() {
-        return Err(AppError::Ssh("请使用文件夹上传功能上传目录".into()));
-    }
+        if local_meta.is_dir() {
+            return Err(AppError::Ssh("请使用文件夹上传功能上传目录".into()));
+        }
 
-    let total = local_meta.len();
+        let file = tokio::fs::File::open(&local_path)
+            .await
+            .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
+        (file, local_meta.len(), true)
+    };
+
     if total > MAX_STREAM_UPLOAD_BYTES {
         return Err(AppError::Ssh(format!(
             "文件过大 ({} MB)，单文件上传限制为 2 GB",
@@ -974,10 +1143,6 @@ pub async fn sftp_upload_stream(
         )
         .await
         .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
-
-    let mut local_file = tokio::fs::File::open(&local_path)
-        .await
-        .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
 
     let mut buf = vec![0u8; 131072];
     let mut written: u64 = 0;
@@ -1029,7 +1194,7 @@ pub async fn sftp_upload_stream(
         return result;
     }
 
-    if written != total {
+    if size_known && written != total {
         let _ = sftp.remove_file(&temp_remote_path).await;
         return Err(AppError::Ssh(format!(
             "上传不完整：预期 {} 字节，实际上传 {} 字节",

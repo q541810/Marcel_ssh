@@ -331,11 +331,22 @@ impl AgentTool for HttpGetTool {
 }
 
 async fn resolve_fetch_mode(ctx: &ToolContext) -> HttpFetchMode {
-    if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
-        let settings = state.settings.read().await;
-        return settings.experimental_settings.http_fetch_mode;
+    // Mobile (Android) 无法启动本地 Chrome/Edge 走 CDP，无视用户设置强制走
+    // 裸 HTTP GET（html）模式，避免工具调用必然失败。
+    #[cfg(mobile)]
+    {
+        let _ = ctx;
+        return HttpFetchMode::Html;
     }
-    HttpFetchMode::default()
+
+    #[cfg(desktop)]
+    {
+        if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
+            let settings = state.settings.read().await;
+            return settings.experimental_settings.http_fetch_mode;
+        }
+        HttpFetchMode::default()
+    }
 }
 
 

@@ -151,13 +151,24 @@ impl AgentTool for WebSearchTool {
 }
 
 async fn resolve_search_config(ctx: &ToolContext) -> (WebSearchMode, WebSearchApiProvider) {
-    // Prefer live app settings when available.
-    if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
-        let settings = state.settings.read().await;
-        let exp = &settings.experimental_settings;
-        return (exp.web_search_mode, exp.web_search_api_provider);
+    // Mobile (Android) 无法启动本地 Chrome/Edge 走 CDP，无视用户设置强制走
+    // 裸 Bing HTML 抓取（html）模式，避免工具调用必然失败。
+    #[cfg(mobile)]
+    {
+        let _ = ctx;
+        return (WebSearchMode::Html, WebSearchApiProvider::default());
     }
-    (WebSearchMode::default(), WebSearchApiProvider::default())
+
+    #[cfg(desktop)]
+    {
+        // Prefer live app settings when available.
+        if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
+            let settings = state.settings.read().await;
+            let exp = &settings.experimental_settings;
+            return (exp.web_search_mode, exp.web_search_api_provider);
+        }
+        (WebSearchMode::default(), WebSearchApiProvider::default())
+    }
 }
 
 async fn run_search(

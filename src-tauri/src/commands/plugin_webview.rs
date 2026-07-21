@@ -3,10 +3,19 @@
 //! Static file serving lives in `plugin_uri.rs`; HTTP API dispatch in
 //! `plugin_api.rs`; enabled-state check in `plugins::enabled`.
 
+// Multi-webview (Window::add_child + webview reposition/close) is a
+// desktop-only capability in Tauri; on mobile these commands degrade to a
+// clear error so plugin views simply don't mount there.
+#[cfg(desktop)]
 use tauri::utils::config::Color;
+#[cfg(desktop)]
 use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
 
+#[cfg(desktop)]
 use crate::plugins::enabled::is_plugin_enabled_async;
+
+#[cfg(mobile)]
+const MOBILE_UNSUPPORTED: &str = "plugin webviews are not supported on mobile";
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +29,16 @@ pub struct PluginWebviewCreateParams {
     pub height: f64,
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn plugin_webview_create(
+    _app: tauri::AppHandle,
+    _params: PluginWebviewCreateParams,
+) -> Result<(), String> {
+    Err(MOBILE_UNSUPPORTED.to_string())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn plugin_webview_create(
     app: tauri::AppHandle,
@@ -92,6 +111,20 @@ pub async fn plugin_webview_create(
     Ok(())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn plugin_webview_set_bounds(
+    _app: tauri::AppHandle,
+    _label: String,
+    _x: f64,
+    _y: f64,
+    _width: f64,
+    _height: f64,
+) -> Result<(), String> {
+    Err(MOBILE_UNSUPPORTED.to_string())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn plugin_webview_set_bounds(
     app: tauri::AppHandle,
@@ -113,6 +146,13 @@ pub async fn plugin_webview_set_bounds(
     Ok(())
 }
 
+#[cfg(mobile)]
+#[tauri::command]
+pub async fn plugin_webview_close(_app: tauri::AppHandle, _label: String) -> Result<(), String> {
+    Err(MOBILE_UNSUPPORTED.to_string())
+}
+
+#[cfg(desktop)]
 #[tauri::command]
 pub async fn plugin_webview_close(app: tauri::AppHandle, label: String) -> Result<(), String> {
     if let Some(webview) = app.get_webview(&label) {

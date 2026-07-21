@@ -394,6 +394,11 @@ fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<st
 }
 
 /// Build and run the Tauri application.
+///
+/// `mobile_entry_point` generates the JNI entry symbol Android needs to boot
+/// the app from `libmarcel_ssh.so`; on desktop it's a no-op and `main.rs`
+/// keeps calling `run()` directly.
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -572,6 +577,7 @@ pub fn run() {
             commands::sftp::sftp_write_file,
             commands::sftp::sftp_download_stream,
             commands::sftp::sftp_upload_stream,
+            commands::sftp::sftp_local_file_name,
             commands::sftp::sftp_cancel_upload,
             commands::sftp::sftp_cancel_download,
             commands::sftp::sftp_upload_folder_stream,

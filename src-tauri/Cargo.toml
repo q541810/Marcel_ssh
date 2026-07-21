@@ -5,6 +5,11 @@ edition = "2021"
 description = "AI-Native SSH Client with Autonomous Agent Operations"
 rust-version = "1.77.2"
 
+[lib]
+# cdylib is required for the Android build (libmarcel_ssh.so); rlib keeps the
+# desktop binary and tests working; staticlib is for iOS.
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "^2", features = [] }
 
@@ -29,8 +34,6 @@ async-trait = "^0.1"
 russh = { version = "0.60", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "2.1"
 zeroize = { version = "^1", features = ["derive"] }
-keyring = { version = "^3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
-reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "charset", "gzip", "brotli", "deflate"] }
 futures = "^0.3"
 html2md = "^0.2"
 parking_lot = "^0.12"
@@ -47,6 +50,28 @@ handlebars = "6"
 
 
 
+
+# reqwest TLS 后端按平台拆分：桌面用系统原生 TLS；Android 交叉编译没有 OpenSSL，用 rustls。
+[target.'cfg(not(target_os = "android"))'.dependencies]
+reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "charset", "gzip", "brotli", "deflate"] }
+# 桌面密钥链：Windows Credential Manager / macOS+iOS Keychain / Linux Secret Service
+keyring = { version = "^4", default-features = false, features = [
+    "v1",
+    "windows-native-keyring-store",
+    "apple-native-keyring-store",
+    "zbus-secret-service-keyring-store",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "gzip", "brotli", "deflate"] }
+# Android 密钥链：SharedPreferences + Android Keystore（hardware-backed AES）
+# v3 时代 keyring 在 Android 静默降级为内存 mock，重启即丢；
+# v4 的 v1 便利模块仍不覆盖 Android，因此直接用官方 store + keyring-core 构建 Entry。
+keyring-core = { version = "^1", features = [] }
+android-native-keyring-store = { version = "^1", features = [] }
+# content:// URI 的 DISPLAY_NAME 查询走 JNI ContentResolver（tauri 依赖树已有同版本）
+jni = "0.21"
+ndk-context = "0.1"
 
 [dev-dependencies]
 tempfile = "^3"

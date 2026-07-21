@@ -1,6 +1,10 @@
 fn main() {
-    #[cfg(windows)]
-    {
+    // Gate on the *target* OS, not the host: `#[cfg(windows)]` in a build
+    // script matches the host machine, which would leak MSVC linker args
+    // (/MANIFESTDEPENDENCY) into Android/iOS cross-compilation and break the
+    // NDK clang link step.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os == "windows" {
         use std::fs;
         use std::path::PathBuf;
 

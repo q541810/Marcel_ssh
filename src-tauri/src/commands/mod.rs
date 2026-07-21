@@ -18,13 +18,20 @@ pub mod skill;
 pub mod ssh;
 pub mod update;
 
+#[cfg(desktop)]
 use tauri::Manager;
 
 #[tauri::command]
 pub async fn app_ready(app: tauri::AppHandle) -> Result<(), String> {
+    // Desktop: the main window starts hidden (visible: false) and is revealed
+    // once the frontend signals readiness, avoiding a white flash.
+    #[cfg(desktop)]
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())?;
     }
+    // Mobile: the activity is always visible; nothing to do.
+    #[cfg(mobile)]
+    let _ = app;
     Ok(())
 }
