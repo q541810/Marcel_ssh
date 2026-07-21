@@ -416,6 +416,8 @@ export interface TerminalColors {
   cursor: string;
   cursorAccent: string;
   selectionBackground: string;
+  /** Optional; xterm uses this for selected text. Mobile defaults to white for contrast. */
+  selectionForeground?: string;
   black: string;
   red: string;
   green: string;
