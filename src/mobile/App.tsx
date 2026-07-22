@@ -89,17 +89,18 @@ export default function MobileApp() {
           <MobileSettings />
         </div>
 
-        {updateToast && !showOnboarding && (
-          <MobileUpdateToast
-            version={updateToast.version}
-            url={updateToast.url}
-            onDismiss={() => setUpdateToast(null)}
-          />
-        )}
       </main>
       <div className="absolute inset-x-0 bottom-0">
         <MobileTabBar activeTab={activeTab} onTabChange={setActiveTab} />
       </div>
+
+      {updateToast && !showOnboarding && (
+        <MobileUpdateToast
+          version={updateToast.version}
+          url={updateToast.url}
+          onDismiss={() => setUpdateToast(null)}
+        />
+      )}
 
       {showOnboarding && (
         <MobileOnboarding onComplete={handleOnboardingComplete} />

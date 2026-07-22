@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
+use tauri_plugin_shell::ShellExt;
 
 use crate::error::AppError;
 
@@ -10,6 +11,23 @@ pub struct UpdateCheckResult {
     pub has_update: bool,
     pub latest_version: String,
     pub release_url: String,
+}
+
+/// Open a URL in the system browser.
+///
+/// Uses `ShellExt::open` so Android hits the shell plugin Intent path
+/// (`ACTION_VIEW`). The JS `plugin:shell|open` command always goes through
+/// the desktop `open` crate (xdg-open), which is a no-op on Android.
+#[tauri::command]
+pub async fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), AppError> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err(AppError::Other(format!("不允许打开的链接: {}", trimmed)));
+    }
+    #[allow(deprecated)]
+    app.shell()
+        .open(trimmed, None)
+        .map_err(|e| AppError::Other(format!("打开浏览器失败: {}", e)))
 }
 
 #[tauri::command]

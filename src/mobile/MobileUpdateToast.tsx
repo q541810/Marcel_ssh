@@ -1,6 +1,6 @@
-import { ArrowUpCircle, X } from 'lucide-react';
+import { ArrowUpCircle } from 'lucide-react';
 import { openExternalLink } from '@/lib/externalLinks';
-import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
+import MobileSheet from './ui/MobileSheet';
 
 interface MobileUpdateToastProps {
   version: string;
@@ -8,45 +8,54 @@ interface MobileUpdateToastProps {
   onDismiss: () => void;
 }
 
-/** Update notice floating above the tab bar; tap opens the GitHub release (APK download). */
+/** Full-screen update dialog (sheet) for the mobile shell. */
 export default function MobileUpdateToast({
   version,
   url,
   onDismiss,
 }: MobileUpdateToastProps) {
-  const { closing, requestClose, onAnimationEnd } = useAnimatedClose(onDismiss);
+  const handleDownload = () => {
+    openExternalLink(url);
+  };
+
   return (
-    <div
-      onAnimationEnd={onAnimationEnd}
-      className={`pointer-events-none absolute inset-x-3 bottom-2 z-40 ${
-        closing ? 'mobile-overlay-exit' : 'mobile-sheet-enter'
-      }`}
+    <MobileSheet
+      open
+      onClose={onDismiss}
+      title="发现新版本"
+      maxHeightClassName="max-h-[70dvh]"
+      footer={
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="flex-1 rounded-xl bg-zinc-800 px-3 py-3 text-sm font-medium text-zinc-200 active:bg-zinc-700"
+          >
+            稍后
+          </button>
+          <button
+            type="button"
+            onClick={handleDownload}
+            className="flex-1 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500"
+          >
+            去下载
+          </button>
+        </div>
+      }
     >
-      <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-900/95 px-4 py-3 shadow-2xl backdrop-blur-sm">
-        <button
-          type="button"
-          onClick={() => openExternalLink(url)}
-          className="flex min-w-0 flex-1 items-center gap-3 text-left active:opacity-80"
-        >
-          <ArrowUpCircle className="h-6 w-6 flex-shrink-0 text-indigo-400" />
-          <span className="min-w-0">
-            <span className="block text-sm font-medium text-zinc-100">
-              新版本 {version} 可用
-            </span>
-            <span className="mt-0.5 block text-xs text-zinc-500">
-              点击前往下载安装包
-            </span>
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={requestClose}
-          className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-zinc-800"
-          aria-label="关闭更新提示"
-        >
-          <X className="h-4 w-4" />
-        </button>
+      <div className="flex flex-col items-center gap-3 px-5 py-6 text-center">
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-500/15">
+          <ArrowUpCircle className="h-8 w-8 text-indigo-400" />
+        </div>
+        <div>
+          <p className="text-base font-semibold text-zinc-100">
+            新版本 {version} 可用
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+            前往 GitHub Release 下载并安装最新 APK。安装后可直接覆盖当前版本。
+          </p>
+        </div>
       </div>
-    </div>
+    </MobileSheet>
   );
 }

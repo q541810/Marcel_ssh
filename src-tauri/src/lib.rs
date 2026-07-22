@@ -562,6 +562,7 @@ pub fn run() {
             commands::mcp::mcp_refresh_tools,
             commands::mcp::mcp_call_tool,
             commands::update::check_update,
+            commands::update::open_external_url,
             commands::sftp::sftp_list_dir,
             commands::sftp::sftp_upload,
             commands::sftp::sftp_download,
