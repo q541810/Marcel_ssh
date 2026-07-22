@@ -36,12 +36,12 @@ gh release list
 
 修改以下文件中的版本号：
 
-| 文件 | 字段 |
-|------|------|
-| `src-tauri/tauri.conf.json` | `version` |
-| `src-tauri/Cargo.toml` | `version` (package section) |
-| `package.json` | `version` |
-| `latest.json` | `version`、`release_url` |
+| 文件                          | 字段                          |
+| --------------------------- | --------------------------- |
+| `src-tauri/tauri.conf.json` | `version`                   |
+| `src-tauri/Cargo.toml`      | `version` (package section) |
+| `package.json`              | `version`                   |
+| `latest.json`               | `version`、`release_url`     |
 
 > 改完 `Cargo.toml` 后 `Cargo.lock` 会自动更新，这是预期行为，一并提交。
 
@@ -58,11 +58,12 @@ pnpm tauri build
 ```
 
 产物路径：
+
 - `src-tauri/target/release/bundle/nsis/Marcel SSH_{version}_x64-setup.exe`
 
 > Windows 默认只发布 NSIS 安装包，不发布 MSI，以控制安装包体积。
 
-#### Android APK（可选）
+#### Android APK
 
 如果本次发布也要出 Android 包：
 
@@ -73,18 +74,22 @@ pnpm tauri android build --apk --target aarch64
 ```
 
 产物路径：
+
 - `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`（**已自动用正式 keystore 签名**）
 
 签名说明：
+
 - keystore 在 `~/.android/marcel-ssh-release.keystore`（仓库外），密码在 `src-tauri/gen/android/app/key.properties`（已 gitignore）。两个文件都必须备份，丢了无法再对同一 app 签发更新。
 - Gradle 侧 signingConfig 读 `key.properties`；文件缺失时 release 构建退化为未签名 APK，方便 CI 或新机器先跑通。
 - 首次构建前需 `pnpm tauri android init` 生成 `gen/android` 工程（已提交进仓库，无需重复跑）。
 - Gradle wrapper 走腾讯镜像（`gradle-wrapper.properties`），避免官方源证书问题。
 
 ### 4. 拟定release描述
+
 先阅读commit记录，再查看release记录，模仿之前的release描述风格，根据commit记录确定当前版本的描述后告知用户。
 
 ### 5. 提交并打 tag
+
 在用户确认4中你告知他的release描述后，提交并打 tag。
 
 ```bash
@@ -111,6 +116,7 @@ gh release create v{version} --title "v{version}" --notes-file release-notes.md
 ```
 
 创建完成后删除临时文件：
+
 ```bash
 Remove-Item -LiteralPath release-notes.md
 ```
