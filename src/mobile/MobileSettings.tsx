@@ -14,10 +14,9 @@ import {
 import { MobileAboutSection } from './settings/MobileAboutSection';
 import { MobileAgentPolicySection } from './settings/MobileAgentPolicySection';
 import { MobileAppearanceSection } from './settings/MobileAppearanceSection';
-import { MobileDisplaySection } from './settings/MobileDisplaySection';
+import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSection';
 import { MobileModelSection } from './settings/MobileModelSection';
-import { MobileQuickCommandSection } from './settings/MobileQuickCommandSection';
-import { MobileSkillSection } from './settings/MobileSkillSection';
+import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
 import { MobileSyncSection } from './settings/MobileSyncSection';
 import { registerBackHandler } from './backHandler';
 
@@ -197,12 +196,6 @@ export default function MobileSettings({
             </div>
           )}
 
-          {activeCategory === 'display' && (
-            <div className="p-3">
-              <MobileDisplaySection />
-            </div>
-          )}
-
           {activeCategory === 'llm' && (
             <div className="p-3">
               <MobileModelSection />
@@ -215,15 +208,15 @@ export default function MobileSettings({
             </div>
           )}
 
-          {activeCategory === 'quick-commands' && (
+          {activeCategory === 'commands-skills' && (
             <div className="p-3">
-              <MobileQuickCommandSection />
+              <MobileCommandsSkillsSection />
             </div>
           )}
 
-          {activeCategory === 'skills' && (
+          {activeCategory === 'notification-background' && (
             <div className="p-3">
-              <MobileSkillSection />
+              <MobileNotificationBackgroundSection />
             </div>
           )}
 

@@ -18,24 +18,24 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
   it('lists only usable mobile categories in order', () => {
     expect(MOBILE_SETTINGS_CATEGORIES.map((c) => c.id)).toEqual([
       'appearance',
-      'display',
       'llm',
       'agent-policy',
-      'quick-commands',
-      'skills',
+      'commands-skills',
+      'notification-background',
+      'sync',
       'about',
     ]);
   });
 
-  it('does not include the redundant agent-mode or notification categories', () => {
-    // agent-mode duplicates the composer mode switch (same store, same persistence);
-    // notification is deferred until Android notification runtime is verified.
+  it('does not include the redundant agent-mode category', () => {
+    // agent-mode duplicates the composer mode switch (same store, same persistence).
     expect(isMobileSettingsCategoryId('agent-mode')).toBe(false);
-    expect(isMobileSettingsCategoryId('notification')).toBe(false);
   });
 
   it('resolves category by id', () => {
     expect(getMobileSettingsCategory('llm')?.title).toBe('模型服务');
+    expect(getMobileSettingsCategory('commands-skills')?.title).toBe('快捷命令与技能');
+    expect(getMobileSettingsCategory('notification-background')?.title).toBe('通知与后台');
     expect(getMobileSettingsCategory('nope')).toBeUndefined();
   });
 
@@ -43,7 +43,14 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
     expect(isMobileSettingsCategoryId('llm')).toBe(true);
     expect(isMobileSettingsCategoryId('plugins')).toBe(false);
     expect(isMobileSettingsCategoryId('agent-policy')).toBe(true);
-    expect(isMobileSettingsCategoryId('quick-commands')).toBe(true);
+    expect(isMobileSettingsCategoryId('commands-skills')).toBe(true);
+    expect(isMobileSettingsCategoryId('notification-background')).toBe(true);
+    // 已合并的旧 id 应被拒绝
+    expect(isMobileSettingsCategoryId('display')).toBe(false);
+    expect(isMobileSettingsCategoryId('quick-commands')).toBe(false);
+    expect(isMobileSettingsCategoryId('skills')).toBe(false);
+    expect(isMobileSettingsCategoryId('notification')).toBe(false);
+    expect(isMobileSettingsCategoryId('background')).toBe(false);
   });
 });
 

@@ -18,11 +18,10 @@ export function withMobileSelectionContrast(
 
 export type MobileSettingsCategoryId =
   | 'appearance'
-  | 'display'
   | 'llm'
   | 'agent-policy'
-  | 'quick-commands'
-  | 'skills'
+  | 'commands-skills'
+  | 'notification-background'
   | 'sync'
   | 'about';
 
@@ -35,13 +34,8 @@ export interface MobileSettingsCategory {
 export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
   {
     id: 'appearance',
-    title: '终端外观',
-    description: '字号、字体与配色',
-  },
-  {
-    id: 'display',
-    title: '对话显示',
-    description: '控制 Agent 对话内容的呈现方式',
+    title: '外观与显示',
+    description: '终端配色、字号、字体与对话呈现',
   },
   {
     id: 'llm',
@@ -54,14 +48,14 @@ export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
     description: '命令安全边界、审批与执行限制',
   },
   {
-    id: 'quick-commands',
-    title: '快捷命令',
-    description: '管理终端快捷命令',
+    id: 'commands-skills',
+    title: '快捷命令与技能',
+    description: '管理终端快捷命令与 Agent 技能',
   },
   {
-    id: 'skills',
-    title: 'Skills',
-    description: '导入、编辑与启用技能',
+    id: 'notification-background',
+    title: '通知与后台',
+    description: 'Agent 事件提醒与后台保活（仅 Android）',
   },
   {
     id: 'sync',

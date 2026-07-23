@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { TerminalColors } from '@/lib/types';
 import { TERMINAL_COLOR_PRESETS } from '@/lib/constants';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
+import Toggle from '@/components/ui/Toggle';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const CUSTOM_COLOR_FIELDS: { key: keyof TerminalColors; label: string }[] = [
@@ -180,6 +181,21 @@ export function MobileAppearanceSection() {
           className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none focus:border-indigo-500"
         />
       </MobileSettingRow>
+
+      {/* 对话显示（原 display 分区，合并到外观以减少分区数量） */}
+      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+        对话显示
+      </div>
+      <MobileSettingRow
+        label="隐藏模型思考"
+        description="不显示模型的推理/思考内容"
+        trailing={
+          <Toggle
+            checked={settings.hideThinkingDisplay}
+            onChange={(checked) => update({ hideThinkingDisplay: checked })}
+          />
+        }
+      />
     </div>
   );
 }
