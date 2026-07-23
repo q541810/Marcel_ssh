@@ -29,6 +29,8 @@ interface MobileSyncPairPageProps {
   /** initialMode='showCode' 时传入配置码；first 成功后内部生成 */
   initialCode?: string;
   onClose: () => void;
+  /** 配对（first/join）成功后回调，用于父组件显示引导提示 */
+  onPairSuccess?: () => void;
 }
 
 const inputClass =
@@ -39,6 +41,7 @@ export default function MobileSyncPairPage({
   initialMode,
   initialCode,
   onClose,
+  onPairSuccess,
 }: MobileSyncPairPageProps) {
   const { pairFirst, pairJoin, actionLoading, error, clearError } = useSyncStore();
   const [serverSource, setServerSource] = useState<'official' | 'custom'>('official');
@@ -95,7 +98,8 @@ export default function MobileSyncPairPage({
     setLocalPasswordError(null);
     try {
       await pairJoin(resolvedServerUrl, joinCode.trim(), accountPassword);
-      // 加入成功 → 关闭页面
+      // 加入成功 → 通知父组件显示引导提示，再关闭页面
+      onPairSuccess?.();
       requestClose();
     } catch {
       // error 已在 store

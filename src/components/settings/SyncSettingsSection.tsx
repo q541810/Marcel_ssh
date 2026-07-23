@@ -7,8 +7,8 @@
  * 3. 配对中：显示配置码（第一台设备，仅此一次）
  */
 
-import { useEffect, useState, type ChangeEvent } from 'react';
-import { RefreshCw, Cloud, CloudOff, KeyRound, Laptop, Smartphone, Trash2, AlertTriangle, Copy, Check, ShieldCheck, Link2, Unlink } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { RefreshCw, Cloud, CloudOff, KeyRound, Laptop, Smartphone, Trash2, AlertTriangle, Copy, Check, ShieldCheck, Link2, Unlink, Info } from 'lucide-react';
 import { Card, SettingItem } from './helpers';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -73,6 +73,24 @@ export function SyncSettingsSection() {
   const [resetCode, setResetCode] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 设置一条引导提示，5 秒后自动消失。重复调用会重置计时器。
+  const showHint = (text: string) => {
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    setHint(text);
+    hintTimerRef.current = setTimeout(() => {
+      setHint(null);
+      hintTimerRef.current = null;
+    }, 5000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+  }, []);
 
   const resolvedServerUrl =
     serverSource === 'official' ? OFFICIAL_SYNC_SERVER_URL : customServerUrl.trim();
@@ -134,6 +152,7 @@ export function SyncSettingsSection() {
       await pairJoin(resolvedServerUrl, joinCode.trim(), accountPassword);
       setMode('idle');
       clearPairForm();
+      showHint('首次同步可能需要1分钟甚至更长，请不要关闭应用，耐心等待，"拉取中..."按钮变为"拉取"则为完成');
     } catch {
       // error 已在 store 里
     }
@@ -162,6 +181,9 @@ export function SyncSettingsSection() {
       excludedKeys: summary.profile.excludedKeys ?? [],
     };
     updateProfile(newProfile);
+    if (enabled) {
+      showHint('想让这个项同步成功，您可能需要重新启动程序以全量同步一遍');
+    }
   };
 
   // ── 危险操作 ──────────────────────────────
@@ -235,6 +257,25 @@ export function SyncSettingsSection() {
             <p className="text-sm text-red-300">{error}</p>
           </div>
           <button onClick={clearError} className="text-red-400 hover:text-red-300 text-xs">
+            关闭
+          </button>
+        </div>
+      )}
+
+      {/* 引导提示（开启同步项 / 加入同步成功） */}
+      {hint && (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 flex items-start gap-3">
+          <Info className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-amber-200">{hint}</p>
+          </div>
+          <button
+            onClick={() => {
+              if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+              setHint(null);
+            }}
+            className="text-amber-400 hover:text-amber-300 text-xs"
+          >
             关闭
           </button>
         </div>

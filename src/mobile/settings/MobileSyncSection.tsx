@@ -8,8 +8,8 @@
  * 独立全屏页面，不再在 section 内原地切换内容。
  */
 
-import { useEffect, useState } from 'react';
-import { RefreshCw, CloudOff, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { RefreshCw, CloudOff, AlertTriangle, ShieldCheck, Info } from 'lucide-react';
 import { useSyncStore } from '@/stores/syncStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { SyncCategory, SyncProfile } from '@/lib/types';
@@ -59,6 +59,24 @@ export function MobileSyncSection() {
   const [resetCode, setResetCode] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 设置一条引导提示，5 秒后自动消失。重复调用会重置计时器。
+  const showHint = (text: string) => {
+    if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    setHint(text);
+    hintTimerRef.current = setTimeout(() => {
+      setHint(null);
+      hintTimerRef.current = null;
+    }, 5000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+    };
+  }, []);
 
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const hasAcceptedSyncDisclaimer = useSettingsStore((s) => s.settings.hasAcceptedSyncDisclaimer);
@@ -95,6 +113,9 @@ export function MobileSyncSection() {
       excludedKeys: summary.profile.excludedKeys ?? [],
     };
     updateProfile(newProfile);
+    if (enabled) {
+      showHint('想让这个项同步成功，您可能需要重新启动程序以全量同步一遍');
+    }
   };
 
   const handleReset = async () => {
@@ -151,6 +172,23 @@ export function MobileSyncSection() {
           <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
           <p className="flex-1 text-xs text-red-300">{error}</p>
           <button onClick={clearError} className="text-red-400 text-xs">关闭</button>
+        </div>
+      )}
+
+      {/* 引导提示（开启同步项 / 加入同步成功） */}
+      {hint && (
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2 flex items-start gap-2">
+          <Info className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <p className="flex-1 text-xs text-amber-200">{hint}</p>
+          <button
+            onClick={() => {
+              if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+              setHint(null);
+            }}
+            className="text-amber-400 text-xs"
+          >
+            关闭
+          </button>
         </div>
       )}
 
@@ -291,6 +329,12 @@ export function MobileSyncSection() {
         open={pairPageOpen}
         initialMode={pairMode}
         onClose={() => setPairPageOpen(false)}
+        onPairSuccess={() => {
+          // 关闭配对页后回到 section 才显示提示，避免被全屏页遮挡
+          setTimeout(() => {
+            showHint('首次同步可能需要1分钟甚至更长，请不要关闭应用，耐心等待，"拉取中..."按钮变为"拉取"则为完成');
+          }, 400);
+        }}
       />
     </div>
   );
