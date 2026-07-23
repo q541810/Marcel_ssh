@@ -31,6 +31,8 @@ pub enum AppError {
     HostKeyVerification(String),
     #[error("Update error: {0}")]
     Update(String),
+    #[error("Network error: {0}")]
+    Network(String),
     #[error("{0}")]
     Other(String),
 }
@@ -77,6 +79,7 @@ impl Serialize for AppError {
                     AppError::Llm(_) => "Llm",
                     AppError::Config(_) => "Config",
                     AppError::Update(_) => "Update",
+                    AppError::Network(_) => "Network",
                     AppError::Io(_) => "Io",
                     AppError::Serde(_) => "Serde",
                     AppError::HostKeyVerification(_) => "HostKeyVerification",

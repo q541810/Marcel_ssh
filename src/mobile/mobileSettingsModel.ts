@@ -23,6 +23,7 @@ export type MobileSettingsCategoryId =
   | 'agent-policy'
   | 'quick-commands'
   | 'skills'
+  | 'sync'
   | 'about';
 
 export interface MobileSettingsCategory {
@@ -61,6 +62,11 @@ export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
     id: 'skills',
     title: 'Skills',
     description: '导入、编辑与启用技能',
+  },
+  {
+    id: 'sync',
+    title: '跨设备同步',
+    description: '自动同步配置与聊天记录',
   },
   {
     id: 'about',

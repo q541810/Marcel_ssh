@@ -36,6 +36,15 @@ pub async fn config_save_connection(
     let path = ConnectionStore::default_file(&state.config_dir);
     tokio::task::block_in_place(|| store.save_to_path(&path))?;
 
+    // 触发跨设备同步：connections 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let store_snapshot = store.clone();
+            let _ = engine.record_local_change(&format!("connections.{}", id), &serde_json::to_string(&store_snapshot).unwrap_or_default());
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(id)
 }
 
@@ -52,6 +61,15 @@ pub async fn config_delete_connection(
     }
     let path = ConnectionStore::default_file(&state.config_dir);
     tokio::task::block_in_place(|| store.save_to_path(&path))?;
+
+    // 触发跨设备同步：connections 删除
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_delete(&format!("connections.{}", id));
+            scheduler.schedule_push();
+        }
+    }
+
     // Best-effort: also purge any stored password and passphrase from the keychain
     if let Err(e) = keychain::delete_password(&id) {
         log::warn!("清除密钥链条目失败（id={}): {}", id, e);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { Trash2 } from 'lucide-react';
 import { useAgent } from '@/hooks/useAgent';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { useConnectionStore } from '@/stores/connectionStore';
@@ -11,6 +12,7 @@ import PlanList from '@/components/agent/PlanList';
 import MobileApprovalSheet from './MobileApprovalSheet';
 import MobileQuestionSheet from './MobileQuestionSheet';
 import MobileChatHistorySheet from './MobileChatHistorySheet';
+import MobileSheet from './ui/MobileSheet';
 import {
   agentEmptyStateReason,
   canSendAgentPrompt,
@@ -88,6 +90,7 @@ export default function MobileAgentHost({
     activeConversationId,
     newConversation,
     switchConversation,
+    deleteConversation,
     syncActiveToConnection,
     rollbackToMessage,
   } = useAgent();
@@ -98,6 +101,7 @@ export default function MobileAgentHost({
   const historyPresence = useAnimatedPresence(historyOpen);
   /** 未连接时的只读历史浏览面板（对齐桌面 AgentPanel 的 ChatHistoryModal 分支） */
   const [historyBrowserOpen, setHistoryBrowserOpen] = useState(false);
+  const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [rollbackHint, setRollbackHint] = useState<string | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -288,6 +292,21 @@ export default function MobileAgentHost({
     [switchConversation],
   );
 
+  const handleDeleteConversation = useCallback(async () => {
+    if (!deleteTargetId) return;
+    const id = deleteTargetId;
+    setDeleteTargetId(null);
+    try {
+      await deleteConversation(id);
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+    }
+  }, [deleteTargetId, deleteConversation]);
+
+  const deleteTargetTitle = deleteTargetId
+    ? (conversations[deleteTargetId]?.title ?? '该会话')
+    : '';
+
   const showRollbackHint = useCallback((text: string) => {
     setRollbackHint(text);
     if (rollbackHintTimerRef.current)
@@ -448,7 +467,7 @@ export default function MobileAgentHost({
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollContainerRef}
-          className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3"
+          className="h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-3"
           onScroll={handleScroll}
         >
           {emptyReason !== 'ready' && (
@@ -533,20 +552,31 @@ export default function MobileAgentHost({
                 {sessionConversations.map((conv) => {
                   const active = conv.id === activeConversationId;
                   return (
-                    <li key={conv.id}>
+                    <li
+                      key={conv.id}
+                      className={`flex items-center gap-1 rounded-lg ${
+                        active
+                          ? 'bg-indigo-600/20 text-indigo-200'
+                          : 'bg-zinc-800/60 text-zinc-300'
+                      }`}
+                    >
                       <button
                         type="button"
                         onClick={() => void handleSelectConversation(conv.id)}
-                        className={`w-full rounded-lg px-3 py-2.5 text-left text-sm ${
-                          active
-                            ? 'bg-indigo-600/20 text-indigo-200'
-                            : 'bg-zinc-800/60 text-zinc-300 active:bg-zinc-800'
-                        }`}
+                        className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm active:opacity-80"
                       >
                         <div className="truncate font-medium">{conv.title}</div>
                         <div className="mt-0.5 text-[11px] text-zinc-500">
                           {new Date(conv.updatedAt).toLocaleString()}
                         </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteTargetId(conv.id)}
+                        className="mr-1.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-zinc-800 active:text-red-400"
+                        aria-label={`删除 ${conv.title}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </li>
                   );
@@ -556,6 +586,32 @@ export default function MobileAgentHost({
           </div>
         </>
       )}
+
+      <MobileSheet
+        open={deleteTargetId != null}
+        onClose={() => setDeleteTargetId(null)}
+        title="确认删除"
+      >
+        <div className="flex flex-col gap-2 px-4 pb-4">
+          <p className="pb-1 text-sm text-zinc-400">
+            删除会话「{deleteTargetTitle}」？此操作不可撤销。
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleDeleteConversation()}
+            className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteTargetId(null)}
+            className="rounded-xl px-4 py-3 text-sm text-zinc-400 active:bg-zinc-800"
+          >
+            取消
+          </button>
+        </div>
+      </MobileSheet>
 
       <MobileChatHistorySheet
         open={historyBrowserOpen}
@@ -571,7 +627,7 @@ export default function MobileAgentHost({
         />
       ) : (
         <div className="flex-shrink-0 border-t border-zinc-800 p-3">
-          <div className="flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
+          <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
             <div className="relative flex-shrink-0 self-center pl-1">
               <button
                 type="button"
@@ -640,7 +696,7 @@ export default function MobileAgentHost({
                     : '描述您想要做的事情…'
               }
               disabled={!canInteract || !ids}
-              className="min-h-[2.5rem] max-h-[7.5rem] min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none disabled:opacity-50"
+              className="min-h-[2.5rem] max-h-[7.5rem] min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
             />
             <button
               type="button"

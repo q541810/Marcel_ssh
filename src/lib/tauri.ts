@@ -25,6 +25,14 @@ import type {
   PluginHttpResponse,
   ReloadDiff,
   TruncateConversationResult,
+  SyncSummary,
+  SyncProfile,
+  SyncDeviceInfo,
+  SyncPairResult,
+  SyncResetResult,
+  SyncPendingConflict,
+  SyncConflictAction,
+  SyncResolveResult,
 } from './types';
 
 // SSH commands
@@ -560,6 +568,124 @@ export async function sftpPreviewImage(
     remotePath,
     previewId,
   });
+}
+
+// ──────────── 跨设备同步（sync_* commands） ────────────
+
+/** 获取同步配置摘要（状态 + profile + 配置信息） */
+export async function syncGetSummary(): Promise<SyncSummary> {
+  return invoke<SyncSummary>('sync_get_summary');
+}
+
+/** 第一台设备配对：生成配置码 + 注册账户。
+ *
+ * serverUrl: 服务器地址
+ * password: 账户密码（参与密钥派生，服务端不存储）
+ * 返回 SyncPairResult，含 configCode（仅此一次）
+ */
+export async function syncPairFirst(
+  serverUrl: string,
+  password: string,
+): Promise<SyncPairResult> {
+  return invoke<SyncPairResult>('sync_pair_first', { serverUrl, password });
+}
+
+/** 后续设备加入：配置码 + 账户密码。
+ *
+ * password 可为空字符串：兼容旧账户（仅配置码包装）。
+ */
+export async function syncPairJoin(
+  serverUrl: string,
+  configCode: string,
+  password: string,
+): Promise<SyncPairResult> {
+  return invoke<SyncPairResult>('sync_pair_join', {
+    serverUrl,
+    configCode,
+    password,
+  });
+}
+
+/** 更新 sync_profile */
+export async function syncUpdateProfile(profile: SyncProfile): Promise<void> {
+  return invoke<void>('sync_update_profile', { profile });
+}
+
+/** 手动触发 push */
+export async function syncPushNow(): Promise<void> {
+  return invoke<void>('sync_push_now');
+}
+
+/** 手动触发 pull */
+export async function syncPullNow(): Promise<void> {
+  return invoke<void>('sync_pull_now');
+}
+
+/** 列出已配对设备 */
+export async function syncListDevices(): Promise<SyncDeviceInfo[]> {
+  return invoke<SyncDeviceInfo[]>('sync_list_devices');
+}
+
+/** 删除（撤销）某设备的 API Key */
+export async function syncRemoveDevice(deviceId: string): Promise<void> {
+  return invoke<void>('sync_remove_device', { deviceId });
+}
+
+/** 账户重置：删除账户及所有数据（需配置码验证） */
+export async function syncResetAccount(configCode: string): Promise<SyncResetResult> {
+  return invoke<SyncResetResult>('sync_reset_account', { configCode });
+}
+
+/** 关闭同步（清除本机凭证，不删服务端数据） */
+export async function syncDisable(): Promise<void> {
+  return invoke<void>('sync_disable');
+}
+
+// ──────────── 冲突解决 commands ────────────
+
+/** 获取所有待解决的冲突列表 */
+export async function syncGetPendingConflicts(): Promise<SyncPendingConflict[]> {
+  return invoke<SyncPendingConflict[]>('sync_get_pending_conflicts');
+}
+
+/** 解决单个冲突
+ *
+ * key: 冲突的 key（如 `settings.fontSize`）
+ * action: 解决动作（{ type: 'ours' } / { type: 'custom', value: '...' } 等）
+ *
+ * 返回 SyncResolveResult，outcome 为 "pushNeeded" 时后端已自动调度 push
+ */
+export async function syncResolveConflict(
+  key: string,
+  action: SyncConflictAction,
+): Promise<SyncResolveResult> {
+  return invoke<SyncResolveResult>('sync_resolve_conflict', { key, action });
+}
+
+/** 批量解决所有冲突
+ *
+ * actions: 每个冲突对应的解决动作（按 key 索引）
+ * 未在 actions 中提供的冲突默认为 skipOnce
+ */
+export async function syncResolveAllConflicts(
+  actions: Record<string, SyncConflictAction>,
+): Promise<SyncResolveResult[]> {
+  return invoke<SyncResolveResult[]>('sync_resolve_all_conflicts', { actions });
+}
+
+/** 添加永久跳过项（用户在设置 UI 主动排除某 key） */
+export async function syncAddExcludedKey(key: string): Promise<void> {
+  return invoke<void>('sync_add_excluded_key', { key });
+}
+
+/** 移除永久跳过项（用户在设置 UI 重新启用某 key） */
+export async function syncRemoveExcludedKey(key: string): Promise<void> {
+  return invoke<void>('sync_remove_excluded_key', { key });
+}
+
+/** 获取当前所有永久跳过项 */
+export async function syncGetExcludedKeys(): Promise<string[]> {
+  return invoke<string[]>('sync_get_excluded_keys');
 }
 
 /**

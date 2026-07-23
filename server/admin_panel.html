@@ -1,0 +1,1215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>Marcel SSH · Sync Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ── 设计令牌 ────────────────────────────────
+     配色：深石墨 #0A0E14 + 橙红 #FF8B3D + 紫 #A371F7
+     字体：Space Grotesk (display) / JetBrains Mono (data) / IBM Plex Sans (body)
+     刻意避开 AI 三件套：warm-cream+serif、near-black+acid-green、broadsheet-hairline
+  */
+  :root {
+    --bg: #0A0E14;
+    --surface: #141A24;
+    --surface-2: #1E2638;
+    --surface-3: #252E45;
+    --border: #2A3346;
+    --border-dim: #1F2638;
+    --text: #E6EDF3;
+    --text-dim: #7D8590;
+    --text-mute: #545B6B;
+    --accent: #FF8B3D;
+    --accent-dim: #B85F26;
+    --accent-2: #A371F7;
+    --accent-2-dim: #6B47A8;
+    --success: #3FB950;
+    --danger: #F85149;
+    --warning: #D29922;
+
+    --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace;
+    --font-body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+
+    --radius: 6px;
+    --radius-sm: 3px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  button { font-family: inherit; cursor: pointer; }
+  input { font-family: inherit; }
+
+  /* ── 登录视图 ──────────────────────────────── */
+  #login-view {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -10%, rgba(255, 139, 61, 0.08), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 50% 110%, rgba(163, 113, 247, 0.06), transparent 60%),
+      var(--bg);
+  }
+
+  .login-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 2rem 1.75rem 1.75rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .login-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.6;
+  }
+
+  .login-brand {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+  }
+
+  .login-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.25rem;
+  }
+
+  .login-subtitle {
+    color: var(--text-dim);
+    font-size: 0.875rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .login-field { margin-bottom: 1rem; }
+  .login-field label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+  .login-field input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.625rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.9rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .login-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(255, 139, 61, 0.12);
+  }
+
+  .login-button {
+    width: 100%;
+    background: var(--accent);
+    color: #1a0d04;
+    border: none;
+    padding: 0.7rem 1rem;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: background 0.15s, transform 0.05s;
+  }
+  .login-button:hover { background: #ff9d56; }
+  .login-button:active { transform: translateY(1px); }
+  .login-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .login-error {
+    color: var(--danger);
+    font-size: 0.825rem;
+    margin-top: 0.75rem;
+    min-height: 1.2rem;
+    font-family: var(--font-mono);
+  }
+
+  .login-warning {
+    margin-top: 1.25rem;
+    padding: 0.625rem 0.75rem;
+    background: rgba(210, 153, 34, 0.08);
+    border: 1px solid rgba(210, 153, 34, 0.3);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    color: var(--warning);
+    line-height: 1.5;
+  }
+
+  /* ── 控制台视图 ────────────────────────────── */
+  #console-view { display: none; min-height: 100vh; flex-direction: column; }
+  #console-view.active { display: flex; }
+
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.875rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .app-header-left { display: flex; align-items: center; gap: 0.75rem; }
+  .app-logo {
+    width: 24px; height: 24px;
+    border-radius: 4px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 0.75rem;
+    color: #0A0E14;
+  }
+  .app-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: -0.01em;
+  }
+  .app-title-sub {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-left: 0.5rem;
+  }
+  .app-header-right { display: flex; align-items: center; gap: 0.875rem; }
+  .session-info {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+  }
+  .logout-button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 0.35rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    transition: all 0.15s;
+  }
+  .logout-button:hover {
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  /* ── signature: 状态行（模仿 Unix uptime） ─── */
+  .status-line {
+    padding: 0.625rem 1.5rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border-dim);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    overflow-x: auto;
+    white-space: nowrap;
+    letter-spacing: 0.01em;
+  }
+  .status-line .sl-arrow { color: var(--success); margin-right: 0.5rem; }
+  .status-line .sl-sep { color: var(--text-mute); margin: 0 0.5rem; }
+  .status-line .sl-key { color: var(--text-mute); }
+  .status-line .sl-val { color: var(--text); }
+  .status-line .sl-val-accent { color: var(--accent); }
+  .status-line .sl-val-purple { color: var(--accent-2); }
+
+  /* ── 主内容 ────────────────────────────────── */
+  .main-content {
+    flex: 1;
+    padding: 1.5rem;
+    max-width: 1600px;
+    width: 100%;
+    margin: 0 auto;
+  }
+
+  /* ── 指标卡片网格 ──────────────────────────── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0.875rem;
+    margin-bottom: 1.5rem;
+  }
+  .metric-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.125rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .metric-card:hover { border-color: var(--surface-3); }
+  .metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 2px; height: 100%;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .metric-card.is-online::before { opacity: 1; background: var(--success); }
+  .metric-card.is-accent::before { opacity: 1; }
+
+  .metric-label {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .metric-value {
+    font-family: var(--font-display);
+    font-size: 1.75rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    transition: color 0.4s;
+  }
+  .metric-value.is-pulse {
+    animation: valueFlash 0.6s ease-out;
+  }
+  @keyframes valueFlash {
+    0% { color: var(--accent); }
+    100% { color: var(--text); }
+  }
+  .metric-sub {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-mute);
+    margin-top: 0.3rem;
+  }
+  .pulse-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.6); }
+    70% { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0); }
+  }
+
+  /* ── 区块标题 ──────────────────────────────── */
+  .section {
+    margin-bottom: 1.5rem;
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-dim);
+  }
+  .section-title {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .section-meta {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-mute);
+  }
+
+  /* ── 系统资源 ──────────────────────────────── */
+  .resources-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.875rem;
+  }
+  .resource-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.875rem 1rem;
+  }
+  .resource-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.5rem;
+  }
+  .resource-label {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .resource-value {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text);
+    font-weight: 500;
+  }
+  .resource-bar {
+    height: 4px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+  }
+  .resource-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.5s ease, background 0.3s;
+  }
+  .resource-bar-fill.is-warn { background: var(--warning); }
+  .resource-bar-fill.is-danger { background: var(--danger); }
+
+  /* ── 账户表格 ──────────────────────────────── */
+  .accounts-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .accounts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.825rem;
+  }
+  .accounts-table thead th {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    font-weight: 500;
+  }
+  .accounts-table tbody tr {
+    border-bottom: 1px solid var(--border-dim);
+    transition: background 0.1s;
+  }
+  .accounts-table tbody tr:last-child { border-bottom: none; }
+  .accounts-table tbody tr:hover { background: var(--surface-2); }
+  .accounts-table td {
+    padding: 0.7rem 1rem;
+    vertical-align: middle;
+  }
+
+  .acc-id {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .acc-online-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    background: rgba(63, 185, 80, 0.1);
+    color: var(--success);
+    border: 1px solid rgba(63, 185, 80, 0.2);
+  }
+  .acc-online-badge.is-offline {
+    background: rgba(125, 133, 144, 0.08);
+    color: var(--text-mute);
+    border-color: rgba(125, 133, 144, 0.15);
+  }
+  .acc-online-badge .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .acc-online-badge.is-online .dot { animation: pulse 2s infinite; }
+
+  .quota-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 180px;
+  }
+  .quota-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--bg);
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 80px;
+  }
+  .quota-bar-fill {
+    height: 100%;
+    background: var(--accent-2);
+    border-radius: 2px;
+    transition: width 0.4s, background 0.3s;
+  }
+  .quota-bar-fill.is-warn { background: var(--warning); }
+  .quota-bar-fill.is-danger { background: var(--danger); }
+  .quota-text {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .num-cell {
+    font-family: var(--font-mono);
+    color: var(--text);
+    text-align: right;
+  }
+  .time-cell {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+
+  .expand-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 24px; height: 24px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    transition: all 0.15s;
+  }
+  .expand-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .expand-btn.is-open {
+    background: var(--accent);
+    color: #1a0d04;
+    border-color: var(--accent);
+  }
+
+  /* ── 设备子表（展开行） ────────────────────── */
+  .devices-row td {
+    padding: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border-dim);
+  }
+  .devices-row.is-hidden { display: none; }
+  .devices-inner {
+    padding: 0.875rem 1rem 0.875rem 3rem;
+    border-left: 2px solid var(--accent-dim);
+    margin-left: 1rem;
+  }
+  .devices-title {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+  }
+  .devices-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  .devices-table th {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    color: var(--text-mute);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border-dim);
+    font-weight: 500;
+  }
+  .devices-table td {
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border-dim);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+  .devices-table tr:last-child td { border-bottom: none; }
+  .dev-id { color: var(--accent-2); }
+  .dev-platform {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.68rem;
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  /* ── 空状态 ────────────────────────────────── */
+  .empty-state {
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: var(--text-mute);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  /* ── 加载状态 ──────────────────────────────── */
+  .loading-bar {
+    position: fixed;
+    top: 0; left: 0;
+    height: 2px;
+    background: var(--accent);
+    width: 0;
+    z-index: 100;
+    transition: width 0.3s, opacity 0.3s;
+    opacity: 0;
+  }
+  .loading-bar.is-loading { opacity: 1; width: 30%; animation: loadingSlide 1.5s ease-in-out infinite; }
+  @keyframes loadingSlide {
+    0% { width: 0; left: 0; }
+    50% { width: 40%; left: 30%; }
+    100% { width: 0; left: 100%; }
+  }
+
+  /* ── Toast ─────────────────────────────────── */
+  .toast {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--danger);
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    color: var(--text);
+    z-index: 200;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.2s, transform 0.2s;
+    max-width: 360px;
+  }
+  .toast.is-show { opacity: 1; transform: translateY(0); }
+
+  /* ── 响应式 ────────────────────────────────── */
+  @media (max-width: 1200px) {
+    .metrics-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 768px) {
+    .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .resources-grid { grid-template-columns: 1fr; }
+    .main-content { padding: 1rem; }
+    .app-header { padding: 0.75rem 1rem; }
+    .status-line { padding: 0.5rem 1rem; font-size: 0.7rem; }
+    .accounts-table { font-size: 0.75rem; }
+    .accounts-table th, .accounts-table td { padding: 0.5rem 0.6rem; }
+    .quota-cell { min-width: 120px; }
+  }
+  @media (max-width: 480px) {
+    .metrics-grid { grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .metric-value { font-size: 1.4rem; }
+    .session-info { display: none; }
+  }
+
+  /* ── reduced-motion ────────────────────────── */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    .pulse-dot, .acc-online-badge.is-online .dot { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loading-bar"></div>
+
+<!-- 登录视图 -->
+<div id="login-view">
+  <div class="login-card">
+    <div class="login-brand">MARCEL SSH · SYNC</div>
+    <h1 class="login-title">运维监控</h1>
+    <p class="login-subtitle">服务端状态与配额总览</p>
+    <form id="login-form" autocomplete="off">
+      <div class="login-field">
+        <label for="password">管理员密码</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="login-button" id="login-button">登录</button>
+      <div class="login-error" id="login-error"></div>
+    </form>
+    <div class="login-warning" id="https-warning" style="display:none">
+      当前为非 HTTPS 连接，密码可能被中间人嗅探。请通过 HTTPS 访问，或将面板限制在内网/本地。
+    </div>
+  </div>
+</div>
+
+<!-- 控制台视图 -->
+<div id="console-view">
+  <header class="app-header">
+    <div class="app-header-left">
+      <div class="app-logo">M</div>
+      <div>
+        <span class="app-title">Marcel SSH Sync Monitor</span>
+        <span class="app-title-sub" id="mode-badge">—</span>
+      </div>
+    </div>
+    <div class="app-header-right">
+      <span class="session-info" id="session-info">—</span>
+      <button class="logout-button" id="logout-button">登出</button>
+    </div>
+  </header>
+
+  <!-- signature: 状态行 -->
+  <div class="status-line" id="status-line">
+    <span class="sl-arrow">↑</span><span class="sl-val">初始化中…</span>
+  </div>
+
+  <main class="main-content">
+    <!-- 指标卡片 -->
+    <section class="metrics-grid" id="metrics-grid">
+      <div class="metric-card is-accent">
+        <div class="metric-label">DAU</div>
+        <div class="metric-value" id="m-dau">—</div>
+        <div class="metric-sub">日活账户 · UTC</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">MAU</div>
+        <div class="metric-value" id="m-mau">—</div>
+        <div class="metric-sub">月活账户 · 30d</div>
+      </div>
+      <div class="metric-card is-online">
+        <div class="metric-label">ONLINE <span class="pulse-dot"></span></div>
+        <div class="metric-value" id="m-online">—</div>
+        <div class="metric-sub" id="m-online-sub">连接 0 · 账户 0</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">ACCOUNTS</div>
+        <div class="metric-value" id="m-accounts">—</div>
+        <div class="metric-sub">总账户数</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">DEVICES</div>
+        <div class="metric-value" id="m-devices">—</div>
+        <div class="metric-sub">总设备数</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">DB SIZE</div>
+        <div class="metric-value" id="m-dbsize">—</div>
+        <div class="metric-sub" id="m-quota-sub">配额 —</div>
+      </div>
+    </section>
+
+    <!-- 系统资源 -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-title">System Resources</span>
+        <span class="section-meta" id="sys-meta">uptime —</span>
+      </div>
+      <div class="resources-grid" id="resources-grid">
+        <div class="resource-card">
+          <div class="resource-row">
+            <span class="resource-label">CPU</span>
+            <span class="resource-value" id="r-cpu-val">—</span>
+          </div>
+          <div class="resource-bar"><div class="resource-bar-fill" id="r-cpu-bar" style="width:0%"></div></div>
+        </div>
+        <div class="resource-card">
+          <div class="resource-row">
+            <span class="resource-label">MEMORY</span>
+            <span class="resource-value" id="r-mem-val">—</span>
+          </div>
+          <div class="resource-bar"><div class="resource-bar-fill" id="r-mem-bar" style="width:0%"></div></div>
+        </div>
+        <div class="resource-card">
+          <div class="resource-row">
+            <span class="resource-label">DISK</span>
+            <span class="resource-value" id="r-disk-val">—</span>
+          </div>
+          <div class="resource-bar"><div class="resource-bar-fill" id="r-disk-bar" style="width:0%"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 账户列表 -->
+    <section class="section">
+      <div class="section-header">
+        <span class="section-title">Accounts · 配额与设备</span>
+        <span class="section-meta" id="acc-meta">—</span>
+      </div>
+      <div class="accounts-wrap">
+        <table class="accounts-table">
+          <thead>
+            <tr>
+              <th style="width:32px"></th>
+              <th>账户</th>
+              <th>状态</th>
+              <th>配额使用</th>
+              <th style="text-align:right">设备数</th>
+              <th>最后活跃</th>
+            </tr>
+          </thead>
+          <tbody id="accounts-tbody">
+            <tr><td colspan="6" class="empty-state">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script nonce="{{NONCE}}">
+(function() {
+  'use strict';
+
+  // ── 路径推断 ─────────────────────────────────
+  // HTML 由 {admin_path} 返回，location.pathname 即为 admin_path（无尾斜杠）
+  const BASE = location.pathname.replace(/\/+$/, '') || '/';
+
+  const TOKEN_KEY = 'marcel_admin_token';
+  const SESSION_KEY = 'marcel_admin_expires';
+
+  let token = sessionStorage.getItem(TOKEN_KEY) || '';
+  let sessionExpires = parseInt(sessionStorage.getItem(SESSION_KEY) || '0', 10);
+
+  // 轮询句柄
+  let pollStatus = null;
+  let pollOverview = null;
+  let pollAccounts = null;
+
+  // ── 工具函数 ─────────────────────────────────
+  function $(id) { return document.getElementById(id); }
+
+  function fmtBytes(n) {
+    if (n === 0 || n == null) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(n) / Math.log(1024));
+    return (n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + u[i];
+  }
+
+  function fmtUptime(sec) {
+    if (sec < 60) return sec + 's';
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm ' + s + 's';
+  }
+
+  function fmtRelative(iso) {
+    if (!iso) return '—';
+    const t = new Date(iso);
+    if (isNaN(t)) return '—';
+    const diff = (Date.now() - t.getTime()) / 1000;
+    if (diff < 60) return Math.floor(diff) + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  function showToast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('is-show');
+    setTimeout(() => t.classList.remove('is-show'), 3000);
+  }
+
+  function setLoading(on) {
+    $('loading-bar').classList.toggle('is-loading', on);
+  }
+
+  function flashValue(el, newVal) {
+    if (el.textContent !== String(newVal)) {
+      el.textContent = newVal;
+      el.classList.remove('is-pulse');
+      void el.offsetWidth; // 触发重绘以重启动画
+      el.classList.add('is-pulse');
+    }
+  }
+
+  // ── API 调用 ─────────────────────────────────
+  async function api(path, options) {
+    const res = await fetch(BASE + path, Object.assign({
+      headers: { 'Authorization': 'Bearer ' + token }
+    }, options || {}));
+    if (res.status === 401) {
+      // session 过期
+      clearSession();
+      showLogin('会话已过期，请重新登录');
+      throw new Error('unauthorized');
+    }
+    if (res.status === 404) {
+      throw new Error('not found');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '请求失败' }));
+      throw new Error(err.detail || '请求失败');
+    }
+    return res.json();
+  }
+
+  async function login(password) {
+    const res = await fetch(BASE + '/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password })
+    });
+    if (res.status === 429) {
+      throw new Error('尝试过于频繁，请稍后再试');
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '登录失败' }));
+      throw new Error(err.detail || '登录失败');
+    }
+    const data = await res.json();
+    token = data.token;
+    sessionExpires = Date.now() + data.expires_in * 1000;
+    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(SESSION_KEY, String(sessionExpires));
+  }
+
+  function clearSession() {
+    token = '';
+    sessionExpires = 0;
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_KEY);
+  }
+
+  // ── 视图切换 ─────────────────────────────────
+  function showLogin(errMsg) {
+    $('login-view').style.display = 'flex';
+    $('console-view').classList.remove('active');
+    stopPolling();
+    if (errMsg) {
+      $('login-error').textContent = errMsg;
+    }
+    $('password').value = '';
+    $('password').focus();
+  }
+
+  function showConsole() {
+    $('login-view').style.display = 'none';
+    $('console-view').classList.add('active');
+    startPolling();
+    refreshAll();
+  }
+
+  // ── 数据刷新 ─────────────────────────────────
+  async function refreshOverview() {
+    try {
+      const d = await api('/api/overview');
+      flashValue($('m-dau'), d.dau);
+      flashValue($('m-mau'), d.mau);
+      flashValue($('m-online'), d.online_connections);
+      $('m-online-sub').textContent = '连接 ' + d.online_connections + ' · 账户 ' + d.online_accounts;
+      flashValue($('m-accounts'), d.total_accounts);
+      flashValue($('m-devices'), d.total_devices);
+      $('m-dbsize').textContent = fmtBytes(d.db_size_bytes);
+      const quotaPct = d.quota_limit_bytes > 0
+        ? Math.round(d.quota_used_bytes / d.quota_limit_bytes * 100)
+        : null;
+      $('m-quota-sub').textContent = quotaPct !== null
+        ? '全服务端 ' + fmtBytes(d.quota_used_bytes) + ' / ' + fmtBytes(d.quota_limit_bytes)
+        : '配额无限制 · ' + fmtBytes(d.quota_used_bytes);
+      updateStatusLine(d);
+      updateSessionInfo();
+    } catch (e) {
+      if (e.message !== 'unauthorized') {
+        showToast('总览加载失败: ' + e.message);
+      }
+    }
+  }
+
+  async function refreshSystem() {
+    try {
+      const d = await api('/api/system');
+      setResource('cpu', d.cpu_percent, d.cpu_percent + '%');
+      setResource('mem', d.mem_percent, fmtBytes(d.mem_used_bytes) + ' / ' + fmtBytes(d.mem_total_bytes));
+      setResource('disk', d.disk_percent, fmtBytes(d.disk_used_bytes) + ' / ' + fmtBytes(d.disk_total_bytes));
+      $('sys-meta').textContent = 'uptime ' + fmtUptime(d.server_uptime_seconds);
+    } catch (e) {
+      if (e.message !== 'unauthorized') {
+        // 静默失败，避免刷屏
+      }
+    }
+  }
+
+  function setResource(name, pct, text) {
+    const bar = $('r-' + name + '-bar');
+    const val = $('r-' + name + '-val');
+    bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+    val.textContent = text;
+    bar.classList.remove('is-warn', 'is-danger');
+    if (pct >= 90) bar.classList.add('is-danger');
+    else if (pct >= 75) bar.classList.add('is-warn');
+  }
+
+  function updateStatusLine(d) {
+    const el = $('status-line');
+    const quotaPart = d.quota_limit_bytes > 0
+      ? '<span class="sl-key">quota</span> <span class="sl-val">' + fmtBytes(d.quota_used_bytes) + '/' + fmtBytes(d.quota_limit_bytes) + '</span>'
+      : '<span class="sl-key">quota</span> <span class="sl-val">' + fmtBytes(d.quota_used_bytes) + '</span>';
+    el.innerHTML =
+      '<span class="sl-arrow">↑</span>' +
+      '<span class="sl-key">up</span> <span class="sl-val">' + fmtUptime(d.server_uptime_seconds) + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">conns</span> <span class="sl-val-accent">' + d.online_connections + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">acc</span> <span class="sl-val">' + d.total_accounts + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">dev</span> <span class="sl-val">' + d.total_devices + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">db</span> <span class="sl-val-purple">' + fmtBytes(d.db_size_bytes) + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      quotaPart +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">dau</span> <span class="sl-val-accent">' + d.dau + '</span>' +
+      '<span class="sl-sep">·</span>' +
+      '<span class="sl-key">mau</span> <span class="sl-val">' + d.mau + '</span>';
+  }
+
+  function updateSessionInfo() {
+    const remain = Math.max(0, Math.floor((sessionExpires - Date.now()) / 1000));
+    const m = Math.floor(remain / 60);
+    const s = remain % 60;
+    $('session-info').textContent = '会话剩余 ' + m + ':' + (s < 10 ? '0' + s : s);
+  }
+
+  async function refreshAccounts() {
+    try {
+      const d = await api('/api/accounts');
+      renderAccounts(d.accounts, d.quota_limit_bytes);
+      const totalQuota = d.accounts.reduce((s, a) => s + a.quota_used_bytes, 0);
+      $('acc-meta').textContent = d.accounts.length + ' 个账户 · 总占用 ' + fmtBytes(totalQuota);
+    } catch (e) {
+      if (e.message !== 'unauthorized') {
+        $('accounts-tbody').innerHTML = '<tr><td colspan="6" class="empty-state">加载失败: ' + e.message + '</td></tr>';
+      }
+    }
+  }
+
+  function renderAccounts(accounts, quotaLimit) {
+    const tbody = $('accounts-tbody');
+    if (accounts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无账户</td></tr>';
+      return;
+    }
+    tbody.innerHTML = accounts.map((a, i) => {
+      const pct = quotaLimit > 0 ? Math.min(100, a.quota_used_bytes / quotaLimit * 100) : 0;
+      const barClass = pct >= 90 ? 'is-danger' : (pct >= 75 ? 'is-warn' : '');
+      const quotaText = quotaLimit > 0
+        ? fmtBytes(a.quota_used_bytes) + ' / ' + fmtBytes(quotaLimit)
+        : fmtBytes(a.quota_used_bytes);
+      const badge = a.online
+        ? '<span class="acc-online-badge is-online"><span class="dot"></span>在线</span>'
+        : '<span class="acc-online-badge is-offline"><span class="dot"></span>离线</span>';
+      return ''
+        + '<tr class="acc-row" data-account-id="' + a.account_id_short + '" data-index="' + i + '">'
+        +   '<td><button class="expand-btn" data-expand="' + a.account_id_short + '" aria-label="展开设备">+</button></td>'
+        +   '<td><span class="acc-id">' + a.account_id_short + '</span></td>'
+        +   '<td>' + badge + '</td>'
+        +   '<td><div class="quota-cell"><div class="quota-bar"><div class="quota-bar-fill ' + barClass + '" style="width:' + pct + '%"></div></div><span class="quota-text">' + quotaText + '</span></div></td>'
+        +   '<td class="num-cell">' + a.device_count + '</td>'
+        +   '<td class="time-cell">' + fmtRelative(a.last_active_at) + '</td>'
+        + '</tr>'
+        + '<tr class="devices-row is-hidden" data-devices-for="' + a.account_id_short + '"><td colspan="6"><div class="devices-inner"><div class="devices-title">设备列表</div><div class="devices-content">加载中…</div></div></td></tr>';
+    }).join('');
+
+    // 绑定展开按钮
+    tbody.querySelectorAll('.expand-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        toggleDevices(this);
+      });
+    });
+  }
+
+  async function toggleDevices(btn) {
+    const accId = btn.getAttribute('data-expand');
+    const row = btn.closest('tr');
+    const devicesRow = document.querySelector('.devices-row[data-devices-for="' + CSS.escape(accId) + '"]');
+    if (!devicesRow) return;
+
+    if (btn.classList.contains('is-open')) {
+      // 收起
+      btn.classList.remove('is-open');
+      btn.textContent = '+';
+      devicesRow.classList.add('is-hidden');
+      return;
+    }
+
+    // 展开
+    btn.classList.add('is-open');
+    btn.textContent = '−';
+    devicesRow.classList.remove('is-hidden');
+    const content = devicesRow.querySelector('.devices-content');
+    content.textContent = '加载中…';
+
+    try {
+      const d = await api('/api/accounts/' + encodeURIComponent(accId) + '/devices');
+      if (d.devices.length === 0) {
+        content.innerHTML = '<div class="empty-state" style="padding:1rem">该账户暂无设备</div>';
+        return;
+      }
+      content.innerHTML = ''
+        + '<table class="devices-table">'
+        +   '<thead><tr><th>设备 ID</th><th>平台</th><th>状态</th><th>最后活跃</th></tr></thead>'
+        +   '<tbody>'
+        + d.devices.map(dev => {
+            const status = dev.online
+              ? '<span class="acc-online-badge is-online" style="font-size:0.65rem"><span class="dot"></span>在线</span>'
+              : '<span class="acc-online-badge is-offline" style="font-size:0.65rem"><span class="dot"></span>离线</span>';
+            return ''
+              + '<tr>'
+              +   '<td><span class="dev-id">' + dev.device_id_short + '</span></td>'
+              +   '<td><span class="dev-platform">' + escapeHtml(dev.platform) + '</span></td>'
+              +   '<td>' + status + '</td>'
+              +   '<td class="time-cell">' + fmtRelative(dev.last_seen_at) + '</td>'
+              + '</tr>';
+          }).join('')
+        +   '</tbody>'
+        + '</table>';
+    } catch (e) {
+      content.innerHTML = '<div class="empty-state" style="padding:1rem;color:var(--danger)">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  function refreshAll() {
+    refreshOverview();
+    refreshSystem();
+    refreshAccounts();
+  }
+
+  // ── 轮询 ─────────────────────────────────────
+  function startPolling() {
+    stopPolling();
+    // 状态行 + session 信息：每 5s
+    pollStatus = setInterval(() => {
+      refreshOverview();
+      updateSessionInfo();
+    }, 5000);
+    // 系统资源：每 10s（CPU 需要间隔才有意义）
+    pollOverview = setInterval(refreshSystem, 10000);
+    // 账户列表：每 30s
+    pollAccounts = setInterval(refreshAccounts, 30000);
+  }
+
+  function stopPolling() {
+    if (pollStatus) { clearInterval(pollStatus); pollStatus = null; }
+    if (pollOverview) { clearInterval(pollOverview); pollOverview = null; }
+    if (pollAccounts) { clearInterval(pollAccounts); pollAccounts = null; }
+  }
+
+  // ── 登出 ─────────────────────────────────────
+  async function doLogout() {
+    try {
+      await api('/api/logout', { method: 'POST' });
+    } catch (e) { /* 忽略 */ }
+    clearSession();
+    showLogin('已登出');
+  }
+
+  // ── 初始化 ───────────────────────────────────
+  function init() {
+    // HTTPS 检测
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && location.hostname !== '::1') {
+      $('https-warning').style.display = 'block';
+    }
+
+    // 登录表单
+    $('login-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const pwd = $('password').value;
+      if (!pwd) return;
+      $('login-button').disabled = true;
+      $('login-error').textContent = '';
+      setLoading(true);
+      try {
+        await login(pwd);
+        showConsole();
+      } catch (err) {
+        $('login-error').textContent = err.message;
+      } finally {
+        $('login-button').disabled = false;
+        setLoading(false);
+      }
+    });
+
+    // 登出按钮
+    $('logout-button').addEventListener('click', doLogout);
+
+    // 检查已有 session
+    if (token && sessionExpires > Date.now()) {
+      showConsole();
+    } else {
+      clearSession();
+      showLogin();
+    }
+
+    // 页面可见性变化时立即刷新
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible' && token) {
+        refreshAll();
+      }
+    });
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

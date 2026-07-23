@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use chrono::Utc;
 use rusqlite::{Connection, Result as RusqliteResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,7 +22,7 @@ pub enum ConversationError {
     },
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Conversation {
     pub id: String,
@@ -32,7 +32,7 @@ pub struct Conversation {
     pub updated_at: chrono::DateTime<Utc>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredMessage {
     pub id: String,
@@ -48,6 +48,15 @@ pub struct StoredMessage {
     pub reasoning_content: Option<String>,
     /// JSON array of relative image paths under `images/` (user messages).
     pub image_paths_json: Option<String>,
+}
+
+/// 会话完整快照（元数据 + 全部消息），用于跨设备同步。
+/// 序列化后的 JSON 是 `conversations.{id}` key 对应的明文值。
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationWithMessages {
+    pub conversation: Conversation,
+    pub messages: Vec<StoredMessage>,
 }
 
 /// 聊天历史全文搜索的单条会话聚合结果。
@@ -580,6 +589,130 @@ impl ConversationDb {
             (Utc::now().to_rfc3339(), conversation_id),
         )?;
         Ok(())
+    }
+
+    /// 读取单个会话的元数据（不含消息）。
+    pub fn get_conversation(&self, conversation_id: &str) -> RusqliteResult<Option<Conversation>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, connection_id, title, created_at, updated_at
+             FROM conversations
+             WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([conversation_id], |row| {
+            Ok(Conversation {
+                id: row.get(0)?,
+                connection_id: row.get(1)?,
+                title: row.get(2)?,
+                created_at: row
+                    .get::<_, String>(3)?
+                    .parse()
+                    .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+                updated_at: row
+                    .get::<_, String>(4)?
+                    .parse()
+                    .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+            })
+        })?;
+        match rows.next() {
+            Some(Ok(c)) => Ok(Some(c)),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    /// 读取会话完整快照（元数据 + 全部消息），用于跨设备同步 push。
+    pub fn get_conversation_with_messages(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Option<ConversationWithMessages>> {
+        let conv = match self.get_conversation(conversation_id)? {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+        let messages = self.load_messages(conversation_id)?;
+        Ok(Some(ConversationWithMessages {
+            conversation: conv,
+            messages,
+        }))
+    }
+
+    /// upsert 会话元数据（用于跨设备同步 pull 应用）。
+    /// 注意：不修改 updated_at，保留传入的值（同步语义）。
+    pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                connection_id = excluded.connection_id,
+                title = excluded.title,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at",
+            (
+                &conv.id,
+                &conv.connection_id,
+                &conv.title,
+                conv.created_at.to_rfc3339(),
+                conv.updated_at.to_rfc3339(),
+            ),
+        )?;
+        Ok(())
+    }
+
+    /// 替换会话的全部消息（删除旧的 + 插入新的）。
+    /// 用于跨设备同步 pull 时整体覆盖会话消息。
+    pub fn replace_messages(
+        &self,
+        conversation_id: &str,
+        messages: &[StoredMessage],
+    ) -> RusqliteResult<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            [conversation_id],
+        )?;
+        for m in messages {
+            tx.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(id) DO UPDATE SET
+                    conversation_id = excluded.conversation_id,
+                    role = excluded.role,
+                    content = excluded.content,
+                    timestamp = excluded.timestamp,
+                    created_at = excluded.created_at,
+                    tool_calls_json = excluded.tool_calls_json,
+                    reasoning_content = excluded.reasoning_content,
+                    image_paths_json = excluded.image_paths_json",
+                (
+                    &m.id,
+                    &m.conversation_id,
+                    &m.role,
+                    &m.content,
+                    &m.timestamp,
+                    m.created_at.to_rfc3339(),
+                    &m.tool_calls_json,
+                    &m.reasoning_content,
+                    &m.image_paths_json,
+                ),
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 列出所有会话 id（用于跨设备同步比对）。
+    pub fn list_all_conversation_ids(&self) -> RusqliteResult<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id FROM conversations")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for r in rows {
+            ids.push(r?);
+        }
+        Ok(ids)
     }
 
     /// 保存或更新 plan（按 task_id upsert）。

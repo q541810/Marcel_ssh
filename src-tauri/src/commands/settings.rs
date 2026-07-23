@@ -118,6 +118,25 @@ pub async fn config_save_settings(
     let path = AppSettings::default_file(&state.config_dir);
     tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
 
+    // 触发跨设备同步：settings 字段级 diff，对变更字段逐个 record_local_change
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let new_json = serde_json::to_value(&snapshot).unwrap_or(serde_json::Value::Null);
+            // 对每个字段路径 diff，变更的 bump 版本
+            for field_path in crate::sync::settings_field::all_field_paths() {
+                let sync_key = format!("settings.{}", field_path);
+                let new_field = crate::sync::settings_field::get_field(&new_json, field_path);
+                let new_field_str = new_field
+                    .as_ref()
+                    .and_then(|v| serde_json::to_string(v).ok())
+                    .unwrap_or_default();
+                // record_local_change 内部会与 last_synced_values 比对，相同则不 bump
+                let _ = engine.record_local_change(&sync_key, &new_field_str);
+            }
+            scheduler.schedule_push();
+        }
+    }
+
     // Settings changes (enable/disable plugin, authorized capabilities) may
     // affect the plugin registry. Reload and emit so the frontend can
     // diff-refresh webviews/injections without a nuke-and-rebuild.

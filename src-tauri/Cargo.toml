@@ -47,6 +47,11 @@ url = "2"
 dirs = "^5"
 semver = "^1"
 handlebars = "6"
+# 跨设备同步 E2E 加密：纯 Rust crate，无平台差异，桌面/Android 共用
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
 
 
 
@@ -54,6 +59,8 @@ handlebars = "6"
 # reqwest TLS 后端按平台拆分：桌面用系统原生 TLS；Android 交叉编译没有 OpenSSL，用 rustls。
 [target.'cfg(not(target_os = "android"))'.dependencies]
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "charset", "gzip", "brotli", "deflate"] }
+# 同步 WebSocket：桌面走系统 TLS
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "native-tls"] }
 # 桌面密钥链：Windows Credential Manager / macOS+iOS Keychain / Linux Secret Service
 keyring = { version = "^4", default-features = false, features = [
     "v1",
@@ -64,6 +71,8 @@ keyring = { version = "^4", default-features = false, features = [
 
 [target.'cfg(target_os = "android")'.dependencies]
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "gzip", "brotli", "deflate"] }
+# 同步 WebSocket：Android 交叉编译用 rustls
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 # Android 密钥链：SharedPreferences + Android Keystore（hardware-backed AES）
 # v3 时代 keyring 在 Android 静默降级为内存 mock，重启即丢；
 # v4 的 v1 便利模块仍不覆盖 Android，因此直接用官方 store + keyring-core 构建 Entry。

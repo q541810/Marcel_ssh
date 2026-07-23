@@ -27,5 +27,16 @@ Thumbs.db
 .env
 .env.local
 
+# Python (sync server)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 同步服务端运行时产物
+server/config.toml
+server/data/
+
 # 官网
 website/

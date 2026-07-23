@@ -62,6 +62,19 @@ pub async fn skill_add(
     let mut store = state.skill_store.write().await;
     store.add(skill);
     store.save_to_path(&path)?;
+    drop(store);
+
+    // 触发跨设备同步：skills 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("skills.{}", cloned.id),
+                &serde_json::to_string(&cloned).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(cloned)
 }
 
@@ -84,22 +97,60 @@ pub async fn skill_update(
         }
     }
     let path = SkillStore::default_file(&state.config_dir);
-    let mut store = state.skill_store.write().await;
-    if !store.update(&id, name, description, prompt) {
-        return Err(AppError::Config(format!("skill not found: {}", id)));
+    let updated = {
+        let mut store = state.skill_store.write().await;
+        if !store.update(&id, name, description, prompt) {
+            return Err(AppError::Config(format!("skill not found: {}", id)));
+        }
+        let updated = store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
+        store.save_to_path(&path)?;
+        updated
+    };
+
+    // 触发跨设备同步：skills 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("skills.{}", id),
+                &serde_json::to_string(&updated).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
     }
-    store.save_to_path(&path)?;
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn skill_toggle(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let path = SkillStore::default_file(&state.config_dir);
-    let mut store = state.skill_store.write().await;
-    if !store.toggle(&id) {
-        return Err(AppError::Config(format!("skill not found: {}", id)));
+    let updated = {
+        let mut store = state.skill_store.write().await;
+        if !store.toggle(&id) {
+            return Err(AppError::Config(format!("skill not found: {}", id)));
+        }
+        let updated = store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
+        store.save_to_path(&path)?;
+        updated
+    };
+
+    // 触发跨设备同步：skills 变更（toggle 改变 enabled 状态）
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("skills.{}", id),
+                &serde_json::to_string(&updated).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
     }
-    store.save_to_path(&path)?;
+
     Ok(())
 }
 
@@ -111,5 +162,15 @@ pub async fn skill_delete(state: State<'_, AppState>, id: String) -> Result<(), 
         return Err(AppError::Config(format!("skill not found: {}", id)));
     }
     store.save_to_path(&path)?;
+    drop(store);
+
+    // 触发跨设备同步：skills 删除
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_delete(&format!("skills.{}", id));
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }

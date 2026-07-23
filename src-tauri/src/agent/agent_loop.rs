@@ -97,7 +97,8 @@ pub(crate) async fn run_agent_loop(
         config_dir,
     } = ctx;
 
-    let persister = ConversationPersister::new(conv_db, conversation_id.clone());
+    let persister = ConversationPersister::new(conv_db, conversation_id.clone())
+        .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
 
     persister.update_title_from_last_user_msg(&messages);
     persister.save_last_user_msg(&messages);

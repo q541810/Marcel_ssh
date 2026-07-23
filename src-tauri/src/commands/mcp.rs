@@ -35,6 +35,19 @@ pub async fn mcp_add_server(
     let mut store = state.mcp_store.write().await;
     store.add(server);
     store.save_to_path(&path)?;
+    drop(store);
+
+    // 触发跨设备同步：mcpServers 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("mcpServers.{}", cloned.id),
+                &serde_json::to_string(&cloned).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(cloned)
 }
 
@@ -45,12 +58,29 @@ pub async fn mcp_update_server(
     input: McpServerInput,
 ) -> Result<(), AppError> {
     let path = McpServerStore::default_file(&state.config_dir);
-    {
+    let updated = {
         let mut store = state.mcp_store.write().await;
         store.update(&id, input)?;
+        let updated = store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| AppError::Config(format!("MCP server not found: {}", id)))?;
         store.save_to_path(&path)?;
-    }
+        updated
+    };
     state.mcp_manager.clear_cache(&id).await;
+
+    // 触发跨设备同步：mcpServers 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("mcpServers.{}", id),
+                &serde_json::to_string(&updated).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }
 
@@ -63,19 +93,45 @@ pub async fn mcp_delete_server(state: State<'_, AppState>, id: String) -> Result
         store.save_to_path(&path)?;
     }
     state.mcp_manager.clear_cache(&id).await;
+
+    // 触发跨设备同步：mcpServers 删除
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_delete(&format!("mcpServers.{}", id));
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }
 
 #[tauri::command]
 pub async fn mcp_toggle_server(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let path = McpServerStore::default_file(&state.config_dir);
-    {
+    let updated = {
         let mut store = state.mcp_store.write().await;
         store.toggle(&id)?;
+        let updated = store
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| AppError::Config(format!("MCP server not found: {}", id)))?;
         store.save_to_path(&path)?;
-    }
+        updated
+    };
     // enabled 不进 tools cache key；Agent 只注册 store 里 enabled 的 server。
     // 不清 cache，避免关/开闪空与无意义重刷。
+
+    // 触发跨设备同步：mcpServers 变更（toggle 改变 enabled 状态）
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_change(
+                &format!("mcpServers.{}", id),
+                &serde_json::to_string(&updated).unwrap_or_default(),
+            );
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }
 

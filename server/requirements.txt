@@ -1,0 +1,7 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+aiosqlite>=0.20.0
+# 配置文件解析：Python 3.11+ 内置 tomllib，3.10 需 tomli
+tomli>=2.0.0; python_version < "3.11"
+# admin 监控面板：系统资源采集（CPU/内存/磁盘）。仅 admin.enabled=true 时使用
+psutil>=5.9.0

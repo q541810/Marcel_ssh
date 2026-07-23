@@ -8,6 +8,7 @@ pub mod plugins;
 pub mod notification;
 pub mod skills;
 pub mod ssh;
+pub mod sync;
 pub mod util;
 
 use std::collections::HashMap;
@@ -84,6 +85,10 @@ pub struct AppState {
     /// Reloads on startup and whenever settings change (enable/disable plugin,
     /// authorized capabilities). Emits `plugin-registry-changed` after reload.
     pub plugin_registry: crate::plugins::registry::SharedPluginRegistry,
+    /// 跨设备同步引擎（None = 未初始化）
+    pub sync_engine: Option<std::sync::Arc<crate::sync::engine::SyncEngine>>,
+    /// 同步调度器（None = 未初始化）
+    pub sync_scheduler: Option<std::sync::Arc<crate::sync::scheduler::SyncScheduler>>,
 }
 
 impl AppState {
@@ -310,16 +315,101 @@ impl AppState {
             }
         };
 
+        // ── Phase 3: sync engine + scheduler + accessor ──────────────
+        // Sync is optional — initialization is best-effort and non-fatal.
+        // Scheduler stays NotConfigured until the user pairs via sync_pair_first/join.
+        //
+        // 先把各 store 包成 Arc<TokioRwLock<T>>，这样 accessor 可以 clone 这些 Arc，
+        // 同时 Self{} 可以直接 move 它们。
+        let connection_store_arc = std::sync::Arc::new(TokioRwLock::new(connection_store));
+        let settings_arc = std::sync::Arc::new(TokioRwLock::new(settings));
+        let quick_command_store_arc = std::sync::Arc::new(TokioRwLock::new(quick_command_store));
+        let conversation_db_arc = std::sync::Arc::new(conversation_db);
+        let skill_store_arc = std::sync::Arc::new(TokioRwLock::new(skill_store));
+        let mcp_store_arc = std::sync::Arc::new(TokioRwLock::new(mcp_store));
+
+        let (sync_engine, sync_scheduler) = {
+            let profile = crate::sync::profile::SyncProfile::default();
+            let engine = std::sync::Arc::new(
+                crate::sync::engine::SyncEngine::new(config_dir.clone(), profile),
+            );
+
+            // Load local version table (best-effort)
+            if let Err(e) = engine.load().await {
+                log::warn!("同步引擎加载本地版本表失败: {}", e);
+            }
+
+            // 创建 accessor 并注入到 engine
+            // accessor 持有各 store 的 Arc 引用，用于 push 时读值 / pull 时写值
+            let accessor = std::sync::Arc::new(crate::sync::accessor::SyncStoreAccessor::new(
+                config_dir.clone(),
+                settings_arc.clone(),
+                connection_store_arc.clone(),
+                quick_command_store_arc.clone(),
+                skill_store_arc.clone(),
+                mcp_store_arc.clone(),
+                conversation_db_arc.clone(),
+            ));
+            engine.set_accessor(accessor);
+
+            let server_url = crate::sync::keychain::get_server_url()
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            // 降级：即使 server_url 为空也创建一个 client，sync 操作会失败但不会 panic
+            let client_url = if server_url.is_empty() {
+                "http://localhost:0".to_string()
+            } else {
+                server_url
+            };
+            let client = match crate::sync::client::SyncClient::new(&client_url) {
+                Ok(c) => std::sync::Arc::new(c),
+                Err(e) => {
+                    log::warn!("同步客户端初始化失败: {}", e);
+                    return Self {
+                        ssh_manager: SshManager::with_known_hosts(known_hosts),
+                        agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        connection_store: connection_store_arc,
+                        settings: settings_arc,
+                        quick_command_store: quick_command_store_arc,
+                        conversation_db: conversation_db_arc,
+                        skill_store: skill_store_arc,
+                        mcp_store: mcp_store_arc,
+                        mcp_manager: std::sync::Arc::new(McpManager::new()),
+                        config_dir,
+                        pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        pending_questions: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
+                        plugin_registry: crate::plugins::registry::new_shared(),
+                        sync_engine: Some(engine),
+                        sync_scheduler: None,
+                    };
+                }
+            };
+
+            let scheduler = std::sync::Arc::new(
+                crate::sync::scheduler::SyncScheduler::new(engine.clone(), client),
+            );
+
+            (Some(engine), Some(scheduler))
+        };
+
         Self {
             ssh_manager: SshManager::with_known_hosts(known_hosts),
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            connection_store: std::sync::Arc::new(TokioRwLock::new(connection_store)),
-            settings: std::sync::Arc::new(TokioRwLock::new(settings)),
-            quick_command_store: std::sync::Arc::new(TokioRwLock::new(quick_command_store)),
-            conversation_db: std::sync::Arc::new(conversation_db),
-            skill_store: std::sync::Arc::new(TokioRwLock::new(skill_store)),
-            mcp_store: std::sync::Arc::new(TokioRwLock::new(mcp_store)),
+            connection_store: connection_store_arc,
+            settings: settings_arc,
+            quick_command_store: quick_command_store_arc,
+            conversation_db: conversation_db_arc,
+            skill_store: skill_store_arc,
+            mcp_store: mcp_store_arc,
             mcp_manager: std::sync::Arc::new(McpManager::new()),
             config_dir,
             pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -330,6 +420,8 @@ impl AppState {
             long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
+            sync_engine,
+            sync_scheduler,
         }
     }
 }
@@ -485,6 +577,33 @@ pub fn run() {
                 while let Some(_) = set.join_next().await {}
             });
 
+            // Background: start sync scheduler if sync was configured previously.
+            // Engine + client + scheduler were initialized in AppState::new;
+            // here we only start the background loops (push debounce + polling).
+            // 同时注入 AppHandle 给 scheduler + accessor，让它们能 emit 前端事件。
+            {
+                let state = app.state::<AppState>();
+                let app_handle = app.handle();
+                if let Some(scheduler) = state.sync_scheduler.clone() {
+                    scheduler.set_app_handle(app_handle.clone());
+                    if let Some(api_key) = crate::sync::keychain::get_device_api_key()
+                        .ok()
+                        .flatten()
+                    {
+                        scheduler.set_api_key(Some(api_key));
+                        let scheduler_clone = scheduler.clone();
+                        tauri::async_runtime::spawn(async move {
+                            scheduler_clone.start().await;
+                        });
+                    }
+                }
+                // 注入 AppHandle 给 accessor（通过 engine 转发），
+                // 让 pull 时 apply_value 能 emit "sync-data-applied" 通知前端刷新。
+                if let Some(ref engine) = state.sync_engine {
+                    engine.set_accessor_app_handle(app_handle.clone());
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -598,6 +717,22 @@ pub fn run() {
             commands::plugin_fs::plugin_fs_write,
             commands::plugin_http::plugin_http_request,
             commands::plugin_notification::plugin_send_notification,
+            commands::sync::sync_get_summary,
+            commands::sync::sync_pair_first,
+            commands::sync::sync_pair_join,
+            commands::sync::sync_update_profile,
+            commands::sync::sync_push_now,
+            commands::sync::sync_pull_now,
+            commands::sync::sync_list_devices,
+            commands::sync::sync_remove_device,
+            commands::sync::sync_reset_account,
+            commands::sync::sync_disable,
+            commands::sync::sync_get_pending_conflicts,
+            commands::sync::sync_resolve_conflict,
+            commands::sync::sync_resolve_all_conflicts,
+            commands::sync::sync_add_excluded_key,
+            commands::sync::sync_remove_excluded_key,
+            commands::sync::sync_get_excluded_keys,
         ])
         .run(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application");

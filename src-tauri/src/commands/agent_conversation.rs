@@ -97,6 +97,15 @@ pub async fn agent_delete_conversation(
         .delete_conversation(&conversation_id)
         .map_err(|e| AppError::Agent(format!("Failed to delete conversation: {}", e)))?;
     log::info!("Deleted conversation: {}", conversation_id);
+
+    // 触发跨设备同步：conversations 删除
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let _ = engine.record_local_delete(&format!("conversations.{}", conversation_id));
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }
 
@@ -163,6 +172,16 @@ pub async fn agent_save_user_message(
             image_paths_json.as_deref(),
         )
         .map_err(|e| AppError::Agent(format!("保存用户消息失败: {}", e)))?;
+
+    // 触发跨设备同步：conversations 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let marker = chrono::Utc::now().to_rfc3339();
+            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(())
 }
 
@@ -312,6 +331,15 @@ pub async fn agent_truncate_conversation(
         restored_plan.is_some()
     );
 
+    // 触发跨设备同步：conversations 变更（truncate 改变了消息列表）
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let marker = chrono::Utc::now().to_rfc3339();
+            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            scheduler.schedule_push();
+        }
+    }
+
     Ok(TruncateConversationResult {
         deleted_messages: deleted,
         plan_adjusted,
@@ -386,6 +414,13 @@ pub async fn agent_delete_conversations_by_session(
         .await
         .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
+    // 先列出待删除的 conversation ids，删除后逐个触发 sync
+    let conv_ids = state
+        .conversation_db
+        .list_conversations(&connection_id)
+        .map(|v| v.into_iter().map(|c| c.id).collect::<Vec<_>>())
+        .unwrap_or_default();
+
     state
         .conversation_db
         .delete_conversations_by_connection(&connection_id)
@@ -393,10 +428,23 @@ pub async fn agent_delete_conversations_by_session(
             AppError::Agent(format!("Failed to delete conversations by session: {}", e))
         })?;
     log::info!(
-        "Deleted all conversations for session: {} (connection={})",
+        "Deleted all conversations for session: {} (connection={}, count={})",
         session_id,
-        connection_id
+        connection_id,
+        conv_ids.len()
     );
+
+    // 触发跨设备同步：逐个 conversations 删除
+    if let (Some(ref engine), Some(ref scheduler)) = (
+        &state.sync_engine,
+        &state.sync_scheduler,
+    ) {
+        for id in &conv_ids {
+            let _ = engine.record_local_delete(&format!("conversations.{}", id));
+        }
+        scheduler.schedule_push();
+    }
+
     Ok(())
 }
 

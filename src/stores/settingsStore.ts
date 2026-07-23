@@ -68,6 +68,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   customProtectedPaths: [],
   commandTimeoutSecs: 120,
   hasCompletedOnboarding: false,
+  hasAcceptedSyncDisclaimer: false,
   disabledPlugins: [],
   authorizedCapabilities: {},
   disableAllInjections: false,

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { usePluginStore } from '@/stores/pluginStore';
+import { useSettingsNavStore } from '@/stores/settingsNavStore';
 import { getErrorMessage } from '@/lib/errors';
 import type { AppSettings } from '@/lib/types';
 import { resolveSettingsLayout } from '@/lib/settingsLayout';
@@ -32,12 +33,31 @@ export default function Settings() {
   const [shellWidth, setShellWidth] = useState(1200);
   const savedNoticeTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  /** 上次已同步进 draft 的 store 快照；用于区分「用户本地改动」与「远端 sync 刷新 store」 */
+  const lastSyncedStoreRef = useRef<AppSettings | null>(
+    useSettingsStore.getState().loaded ? useSettingsStore.getState().settings : null,
+  );
 
   useEffect(() => {
     return () => {
       clearTimeout(savedNoticeTimerRef.current);
       clearTimeout(saveErrorTimerRef.current);
     };
+  }, []);
+
+  // 消费外部发起的 category 跳转意图（如 SyncStatusIndicator 点击）。
+  // 单次消费：读到立即清空，避免残留影响后续手动切换。
+  useEffect(() => {
+    const pending = useSettingsNavStore.getState().consume();
+    if (pending) setActiveCategory(pending);
+    // 订阅后续请求：用 subscribe 捕获 store 内 pendingCategory 变化。
+    const unsub = useSettingsNavStore.subscribe((s) => {
+      if (s.pendingCategory) {
+        setActiveCategory(s.pendingCategory);
+        useSettingsNavStore.getState().consume();
+      }
+    });
+    return unsub;
   }, []);
 
   const updateDraft = useCallback((patch: Partial<AppSettings>) => {
@@ -51,11 +71,35 @@ export default function Settings() {
     [storeSetPreview]
   );
 
-  useEffect(() => {
-    if (loaded && draft === null) {
-      setDraft(storeSettings);
-    }
-  }, [loaded, draft, storeSettings]);
+  // storeSettings 变化：初次加载 / 跨设备 sync pull 后 load(true)。
+  // layout 阶段跟进，避免 paint 一帧 draft 落后 → 闪「未保存的更改」。
+  // 字段级跟进：用户未改过的顶层字段跟进 sync，改过的保留（避免远端覆盖本地编辑）。
+  // 这样当本地编辑与远端 sync 在同字段同值时，dirty 自动消失，不会误显「未保存」。
+  useLayoutEffect(() => {
+    if (!loaded) return;
+    const prevStore = lastSyncedStoreRef.current;
+    lastSyncedStoreRef.current = storeSettings;
+    setDraft((current) => {
+      if (current === null) return storeSettings;
+      if (prevStore === null) return storeSettings;
+      // 整对象相同：直接跟进
+      if (JSON.stringify(current) === JSON.stringify(prevStore)) {
+        return storeSettings;
+      }
+      // 字段级合并：未改的顶层字段跟进 sync，改过的保留
+      // 用 Record<string, unknown> 中间层规避 keyof 联合类型索引赋值的 TS 限制
+      const cur = current as unknown as Record<string, unknown>;
+      const prev = prevStore as unknown as Record<string, unknown>;
+      const next = storeSettings as unknown as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...cur };
+      for (const key of Object.keys(storeSettings)) {
+        if (JSON.stringify(cur[key]) === JSON.stringify(prev[key])) {
+          merged[key] = next[key];
+        }
+      }
+      return merged as unknown as AppSettings;
+    });
+  }, [loaded, storeSettings]);
 
   useEffect(() => {
     const el = shellRef.current;

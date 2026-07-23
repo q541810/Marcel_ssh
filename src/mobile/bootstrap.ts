@@ -3,6 +3,7 @@ import { appReady, checkUpdate } from '@/lib/tauri';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { useSkillStore } from '@/stores/skillStore';
+import { useSyncStore } from '@/stores/syncStore';
 import { attachTransferListeners } from '@/stores/sftpTransferManager';
 
 const VALID_AGENT_MODES: readonly AgentMode[] = ['plan', 'agent', 'auto'];
@@ -53,6 +54,18 @@ export async function runMobileBootstrap(
     /* best-effort */
   }
   await deps.attachTransferListeners();
+  // 跨设备同步：加载摘要 + 监听事件（state-changed / data-applied / conflicts-detected）。
+  // 移动端 App 整个生命周期持有监听器，不需要 stopListening。
+  try {
+    await useSyncStore.getState().load();
+  } catch {
+    /* best-effort：sync 失败不影响其他功能 */
+  }
+  try {
+    await useSyncStore.getState().startListening();
+  } catch {
+    /* best-effort：非 Tauri 环境会失败 */
+  }
   // Update check last and silent-on-failure: never blocks interaction.
   try {
     const result = await deps.checkUpdate();

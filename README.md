@@ -63,15 +63,14 @@ QQ:1101255501
 
 Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端(Preview)**，两端共用同一套核心：SSH 终端、Agent 自动化、SFTP 文件管理、Skills、MCP、设置。
 
-|                                | Windows                                | Android                                     |
-| ------------------------------ | -------------------------------------- | ------------------------------------------- |
-| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名） |
-| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                           |
-| 插件系统                           | ✓                                      | ✗（移动端不兼容插件）                                 |
-| 自定义MCP                         | ✓                                      | ✗                                           |
-| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences        |
-| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                    |
-| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                 |
+|                                | Windows                                | Android                                                          |
+| ------------------------------ | -------------------------------------- | ---------------------------------------------------------------- |
+| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名）                      |
+| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                                                |
+| 插件系统/自定义MCP                    | ✓                                      | ✗                                                                |
+| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences |
+| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                                         |
+| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                                      |
 
 Android APK 在 [Release 页面](https://github.com/q541810/Marcel_ssh/releases) 与 Windows 安装包一同发布。
 

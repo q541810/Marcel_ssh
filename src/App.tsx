@@ -16,10 +16,12 @@ import HostKeyWarningToast from '@/components/layout/HostKeyWarningToast';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
+import SyncConflictModal from '@/components/settings/SyncConflictModal';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { usePluginStore } from '@/stores/pluginStore';
+import { useSyncStore } from '@/stores/syncStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate, sftpPreviewCleanup } from '@/lib/tauri';
@@ -55,7 +57,8 @@ const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 const AGENT_PANEL_COLLAPSE_MS = 300;
 
 export default function App() {
-  const [activeId, setActiveId] = useState<string>('builtin.sessions');
+  const activeId = useViewStore((s) => s.activeId);
+  const setActiveId = useViewStore((s) => s.setActiveId);
   const providers = useViewStore((s) => s.providers);
   const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -315,6 +318,21 @@ export default function App() {
     }
   }, []);
 
+  // 启动跨设备同步：加载摘要 + 监听同步事件（state-changed / data-applied / conflicts-detected）。
+  // syncStore 不依赖 settings，可独立启动。
+  useEffect(() => {
+    const syncStore = useSyncStore.getState();
+    syncStore.load().catch((err) => {
+      console.error('Failed to load sync state:', err);
+    });
+    syncStore.startListening().catch((err) => {
+      console.error('Failed to start sync listeners:', err);
+    });
+    return () => {
+      syncStore.stopListening();
+    };
+  }, []);
+
   useEffect(() => {
     // 必须先 loadSettings 再 fetchPlugins：视图注册依赖 disabledPlugins，
     // 并行启动时 settings 仍是默认 []，会把已禁用插件注册进 NavRail。
@@ -509,6 +527,7 @@ export default function App() {
 
       <SettingsWarningToast />
       <HostKeyWarningToast />
+      <SyncConflictModal />
 
       {/* Shared overlay container for content-script plugins. Fixed, full
           screen, no pointer events by default; plugins opt-in via

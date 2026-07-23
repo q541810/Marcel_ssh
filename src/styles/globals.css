@@ -147,6 +147,27 @@ body,
   background-color: #18181b;
 }
 
+/*
+ * Mobile IME + overlays-content: the browser may pan/scroll the document to
+ * keep a focused input above the keyboard. That creates a blank strip under
+ * the content and exposes the bottom tab bar. Pin the document so only in-app
+ * scroll containers move; content height still reacts via --ime-bottom.
+ */
+html[data-marcel-platform='mobile'],
+html[data-marcel-platform='mobile'] body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+
+html[data-marcel-platform='mobile'] #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* Custom scrollbar styles */
 ::-webkit-scrollbar {
   width: 8px;
@@ -455,8 +476,9 @@ button,
   transition: outline-offset 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
-/* Disable focus ring for agent panel input */
-.agent-input input:focus-visible {
+/* Disable focus ring for agent panel input — outer border is the only highlight */
+.agent-input input:focus-visible,
+.agent-input textarea:focus-visible {
   outline: none;
   outline-offset: 0;
 }

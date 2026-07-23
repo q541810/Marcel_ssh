@@ -495,6 +495,8 @@ export interface AppSettings {
   commandTimeoutSecs: number;
   /** Whether the user has completed the onboarding wizard. */
   hasCompletedOnboarding: boolean;
+  /** Whether the user has accepted the cross-device sync disclaimer (first visit only). */
+  hasAcceptedSyncDisclaimer: boolean;
   /** Disabled plugin IDs. Plugins listed here are scanned but not loaded. */
   disabledPlugins: string[];
   /**
@@ -734,4 +736,136 @@ export interface Skill {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// ──────────── 跨设备同步（与 Rust sync 模块对齐，camelCase） ────────────
+
+/** 一级同步分类（与 src-tauri/src/sync/profile.rs SyncCategory 对齐） */
+export type SyncCategory =
+  | 'connections'
+  | 'quickCommands'
+  | 'skills'
+  | 'mcpServers'
+  | 'conversations'
+  | 'terminalSettings'
+  | 'modelService'
+  | 'agentPolicy'
+  | 'displaySettings'
+  | 'secrets';
+
+/** 平台标识（与 sync/profile.rs Platform 对齐，lowercase 序列化） */
+export type SyncPlatform = 'desktop' | 'mobile';
+
+/** 同步状态机（与 sync/scheduler.rs SyncState 对齐，camelCase 序列化） */
+export type SyncState = 'idle' | 'pushing' | 'pulling' | 'error' | 'notConfigured';
+
+/**
+ * sync_profile：用户选择的同步项集合。
+ * Rust 端用 HashSet<SyncCategory>，序列化后是数组；前端用数组以保持顺序与可遍历。
+ */
+export interface SyncProfile {
+  /** 开启的一级分类列表 */
+  enabledCategories: SyncCategory[];
+  /** 字段级排除清单（用户在冲突 UI 选"永久跳过"时加入）
+   *  存储完整 key 字符串（如 "settings.fontSize"）
+   *  与 Rust 端 HashSet<String> 对齐，序列化为数组 */
+  excludedKeys: string[];
+}
+
+/** 同步摘要（GET sync_get_summary 返回） */
+export interface SyncSummary {
+  /** 是否已完成配对（sync_key + device_id + api_key 全部就绪） */
+  configured: boolean;
+  /** 服务器 URL（未配置时为 null） */
+  serverUrl: string | null;
+  /** 本设备 ID（未配置时为 null） */
+  deviceId: string | null;
+  /** 平台标识：'desktop' | 'mobile' */
+  platform: string;
+  /** 当前 sync_profile */
+  profile: SyncProfile;
+  /** 当前同步状态机值 */
+  state: SyncState;
+  /** 待 push 的本地变更数 */
+  pendingCount: number;
+  /** 最近错误信息（无错为 null） */
+  error: string | null;
+}
+
+/** sync-state-changed 事件 payload */
+export interface SyncStateEvent {
+  state: SyncState;
+  pendingCount: number;
+  error: string | null;
+}
+
+/** 已配对设备信息 */
+export interface SyncDeviceInfo {
+  /** 设备 ID（UUID） */
+  deviceId: string;
+  /** 平台：'desktop' | 'mobile' */
+  platform: SyncPlatform;
+  /** 最后活跃时间（ISO 8601 字符串） */
+  lastSeenAt: string;
+}
+
+/** sync_pair_first / sync_pair_join 返回值 */
+export interface SyncPairResult {
+  /** 第一台设备返回新生成的配置码（仅此一次，用户必须手抄保存）；其他设备返回 null */
+  configCode: string | null;
+  /** 是否是第一台设备（true = 新账户，false = 加入已有账户） */
+  isFirstDevice: boolean;
+}
+
+/** sync_reset_account 返回值 */
+export interface SyncResetResult {
+  success: boolean;
+  error: string | null;
+}
+
+// ──────────── 冲突解决（与 Rust sync::engine 对齐） ────────────
+
+/**
+ * 待解决的同步冲突项。
+ * pull 时检测到本地和远程都改了同一 key 且值不同，缓存到内存等用户决策。
+ */
+export interface SyncPendingConflict {
+  /** 冲突的 key（如 `settings.fontSize`、`connections.abc`） */
+  key: string;
+  /** 远程版本号 */
+  remoteVersion: number;
+  /** base：上次同步的值（明文 JSON 字符串），首次同步时为 null */
+  base: string | null;
+  /** ours：当前本地值（明文 JSON 字符串），删除时为 null */
+  ours: string | null;
+  /** theirs：远程值（明文 JSON 字符串），远程删除时为 null */
+  theirs: string | null;
+}
+
+/**
+ * 用户在 UI 选择的冲突解决动作（与 Rust ConflictActionDto 对齐）。
+ * 使用 serde tag = "type" 序列化。
+ */
+export type SyncConflictAction =
+  | { type: 'ours' }
+  | { type: 'theirs' }
+  | { type: 'skipOnce' }
+  | { type: 'skipForever' }
+  | { type: 'custom'; value: string }
+  | { type: 'fork' };
+
+/** sync_resolve_conflict / sync_resolve_all_conflicts 返回值 */
+export interface SyncResolveResult {
+  /** "pushNeeded" | "appliedTheirs" | "skipped" | "excluded" */
+  outcome: string;
+  /** 是否已自动调度 push */
+  pushTriggered: boolean;
+}
+
+/** sync-conflicts-detected 事件 payload */
+export interface SyncConflictsEvent {
+  /** 所有待解决的冲突（含 base/ours/theirs 明文 JSON） */
+  conflicts: SyncPendingConflict[];
+  /** 冲突数量 */
+  count: number;
 }

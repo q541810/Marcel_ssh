@@ -17,18 +17,27 @@ interface Props {
   title?: string;
   size?: ModalSize;
   children: ReactNode;
+  /** When false, block backdrop / Escape / header close (e.g. mandatory disclaimer). Default true. */
+  dismissible?: boolean;
 }
 
-export default function Modal({ open, onClose, title, size = 'md', children }: Props) {
+export default function Modal({
+  open,
+  onClose,
+  title,
+  size = 'md',
+  children,
+  dismissible = true,
+}: Props) {
   const presence = useAnimatedPresence(open);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) {
+      if (e.key === 'Escape' && open && dismissible) {
         onClose();
       }
     },
-    [open, onClose],
+    [open, onClose, dismissible],
   );
 
   useEffect(() => {
@@ -46,7 +55,7 @@ export default function Modal({ open, onClose, title, size = 'md', children }: P
         className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
           exiting ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
         }`}
-        onClick={onClose}
+        onClick={dismissible ? onClose : undefined}
       />
 
       {/* Content */}
@@ -62,13 +71,15 @@ export default function Modal({ open, onClose, title, size = 'md', children }: P
         {title && (
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
             <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
-            <button
-              onClick={onClose}
-              className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
-              aria-label="关闭"
-            >
-              &times;
-            </button>
+            {dismissible && (
+              <button
+                onClick={onClose}
+                className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
+                aria-label="关闭"
+              >
+                &times;
+              </button>
+            )}
           </div>
         )}
 

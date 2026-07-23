@@ -5,6 +5,9 @@ export const APP_NAME = 'Marcel SSH';
 /** 应用 logo 静态资源路径，引用 public/app-logo.png（与 src-tauri/icons/icon.png 同源）。 */
 export const APP_LOGO = '/app-logo.png';
 
+/** Marcel 官方跨设备同步服务器（Nginx 反代，无端口）。 */
+export const OFFICIAL_SYNC_SERVER_URL = 'https://ssh.neopig.top';
+
 /** Maximum file size (in bytes) that can be opened in the remote file editor. */
 export const MAX_EDITOR_FILE_SIZE = 2 * 1024 * 1024;
 

@@ -6,6 +6,7 @@ import MobileAgentHost from './MobileAgentHost';
 import MobileFilesHost from './MobileFilesHost';
 import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
+import MobileSyncConflictSheet from './MobileSyncConflictSheet';
 import MobileUpdateToast from './MobileUpdateToast';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
@@ -34,6 +35,39 @@ export default function MobileApp() {
     }).catch(() => {});
   }, []);
 
+  // Android WebView may still pan the document when an input focuses (despite
+  // overflow:hidden). Snap scroll back so users cannot drag into the blank
+  // strip under the IME and reveal the pinned tab bar.
+  useEffect(() => {
+    const snap = () => {
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+      if (document.documentElement.scrollTop !== 0) {
+        document.documentElement.scrollTop = 0;
+      }
+      if (document.body.scrollTop !== 0) {
+        document.body.scrollTop = 0;
+      }
+    };
+    const onFocusIn = () => {
+      requestAnimationFrame(snap);
+      window.setTimeout(snap, 50);
+      window.setTimeout(snap, 300);
+    };
+    window.addEventListener('scroll', snap, { passive: true });
+    document.addEventListener('focusin', onFocusIn);
+    const vv = window.visualViewport;
+    vv?.addEventListener('scroll', snap);
+    vv?.addEventListener('resize', snap);
+    return () => {
+      window.removeEventListener('scroll', snap);
+      document.removeEventListener('focusin', onFocusIn);
+      vv?.removeEventListener('scroll', snap);
+      vv?.removeEventListener('resize', snap);
+    };
+  }, []);
+
   // Android back gesture returns to the home tab before the system gets a
   // chance to finish the activity (sheets/overlays register on top of this).
   useEffect(() => {
@@ -50,7 +84,7 @@ export default function MobileApp() {
   // --ime-bottom (injected from MainActivity when the IME opens).
   return (
     <div
-      className="relative h-full min-h-0 w-full overflow-hidden bg-zinc-950 text-zinc-100"
+      className="relative h-full min-h-0 w-full overflow-hidden overscroll-none bg-zinc-950 text-zinc-100"
       data-mobile-shell="1"
       style={{
         paddingLeft: 'env(safe-area-inset-left, 0px)',
@@ -86,7 +120,7 @@ export default function MobileApp() {
         <div
           className={`absolute inset-0 ${panelVisibilityClass(activeTab === 'settings')}`}
         >
-          <MobileSettings />
+          <MobileSettings visible={activeTab === 'settings'} />
         </div>
 
       </main>
@@ -105,6 +139,8 @@ export default function MobileApp() {
       {showOnboarding && (
         <MobileOnboarding onComplete={handleOnboardingComplete} />
       )}
+
+      <MobileSyncConflictSheet />
     </div>
   );
 }

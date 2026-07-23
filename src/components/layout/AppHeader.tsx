@@ -1,6 +1,7 @@
 import { APP_NAME } from '@/lib/constants';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import WindowControls from '@/components/layout/WindowControls';
+import { SyncStatusIndicator } from '@/components/settings/SyncStatusIndicator';
 
 interface Props {
   onToggleSidebar: () => void;
@@ -38,6 +39,7 @@ export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, classNa
         <h1 className="text-xs font-bold tracking-wide text-zinc-200" data-tauri-drag-region>
           {APP_NAME}
         </h1>
+        <SyncStatusIndicator compact />
         <div className="flex-1" data-tauri-drag-region />
         <button
           onClick={onToggleAgentPanel}

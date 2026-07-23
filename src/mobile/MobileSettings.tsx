@@ -18,9 +18,17 @@ import { MobileDisplaySection } from './settings/MobileDisplaySection';
 import { MobileModelSection } from './settings/MobileModelSection';
 import { MobileQuickCommandSection } from './settings/MobileQuickCommandSection';
 import { MobileSkillSection } from './settings/MobileSkillSection';
+import { MobileSyncSection } from './settings/MobileSyncSection';
 import { registerBackHandler } from './backHandler';
 
-export default function MobileSettings() {
+interface MobileSettingsProps {
+  /** Tab keep-alive: false while another tab is active. */
+  visible?: boolean;
+}
+
+export default function MobileSettings({
+  visible = true,
+}: MobileSettingsProps) {
   const loaded = useSettingsStore((s) => s.loaded);
   const storeSettings = useSettingsStore((s) => s.settings);
   const storeUpdate = useSettingsStore((s) => s.update);
@@ -40,15 +48,23 @@ export default function MobileSettings() {
     setDraft(storeSettings);
   }, [loaded, storeSettings]);
 
+  // Tab keep-alive retains state; re-entering settings must land on the home
+  // list (not the last sub-category). Clear preview if a theme trial was open.
+  useEffect(() => {
+    if (visible) return;
+    storeClearPreview();
+    setActiveCategory(null);
+  }, [visible, storeClearPreview]);
+
   // Android back gesture pops the sub-category page (mirrors the header's
   // "返回设置" button, including the preview cleanup).
   useEffect(() => {
-    if (activeCategory == null) return;
+    if (!visible || activeCategory == null) return;
     return registerBackHandler(() => {
       storeClearPreview();
       setActiveCategory(null);
     });
-  }, [activeCategory, storeClearPreview]);
+  }, [visible, activeCategory, storeClearPreview]);
 
   const updateAndPersist = useCallback(
     async (patch: Partial<AppSettings>) => {
@@ -150,7 +166,7 @@ export default function MobileSettings() {
 
         <div
           key={activeCategory ?? 'root'}
-          className="mobile-panel-enter min-h-0 flex-1 overflow-y-auto"
+          className="mobile-panel-enter min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
           {!activeCategory && (
             <nav className="flex flex-col gap-1 p-3">
@@ -208,6 +224,12 @@ export default function MobileSettings() {
           {activeCategory === 'skills' && (
             <div className="p-3">
               <MobileSkillSection />
+            </div>
+          )}
+
+          {activeCategory === 'sync' && (
+            <div className="p-3">
+              <MobileSyncSection />
             </div>
           )}
 

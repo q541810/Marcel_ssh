@@ -373,6 +373,11 @@ pub struct AppSettings {
     /// Whether the user has completed the onboarding wizard.
     #[serde(default)]
     pub has_completed_onboarding: bool,
+    /// Whether the user has accepted the cross-device sync disclaimer
+    /// (shown once the first time they open the Sync settings page).
+    /// Local-only flag; not included in sync field paths.
+    #[serde(default)]
+    pub has_accepted_sync_disclaimer: bool,
     /// Disabled plugin IDs. Plugins listed here are scanned but not loaded.
     #[serde(default)]
     pub disabled_plugins: Vec<String>,
@@ -448,6 +453,7 @@ impl Default for AppSettings {
             custom_protected_paths: vec![],
             command_timeout_secs: default_command_timeout(),
             has_completed_onboarding: false,
+            has_accepted_sync_disclaimer: false,
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
@@ -671,6 +677,25 @@ mod tests {
         assert!(json.contains("\"hasCompletedOnboarding\":true"));
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(parsed.has_completed_onboarding);
+    }
+
+    /// Missing hasAcceptedSyncDisclaimer in old configs defaults to false.
+    #[test]
+    fn app_settings_loads_old_format_without_sync_disclaimer() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings =
+            serde_json::from_str(json).expect("missing hasAcceptedSyncDisclaimer should load");
+        assert!(!parsed.has_accepted_sync_disclaimer);
+    }
+
+    #[test]
+    fn app_settings_sync_disclaimer_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.has_accepted_sync_disclaimer = true;
+        let json = serde_json::to_string(&settings).expect("serialize");
+        assert!(json.contains("\"hasAcceptedSyncDisclaimer\":true"));
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.has_accepted_sync_disclaimer);
     }
 
     #[test]
