@@ -119,6 +119,26 @@ class AuthManager:
             await conn.commit()
         return True
 
+    async def cleanup_empty_accounts(self) -> int:
+        """删除设备数为 0 的账户（含级联数据）。
+
+        用于每日定时维护：所有设备都被移除后，账户本身（含 sync_snapshots）
+        已无意义，清理以释放空间。
+
+        Returns:
+            被删除的账户数
+        """
+        # 删除 devices 表中没有任何设备记录的账户。外键级联会自动清理 sync_snapshots。
+        async with self._db._lock:
+            conn = self._db.conn
+            cursor = await conn.execute(
+                """DELETE FROM accounts
+                   WHERE id NOT IN (SELECT DISTINCT account_id FROM devices
+                                    WHERE account_id IS NOT NULL)"""
+            )
+            await conn.commit()
+            return cursor.rowcount
+
     async def verify_api_key(self, api_key: str) -> tuple[str, str] | None:
         """验证 API Key，返回 (account_id, device_id) 或 None。
 

@@ -103,9 +103,63 @@ async def lifespan(app: FastAPI):
         config.db_path,
         "托管" if config.is_hosted else "自部署",
     )
+    # 启动每日空账户清理任务（默认 UTC 04:00）
+    cleanup_task = None
+    if config.cleanup_empty_accounts_enabled:
+        cleanup_task = asyncio.create_task(_cleanup_empty_accounts_loop())
+        logger.info(
+            "空账户清理任务已启动，每日 UTC %02d:00 执行",
+            config.cleanup_empty_accounts_hour,
+        )
+    else:
+        logger.info("空账户清理任务已禁用")
+
     yield
+
+    if cleanup_task is not None:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
     await db.close()
     logger.info("数据库已关闭")
+
+
+async def _cleanup_empty_accounts_loop() -> None:
+    """每日定时清理设备数为 0 的账户。
+
+    策略：循环计算到下一次 UTC `cleanup_empty_accounts_hour:00` 的等待秒数并 sleep。
+    服务启动时若已过当天该时刻，则等到次日；未过则在当天执行。
+    每次执行后重新计算下一次时间，避免长时间运行后的漂移。
+    """
+    import datetime as _dt
+
+    while True:
+        try:
+            now = _dt.datetime.now(_dt.timezone.utc)
+            target = now.replace(
+                hour=config.cleanup_empty_accounts_hour,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+            if now >= target:
+                target += _dt.timedelta(days=1)
+            wait_secs = (target - now).total_seconds()
+            await asyncio.sleep(wait_secs)
+
+            deleted = await auth.cleanup_empty_accounts()
+            if deleted > 0:
+                logger.info("空账户清理：删除 %d 个无设备账户", deleted)
+            else:
+                logger.debug("空账户清理：本次无账户需清理")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # 不让异常中断循环；下次到点重试
+            logger.exception("空账户清理任务异常，将在下次到点重试")
+            await asyncio.sleep(60)
 
 
 app = FastAPI(

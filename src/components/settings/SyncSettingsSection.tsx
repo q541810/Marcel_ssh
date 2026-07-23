@@ -594,7 +594,7 @@ export function SyncSettingsSection() {
             <SettingItem
               id="sync-disable"
               label="关闭同步"
-              description="清除本机凭证，不删除服务端数据"
+              description="从服务端移除本设备并清除本机凭证（账户数据保留以便重新启用）"
               sectionId="settings-sync-danger"
               keywords={['disable', '关闭', 'logout', '退出']}
             >

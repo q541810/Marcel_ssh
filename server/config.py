@@ -93,6 +93,9 @@ class ServerConfig:
     admin_password_hash: str = ""  # SHA-256 hex，空表示未配置
     admin_session_ttl: int = 3600
     admin_ip_whitelist: list[str] = field(default_factory=list)
+    # 维护任务
+    cleanup_empty_accounts_enabled: bool = True
+    cleanup_empty_accounts_hour: int = 4  # UTC 小时，0-23
 
     @property
     def is_hosted(self) -> bool:
@@ -189,6 +192,13 @@ def load_config(config_path: str | None = None) -> ServerConfig:
     admin_ip_whitelist = _get(raw, "admin", "ip_whitelist", [], list)
     admin_ip_whitelist = [str(o).strip() for o in admin_ip_whitelist if str(o).strip()]
 
+    # ── [maintenance] ─────────────────────────────
+    cleanup_enabled = _get(raw, "maintenance", "cleanup_empty_accounts_enabled", True, bool)
+    cleanup_hour = _get(raw, "maintenance", "cleanup_empty_accounts_hour", 4, int)
+    if not 0 <= cleanup_hour <= 23:
+        logger.warning("[maintenance].cleanup_empty_accounts_hour=%s 超出 0-23，回退默认 4", cleanup_hour)
+        cleanup_hour = 4
+
     return ServerConfig(
         hosted_mode=hosted,
         db_path=db_path,
@@ -206,4 +216,6 @@ def load_config(config_path: str | None = None) -> ServerConfig:
         admin_password_hash=admin_password_hash,
         admin_session_ttl=admin_session_ttl,
         admin_ip_whitelist=admin_ip_whitelist,
+        cleanup_empty_accounts_enabled=cleanup_enabled,
+        cleanup_empty_accounts_hour=cleanup_hour,
     )

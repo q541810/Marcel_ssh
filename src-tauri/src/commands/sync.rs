@@ -372,7 +372,7 @@ pub async fn sync_remove_device(
     state: State<'_, AppState>,
     device_id: String,
 ) -> Result<(), AppError> {
-    let _api_key = match get_api_key(&state).await? {
+    let api_key = match get_api_key(&state).await? {
         Some(k) => k,
         None => return Ok(()),
     };
@@ -382,10 +382,8 @@ pub async fn sync_remove_device(
         None => return Ok(()),
     };
 
-    let _client = SyncClient::new(&server_url)?;
-    // 服务端删除设备接口（Phase 5 实现，当前占位）
-    // client.remove_device(&api_key, &device_id).await?;
-    log::info!("删除设备 {}（待服务端接口实现）", device_id);
+    let client = SyncClient::new(&server_url)?;
+    client.delete_device(&api_key, &device_id).await?;
 
     Ok(())
 }
@@ -444,9 +442,27 @@ pub async fn sync_reset_account(
     }
 }
 
-/// 关闭同步（清除本机凭证，不删服务端数据）。
+/// 关闭同步：从服务端删除本机设备记录 + 清除本机凭证。
+///
+/// 与账户重置不同：仅移除本机设备记录，账户下的同步数据（settings/connections 等）保留，
+/// 便于用户后续用配置码 + 密码重新加入。
+///
+/// 失败处理：服务端删除设备失败时报错给用户，本地凭证不清，便于重试。
+/// 若本机已无凭证（未配置同步），跳过网络调用直接成功。
 #[tauri::command]
 pub async fn sync_disable(state: State<'_, AppState>) -> Result<(), AppError> {
+    // 1. 先尝试从服务端删除本机设备记录（必须在清 keychain 之前，否则丢失 api_key/device_id）
+    let api_key = sync_keychain::get_device_api_key()?;
+    let device_id = sync_keychain::get_device_id()?;
+    let server_url = sync_keychain::get_server_url()?;
+
+    if let (Some(api_key), Some(device_id), Some(server_url)) = (api_key, device_id, server_url) {
+        let client = SyncClient::new(&server_url)?;
+        // 失败就报错，凭证不清，用户可重试
+        client.delete_device(&api_key, &device_id).await?;
+    }
+
+    // 2. 清本地凭证 + 停 WS
     sync_keychain::clear_all_sync_credentials()?;
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
         scheduler.set_api_key(None);
