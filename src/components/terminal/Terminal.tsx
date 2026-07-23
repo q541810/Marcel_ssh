@@ -233,7 +233,7 @@ export default function Terminal() {
             }`}
           >
             <div
-              className="h-1 cursor-row-resize hover:bg-indigo-500/50 transition-colors flex-shrink-0"
+              className="h-1 cursor-row-resize hover:bg-green-500/50 transition-colors flex-shrink-0"
               onMouseDown={handlePanelResizeMouseDown}
               style={{ touchAction: 'none' }}
             />

@@ -455,7 +455,7 @@ export default function App() {
 
           {effectiveSidebarOpen && (
             <div
-              className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+              className="w-1 cursor-col-resize hover:bg-green-500/50 transition-colors z-10 flex-shrink-0"
               onMouseDown={handleSidebarResizeMouseDown}
               style={{ touchAction: 'none' }}
             />
@@ -496,7 +496,7 @@ export default function App() {
             {agentPanelMounted && agentPanelVisible && (
               <>
                 <div
-                  className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
+                  className="w-1 cursor-col-resize hover:bg-green-500/50 transition-colors z-10 flex-shrink-0"
                   onMouseDown={handleAgentResizeMouseDown}
                   style={{ touchAction: 'none' }}
                 />

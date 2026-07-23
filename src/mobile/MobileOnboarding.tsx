@@ -27,7 +27,7 @@ function WelcomeStep() {
 
       <div className="mt-8 flex w-full flex-col gap-2">
         <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3.5 text-left">
-          <Terminal className="h-6 w-6 flex-shrink-0 text-indigo-400" />
+          <Terminal className="h-6 w-6 flex-shrink-0 text-green-400" />
           <div>
             <div className="text-sm font-medium text-zinc-200">智能终端</div>
             <div className="mt-0.5 text-xs text-zinc-500">
@@ -36,7 +36,7 @@ function WelcomeStep() {
           </div>
         </div>
         <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3.5 text-left">
-          <Bot className="h-6 w-6 flex-shrink-0 text-indigo-400" />
+          <Bot className="h-6 w-6 flex-shrink-0 text-green-400" />
           <div>
             <div className="text-sm font-medium text-zinc-200">AI Agent</div>
             <div className="mt-0.5 text-xs text-zinc-500">
@@ -45,7 +45,7 @@ function WelcomeStep() {
           </div>
         </div>
         <div className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3.5 text-left">
-          <Folder className="h-6 w-6 flex-shrink-0 text-indigo-400" />
+          <Folder className="h-6 w-6 flex-shrink-0 text-green-400" />
           <div>
             <div className="text-sm font-medium text-zinc-200">文件管理</div>
             <div className="mt-0.5 text-xs text-zinc-500">
@@ -217,7 +217,7 @@ export default function MobileOnboarding({
               <span
                 key={i}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
-                  i === step ? 'w-5 bg-indigo-500' : 'w-1.5 bg-zinc-700'
+                  i === step ? 'w-5 bg-green-500' : 'w-1.5 bg-zinc-700'
                 }`}
               />
             ))}
@@ -231,7 +231,7 @@ export default function MobileOnboarding({
                 setStep((s) => s + 1);
               }
             }}
-            className="w-full rounded-xl bg-indigo-600 px-4 py-3.5 text-sm font-medium text-white transition-transform duration-100 active:scale-[0.99] active:bg-indigo-500"
+            className="w-full rounded-xl bg-green-600 px-4 py-3.5 text-sm font-medium text-white transition-transform duration-100 active:scale-[0.99] active:bg-green-500"
           >
             {isLast ? '开始使用' : '下一步'}
           </button>

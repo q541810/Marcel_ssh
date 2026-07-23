@@ -37,7 +37,7 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
     parts.push(
       <mark
         key={key++}
-        className="rounded bg-indigo-400/30 text-indigo-100 px-0.5"
+        className="rounded bg-green-400/30 text-green-100 px-0.5"
       >
         {text.slice(idx, idx + q.length)}
       </mark>,
@@ -48,7 +48,7 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
 }
 
 const MARKDOWN_CLASS =
-  'text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic';
+  'text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-green-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic';
 
 // ─── Retry indicator: 倒计时 + 错误折叠 ───
 // 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs

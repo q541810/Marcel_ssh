@@ -71,7 +71,7 @@ function ListModeButton({
       disabled={disabled}
       className={`flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0 ${roundedClass} ${
         active
-          ? 'bg-indigo-600 text-white'
+          ? 'bg-green-600 text-white'
           : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
       } disabled:opacity-40 disabled:cursor-not-allowed`}
       style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
@@ -183,7 +183,7 @@ export function AgentPolicySection() {
               onChange={(e) =>
                 update({ commandTimeoutSecs: Number(e.target.value) })
               }
-              className="flex-1 accent-indigo-500"
+              className="flex-1 accent-green-500"
             />
             <span className="text-sm font-mono text-zinc-300 w-16 text-right">
               {settings.commandTimeoutSecs ?? 120}s
@@ -248,7 +248,7 @@ export function AgentPolicySection() {
                       updateAgent({ modelApprovalModel: e.target.value })
                     }
                     placeholder="留空使用主模型"
-                    className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                    className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
                   />
                   <button
                     type="button"
@@ -260,7 +260,7 @@ export function AgentPolicySection() {
                 </div>
                 <p className="text-xs text-zinc-500">
                   填写模型名可降低审批延迟和成本，如{' '}
-                  <code className="text-indigo-300">MIMo-v2.5</code>
+                  <code className="text-green-300">MIMo-v2.5</code>
                 </p>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-xs text-zinc-400">审批提示词</span>
@@ -282,7 +282,7 @@ export function AgentPolicySection() {
                     });
                   }}
                   rows={6}
-                  className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
+                  className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-green-500 resize-none"
                 />
               </div>
             )}
@@ -355,7 +355,7 @@ export function AgentPolicySection() {
                 }}
                 placeholder="例如：rm 或 sudo"
                 disabled={agent.confirmEachCommand}
-                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500 disabled:opacity-40 disabled:cursor-not-allowed"
               />
               <Button
                 variant="secondary"
@@ -420,7 +420,7 @@ export function AgentPolicySection() {
                   }
                 }}
                 placeholder="例如：rm -rf /tmp/test"
-                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
               />
               <Button
                 variant="secondary"
@@ -477,7 +477,7 @@ export function AgentPolicySection() {
               <ul className="text-xs text-zinc-400 flex flex-wrap gap-x-5 gap-y-0.5">
                 {BUILT_IN_PROTECTED.map((p) => (
                   <li key={p.path} className="whitespace-nowrap">
-                    <code className="text-indigo-300">{p.path}</code>
+                    <code className="text-green-300">{p.path}</code>
                     <span className="text-zinc-500"> — {p.reason}</span>
                   </li>
                 ))}
@@ -502,7 +502,7 @@ export function AgentPolicySection() {
                     }
                   }}
                   placeholder="/home/user/.ssh"
-                  className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
                 />
                 <Button
                   variant="secondary"
@@ -527,7 +527,7 @@ export function AgentPolicySection() {
                       key={p}
                       className="flex items-center justify-between gap-2 rounded-md bg-zinc-800 px-2 py-1"
                     >
-                      <code className="text-indigo-300 truncate">{p}</code>
+                      <code className="text-green-300 truncate">{p}</code>
                       <button
                         type="button"
                         onClick={() => handleRemoveProtectedPath(p)}

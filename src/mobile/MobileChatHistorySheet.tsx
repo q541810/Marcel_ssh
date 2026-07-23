@@ -294,7 +294,7 @@ export default function MobileChatHistorySheet({
             <button
               type="button"
               onClick={handleBack}
-              className="-ml-1 flex-shrink-0 rounded-lg px-2 py-1 text-xs text-indigo-300 active:bg-zinc-800"
+              className="-ml-1 flex-shrink-0 rounded-lg px-2 py-1 text-xs text-green-300 active:bg-zinc-800"
             >
               ‹ 返回
             </button>
@@ -308,8 +308,8 @@ export default function MobileChatHistorySheet({
       {selectedConv ? (
         <div className="flex flex-col">
           {activeMatchIds.length > 0 && (
-            <div className="sticky top-0 z-10 flex flex-shrink-0 items-center justify-between gap-2 border-b border-indigo-500/15 bg-zinc-900/95 px-4 py-1.5 text-xs backdrop-blur-sm">
-              <span className="text-indigo-300/90">
+            <div className="sticky top-0 z-10 flex flex-shrink-0 items-center justify-between gap-2 border-b border-green-500/15 bg-zinc-900/95 px-4 py-1.5 text-xs backdrop-blur-sm">
+              <span className="text-green-300/90">
                 匹配 {matchIndex + 1}/{activeMatchIds.length}
                 {activeMatchIds.length >= 200 ? '+' : ''}
               </span>
@@ -391,7 +391,7 @@ export default function MobileChatHistorySheet({
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="搜索聊天记录…"
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-2 pl-9 pr-9 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 py-2 pl-9 pr-9 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-green-500 focus:outline-none"
               />
               {searchInput && (
                 <button
@@ -451,7 +451,7 @@ export default function MobileChatHistorySheet({
                               <div className="mt-0.5 line-clamp-2 break-words text-xs text-zinc-500">
                                 {r.matchedSnippet}
                               </div>
-                              <div className="mt-0.5 text-xs text-indigo-400/80">
+                              <div className="mt-0.5 text-xs text-green-400/80">
                                 {matchCountLabel(r.matchCount)}
                               </div>
                             </button>

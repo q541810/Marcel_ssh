@@ -20,7 +20,7 @@ export default function BottomTabBar({ activeTab, onTabChange, tabs }: BottomTab
             onClick={() => onTabChange(isActive ? null : tab.id)}
             className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               isActive
-                ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400'
+                ? 'border-green-500 bg-green-500/10 text-green-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300'
             }`}
           >

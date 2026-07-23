@@ -135,7 +135,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
   };
 
   const SortIcon = ({ active, dir }: { active: boolean; dir: SortDir }) => (
-    <span className={`ml-1 inline-block ${active ? 'text-indigo-400' : 'text-zinc-600'}`}>
+    <span className={`ml-1 inline-block ${active ? 'text-green-400' : 'text-zinc-600'}`}>
       {active ? (dir === 'asc' ? '↑' : '↓') : '↕'}
     </span>
   );
@@ -148,7 +148,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索进程..."
-          className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+          className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-green-500 placeholder:text-zinc-500"
         />
         <button
           type="button"

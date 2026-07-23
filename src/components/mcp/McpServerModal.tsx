@@ -135,9 +135,9 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
           <div className="grid grid-cols-2 gap-3">
             <button
               onClick={() => setStep('json')}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:border-indigo-500 hover:bg-zinc-900 transition-colors"
+              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:border-green-500 hover:bg-zinc-900 transition-colors"
             >
-              <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h10m-6 6h12" />
               </svg>
               <span className="text-sm font-medium text-zinc-100">从 JSON 导入</span>
@@ -145,7 +145,7 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
             </button>
             <button
               onClick={() => setStep('form')}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:border-indigo-500 hover:bg-zinc-900 transition-colors"
+              className="flex flex-col items-center gap-2 p-4 rounded-xl border border-zinc-700 bg-zinc-900/60 hover:border-green-500 hover:bg-zinc-900 transition-colors"
             >
               <svg className="w-6 h-6 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -169,7 +169,7 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
               onChange={(e) => { setJsonText(e.target.value); setJsonError(null); }}
               rows={8}
               placeholder={'{\n  "mcpServers": {\n    "my-server": {\n      "url": "https://...",\n      "headers": { "Authorization": "Bearer xxx" }\n    }\n  }\n}'}
-              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-green-500 font-mono"
             />
             {jsonError && <p className="text-xs text-red-400 mt-1">{jsonError}</p>}
           </div>
@@ -192,7 +192,7 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
               onChange={(e) => setHeadersText(e.target.value)}
               rows={4}
               placeholder="Authorization: Bearer xxx\nX-Custom: value"
-              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 font-mono"
+              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-green-500 font-mono"
             />
           </div>
           <label className="flex items-center justify-between rounded-lg bg-zinc-900/60 border border-zinc-700 px-3 py-2">

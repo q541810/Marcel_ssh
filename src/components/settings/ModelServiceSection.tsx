@@ -48,7 +48,7 @@ export function ModelServiceSection() {
           value={llmConfig.baseUrl ?? ''}
           onChange={(e) => updateLlm({ baseUrl: e.target.value || null })}
           placeholder="https://api.openai.com/v1"
-          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
         />
       </SettingItem>
       <SettingItem id="llm-apikey" label="API Key" description="API 密钥" sectionId="settings-llm" keywords={['key', '密钥', 'token', '模型服务']}>
@@ -58,7 +58,7 @@ export function ModelServiceSection() {
           onChange={(e) => updateLlm({ apiKey: e.target.value })}
           placeholder="输入 API Key"
           autoComplete="off"
-          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
         />
       </SettingItem>
       <SettingItem id="llm-model" label="Model" description="模型名称" sectionId="settings-llm" keywords={['model', '模型', '模型服务']}>
@@ -69,7 +69,7 @@ export function ModelServiceSection() {
             onChange={(e) => updateLlm({ model: e.target.value })}
             placeholder="claude-opus-4-7"
             list="llm-model-suggestions"
-            className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+            className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
           />
           <datalist id="llm-model-suggestions">
             <option value="claude-opus-4-7" />

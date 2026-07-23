@@ -46,7 +46,7 @@ export function FontSizeInput({
         onChange={(e) => setInputValue(e.target.value)}
         onFocus={() => setShowSlider(true)}
         onBlur={handleBlur}
-        className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+        className="w-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-green-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
       {showSlider && (
         <div 
@@ -66,11 +66,11 @@ export function FontSizeInput({
                 onChange(v);
               }
             }}
-            className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-green-500"
           />
           <div className="flex justify-between text-xs text-zinc-500 mt-1">
             <span>10</span>
-            <span className="text-indigo-400 font-medium">{value}px</span>
+            <span className="text-green-400 font-medium">{value}px</span>
             <span>32</span>
           </div>
         </div>

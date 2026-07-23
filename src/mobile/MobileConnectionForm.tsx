@@ -13,7 +13,7 @@ interface MobileConnectionFormProps {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 const inputErrorClass =
   'w-full rounded-lg border border-red-500 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-red-400';
 
@@ -231,7 +231,7 @@ export default function MobileConnectionForm({
             type="button"
             onClick={() => void handleSave()}
             disabled={saving}
-            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+            className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
           >
             {saving ? '保存中…' : '保存'}
           </button>
@@ -353,7 +353,7 @@ export default function MobileConnectionForm({
             <span className="font-medium">跳板机（可选）</span>
             <span
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                useJump ? 'bg-indigo-600' : 'bg-zinc-700'
+                useJump ? 'bg-green-600' : 'bg-zinc-700'
               }`}
               role="switch"
               aria-checked={useJump}

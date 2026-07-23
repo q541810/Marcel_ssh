@@ -71,7 +71,7 @@ export default function MobileQuestionSheet({
 
   return (
     <div
-      className="mobile-panel-enter flex-shrink-0 border-t border-indigo-700/40 bg-zinc-900"
+      className="mobile-panel-enter flex-shrink-0 border-t border-green-700/40 bg-zinc-900"
       data-region="mobile-question"
       style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
     >
@@ -81,7 +81,7 @@ export default function MobileQuestionSheet({
           {current.header}
         </span>
         {current.multiple && (
-          <span className="flex-shrink-0 rounded bg-indigo-600/20 px-1.5 py-0.5 text-[11px] text-indigo-300">
+          <span className="flex-shrink-0 rounded bg-green-600/20 px-1.5 py-0.5 text-[11px] text-green-300">
             可多选
           </span>
         )}
@@ -118,7 +118,7 @@ export default function MobileQuestionSheet({
                   onClick={() => handleOptionTap(opt.label)}
                   className={`w-full rounded-xl border px-3 py-3 text-left ${
                     isSelected
-                      ? 'border-indigo-500 bg-indigo-600/15'
+                      ? 'border-green-500 bg-green-600/15'
                       : 'border-zinc-700 bg-zinc-800/50 active:bg-zinc-800'
                   }`}
                 >
@@ -128,7 +128,7 @@ export default function MobileQuestionSheet({
                         current.multiple ? 'rounded-md' : 'rounded-full'
                       } ${
                         isSelected
-                          ? 'border-indigo-500 bg-indigo-600'
+                          ? 'border-green-500 bg-green-600'
                           : 'border-zinc-600'
                       }`}
                     >
@@ -141,7 +141,7 @@ export default function MobileQuestionSheet({
                     </span>
                     <span
                       className={`text-sm font-medium ${
-                        isSelected ? 'text-indigo-200' : 'text-zinc-300'
+                        isSelected ? 'text-green-200' : 'text-zinc-300'
                       }`}
                     >
                       {opt.label}
@@ -174,7 +174,7 @@ export default function MobileQuestionSheet({
                 : '或输入自定义回答…'
               : '输入你的回答…'
           }
-          className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+          className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm leading-relaxed text-zinc-200 outline-none placeholder:text-zinc-500 focus:border-green-500"
         />
       </div>
 
@@ -192,7 +192,7 @@ export default function MobileQuestionSheet({
         <button
           type="button"
           onClick={handleNext}
-          className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+          className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500"
         >
           {isLast ? '提交答案' : '下一题'}
         </button>

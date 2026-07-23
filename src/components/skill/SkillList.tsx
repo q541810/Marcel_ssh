@@ -26,7 +26,7 @@ function SkillCard({ skill, onToggle, onDelete, onEdit, onContextMenu }: SkillCa
       className={
         'group rounded-lg border transition-colors px-2 py-2 ' +
         (skill.enabled
-          ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
+          ? 'bg-green-900/20 border-green-700/50 hover:border-green-700'
           : 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700')
       }
     >
@@ -149,7 +149,7 @@ export default function SkillList() {
             <p className='text-sm text-zinc-500 mb-3'>暂无 skill</p>
             <button
               onClick={() => setCreateOpen(true)}
-              className='text-xs text-indigo-400 hover:text-indigo-300 underline'
+              className='text-xs text-green-400 hover:text-green-300 underline'
             >
               创建 Skill
             </button>

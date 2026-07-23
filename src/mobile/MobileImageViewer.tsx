@@ -415,7 +415,7 @@ export default function MobileImageViewer({
               <div className="flex w-56 flex-col gap-1">
                 <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
                   <div
-                    className="h-full bg-indigo-500 transition-all duration-200"
+                    className="h-full bg-green-500 transition-all duration-200"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>

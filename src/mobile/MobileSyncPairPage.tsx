@@ -32,7 +32,7 @@ interface MobileSyncPairPageProps {
 }
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 
 export default function MobileSyncPairPage({
   open,
@@ -197,7 +197,7 @@ export default function MobileSyncPairPage({
             </p>
             <button
               onClick={requestClose}
-              className="mt-4 w-full rounded-lg bg-indigo-600 py-3 text-sm font-medium text-white active:bg-indigo-500"
+              className="mt-4 w-full rounded-lg bg-green-600 py-3 text-sm font-medium text-white active:bg-green-500"
             >
               我已保存
             </button>
@@ -212,7 +212,7 @@ export default function MobileSyncPairPage({
                   onClick={() => setServerSource('official')}
                   className={`flex-1 rounded-lg border py-2.5 text-sm ${
                     serverSource === 'official'
-                      ? 'border-indigo-500 bg-indigo-600/20 text-indigo-200'
+                      ? 'border-green-500 bg-green-600/20 text-green-200'
                       : 'border-zinc-700 bg-zinc-800 text-zinc-300'
                   }`}
                 >
@@ -223,7 +223,7 @@ export default function MobileSyncPairPage({
                   onClick={() => setServerSource('custom')}
                   className={`flex-1 rounded-lg border py-2.5 text-sm ${
                     serverSource === 'custom'
-                      ? 'border-indigo-500 bg-indigo-600/20 text-indigo-200'
+                      ? 'border-green-500 bg-green-600/20 text-green-200'
                       : 'border-zinc-700 bg-zinc-800 text-zinc-300'
                   }`}
                 >
@@ -323,7 +323,7 @@ export default function MobileSyncPairPage({
                 (mode === 'join' && !joinCode.trim()) ||
                 (mode === 'first' && !accountPassword)
               }
-              className="w-full rounded-lg bg-indigo-600 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+              className="w-full rounded-lg bg-green-600 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-50"
             >
               {actionLoading ? (
                 <span className="inline-flex items-center gap-2">

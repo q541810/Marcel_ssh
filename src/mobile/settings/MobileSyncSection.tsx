@@ -35,7 +35,7 @@ const CATEGORY_LABELS: Partial<
 };
 
 const inputClass =
-  'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 
 export function MobileSyncSection() {
   const {
@@ -134,7 +134,7 @@ export function MobileSyncSection() {
             type="button"
             disabled={disclaimerAccepting}
             onClick={() => void handleAcceptDisclaimer()}
-            className="w-full rounded-lg bg-indigo-600 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+            className="w-full rounded-lg bg-green-600 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-50"
           >
             {disclaimerAccepting ? '保存中…' : '我已了解'}
           </button>
@@ -161,7 +161,7 @@ export function MobileSyncSection() {
           <p className="text-sm text-zinc-400 mb-4">尚未配置同步</p>
           <button
             onClick={() => openPairPage('first')}
-            className="w-full rounded-lg bg-indigo-600 text-white text-sm font-medium py-2.5 mb-2 active:bg-indigo-500"
+            className="w-full rounded-lg bg-green-600 text-white text-sm font-medium py-2.5 mb-2 active:bg-green-500"
           >
             设置新账户
           </button>

@@ -287,7 +287,7 @@ export default function CompressModal({
                   onClick={() => handleFormatChange(f)}
                   className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${
                     format === f
-                      ? 'bg-indigo-600 text-white'
+                      ? 'bg-green-600 text-white'
                       : 'bg-zinc-700/50 text-zinc-300 hover:bg-zinc-700'
                   } disabled:opacity-50 disabled:cursor-not-allowed`}
                 >
@@ -311,7 +311,7 @@ export default function CompressModal({
               disabled={isRunning}
               onChange={(e) => setTargetPath(e.target.value)}
               placeholder="/path/to/archive.tar.gz"
-              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 font-mono outline-none focus:border-indigo-500 disabled:opacity-50"
+              className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs text-zinc-100 font-mono outline-none focus:border-green-500 disabled:opacity-50"
             />
             <p className="mt-1 text-[10px] text-zinc-600">
               默认压缩到源目录的父目录，避免递归包含
@@ -325,7 +325,7 @@ export default function CompressModal({
               checked={overwrite}
               disabled={isRunning}
               onChange={(e) => setOverwrite(e.target.checked)}
-              className="w-3.5 h-3.5 rounded border-zinc-500 bg-zinc-600 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
+              className="w-3.5 h-3.5 rounded border-zinc-500 bg-zinc-600 text-green-500 focus:ring-green-500 focus:ring-offset-0"
             />
             <span className="text-xs text-zinc-300">覆盖已存在的目标文件</span>
           </label>
@@ -342,7 +342,7 @@ export default function CompressModal({
             <div className="rounded-lg bg-zinc-900/50 border border-zinc-700/50 p-3 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 text-zinc-300">
-                  <svg className="w-3.5 h-3.5 animate-spin text-indigo-400" fill="none" viewBox="0 0 24 24">
+                  <svg className="w-3.5 h-3.5 animate-spin text-green-400" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                   </svg>
@@ -407,7 +407,7 @@ export default function CompressModal({
                   type="button"
                   onClick={handleStart}
                   disabled={!targetPath.trim()}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   开始压缩
                 </button>

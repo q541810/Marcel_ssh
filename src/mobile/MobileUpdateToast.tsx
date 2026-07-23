@@ -36,7 +36,7 @@ export default function MobileUpdateToast({
           <button
             type="button"
             onClick={handleDownload}
-            className="flex-1 rounded-xl bg-indigo-600 px-3 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="flex-1 rounded-xl bg-green-600 px-3 py-3 text-sm font-medium text-white active:bg-green-500"
           >
             去下载
           </button>
@@ -44,8 +44,8 @@ export default function MobileUpdateToast({
       }
     >
       <div className="flex flex-col items-center gap-3 px-5 py-6 text-center">
-        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-500/15">
-          <ArrowUpCircle className="h-8 w-8 text-indigo-400" />
+        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-green-500/15">
+          <ArrowUpCircle className="h-8 w-8 text-green-400" />
         </div>
         <div>
           <p className="text-base font-semibold text-zinc-100">

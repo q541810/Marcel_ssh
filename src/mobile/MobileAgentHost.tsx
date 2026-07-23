@@ -433,7 +433,7 @@ export default function MobileAgentHost({
           type="button"
           onClick={() => void handleNewConversation()}
           disabled={!canInteract || !ids}
-          className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white transition-transform duration-100 active:scale-95 active:bg-indigo-500 disabled:opacity-40"
+          className="rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white transition-transform duration-100 active:scale-95 active:bg-green-500 disabled:opacity-40"
         >
           新对话
         </button>
@@ -556,7 +556,7 @@ export default function MobileAgentHost({
                       key={conv.id}
                       className={`flex items-center gap-1 rounded-lg ${
                         active
-                          ? 'bg-indigo-600/20 text-indigo-200'
+                          ? 'bg-green-600/20 text-green-200'
                           : 'bg-zinc-800/60 text-zinc-300'
                       }`}
                     >
@@ -627,7 +627,7 @@ export default function MobileAgentHost({
         />
       ) : (
         <div className="flex-shrink-0 border-t border-zinc-800 p-3">
-          <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
+          <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-green-500">
             <div className="relative flex-shrink-0 self-center pl-1">
               <button
                 type="button"
@@ -665,7 +665,7 @@ export default function MobileAgentHost({
                         }}
                         className={`w-full px-3 py-2 text-left text-sm ${
                           active
-                            ? 'bg-indigo-600/20 text-indigo-200'
+                            ? 'bg-green-600/20 text-green-200'
                             : 'text-zinc-200 active:bg-zinc-700'
                         }`}
                       >
@@ -705,7 +705,7 @@ export default function MobileAgentHost({
               className={`m-1.5 flex-shrink-0 self-center rounded-lg px-3 py-2 text-xs font-medium text-white disabled:opacity-40 ${
                 isRunning
                   ? 'bg-red-600 active:bg-red-500'
-                  : 'bg-indigo-600 active:bg-indigo-500'
+                  : 'bg-green-600 active:bg-green-500'
               }`}
             >
               {isRunning ? '停止' : '发送'}

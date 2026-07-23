@@ -493,7 +493,7 @@ export default function AgentPanel() {
               onClick={() => setTokenPopoverOpen((v) => !v)}
               className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-medium transition-colors ${
                 tokenPopoverOpen
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-green-600 text-white'
                   : 'bg-zinc-700 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200'
               }`}
               title="Token 用量"
@@ -552,7 +552,7 @@ export default function AgentPanel() {
                               {rate > 0 && (
                                 <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
                                   <div
-                                    className="h-full bg-indigo-500 rounded-full transition-all"
+                                    className="h-full bg-green-500 rounded-full transition-all"
                                     style={{ width: `${Math.min(rate, 100)}%` }}
                                   />
                                 </div>
@@ -726,8 +726,8 @@ export default function AgentPanel() {
             </div>
           )}
           <div
-            className={`agent-input relative flex items-start rounded-lg bg-zinc-800 border focus-within:border-indigo-500 ${
-              dragOver ? 'border-indigo-400 ring-1 ring-indigo-500/40' : 'border-zinc-700'
+            className={`agent-input relative flex items-start rounded-lg bg-zinc-800 border focus-within:border-green-500 ${
+              dragOver ? 'border-green-400 ring-1 ring-green-500/40' : 'border-zinc-700'
             }`}
           >
           {/* Mode selector (inside input) */}
@@ -787,7 +787,7 @@ export default function AgentPanel() {
                         w-full text-left px-3 py-2 transition-colors
                         ${
                           active
-                            ? 'bg-indigo-600/20 border-l-2 border-indigo-500'
+                            ? 'bg-green-600/20 border-l-2 border-green-500'
                             : 'hover:bg-zinc-700 border-l-2 border-transparent'
                         }
                       `}
@@ -795,13 +795,13 @@ export default function AgentPanel() {
                       <div className="flex items-center justify-between">
                         <span
                           className={`text-sm font-bold tracking-wider ${
-                            active ? 'text-indigo-300' : 'text-zinc-200'
+                            active ? 'text-green-300' : 'text-zinc-200'
                           }`}
                         >
                           {m.label}
                         </span>
                         {active && (
-                          <span className="text-xs text-indigo-400">已选</span>
+                          <span className="text-xs text-green-400">已选</span>
                         )}
                       </div>
                       <p className="text-xs text-zinc-400 mt-0.5">
@@ -848,7 +848,7 @@ export default function AgentPanel() {
               flex-shrink-0 p-2 mr-1 self-center rounded-md transition-all
               ${isRunning
                 ? 'bg-red-600 hover:bg-red-500 text-white'
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed'
+                : 'bg-green-600 hover:bg-green-500 text-white disabled:opacity-50 disabled:cursor-not-allowed'
               }
             `}
             title={isRunning ? '停止' : '发送'}

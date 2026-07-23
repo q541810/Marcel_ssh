@@ -201,7 +201,7 @@ input[type='range']::-webkit-slider-thumb {
   height: 16px;
   border-radius: 50%;
   background: var(--color-bg-primary, #18181b);
-  border: 2px solid var(--color-accent, #a78bfa);
+  border: 2px solid var(--color-accent, #10b981);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -211,7 +211,7 @@ input[type='range']::-moz-range-thumb {
   height: 16px;
   border-radius: 50%;
   background: var(--color-bg-primary, #18181b);
-  border: 2px solid var(--color-accent, #a78bfa);
+  border: 2px solid var(--color-accent, #10b981);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -471,7 +471,7 @@ button,
 
 /* Focus ring animations */
 :focus-visible {
-  outline: 2px solid #6366f1;
+  outline: 2px solid #22c55e;
   outline-offset: 2px;
   transition: outline-offset 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }

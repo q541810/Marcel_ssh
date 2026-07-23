@@ -211,7 +211,7 @@ function MatchNavBar({
               onClick={() => onGo(i)}
               className={`min-w-[1.25rem] h-5 px-1 rounded text-[10px] font-mono transition-colors ${
                 i === activeIndex
-                  ? 'bg-indigo-600 text-white'
+                  ? 'bg-green-600 text-white'
                   : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
               }`}
             >

@@ -77,12 +77,12 @@ function ExplorationGroup({
                   key={msg.id}
                   data-message-id={msg.id}
                   className={`relative rounded-lg transition-colors duration-500 ${
-                    isFlash ? 'bg-indigo-500/20 ring-1 ring-indigo-400/30' : ''
+                    isFlash ? 'bg-green-500/20 ring-1 ring-green-400/30' : ''
                   } ${isMatch ? 'pl-2' : ''}`}
                 >
                   {isMatch && (
                     <span
-                      className="absolute left-0 top-2 bottom-2 w-1 rounded-full bg-indigo-400/70"
+                      className="absolute left-0 top-2 bottom-2 w-1 rounded-full bg-green-400/70"
                       aria-hidden
                     />
                   )}

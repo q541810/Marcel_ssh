@@ -59,7 +59,7 @@ async function loadAllCommands(
 }
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 
 /**
  * Quick command management for mobile: list / create / edit / delete for both
@@ -263,7 +263,7 @@ export function MobileQuickCommandSection() {
               type="button"
               onClick={() => void handleSubmit()}
               disabled={saving}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
             >
               {saving ? '保存中…' : '保存'}
             </button>
@@ -314,13 +314,13 @@ export function MobileQuickCommandSection() {
                       onClick={() => setForm({ ...form, scope: s.value })}
                       className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
                         active
-                          ? 'border-indigo-500 bg-indigo-500/10'
+                          ? 'border-green-500 bg-green-500/10'
                           : 'border-zinc-700 bg-zinc-800/60'
                       }`}
                     >
                       <div
                         className={`text-sm font-medium ${
-                          active ? 'text-indigo-200' : 'text-zinc-300'
+                          active ? 'text-green-200' : 'text-zinc-300'
                         }`}
                       >
                         {s.label}
@@ -383,7 +383,7 @@ export function MobileQuickCommandSection() {
             <div>
               <div className="mb-1 flex items-center justify-between">
                 <label className="text-xs text-zinc-400">多条命令间隔</label>
-                <span className="font-mono text-xs text-indigo-300">
+                <span className="font-mono text-xs text-green-300">
                   {form.intervalMs}ms
                 </span>
               </div>
@@ -396,7 +396,7 @@ export function MobileQuickCommandSection() {
                 onChange={(e) =>
                   setForm({ ...form, intervalMs: Number(e.target.value) })
                 }
-                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
               />
             </div>
           </div>

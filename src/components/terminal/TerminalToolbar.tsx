@@ -39,7 +39,7 @@ export default function TerminalToolbar() {
               px-2 py-0.5 rounded-lg text-xs font-medium transition-colors
               ${
                 mode === m.value
-                  ? 'bg-indigo-600 text-indigo-100'
+                  ? 'bg-green-600 text-green-100'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
               }
             `}

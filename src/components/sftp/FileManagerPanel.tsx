@@ -565,7 +565,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             setShowHidden(newVal);
             useSettingsStore.getState().update({ fileManagerShowHidden: newVal });
           }}
-          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${showHidden ? 'bg-indigo-500/20 text-indigo-400' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'}`}
+          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${showHidden ? 'bg-green-500/20 text-green-400' : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'}`}
           title="显示隐藏文件"
         >
           {mode !== 'compact' && (
@@ -606,13 +606,13 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFolder(false);
             }}
             placeholder="新文件夹名称"
-            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-green-500 placeholder:text-zinc-500"
             autoFocus
           />
           <button
             type="button"
             onClick={handleCreateFolder}
-            className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            className="rounded-md bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-500"
           >
             创建
           </button>
@@ -636,13 +636,13 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFile(false);
             }}
             placeholder="新文件名称"
-            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+            className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-green-500 placeholder:text-zinc-500"
             autoFocus
           />
           <button
             type="button"
             onClick={handleCreateFile}
-            className="rounded-md bg-indigo-600 px-2 py-1 text-xs text-white hover:bg-indigo-500"
+            className="rounded-md bg-green-600 px-2 py-1 text-xs text-white hover:bg-green-500"
           >
             创建
           </button>
@@ -657,9 +657,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {folderStatus && (
-        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 bg-indigo-500/10">
+        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 bg-green-500/10">
           {!folderStatus.includes('已取消') ? (
-            <svg className="w-3.5 h-3.5 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5 text-green-400 animate-spin" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
@@ -668,7 +668,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           )}
-          <span className="text-xs text-indigo-300 flex-1">{folderStatus}</span>
+          <span className="text-xs text-green-300 flex-1">{folderStatus}</span>
           {!folderStatus.includes('已取消') && !folderStatus.includes('暂不可取消') && (
             <button
               type="button"
@@ -683,10 +683,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       )}
 
       {uploadState && (
-        <div className="flex flex-col gap-1 border-b border-zinc-800 px-3 py-2 bg-indigo-500/10">
+        <div className="flex flex-col gap-1 border-b border-zinc-800 px-3 py-2 bg-green-500/10">
           <div className="flex items-center gap-2">
             {uploadState.status === 'uploading' && (
-              <svg className="w-3.5 h-3.5 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-green-400 animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
@@ -706,7 +706,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             )}
-            <span className={`flex-1 text-xs ${uploadState.status === 'error' ? 'text-red-300' : uploadState.status === 'done' ? 'text-emerald-300' : uploadState.status === 'cancelled' ? 'text-zinc-400' : 'text-indigo-300'}`}>
+            <span className={`flex-1 text-xs ${uploadState.status === 'error' ? 'text-red-300' : uploadState.status === 'done' ? 'text-emerald-300' : uploadState.status === 'cancelled' ? 'text-zinc-400' : 'text-green-300'}`}>
               {uploadState.statusText}
             </span>
             {uploadState.status === 'uploading' && (
@@ -723,7 +723,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           {uploadState.status === 'uploading' && uploadState.total > 0 && (
             <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
               <div
-                className="h-full rounded-full bg-indigo-500 transition-all duration-200"
+                className="h-full rounded-full bg-green-500 transition-all duration-200"
                 style={{ width: `${Math.round((uploadState.written * 100) / uploadState.total)}%` }}
               />
             </div>
@@ -789,12 +789,12 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {/* Drag-over overlay */}
       {isDragging && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-green-500/10 border-2 border-dashed border-green-400 rounded-lg pointer-events-none">
           <div className="text-center">
-            <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-10 h-10 mx-auto text-green-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="text-sm text-indigo-300 font-medium">松手上传到当前目录</p>
+            <p className="text-sm text-green-300 font-medium">松手上传到当前目录</p>
           </div>
         </div>
       )}
@@ -816,7 +816,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         setSelected(new Set(filteredEntries.map((e) => e.name)));
                       }
                     }}
-                    className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${selected.size > 0 && selected.size === filteredEntries.length ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                    className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${selected.size > 0 && selected.size === filteredEntries.length ? 'bg-green-500 border-green-500' : 'bg-zinc-600 border-zinc-500'}`}
                   />
                   {selected.size > 0 && selected.size === filteredEntries.length && (
                     <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
@@ -850,7 +850,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               return (
                 <tr
                   key={entryPath}
-                  className={`hover:bg-zinc-800/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
+                  className={`hover:bg-zinc-800/50 transition-colors cursor-pointer ${isSelected ? 'bg-green-500/10' : ''}`}
                   onDoubleClick={() => handleNavigate(entry)}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey) {
@@ -878,7 +878,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                           });
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${isSelected ? 'bg-indigo-500 border-indigo-500' : 'bg-zinc-600 border-zinc-500'}`}
+                        className={`appearance-none w-3.5 h-3.5 rounded-[3px] border cursor-pointer ${isSelected ? 'bg-green-500 border-green-500' : 'bg-zinc-600 border-zinc-500'}`}
                       />
                       {isSelected && (
                         <svg className="absolute w-2.5 h-2.5 text-white pointer-events-none" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1100,7 +1100,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 if (e.key === 'Enter') handleRename();
                 if (e.key === 'Escape') setRenameEntry(null);
               }}
-              className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 mb-3"
+              className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-green-500 mb-3"
               autoFocus
             />
             <div className="flex justify-end gap-2">
@@ -1114,7 +1114,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={handleRename}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-green-600 hover:bg-green-500"
               >
                 确认
               </button>

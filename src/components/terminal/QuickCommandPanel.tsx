@@ -167,14 +167,14 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           <button
             type="button"
             onClick={() => setTab('all')}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'all' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
+            className={`rounded-md px-2 py-1 text-xs ${tab === 'all' ? 'bg-green-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
           >
             全部
           </button>
           <button
             type="button"
             onClick={() => setTab('global')}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'global' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
+            className={`rounded-md px-2 py-1 text-xs ${tab === 'global' ? 'bg-green-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}
           >
             全局
           </button>
@@ -182,7 +182,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
             type="button"
             onClick={() => setTab('session')}
             disabled={!canUseSessionCommands}
-            className={`rounded-md px-2 py-1 text-xs ${tab === 'session' ? 'bg-indigo-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'} disabled:cursor-not-allowed disabled:opacity-40`}
+            className={`rounded-md px-2 py-1 text-xs ${tab === 'session' ? 'bg-green-600 text-white' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'} disabled:cursor-not-allowed disabled:opacity-40`}
             title={canUseSessionCommands ? '当前连接快捷指令' : '当前会话未绑定保存的连接配置'}
           >
             当前连接
@@ -193,7 +193,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索快捷指令..."
-          className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-indigo-500 placeholder:text-zinc-500"
+          className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-green-500 placeholder:text-zinc-500"
         />
         <button
           type="button"
@@ -292,7 +292,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-green-500"
                   placeholder="例如：查看磁盘"
                   autoFocus
                 />
@@ -303,7 +303,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                   <select
                     value={form.scope}
                     onChange={(e) => setForm({ ...form, scope: e.target.value as QuickCommandScope | '' })}
-                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-green-500"
                   >
                     <option value="" disabled>请选择</option>
                     <option value="global">全局</option>
@@ -317,7 +317,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                     min={0}
                     value={form.intervalMs}
                     onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
-                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-green-500"
                   />
                 </div>
               </div>
@@ -327,7 +327,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                   value={form.commandsText}
                   onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
                   rows={4}
-                  className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                  className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-green-500"
                   placeholder={'pwd\ndf -h'}
                 />
               </div>
@@ -343,7 +343,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
               <button
                 type="button"
                 onClick={handleSubmit}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                className="px-3 py-1.5 rounded-lg text-xs text-white bg-green-600 hover:bg-green-500"
               >
                 保存
               </button>

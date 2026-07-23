@@ -53,7 +53,7 @@ export function TerminalAppearanceSection() {
             setPreview({ fontFamily });
             update({ fontFamily });
           }}
-          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm text-zinc-100 focus:outline-none focus:border-green-500"
         />
       </SettingItem>
     </Card>

@@ -32,7 +32,7 @@ export default function MobileTabBar({
             type="button"
             onClick={() => onTabChange(tab.id)}
             className={`flex min-h-12 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] transition-colors ${
-              active ? 'text-indigo-400' : 'text-zinc-500 active:text-zinc-300'
+              active ? 'text-green-400' : 'text-zinc-500 active:text-zinc-300'
             }`}
             aria-current={active ? 'page' : undefined}
           >

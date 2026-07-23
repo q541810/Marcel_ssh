@@ -503,7 +503,7 @@ export default function ImagePreviewModal({
                 <div className="w-64 flex flex-col gap-1">
                   <div className="h-1.5 rounded-full bg-zinc-700 overflow-hidden">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200"
+                      className="h-full bg-green-500 transition-all duration-200"
                       style={{ width: `${progressPct}%` }}
                     />
                   </div>
@@ -616,7 +616,7 @@ function ToolbarButton({ title, onClick, children, disabled, active }: ToolbarBu
       disabled={disabled}
       className={`p-1.5 rounded-lg transition-colors ${
         active
-          ? 'bg-indigo-600 text-white'
+          ? 'bg-green-600 text-white'
           : 'text-zinc-300 bg-zinc-700/50 hover:bg-zinc-700'
       } disabled:opacity-30 disabled:cursor-not-allowed`}
     >

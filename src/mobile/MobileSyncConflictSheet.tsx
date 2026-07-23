@@ -93,7 +93,7 @@ export default function MobileSyncConflictSheet() {
         <button
           onClick={() => handleBatch('ours')}
           disabled={resolvingKey !== null}
-          className={`${btnClass} bg-indigo-600 text-white`}
+          className={`${btnClass} bg-green-600 text-white`}
         >
           全本地
         </button>
@@ -191,7 +191,7 @@ function ConflictItem({ conflict, resolving, onResolve }: ConflictItemProps) {
 
       <div className="mb-3 space-y-2">
         <div className="rounded-lg bg-zinc-950/60 p-2 border border-zinc-700">
-          <div className="mb-1 flex items-center gap-1 text-xs text-indigo-300">
+          <div className="mb-1 flex items-center gap-1 text-xs text-green-300">
             <ArrowDownToLine className="w-3 h-3" />
             本地值
           </div>
@@ -214,7 +214,7 @@ function ConflictItem({ conflict, resolving, onResolve }: ConflictItemProps) {
         <button
           onClick={() => onResolve(conflict.key, { type: 'ours' })}
           disabled={resolving}
-          className={`${btnClass} bg-indigo-600 text-white`}
+          className={`${btnClass} bg-green-600 text-white`}
         >
           <ArrowDownToLine className="w-3 h-3" />
           用本地

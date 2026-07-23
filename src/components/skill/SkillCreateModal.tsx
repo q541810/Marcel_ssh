@@ -107,7 +107,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
           className={
             'rounded-xl border-2 border-dashed cursor-pointer select-none transition-colors p-5 flex flex-col items-center gap-1.5 ' +
             (isDragging
-              ? 'border-indigo-400 bg-indigo-950/30'
+              ? 'border-green-400 bg-green-950/30'
               : 'border-zinc-600 hover:border-zinc-500 hover:bg-zinc-700/40')
           }
         >
@@ -169,7 +169,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
           <button
             onClick={handleConfirm}
             disabled={!valid || saving}
-            className='px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+            className='px-4 py-1.5 text-sm rounded-lg bg-green-600 text-white hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
           >
             {saving ? '保存中...' : '确认'}
           </button>

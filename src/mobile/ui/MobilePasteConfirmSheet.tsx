@@ -34,7 +34,7 @@ export default function MobilePasteConfirmSheet({
             onClick={() => {
               if (text != null) onConfirm(text);
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500"
           >
             确认粘贴
           </button>

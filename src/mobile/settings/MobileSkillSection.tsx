@@ -17,7 +17,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '' };
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 
 /** Skill management for mobile: import file / create / edit / toggle / delete. */
 export function MobileSkillSection() {
@@ -215,7 +215,7 @@ export function MobileSkillSection() {
               type="button"
               onClick={() => void handleSubmit()}
               disabled={saving}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
             >
               {saving ? '保存中…' : '保存'}
             </button>

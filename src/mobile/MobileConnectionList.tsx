@@ -342,7 +342,7 @@ export default function MobileConnectionList({
           <button
             type="button"
             onClick={onBack}
-            className="mb-2 flex items-center gap-1 text-xs text-indigo-400 active:text-indigo-300"
+            className="mb-2 flex items-center gap-1 text-xs text-green-400 active:text-green-300"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             {backLabel}
@@ -358,7 +358,7 @@ export default function MobileConnectionList({
           <button
             type="button"
             onClick={openNewForm}
-            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white active:bg-indigo-500"
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white active:bg-green-500"
           >
             <Plus className="h-3.5 w-3.5" />
             新建
@@ -381,7 +381,7 @@ export default function MobileConnectionList({
             <button
               type="button"
               onClick={openNewForm}
-              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+              className="flex items-center gap-1.5 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-medium text-white active:bg-green-500"
             >
               <Plus className="h-4 w-4" />
               新建连接
@@ -410,7 +410,7 @@ export default function MobileConnectionList({
                     onClick={() => void handleConnect(conn)}
                     className="flex min-w-0 flex-1 items-center gap-3 rounded-l-xl px-3 py-3 text-left active:scale-[0.99] disabled:opacity-60"
                   >
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-indigo-400">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-green-400">
                       {busy ? (
                         <Loader2 className="h-5 w-5 animate-spin" />
                       ) : (

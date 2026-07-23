@@ -244,7 +244,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="搜索聊天记录…"
-              className="w-full rounded-lg bg-zinc-800 border border-zinc-700 pl-9 pr-8 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+              className="w-full rounded-lg bg-zinc-800 border border-zinc-700 pl-9 pr-8 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
             />
             {searchInput && (
               <button
@@ -293,7 +293,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                           <div className="text-xs text-zinc-500 mt-0.5 line-clamp-2 break-words">
                             {r.matchedSnippet}
                           </div>
-                          <div className="text-xs text-indigo-400/80 mt-0.5">
+                          <div className="text-xs text-green-400/80 mt-0.5">
                             {matchCountLabel(r.matchCount)}
                           </div>
                         </button>
@@ -386,8 +386,8 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
             )}
 
             {activeMatchIds.length > 0 && selectedConvId && (
-              <div className="flex items-center justify-center gap-3 px-4 py-1.5 border-b border-indigo-500/15 bg-indigo-500/5 sticky top-0 z-10 flex-shrink-0 text-xs text-zinc-300">
-                <span className="text-indigo-300/90">
+              <div className="flex items-center justify-center gap-3 px-4 py-1.5 border-b border-green-500/15 bg-green-500/5 sticky top-0 z-10 flex-shrink-0 text-xs text-zinc-300">
+                <span className="text-green-300/90">
                   匹配到 {activeMatchIds.length}
                   {activeMatchIds.length >= 200 ? '+' : ''} 条结果
                 </span>
@@ -396,7 +396,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                     type="button"
                     disabled={matchIndex <= 0}
                     onClick={() => goMatch(-1)}
-                    className="px-1.5 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-1.5 py-0.5 rounded text-green-200/80 hover:bg-green-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="上一条"
                   >
                     ◀
@@ -408,7 +408,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                     type="button"
                     disabled={matchIndex >= activeMatchIds.length - 1}
                     onClick={() => goMatch(1)}
-                    className="px-1.5 py-0.5 rounded text-indigo-200/80 hover:bg-indigo-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
+                    className="px-1.5 py-0.5 rounded text-green-200/80 hover:bg-green-500/15 disabled:opacity-30 disabled:cursor-not-allowed"
                     title="下一条"
                   >
                     ▶

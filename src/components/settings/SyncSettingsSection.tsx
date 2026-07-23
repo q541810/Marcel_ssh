@@ -614,8 +614,8 @@ export function SyncSettingsSection() {
 function SyncStateBadge({ state }: { state: string }) {
   const config: Record<string, { label: string; color: string; dot?: boolean }> = {
     idle: { label: '已同步', color: 'text-emerald-400 bg-emerald-900/20 border-emerald-800' },
-    pushing: { label: '推送中', color: 'text-indigo-300 bg-indigo-900/20 border-indigo-800', dot: true },
-    pulling: { label: '拉取中', color: 'text-indigo-300 bg-indigo-900/20 border-indigo-800', dot: true },
+    pushing: { label: '推送中', color: 'text-green-300 bg-green-900/20 border-green-800', dot: true },
+    pulling: { label: '拉取中', color: 'text-green-300 bg-green-900/20 border-green-800', dot: true },
     error: { label: '错误', color: 'text-red-300 bg-red-900/20 border-red-800' },
     notConfigured: { label: '未配置', color: 'text-zinc-400 bg-zinc-800 border-zinc-700' },
   };

@@ -41,8 +41,8 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
     { icon: typeof Cloud; color: string; label: string; spin?: boolean }
   > = {
     idle: { icon: Check, color: 'text-emerald-400', label: '已同步' },
-    pushing: { icon: RefreshCw, color: 'text-indigo-400', label: '同步中', spin: true },
-    pulling: { icon: RefreshCw, color: 'text-indigo-400', label: '同步中', spin: true },
+    pushing: { icon: RefreshCw, color: 'text-green-400', label: '同步中', spin: true },
+    pulling: { icon: RefreshCw, color: 'text-green-400', label: '同步中', spin: true },
     error: { icon: AlertCircle, color: 'text-red-400', label: '同步错误' },
     notConfigured: { icon: CloudOff, color: 'text-zinc-500', label: '未配置' },
   };

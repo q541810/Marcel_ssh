@@ -64,7 +64,7 @@ export default function MobileQuickCommandBar({
             disabled={!sessionId || (executingId != null && !running)}
             className={`flex flex-shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors duration-100 active:scale-95 disabled:opacity-50 ${
               running
-                ? 'border-indigo-500 bg-indigo-500/15 text-indigo-300'
+                ? 'border-green-500 bg-green-500/15 text-green-300'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-200 active:bg-zinc-700'
             }`}
           >

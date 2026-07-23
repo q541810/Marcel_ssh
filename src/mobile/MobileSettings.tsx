@@ -136,7 +136,7 @@ export default function MobileSettings({
                 storeClearPreview();
                 setActiveCategory(null);
               }}
-              className="mb-1 flex items-center gap-1 text-xs text-indigo-400 active:text-indigo-300"
+              className="mb-1 flex items-center gap-1 text-xs text-green-400 active:text-green-300"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
               返回设置

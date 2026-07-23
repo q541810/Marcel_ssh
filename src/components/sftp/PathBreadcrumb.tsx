@@ -30,7 +30,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
           setEditing(false);
           if (p !== currentPath) onNavigate(p);
         }}
-        className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-0.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 font-mono"
+        className="flex-1 rounded-md bg-zinc-800 border border-zinc-700 px-2 py-0.5 text-xs text-zinc-100 outline-none focus:border-green-500 font-mono"
         autoFocus
       />
     );
@@ -51,7 +51,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
           e.stopPropagation();
           onNavigate('/');
         }}
-        className="text-zinc-400 hover:text-indigo-400 transition-colors px-0.5"
+        className="text-zinc-400 hover:text-green-400 transition-colors px-0.5"
         title="根目录"
       >
         /
@@ -65,7 +65,7 @@ export default function PathBreadcrumb({ currentPath, onNavigate }: PathBreadcru
               e.stopPropagation();
               onNavigate('/' + pathParts.slice(0, i + 1).join('/'));
             }}
-            className="hover:text-indigo-400 transition-colors px-1"
+            className="hover:text-green-400 transition-colors px-1"
           >
             {part}
           </button>

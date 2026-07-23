@@ -225,9 +225,9 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
                       w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
                       transition-all duration-300
                       ${index === currentStep
-                        ? 'bg-indigo-600 text-white scale-110'
+                        ? 'bg-green-600 text-white scale-110'
                         : index < currentStep
-                          ? 'bg-indigo-600/50 text-indigo-200'
+                          ? 'bg-green-600/50 text-green-200'
                           : 'bg-zinc-800 text-zinc-500'
                       }
                     `}
@@ -241,7 +241,7 @@ export default function OnboardingWizard({ open, onComplete }: OnboardingWizardP
                   {index < STEPS.length - 1 && (
                     <div
                       className={`w-16 h-0.5 mx-2 transition-colors duration-300 ${
-                        index < currentStep ? 'bg-indigo-600/50' : 'bg-zinc-800'
+                        index < currentStep ? 'bg-green-600/50' : 'bg-zinc-800'
                       }`}
                     />
                   )}

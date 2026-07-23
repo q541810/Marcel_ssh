@@ -199,7 +199,7 @@ function ConflictItem({ conflict, resolving, onResolve }: ConflictItemProps) {
 
       <div className="grid grid-cols-2 gap-2 mb-3">
         <div className="rounded bg-zinc-800/80 p-2 border border-zinc-700">
-          <div className="text-xs text-indigo-300 mb-1 flex items-center gap-1">
+          <div className="text-xs text-green-300 mb-1 flex items-center gap-1">
             <ArrowLeft className="w-3 h-3" />
             本地值
           </div>
@@ -222,7 +222,7 @@ function ConflictItem({ conflict, resolving, onResolve }: ConflictItemProps) {
         <button
           onClick={() => onResolve(conflict.key, { type: 'ours' })}
           disabled={resolving}
-          className={`${btnClass} bg-indigo-600 hover:bg-indigo-500 text-white`}
+          className={`${btnClass} bg-green-600 hover:bg-green-500 text-white`}
         >
           <ArrowLeft className="w-3 h-3" />
           用本地

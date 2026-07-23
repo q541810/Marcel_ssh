@@ -20,7 +20,7 @@ const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
 ];
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40';
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500 disabled:opacity-40';
 
 /** Full agent command policy for mobile — same settings surface as desktop. */
 export function MobileAgentPolicySection() {
@@ -96,7 +96,7 @@ export function MobileAgentPolicySection() {
         label="命令超时时间"
         description="Agent 执行单条命令的最大等待时间"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-sm text-green-300">
             {settings.commandTimeoutSecs ?? 120}s
           </span>
         }
@@ -110,7 +110,7 @@ export function MobileAgentPolicySection() {
           onChange={(e) =>
             update({ commandTimeoutSecs: Number(e.target.value) })
           }
-          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
         />
       </MobileSettingRow>
 
@@ -185,7 +185,7 @@ export function MobileAgentPolicySection() {
                 });
               }}
               rows={6}
-              className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+              className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-green-500"
             />
           </div>
         )}
@@ -224,13 +224,13 @@ export function MobileAgentPolicySection() {
                   onClick={() => updateAgent({ listMode: m.value })}
                   className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
                     active
-                      ? 'border-indigo-500 bg-indigo-500/10'
+                      ? 'border-green-500 bg-green-500/10'
                       : 'border-zinc-700 bg-zinc-800/60'
                   }`}
                 >
                   <div
                     className={`text-sm font-medium ${
-                      active ? 'text-indigo-200' : 'text-zinc-300'
+                      active ? 'text-green-200' : 'text-zinc-300'
                     }`}
                   >
                     {m.label}
@@ -366,7 +366,7 @@ export function MobileAgentPolicySection() {
             <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-zinc-400">
               {BUILT_IN_PROTECTED.map((p) => (
                 <span key={p.path} className="whitespace-nowrap">
-                  <code className="text-indigo-300">{p.path}</code>
+                  <code className="text-green-300">{p.path}</code>
                   <span className="text-zinc-500"> {p.reason}</span>
                 </span>
               ))}
@@ -412,7 +412,7 @@ export function MobileAgentPolicySection() {
                   key={p}
                   className="flex items-center justify-between gap-2 rounded-lg bg-zinc-800 px-3 py-2"
                 >
-                  <code className="truncate text-xs text-indigo-300">{p}</code>
+                  <code className="truncate text-xs text-green-300">{p}</code>
                   <button
                     type="button"
                     onClick={() =>
@@ -439,7 +439,7 @@ export function MobileAgentPolicySection() {
         label="最大执行轮数"
         description="单次任务最多执行的工具调用轮数，超限自动停止"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-sm text-green-300">
             {agent.maxToolRounds ?? 80}
           </span>
         }
@@ -453,7 +453,7 @@ export function MobileAgentPolicySection() {
           onChange={(e) =>
             updateAgent({ maxToolRounds: Number(e.target.value) })
           }
-          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
         />
       </MobileSettingRow>
 
@@ -470,7 +470,7 @@ export function MobileAgentPolicySection() {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="mt-2 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+          className="mt-2 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500"
         />
       </MobileSettingRow>
     </div>

@@ -134,7 +134,7 @@ export function ToolCapabilitiesSection() {
                     }}
                     placeholder={hasWebSearchApiKey ? '已保存，输入新 Key 可覆盖' : '输入搜索 API Key'}
                     autoComplete="off"
-                    className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                    className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500"
                   />
                   {hasWebSearchApiKey && (
                     <Button variant="secondary" size="sm" onClick={() => void clearSearchKey()}>

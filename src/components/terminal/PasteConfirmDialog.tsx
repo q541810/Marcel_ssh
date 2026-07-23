@@ -54,7 +54,7 @@ export default function PasteConfirmDialog({ text, sessionId, onConfirm, onCance
           </button>
           <button
             onClick={() => onConfirm(sessionId, text)}
-            className="px-4 py-1.5 rounded-lg text-sm text-white bg-indigo-600 hover:bg-indigo-500 transition-colors"
+            className="px-4 py-1.5 rounded-lg text-sm text-white bg-green-600 hover:bg-green-500 transition-colors"
           >
             确认粘贴
           </button>

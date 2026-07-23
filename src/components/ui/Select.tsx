@@ -122,7 +122,7 @@ export default function Select<T extends string = string>({
           transition-colors
           ${disabled
             ? 'border-zinc-700 bg-zinc-800/50 text-zinc-500 cursor-not-allowed'
-            : 'border-zinc-700 bg-zinc-800 text-zinc-100 hover:border-zinc-600 focus:outline-none focus:border-indigo-500'
+            : 'border-zinc-700 bg-zinc-800 text-zinc-100 hover:border-zinc-600 focus:outline-none focus:border-green-500'
           }
         `}
       >
@@ -159,7 +159,7 @@ export default function Select<T extends string = string>({
                 className={`
                   flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
                   ${active ? 'bg-zinc-700' : ''}
-                  ${selected ? 'text-indigo-400' : 'text-zinc-200'}
+                  ${selected ? 'text-green-400' : 'text-zinc-200'}
                   ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-700'}
                 `}
               >

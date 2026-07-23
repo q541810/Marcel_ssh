@@ -72,7 +72,7 @@ export function MobileModelSection() {
       : models.filter((m) => m.id.toLowerCase().includes(filterText));
 
   const inputClass =
-    'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+    'mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500';
 
   return (
     <div className="flex flex-col gap-2">
@@ -158,7 +158,7 @@ export function MobileModelSection() {
         label="最大重试次数"
         description="LLM 请求失败时自动重试的最大次数（0 = 不重试）"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-sm text-green-300">
             {llmConfig.maxRetries} 次
           </span>
         }
@@ -170,7 +170,7 @@ export function MobileModelSection() {
           step={1}
           value={llmConfig.maxRetries}
           onChange={(e) => updateLlm({ maxRetries: Number(e.target.value) })}
-          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
         />
       </MobileSettingRow>
 
@@ -178,7 +178,7 @@ export function MobileModelSection() {
         label="重试间隔"
         description="两次重试之间的等待时间"
         trailing={
-          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+          <span className="w-14 text-right font-mono text-sm text-green-300">
             {llmConfig.retryDelaySecs}s
           </span>
         }
@@ -192,7 +192,7 @@ export function MobileModelSection() {
           onChange={(e) =>
             updateLlm({ retryDelaySecs: Number(e.target.value) })
           }
-          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
         />
       </MobileSettingRow>
 
@@ -243,7 +243,7 @@ export function MobileModelSection() {
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500"
           />
 
           {modelsLoading && (
@@ -286,13 +286,13 @@ export function MobileModelSection() {
                       }}
                       className={`flex w-full items-center gap-2 px-3 py-3 text-left font-mono text-sm ${
                         isCurrent
-                          ? 'bg-indigo-600/10 text-indigo-300'
+                          ? 'bg-green-600/10 text-green-300'
                           : 'text-zinc-200 active:bg-zinc-800'
                       }`}
                     >
                       <span className="min-w-0 flex-1 truncate">{m.id}</span>
                       {isCurrent && (
-                        <span className="flex-shrink-0 text-xs text-indigo-400">
+                        <span className="flex-shrink-0 text-xs text-green-400">
                           当前
                         </span>
                       )}

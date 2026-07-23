@@ -64,7 +64,7 @@ export default function MobileAuxKeyBar({
         const label =
           isCopy && copied ? <Check className="mx-auto h-4 w-4" /> : key.label;
         const colorClass = active
-          ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300'
+          ? 'border-green-500 bg-green-500/20 text-green-300'
           : isCopy && copied
             ? 'border-emerald-600 bg-emerald-500/20 text-emerald-300'
             : 'border-zinc-700/80 bg-zinc-800 text-zinc-200 active:bg-zinc-700';

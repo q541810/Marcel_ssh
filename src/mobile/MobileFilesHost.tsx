@@ -542,7 +542,7 @@ export default function MobileFilesHost({
             onClick={handleToggleHidden}
             className={`rounded-lg px-2.5 py-1.5 text-xs active:opacity-80 ${
               showHidden
-                ? 'bg-indigo-600/30 text-indigo-200'
+                ? 'bg-green-600/30 text-green-200'
                 : 'bg-zinc-800 text-zinc-200 active:bg-zinc-700'
             }`}
             aria-label={showHidden ? '隐藏点文件' : '显示点文件'}
@@ -564,7 +564,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={() => void handleUpload()}
             disabled={isTransferring}
-            className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs font-medium text-white active:bg-indigo-500 disabled:opacity-50"
+            className="rounded-lg bg-green-600 px-2.5 py-1.5 text-xs font-medium text-white active:bg-green-500 disabled:opacity-50"
           >
             上传
           </button>
@@ -583,7 +583,7 @@ export default function MobileFilesHost({
             }}
             className={`rounded-lg px-2.5 py-1.5 text-xs active:opacity-80 ${
               selectMode
-                ? 'bg-indigo-600/30 text-indigo-200'
+                ? 'bg-green-600/30 text-green-200'
                 : 'bg-zinc-800 text-zinc-200 active:bg-zinc-700'
             }`}
             aria-pressed={selectMode}
@@ -651,11 +651,11 @@ export default function MobileFilesHost({
 
       {opStatus && (
         <div
-          className="flex flex-shrink-0 items-center gap-2 border-b border-zinc-800 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-300"
+          className="flex flex-shrink-0 items-center gap-2 border-b border-zinc-800 bg-green-500/10 px-3 py-2 text-xs text-green-300"
           role="status"
           aria-live="polite"
         >
-          <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-indigo-400" />
+          <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin text-green-400" />
           <span className="min-w-0 flex-1 truncate">{opStatus}</span>
         </div>
       )}
@@ -670,7 +670,7 @@ export default function MobileFilesHost({
               <button
                 type="button"
                 onClick={() => openFile(selectedEntry)}
-                className="rounded-lg bg-indigo-600 px-2.5 py-1.5 text-xs text-white active:bg-indigo-500"
+                className="rounded-lg bg-green-600 px-2.5 py-1.5 text-xs text-white active:bg-green-500"
               >
                 打开
               </button>
@@ -794,7 +794,7 @@ export default function MobileFilesHost({
             aria-live="polite"
             aria-busy="true"
           >
-            <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+            <Loader2 className="h-6 w-6 animate-spin text-green-400" />
             <span>加载中…</span>
           </div>
         ) : filteredEntries.length === 0 ? (
@@ -824,14 +824,14 @@ export default function MobileFilesHost({
                       }
                     }}
                     className={`flex w-full items-center gap-3 px-3 py-3 text-left active:bg-zinc-900 ${
-                      selected ? 'bg-indigo-500/10' : ''
+                      selected ? 'bg-green-500/10' : ''
                     }`}
                   >
                     {selectMode && (
                       <span
                         className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border ${
                           selected
-                            ? 'border-indigo-500 bg-indigo-500 text-white'
+                            ? 'border-green-500 bg-green-500 text-white'
                             : 'border-zinc-600 bg-zinc-800 text-transparent'
                         }`}
                         aria-hidden
@@ -885,7 +885,7 @@ export default function MobileFilesHost({
             aria-busy="true"
           >
             <div className="flex items-center gap-2 rounded-full border border-zinc-700/80 bg-zinc-900/90 px-3 py-1.5 text-xs text-zinc-300 shadow-lg">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-400" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-green-400" />
               刷新中…
             </div>
           </div>
@@ -909,7 +909,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleMkdir()}
               disabled={!newFolderName.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
             >
               创建
             </button>
@@ -928,7 +928,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500"
             autoFocus
           />
         </div>
@@ -1047,7 +1047,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleMkfile()}
               disabled={!newFileName.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
             >
               创建
             </button>
@@ -1066,7 +1066,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-green-500"
             autoFocus
           />
         </div>
@@ -1158,7 +1158,7 @@ export default function MobileFilesHost({
               type="button"
               onClick={() => void handleRename()}
               disabled={!renameValue.trim()}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
             >
               确定
             </button>
@@ -1176,7 +1176,7 @@ export default function MobileFilesHost({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-indigo-500"
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-green-500"
             autoFocus
           />
         </div>
@@ -1227,8 +1227,8 @@ function TransferBar({
 }) {
   const active = status === 'uploading' || status === 'downloading';
   const pct = transferProgressPercent(written, total);
-  const bg = tone === 'upload' ? 'bg-indigo-500/10' : 'bg-emerald-500/10';
-  const bar = tone === 'upload' ? 'bg-indigo-500' : 'bg-emerald-500';
+  const bg = tone === 'upload' ? 'bg-green-500/10' : 'bg-emerald-500/10';
+  const bar = tone === 'upload' ? 'bg-green-500' : 'bg-emerald-500';
   const text =
     status === 'error'
       ? 'text-red-300'
@@ -1237,7 +1237,7 @@ function TransferBar({
         : status === 'cancelled'
           ? 'text-zinc-400'
           : tone === 'upload'
-            ? 'text-indigo-300'
+            ? 'text-green-300'
             : 'text-emerald-300';
 
   return (

@@ -20,7 +20,7 @@ export default function Input({ label, error, className = '', ...props }: Props)
           ${
             error
               ? 'border-red-500 focus:border-red-400'
-              : 'border-zinc-700 focus:border-indigo-500'
+              : 'border-zinc-700 focus:border-green-500'
           }
           disabled:opacity-50 disabled:cursor-not-allowed
           ${className}

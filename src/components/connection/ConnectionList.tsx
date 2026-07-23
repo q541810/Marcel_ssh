@@ -333,7 +333,7 @@ export default function ConnectionList() {
             <p className="text-sm text-zinc-500 mb-3">暂无已保存的连接</p>
             <button
               onClick={openNewConnectionForm}
-              className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+              className="text-xs text-green-400 hover:text-green-300 underline"
             >
               点击此处新建连接
             </button>
@@ -354,7 +354,7 @@ export default function ConnectionList() {
                     w-full text-left px-2 py-2 rounded-lg text-sm transition-colors border
                     ${
                       activeConnectionId === conn.id
-                        ? 'bg-indigo-900/30 border-indigo-700'
+                        ? 'bg-green-900/30 border-green-700'
                         : 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700'
                     }
                   `}

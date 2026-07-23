@@ -88,7 +88,7 @@ export default function AboutSection() {
           {result && result.hasUpdate && (
             <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-800/50 p-4 space-y-3">
               <p className="text-sm text-zinc-200">
-                新版本 <span className="text-indigo-400 font-medium">{result.latestVersion}</span> 可用！
+                新版本 <span className="text-green-400 font-medium">{result.latestVersion}</span> 可用！
               </p>
               <Button variant="primary" onClick={() => openExternalLink(result.releaseUrl)}>
                 去下载

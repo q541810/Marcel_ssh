@@ -40,13 +40,13 @@ function NavButton({
         relative flex items-center justify-center w-12 h-12 rounded-lg transition-colors
         ${
           active
-            ? 'bg-zinc-800 text-indigo-400'
+            ? 'bg-zinc-800 text-green-400'
             : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60'
         }
       `}
     >
       {active && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r bg-indigo-400" />
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r bg-green-400" />
       )}
       {icon}
     </button>

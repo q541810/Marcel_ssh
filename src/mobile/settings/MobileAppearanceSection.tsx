@@ -64,7 +64,7 @@ export function MobileAppearanceSection() {
                 }}
                 className={`flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left ${
                   selected
-                    ? 'border-indigo-500 bg-indigo-500/10'
+                    ? 'border-green-500 bg-green-500/10'
                     : 'border-zinc-800 bg-zinc-900 active:bg-zinc-800'
                 }`}
               >
@@ -74,7 +74,7 @@ export function MobileAppearanceSection() {
                 />
                 <span
                   className={`truncate text-sm ${
-                    selected ? 'font-medium text-indigo-200' : 'text-zinc-300'
+                    selected ? 'font-medium text-green-200' : 'text-zinc-300'
                   }`}
                 >
                   {preset.name}
@@ -87,13 +87,13 @@ export function MobileAppearanceSection() {
             onClick={() => setCustomOpen((v) => !v)}
             className={`flex items-center gap-2.5 rounded-xl border px-3 py-3 text-left ${
               customOpen
-                ? 'border-indigo-500 bg-indigo-500/10'
+                ? 'border-green-500 bg-green-500/10'
                 : 'border-zinc-800 bg-zinc-900 active:bg-zinc-800'
             }`}
           >
             <span className="h-6 w-6 flex-shrink-0 rounded-md border border-zinc-600 bg-gradient-to-br from-red-500 via-green-500 to-blue-500" />
             <span
-              className={`text-sm ${customOpen ? 'font-medium text-indigo-200' : 'text-zinc-300'}`}
+              className={`text-sm ${customOpen ? 'font-medium text-green-200' : 'text-zinc-300'}`}
             >
               自定义
             </span>
@@ -149,7 +149,7 @@ export function MobileAppearanceSection() {
         label="字号"
         description="终端字体大小"
         trailing={
-          <span className="w-12 text-right font-mono text-sm text-indigo-300">
+          <span className="w-12 text-right font-mono text-sm text-green-300">
             {settings.fontSize}px
           </span>
         }
@@ -160,7 +160,7 @@ export function MobileAppearanceSection() {
           max={32}
           value={settings.fontSize}
           onChange={(e) => applyFontSize(parseInt(e.target.value, 10))}
-          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-green-500"
         />
       </MobileSettingRow>
 
@@ -177,7 +177,7 @@ export function MobileAppearanceSection() {
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none focus:border-indigo-500"
+          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none focus:border-green-500"
         />
       </MobileSettingRow>
     </div>

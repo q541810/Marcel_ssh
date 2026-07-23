@@ -183,7 +183,7 @@ export default function MobileFileEditor({
           type="button"
           onClick={() => void handleSave()}
           disabled={saving || loading || !dirty}
-          className="mr-2 flex-shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+          className="mr-2 flex-shrink-0 rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white active:bg-green-500 disabled:opacity-40"
         >
           {saving ? '保存中…' : '保存'}
         </button>
@@ -242,7 +242,7 @@ export default function MobileFileEditor({
               const ok = await handleSave();
               if (ok) requestClose();
             }}
-            className="rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500"
           >
             保存并关闭
           </button>

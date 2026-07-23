@@ -98,12 +98,12 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
 
   return (
     <div className="p-3 border-t border-zinc-800 bg-zinc-900">
-      <div className="rounded-xl bg-zinc-800 border border-indigo-700/40 shadow-lg overflow-hidden">
+      <div className="rounded-xl bg-zinc-800 border border-green-700/40 shadow-lg overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
           <div className="flex items-center gap-2 min-w-0">
             <svg
-              className="w-4 h-4 flex-shrink-0 text-indigo-400"
+              className="w-4 h-4 flex-shrink-0 text-green-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -119,7 +119,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
               {current.header}
             </span>
             {current.multiple && (
-              <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300">
+              <span className="flex-shrink-0 text-xs px-1.5 py-0.5 rounded bg-green-600/20 text-green-300">
                 可多选
               </span>
             )}
@@ -163,7 +163,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
                     onClick={() => handleOptionClick(opt.label)}
                     className={`w-full text-left px-3 py-2 rounded-lg border transition-all ${
                       isSelected
-                        ? 'border-indigo-500 bg-indigo-600/15 text-indigo-200'
+                        ? 'border-green-500 bg-green-600/15 text-green-200'
                         : 'border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:border-zinc-600 hover:bg-zinc-700/50'
                     }`}
                   >
@@ -172,7 +172,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
                         <div
                           className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
                             isSelected
-                              ? 'border-indigo-500 bg-indigo-600'
+                              ? 'border-green-500 bg-green-600'
                               : 'border-zinc-600'
                           }`}
                         >
@@ -186,7 +186,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
                         <div
                           className={`w-4 h-4 rounded-full border flex-shrink-0 flex items-center justify-center transition-colors ${
                             isSelected
-                              ? 'border-indigo-500 bg-indigo-600'
+                              ? 'border-green-500 bg-green-600'
                               : 'border-zinc-600'
                           }`}
                         >
@@ -217,7 +217,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
                   ? '补充说明（可选）...'
                   : '输入你的回答...'
               }
-              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500 resize-none leading-relaxed"
+              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-green-500 resize-none leading-relaxed"
             />
           )}
 
@@ -230,7 +230,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
               onChange={(e) => handleCustomChange(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="或输入自定义回答..."
-              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500 resize-none leading-relaxed"
+              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-green-500 resize-none leading-relaxed"
             />
           )}
         </div>
@@ -252,7 +252,7 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
             )}
             <button
               onClick={handleNext}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+              className="px-4 py-1.5 rounded-lg text-sm font-medium bg-green-600 hover:bg-green-500 text-white transition-colors"
             >
               {isLast ? '提交答案' : '下一题 →'}
             </button>

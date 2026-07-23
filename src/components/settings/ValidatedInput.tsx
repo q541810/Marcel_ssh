@@ -95,7 +95,7 @@ export function ValidatedInput(props: ValidatedInputProps) {
           onChange={(e) => handleChange(e.target.value)}
           onBlur={handleBlur}
           placeholder={placeholder}
-          className={`rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 ${getValidatedInputClassName(hasError)} ${className ?? ''}`}
+          className={`rounded-lg px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-green-500 ${getValidatedInputClassName(hasError)} ${className ?? ''}`}
           {...(type === 'number' ? { min: (props as NumberProps).min, max: (props as NumberProps).max, step: (props as NumberProps).step } : {})}
         />
         {suffix && <span className="text-xs text-zinc-500">{suffix}</span>}

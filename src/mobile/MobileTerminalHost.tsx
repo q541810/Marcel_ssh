@@ -532,7 +532,7 @@ export default function MobileTerminalHost({
           <button
             type="button"
             onClick={() => setForceList(true)}
-            className="flex-shrink-0 text-indigo-400 active:text-indigo-300"
+            className="flex-shrink-0 text-green-400 active:text-green-300"
           >
             连接列表
           </button>
@@ -556,7 +556,7 @@ export default function MobileTerminalHost({
             onError={setIoError}
           />
           {copyHint && hasSelection && !copied && (
-            <div className="pointer-events-none flex-shrink-0 border-t border-indigo-500/30 bg-indigo-500/15 px-3 py-1.5 text-center text-[11px] text-indigo-200">
+            <div className="pointer-events-none flex-shrink-0 border-t border-green-500/30 bg-green-500/15 px-3 py-1.5 text-center text-[11px] text-green-200">
               已选中 · 点下方复制键复制
             </div>
           )}

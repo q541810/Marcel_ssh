@@ -71,7 +71,7 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
           <button
             onClick={handleConfirm}
             disabled={!valid || saving}
-            className='px-4 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
+            className='px-4 py-1.5 text-sm rounded-lg bg-green-600 text-white hover:bg-green-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors'
           >
             {saving ? '保存中...' : '保存'}
           </button>

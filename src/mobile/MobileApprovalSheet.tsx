@@ -60,7 +60,7 @@ export default function MobileApprovalSheet({
           <button
             type="button"
             onClick={onApprove}
-            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            className="flex-1 rounded-xl bg-green-600 px-4 py-3 text-sm font-medium text-white active:bg-green-500"
           >
             批准
           </button>

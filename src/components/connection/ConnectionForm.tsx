@@ -188,7 +188,7 @@ export default function ConnectionForm({
           <select
             value={authMethod}
             onChange={(e) => setAuthMethod(e.target.value)}
-            className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+            className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-green-500"
           >
             <option value="Password">密码</option>
             <option value="PrivateKey">私钥</option>
@@ -232,7 +232,7 @@ export default function ConnectionForm({
           <span className="font-medium">跳板机（可选）</span>
           <span
             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              useJump ? 'bg-indigo-600' : 'bg-zinc-700'
+              useJump ? 'bg-green-600' : 'bg-zinc-700'
             }`}
             role="switch"
             aria-checked={useJump}
@@ -288,7 +288,7 @@ export default function ConnectionForm({
                   setJumpPassword('');
                   setJumpPassphrase('');
                 }}
-                className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-green-500"
               >
                 <option value="withTarget">和目标相同</option>
                 <option value="Password">密码</option>

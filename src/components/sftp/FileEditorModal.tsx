@@ -347,7 +347,7 @@ export default function FileEditorModal({
             type="button"
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white bg-green-600 hover:bg-green-500 disabled:opacity-50"
           >
             {saving ? (
               <>
@@ -391,7 +391,7 @@ export default function FileEditorModal({
                     const result = await handleSave();
                     if (result === 'saved') requestClose();
                   }}
-                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-indigo-600 hover:bg-indigo-500"
+                  className="px-3 py-1.5 rounded-lg text-xs text-white bg-green-600 hover:bg-green-500"
                 >
                   保存
                 </button>

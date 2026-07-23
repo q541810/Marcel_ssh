@@ -103,7 +103,7 @@ export default function McpList() {
             <p className="text-zinc-500 mb-3">尚未配置任何 MCP 服务器</p>
             <button
               onClick={openCreate}
-              className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+              className="text-xs text-green-400 hover:text-green-300 underline"
             >
               创建 MCP
             </button>
@@ -125,7 +125,7 @@ export default function McpList() {
               className={
                 'group rounded-lg border transition-colors px-2 py-2 space-y-2 ' +
                 (server.enabled
-                  ? 'bg-indigo-900/20 border-indigo-700/50 hover:border-indigo-700'
+                  ? 'bg-green-900/20 border-green-700/50 hover:border-green-700'
                   : 'bg-zinc-900/40 border-zinc-800 hover:border-zinc-700')
               }
             >
