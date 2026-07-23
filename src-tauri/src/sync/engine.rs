@@ -829,6 +829,26 @@ impl SyncEngine {
         self.persist_pending_conflicts().await;
     }
 
+    /// 重置本地版本表：清空内存 + 删除 `sync_local_versions.json`。
+    ///
+    /// 必须在以下场景调用，避免旧 sync_key 加密的 `last_synced_values` 残留导致
+    /// 下次 pull 解密 base 失败：
+    /// - `sync_disable`：关闭同步后，若用户重新 pair 可能拿到不同 sync_key
+    /// - `sync_pair_first` / `sync_pair_join`：新账户/新设备加入时，旧版本表已无意义
+    ///
+    /// 仅清理版本表，不动 SyncProfile（用户排除项偏好保留）和 pending_conflicts
+    /// （pair 时理应为空，disable 时由 clear_pending_conflicts 单独处理）。
+    pub async fn reset_local_versions(&self) -> Result<(), AppError> {
+        {
+            let mut local = self.local_versions.write();
+            *local = LocalVersionTable::default();
+        }
+        let path = self.config_dir.join(LOCAL_VERSIONS_FILE);
+        let _ = tokio::fs::remove_file(&path).await;
+        log::info!("[sync] 已重置本地版本表（sync_local_versions.json 已删除）");
+        Ok(())
+    }
+
     /// 首次配对后播种本地版本表。
     ///
     /// 场景：用户在启用同步前已有本地数据（连接、快捷命令、技能、MCP、会话、设置），

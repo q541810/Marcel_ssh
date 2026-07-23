@@ -171,6 +171,9 @@ pub async fn sync_pair_first(
     //    用户在配对前已有本地数据（连接/会话/设置等），但 versions 表为空，
     //    直接 push 不会推任何东西。必须先播种让所有本地数据进入版本表。
     if let Some(engine) = state.sync_engine.as_ref() {
+        // 先清理可能残留的旧版本表（disable 后重新 pair 场景）
+        engine.reset_local_versions().await?;
+        engine.clear_pending_conflicts().await;
         match engine.seed_local_versions().await {
             Ok(n) => log::info!("[sync] pair_first 播种完成：{} 个 key", n),
             Err(e) => log::warn!("[sync] pair_first 播种失败：{}", e),
@@ -266,6 +269,12 @@ pub async fn sync_pair_join(
     //    start() 内部 trigger_pull_now 会执行全量 pull（last_sync_versions 为空 = 拉取全部）。
     //    拉取后按字段级三方合并 / LWW 应用到本地，冲突进 pending_conflicts 弹窗。
     //    已启动时 start() 直接返回（started 标志防重入），此时靠轮询或手动 pull。
+    //    先清理可能残留的旧版本表（disable 后重新 pair 场景），避免旧 sync_key 加密的
+    //    last_synced_values 导致 pull 解密 base 失败。
+    if let Some(engine) = state.sync_engine.as_ref() {
+        engine.reset_local_versions().await?;
+        engine.clear_pending_conflicts().await;
+    }
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
         let scheduler_clone = scheduler.clone();
         tauri::async_runtime::spawn(async move {
@@ -430,6 +439,13 @@ pub async fn sync_reset_account(
             if let Some(scheduler) = state.sync_scheduler.as_ref() {
                 scheduler.set_api_key(None);
             }
+            // 清理本地版本表 + 冲突（账户已删，旧数据无意义）
+            if let Some(engine) = state.sync_engine.as_ref() {
+                if let Err(e) = engine.reset_local_versions().await {
+                    log::warn!("[sync] reset_account 时重置版本表失败：{}", e);
+                }
+                engine.clear_pending_conflicts().await;
+            }
             Ok(SyncResetResult {
                 success: true,
                 error: None,
@@ -462,10 +478,18 @@ pub async fn sync_disable(state: State<'_, AppState>) -> Result<(), AppError> {
         client.delete_device(&api_key, &device_id).await?;
     }
 
-    // 2. 清本地凭证 + 停 WS
+    // 2. 清本地凭证 + 停 WS + 重置版本表
     sync_keychain::clear_all_sync_credentials()?;
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
         scheduler.set_api_key(None);
+    }
+    // 清理 sync_local_versions.json：last_synced_values 存的是旧 sync_key 加密的密文，
+    // 重新 pair 若拿到不同 sync_key，下次 pull 解密 base 会失败。
+    if let Some(engine) = state.sync_engine.as_ref() {
+        if let Err(e) = engine.reset_local_versions().await {
+            log::warn!("[sync] disable 时重置版本表失败：{}", e);
+        }
+        engine.clear_pending_conflicts().await;
     }
     Ok(())
 }
