@@ -608,6 +608,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_ready,
+            commands::mobile_set_app_foreground,
             commands::ssh::ssh_connect,
             commands::ssh::ssh_connect_with_saved_password,
             commands::ssh::ssh_connect_with_saved_passphrase,
@@ -734,6 +735,21 @@ pub fn run() {
             commands::sync::sync_remove_excluded_key,
             commands::sync::sync_get_excluded_keys,
         ])
-        .run(tauri::generate_context!())
-        .expect("Fatal: failed to start Tauri application");
+        .build(tauri::generate_context!())
+        .expect("Fatal: failed to start Tauri application")
+        .run(|app, event| {
+            // 移动端生命周期兜底：Android 切前台时 Tauri 抛出 Resumed。
+            // 桌面端此事件通常不触发，emit 出去前端也只在移动端监听，无副作用。
+            // 前端 (src/mobile/App.tsx) 用 visibilitychange 作为主信号，本事件作兜底，
+            // 确保 WebView 被冻结后恢复时至少有一次状态刷新机会。
+            //
+            // 注：Tauri 2.10.3 的 RunEvent 无 Suspended variant，切后台信号
+            // 仅靠前端 visibilitychange 触发，不影响 SSH/Agent 后台运行（前台服务保活）。
+            // Resumed 时同步「在前台」给 notification，避免恢复后仍按后台发系统通知。
+            if let tauri::RunEvent::Resumed = event {
+                #[cfg(mobile)]
+                crate::notification::set_app_in_foreground(true);
+                let _ = app.emit("mobile://lifecycle", "resumed");
+            }
+        });
 }

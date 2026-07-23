@@ -8,6 +8,7 @@ import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
 import MobileSyncConflictSheet from './MobileSyncConflictSheet';
 import MobileUpdateToast from './MobileUpdateToast';
+import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { panelVisibilityClass } from './sessionUi';
@@ -74,6 +75,32 @@ export default function MobileApp() {
     if (activeTab === DEFAULT_MOBILE_TAB) return;
     return registerBackHandler(() => setActiveTab(DEFAULT_MOBILE_TAB));
   }, [activeTab]);
+
+  // 切前台时触发刷新信号。Rust 侧 RunEvent::Resumed 也会 emit mobile://lifecycle，
+  // 但 visibilitychange 更贴近 WebView 实际恢复时机（JS 引擎解冻）。
+  // 切后台时 SSH/Agent 在 Rust 内存里持续运行（前台服务保活），事件可能积压，
+  // 切前台后批量触发；本信号让需要刷新的组件（如 xterm）有机会主动重绘。
+  // 同时把前后台同步给 Rust：前台不发 Agent 系统通知，后台才发。
+  useEffect(() => {
+    const reportForeground = (inForeground: boolean) => {
+      mobileSetAppForeground(inForeground).catch(() => {});
+    };
+    reportForeground(document.visibilityState === 'visible');
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        reportForeground(true);
+        window.dispatchEvent(new CustomEvent('mobile:foreground'));
+      } else {
+        reportForeground(false);
+        window.dispatchEvent(new CustomEvent('mobile:background'));
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingDone(true);

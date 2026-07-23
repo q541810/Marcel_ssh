@@ -30,6 +30,7 @@ describe('runMobileBootstrap', () => {
       setMode: vi.fn(),
       fetchSkills: vi.fn().mockResolvedValue(undefined),
       attachTransferListeners: vi.fn().mockResolvedValue(undefined),
+      startForegroundServiceIfEnabled: vi.fn(),
       checkUpdate: vi.fn().mockResolvedValue({
         hasUpdate: false,
         latestVersion: '',
@@ -47,6 +48,9 @@ describe('runMobileBootstrap', () => {
     deps.loadSettings = vi.fn(async () => {
       order.push('loadSettings');
     });
+    deps.startForegroundServiceIfEnabled = vi.fn(() => {
+      order.push('startForegroundServiceIfEnabled');
+    });
 
     await runMobileBootstrap(deps);
 
@@ -54,9 +58,10 @@ describe('runMobileBootstrap', () => {
     expect(deps.loadSettings).toHaveBeenCalledOnce();
     expect(deps.getDefaultAgentMode).toHaveBeenCalledOnce();
     expect(deps.setMode).toHaveBeenCalledWith('auto');
+    expect(deps.startForegroundServiceIfEnabled).toHaveBeenCalledOnce();
     expect(deps.fetchSkills).toHaveBeenCalledOnce();
     expect(deps.attachTransferListeners).toHaveBeenCalledOnce();
-    expect(order).toEqual(['appReady', 'loadSettings']);
+    expect(order).toEqual(['appReady', 'loadSettings', 'startForegroundServiceIfEnabled']);
   });
 
   it('still boots when appReady rejects (browser preview)', async () => {

@@ -465,6 +465,11 @@ export async function importSkillFile(fileData: string, fileName: string): Promi
 
 // App lifecycle
 
+/** 移动端同步前后台；桌面端 no-op。前台时不发 Agent 系统通知。 */
+export async function mobileSetAppForeground(inForeground: boolean): Promise<void> {
+  return invoke('mobile_set_app_foreground', { inForeground });
+}
+
 export async function appReady(): Promise<void> {
   return invoke('app_ready');
 }

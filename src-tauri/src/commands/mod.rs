@@ -36,3 +36,13 @@ pub async fn app_ready(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app;
     Ok(())
 }
+
+/// 移动端同步 App 前后台状态，供 Agent 系统通知决定是否发送。
+/// 桌面端 no-op。
+#[tauri::command]
+pub fn mobile_set_app_foreground(in_foreground: bool) {
+    #[cfg(mobile)]
+    crate::notification::set_app_in_foreground(in_foreground);
+    #[cfg(desktop)]
+    let _ = in_foreground;
+}

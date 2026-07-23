@@ -462,6 +462,25 @@ export interface NotificationSettings {
   notificationVolume: number;
 }
 
+/**
+ * 移动端独立通知开关（不参与云端同步，与桌面端 NotificationSettings 隔离）。
+ * 无 notificationVolume：移动端走系统通知通道，不发提示音。
+ */
+export interface MobileNotificationSettings {
+  agentApproval: boolean;
+  agentQuestion: boolean;
+  agentTaskDone: boolean;
+  agentTaskFailed: boolean;
+}
+
+/**
+ * 移动端后台保活设置（不参与云端同步）。
+ * 开启后 App 启动即启动 Android 前台服务，切后台维持 SSH/Agent 运行。
+ */
+export interface MobileBackgroundSettings {
+  keepAliveEnabled: boolean;
+}
+
 export interface WorkspaceLayoutSettings {
   sidebarBaseWidth: number;
   agentBaseWidth: number;
@@ -487,6 +506,10 @@ export interface AppSettings {
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
   notificationSettings: NotificationSettings;
+  /** 移动端独立通知开关（不参与云端同步）。桌面端读写无副作用，UI 不暴露。 */
+  mobileNotificationSettings: MobileNotificationSettings;
+  /** 移动端后台保活设置（不参与云端同步）。 */
+  mobileBackgroundSettings: MobileBackgroundSettings;
   workspaceLayout: WorkspaceLayoutSettings;
   /** User-defined protected paths. Writes to anything under these paths
    * require explicit user approval, same as built-in `/etc`, `/boot`, etc. */

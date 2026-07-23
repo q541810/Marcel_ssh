@@ -245,6 +245,61 @@ impl Default for NotificationSettings {
     }
 }
 
+/// 移动端独立通知开关。
+///
+/// 与桌面端 `NotificationSettings` 完全隔离：
+/// - 不包含 `notification_volume`（移动端不发提示音，走系统通知通道，无声）
+/// - 不参与云端 syncStore 同步（`syncStore` 的 field paths 不包含本字段）
+/// - 桌面端修改不影响移动端，反之亦然
+///
+/// Agent 事件通知由 Rust 侧 `send_notification` 在 `#[cfg(mobile)]` 分支下
+/// 通过 `window.AndroidBridge.sendAgentNotification` 发出，走 `marcel_agent` 通道。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MobileNotificationSettings {
+    #[serde(default = "default_true")]
+    pub agent_approval: bool,
+    #[serde(default = "default_true")]
+    pub agent_question: bool,
+    #[serde(default = "default_true")]
+    pub agent_task_done: bool,
+    #[serde(default = "default_true")]
+    pub agent_task_failed: bool,
+}
+
+impl Default for MobileNotificationSettings {
+    fn default() -> Self {
+        Self {
+            agent_approval: true,
+            agent_question: true,
+            agent_task_done: true,
+            agent_task_failed: true,
+        }
+    }
+}
+
+/// 移动端后台保活设置。
+///
+/// 开启后 App 启动即启动 Android 前台服务（ForegroundService），切后台维持
+/// SSH 会话与 Agent 任务运行。常驻通知为 Android 系统硬性要求，无法去除。
+///
+/// 不参与云端 syncStore 同步：保活是设备本地行为，跨设备同步无意义。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MobileBackgroundSettings {
+    /// 是否启用后台保活（前台服务）。默认关闭，用户主动开启。
+    #[serde(default)]
+    pub keep_alive_enabled: bool,
+}
+
+impl Default for MobileBackgroundSettings {
+    fn default() -> Self {
+        Self {
+            keep_alive_enabled: false,
+        }
+    }
+}
+
 /// Saved workspace layout intent. The frontend treats these as user-preferred
 /// base widths, then scales them against the current window size.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -360,6 +415,13 @@ pub struct AppSettings {
     /// Notification preferences.
     #[serde(default)]
     pub notification_settings: NotificationSettings,
+    /// 移动端独立通知开关（不参与云端同步）。
+    /// 桌面端读写本字段无副作用，但 UI 不暴露；仅移动端设置页可改。
+    #[serde(default)]
+    pub mobile_notification_settings: MobileNotificationSettings,
+    /// 移动端后台保活设置（不参与云端同步）。
+    #[serde(default)]
+    pub mobile_background_settings: MobileBackgroundSettings,
     /// Workspace layout intent for left/main/right columns.
     #[serde(default)]
     pub workspace_layout: WorkspaceLayoutSettings,
@@ -449,6 +511,8 @@ impl Default for AppSettings {
             panel_height: default_panel_height(),
             hide_thinking_display: false,
             notification_settings: NotificationSettings::default(),
+            mobile_notification_settings: MobileNotificationSettings::default(),
+            mobile_background_settings: MobileBackgroundSettings::default(),
             workspace_layout: WorkspaceLayoutSettings::default(),
             custom_protected_paths: vec![],
             command_timeout_secs: default_command_timeout(),

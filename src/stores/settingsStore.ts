@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { setNotificationVolume } from '@/lib/notificationSound';
@@ -49,6 +49,17 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   notificationVolume: 70,
 };
 
+export const DEFAULT_MOBILE_NOTIFICATION_SETTINGS: MobileNotificationSettings = {
+  agentApproval: true,
+  agentQuestion: true,
+  agentTaskDone: true,
+  agentTaskFailed: true,
+};
+
+export const DEFAULT_MOBILE_BACKGROUND_SETTINGS: MobileBackgroundSettings = {
+  keepAliveEnabled: false,
+};
+
 const DEFAULT_SETTINGS: AppSettings = {
   terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
@@ -64,6 +75,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   panelHeight: 256,
   hideThinkingDisplay: false,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
+  mobileNotificationSettings: DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
+  mobileBackgroundSettings: DEFAULT_MOBILE_BACKGROUND_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   customProtectedPaths: [],
   commandTimeoutSecs: 120,
@@ -125,6 +138,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         },
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
+        // 移动端独立设置：旧数据无此字段时用默认值兜底（兼容旧数据 = 保持原样 + 默认值填充）
+        mobileNotificationSettings: {
+          ...DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
+          ...(fromDisk.mobileNotificationSettings ?? {}),
+        },
+        mobileBackgroundSettings: {
+          ...DEFAULT_MOBILE_BACKGROUND_SETTINGS,
+          ...(fromDisk.mobileBackgroundSettings ?? {}),
+        },
       };
       set({
         settings: merged,
