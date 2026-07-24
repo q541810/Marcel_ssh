@@ -364,19 +364,21 @@ async def delete_account(
 ):
     """账户重置：删除账户及所有数据。
 
-    安全措施（双重验证）：
-    - 1. API Key 校验：证明调用者是账户内合法设备（verify_auth 依赖）
-    - 2. 配置码 hash 校验：请求体内的 config_code_hash 必须与 API Key 所属账户一致，
-         证明调用者知道账户根信任锚（配置码）
+    认证要求：
+    - 必须持有该账户的有效 API Key（verify_auth 依赖）。API Key 即代表对该账户的完全访问权，
+      一旦泄露，持有者可读写并删除账户全部数据。
+    - 请求体内的 config_code_hash 必须与 API Key 所属账户一致（一致性校验）。
+
+    说明：上述第二点并非独立「第二因子」。合法设备本就持有自身 account_id
+          （= config_code_hash，setup/join 响应中已返回并存储），因此该检查对合法
+          调用者恒为真，仅作一致性/防误用保护，不构成额外的身份因子。
+          真正的删除授权完全来自 API Key，请勿在文档/审计中声称存在「双因子」防护。
     - 级联删除 devices 和 sync_snapshots（外键 ON DELETE CASCADE）
     - 所有在线 WebSocket 连接会被踢
-
-    防御：仅有 API Key 的攻击者无法删除账户（不知道配置码 hash）；
-          仅知道配置码 hash 的攻击者也无法删除账户（没有 API Key）。
     """
     account_id, _ = auth_ctx
 
-    # 双因子校验：API Key 所属账户必须与请求的 config_code_hash 一致
+    # 一致性校验：请求体的 config_code_hash 必须与 API Key 所属账户一致（非独立第二因子）
     if account_id != request.config_code_hash:
         # 不泄露账户是否存在，统一返回 403
         raise HTTPException(

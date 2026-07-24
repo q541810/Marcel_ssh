@@ -28,7 +28,7 @@ from starlette.responses import Response
 
 # 端点路径 → (max_requests, window_seconds)
 RATE_LIMITS: dict[str, tuple[int, int]] = {
-    "/api/account/setup":   (5, 60),
+    "/api/account/setup":   (3, 60),
     "/api/account/join":    (5, 60),
     "/api/account":         (5, 60),  # DELETE
     "/api/device/register": (10, 60),
