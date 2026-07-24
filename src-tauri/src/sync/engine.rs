@@ -10,7 +10,7 @@
 //! 本地版本追踪：
 //! - 每个设备维护一份 `local_versions.json`，记录每个 key 的版本号
 //! - 本地值变更时，版本号 +1
-//! - push 成功后，更新 last_sync_versions
+//! - push 成功后，更新 last_sync_versions + last_synced_values（三方合并 base）
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -66,7 +66,8 @@ pub struct PendingConflict {
 /// 冲突解决动作（用户在 UI 选择后传入 engine）。
 #[derive(Debug, Clone)]
 pub enum ConflictAction {
-    /// 保留本地值（不 apply 本地；bump 版本号 + 触发 push 让远程更新）
+    /// 保留本地值：越过已否决的 remote_version + 抬高本地 version 触发 push。
+    /// 不跳过「处理冲突期间」远程更新的更高版本（见 `advance_past_remote`）。
     UseOurs,
     /// 用远程值（apply theirs；更新版本表为 remote_version；不 push）
     UseTheirs,
@@ -74,17 +75,17 @@ pub enum ConflictAction {
     SkipOnce,
     /// 永久跳过（加进 excluded_keys + 持久化 SyncProfile；下次 pull 该 key 被 profile 过滤掉）
     SkipForever,
-    /// 用自定义值（apply custom；bump 版本号 + 触发 push 让远程更新）
+    /// 用自定义值（apply custom；越过 remote_version + 抬高 version 触发 push）
     UseCustom(String),
     /// Fork：保留本地原会话，远程内容另存为新会话（仅用于 conversations.* 冲突）。
-    /// 新会话 id = `{原id}-fork-{ts}`，bump 原会话版本号 + 标记新会话为本地变更 + 触发 push。
+    /// 新会话 id = `{原id}-fork-{ts}`；原会话按 UseOurs 推进版本 + 标记新会话为本地变更 + 触发 push。
     Fork,
 }
 
 /// 冲突解决结果（由 engine 返回，调用方据此决定是否触发 push）。
 #[derive(Debug, Clone)]
 pub enum ResolveOutcome {
-    /// 已 bump 版本号，调用方应触发 push（UseOurs / UseCustom / Fork）
+    /// 已越过否决的远程版本并抬高本地 version，调用方应触发 push（UseOurs / UseCustom / Fork）
     PushNeeded,
     /// 已 apply theirs，无需 push（UseTheirs）
     AppliedTheirs,
@@ -117,6 +118,27 @@ impl LocalVersionTable {
         *v
     }
 
+    /// 用户选择保留本地（UseOurs / UseCustom / Fork 原 key）时推进版本表。
+    ///
+    /// - `versions = max(local, remote_version) + 1`：保证 push 不会被服务端
+    ///   `outdated_version` 拒绝（仅 `bump` 时本地可能仍 ≤ 远程）。
+    /// - `last_sync_versions = max(existing, remote_version)`：否决**弹窗里那一版**
+    ///   远程，打断「push 前 pull → 同一版再冲突」死循环；若处理冲突期间远程
+    ///   已升到更高版本，下次 pull 仍会拿到并再 merge，不会静默吞掉。
+    /// - **不**改 `last_synced_values`：base 仍指向上次真正同步的值，等 push
+    ///   成功后再写入本次推送的密文。
+    pub fn advance_past_remote(&mut self, key: &str, remote_version: i64) -> i64 {
+        let local = self.get_version(key);
+        let new_version = local.max(remote_version) + 1;
+        self.versions.insert(key.to_string(), new_version);
+        let last = self.last_sync_versions.get(key).copied().unwrap_or(0);
+        if remote_version > last {
+            self.last_sync_versions
+                .insert(key.to_string(), remote_version);
+        }
+        new_version
+    }
+
     /// 记录已同步的值（push 或 pull 后）。
     pub fn record_synced(&mut self, key: &str, version: i64, encrypted_value: Option<&str>) {
         self.versions.insert(key.to_string(), version);
@@ -127,6 +149,25 @@ impl LocalVersionTable {
             }
             None => {
                 self.last_synced_values.remove(&key.to_string());
+            }
+        }
+    }
+
+    /// push 被服务端接受后：只推进 last_sync_versions + last_synced_values，
+    /// 不覆盖 `versions`（本地可能在 push 飞行中又 bump 了更高版本）。
+    pub fn record_push_accepted(
+        &mut self,
+        key: &str,
+        version: i64,
+        encrypted_value: Option<&str>,
+    ) {
+        self.last_sync_versions.insert(key.to_string(), version);
+        match encrypted_value {
+            Some(v) => {
+                self.last_synced_values.insert(key.to_string(), v.to_string());
+            }
+            None => {
+                self.last_synced_values.remove(key);
             }
         }
     }
@@ -489,14 +530,23 @@ impl SyncEngine {
             })
             .collect();
 
+        // 保留已推送密文，accept 后写入 last_synced_values（三方合并 base）
+        let encrypted_by_key: HashMap<String, Option<String>> = changes
+            .iter()
+            .map(|c| (c.key.clone(), c.encrypted_value.clone()))
+            .collect();
+
         let request = PushRequest { changes };
         let response = client.push(api_key, request).await?;
 
-        // 更新本地版本表：只更新 accepted 的项
+        // 更新本地版本表：accepted 推进 last_sync + last_synced_values
         {
             let mut local = self.local_versions.write();
             for accepted in &response.accepted {
-                local.last_sync_versions.insert(accepted.key.clone(), accepted.version);
+                let enc = encrypted_by_key
+                    .get(&accepted.key)
+                    .and_then(|v| v.as_deref());
+                local.record_push_accepted(&accepted.key, accepted.version, enc);
             }
         }
         self.persist().await?;
@@ -716,10 +766,10 @@ impl SyncEngine {
     ) -> Result<ResolveOutcome, AppError> {
         match action {
             ConflictAction::UseOurs => {
-                // 本地值不动，bump 版本号让 push 把 ours 推到远程
+                // 本地值不动：越过已否决的远程版 + 抬高 version，让 push 把 ours 推上云
                 {
                     let mut local = self.local_versions.write();
-                    local.bump_version(&conflict.key);
+                    local.advance_past_remote(&conflict.key, conflict.remote_version);
                 }
                 self.persist().await?;
                 Ok(ResolveOutcome::PushNeeded)
@@ -767,10 +817,10 @@ impl SyncEngine {
                     .apply_value(&conflict.key, Some(&value))
                     .await?;
 
-                // bump 版本号触发 push
+                // 越过否决的远程版 + 抬高 version，触发 push
                 {
                     let mut local = self.local_versions.write();
-                    local.bump_version(&conflict.key);
+                    local.advance_past_remote(&conflict.key, conflict.remote_version);
                 }
                 self.persist().await?;
                 Ok(ResolveOutcome::PushNeeded)
@@ -802,10 +852,10 @@ impl SyncEngine {
                 let accessor = self.require_accessor()?;
                 accessor.fork_conversation(conv_id, &forked_id, theirs_json).await?;
 
-                // bump 原会话版本号（相当于 UseOurs，让 push 把本地值推到远程）
+                // 原会话按 UseOurs 推进（越过否决的远程版，push 本地值）
                 {
                     let mut local = self.local_versions.write();
-                    local.bump_version(&conflict.key);
+                    local.advance_past_remote(&conflict.key, conflict.remote_version);
                 }
                 // 标记新会话为本地变更（让 push 把新会话推到远程）
                 let marker = chrono::Utc::now().to_rfc3339();
@@ -989,16 +1039,23 @@ impl SyncEngine {
             });
         }
 
+        // 保留已推送密文，accept 后写入 last_synced_values（三方合并 base）
+        let encrypted_by_key: HashMap<String, Option<String>> = changes
+            .iter()
+            .map(|c| (c.key.clone(), c.encrypted_value.clone()))
+            .collect();
+
         let request = PushRequest { changes };
         let response = client.push(api_key, request).await?;
 
-        // 更新本地版本表：只更新 accepted 的项
+        // 更新本地版本表：accepted 推进 last_sync + last_synced_values
         {
             let mut local = self.local_versions.write();
             for accepted in &response.accepted {
-                local
-                    .last_sync_versions
-                    .insert(accepted.key.clone(), accepted.version);
+                let enc = encrypted_by_key
+                    .get(&accepted.key)
+                    .and_then(|v| v.as_deref());
+                local.record_push_accepted(&accepted.key, accepted.version, enc);
             }
         }
         self.persist().await?;
@@ -1223,5 +1280,72 @@ mod tests {
         table.bump_version("key1");
         table.last_synced_values.remove("key1");
         assert!(!table.last_synced_values.contains_key("key1"));
+    }
+
+    #[test]
+    fn test_advance_past_remote_breaks_pull_loop() {
+        // 冲突：远程 v5，本地 version 仍可能 ≤ 5；选本地后必须
+        // last_sync=5（不再拉回 v5）且 versions>5（push 可被接受）
+        let mut table = LocalVersionTable::default();
+        table.versions.insert("k".into(), 3);
+        table.last_sync_versions.insert("k".into(), 2);
+        table
+            .last_synced_values
+            .insert("k".into(), "old_base_enc".into());
+
+        let v = table.advance_past_remote("k", 5);
+        assert_eq!(v, 6);
+        assert_eq!(table.get_version("k"), 6);
+        assert_eq!(table.last_sync_versions.get("k"), Some(&5));
+        // base 不动，等 push accept 再写
+        assert_eq!(
+            table.last_synced_values.get("k"),
+            Some(&"old_base_enc".to_string())
+        );
+        // 仍有 pending push
+        assert!(table.get_version("k") > table.last_sync_versions["k"]);
+    }
+
+    #[test]
+    fn test_advance_past_remote_when_local_already_higher() {
+        let mut table = LocalVersionTable::default();
+        table.versions.insert("k".into(), 10);
+        table.last_sync_versions.insert("k".into(), 2);
+
+        let v = table.advance_past_remote("k", 5);
+        assert_eq!(v, 11); // max(10, 5) + 1
+        assert_eq!(table.last_sync_versions.get("k"), Some(&5));
+    }
+
+    #[test]
+    fn test_advance_past_remote_does_not_lower_last_sync() {
+        let mut table = LocalVersionTable::default();
+        table.versions.insert("k".into(), 8);
+        table.last_sync_versions.insert("k".into(), 7);
+
+        let v = table.advance_past_remote("k", 5);
+        assert_eq!(v, 9);
+        // 不回退 last_sync（防御；正常路径冲突 remote 应 ≥ last_sync）
+        assert_eq!(table.last_sync_versions.get("k"), Some(&7));
+    }
+
+    #[test]
+    fn test_record_push_accepted_updates_base_not_versions() {
+        let mut table = LocalVersionTable::default();
+        table.versions.insert("k".into(), 6);
+        table.last_sync_versions.insert("k".into(), 5);
+
+        // push 飞行中本地又改了 → versions 已到 7
+        table.versions.insert("k".into(), 7);
+        table.record_push_accepted("k", 6, Some("enc_ours"));
+
+        assert_eq!(table.get_version("k"), 7); // 不覆盖更高本地 version
+        assert_eq!(table.last_sync_versions.get("k"), Some(&6));
+        assert_eq!(
+            table.last_synced_values.get("k"),
+            Some(&"enc_ours".to_string())
+        );
+        // 仍有 pending（7 > 6）
+        assert!(table.get_version("k") > table.last_sync_versions["k"]);
     }
 }

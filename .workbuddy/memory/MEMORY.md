@@ -10,3 +10,14 @@
 ## 审查交付物
 - `D:\my\Marcel SSH\review-auto-sync.md`：自动同步全面审查报告（含第 9 节维护者反馈与修订）。
 - 唯一 P0 遗留：C-F1 客户端 push 失败无自动重试。
+
+## 引导（onboarding）架构（2026-07-24 重做）
+- 两端引导均为三相位：`gate（同步账户门）→ restore（恢复）→ steps（内容步骤）`。恢复成功（pairJoin + 首轮 pull）直接 `hasCompletedOnboarding=true` 结束引导。
+- 共享逻辑在 `src/components/onboarding/SyncRestore.tsx`（恢复流程状态机 form→syncing→done）；样式沿用原组件与配色，不要另起视觉系统。
+- `hasCompletedOnboarding` / `hasAcceptedSyncDisclaimer` 不参与跨设备同步（profile.rs 映射 None），是纯本机标记。
+- `src/lib/waitForInitialSync.ts`（waitForInitialSyncPull）：加入账户后等首轮 pull 落定（轮询 summary.state，90s 超时），任何"配对后立即进入"场景都应复用。
+- 引导里只做"加入已有账户"；创建新账户（pairFirst + 手抄配置码）留在设置页。
+
+## UI 变更风格要求（用户明确，2026-07-24）
+- 简洁、干净、克制、现代化；尊重原有设计语言与代码结构：zinc 卡片（border-zinc-800 bg-zinc-900/50）、indigo-600 主按钮、既有文案词汇、既有动效类。
+- 禁止"AI 味"发挥：渐变按钮、光晕/发光 logo、渐变文字、大面积错落动效、营销化/修饰性文案（如"开始之前"这类无中生有的标签）。

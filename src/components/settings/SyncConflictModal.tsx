@@ -6,7 +6,7 @@
  * - syncStore 收到 sync-conflicts-detected 事件后自动打开
  *
  * 单条决策选项：
- * - 用本地值（ours）→ bump 版本号触发 push，让远程更新
+ * - 用本地值（ours）→ 越过弹窗里那一版远程 + 抬高 version 触发 push（处理期间更新的更高远程仍会再 pull）
  * - 用远程值（theirs）→ apply theirs，不 push
  * - 开 Fork（仅 conversations.*）→ 保留本地原会话，远程内容另存为新会话
  * - 跳过本次（skipOnce）→ 不 apply，下次 pull 还会冲突

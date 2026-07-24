@@ -12,6 +12,7 @@ src-tauri/target/
 AGENTS.md
 .vscode/
 .idea/
+.workbuddy/
 .trae/*
 !.trae/skills/
 !.trae/skills/release/
