@@ -181,9 +181,6 @@ export function SyncSettingsSection() {
       excludedKeys: summary.profile.excludedKeys ?? [],
     };
     updateProfile(newProfile);
-    if (enabled) {
-      showHint('想让这个项同步成功，您可能需要重新启动程序以全量同步一遍');
-    }
   };
 
   // ── 危险操作 ──────────────────────────────

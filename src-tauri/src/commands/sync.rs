@@ -292,11 +292,29 @@ pub async fn sync_pair_join(
 ///
 /// 本地：写入 SyncEngine 内存 + 持久化到 sync_profile.json
 /// 远程：推送到服务端（per-device，不影响其他设备）
+///
+/// 若有新开启的分类：对该分类下已有本地数据播种版本表 → 防抖 push → 立即 pull，
+/// 避免「打开同步项后要等重启 / 再改一次配置才同步」。
 #[tauri::command]
 pub async fn sync_update_profile(
     state: State<'_, AppState>,
     profile: SyncProfile,
 ) -> Result<(), AppError> {
+    // 在写入前对比，收集新开启的分类（仅关闭时不必播种）
+    let newly_enabled: std::collections::HashSet<crate::sync::profile::SyncCategory> =
+        match state.sync_engine.as_ref() {
+            Some(engine) => {
+                let old = engine.profile();
+                profile
+                    .enabled_categories
+                    .iter()
+                    .filter(|c| !old.enabled_categories.contains(*c))
+                    .cloned()
+                    .collect()
+            }
+            None => std::collections::HashSet::new(),
+        };
+
     // 本地更新 + 持久化（必须在服务端推送前完成，否则重启后丢失）
     if let Some(engine) = state.sync_engine.as_ref() {
         engine.update_profile(profile.clone());
@@ -326,6 +344,30 @@ pub async fn sync_update_profile(
     };
 
     client.update_sync_profile(&api_key, request).await?;
+
+    // 新开启分类：播种该分类本地存量 → push；并 pull 云端数据
+    if !newly_enabled.is_empty() {
+        if let Some(engine) = state.sync_engine.as_ref() {
+            match engine.seed_newly_enabled_categories(&newly_enabled).await {
+                Ok(n) => {
+                    if n > 0 {
+                        log::info!(
+                            "[sync] profile 新开分类后播种完成：{} 个 key 进入待推送",
+                            n
+                        );
+                    }
+                }
+                Err(e) => log::warn!("[sync] profile 新开分类后播种失败：{}", e),
+            }
+        }
+        if let Some(scheduler) = state.sync_scheduler.as_ref() {
+            scheduler.schedule_push();
+            let scheduler = scheduler.clone();
+            tauri::async_runtime::spawn(async move {
+                scheduler.trigger_pull_now().await;
+            });
+        }
+    }
 
     Ok(())
 }

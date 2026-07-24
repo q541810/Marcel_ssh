@@ -849,18 +849,20 @@ impl SyncEngine {
         Ok(())
     }
 
-    /// 首次配对后播种本地版本表。
+    /// 播种本地版本表（首次配对 / 新开启同步分类后复用）。
     ///
-    /// 场景：用户在启用同步前已有本地数据（连接、快捷命令、技能、MCP、会话、设置），
-    /// 但 `local_versions.versions` 为空（record_local_change 从未被调用过）。
-    /// 此时直接 `schedule_push()` 不会推送任何东西，因为 push 只推送 version > 0 的项。
+    /// 场景：
+    /// 1. 用户在启用同步前已有本地数据，但 `local_versions.versions` 为空
+    ///    （record_local_change 从未被调用）。此时直接 `schedule_push()` 不会推任何东西。
+    /// 2. 用户在设置里新打开某个同步分类：该分类下本地数据此前被 profile 过滤，
+    ///    未进版本表；不播种则要等用户再改一次数据或重启后偶然 pull，才会同步。
     ///
     /// 本方法遍历 accessor.enumerate_all_keys() 返回的所有本地 key，对每个 key：
     /// 1. 通过 accessor.read_value 读取当前明文值
-    /// 2. 调用 record_local_change（内部会与 last_synced_values 比对，首次配对时为空必然 bump 到 1）
-    /// 3. record_local_change 内部会按 profile + platform 过滤，不同步的 key 跳过
+    /// 2. 调用 record_local_change（与 last_synced_values 比对；无记录或值变化才 bump）
+    /// 3. record_local_change 内部按 **当前** profile + platform 过滤，未开启分类的 key 跳过
     ///
-    /// 播种后所有本地数据都有 version=1，scheduler.schedule_push() 会全量推送到服务端。
+    /// 调用方应在 `update_profile` 写入新 profile 之后调用，再 `schedule_push`。
     ///
     /// 返回实际 bump 版本号的 key 数量（被 profile 排除或值为空的 key 不计数）。
     pub async fn seed_local_versions(&self) -> Result<usize, AppError> {
@@ -868,6 +870,14 @@ impl SyncEngine {
         let keys = accessor.enumerate_all_keys().await;
         let mut seeded = 0usize;
         for key in &keys {
+            // 已进版本表的 key 跳过：首次配对 versions 为空会全部播种；
+            // 新开分类时另走 seed_newly_enabled_categories，避免把无关已同步项整库 re-bump。
+            {
+                let local = self.local_versions.read();
+                if local.get_version(key) > 0 {
+                    continue;
+                }
+            }
             if let Some(value) = accessor.read_value(key).await {
                 let v = self.record_local_change(key, &value)?;
                 if v > 0 {
@@ -877,9 +887,48 @@ impl SyncEngine {
         }
         self.persist().await?;
         log::info!(
-            "[sync] 首次配对播种完成：{} 个 key 进入版本表（共 {} 个本地 key）",
+            "[sync] 本地版本播种完成：{} 个 key 进入版本表（共扫描 {} 个本地 key）",
             seeded,
             keys.len()
+        );
+        Ok(seeded)
+    }
+
+    /// 用户新打开同步分类后：把这些分类下的本地存量重新纳入版本表 / 待推送。
+    ///
+    /// 与 `seed_local_versions` 的区别：
+    /// - 只处理给定分类的 key（不影响其他分类）
+    /// - 即使 version 已存在也会 `record_local_change`（关闭期间本地改动此前被 profile 过滤未 bump）
+    ///
+    /// 须在 `update_profile` 写入**新** profile 之后调用（should_sync 依赖当前 profile）。
+    pub async fn seed_newly_enabled_categories(
+        &self,
+        categories: &std::collections::HashSet<crate::sync::profile::SyncCategory>,
+    ) -> Result<usize, AppError> {
+        if categories.is_empty() {
+            return Ok(0);
+        }
+        let accessor = self.require_accessor()?;
+        let keys = accessor.enumerate_all_keys().await;
+        let mut seeded = 0usize;
+        for key in &keys {
+            let sync_key = crate::sync::profile::SyncKey::new(key);
+            match sync_key.category() {
+                Some(cat) if categories.contains(&cat) => {}
+                _ => continue,
+            }
+            if let Some(value) = accessor.read_value(key).await {
+                let v = self.record_local_change(key, &value)?;
+                if v > 0 {
+                    seeded += 1;
+                }
+            }
+        }
+        self.persist().await?;
+        log::info!(
+            "[sync] 新开分类播种完成：{} 个 key 进入待推送（分类数 {}）",
+            seeded,
+            categories.len()
         );
         Ok(seeded)
     }
