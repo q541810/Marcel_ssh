@@ -154,8 +154,11 @@ pub fn save_sync_key_bytes(bytes: &[u8; 32]) -> Result<(), AppError> {
 mod tests {
     use super::*;
 
-    /// 这个测试会真实操作 keychain，只在非 CI 环境手动跑
+    /// 真实读写系统 keychain（Windows Credential Manager 等）。
+    /// 默认忽略：会删掉本机 `com.marcel.ssh` / `sync_key`，与正在用的桌面端冲突。
+    /// 手动验证：`cargo test -p marcel-ssh test_save_and_get_sync_key -- --ignored --nocapture`
     #[test]
+    #[ignore = "mutates real OS keychain; deletes production sync_key"]
     fn test_save_and_get_sync_key() {
         let mut key = [0u8; 32];
         for (i, b) in key.iter_mut().enumerate() {
