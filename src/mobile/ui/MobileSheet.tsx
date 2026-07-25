@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
@@ -17,11 +17,35 @@ interface MobileSheetProps {
   footer?: ReactNode;
 }
 
-const SWIPE_CLOSE_THRESHOLD_PX = 72;
+const CLOSE_POSITION_THRESHOLD_PX = 72;
+const CLOSE_VELOCITY_THRESHOLD_PX_S = 500;
+const RUBBERBAND_DIMENSION = 300;
+const RUBBERBAND_CONSTANT = 0.55;
+const VELOCITY_HISTORY_MAX = 5;
+
+/**
+ * 渐进阻力：超出边界越远，跟随越少（Apple §9 橡皮筋效果）。
+ * dimension 越大，前期阻力越小；constant 控制曲线斜率。
+ */
+function rubberband(
+  overshoot: number,
+  dimension: number,
+  constant = RUBBERBAND_CONSTANT,
+): number {
+  return (
+    (overshoot * dimension * constant) /
+    (dimension + constant * Math.abs(overshoot))
+  );
+}
 
 /**
  * Bottom sheet for the mobile shell: full-width, slides from the bottom,
  * safe-area aware, swipe-down on the grab handle to dismiss.
+ *
+ * Improvements over touch events:
+ * - Pointer Events + setPointerCapture（Apple §2 直接操控：1:1 跟随）
+ * - 橡皮筋渐进阻力（Apple §9）
+ * - 速度采样 + 动量推算决定关闭/回弹（Apple §5, §6）
  */
 export default function MobileSheet({
   open,
@@ -35,6 +59,8 @@ export default function MobileSheet({
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragStartYRef = useRef<number | null>(null);
   const dragDeltaRef = useRef(0);
+  const velocitySamplesRef = useRef<Array<{ y: number; t: number }>>([]);
+  const capturedPointerIdRef = useRef<number | null>(null);
   const presence = useAnimatedPresence(open);
 
   // Reset any in-flight drag when closed.
@@ -42,6 +68,8 @@ export default function MobileSheet({
     if (!open) {
       dragStartYRef.current = null;
       dragDeltaRef.current = 0;
+      velocitySamplesRef.current = [];
+      capturedPointerIdRef.current = null;
     }
   }, [open]);
 
@@ -53,31 +81,121 @@ export default function MobileSheet({
     return registerBackHandler(dismissible ? onClose : () => {});
   }, [open, dismissible, onClose]);
 
-  if (!presence.mounted) return null;
-  const exiting = presence.phase === 'exit';
-
-  const setDragOffset = (offset: number) => {
+  const applyDragOffset = useCallback((rawDelta: number) => {
     const el = sheetRef.current;
     if (!el) return;
-    el.style.transform = offset > 0 ? `translateY(${offset}px)` : '';
+    // 只允许向下拖
+    if (rawDelta <= 0) {
+      dragDeltaRef.current = 0;
+      el.style.transform = '';
+      el.style.transition = '';
+      return;
+    }
+    // 橡皮筋：渐进阻力，而非 1:1
+    const dampened = rubberband(rawDelta, RUBBERBAND_DIMENSION);
+    dragDeltaRef.current = dampened;
+    el.style.transform = `translateY(${dampened}px)`;
     el.style.transition = 'none';
-  };
+  }, []);
 
-  const endDrag = () => {
+  const snapBack = useCallback(() => {
     const el = sheetRef.current;
-    const delta = dragDeltaRef.current;
+    if (!el) return;
+    el.style.transition =
+      'transform 300ms cubic-bezier(0.22, 1, 0.36, 1)';
+    el.style.transform = '';
+  }, []);
+
+  const cleanupDrag = useCallback(() => {
     dragStartYRef.current = null;
     dragDeltaRef.current = 0;
+    velocitySamplesRef.current = [];
+    if (capturedPointerIdRef.current != null && sheetRef.current) {
+      try {
+        sheetRef.current.releasePointerCapture(capturedPointerIdRef.current);
+      } catch {
+        /* pointer already released */
+      }
+      capturedPointerIdRef.current = null;
+    }
+  }, []);
+
+  /** 计算释放时的瞬时速度（px/s），基于最近几次采样。 */
+  const computeReleaseVelocity = useCallback((): number => {
+    const samples = velocitySamplesRef.current;
+    if (samples.length < 2) return 0;
+    const last = samples[samples.length - 1];
+    const first = samples[0];
+    const dt = last.t - first.t;
+    if (dt <= 0) return 0;
+    return (last.y - first.y) / (dt / 1000); // px/s
+  }, []);
+
+  const endDrag = useCallback(() => {
+    const el = sheetRef.current;
+    const delta = dragDeltaRef.current;
+    const velocity = computeReleaseVelocity();
+    cleanupDrag();
     if (!el) return;
-    el.style.transition = '';
-    if (dismissible && delta > SWIPE_CLOSE_THRESHOLD_PX) {
-      // Keep the dragged offset; the exit animation picks up from the
-      // current position instead of snapping back to 0 first.
+
+    if (!dismissible) {
+      snapBack();
+      return;
+    }
+
+    // Apple §6：速度符号决定方向，不仅看位置。
+    // 位置超过阈值 或 速度超过阈值 → 关闭；否则弹回。
+    if (
+      delta > CLOSE_POSITION_THRESHOLD_PX ||
+      velocity > CLOSE_VELOCITY_THRESHOLD_PX_S
+    ) {
+      // 保持当前拖拽偏移，退出动画从这里继续（Apple §3 可中断性）
       onClose();
       return;
     }
-    el.style.transform = '';
-  };
+
+    snapBack();
+  }, [dismissible, onClose, computeReleaseVelocity, cleanupDrag, snapBack]);
+
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dismissible || e.pointerType !== 'touch') return;
+      const el = sheetRef.current;
+      if (!el) return;
+      // Apple §2：setPointerCapture 确保指针离开元素后仍能跟踪
+      el.setPointerCapture(e.pointerId);
+      capturedPointerIdRef.current = e.pointerId;
+      dragStartYRef.current = e.clientY;
+      dragDeltaRef.current = 0;
+      velocitySamplesRef.current = [{ y: e.clientY, t: e.timeStamp }];
+    },
+    [dismissible],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (dragStartYRef.current == null) return;
+      const delta = e.clientY - dragStartYRef.current;
+      // 记录速度采样（Apple §2：保留速度/位置历史）
+      const samples = velocitySamplesRef.current;
+      samples.push({ y: e.clientY, t: e.timeStamp });
+      if (samples.length > VELOCITY_HISTORY_MAX) samples.shift();
+      applyDragOffset(delta);
+    },
+    [applyDragOffset],
+  );
+
+  const handlePointerUp = useCallback(() => {
+    endDrag();
+  }, [endDrag]);
+
+  const handlePointerCancel = useCallback(() => {
+    snapBack();
+    cleanupDrag();
+  }, [snapBack, cleanupDrag]);
+
+  if (!presence.mounted) return null;
+  const exiting = presence.phase === 'exit';
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
@@ -102,20 +220,11 @@ export default function MobileSheet({
         aria-modal="true"
       >
         <div
-          className="flex flex-shrink-0 flex-col items-stretch"
-          onTouchStart={(e) => {
-            if (!dismissible || e.touches.length !== 1) return;
-            dragStartYRef.current = e.touches[0].clientY;
-            dragDeltaRef.current = 0;
-          }}
-          onTouchMove={(e) => {
-            if (dragStartYRef.current == null) return;
-            const delta = e.touches[0].clientY - dragStartYRef.current;
-            dragDeltaRef.current = delta;
-            setDragOffset(delta);
-          }}
-          onTouchEnd={endDrag}
-          onTouchCancel={endDrag}
+          className="flex flex-shrink-0 flex-col items-stretch touch-none"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
         >
           <div className="flex justify-center pb-1 pt-2" aria-hidden>
             <div className="h-1 w-10 rounded-full bg-zinc-600" />
