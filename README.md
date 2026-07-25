@@ -15,6 +15,7 @@
 QQ:1101255501
 
 欢迎加入交流群，与我们分享使用经验、反馈问题、建议功能等
+
 ***
 
 ## 核心功能
@@ -27,7 +28,7 @@ QQ:1101255501
 - **Skills**：自定义提示词模板，渐进式披露，按需启用/禁用
 - **SFTP 文件管理**：拖拽上传、批量操作、在线解压、可上传文件夹、文件编辑
 - **插件系统**：自定义插件扩展功能，支持 WebView 面板挂载（[开发指南](docs/plugin-development.md)）
-- **双端支持**：Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端**，工作随时迁移
+- **双端支持**：Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端**。搭配自动同步，工作随时迁移
 
 ***
 
@@ -62,16 +63,31 @@ QQ:1101255501
 
 Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端**，两端共用同一套核心：SSH 终端、Agent 自动化、SFTP 文件管理、Skills、MCP、设置。
 
-|                                | Windows                                | Android                                                          |
-| ------------------------------ | -------------------------------------- | ---------------------------------------------------------------- |
-| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名）                      |
-| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                                                |
-| 插件系统/自定义MCP                    | ✓                                      | ✗                                                                |
-| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences |
-| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                                         |
-| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                                      |
+|                                | Windows                                | Android                                     |
+| ------------------------------ | -------------------------------------- | ------------------------------------------- |
+| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名） |
+| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                           |
+| 插件系统/自定义MCP                    | ✓                                      | ✗                                           |
+| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences        |
+| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                    |
+| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                 |
 
 Android APK 在 [Release 页面](https://github.com/q541810/Marcel_ssh/releases) 与 Windows 安装包一同发布。
+
+****
+
+### 自动同步
+
+基于端到端加密，服务端无法读取数据。支持自部署或使用官方服务器。
+
+| | Marcel SSH | FinalShell | XShell |
+|---|---|---|---|
+| 费用 | 免费 | 云同步收费 | 付费软件 |
+| 同步方式 | 配置码+密码，不强制注册账号 | 账号密码登录 | 无云同步 |
+| 服务端 | 自部署/官方，代码开源 | 强制使用官方服务器，闭源 | 无 |
+| 数据隐私 | 服务端零信任的端到端加密 | 闭源软件，全凭开发者自觉 | 仅本地 |
+
+**安全说明**：SSH 密钥永远不同步；配置码和账户密码参与密钥派生，丢失后无法找回（不影响本地数据）。
 
 ****
 
@@ -99,6 +115,12 @@ pnpm tauri android build --apk --target aarch64
 产物在 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`。release 构建会自动用仓库外的正式 keystore 签名；没有配置 `key.properties` 时退化为未签名 APK，可手动用 `apksigner` 签 debug key 自测。
 
 ***
+
+### 部署自动同步服务端
+
+服务端文档见Marcel SSH\server\DEPLOY.md
+
+****
 
 ## 界面展示
 
