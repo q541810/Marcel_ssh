@@ -119,7 +119,7 @@ export default function Select<T extends string = string>({
         onClick={() => setOpen((v) => !v)}
         className={`
           w-full flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm text-left
-          transition-colors
+          transition-colors active:scale-[0.98]
           ${disabled
             ? 'border-zinc-700 bg-zinc-800/50 text-zinc-500 cursor-not-allowed'
             : 'border-zinc-700 bg-zinc-800 text-zinc-100 hover:border-zinc-600 focus:outline-none focus:border-indigo-500'
