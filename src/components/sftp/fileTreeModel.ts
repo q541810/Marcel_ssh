@@ -4,7 +4,7 @@ export const FILE_TREE_MIN_WIDTH = 140;
 export const FILE_TREE_MAX_WIDTH = 360;
 export const FILE_TREE_DEFAULT_WIDTH = 200;
 /** Panel width below this hides the tree (panel self-width, not window). */
-export const FILE_TREE_SHOW_THRESHOLD = 760;
+export const FILE_TREE_SHOW_THRESHOLD = 680;
 export const FILE_TREE_ANIM_MS = 220;
 /** Hard depth cap for symlink / deep nests (cycle safety without realpath). */
 export const FILE_TREE_MAX_DEPTH = 32;
