@@ -90,6 +90,8 @@ export function flyToTransferCenter(kind: TransferFlyKind, origin?: { x: number;
     return;
   }
 
+  // from 已通过 null 检查，赋给不可变 const 让 TypeScript 在闭包内也能 narrow。
+  const start = from;
   const rect = targetEl.getBoundingClientRect();
   const to = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 
@@ -100,20 +102,46 @@ export function flyToTransferCenter(kind: TransferFlyKind, origin?: { x: number;
   }
   document.body.appendChild(node);
 
-  // 抛物线中点：水平取中，垂直抬到两点更高处之上，形成上抛的弧线（§8 沿手势方向暗示去向）。
-  const midX = (from.x + to.x) / 2;
-  const midY = Math.min(from.y, to.y) - 56;
+  // 抛物线控制点：水平取中，垂直抬到两点更高处之上，形成上抛的弧线（§8 沿手势方向暗示去向）。
+  const ctrlX = (start.x + to.x) / 2;
+  const ctrlY = Math.min(start.y, to.y) - 56;
 
+  // 二次贝塞尔插值：B(t) = (1-t)²·from + 2(1-t)t·ctrl + t²·to
+  // 用多个中间点让 Web Animations API 走出平滑弧线（3 个关键帧只走出折线）。
+  function bezierPoint(t: number) {
+    const u = 1 - t;
+    return {
+      x: u * u * start.x + 2 * u * t * ctrlX + t * t * to.x,
+      y: u * u * start.y + 2 * u * t * ctrlY + t * t * to.y,
+    };
+  }
+
+  // 运动模糊（§11 帧级流畅度）：中段速度最快时沿水平方向拉伸，起点/终点恢复正常。
   const center = 'translate(-50%,-50%)';
-  const anim = node.animate(
-    [
-      { transform: `translate(${from.x}px,${from.y}px) ${center} scale(0.6)`, opacity: 0, offset: 0 },
-      { transform: `translate(${from.x}px,${from.y}px) ${center} scale(1)`, opacity: 1, offset: 0.12 },
-      { transform: `translate(${midX}px,${midY}px) ${center} scale(1.05)`, opacity: 1, offset: 0.5 },
-      { transform: `translate(${to.x}px,${to.y}px) ${center} scale(0.28)`, opacity: 0, offset: 1 },
-    ],
-    { duration: 640, easing: 'cubic-bezier(0.32, 0.0, 0.2, 1)', fill: 'forwards' },
-  );
+  const frames: Keyframe[] = [];
+  const steps = [
+    { t: 0,    scale: 0.6,  scaleX: 1,   opacity: 0 },
+    { t: 0.12, scale: 1,    scaleX: 1,   opacity: 1 },
+    { t: 0.3,  scale: 1.03, scaleX: 1.2, opacity: 1 },
+    { t: 0.5,  scale: 1.05, scaleX: 1.4, opacity: 0.9 },
+    { t: 0.7,  scale: 1.03, scaleX: 1.2, opacity: 0.8 },
+    { t: 0.88, scale: 0.8,  scaleX: 1,   opacity: 0.5 },
+    { t: 1,    scale: 0.28, scaleX: 1,   opacity: 0 },
+  ];
+  for (const s of steps) {
+    const p = bezierPoint(s.t);
+    frames.push({
+      transform: `translate(${p.x}px,${p.y}px) ${center} scale(${s.scale}) scaleX(${s.scaleX})`,
+      opacity: s.opacity,
+      offset: s.t,
+    });
+  }
+
+  const anim = node.animate(frames, {
+    duration: 640,
+    easing: 'cubic-bezier(0.32, 0.0, 0.2, 1)',
+    fill: 'forwards',
+  });
 
   const cleanup = () => {
     node.remove();
