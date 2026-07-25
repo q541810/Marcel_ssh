@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { useTransferStore, type UploadState, type DownloadState } from '@/stores/transferStore';
+import { useTransferStore } from '@/stores/transferStore';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
@@ -38,7 +38,13 @@ vi.mock('@/hooks/useSftpDownload', () => ({
 
 vi.mock('@/stores/settingsStore', () => {
   const stub = {
-    settings: { fileManagerPath: '/', fileManagerPaths: {}, fileManagerShowHidden: false },
+    settings: {
+      fileManagerPath: '/',
+      fileManagerPaths: {},
+      fileManagerShowHidden: false,
+      fileManagerTreeWidth: 200,
+      fileManagerTreeUserHidden: false,
+    },
     loaded: true,
     update: vi.fn(),
   };
@@ -49,173 +55,49 @@ vi.mock('@/stores/settingsStore', () => {
 
 const FileManagerPanel = (await import('@/components/sftp/FileManagerPanel')).default;
 
-function makeUploadState(overrides: Partial<UploadState> = {}): UploadState {
-  return {
-    status: 'uploading',
-    fileName: 'a.txt',
-    written: 500,
-    total: 1000,
-    statusText: 'uploading a.txt',
-    ...overrides,
-  };
-}
-
-function makeDownloadState(overrides: Partial<DownloadState> = {}): DownloadState {
-  return {
-    status: 'downloading',
-    fileName: 'b.txt',
-    written: 500,
-    total: 1000,
-    statusText: 'downloading b.txt',
-    ...overrides,
-  };
-}
-
-describe('FileManagerPanel upload button disable', () => {
+describe('FileManagerPanel after transfer center migration', () => {
   beforeEach(() => {
-    useTransferStore.setState({
-      upload: null,
-      download: null,
-      folderUpload: null,
-      activeUploadId: null,
-      activeDownloadId: null,
-      activeFolderUploadId: null,
-    });
+    useTransferStore.setState({ items: {}, order: [] });
     useSftpUploadMock.mockReturnValue({
       uploadFile: vi.fn(),
       pickFolder: vi.fn(),
       uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: null,
-      folderStatus: null,
     });
     useSftpDownloadMock.mockReturnValue({
-      downloadState: null,
       startDownload: vi.fn(),
-      cancelCurrentDownload: vi.fn(),
     });
   });
 
-  it('enables upload buttons when no transfer is active', () => {
+  it('renders upload buttons enabled with plain tooltips', () => {
     const html = renderToStaticMarkup(
       <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
     );
     expect(html).toContain('title="上传文件"');
     expect(html).toContain('title="上传文件夹"');
     expect(html).not.toContain('title="正在上传，请等待"');
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*title="上传文件"/);
   });
 
-  it('disables upload buttons when uploadState is set', () => {
-    useSftpUploadMock.mockReturnValue({
-      uploadFile: vi.fn(),
-      pickFolder: vi.fn(),
-      uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: makeUploadState({ statusText: 'uploading a.txt' }),
-      folderStatus: null,
+  it('shows no inline transfer banners even with active transfers in the store', () => {
+    useTransferStore.getState().addItem({
+      id: 'u1',
+      kind: 'upload',
+      sessionId: 'sess-1',
+      fileName: 'a.txt',
+      localPath: 'C:/tmp/a.txt',
+      remotePath: '/a.txt',
+      written: 500,
+      total: 1000,
+      statusText: '上传 500 B / 1000 B (50%)',
+      createdAt: 1,
     });
+    useTransferStore.getState().updateItem('u1', { status: 'active' });
 
     const html = renderToStaticMarkup(
       <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
     );
-    // The "正在上传，请等待" tooltip only appears on the upload buttons
-    const tooltipCount = (html.match(/title="正在上传，请等待"/g) ?? []).length;
-    expect(tooltipCount).toBe(2);
-    // Both upload buttons should be disabled
-    const uploadButtonRegex =
-      /<button[^>]*disabled=""[^>]*title="正在上传，请等待"/g;
-    expect(html).toMatch(uploadButtonRegex);
-    // The status text should appear
-    expect(html).toContain('uploading a.txt');
-  });
-
-  it('disables upload buttons when folderStatus is set', () => {
-    useSftpUploadMock.mockReturnValue({
-      uploadFile: vi.fn(),
-      pickFolder: vi.fn(),
-      uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: null,
-      folderStatus: '正在压缩文件夹 50%',
-    });
-
-    const html = renderToStaticMarkup(
-      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
-    );
-    const tooltipCount = (html.match(/title="正在上传，请等待"/g) ?? []).length;
-    expect(tooltipCount).toBe(2);
-    expect(html).toContain('正在压缩文件夹 50%');
-  });
-
-  it('hides folder upload cancel button while remote extraction cannot be interrupted', () => {
-    useSftpUploadMock.mockReturnValue({
-      uploadFile: vi.fn(),
-      pickFolder: vi.fn(),
-      uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: null,
-      folderStatus: '正在远端解压，暂不可取消 90%',
-    });
-
-    const html = renderToStaticMarkup(
-      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
-    );
-    expect(html).toContain('正在远端解压，暂不可取消 90%');
+    expect(html).not.toContain('上传 500 B / 1000 B');
     expect(html).not.toContain('title="取消上传"');
-  });
-
-  it('keeps download button enabled when only upload is active', () => {
-    useSftpUploadMock.mockReturnValue({
-      uploadFile: vi.fn(),
-      pickFolder: vi.fn(),
-      uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: makeUploadState(),
-      folderStatus: null,
-    });
-    useSftpDownloadMock.mockReturnValue({
-      downloadState: makeDownloadState({ status: 'idle' }),
-      startDownload: vi.fn(),
-      cancelCurrentDownload: vi.fn(),
-    });
-
-    const html = renderToStaticMarkup(
-      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
-    );
-    // Upload buttons disabled
-    const tooltipCount = (html.match(/title="正在上传，请等待"/g) ?? []).length;
-    expect(tooltipCount).toBe(2);
-  });
-
-  it('re-enables upload buttons after upload state is cleared', () => {
-    useSftpUploadMock.mockReturnValue({
-      uploadFile: vi.fn(),
-      pickFolder: vi.fn(),
-      uploadFolder: vi.fn(),
-      cancelCurrentUpload: vi.fn(),
-      uploadState: null,
-      folderStatus: null,
-    });
-
-    const html = renderToStaticMarkup(
-      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
-    );
-    expect(html).toContain('title="上传文件"');
-    expect(html).toContain('title="上传文件夹"');
-    expect(html).not.toContain('title="正在上传，请等待"');
-  });
-
-  it('shows a cancel button while download is active', () => {
-    useSftpDownloadMock.mockReturnValue({
-      downloadState: makeDownloadState({ statusText: 'downloading b.txt' }),
-      startDownload: vi.fn(),
-      cancelCurrentDownload: vi.fn(),
-    });
-
-    const html = renderToStaticMarkup(
-      <FileManagerPanel sessionId="sess-1" connectionKey="conn-1" />,
-    );
-    expect(html).toContain('downloading b.txt');
-    expect(html).toContain('title="取消下载"');
+    expect(html).not.toContain('title="取消下载"');
   });
 });

@@ -16,10 +16,21 @@ import type { SftpFileEntry } from '@/lib/types';
 import { formatSize, modeToString, getErrorMessage, isPreviewableImage } from '@/lib/sftp-helpers';
 import { MAX_EDITOR_FILE_SIZE, MAX_PREVIEW_IMAGE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
+import FileTreeSidebar from './FileTreeSidebar';
+import {
+  clampTreeWidth,
+  FILE_TREE_ANIM_MS,
+  FILE_TREE_DEFAULT_WIDTH,
+  FILE_TREE_MAX_WIDTH,
+  FILE_TREE_MIN_WIDTH,
+  FILE_TREE_SHOW_THRESHOLD,
+} from './fileTreeModel';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
-import { useFileDrop } from '@/hooks/useFileDrop';
+import { useFileDrop, type DropPosition } from '@/hooks/useFileDrop';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
+import { useResizablePanel } from '@/hooks/useResizablePanel';
+import { useFileTree } from '@/hooks/useFileTree';
 import FileEditorModal from './FileEditorModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import CompressModal from './CompressModal';
@@ -60,9 +71,56 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [compressEntry, setCompressEntry] = useState<SftpFileEntry | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const treeRegionRef = useRef<HTMLDivElement>(null);
   const loadSeqRef = useRef(0);
   const toolbarWidth = useContainerWidth(toolbarRef);
+  const panelWidth = useContainerWidth(panelRef);
   const mode = toolbarWidth >= 870 ? 'full' : toolbarWidth >= 750 ? 'compact' : 'icon-only';
+
+  const treeUserHidden = storeSettings.fileManagerTreeUserHidden ?? false;
+  const treeFits = panelWidth >= FILE_TREE_SHOW_THRESHOLD;
+  const showTree = treeFits && !treeUserHidden;
+
+  const persistTreeWidth = useCallback((w: number) => {
+    useSettingsStore.getState().update({ fileManagerTreeWidth: clampTreeWidth(w) });
+  }, []);
+
+  const {
+    width: treeWidth,
+    isResizing: isTreeResizing,
+    startResize: startTreeResize,
+    setWidth: setTreeWidth,
+  } = useResizablePanel({
+    initialWidth: clampTreeWidth(storeSettings.fileManagerTreeWidth ?? FILE_TREE_DEFAULT_WIDTH),
+    minWidth: FILE_TREE_MIN_WIDTH,
+    maxWidth: FILE_TREE_MAX_WIDTH,
+    edge: 'left',
+    onChange: persistTreeWidth,
+  });
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setTreeWidth(clampTreeWidth(useSettingsStore.getState().settings.fileManagerTreeWidth ?? FILE_TREE_DEFAULT_WIDTH));
+  }, [settingsLoaded, setTreeWidth]);
+
+  const {
+    cache: treeCache,
+    expanded: treeExpanded,
+    selectedPath: treeSelectedPath,
+    toggleExpand: toggleTreeExpand,
+    loadNode: loadTreeNode,
+    seedFromListing: seedTreeFromListing,
+  } = useFileTree({
+    sessionId,
+    showHidden,
+    currentPath,
+  });
+
+  const toggleTreeUserHidden = useCallback(() => {
+    const next = !useSettingsStore.getState().settings.fileManagerTreeUserHidden;
+    useSettingsStore.getState().update({ fileManagerTreeUserHidden: next });
+  }, []);
 
   const loadDirectory = useCallback(async (path: string) => {
     const seq = ++loadSeqRef.current;
@@ -73,14 +131,17 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       const items = await sftpListDir(sessionId, path);
       if (seq !== loadSeqRef.current) return;
       setEntries(items);
+      // Seed tree: expand of this path needs no second listDir.
+      seedTreeFromListing(path, items);
     } catch (err) {
       if (seq !== loadSeqRef.current) return;
       setError(`加载失败：${getErrorMessage(err)}`);
     } finally {
-      if (seq !== loadSeqRef.current) return;
-      setLoading(false);
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+      }
     }
-  }, [sessionId]);
+  }, [sessionId, seedTreeFromListing]);
 
   useEffect(() => {
     loadDirectory(currentPath);
@@ -223,19 +284,16 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       const fileName = localPath.split(/[/\\]/).pop() || 'upload';
       const targetPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
 
-      await uploadFile(localPath, fileName, targetPath);
-      await loadDirectory(currentPath);
+      uploadFile(localPath, fileName, targetPath, () => {
+        void loadDirectory(currentPath);
+      });
     } catch (err) {
       setError(`上传失败：${getErrorMessage(err)}`);
     }
   };
 
-  const { uploadFile, pickFolder, uploadFolder: doUploadFolder, cancelCurrentUpload, uploadState, folderStatus } = useSftpUpload(sessionId, currentPath);
-  const { downloadState, startDownload, cancelCurrentDownload } = useSftpDownload(sessionId);
-
-  const isUploading =
-    (uploadState !== null && uploadState.status !== 'cancelled' && uploadState.status !== 'done' && uploadState.status !== 'error') ||
-    (folderStatus !== null && !folderStatus.includes('已取消'));
+  const { uploadFile, pickFolder, uploadFolder: doUploadFolder } = useSftpUpload(sessionId, currentPath);
+  const { startDownload } = useSftpDownload(sessionId);
 
   const handleUploadFolder = async () => {
     setMenuEntry(null);
@@ -249,84 +307,74 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  const runFolderUpload = async (mode: 'folder' | 'flat') => {
+  const runFolderUpload = (mode: 'folder' | 'flat') => {
     const picked = pendingFolderUpload;
     if (!picked) return;
     setPendingFolderUpload(null);
-    try {
-      await doUploadFolder(picked.localPath, picked.folderName, mode);
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`上传文件夹失败：${getErrorMessage(err)}`);
-    }
+    doUploadFolder(picked.localPath, picked.folderName, mode, () => {
+      void loadDirectory(currentPath);
+    });
   };
 
-  const handleDropUpload = useCallback(async (paths: string[]) => {
+  const handleDropUpload = useCallback((paths: string[]) => {
     for (const localPath of paths) {
       const fileName = localPath.split(/[/\\]/).pop() || 'upload';
       const targetPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
-      try {
-        await uploadFile(localPath, fileName, targetPath);
-      } catch (err) {
-        setError(`上传失败：${getErrorMessage(err)}`);
-      }
+      uploadFile(localPath, fileName, targetPath, () => {
+        void loadDirectory(currentPath);
+      });
     }
-    await loadDirectory(currentPath);
   }, [currentPath, uploadFile, loadDirectory]);
 
   const handleDropUploadAsZip = useCallback(async (paths: string[]) => {
-    const { sftpPrepareDragUpload, sftpUploadFolderStream, sftpCleanupTempDir } = await import('@/lib/tauri');
-    const { useTransferStore } = await import('@/stores/transferStore');
-    const { formatFolderUploadStatus } = await import('@/hooks/sftpUploadStatus');
-    const { setFolderUpload, setActiveFolderUploadId } = useTransferStore.getState();
+    const { sftpPrepareDragUpload, sftpCleanupTempDir } = await import('@/lib/tauri');
+    const { enqueueTransfer, createTransferId } = await import('@/stores/transferScheduler');
 
-    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     let tempDir: string | null = null;
-
     try {
       // 1. 后端创建临时目录并复制文件
       tempDir = await sftpPrepareDragUpload(paths);
-
-      // 2. 上传（解压到当前目录）
-      setActiveFolderUploadId(uploadId);
-      setFolderUpload(
-        formatFolderUploadStatus({ uploadId, phase: 'checking' as const, percent: 0 }),
-      );
-
-      const targetPath = currentPath;
-      await sftpUploadFolderStream(sessionId, tempDir, targetPath, uploadId, true);
-      setFolderUpload(null);
-      setActiveFolderUploadId(null);
-
-      await loadDirectory(currentPath);
     } catch (err) {
-      const msg = getErrorMessage(err);
-      if (msg === '上传已取消') {
-        setFolderUpload('上传已取消');
-        setTimeout(() => {
-          setFolderUpload(null);
-          setActiveFolderUploadId(null);
-        }, 3000);
-      } else {
-        setFolderUpload(null);
-        setActiveFolderUploadId(null);
-        setError(`打包上传失败：${msg}`);
-      }
-    } finally {
-      // 3. 清理临时目录
-      if (tempDir) {
-        try {
-          await sftpCleanupTempDir(tempDir);
-        } catch {
-          // 忽略清理失败
-        }
-      }
+      setError(`打包上传失败：${getErrorMessage(err)}`);
+      return;
     }
+
+    // 2. 入队打包上传（解压到当前目录），完成后清理临时目录并刷新
+    const preparedDir = tempDir;
+    enqueueTransfer(
+      {
+        id: createTransferId(),
+        kind: 'folder-upload',
+        sessionId,
+        fileName: `拖拽上传 (${paths.length} 项)`,
+        localPath: preparedDir,
+        remotePath: currentPath,
+        flat: true,
+        written: 0,
+        total: 0,
+        statusText: '排队中',
+        createdAt: Date.now(),
+      },
+      () => {
+        void sftpCleanupTempDir(preparedDir).catch(() => {});
+        void loadDirectory(currentPath);
+      },
+    );
   }, [sessionId, currentPath, loadDirectory]);
 
-  // 拖拽上传：使用 useFileDrop hook，上传中时禁用
-  const handleFileDrop = useCallback(async (paths: string[]) => {
-    if (isUploading) return;
+  // 拖拽上传：使用 useFileDrop hook；树区域不接 drop
+  const handleFileDrop = useCallback(async (paths: string[], position?: DropPosition) => {
+    if (position && treeRegionRef.current && showTree) {
+      const rect = treeRegionRef.current.getBoundingClientRect();
+      if (
+        position.x >= rect.left &&
+        position.x <= rect.right &&
+        position.y >= rect.top &&
+        position.y <= rect.bottom
+      ) {
+        return;
+      }
+    }
     if (paths.length === 1) {
       try {
         const info = await stat(paths[0]);
@@ -342,9 +390,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     } else {
       setPendingDropFiles(paths);
     }
-  }, [isUploading, handleDropUpload]);
+  }, [handleDropUpload, showTree]);
 
-  const { isDragging } = useFileDrop(handleFileDrop, !isUploading);
+  const { isDragging } = useFileDrop(handleFileDrop, true);
 
   const handleDelete = async (entries: SftpFileEntry[]) => {
     setDeleteConfirm([]);
@@ -479,7 +527,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div ref={panelRef} className="flex flex-col h-full">
       <div ref={toolbarRef} className="flex items-center gap-1.5 border-b border-zinc-800 px-3 py-2 flex-shrink-0">
         <button
           type="button"
@@ -533,9 +581,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <button
           type="button"
           onClick={handleUpload}
-          disabled={isUploading}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800 whitespace-nowrap"
-          title={isUploading ? '正在上传，请等待' : '上传文件'}
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 whitespace-nowrap"
+          title="上传文件"
         >
           {mode !== 'compact' && (
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -547,9 +594,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <button
           type="button"
           onClick={handleUploadFolder}
-          disabled={isUploading}
-          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-zinc-800 whitespace-nowrap"
-          title={isUploading ? '正在上传，请等待' : '上传文件夹'}
+          className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 whitespace-nowrap"
+          title="上传文件夹"
         >
           {mode !== 'compact' && (
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -578,7 +624,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </button>
         <button
           type="button"
-          onClick={() => loadDirectory(currentPath)}
+          onClick={() => void loadDirectory(currentPath)}
           disabled={loading}
           className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-zinc-700 disabled:opacity-40 whitespace-nowrap"
           title="刷新"
@@ -593,6 +639,23 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             '刷新'
           )}
         </button>
+        {treeFits && (
+          <button
+            type="button"
+            onClick={toggleTreeUserHidden}
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors whitespace-nowrap ${
+              !treeUserHidden
+                ? 'bg-indigo-500/20 text-indigo-400'
+                : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+            }`}
+            title={treeUserHidden ? '显示目录树' : '隐藏目录树'}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h6v6H4V6zm10 0h6v4h-6V6zM4 14h6v4H4v-4zm10 2h6v4h-6v-4z" />
+            </svg>
+            {mode !== 'icon-only' && <span>目录树</span>}
+          </button>
+        )}
       </div>
 
       {showNewFolder && (
@@ -656,130 +719,6 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </div>
       )}
 
-      {folderStatus && (
-        <div className="flex items-center gap-2 border-b border-zinc-800 px-3 py-2 bg-indigo-500/10">
-          {!folderStatus.includes('已取消') ? (
-            <svg className="w-3.5 h-3.5 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-          ) : (
-            <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          )}
-          <span className="text-xs text-indigo-300 flex-1">{folderStatus}</span>
-          {!folderStatus.includes('已取消') && !folderStatus.includes('暂不可取消') && (
-            <button
-              type="button"
-              onClick={cancelCurrentUpload}
-              className="rounded-md bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300 hover:bg-red-900/60 hover:text-red-300 transition-colors"
-              title="取消上传"
-            >
-              取消
-            </button>
-          )}
-        </div>
-      )}
-
-      {uploadState && (
-        <div className="flex flex-col gap-1 border-b border-zinc-800 px-3 py-2 bg-indigo-500/10">
-          <div className="flex items-center gap-2">
-            {uploadState.status === 'uploading' && (
-              <svg className="w-3.5 h-3.5 text-indigo-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            )}
-            {uploadState.status === 'done' && (
-              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {uploadState.status === 'error' && (
-              <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            {uploadState.status === 'cancelled' && (
-              <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            <span className={`flex-1 text-xs ${uploadState.status === 'error' ? 'text-red-300' : uploadState.status === 'done' ? 'text-emerald-300' : uploadState.status === 'cancelled' ? 'text-zinc-400' : 'text-indigo-300'}`}>
-              {uploadState.statusText}
-            </span>
-            {uploadState.status === 'uploading' && (
-              <button
-                type="button"
-                onClick={cancelCurrentUpload}
-                className="rounded-md bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300 hover:bg-red-900/60 hover:text-red-300 transition-colors"
-                title="取消上传"
-              >
-                取消
-              </button>
-            )}
-          </div>
-          {uploadState.status === 'uploading' && uploadState.total > 0 && (
-            <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-indigo-500 transition-all duration-200"
-                style={{ width: `${Math.round((uploadState.written * 100) / uploadState.total)}%` }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {downloadState && (
-        <div className="flex flex-col gap-1 border-b border-zinc-800 px-3 py-2 bg-emerald-500/10">
-          <div className="flex items-center gap-2">
-            {downloadState.status === 'downloading' && (
-              <svg className="w-3.5 h-3.5 text-emerald-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            )}
-            {downloadState.status === 'done' && (
-              <svg className="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-            {downloadState.status === 'error' && (
-              <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            {downloadState.status === 'cancelled' && (
-              <svg className="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-            <span className={`flex-1 text-xs ${downloadState.status === 'error' ? 'text-red-300' : downloadState.status === 'cancelled' ? 'text-zinc-400' : 'text-emerald-300'}`}>
-              {downloadState.statusText}
-            </span>
-            {downloadState.status === 'downloading' && (
-              <button
-                type="button"
-                onClick={cancelCurrentDownload}
-                className="rounded-md bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300 hover:bg-red-900/60 hover:text-red-300 transition-colors"
-                title="取消下载"
-              >
-                取消
-              </button>
-            )}
-          </div>
-          {downloadState.status === 'downloading' && downloadState.total > 0 && (
-            <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-emerald-500 transition-all duration-200"
-                style={{ width: `${Math.round((downloadState.written * 100) / downloadState.total)}%` }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
       {error && (
         <div className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0">
           <span>{error}</span>
@@ -787,19 +726,55 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </div>
       )}
 
-      {/* Drag-over overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
-          <div className="text-center">
-            <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <p className="text-sm text-indigo-300 font-medium">松手上传到当前目录</p>
+      <div className="flex-1 min-h-0 flex relative">
+        <div
+          ref={treeRegionRef}
+          className={`flex-shrink-0 h-full overflow-hidden ${showTree ? 'border-r border-zinc-800/80' : 'pointer-events-none'}`}
+          style={{
+            width: showTree ? treeWidth : 0,
+            opacity: showTree ? 1 : 0,
+            transition: isTreeResizing
+              ? 'none'
+              : `width ${FILE_TREE_ANIM_MS}ms ease, opacity ${FILE_TREE_ANIM_MS}ms ease`,
+          }}
+          aria-hidden={!showTree}
+        >
+          <div className="flex h-full" style={{ width: treeWidth }}>
+            <div className="flex-1 min-w-0 h-full">
+              <FileTreeSidebar
+                cache={treeCache}
+                expanded={treeExpanded}
+                selectedPath={treeSelectedPath}
+                onToggleExpand={toggleTreeExpand}
+                onNavigate={navigateTo}
+                onRetry={(path) => void loadTreeNode(path, true)}
+              />
+            </div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="调整目录树宽度"
+              onMouseDown={startTreeResize}
+              className={`w-1 flex-shrink-0 cursor-col-resize group relative ${
+                isTreeResizing ? 'bg-indigo-500/40' : 'hover:bg-indigo-500/25'
+              }`}
+            >
+              <div className="absolute inset-y-0 -left-1 -right-1" />
+            </div>
           </div>
         </div>
-      )}
 
-      <div className="flex-1 overflow-auto relative">
+        <div className="flex-1 min-w-0 overflow-auto relative">
+          {isDragging && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
+              <div className="text-center">
+                <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <p className="text-sm text-indigo-300 font-medium">松手上传到当前目录</p>
+              </div>
+            </div>
+          )}
 
         <table className="w-full text-xs table-fixed border-separate border-spacing-0">
           <thead className="sticky top-0 z-10">
@@ -954,6 +929,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             </div>
           </div>
         )}
+        </div>
       </div>
 
       {menuEntry && menuTargets.length > 0 && createPortal(

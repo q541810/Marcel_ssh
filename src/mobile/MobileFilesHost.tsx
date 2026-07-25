@@ -9,6 +9,8 @@ import MobilePathBar from './MobilePathBar';
 import MobileSheet from './ui/MobileSheet';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
+import { useTransferStore, selectActiveOf } from '@/stores/transferStore';
+import { cancelTransfer } from '@/stores/transferScheduler';
 import {
   MAX_EDITOR_FILE_SIZE,
   MAX_PREVIEW_IMAGE_SIZE,
@@ -233,16 +235,14 @@ export default function MobileFilesHost({
     [entries, showHidden],
   );
 
-  const { uploadFile, cancelCurrentUpload, uploadState } = useSftpUpload(
-    sessionId,
-    currentPath,
-  );
-  const { downloadState, startDownload, cancelCurrentDownload } =
-    useSftpDownload(sessionId);
+  const { uploadFile } = useSftpUpload(sessionId, currentPath);
+  const { startDownload } = useSftpDownload(sessionId);
 
-  const isTransferring =
-    uploadState?.status === 'uploading' ||
-    downloadState?.status === 'downloading';
+  // 传输中心接管进度管理；移动端保留顶部条显示当前活动传输
+  const uploadItem = useTransferStore((s) => selectActiveOf(s, 'upload'));
+  const downloadItem = useTransferStore((s) => selectActiveOf(s, 'download'));
+
+  const isTransferring = uploadItem !== null || downloadItem !== null;
 
   const navigateTo = useCallback((path: string) => {
     setCurrentPath(path || '/');
@@ -391,8 +391,9 @@ export default function MobileFilesHost({
         ? await sftpLocalFileName(localPath)
         : localPath.split(/[/\\]/).pop() || 'upload';
       const targetPath = joinRemotePath(currentPath, fileName);
-      await uploadFile(localPath, fileName, targetPath);
-      await loadDirectory(currentPath);
+      uploadFile(localPath, fileName, targetPath, () => {
+        void loadDirectory(currentPath);
+      });
     } catch (err) {
       // Android 上取消文件选择器是 reject 而非返回 null，不当作错误
       if (isDialogCancelled(err)) return;
@@ -606,30 +607,30 @@ export default function MobileFilesHost({
         </div>
       </header>
 
-      {uploadState && (
+      {uploadItem && (
         <TransferBar
           tone="upload"
-          statusText={uploadState.statusText}
-          status={uploadState.status}
-          written={uploadState.written}
-          total={uploadState.total}
+          statusText={uploadItem.statusText}
+          status="uploading"
+          written={uploadItem.written}
+          total={uploadItem.total}
           onCancel={
-            uploadState.status === 'uploading'
-              ? () => void cancelCurrentUpload()
+            uploadItem.status === 'active' && uploadItem.phase !== 'extracting'
+              ? () => cancelTransfer(uploadItem.id)
               : undefined
           }
         />
       )}
-      {downloadState && downloadState.status !== 'idle' && (
+      {downloadItem && (
         <TransferBar
           tone="download"
-          statusText={downloadState.statusText}
-          status={downloadState.status}
-          written={downloadState.written}
-          total={downloadState.total}
+          statusText={downloadItem.statusText}
+          status="downloading"
+          written={downloadItem.written}
+          total={downloadItem.total}
           onCancel={
-            downloadState.status === 'downloading'
-              ? () => void cancelCurrentDownload()
+            downloadItem.status === 'active'
+              ? () => cancelTransfer(downloadItem.id)
               : undefined
           }
         />

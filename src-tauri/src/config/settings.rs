@@ -401,6 +401,12 @@ pub struct AppSettings {
     /// File manager show hidden files
     #[serde(default)]
     pub file_manager_show_hidden: bool,
+    /// Desktop file-manager directory tree width in pixels.
+    #[serde(default = "default_file_manager_tree_width")]
+    pub file_manager_tree_width: u16,
+    /// User forced the directory tree closed (panel still auto-hides when narrow).
+    #[serde(default)]
+    pub file_manager_tree_user_hidden: bool,
     /// Zip compression level for folder uploads (0 fastest/largest, 9 slowest/smallest).
     #[serde(default = "default_folder_upload_compression_level")]
     pub folder_upload_compression_level: i64,
@@ -458,6 +464,9 @@ pub struct AppSettings {
 fn default_file_manager_path() -> String {
     "/".to_string()
 }
+fn default_file_manager_tree_width() -> u16 {
+    200
+}
 fn default_font_size() -> u16 {
     14
 }
@@ -507,6 +516,8 @@ impl Default for AppSettings {
             file_manager_path: default_file_manager_path(),
             file_manager_paths: HashMap::new(),
             file_manager_show_hidden: false,
+            file_manager_tree_width: default_file_manager_tree_width(),
+            file_manager_tree_user_hidden: false,
             folder_upload_compression_level: default_folder_upload_compression_level(),
             panel_height: default_panel_height(),
             hide_thinking_display: false,
@@ -668,6 +679,8 @@ mod tests {
         assert_eq!(s.file_manager_path, "/");
         assert!(s.file_manager_paths.is_empty());
         assert!(!s.file_manager_show_hidden);
+        assert_eq!(s.file_manager_tree_width, 200);
+        assert!(!s.file_manager_tree_user_hidden);
         assert_eq!(s.folder_upload_compression_level, 6);
         assert!(!s.hide_thinking_display);
     }

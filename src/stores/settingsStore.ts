@@ -71,6 +71,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   fileManagerShowHidden: false,
   fileManagerPath: '/',
   fileManagerPaths: {},
+  fileManagerTreeWidth: 200,
+  fileManagerTreeUserHidden: false,
   folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,

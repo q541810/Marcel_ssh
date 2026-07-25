@@ -25,6 +25,8 @@ describe('settingsStore', () => {
     expect(s.fileManagerShowHidden).toBe(false);
     expect(s.fileManagerPath).toBe('/');
     expect(s.fileManagerPaths).toEqual({});
+    expect(s.fileManagerTreeWidth).toBe(200);
+    expect(s.fileManagerTreeUserHidden).toBe(false);
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
     expect(s.workspaceLayout).toEqual({

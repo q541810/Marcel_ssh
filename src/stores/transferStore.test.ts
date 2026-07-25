@@ -1,94 +1,134 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useTransferStore } from '@/stores/transferStore';
+import {
+  useTransferStore,
+  selectByLane,
+  selectActiveOf,
+  selectQueuedOf,
+  selectBadgeCount,
+  laneOf,
+  type TransferItem,
+} from '@/stores/transferStore';
+
+let seq = 0;
+function makeItem(patch: Partial<TransferItem> = {}): TransferItem {
+  seq += 1;
+  return {
+    id: `t-${seq}`,
+    kind: 'upload',
+    sessionId: 's1',
+    fileName: `file-${seq}.txt`,
+    localPath: `C:/tmp/file-${seq}.txt`,
+    remotePath: `/srv/file-${seq}.txt`,
+    written: 0,
+    total: 100,
+    statusText: '排队中',
+    createdAt: seq,
+    ...patch,
+  };
+}
 
 describe('transferStore', () => {
   beforeEach(() => {
-    useTransferStore.setState({
-      upload: null,
-      download: null,
-      folderUpload: null,
-      activeUploadId: null,
-      activeDownloadId: null,
-      activeFolderUploadId: null,
-    });
+    useTransferStore.setState({ items: {}, order: [] });
   });
 
-  it('starts with null states', () => {
+  it('addItem inserts with queued status and preserves order', () => {
+    const a = makeItem();
+    const b = makeItem({ kind: 'download' });
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().addItem(b);
     const state = useTransferStore.getState();
-    expect(state.upload).toBeNull();
-    expect(state.download).toBeNull();
-    expect(state.folderUpload).toBeNull();
-    expect(state.activeUploadId).toBeNull();
+    expect(state.order).toEqual([a.id, b.id]);
+    expect(state.items[a.id].status).toBe('queued');
+    expect(state.items[b.id].status).toBe('queued');
   });
 
-  it('sets upload state', () => {
-    useTransferStore.getState().setUpload({
-      status: 'uploading',
-      fileName: 'a.txt',
-      written: 100,
-      total: 1000,
-      statusText: 'uploading',
-    });
-    expect(useTransferStore.getState().upload?.fileName).toBe('a.txt');
+  it('addItem ignores duplicate ids', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'active' });
+    useTransferStore.getState().addItem(a);
+    const state = useTransferStore.getState();
+    expect(state.order).toEqual([a.id]);
+    expect(state.items[a.id].status).toBe('active');
   });
 
-  it('sets activeUploadId and clears on next set', () => {
-    useTransferStore.getState().setActiveUploadId('123');
-    expect(useTransferStore.getState().activeUploadId).toBe('123');
-    useTransferStore.getState().setActiveUploadId(null);
-    expect(useTransferStore.getState().activeUploadId).toBeNull();
+  it('updateItem patches fields and no-ops on unknown id', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { written: 50, statusText: '50%' });
+    expect(useTransferStore.getState().items[a.id].written).toBe(50);
+    useTransferStore.getState().updateItem('missing', { written: 1 });
+    expect(useTransferStore.getState().items['missing']).toBeUndefined();
   });
 
-  it('clearUploadAfter sets a timer that nullifies upload', async () => {
-    useTransferStore.getState().setUpload({
-      status: 'done',
-      fileName: 'a.txt',
-      written: 0,
-      total: 0,
-      statusText: 'done',
-    });
-    useTransferStore.getState().clearUploadAfter(50);
-    expect(useTransferStore.getState().upload).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(useTransferStore.getState().upload).toBeNull();
+  it('updateItem refuses finished → in-progress regression', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'done' });
+    useTransferStore.getState().updateItem(a.id, { status: 'active' });
+    expect(useTransferStore.getState().items[a.id].status).toBe('done');
   });
 
-  it('clearDownloadAfter sets a timer that nullifies download', async () => {
-    useTransferStore.getState().setDownload({
-      status: 'done',
-      fileName: 'b.txt',
-      written: 0,
-      total: 0,
-      statusText: 'done',
-    });
-    useTransferStore.getState().clearDownloadAfter(50);
-    expect(useTransferStore.getState().download).not.toBeNull();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(useTransferStore.getState().download).toBeNull();
+  it('removeItem deletes item and order entry', () => {
+    const a = makeItem();
+    const b = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().addItem(b);
+    useTransferStore.getState().removeItem(a.id);
+    const state = useTransferStore.getState();
+    expect(state.order).toEqual([b.id]);
+    expect(state.items[a.id]).toBeUndefined();
   });
 
-  it('sets folder upload status', () => {
-    useTransferStore.getState().setFolderUpload('uploading...');
-    expect(useTransferStore.getState().folderUpload).toBe('uploading...');
-    useTransferStore.getState().setFolderUpload(null);
-    expect(useTransferStore.getState().folderUpload).toBeNull();
+  it('clearFinished removes only done/error/cancelled', () => {
+    const a = makeItem();
+    const b = makeItem();
+    const c = makeItem();
+    const d = makeItem();
+    for (const it of [a, b, c, d]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(a.id, { status: 'done' });
+    useTransferStore.getState().updateItem(b.id, { status: 'error' });
+    useTransferStore.getState().updateItem(c.id, { status: 'active' });
+    useTransferStore.getState().clearFinished();
+    expect(useTransferStore.getState().order).toEqual([c.id, d.id]);
   });
 
-  it('isUploading derives from upload and folderUpload being non-null', () => {
-    const isUploading = (s: ReturnType<typeof useTransferStore.getState>) =>
-      s.upload !== null || s.folderUpload !== null;
-    expect(isUploading(useTransferStore.getState())).toBe(false);
-    useTransferStore.getState().setUpload({
-      status: 'uploading',
-      fileName: 'a',
-      written: 0,
-      total: 0,
-      statusText: '',
-    });
-    expect(isUploading(useTransferStore.getState())).toBe(true);
-    useTransferStore.getState().setUpload(null);
-    expect(isUploading(useTransferStore.getState())).toBe(false);
-    useTransferStore.getState().setFolderUpload('zipping');
-    expect(isUploading(useTransferStore.getState())).toBe(true);
+  it('laneOf maps folder-upload to upload lane', () => {
+    expect(laneOf('upload')).toBe('upload');
+    expect(laneOf('folder-upload')).toBe('upload');
+    expect(laneOf('download')).toBe('download');
+  });
+
+  it('lane selectors split items and find active/queued', () => {
+    const up = makeItem();
+    const folder = makeItem({ kind: 'folder-upload' });
+    const down = makeItem({ kind: 'download' });
+    for (const it of [up, folder, down]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(up.id, { status: 'active' });
+
+    const state = useTransferStore.getState();
+    expect(selectByLane(state, 'upload').map((i) => i.id)).toEqual([up.id, folder.id]);
+    expect(selectByLane(state, 'download').map((i) => i.id)).toEqual([down.id]);
+    expect(selectActiveOf(state, 'upload')?.id).toBe(up.id);
+    expect(selectActiveOf(state, 'download')).toBeNull();
+    expect(selectQueuedOf(state, 'upload').map((i) => i.id)).toEqual([folder.id]);
+  });
+
+  it('selectActiveOf treats cancelling as occupying the lane', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'cancelling' });
+    expect(selectActiveOf(useTransferStore.getState(), 'upload')?.id).toBe(a.id);
+  });
+
+  it('selectBadgeCount counts unfinished items only', () => {
+    const a = makeItem();
+    const b = makeItem();
+    const c = makeItem();
+    for (const it of [a, b, c]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(a.id, { status: 'active' });
+    useTransferStore.getState().updateItem(b.id, { status: 'done' });
+    expect(selectBadgeCount(useTransferStore.getState())).toBe(2);
   });
 });

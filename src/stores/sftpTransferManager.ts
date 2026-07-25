@@ -3,9 +3,9 @@ import { formatSize } from '@/lib/sftp-helpers';
 import {
   formatFolderUploadStatus,
   type FolderStatusPayload,
-  type FolderUploadPhase,
 } from '@/hooks/sftpUploadStatus';
 import { useTransferStore } from './transferStore';
+import { initTransferScheduler } from './transferScheduler';
 
 // ---------------------------------------------------------------------------
 // Listener handles (module-level, persist across component unmounts)
@@ -39,6 +39,11 @@ interface DownloadDonePayload {
   downloadId: string;
 }
 
+function progressText(action: '上传' | '下载', written: number, total: number): string {
+  const pct = total > 0 ? Math.round((written * 100) / total) : 0;
+  return `${action} ${formatSize(written)} / ${formatSize(total)} (${pct}%)`;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -49,34 +54,33 @@ export async function attachTransferListeners() {
   if (attached) return;
   attached = true;
 
+  initTransferScheduler();
+
   progressUnlisten = await listen<ProgressPayload>(
     'sftp-upload-progress',
     (event) => {
       const { uploadId, written, total } = event.payload;
       const state = useTransferStore.getState();
-      const pct = total > 0 ? Math.round((written * 100) / total) : 0;
-      const fmt = `上传 ${formatSize(written)} / ${formatSize(total)} (${pct}%)`;
+      const item = state.items[uploadId];
+      if (!item || (item.status !== 'active' && item.status !== 'cancelling')) return;
 
-      if (uploadId === state.activeUploadId) {
-        const current = state.upload;
-        if (!current) return;
-        if (current.status !== 'uploading') return;
-        state.setUpload({
-          status: 'uploading',
-          fileName: current.fileName,
+      if (item.kind === 'upload') {
+        state.updateItem(uploadId, {
           written,
           total,
-          statusText: fmt,
+          statusText: progressText('上传', written, total),
         });
-      } else if (uploadId === state.activeFolderUploadId) {
-        state.setFolderUpload(
-          formatFolderUploadStatus({
+      } else if (item.kind === 'folder-upload') {
+        state.updateItem(uploadId, {
+          written,
+          total,
+          statusText: formatFolderUploadStatus({
             uploadId,
-            phase: 'uploading' as FolderUploadPhase,
+            phase: 'uploading',
             written,
             total,
           }),
-        );
+        });
       }
     },
   );
@@ -86,33 +90,30 @@ export async function attachTransferListeners() {
     (event) => {
       const { uploadId } = event.payload;
       const state = useTransferStore.getState();
-      if (uploadId === state.activeUploadId) {
-        const current = state.upload;
-        if (!current) return;
-        if (current.status !== 'uploading') return;
-        state.setUpload({
-          status: 'done',
-          fileName: current.fileName,
-          written: 0,
-          total: 0,
-          statusText: `${current.fileName} 上传完成`,
-        });
-        state.setActiveUploadId(null);
-        state.clearUploadAfter(3000);
-      } else if (uploadId === state.activeFolderUploadId) {
-        state.setFolderUpload(null);
-        state.setActiveFolderUploadId(null);
-      }
+      const item = state.items[uploadId];
+      // folder-upload 以命令 resolve 为完成信号（done 事件只代表压缩包上传完毕）
+      if (!item || item.kind !== 'upload' || item.status !== 'active') return;
+      state.updateItem(uploadId, {
+        status: 'done',
+        written: item.total,
+        statusText: `${item.fileName} 上传完成`,
+        finishedAt: Date.now(),
+      });
     },
   );
 
   folderStatusUnlisten = await listen<FolderStatusPayload>(
     'sftp-folder-upload-status',
     (event) => {
-      const { uploadId } = event.payload;
+      const { uploadId, phase } = event.payload;
       const state = useTransferStore.getState();
-      if (uploadId !== state.activeFolderUploadId) return;
-      state.setFolderUpload(formatFolderUploadStatus(event.payload));
+      const item = state.items[uploadId];
+      if (!item || item.kind !== 'folder-upload') return;
+      if (item.status !== 'active' && item.status !== 'cancelling') return;
+      state.updateItem(uploadId, {
+        phase,
+        statusText: formatFolderUploadStatus(event.payload),
+      });
     },
   );
 
@@ -121,17 +122,13 @@ export async function attachTransferListeners() {
     (event) => {
       const { downloadId, written, total } = event.payload;
       const state = useTransferStore.getState();
-      if (downloadId !== state.activeDownloadId) return;
-      const current = state.download;
-      if (!current) return;
-      if (current.status !== 'downloading') return;
-      const pct = total > 0 ? Math.round((written * 100) / total) : 0;
-      state.setDownload({
-        status: 'downloading',
-        fileName: current.fileName,
+      const item = state.items[downloadId];
+      if (!item || item.kind !== 'download') return;
+      if (item.status !== 'active' && item.status !== 'cancelling') return;
+      state.updateItem(downloadId, {
         written,
         total,
-        statusText: `下载 ${formatSize(written)} / ${formatSize(total)} (${pct}%)`,
+        statusText: progressText('下载', written, total),
       });
     },
   );
@@ -141,19 +138,14 @@ export async function attachTransferListeners() {
     (event) => {
       const { downloadId } = event.payload;
       const state = useTransferStore.getState();
-      if (downloadId !== state.activeDownloadId) return;
-      const current = state.download;
-      if (!current) return;
-      if (current.status !== 'downloading') return;
-      state.setDownload({
+      const item = state.items[downloadId];
+      if (!item || item.kind !== 'download' || item.status !== 'active') return;
+      state.updateItem(downloadId, {
         status: 'done',
-        fileName: current.fileName,
-        written: current.total,
-        total: current.total,
-        statusText: `${current.fileName} 下载完成`,
+        written: item.total,
+        statusText: `${item.fileName} 下载完成`,
+        finishedAt: Date.now(),
       });
-      state.setActiveDownloadId(null);
-      state.clearDownloadAfter(3000);
     },
   );
 }

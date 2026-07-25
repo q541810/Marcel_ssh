@@ -1,87 +1,141 @@
 import { create } from 'zustand';
+import type { FolderUploadPhase } from '@/hooks/sftpUploadStatus';
 
-let uploadTimerId: ReturnType<typeof setTimeout> | null = null;
-let downloadTimerId: ReturnType<typeof setTimeout> | null = null;
+export type TransferKind = 'upload' | 'folder-upload' | 'download';
 
-export interface UploadState {
-  status: 'uploading' | 'done' | 'error' | 'cancelled';
+export type TransferStatus =
+  | 'queued'
+  | 'active'
+  | 'cancelling'
+  | 'done'
+  | 'error'
+  | 'cancelled';
+
+/** upload + folder-upload 共用上传道，download 独占下载道 */
+export type TransferLane = 'upload' | 'download';
+
+export interface TransferItem {
+  id: string;
+  kind: TransferKind;
+  sessionId: string;
   fileName: string;
+  /** 上传源路径 / 下载保存路径 */
+  localPath: string;
+  remotePath: string;
+  flat?: boolean;
+  phase?: FolderUploadPhase;
   written: number;
   total: number;
   statusText: string;
+  createdAt: number;
+  finishedAt?: number;
 }
 
-export interface DownloadState {
-  status: 'idle' | 'downloading' | 'done' | 'error' | 'cancelled';
-  fileName: string;
-  written: number;
-  total: number;
-  statusText: string;
+const FINISHED_STATUSES: ReadonlySet<TransferStatus> = new Set(['done', 'error', 'cancelled']);
+const MAX_FINISHED_ITEMS = 50;
+
+export function isFinished(status: TransferStatus): boolean {
+  return FINISHED_STATUSES.has(status);
 }
 
-interface TransferState {
-  upload: UploadState | null;
-  download: DownloadState | null;
-  folderUpload: string | null;
-
-  activeUploadId: string | null;
-  activeDownloadId: string | null;
-  activeFolderUploadId: string | null;
-
-  setUpload: (state: UploadState | null) => void;
-  setDownload: (state: DownloadState | null) => void;
-  setFolderUpload: (status: string | null) => void;
-  setActiveUploadId: (id: string | null) => void;
-  setActiveDownloadId: (id: string | null) => void;
-  setActiveFolderUploadId: (id: string | null) => void;
-  clearUploadAfter: (ms: number) => void;
-  clearDownloadAfter: (ms: number) => void;
+export function laneOf(kind: TransferKind): TransferLane {
+  return kind === 'download' ? 'download' : 'upload';
 }
 
-export const useTransferStore = create<TransferState>((set) => ({
-  upload: null,
-  download: null,
-  folderUpload: null,
+export interface StoredTransferItem extends TransferItem {
+  status: TransferStatus;
+}
 
-  activeUploadId: null,
-  activeDownloadId: null,
-  activeFolderUploadId: null,
+interface TransferCenterState {
+  items: Record<string, StoredTransferItem>;
+  order: string[];
 
-  setUpload: (state) => {
-    if (uploadTimerId !== null) {
-      clearTimeout(uploadTimerId);
-      uploadTimerId = null;
-    }
-    set({ upload: state });
-  },
-  setDownload: (state) => {
-    if (downloadTimerId !== null) {
-      clearTimeout(downloadTimerId);
-      downloadTimerId = null;
-    }
-    set({ download: state });
-  },
-  setFolderUpload: (status) => set({ folderUpload: status }),
-  setActiveUploadId: (id) => set({ activeUploadId: id }),
-  setActiveDownloadId: (id) => set({ activeDownloadId: id }),
-  setActiveFolderUploadId: (id) => set({ activeFolderUploadId: id }),
+  addItem: (item: TransferItem) => void;
+  updateItem: (id: string, patch: Partial<StoredTransferItem>) => void;
+  removeItem: (id: string) => void;
+  clearFinished: () => void;
+}
 
-  clearUploadAfter: (ms) => {
-    if (uploadTimerId !== null) {
-      clearTimeout(uploadTimerId);
-    }
-    uploadTimerId = setTimeout(() => {
-      uploadTimerId = null;
-      set({ upload: null });
-    }, ms);
-  },
-  clearDownloadAfter: (ms) => {
-    if (downloadTimerId !== null) {
-      clearTimeout(downloadTimerId);
-    }
-    downloadTimerId = setTimeout(() => {
-      downloadTimerId = null;
-      set({ download: null });
-    }, ms);
-  },
+export const useTransferStore = create<TransferCenterState>((set) => ({
+  items: {},
+  order: [],
+
+  addItem: (item) =>
+    set((state) => {
+      if (state.items[item.id]) return state;
+      let items: Record<string, StoredTransferItem> = {
+        ...state.items,
+        [item.id]: { ...item, status: 'queued' },
+      };
+      let order = [...state.order, item.id];
+      // 完成项超上限时裁剪最旧的完成项
+      const finishedIds = order.filter((id) => isFinished(items[id].status));
+      if (finishedIds.length > MAX_FINISHED_ITEMS) {
+        const toDrop = new Set(finishedIds.slice(0, finishedIds.length - MAX_FINISHED_ITEMS));
+        order = order.filter((id) => !toDrop.has(id));
+        items = Object.fromEntries(order.map((id) => [id, items[id]]));
+      }
+      return { items, order };
+    }),
+
+  updateItem: (id, patch) =>
+    set((state) => {
+      const current = state.items[id];
+      if (!current) return state;
+      // 终态不可回退到进行中
+      if (
+        isFinished(current.status) &&
+        patch.status !== undefined &&
+        !isFinished(patch.status)
+      ) {
+        return state;
+      }
+      return { items: { ...state.items, [id]: { ...current, ...patch } } };
+    }),
+
+  removeItem: (id) =>
+    set((state) => {
+      if (!state.items[id]) return state;
+      const items = { ...state.items };
+      delete items[id];
+      return { items, order: state.order.filter((x) => x !== id) };
+    }),
+
+  clearFinished: () =>
+    set((state) => {
+      const order = state.order.filter((id) => !isFinished(state.items[id].status));
+      if (order.length === state.order.length) return state;
+      return {
+        order,
+        items: Object.fromEntries(order.map((id) => [id, state.items[id]])),
+      };
+    }),
 }));
+
+// ---------------------------------------------------------------------------
+// Selectors（纯函数，可单测）
+// ---------------------------------------------------------------------------
+
+type TransferSnapshot = Pick<TransferCenterState, 'items' | 'order'>;
+
+export function selectByLane(state: TransferSnapshot, lane: TransferLane): StoredTransferItem[] {
+  return state.order
+    .map((id) => state.items[id])
+    .filter((item) => laneOf(item.kind) === lane);
+}
+
+export function selectActiveOf(state: TransferSnapshot, lane: TransferLane): StoredTransferItem | null {
+  return (
+    selectByLane(state, lane).find(
+      (item) => item.status === 'active' || item.status === 'cancelling',
+    ) ?? null
+  );
+}
+
+export function selectQueuedOf(state: TransferSnapshot, lane: TransferLane): StoredTransferItem[] {
+  return selectByLane(state, lane).filter((item) => item.status === 'queued');
+}
+
+export function selectBadgeCount(state: TransferSnapshot): number {
+  return state.order.filter((id) => !isFinished(state.items[id].status)).length;
+}

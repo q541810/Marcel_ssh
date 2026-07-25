@@ -10,19 +10,23 @@
  * 使用方式：
  *   useFileDrop((paths) => { ... }, enabled)
  *
- * 模块级 activeHandler 确保同一时间只有一个组件处理拖拽。
- * 后注册的覆盖先注册的（SkillCreateModal 打开时覆盖 SFTP 面板）。
+ * 模块级 handler 栈：后注册的在栈顶优先处理（如 SkillCreateModal 打开时覆盖 SFTP）。
+ * unmount / enabled=false 时 pop 自己，栈顶交还给仍 enabled 的前一个消费者。
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
 
-type DropHandler = (paths: string[]) => void;
+export type DropPosition = { x: number; y: number };
+type DropHandler = (paths: string[], position?: DropPosition) => void;
 
-// ─── 模块级状态：全局只有一个活跃处理器 ───
-let activeHandler: DropHandler | null = null;
+// ─── 模块级状态：enabled handler 栈，栈顶为当前活跃处理器 ───
+const handlerStack: DropHandler[] = [];
 let listenersAttached = false;
-let refCount = 0;
+
+function activeHandler(): DropHandler | null {
+  return handlerStack.length > 0 ? handlerStack[handlerStack.length - 1]! : null;
+}
 
 // ─── 模块级拖拽状态（用于外部订阅） ───
 let isDraggingGlobal = false;
@@ -33,23 +37,35 @@ function setIsDragging(value: boolean) {
   for (const fn of isDraggingListeners) fn(value);
 }
 
+/** Tauri drag-drop 的 position 是物理像素，DOM 用 CSS 像素；统一成 CSS 坐标 */
+function toCssPosition(position?: DropPosition): DropPosition | undefined {
+  if (!position) return undefined;
+  const dpr =
+    typeof window !== 'undefined' && window.devicePixelRatio > 0
+      ? window.devicePixelRatio
+      : 1;
+  if (dpr === 1) return position;
+  return { x: position.x / dpr, y: position.y / dpr };
+}
+
 // ─── 确保全局监听器只创建一次 ───
 async function attachGlobalListeners() {
   if (listenersAttached) return;
   listenersAttached = true;
 
   // 文件放下
-  await listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
+  await listen<{ paths?: string[]; position?: DropPosition }>('tauri://drag-drop', (event) => {
     setIsDragging(false);
     const paths = event.payload.paths;
-    if (paths && paths.length > 0 && activeHandler) {
-      activeHandler(paths);
+    const handler = activeHandler();
+    if (paths && paths.length > 0 && handler) {
+      handler(paths, toCssPosition(event.payload.position));
     }
   });
 
   // 文件拖入窗口
   await listen('tauri://drag-enter', () => {
-    if (activeHandler) setIsDragging(true);
+    if (activeHandler()) setIsDragging(true);
   });
 
   // 拖拽离开窗口
@@ -69,9 +85,11 @@ export function useFileDrop(handler: DropHandler, enabled: boolean) {
   useEffect(() => {
     if (!enabled) return;
 
-    // 注册当前 handler 为活跃处理器
-    activeHandler = (paths) => handlerRef.current(paths);
-    refCount++;
+    // 透传 position，供面板判断是否落在目录树等禁 drop 区域
+    const wrapper: DropHandler = (paths, position) => {
+      handlerRef.current(paths, position);
+    };
+    handlerStack.push(wrapper);
     attachGlobalListeners();
 
     // 订阅拖拽状态
@@ -80,12 +98,9 @@ export function useFileDrop(handler: DropHandler, enabled: boolean) {
     setIsDraggingLocal(isDraggingGlobal);
 
     return () => {
-      refCount--;
       isDraggingListeners.delete(listener);
-      // 只有当自己是活跃处理器时才清除
-      if (activeHandler === handlerRef.current) {
-        activeHandler = null;
-      }
+      const idx = handlerStack.lastIndexOf(wrapper);
+      if (idx >= 0) handlerStack.splice(idx, 1);
     };
   }, [enabled]);
 

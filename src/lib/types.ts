@@ -501,6 +501,10 @@ export interface AppSettings {
   fileManagerPath: string;
   fileManagerPaths: Record<string, string>;
   fileManagerShowHidden: boolean;
+  /** Desktop file-manager directory tree width (px). */
+  fileManagerTreeWidth: number;
+  /** User forced the directory tree closed (still auto-hides when panel is narrow). */
+  fileManagerTreeUserHidden: boolean;
   folderUploadCompressionLevel: number;
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */

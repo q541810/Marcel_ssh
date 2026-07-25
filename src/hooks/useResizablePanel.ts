@@ -5,6 +5,12 @@ interface UseResizablePanelOptions {
   minWidth: number;
   maxWidth: number;
   onChange?: (width: number) => void;
+  /**
+   * Which side the panel sits on relative to the drag handle.
+   * - `right` (default): handle on panel's left edge; drag left → wider (agent/sidebar style)
+   * - `left`: handle on panel's right edge; drag right → wider (file tree)
+   */
+  edge?: 'left' | 'right';
 }
 
 export function useResizablePanel({
@@ -12,12 +18,15 @@ export function useResizablePanel({
   minWidth,
   maxWidth,
   onChange,
+  edge = 'right',
 }: UseResizablePanelOptions) {
   const [width, setWidth] = useState(initialWidth);
   const [isResizing, setIsResizing] = useState(false);
   const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const edgeRef = useRef(edge);
+  edgeRef.current = edge;
 
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -30,8 +39,11 @@ export function useResizablePanel({
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!resizeStartRef.current) return;
-      const delta = resizeStartRef.current.x - e.clientX;
-      const newWidth = Math.min(maxWidth, Math.max(minWidth, resizeStartRef.current.width + delta));
+      const raw =
+        edgeRef.current === 'left'
+          ? e.clientX - resizeStartRef.current.x
+          : resizeStartRef.current.x - e.clientX;
+      const newWidth = Math.min(maxWidth, Math.max(minWidth, resizeStartRef.current.width + raw));
       setWidth(newWidth);
       onChangeRef.current?.(newWidth);
     };
