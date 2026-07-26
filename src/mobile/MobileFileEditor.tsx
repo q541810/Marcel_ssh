@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ChevronLeft, Loader2 } from 'lucide-react';
 import { sftpReadFile, sftpWriteFile, sftpGetMtime } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 import { decideSaveAction, isFileMissingMessage } from './editorModel';
 import MobileSheet from './ui/MobileSheet';
-import { registerBackHandler } from './backHandler';
+import MobileFullscreenPage from './ui/MobileFullscreenPage';
 
 interface MobileFileEditorProps {
   open: boolean;
@@ -138,21 +137,15 @@ export default function MobileFileEditor({
     }
   }, [dirty, requestClose]);
 
-  // Android back gesture = header back button (dirty check included).
-  useEffect(() => {
-    if (!open) return;
-    return registerBackHandler(handleClose);
-  }, [open, handleClose]);
-
   if (!open) return null;
 
-  return createPortal(
-    <div
-      onAnimationEnd={onExitAnimationEnd}
-      className={`fixed inset-0 z-50 flex flex-col bg-zinc-950 ${
-        closing ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'
-      }`}
-      data-region="mobile-file-editor"
+  return (
+    <MobileFullscreenPage
+      region="mobile-file-editor"
+      closing={closing}
+      onExitAnimationEnd={onExitAnimationEnd}
+      // Android back gesture = header back button (dirty check included).
+      onBack={handleClose}
     >
       {/* Header */}
       <header
@@ -219,7 +212,11 @@ export default function MobileFileEditor({
             autoCorrect="off"
             className="h-full w-full resize-none bg-zinc-950 p-3 font-mono text-[13px] leading-relaxed text-zinc-100 outline-none"
             style={{
-              paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))',
+              // The keyboard covers the gesture nav bar, and the page bottom is
+              // already lifted by --ime-bottom, so subtract it to avoid a double
+              // gap. Collapses to the plain safe-area pad when the IME is closed.
+              paddingBottom:
+                'max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - var(--ime-bottom, 0px)))',
             }}
           />
         )}
@@ -295,7 +292,6 @@ export default function MobileFileEditor({
           </button>
         </div>
       </MobileSheet>
-    </div>,
-    document.body,
+    </MobileFullscreenPage>
   );
 }

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { Loader2, RotateCw, X } from 'lucide-react';
 import { sftpPreviewImage, sftpPreviewCleanup } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
-import { registerBackHandler } from './backHandler';
+import MobileFullscreenPage from './ui/MobileFullscreenPage';
 import {
   clampPan,
   doubleTapTargetScale,
@@ -75,12 +74,6 @@ export default function MobileImageViewer({
     requestClose,
     onAnimationEnd: onExitAnimationEnd,
   } = useAnimatedClose(onClose);
-
-  // Android back gesture closes the viewer (same path as the X button).
-  useEffect(() => {
-    if (!open) return;
-    return registerBackHandler(requestClose);
-  }, [open, requestClose]);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -375,13 +368,13 @@ export default function MobileImageViewer({
   const transform = `translate(${view.translateX}px, ${view.translateY}px) scale(${view.scale}) rotate(${rotation}deg)`;
   const zoomPct = naturalSize ? Math.round(view.scale * 100) : null;
 
-  return createPortal(
-    <div
-      onAnimationEnd={onExitAnimationEnd}
-      className={`fixed inset-0 z-50 flex flex-col bg-black ${
-        closing ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'
-      }`}
-      data-region="mobile-image-viewer"
+  return (
+    <MobileFullscreenPage
+      region="mobile-image-viewer"
+      className="bg-black"
+      closing={closing}
+      onExitAnimationEnd={onExitAnimationEnd}
+      onBack={requestClose}
     >
       {/* Canvas */}
       <div
@@ -482,7 +475,6 @@ export default function MobileImageViewer({
           </button>
         </div>
       )}
-    </div>,
-    document.body,
+    </MobileFullscreenPage>
   );
 }

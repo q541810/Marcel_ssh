@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Bot, ChevronLeft, ChevronRight, CloudDownload, Folder, Sparkles, Terminal } from 'lucide-react';
 import { APP_LOGO, APP_NAME } from '@/lib/constants';
 import type { AppSettings } from '@/lib/types';
@@ -9,7 +9,7 @@ import {
 } from '@/components/settings/SettingsActionsContext';
 import { SyncRestoreFlow } from '@/components/onboarding/SyncRestore';
 import { MobileModelSection } from './settings/MobileModelSection';
-import { registerBackHandler } from './backHandler';
+import MobileFullscreenPage from './ui/MobileFullscreenPage';
 
 interface MobileOnboardingProps {
   onComplete: () => void;
@@ -238,17 +238,14 @@ export default function MobileOnboarding({
 
   // Android back：restore → 回同步门；steps → 上一步（第 0 步回同步门）；
   // gate 不注册，back 交给系统（退出应用）。
-  useEffect(() => {
-    if (phase === 'gate') return;
-    return registerBackHandler(() => {
-      if (phase === 'restore') {
-        setPhase('gate');
-      } else if (step > 0) {
-        setStep((s) => Math.max(0, s - 1));
-      } else {
-        setPhase('gate');
-      }
-    });
+  const handleBack = useCallback(() => {
+    if (phase === 'restore') {
+      setPhase('gate');
+    } else if (step > 0) {
+      setStep((s) => Math.max(0, s - 1));
+    } else {
+      setPhase('gate');
+    }
   }, [phase, step]);
 
   const isLast = step === STEP_COUNT - 1;
@@ -257,9 +254,10 @@ export default function MobileOnboarding({
 
   return (
     <SettingsActionsProvider value={actionsValue}>
-      <div
-        className="mobile-fullscreen-enter fixed inset-0 z-50 flex flex-col bg-zinc-950"
-        data-region="mobile-onboarding"
+      <MobileFullscreenPage
+        region="mobile-onboarding"
+        // gate 阶段不接管 back，交给系统（退出应用）。
+        onBack={phase === 'gate' ? undefined : handleBack}
       >
         {/* Header：gate 无头；restore / steps 有返回 */}
         {phase !== 'gate' && (
@@ -269,11 +267,7 @@ export default function MobileOnboarding({
           >
             <button
               type="button"
-              onClick={() => {
-                if (phase === 'restore') setPhase('gate');
-                else if (step > 0) setStep((s) => Math.max(0, s - 1));
-                else setPhase('gate');
-              }}
+              onClick={handleBack}
               className="flex h-10 w-10 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800"
               aria-label="上一步"
             >
@@ -332,7 +326,10 @@ export default function MobileOnboarding({
           <footer
             className="flex flex-shrink-0 flex-col gap-3 border-t border-zinc-800 px-4 pt-3"
             style={{
-              paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0px))',
+              // Soft keyboard covers the nav bar; page bottom already lifts via
+              // --ime-bottom. Subtract to avoid double gap (same as AuxKeyBar).
+              paddingBottom:
+                'max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - var(--ime-bottom, 0px)))',
             }}
           >
             <div className="flex justify-center gap-1.5" aria-hidden>
@@ -360,7 +357,7 @@ export default function MobileOnboarding({
             </button>
           </footer>
         )}
-      </div>
+      </MobileFullscreenPage>
     </SettingsActionsProvider>
   );
 }

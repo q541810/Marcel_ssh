@@ -12,13 +12,12 @@
  */
 
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ChevronLeft, RefreshCw, KeyRound, Copy, Check, AlertTriangle } from 'lucide-react';
 import { useSyncStore } from '@/stores/syncStore';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 import { OFFICIAL_SYNC_SERVER_URL } from '@/lib/constants';
 import { validateNewAccountPassword } from '@/lib/syncPassword';
-import { registerBackHandler } from './backHandler';
+import MobileFullscreenPage from './ui/MobileFullscreenPage';
 
 export type MobileSyncPairMode = 'first' | 'join' | 'showCode';
 
@@ -117,13 +116,6 @@ export default function MobileSyncPairPage({
     }
   };
 
-  // Android back gesture = header back button
-  useEffect(() => {
-    if (!open) return;
-    // showCode 模式下，back 也直接关闭页面（配置码已显示，用户可选择稍后处理）
-    return registerBackHandler(requestClose);
-  }, [open, requestClose]);
-
   if (!open) return null;
 
   const title = mode === 'showCode'
@@ -132,13 +124,13 @@ export default function MobileSyncPairPage({
       ? '设置新账户'
       : '加入已有账户';
 
-  return createPortal(
-    <div
-      onAnimationEnd={onExitAnimationEnd}
-      className={`fixed inset-0 z-50 flex flex-col bg-zinc-950 ${
-        closing ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'
-      }`}
-      data-region="mobile-sync-pair"
+  return (
+    <MobileFullscreenPage
+      region="mobile-sync-pair"
+      closing={closing}
+      onExitAnimationEnd={onExitAnimationEnd}
+      // showCode 模式下，back 也直接关闭页面（配置码已显示，用户可选择稍后处理）
+      onBack={requestClose}
     >
       {/* Header */}
       <header
@@ -349,7 +341,6 @@ export default function MobileSyncPairPage({
           </div>
         )}
       </div>
-    </div>,
-    document.body,
+    </MobileFullscreenPage>
   );
 }
