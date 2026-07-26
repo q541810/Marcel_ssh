@@ -203,9 +203,8 @@ export default function ImagePreviewModal({
   const flipH = useCallback(() => setView((v) => ({ ...v, flipH: !v.flipH })), []);
   const flipV = useCallback(() => setView((v) => ({ ...v, flipV: !v.flipV })), []);
 
-  // 拖动平移
+  // 拖动平移（任意缩放均可）
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (viewRef.current.scale <= 1) return;
     e.preventDefault();
     setIsDragging(true);
     dragStartRef.current = {
@@ -355,28 +354,20 @@ export default function ImagePreviewModal({
           flipV();
           break;
         case 'ArrowLeft':
-          if (viewRef.current.scale > 1) {
-            e.preventDefault();
-            setView((v) => ({ ...v, translateX: v.translateX + 50 }));
-          }
+          e.preventDefault();
+          setView((v) => ({ ...v, translateX: v.translateX + 50 }));
           break;
         case 'ArrowRight':
-          if (viewRef.current.scale > 1) {
-            e.preventDefault();
-            setView((v) => ({ ...v, translateX: v.translateX - 50 }));
-          }
+          e.preventDefault();
+          setView((v) => ({ ...v, translateX: v.translateX - 50 }));
           break;
         case 'ArrowUp':
-          if (viewRef.current.scale > 1) {
-            e.preventDefault();
-            setView((v) => ({ ...v, translateY: v.translateY + 50 }));
-          }
+          e.preventDefault();
+          setView((v) => ({ ...v, translateY: v.translateY + 50 }));
           break;
         case 'ArrowDown':
-          if (viewRef.current.scale > 1) {
-            e.preventDefault();
-            setView((v) => ({ ...v, translateY: v.translateY - 50 }));
-          }
+          e.preventDefault();
+          setView((v) => ({ ...v, translateY: v.translateY - 50 }));
           break;
       }
     };
@@ -394,7 +385,6 @@ export default function ImagePreviewModal({
       : 0;
 
   const zoomPct = Math.round(view.scale * 100);
-  const canDrag = view.scale > 1 && !isDragging;
 
   const transform = `translate(${view.translateX}px, ${view.translateY}px) scale(${view.scale}) rotate(${view.rotation}deg) scaleX(${view.flipH ? -1 : 1}) scaleY(${view.flipV ? -1 : 1})`;
 
@@ -477,7 +467,7 @@ export default function ImagePreviewModal({
           ref={containerRef}
           className="flex-1 min-h-0 flex items-center justify-center relative bg-zinc-900/60 overflow-hidden"
           onWheel={handleWheel}
-          style={{ cursor: isDragging ? 'grabbing' : canDrag ? 'grab' : 'default' }}
+          style={{ cursor: isDragging ? 'grabbing' : imageSrc && !loading ? 'grab' : 'default' }}
         >
           {loading && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-900 z-10">
