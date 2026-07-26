@@ -7,7 +7,8 @@ per-key 版本号 LWW（Last-Write-Wins）：
 - encrypted_value 为 null 表示删除该 key
 
 配额管理（托管模式）：
-- 每账户总字节数不超过 [server].account_quota_bytes
+- 每账户总存储字节数不超过 [server].account_quota_bytes
+- 包含 sync_snapshots.encrypted_value + 所有 devices.sync_profile
 - 自部署模式 quota=0 表示无限制
 """
 
@@ -157,26 +158,54 @@ class SyncEngine:
 
         return SnapshotResponse(items=items, total_size=total_size)
 
-    async def _get_account_size(self, account_id: str) -> int:
-        """计算账户当前存储总字节数（锁外调用）。"""
-        row = await self._db.fetchone(
-            "SELECT COALESCE(SUM(LENGTH(encrypted_value)), 0) as total FROM sync_snapshots WHERE account_id = ?",
-            (account_id,),
-        )
-        return row["total"] if row else 0
-
     async def _get_account_size_locked(self, conn, account_id: str) -> int:
-        """计算账户当前存储总字节数（锁内调用，复用已持有的 conn，避免重复 acquire）。
-
-        用于 push 流程中的配额检查，必须与 push 的 INSERT 在同一锁内执行，
-        否则会出现条件竞争（两个并发 push 同时通过检查后双双写入）。
-        """
+        """计算账户当前存储总字节数（锁内，含 snapshots + sync_profiles）。"""
         cursor = await conn.execute(
             "SELECT COALESCE(SUM(LENGTH(encrypted_value)), 0) as total FROM sync_snapshots WHERE account_id = ?",
             (account_id,),
         )
         rows = await cursor.fetchall()
-        return rows[0]["total"] if rows else 0
+        snapshots = rows[0]["total"] if rows else 0
+
+        cursor2 = await conn.execute(
+            "SELECT COALESCE(SUM(LENGTH(sync_profile)), 0) as total FROM devices WHERE account_id = ?",
+            (account_id,),
+        )
+        rows2 = await cursor2.fetchall()
+        profiles = rows2[0]["total"] if rows2 else 0
+
+        return snapshots + profiles
+
+    async def check_sync_profile_quota(
+        self,
+        account_id: str,
+        device_id: str,
+        new_sync_profile_json: str,
+    ) -> None:
+        """检查更新 sync_profile 后是否超出配额。不超则无操作；超则抛 QuotaExceededError。"""
+        if self._quota_bytes <= 0:
+            return
+
+        new_size = len(new_sync_profile_json.encode("utf-8"))
+        if new_size > self._quota_bytes:
+            raise QuotaExceededError(0, new_size, self._quota_bytes)
+
+        async with self._db._lock:
+            conn = self._db.conn
+            cursor = await conn.execute(
+                "SELECT LENGTH(sync_profile) as size FROM devices WHERE id = ? AND account_id = ?",
+                (device_id, account_id),
+            )
+            row = await cursor.fetchone()
+            old_size = row["size"] if row else 0
+
+            delta = new_size - old_size
+            if delta <= 0:
+                return
+
+            current_total = await self._get_account_size_locked(conn, account_id)
+            if current_total + delta > self._quota_bytes:
+                raise QuotaExceededError(current_total, delta, self._quota_bytes)
 
     def set_quota(self, quota_bytes: int) -> None:
         self._quota_bytes = quota_bytes

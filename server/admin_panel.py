@@ -370,9 +370,11 @@ async def _collect_overview() -> OverviewResponse:
     # 有在线连接的账户数 = _connections 字典里的 key 数
     online_accounts = len(getattr(_ws_manager, "_connections", {}))
 
-    # 全服务端配额使用（所有账户 SUM）
+    # 全服务端配额使用（snapshots + sync_profiles，所有账户）
     quota_row = await _db.fetchone(
-        "SELECT COALESCE(SUM(LENGTH(encrypted_value)), 0) as total FROM sync_snapshots"
+        "SELECT "
+        "COALESCE((SELECT SUM(LENGTH(encrypted_value)) FROM sync_snapshots), 0) + "
+        "COALESCE((SELECT SUM(LENGTH(sync_profile)) FROM devices), 0) as total"
     )
     quota_used = quota_row["total"] if quota_row else 0
 
@@ -404,10 +406,11 @@ async def _collect_accounts() -> AccountListResponse:
             a.created_at,
             COALESCE(dc.device_count, 0) as device_count,
             dc.last_active,
-            COALESCE(sc.quota_used, 0) as quota_used
+            COALESCE(sc.quota_used, 0) + COALESCE(dc.profile_size, 0) as quota_used
         FROM accounts a
         LEFT JOIN (
-            SELECT account_id, COUNT(*) as device_count, MAX(last_seen_at) as last_active
+            SELECT account_id, COUNT(*) as device_count, MAX(last_seen_at) as last_active,
+                   SUM(LENGTH(sync_profile)) as profile_size
             FROM devices
             GROUP BY account_id
         ) dc ON dc.account_id = a.id

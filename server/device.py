@@ -7,6 +7,7 @@ sync_profile 是用户选择的同步项，per-device 存储。
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import aiosqlite
 from auth import AuthManager, generate_api_key, sha256_hex, now_iso
@@ -18,13 +19,17 @@ from models import (
     DeviceInfoResponse,
 )
 
+if TYPE_CHECKING:
+    from sync import SyncEngine
+
 
 class DeviceManager:
     """设备注册与 sync_profile 管理。"""
 
-    def __init__(self, db: Database, auth: AuthManager):
+    def __init__(self, db: Database, auth: AuthManager, sync_engine: SyncEngine | None = None):
         self._db = db
         self._auth = auth
+        self._sync_engine = sync_engine
 
     async def count_devices(self, account_id: str) -> int:
         row = await self._db.fetchone(
@@ -92,10 +97,15 @@ class DeviceManager:
         account_id: str,
         request: SyncProfileUpdateRequest,
     ) -> None:
-        """更新设备的 sync_profile。"""
+        """更新设备的 sync_profile。托管模式下检查配额。"""
+        new_json = json.dumps(request.sync_profile)
+
+        if self._sync_engine is not None:
+            await self._sync_engine.check_sync_profile_quota(account_id, request.device_id, new_json)
+
         result = await self._db.execute(
             "UPDATE devices SET sync_profile = ? WHERE id = ? AND account_id = ?",
-            (json.dumps(request.sync_profile), request.device_id, account_id),
+            (new_json, request.device_id, account_id),
         )
         if result.rowcount == 0:
             raise ValueError("设备不存在或不属于该账户")

@@ -81,8 +81,8 @@ def _detect_config_path() -> str | None:
 config: ServerConfig = load_config(_detect_config_path())
 db = Database(config.db_path)
 auth = AuthManager(db)
-device_mgr = DeviceManager(db, auth)
 sync_engine = SyncEngine(db)
+device_mgr = DeviceManager(db, auth, sync_engine)
 ws_manager = ConnectionManager()
 
 # 注入配置
