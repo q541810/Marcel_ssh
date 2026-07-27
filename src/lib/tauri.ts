@@ -72,6 +72,20 @@ export async function sshListProcesses(sessionId: string): Promise<string> {
   });
 }
 
+export async function sshListNetwork(sessionId: string): Promise<string> {
+  return invoke<string>('ssh_exec', {
+    sessionId,
+    command: '(ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null); echo "---CONNECTIONS---"; (ss -Htnp 2>/dev/null || ss -tnp 2>/dev/null)',
+  });
+}
+
+export async function sshListInterfaces(sessionId: string): Promise<string> {
+  return invoke<string>('ssh_exec', {
+    sessionId,
+    command: 'ip -j addr 2>/dev/null || ip addr 2>/dev/null || ifconfig 2>/dev/null',
+  });
+}
+
 // Agent commands
 
 export async function agentStartTask(

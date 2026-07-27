@@ -6,6 +6,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
+import NetworkPanel from './NetworkPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import PasteConfirmDialog from './PasteConfirmDialog';
@@ -246,6 +247,9 @@ export default function Terminal() {
               )}
               {displayTab === 'process' && (
                 <ProcessPanel sessionId={activeSessionId} />
+              )}
+              {displayTab === 'network' && (
+                <NetworkPanel sessionId={activeSessionId} />
               )}
               {displayTab === 'file-manager' && (
                 <FileManagerPanel

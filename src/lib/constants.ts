@@ -306,6 +306,7 @@ export interface BottomTab {
 export const BOTTOM_TABS: BottomTab[] = [
   { id: 'quick-command', icon: 'M13 10V3L4 14h7v7l9-11h-7z', label: '快捷指令' },
   { id: 'process', icon: 'M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z', label: '进程管理' },
+  { id: 'network', icon: 'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M2 12h20 M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z', label: '网络' },
   { id: 'file-manager', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', label: '文件管理' },
 ];
 
