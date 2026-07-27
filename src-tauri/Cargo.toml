@@ -52,6 +52,10 @@ aes-gcm = "0.10"
 hkdf = "0.12"
 sha2 = "0.10"
 rand = "0.8"
+# sysopen 文件监视（替代轮询）：保存即感知，低 CPU。纯 Rust + 平台 binding，桌面/Android 均可编译。
+notify = "6"
+# sysopen 用系统默认应用打开文件（tauri 官方插件，替代已 deprecated 的 shell().open）
+tauri-plugin-opener = "^2"
 
 
 

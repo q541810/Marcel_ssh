@@ -78,9 +78,17 @@ pub struct AppState {
     /// Cancellation signals for long-running SSH commands (compress, etc.): task_id -> watch sender.
     pub long_exec_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Watcher cancellation tokens for "open with system" files, keyed by upload_id.
+    /// Watcher state for "open with system" files, keyed by task_id.
+    /// Value = (session_id, local_path, cancel sender). local_path 用于「重复打开」时
+    /// 复用已下载的本地副本（再次唤起系统应用，不重新下载、不重复监视）；
+    /// cancel sender 设为 true 中止下载 + 监视。
     pub sysopen_watchers:
-        std::sync::Arc<PlRwLock<HashMap<String, (String, tokio::sync::watch::Sender<bool>)>>>,
+        std::sync::Arc<PlRwLock<HashMap<String, (String, std::path::PathBuf, tokio::sync::watch::Sender<bool>)>>>,
+    /// Active "open with system" dedup table: (session_id, remote_path) -> task_id.
+    /// Prevents the same remote file being opened twice concurrently (which would
+    /// have the two local copies clobber each other and race on sync-back).
+    pub sysopen_active_paths:
+        std::sync::Arc<PlRwLock<HashMap<(String, String), String>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -389,6 +397,7 @@ impl AppState {
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
                         plugin_registry: crate::plugins::registry::new_shared(),
                         sync_engine: Some(engine),
@@ -423,6 +432,7 @@ impl AppState {
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
             sync_engine,
@@ -501,6 +511,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())

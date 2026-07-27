@@ -133,7 +133,11 @@ export function selectByLane(state: TransferSnapshot, lane: TransferLane): Store
 export function selectActiveOf(state: TransferSnapshot, lane: TransferLane): StoredTransferItem | null {
   return (
     selectByLane(state, lane).find(
-      (item) => item.status === 'active' || item.status === 'cancelling',
+      (item) =>
+        (item.status === 'active' || item.status === 'cancelling') &&
+        // sysopen 项由后端 sftp-sysopen-state 事件驱动状态，不进 pump 调度，
+        // 不能占用 lane（否则会挡住普通 upload/download 任务启动）。
+        !item.id.startsWith('sysopen-'),
     ) ?? null
   );
 }

@@ -36,6 +36,7 @@
     "fs:allow-read-file",
     "fs:allow-exists",
     "fs:allow-stat",
-    "fs:allow-read-dir"
+    "fs:allow-read-dir",
+    "opener:default"
   ]
 }

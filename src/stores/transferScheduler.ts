@@ -141,6 +141,27 @@ export function enqueueTransfer(
 /** 取消一个传输：排队中直接标记取消；进行中通知 Rust 中止，终态由命令 reject 落地。 */
 export function cancelTransfer(id: string): void {
   const state = useTransferStore.getState();
+
+  // sysopen 任务：download 卡片与 upload 卡片共享一个 taskId（id 形如 sysopen-dl-<taskId> / sysopen-ul-<taskId>）。
+  // 取消任意一条即取消整个任务；两条都先标 cancelling，等后端 cancelled 事件落终态
+  // （后端会先做一次最终回传再发 cancelled，期间保留"正在取消"中间态，避免用户误以为任务已死）。
+  const sysopenMatch = id.match(/^sysopen-(dl|ul)-(.+)$/);
+  if (sysopenMatch) {
+    const taskId = sysopenMatch[2];
+    const pairKind = sysopenMatch[1] === 'dl' ? 'ul' : 'dl';
+    const pairId = `sysopen-${pairKind}-${taskId}`;
+    const a = state.items[id];
+    const b = state.items[pairId];
+    if (a && a.status === 'active') {
+      state.updateItem(id, { status: 'cancelling', statusText: '正在取消 …' });
+    }
+    if (b && b.status === 'active') {
+      state.updateItem(pairId, { status: 'cancelling', statusText: '正在取消 …' });
+    }
+    void sftpCancelSysopen(taskId).catch(() => {});
+    return;
+  }
+
   const item = state.items[id];
   if (!item) return;
 
@@ -151,13 +172,8 @@ export function cancelTransfer(id: string): void {
   if (item.status !== 'active') return;
 
   state.updateItem(id, { status: 'cancelling', statusText: `正在取消 ${item.fileName} ...` });
-  if (item.kind === 'upload' && id.startsWith('sysopen-')) {
-    void sftpCancelSysopen(id).catch(() => {});
-    finalize(id, { status: 'cancelled', statusText: '已取消监视' });
-  } else {
-    const cancel = item.kind === 'download' ? sftpCancelDownload : sftpCancelUpload;
-    void cancel(id).catch(() => {});
-  }
+  const cancel = item.kind === 'download' ? sftpCancelDownload : sftpCancelUpload;
+  void cancel(id).catch(() => {});
 }
 
 let sessionSubscribed = false;

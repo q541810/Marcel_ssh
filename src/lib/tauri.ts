@@ -590,25 +590,52 @@ export async function sftpPreviewImage(
   });
 }
 
-/** 下载远程文件到 marcel-sysopen/ 临时目录，用系统默认应用打开。
- *  下载/上传进度通过传输中心标准事件推送。 */
+/** sysopen 任务阶段，与后端 SysopenPhase 对应（serde tag=kind, rename camelCase）。
+ *  前端据此更新传输中心「下载」与「监视回传」两张卡片的状态与文案。 */
+export type SysopenPhase =
+  | { kind: 'downloading'; written: number; total: number }
+  | { kind: 'opened' }
+  | { kind: 'monitoring' }
+  | { kind: 'syncing'; written: number; total: number }
+  | { kind: 'synced' }
+  | { kind: 'cancelled' }
+  | { kind: 'failed'; message: string };
+
+export interface SysopenStateEvent {
+  taskId: string;
+  downloadId: string;
+  uploadId: string;
+  phase: SysopenPhase;
+}
+
+export interface SysopenResult {
+  taskId: string;
+  localPath: string;
+  /** true = 复用了已存在任务（仅再次唤起系统应用打开本地副本）；前端不应新建监视卡片。 */
+  reused: boolean;
+}
+
+/** 下载远程文件到 marcel-sysopen/ 临时目录，用系统默认应用打开；
+ *  本地文件改动后自动回传到远程。状态经 `sftp-sysopen-state` 事件统一推送。 */
 export async function sftpOpenWithSystem(
   sessionId: string,
   remotePath: string,
+  taskId: string,
   downloadId: string,
   uploadId: string,
-): Promise<SftpPreviewImageResult> {
-  return invoke<SftpPreviewImageResult>('sftp_open_with_system', {
+): Promise<SysopenResult> {
+  return invoke<SysopenResult>('sftp_open_with_system', {
     sessionId,
     remotePath,
+    taskId,
     downloadId,
     uploadId,
   });
 }
 
-/** 取消 sysopen 文件监视任务。 */
-export async function sftpCancelSysopen(uploadId: string): Promise<void> {
-  return invoke('sftp_cancel_sysopen', { uploadId });
+/** 取消 sysopen 任务（下载阶段与监视阶段均可中止）。 */
+export async function sftpCancelSysopen(taskId: string): Promise<void> {
+  return invoke('sftp_cancel_sysopen', { taskId });
 }
 
 // ──────────── 跨设备同步（sync_* commands） ────────────

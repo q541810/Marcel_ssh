@@ -30,6 +30,7 @@ import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
 import { useTransferStore, type TransferItem } from '@/stores/transferStore';
 import { createTransferId } from '@/stores/transferScheduler';
+import { flyToTransferCenter } from '@/stores/transferFlyAnimation';
 import { useFileDrop, type DropPosition } from '@/hooks/useFileDrop';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
 import { useResizablePanel } from '@/hooks/useResizablePanel';
@@ -277,8 +278,12 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setMenuEntry(null);
     setMenuTargets([]);
     const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-    const downloadId = createTransferId();
-    const uploadId = `sysopen-${createTransferId()}`;
+
+    // 一个 task_id 关联「下载」与「监视回传」两张卡片；id 形如 sysopen-dl-<taskId> / sysopen-ul-<taskId>。
+    // 取消任意一条即取消整个任务（见 transferScheduler.cancelTransfer）。
+    const taskId = createTransferId();
+    const downloadId = `sysopen-dl-${taskId}`;
+    const uploadId = `sysopen-ul-${taskId}`;
 
     const downloadItem: TransferItem = {
       id: downloadId,
@@ -289,10 +294,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       remotePath: entryPath,
       written: 0,
       total: entry.size,
-      statusText: `正在下载 ${entry.name} ...`,
+      statusText: '准备下载 …',
       createdAt: Date.now(),
     };
-
     const uploadItem: TransferItem = {
       id: uploadId,
       kind: 'upload',
@@ -302,27 +306,44 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       remotePath: entryPath,
       written: 0,
       total: entry.size,
-      statusText: '监视中...',
+      statusText: '等待下载完成',
       createdAt: Date.now(),
     };
 
+    // 两条项都直接 active：不进 pump 队列（pump 只调度需主动发起 stream 的任务），
+    // 状态由后端 sftp-sysopen-state 事件驱动。
     useTransferStore.getState().addItem(downloadItem);
     useTransferStore.getState().updateItem(downloadId, { status: 'active' });
     useTransferStore.getState().addItem(uploadItem);
     useTransferStore.getState().updateItem(uploadId, { status: 'active' });
     useTransferStore.getState().setOpen(true);
 
+    // 视觉引导：飞一个下载球到传输中心，告诉用户「文件正在下载到这里」。
+    // 下载完成、系统应用打开后，后端发 opened 事件时再飞一个上传球，表示「开始监视，改动会回传到这里」。
+    flyToTransferCenter('download');
+
     try {
-      await sftpOpenWithSystem(sessionId, entryPath, downloadId, uploadId);
+      const result = await sftpOpenWithSystem(sessionId, entryPath, taskId, downloadId, uploadId);
+      if (result.reused) {
+        // 文件已在编辑中（旧 task 仍在监视并自动回传）：移除刚建的监视卡片避免重复，
+        // 下载卡片标「已重新打开」让用户知道发生了什么，而不是看到一张空白进度卡发懵。
+        useTransferStore.getState().removeItem(uploadId);
+        useTransferStore.getState().updateItem(downloadId, {
+          status: 'done',
+          written: entry.size,
+          statusText: '已重新打开（仍在编辑中）',
+          finishedAt: Date.now(),
+        });
+      }
     } catch (err) {
       useTransferStore.getState().updateItem(downloadId, {
         status: 'error',
-        statusText: `下载失败：${getErrorMessage(err)}`,
+        statusText: `打开失败：${getErrorMessage(err)}`,
         finishedAt: Date.now(),
       });
       useTransferStore.getState().updateItem(uploadId, {
         status: 'error',
-        statusText: '下载失败',
+        statusText: '打开失败',
         finishedAt: Date.now(),
       });
     }

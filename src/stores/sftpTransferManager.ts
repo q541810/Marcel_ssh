@@ -6,6 +6,8 @@ import {
 } from '@/hooks/sftpUploadStatus';
 import { useTransferStore } from './transferStore';
 import { initTransferScheduler } from './transferScheduler';
+import { flyToTransferCenter } from './transferFlyAnimation';
+import type { SysopenStateEvent } from '@/lib/tauri';
 
 // ---------------------------------------------------------------------------
 // Listener handles (module-level, persist across component unmounts)
@@ -16,6 +18,7 @@ let doneUnlisten: UnlistenFn | null = null;
 let folderStatusUnlisten: UnlistenFn | null = null;
 let downloadProgressUnlisten: UnlistenFn | null = null;
 let downloadDoneUnlisten: UnlistenFn | null = null;
+let sysopenStateUnlisten: UnlistenFn | null = null;
 
 let attached = false;
 
@@ -39,7 +42,7 @@ interface DownloadDonePayload {
   downloadId: string;
 }
 
-function progressText(action: '上传' | '下载', written: number, total: number): string {
+function progressText(action: '上传' | '下载' | '回传', written: number, total: number): string {
   const pct = total > 0 ? Math.round((written * 100) / total) : 0;
   return `${action} ${formatSize(written)} / ${formatSize(total)} (${pct}%)`;
 }
@@ -148,6 +151,101 @@ export async function attachTransferListeners() {
       });
     },
   );
+
+  // sysopen 状态：统一驱动「下载」与「监视回传」两张卡片。
+  // 不复用标准 progress/done 事件——那些会强制把文案覆盖为「下载完成/上传完成」，丢失 sysopen 语义。
+  sysopenStateUnlisten = await listen<SysopenStateEvent>(
+    'sftp-sysopen-state',
+    (event) => {
+      const { downloadId, uploadId, phase } = event.payload;
+      const state = useTransferStore.getState();
+      const dl = state.items[downloadId];
+      const ul = state.items[uploadId];
+
+      switch (phase.kind) {
+        case 'downloading':
+          if (dl && (dl.status === 'active' || dl.status === 'cancelling')) {
+            state.updateItem(downloadId, {
+              written: phase.written,
+              total: phase.total,
+              statusText: progressText('下载', phase.written, phase.total),
+            });
+          }
+          break;
+        case 'opened':
+          // 下载完成 + 系统应用已打开：下载卡片落 done。
+          if (dl && dl.status === 'active') {
+            state.updateItem(downloadId, {
+              status: 'done',
+              written: dl.total,
+              statusText: '已用系统应用打开',
+              finishedAt: Date.now(),
+            });
+          }
+          // 视觉引导：飞一个上传球到传输中心，告诉用户「现在开始监视，改动会回传到这里」。
+          flyToTransferCenter('upload');
+          break;
+        case 'monitoring':
+          if (ul && (ul.status === 'active' || ul.status === 'cancelling')) {
+            state.updateItem(uploadId, {
+              statusText: '监视中：保存后自动同步',
+            });
+          }
+          break;
+        case 'syncing':
+          if (ul && (ul.status === 'active' || ul.status === 'cancelling')) {
+            state.updateItem(uploadId, {
+              written: phase.written,
+              total: phase.total,
+              statusText: progressText('回传', phase.written, phase.total),
+            });
+          }
+          break;
+        case 'synced':
+          // 一次回传完成，但仍继续监视（保持 active）。
+          if (ul && ul.status === 'active') {
+            state.updateItem(uploadId, {
+              written: ul.total,
+              statusText: '已同步，继续监视',
+            });
+          }
+          break;
+        case 'cancelled':
+          // 下载阶段取消：下载卡片落 cancelled；监视阶段取消：下载卡片已 done，保持不变。
+          if (dl && (dl.status === 'active' || dl.status === 'cancelling')) {
+            state.updateItem(downloadId, {
+              status: 'cancelled',
+              statusText: '已取消',
+              finishedAt: Date.now(),
+            });
+          }
+          if (ul && (ul.status === 'active' || ul.status === 'cancelling')) {
+            state.updateItem(uploadId, {
+              status: 'cancelled',
+              statusText: '已取消监视',
+              finishedAt: Date.now(),
+            });
+          }
+          break;
+        case 'failed':
+          if (dl && (dl.status === 'active' || dl.status === 'cancelling')) {
+            state.updateItem(downloadId, {
+              status: 'error',
+              statusText: phase.message,
+              finishedAt: Date.now(),
+            });
+          }
+          if (ul && (ul.status === 'active' || ul.status === 'cancelling')) {
+            state.updateItem(uploadId, {
+              status: 'error',
+              statusText: phase.message,
+              finishedAt: Date.now(),
+            });
+          }
+          break;
+      }
+    },
+  );
 }
 
 /** Detach all module-level listeners. Call only on app teardown. */
@@ -157,10 +255,12 @@ export function detachTransferListeners() {
   folderStatusUnlisten?.();
   downloadProgressUnlisten?.();
   downloadDoneUnlisten?.();
+  sysopenStateUnlisten?.();
   progressUnlisten = null;
   doneUnlisten = null;
   folderStatusUnlisten = null;
   downloadProgressUnlisten = null;
   downloadDoneUnlisten = null;
+  sysopenStateUnlisten = null;
   attached = false;
 }
