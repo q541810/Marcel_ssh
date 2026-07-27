@@ -51,7 +51,7 @@ gh release list
 - **次版本 (MINOR)**：向后兼容的功能新增（如新工具、新设置项）
 - **修订号 (PATCH)**：向后兼容的 bug 修复（如 UI 修复、内存泄漏修复）
 
-### 3. 构建安装包
+### 3. 构建 Windows 安装包
 
 ```bash
 pnpm tauri build
@@ -63,9 +63,9 @@ pnpm tauri build
 
 > Windows 默认只发布 NSIS 安装包，不发布 MSI，以控制安装包体积。
 
-#### Android APK
+### 4. 构建 Android APK（必须）
 
-如果本次发布也要出 Android 包：
+每次发布必须出 Android 包：
 
 ```powershell
 $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
@@ -77,6 +77,11 @@ pnpm tauri android build --apk --target aarch64
 
 - `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`（**已自动用正式 keystore 签名**）
 
+- keystore 在 `~/.android/marcel-ssh-release.keystore`（仓库外），密码在 `src-tauri/gen/android/app/key.properties`（已 gitignore）。两个文件都必须备份，丢了无法再对同一 app 签发更新。
+- Gradle 侧 signingConfig 读 `key.properties`；文件缺失时 release 构建退化为未签名 APK，方便 CI 或新机器先跑通。
+- 首次构建前需 `pnpm tauri android init` 生成 `gen/android` 工程（已提交进仓库，无需重复跑）。
+- Gradle wrapper 走腾讯镜像（`gradle-wrapper.properties`），避免官方源证书问题。
+
 签名说明：
 
 - keystore 在 `~/.android/marcel-ssh-release.keystore`（仓库外），密码在 `src-tauri/gen/android/app/key.properties`（已 gitignore）。两个文件都必须备份，丢了无法再对同一 app 签发更新。
@@ -84,13 +89,13 @@ pnpm tauri android build --apk --target aarch64
 - 首次构建前需 `pnpm tauri android init` 生成 `gen/android` 工程（已提交进仓库，无需重复跑）。
 - Gradle wrapper 走腾讯镜像（`gradle-wrapper.properties`），避免官方源证书问题。
 
-### 4. 拟定release描述
+### 5. 拟定release描述
 
 先阅读commit记录，再查看release记录，模仿之前的release描述风格，根据commit记录确定当前版本的描述后告知用户。
 
-### 5. 提交并打 tag
+### 6. 提交并打 tag
 
-在用户确认4中你告知他的release描述后，提交并打 tag。
+在用户确认5中你告知他的release描述后，提交并打 tag。
 
 ```bash
 git add -A
@@ -100,7 +105,7 @@ git push origin main
 git push origin v{version}
 ```
 
-### 6. 创建 GitHub Release
+### 7. 创建 GitHub Release
 
 先将 release 描述写入临时文件，**必须用 UTF-8 编码**（`Set-Content` 默认 UTF-16LE 会导致中文乱码）：
 
@@ -121,13 +126,13 @@ gh release create v{version} --title "v{version}" --notes-file release-notes.md
 Remove-Item -LiteralPath release-notes.md
 ```
 
-### 7. 上传安装包到 Release Assets
+### 8. 上传安装包到 Release Assets
 
 ```bash
 gh release upload v{version} "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe" --clobber
 ```
 
-如果出了 Android 包，一并上传（重命名带架构，避免和 Windows 安装包混淆）：
+一并上传 Android APK（重命名带架构，避免和 Windows 安装包混淆）：
 
 ```bash
 gh release upload v{version} "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk#Marcel-SSH_{version}_arm64.apk" --clobber
