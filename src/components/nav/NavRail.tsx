@@ -68,11 +68,12 @@ function NavButton({
 
 export default function NavRail({ activeId, onChange }: Props) {
   const [helpOpen, setHelpOpen] = useState(false);
-  const [transferOpen, setTransferOpen] = useState(false);
   const providers = useViewStore((s) => s.providers);
   const topItems = useMemo(() => byNavGroup(providers, 'top'), [providers]);
   const bottomItems = useMemo(() => byNavGroup(providers, 'bottom'), [providers]);
   const transferBadge = useTransferStore(selectBadgeCount);
+  const transferOpen = useTransferStore((s) => s.open);
+  const setTransferOpen = useTransferStore((s) => s.setOpen);
   const transferBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export default function NavRail({ activeId, onChange }: Props) {
           title="传输中心"
           icon={<ArrowUpDown className="w-5 h-5" />}
           active={transferOpen}
-          onClick={() => setTransferOpen((v) => !v)}
+          onClick={() => setTransferOpen(!transferOpen)}
           badge={transferBadge}
           buttonRef={transferBtnRef}
         />

@@ -4,7 +4,9 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, State, Manager};
+use tauri_plugin_shell::ShellExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::emit_event;
@@ -15,6 +17,15 @@ use crate::AppState;
 const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STREAM_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
+
+const SYSOPEN_TEMP_DIR_PREFIX: &str = "marcel-sysopen";
+const SYSOPEN_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+pub struct OpenWithSystemResult {
+    pub local_path: String,
+    pub sync_upload_id: String,
+}
 
 #[derive(Debug, Serialize)]
 pub struct FileEntry {
@@ -2051,6 +2062,368 @@ pub async fn sftp_preview_cleanup(
         }
     }
     Ok(())
+}
+
+async fn upload_local_to_remote(
+    ssh_manager: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    remote_path: &str,
+    local_path: &Path,
+    app: &AppHandle,
+    upload_id: &str,
+) -> Result<(), AppError> {
+    let sftp = ssh_manager.open_sftp(session_id).await?;
+
+    let file_size = tokio::fs::metadata(local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取本地文件信息失败: {}", e)))?
+        .len();
+
+    let mut local = tokio::fs::File::open(local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
+
+    let temp_remote = remote_sidecar_path(remote_path, "sysopen-sync")?;
+
+    let mut remote = sftp
+        .open_with_flags(
+            &temp_remote,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    let mut buf = vec![0u8; 131072];
+    let mut written: u64 = 0;
+
+    loop {
+        let n = local
+            .read(&mut buf)
+            .await
+            .map_err(|e| AppError::Ssh(format!("读取本地文件失败: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        remote
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
+        written += n as u64;
+
+        emit_event(
+            app,
+            "sftp-upload-progress",
+            json!({
+                "uploadId": upload_id,
+                "written": written,
+                "total": file_size,
+            }),
+        );
+    }
+
+    remote
+        .flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("刷新远程文件失败: {}", e)))?;
+    drop(remote);
+    drop(local);
+
+    if written != file_size {
+        let _ = sftp.remove_file(&temp_remote).await;
+        return Err(AppError::Ssh(format!(
+            "上传不完整：预期 {} 字节，实际 {} 字节",
+            file_size, written
+        )));
+    }
+
+    commit_remote_temp_file(&sftp, &temp_remote, remote_path, true).await?;
+
+    Ok(())
+}
+
+async fn watch_and_sync(
+    app: AppHandle,
+    state: crate::AppState,
+    session_id: String,
+    remote_path: String,
+    local_path: std::path::PathBuf,
+    upload_id: String,
+    initial_mtime: Option<std::time::SystemTime>,
+    mut cancel_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut last_synced = initial_mtime;
+
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                let current_mtime = match tokio::fs::metadata(&local_path).await {
+                    Ok(meta) => meta.modified().ok(),
+                    Err(_) => break,
+                };
+
+                if current_mtime != last_synced {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+
+                    let after_debounce = match tokio::fs::metadata(&local_path).await {
+                        Ok(meta) => meta.modified().ok(),
+                        Err(_) => break,
+                    };
+
+                    if after_debounce == current_mtime && after_debounce != last_synced {
+                        if let Err(e) = upload_local_to_remote(
+                            &state.ssh_manager,
+                            &session_id,
+                            &remote_path,
+                            &local_path,
+                            &app,
+                            &upload_id,
+                        )
+                        .await
+                        {
+                            log::warn!("[sysopen] 自动同步失败: {}", e);
+                        } else {
+                            last_synced = after_debounce;
+                        }
+                    }
+                }
+            }
+            _ = cancel_rx.changed() => {
+                let current_mtime = match tokio::fs::metadata(&local_path).await {
+                    Ok(meta) => meta.modified().ok(),
+                    Err(_) => None,
+                };
+
+                if current_mtime.is_some() && current_mtime != last_synced {
+                    let _ = upload_local_to_remote(
+                        &state.ssh_manager,
+                        &session_id,
+                        &remote_path,
+                        &local_path,
+                        &app,
+                        &upload_id,
+                    )
+                    .await;
+                }
+                break;
+            }
+        }
+    }
+
+    emit_event(
+        &app,
+        "sftp-upload-done",
+        json!({ "uploadId": &upload_id }),
+    );
+
+    let _ = tokio::fs::remove_file(&local_path).await;
+}
+
+#[tauri::command]
+pub async fn sftp_open_with_system(
+    app: AppHandle,
+    state: State<'_, crate::AppState>,
+    session_id: String,
+    remote_path: String,
+    download_id: String,
+    upload_id: String,
+) -> Result<OpenWithSystemResult, AppError> {
+    let remote_path = validate_sftp_remote_path(&remote_path)?;
+
+    let remote_basename = Path::new(&remote_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| AppError::Ssh("无法解析远端文件名".into()))?;
+
+    if remote_basename.contains('/')
+        || remote_basename.contains('\\')
+        || remote_basename.contains('\0')
+        || remote_basename == "."
+        || remote_basename == ".."
+    {
+        return Err(AppError::Ssh("远端文件名包含非法字符".into()));
+    }
+
+    let sftp = state.ssh_manager.open_sftp(&session_id).await?;
+    let metadata = sftp
+        .metadata(&remote_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("读取文件信息失败: {}", e)))?;
+    if !metadata.is_regular() {
+        return Err(AppError::Ssh("只能打开普通文件".into()));
+    }
+    let total = metadata.len();
+    if total > SYSOPEN_MAX_BYTES {
+        return Err(AppError::Ssh(format!(
+            "文件过大 ({} MB)，系统打开限制为 {} MB，请使用下载功能",
+            total / (1024 * 1024),
+            SYSOPEN_MAX_BYTES / (1024 * 1024)
+        )));
+    }
+
+    let app_data = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Ssh(format!("获取 app_data_dir 失败: {}", e)))?;
+    let temp_root = app_data
+        .join(SYSOPEN_TEMP_DIR_PREFIX)
+        .join(&session_id);
+    std::fs::create_dir_all(&temp_root)
+        .map_err(|e| AppError::Ssh(format!("创建临时目录失败: {}", e)))?;
+
+    let local_path = temp_root.join(&remote_basename);
+    let temp_part_path = format!("{}.part", local_path.to_string_lossy());
+
+    let mut remote = sftp
+        .open_with_flags(&remote_path, OpenFlags::READ)
+        .await
+        .map_err(|e| AppError::Ssh(format!("打开远程文件失败: {}", e)))?;
+
+    let mut local = tokio::fs::File::create(&temp_part_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("创建本地临时文件失败: {}", e)))?;
+
+    let mut buf = vec![0u8; 131072];
+    let mut written: u64 = 0;
+
+    loop {
+        let n = remote
+            .read(&mut buf)
+            .await
+            .map_err(|e| AppError::Ssh(format!("读取远程文件失败: {}", e)))?;
+        if n == 0 {
+            break;
+        }
+        local
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
+        written += n as u64;
+
+        emit_event(
+            &app,
+            "sftp-download-progress",
+            json!({
+                "downloadId": &download_id,
+                "written": written,
+                "total": total,
+            }),
+        );
+    }
+
+    local
+        .flush()
+        .await
+        .map_err(|e| AppError::Ssh(format!("刷新本地文件失败: {}", e)))?;
+    drop(local);
+    drop(remote);
+
+    if written != total {
+        let _ = tokio::fs::remove_file(&temp_part_path).await;
+        return Err(AppError::Ssh(format!(
+            "下载不完整：预期 {} 字节，实际 {} 字节",
+            total, written
+        )));
+    }
+
+    tokio::fs::rename(&temp_part_path, &local_path)
+        .await
+        .map_err(|e| AppError::Ssh(format!("保存临时文件失败: {}", e)))?;
+
+    let initial_mtime = tokio::fs::metadata(&local_path)
+        .await
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    emit_event(
+        &app,
+        "sftp-download-done",
+        json!({
+            "downloadId": &download_id,
+        }),
+    );
+
+    let path_str = local_path.to_string_lossy().to_string();
+    #[allow(deprecated)]
+    app.shell()
+        .open(&path_str, None)
+        .map_err(|e| AppError::Ssh(format!("用系统默认应用打开文件失败: {}", e)))?;
+
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    {
+        state.sysopen_watchers.write().insert(
+            upload_id.clone(),
+            (session_id.clone(), cancel_tx),
+        );
+    }
+
+    let watcher_state = state.inner().clone();
+    let watcher_app = app.clone();
+    let watcher_remote = remote_path.clone();
+    let watcher_session = session_id.clone();
+    let result_path = local_path.to_string_lossy().to_string();
+    let result_upload_id = upload_id.clone();
+
+    tokio::spawn(async move {
+        watch_and_sync(
+            watcher_app,
+            watcher_state,
+            watcher_session,
+            watcher_remote,
+            local_path,
+            upload_id,
+            initial_mtime,
+            cancel_rx,
+        )
+        .await;
+    });
+
+    Ok(OpenWithSystemResult {
+        local_path: result_path,
+        sync_upload_id: result_upload_id,
+    })
+}
+
+#[tauri::command]
+pub async fn sftp_cancel_sysopen(
+    state: State<'_, crate::AppState>,
+    upload_id: String,
+) -> Result<(), AppError> {
+    if let Some((_, tx)) = state.sysopen_watchers.write().remove(&upload_id) {
+        let _ = tx.send(true);
+    }
+    Ok(())
+}
+
+pub(crate) async fn cleanup_session_sysopen(
+    app: &AppHandle,
+    state: &crate::AppState,
+    session_id: &str,
+) {
+    let to_cancel: Vec<_> = {
+        let watchers = state.sysopen_watchers.read();
+        watchers
+            .iter()
+            .filter(|(_, (sid, _))| sid.as_str() == session_id)
+            .map(|(id, _)| id.clone())
+            .collect()
+    };
+    for id in to_cancel {
+        if let Some((_, tx)) = state.sysopen_watchers.write().remove(&id) {
+            let _ = tx.send(true);
+        }
+    }
+
+    let app_data = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let temp_dir = app_data
+        .join(SYSOPEN_TEMP_DIR_PREFIX)
+        .join(session_id);
+    if temp_dir.exists() {
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
 }
 
 #[cfg(test)]

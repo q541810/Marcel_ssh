@@ -560,6 +560,7 @@ export async function sftpCancelDownload(downloadId: string): Promise<void> {
 
 export interface SftpPreviewImageResult {
   localPath: string;
+  syncUploadId?: string;
 }
 
 /** 下载远程图片到 marcel-previews/{previewId}/ 临时目录，返回本地路径。 */
@@ -573,6 +574,27 @@ export async function sftpPreviewImage(
     remotePath,
     previewId,
   });
+}
+
+/** 下载远程文件到 marcel-sysopen/ 临时目录，用系统默认应用打开。
+ *  下载/上传进度通过传输中心标准事件推送。 */
+export async function sftpOpenWithSystem(
+  sessionId: string,
+  remotePath: string,
+  downloadId: string,
+  uploadId: string,
+): Promise<SftpPreviewImageResult> {
+  return invoke<SftpPreviewImageResult>('sftp_open_with_system', {
+    sessionId,
+    remotePath,
+    downloadId,
+    uploadId,
+  });
+}
+
+/** 取消 sysopen 文件监视任务。 */
+export async function sftpCancelSysopen(uploadId: string): Promise<void> {
+  return invoke('sftp_cancel_sysopen', { uploadId });
 }
 
 // ──────────── 跨设备同步（sync_* commands） ────────────

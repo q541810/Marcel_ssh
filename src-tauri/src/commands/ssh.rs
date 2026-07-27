@@ -129,9 +129,11 @@ pub async fn ssh_connect(
 /// Disconnect an active SSH session.
 #[tauri::command]
 pub async fn ssh_disconnect(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), AppError> {
+    crate::commands::sftp::cleanup_session_sysopen(&app, &state, &session_id).await;
     state.ssh_manager.disconnect(&session_id).await
 }
 

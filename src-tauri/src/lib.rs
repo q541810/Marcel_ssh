@@ -78,6 +78,9 @@ pub struct AppState {
     /// Cancellation signals for long-running SSH commands (compress, etc.): task_id -> watch sender.
     pub long_exec_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Watcher cancellation tokens for "open with system" files, keyed by upload_id.
+    pub sysopen_watchers:
+        std::sync::Arc<PlRwLock<HashMap<String, (String, tokio::sync::watch::Sender<bool>)>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -385,6 +388,7 @@ impl AppState {
                         upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
                         plugin_registry: crate::plugins::registry::new_shared(),
                         sync_engine: Some(engine),
@@ -418,6 +422,7 @@ impl AppState {
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
             sync_engine,
@@ -706,6 +711,8 @@ pub fn run() {
             commands::sftp::sftp_cleanup_temp_dir,
             commands::sftp::sftp_preview_image,
             commands::sftp::sftp_preview_cleanup,
+            commands::sftp::sftp_open_with_system,
+            commands::sftp::sftp_cancel_sysopen,
             commands::plugin_webview::plugin_webview_create,
             commands::plugin_webview::plugin_webview_set_bounds,
             commands::plugin_webview::plugin_webview_close,

@@ -4,6 +4,7 @@ import {
   sftpDownloadStream,
   sftpCancelUpload,
   sftpCancelDownload,
+  sftpCancelSysopen,
 } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/sftp-helpers';
 import { useSessionStore } from './sessionStore';
@@ -150,10 +151,13 @@ export function cancelTransfer(id: string): void {
   if (item.status !== 'active') return;
 
   state.updateItem(id, { status: 'cancelling', statusText: `正在取消 ${item.fileName} ...` });
-  const cancel = item.kind === 'download' ? sftpCancelDownload : sftpCancelUpload;
-  void cancel(id).catch(() => {
-    // ignore cancel errors；若取消未生效，任务将正常完成或报错落地
-  });
+  if (item.kind === 'upload' && id.startsWith('sysopen-')) {
+    void sftpCancelSysopen(id).catch(() => {});
+    finalize(id, { status: 'cancelled', statusText: '已取消监视' });
+  } else {
+    const cancel = item.kind === 'download' ? sftpCancelDownload : sftpCancelUpload;
+    void cancel(id).catch(() => {});
+  }
 }
 
 let sessionSubscribed = false;

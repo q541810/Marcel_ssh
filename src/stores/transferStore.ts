@@ -50,6 +50,9 @@ interface TransferCenterState {
   items: Record<string, StoredTransferItem>;
   order: string[];
 
+  open: boolean;
+  setOpen: (open: boolean) => void;
+
   addItem: (item: TransferItem) => void;
   updateItem: (id: string, patch: Partial<StoredTransferItem>) => void;
   removeItem: (id: string) => void;
@@ -59,6 +62,9 @@ interface TransferCenterState {
 export const useTransferStore = create<TransferCenterState>((set) => ({
   items: {},
   order: [],
+  open: false,
+
+  setOpen: (open) => set({ open }),
 
   addItem: (item) =>
     set((state) => {

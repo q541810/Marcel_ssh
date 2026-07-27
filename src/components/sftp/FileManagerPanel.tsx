@@ -11,6 +11,7 @@ import {
   sftpRename,
   sftpWriteFile,
   sftpExtractArchive,
+  sftpOpenWithSystem,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import { formatSize, modeToString, getErrorMessage, isPreviewableImage } from '@/lib/sftp-helpers';
@@ -27,6 +28,8 @@ import {
 } from './fileTreeModel';
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useSftpDownload } from '@/hooks/useSftpDownload';
+import { useTransferStore, type TransferItem } from '@/stores/transferStore';
+import { createTransferId } from '@/stores/transferScheduler';
 import { useFileDrop, type DropPosition } from '@/hooks/useFileDrop';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
 import { useResizablePanel } from '@/hooks/useResizablePanel';
@@ -268,6 +271,61 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setMenuTargets([]);
     const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
     startDownload(entry, entryPath);
+  };
+
+  const handleOpenWithSystem = async (entry: SftpFileEntry) => {
+    setMenuEntry(null);
+    setMenuTargets([]);
+    const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    const downloadId = createTransferId();
+    const uploadId = `sysopen-${createTransferId()}`;
+
+    const downloadItem: TransferItem = {
+      id: downloadId,
+      kind: 'download',
+      sessionId,
+      fileName: entry.name,
+      localPath: '',
+      remotePath: entryPath,
+      written: 0,
+      total: entry.size,
+      statusText: `正在下载 ${entry.name} ...`,
+      createdAt: Date.now(),
+    };
+
+    const uploadItem: TransferItem = {
+      id: uploadId,
+      kind: 'upload',
+      sessionId,
+      fileName: entry.name,
+      localPath: '',
+      remotePath: entryPath,
+      written: 0,
+      total: entry.size,
+      statusText: '监视中...',
+      createdAt: Date.now(),
+    };
+
+    useTransferStore.getState().addItem(downloadItem);
+    useTransferStore.getState().updateItem(downloadId, { status: 'active' });
+    useTransferStore.getState().addItem(uploadItem);
+    useTransferStore.getState().updateItem(uploadId, { status: 'active' });
+    useTransferStore.getState().setOpen(true);
+
+    try {
+      await sftpOpenWithSystem(sessionId, entryPath, downloadId, uploadId);
+    } catch (err) {
+      useTransferStore.getState().updateItem(downloadId, {
+        status: 'error',
+        statusText: `下载失败：${getErrorMessage(err)}`,
+        finishedAt: Date.now(),
+      });
+      useTransferStore.getState().updateItem(uploadId, {
+        status: 'error',
+        statusText: '下载失败',
+        finishedAt: Date.now(),
+      });
+    }
   };
 
   const handleUpload = async () => {
@@ -1004,12 +1062,19 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       编辑
                     </button>
                   )}
-                  <button
+                   <button
                     type="button"
                     onClick={() => handleDownload(menuEntry)}
                     className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
                   >
                     下载
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenWithSystem(menuEntry)}
+                    className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    用系统方式打开
                   </button>
                   {isArchiveFile(menuEntry.name) && (
                     <button
