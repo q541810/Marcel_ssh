@@ -211,13 +211,7 @@ export default function MobileFileEditor({
             autoCapitalize="off"
             autoCorrect="off"
             className="h-full w-full resize-none bg-zinc-950 p-3 font-mono text-[13px] leading-relaxed text-zinc-100 outline-none"
-            style={{
-              // The keyboard covers the gesture nav bar, and the page bottom is
-              // already lifted by --ime-bottom, so subtract it to avoid a double
-              // gap. Collapses to the plain safe-area pad when the IME is closed.
-              paddingBottom:
-                'max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - var(--ime-bottom, 0px)))',
-            }}
+            style={{ paddingBottom: '0.75rem' }}
           />
         )}
       </div>

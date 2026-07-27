@@ -324,13 +324,7 @@ export default function MobileOnboarding({
         {/* Footer：仅内容步骤显示 dots + 按钮 */}
         {phase === 'steps' && (
           <footer
-            className="flex flex-shrink-0 flex-col gap-3 border-t border-zinc-800 px-4 pt-3"
-            style={{
-              // Soft keyboard covers the nav bar; page bottom already lifts via
-              // --ime-bottom. Subtract to avoid double gap (same as AuxKeyBar).
-              paddingBottom:
-                'max(0.75rem, calc(env(safe-area-inset-bottom, 0px) - var(--ime-bottom, 0px)))',
-            }}
+            className="flex flex-shrink-0 flex-col gap-3 border-t border-zinc-800 px-4 pt-3 pb-3"
           >
             <div className="flex justify-center gap-1.5" aria-hidden>
               {Array.from({ length: STEP_COUNT }, (_, i) => (
