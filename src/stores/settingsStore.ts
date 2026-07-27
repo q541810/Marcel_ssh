@@ -28,6 +28,7 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   retryDelaySecs: 5,
   retryHttpStatuses: '408, 429, 500-599',
   vision: false,
+  extraBody: null,
 };
 
 const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
@@ -76,6 +77,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,
+  privacyMode: false,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   mobileNotificationSettings: DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
   mobileBackgroundSettings: DEFAULT_MOBILE_BACKGROUND_SETTINGS,

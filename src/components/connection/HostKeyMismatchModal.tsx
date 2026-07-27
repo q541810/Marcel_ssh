@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatAddress } from '@/lib/privacy';
 import type { HostKeyMismatchData } from '@/lib/types';
 
 interface Props {
@@ -18,6 +20,7 @@ interface Props {
  */
 export default function HostKeyMismatchModal({ open, data, onTrust, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
+  const privacyMode = usePrivacyMode();
 
   useEffect(() => {
     if (open) setBusy(false);
@@ -47,7 +50,7 @@ export default function HostKeyMismatchModal({ open, data, onTrust, onCancel }: 
         {data && (
           <>
             <p className="text-sm text-zinc-300">
-              服务器 <span className="font-mono text-zinc-100">{data.host}:{data.port}</span>{' '}
+              服务器 <span className="font-mono text-zinc-100">{formatAddress(data.host, data.port, privacyMode)}</span>{' '}
               提供的主机密钥与本地记录不一致。可能是服务器重装/迁移了密钥，也可能是遭遇中间人攻击。
             </p>
             <p className="text-sm text-zinc-500">

@@ -12,6 +12,8 @@ import {
   clearIntermediateReasoning,
 } from '@/stores/messageConversion';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatNameWithAddress } from '@/lib/privacy';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import MobileSheet from './ui/MobileSheet';
 
@@ -19,8 +21,6 @@ interface MobileChatHistorySheetProps {
   open: boolean;
   onClose: () => void;
 }
-
-const connLabel = (c: SavedConnection) => `${c.name} (${c.host}:${c.port})`;
 
 const matchCountLabel = (n: number) =>
   n > 200 ? '共 200+ 条匹配' : `共 ${n} 条匹配`;
@@ -40,6 +40,9 @@ export default function MobileChatHistorySheet({
   const connections = useConnectionStore((s) => s.connections);
   const connectionsLoading = useConnectionStore((s) => s.loading);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  const privacyMode = usePrivacyMode();
+  const connLabel = (c: SavedConnection) =>
+    formatNameWithAddress(c.name, c.host, c.port, privacyMode);
   const [expandedConnId, setExpandedConnId] = useState<string | null>(null);
   const [conversationsByConn, setConversationsByConn] = useState<
     Record<string, AgentConversation[]>

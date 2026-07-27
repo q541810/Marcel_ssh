@@ -4,7 +4,9 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
+import { formatConnLabel } from '@/lib/privacy';
 import type { SavedConnection, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import Modal from '@/components/ui/Modal';
@@ -24,6 +26,7 @@ export default function ConnectionList() {
   const connectWithSavedPassword = useSessionStore((s) => s.connectWithSavedPassword);
   const connectWithSavedPassphrase = useSessionStore((s) => s.connectWithSavedPassphrase);
   const { onConnected } = useSessionLifecycle();
+  const privacyMode = usePrivacyMode();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<{
@@ -125,7 +128,7 @@ export default function ConnectionList() {
   const promptForPassword = (conn: SavedConnection) => {
     promptPassword({
       title: 'SSH 密码',
-      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
+      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
       allowRemember: true,
       onSubmit: async (password, remember) => {
         if (remember) {
@@ -169,7 +172,7 @@ export default function ConnectionList() {
       try {
         const stored = await tauri.hasPassword(connection.id);
         if (stored) {
-          const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+          const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
           try {
             const sessionId = await connectWithSavedPassword(connection.id, connLabel);
             if (connection.id) {
@@ -208,7 +211,7 @@ export default function ConnectionList() {
         return false;
       });
       if (hasSavedPassphrase) {
-        const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+        const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
         try {
           const sessionId = await connectWithSavedPassphrase(connection.id, connLabel);
           onConnected(connection.id, sessionId);
@@ -363,7 +366,7 @@ export default function ConnectionList() {
                     {conn.name}
                   </div>
                   <div className="text-xs text-zinc-500 truncate">
-                    {conn.username}@{conn.host}:{conn.port}
+                    {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
                   </div>
                   {conn.lastConnected && (
                     <div className="text-xs text-zinc-600 mt-0.5">

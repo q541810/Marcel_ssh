@@ -9,6 +9,8 @@ import type {
 import * as tauri from '@/lib/tauri';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from '@/stores/messageConversion';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatNameWithAddress } from '@/lib/privacy';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 
 interface Props {
@@ -24,6 +26,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
   const [messages, setMessages] = useState<AgentMessageType[]>([]);
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+  const privacyMode = usePrivacyMode();
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -138,7 +141,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
     setHighlightMessageId(activeMatchIds[0]);
   }, [loadingMsgs, messages, activeMatchIds]);
 
-  const connLabel = (c: SavedConnection) => `${c.name} (${c.host}:${c.port})`;
+  const connLabel = (c: SavedConnection) => formatNameWithAddress(c.name, c.host, c.port, privacyMode);
 
   const connNameById = useMemo(() => {
     const m = new Map<string, string>();

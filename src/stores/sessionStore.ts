@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Session, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { formatConnLabel } from '@/lib/privacy';
+import { useSettingsStore } from './settingsStore';
 import { terminalInstanceManager } from '@/components/terminal/TerminalInstanceManager';
 
 interface SessionState {
@@ -25,7 +27,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   connect: async (config: ConnectionConfig) => {
     const tempId = crypto.randomUUID();
-    const connLabel = `${config.username}@${config.host}:${config.port}`;
+    const privacyMode = useSettingsStore.getState().settings.privacyMode ?? false;
+    const connLabel = formatConnLabel(
+      config.username,
+      config.host,
+      config.port,
+      privacyMode,
+    );
     const session: Session = {
       id: tempId,
       connectionId: connLabel,

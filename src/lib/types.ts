@@ -401,6 +401,13 @@ export interface LlmConfig {
   retryHttpStatuses: string;
   /** Whether the model accepts image inputs (multimodal / vision). Default false. */
   vision?: boolean;
+  /**
+   * Free-form JSON object merged into the outgoing chat completion request.
+   * Use for provider-specific or otherwise-unexposed parameters
+   * (e.g. `thinking`, `top_p`, `max_tokens`, `seed`).
+   * Not sent for model-approval calls.
+   */
+  extraBody?: Record<string, unknown> | null;
 }
 
 /** A model entry returned by the provider's /models endpoint. */
@@ -509,6 +516,11 @@ export interface AppSettings {
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
+  /** Privacy mode: mask IP addresses and ports in all UI surfaces (connection
+   *  list, quick connect, host-key mismatch modal, chat history, session
+   *  descriptions, etc.). The actual SSH connection still uses the real
+   *  values — only their on-screen display is masked. */
+  privacyMode: boolean;
   notificationSettings: NotificationSettings;
   /** 移动端独立通知开关（不参与云端同步）。桌面端读写无副作用，UI 不暴露。 */
   mobileNotificationSettings: MobileNotificationSettings;

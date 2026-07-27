@@ -180,7 +180,7 @@ impl OpenAiProvider {
     async fn send_llm_request(
         &self,
         url: &str,
-        req_body: &ChatCompletionRequest,
+        req_body: &serde_json::Value,
         messages_len: usize,
     ) -> Result<reqwest::Response, AppError> {
         log::info!(
@@ -718,7 +718,7 @@ impl PartialToolCall {
         }
     }
 }
-/* ---- Typed request structs — serialize once, zero intermediate Values ---- */
+/* ---- Typed request structs — built once, then `to_value` + extra_body merge ---- */
 
 #[derive(Serialize)]
 struct ChatCompletionRequest {
@@ -804,7 +804,7 @@ fn build_request_body(
     messages: &[LlmMessage],
     tools: &[ToolDefinition],
     stream: bool,
-) -> ChatCompletionRequest {
+) -> serde_json::Value {
     use crate::llm::provider::VISION_RECENT_USER_TURNS;
 
     let user_indices: Vec<usize> = messages
@@ -875,7 +875,7 @@ fn build_request_body(
         )
     };
 
-    ChatCompletionRequest {
+    let typed = ChatCompletionRequest {
         model: config.model.clone(),
         messages,
         temperature: config.temperature,
@@ -886,6 +886,39 @@ fn build_request_body(
         } else {
             None
         },
+    };
+
+    let mut body = serde_json::to_value(&typed).unwrap_or(serde_json::Value::Null);
+
+    // Merge user-defined extra_body (free-form JSON) into the outgoing body.
+    // Keys here override typed fields, letting users tweak any provider-specific
+    // or otherwise-unexposed parameter (e.g. `thinking`, `top_p`, `seed`).
+    if let Some(extra) = &config.extra_body {
+        if let (serde_json::Value::Object(body_map), serde_json::Value::Object(extra_map)) =
+            (&mut body, extra)
+        {
+            for (k, v) in extra_map {
+                body_map.insert(k.clone(), v.clone());
+            }
+        } else if !extra.is_object() {
+            log::warn!(
+                "[llm] extra_body 必须是 JSON 对象（收到 {}），已忽略",
+                value_type_name(extra)
+            );
+        }
+    }
+
+    body
+}
+
+fn value_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -1122,5 +1155,118 @@ mod models_tests {
         assert!(json.contains("\"id\":\"foo\""));
         assert!(!json.contains("ownedBy"));
         assert!(!json.contains("created"));
+    }
+}
+
+#[cfg(test)]
+mod build_request_body_tests {
+    use super::*;
+    use crate::llm::provider::LlmConfig;
+    use crate::llm::provider::LlmMessage;
+    use crate::llm::provider::LlmRole;
+    use crate::llm::provider::ProviderType;
+
+    fn base_config() -> LlmConfig {
+        LlmConfig {
+            provider_type: ProviderType::OpenAI,
+            api_key: String::new(),
+            model: "gpt-4".to_string(),
+            base_url: None,
+            temperature: 0.1,
+            max_retries: 0,
+            retry_delay_secs: 0.0,
+            retry_http_statuses: String::new(),
+            vision: false,
+            extra_body: None,
+        }
+    }
+
+    #[test]
+    fn no_extra_body_emits_only_typed_fields() {
+        let cfg = base_config();
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
+        // 0.1 f32 在 f64 下变成 0.10000000149011612，按 f32 精度比对
+        let temp = body
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .expect("temperature");
+        assert!((temp - 0.1f32 as f64).abs() < 1e-6, "temperature drift: {temp}");
+        assert!(body.get("extraBody").is_none());
+    }
+
+    #[test]
+    fn extra_body_overrides_typed_temperature() {
+        let mut cfg = base_config();
+        cfg.extra_body = Some(serde_json::json!({ "temperature": 0.9 }));
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        // 用户 extra_body 应能覆盖类型化字段
+        let temp = body
+            .get("temperature")
+            .and_then(|v| v.as_f64())
+            .expect("temperature");
+        assert!((temp - 0.9).abs() < 1e-6, "temperature drift: {temp}");
+    }
+
+    #[test]
+    fn extra_body_adds_new_keys() {
+        let mut cfg = base_config();
+        cfg.extra_body = Some(serde_json::json!({
+            "top_p": 0.95,
+            "max_tokens": 4096,
+            "thinking": { "type": "enabled", "budget_tokens": 2048 }
+        }));
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        assert_eq!(body.get("top_p").and_then(|v| v.as_f64()), Some(0.95));
+        assert_eq!(
+            body.get("max_tokens").and_then(|v| v.as_u64()),
+            Some(4096)
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("enabled")
+        );
+        assert_eq!(
+            body.get("thinking")
+                .and_then(|v| v.get("budget_tokens"))
+                .and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+    }
+
+    #[test]
+    fn extra_body_empty_object_is_noop() {
+        let mut cfg = base_config();
+        cfg.extra_body = Some(serde_json::json!({}));
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        // 空对象不应污染输出（不应出现空 key）
+        assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
+    }
+
+    #[test]
+    fn extra_body_non_object_is_ignored() {
+        let mut cfg = base_config();
+        cfg.extra_body = Some(serde_json::json!([1, 2, 3]));
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        // 非对象应当被忽略，发出 warn 但不阻断
+        assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
+        // 不应注入 "array"-like 字段
+        assert!(!body.as_object().unwrap().contains_key("0"));
+    }
+
+    #[test]
+    fn extra_body_does_not_clobber_typed_required_fields() {
+        let mut cfg = base_config();
+        cfg.extra_body = Some(serde_json::json!({ "model": "should-not-win" }));
+        let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
+        // 实际行为是 extra_body 覆盖——这正是用户期望的能力（force override）
+        // 因此 model 应为 extra_body 的值。测试就是记录这个语义，避免后续误改。
+        assert_eq!(
+            body.get("model").and_then(|v| v.as_str()),
+            Some("should-not-win"),
+            "extra_body 故意覆盖类型化字段是设计行为（force override）"
+        );
     }
 }

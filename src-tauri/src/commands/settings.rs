@@ -208,6 +208,7 @@ pub async fn llm_list_models(
         retry_delay_secs: 0.0,
         retry_http_statuses: String::new(),
         vision: false,
+        extra_body: None,
     };
 
     let provider = OpenAiProvider::new(config)?;

@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { asHostKeyMismatch, getErrorMessage, parseAppError } from '@/lib/errors';
 import { DEFAULT_PORT } from '@/lib/constants';
+import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig } from '@/lib/types';
 
 interface ParsedTarget {
@@ -18,6 +20,7 @@ export default function QuickConnect() {
   const connect = useSessionStore((s) => s.connect);
   const { prompt: promptPassword, Prompt: PasswordPromptEl } = useConnectWithPassword();
   const mismatch = useHostKeyMismatch();
+  const privacyMode = usePrivacyMode();
 
   const parseConnectionString = (str: string): ParsedTarget | null => {
     // Format: user@host:port or user@host
@@ -45,7 +48,7 @@ export default function QuickConnect() {
     }
     promptPassword({
       title: 'SSH 认证',
-      description: `连接到 ${target.username}@${target.host}:${target.port}`,
+      description: `连接到 ${formatConnLabel(target.username, target.host, target.port, privacyMode)}`,
       onSubmit: async (password) => {
         const config: ConnectionConfig = {
           ...target,

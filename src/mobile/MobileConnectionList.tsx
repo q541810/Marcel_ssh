@@ -13,11 +13,13 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import {
   asHostKeyMismatch,
   getErrorMessage,
   parseAppError,
 } from '@/lib/errors';
+import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig, SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { listSessionsToDisconnectBeforeNewConnect } from './sessionUi';
@@ -51,6 +53,7 @@ export default function MobileConnectionList({
   const { prompt: promptPassword, Prompt: PasswordPromptEl } =
     useConnectWithPassword();
   const mismatch = useHostKeyMismatch();
+  const privacyMode = usePrivacyMode();
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -143,7 +146,7 @@ export default function MobileConnectionList({
   const promptForPassword = (conn: SavedConnection) => {
     promptPassword({
       title: 'SSH 密码',
-      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
+      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
       allowRemember: true,
       onSubmit: async (password, remember) => {
         if (remember) {
@@ -161,7 +164,7 @@ export default function MobileConnectionList({
   const promptForPassphrase = (conn: SavedConnection) => {
     promptPassword({
       title: '私钥密码',
-      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
+      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
       allowRemember: true,
       onSubmit: async (passphrase, remember) => {
         if (remember) {
@@ -182,7 +185,7 @@ export default function MobileConnectionList({
       try {
         const stored = await tauri.hasPassword(connection.id);
         if (stored) {
-          const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+          const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
           setConnectingId(connection.id);
           try {
             await clearOtherSessions();
@@ -234,7 +237,7 @@ export default function MobileConnectionList({
         .hasPassphrase(connection.id)
         .catch(() => false);
       if (hasSavedPassphrase) {
-        const connLabel = `${connection.username}@${connection.host}:${connection.port}`;
+        const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
         setConnectingId(connection.id);
         try {
           await clearOtherSessions();
@@ -419,10 +422,10 @@ export default function MobileConnectionList({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-zinc-100">
-                        {conn.name || `${conn.username}@${conn.host}`}
+                        {conn.name || formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
                       </div>
                       <div className="truncate text-xs text-zinc-500">
-                        {conn.username}@{conn.host}:{conn.port}
+                        {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
                       </div>
                     </div>
                   </button>

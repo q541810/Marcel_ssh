@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { CommandListMode, CommandCheckResult } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
@@ -94,6 +94,14 @@ export function AgentPolicySection() {
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [approvalModelsOpen, setApprovalModelsOpen] = useState(false);
+  // 「命令超时」和「执行前模型审批」是偶尔调整的高级项，折叠收纳避免主面板太长。
+  // 跟 ModelServiceSection 的「高级：自定义请求参数」折叠风格一致。
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedSummary = useMemo(() => {
+    const secs = settings.commandTimeoutSecs ?? 120;
+    const approval = agent.enableModelCommandApproval ? '开' : '关';
+    return `${secs}s · 模型审批：${approval}`;
+  }, [settings.commandTimeoutSecs, agent.enableModelCommandApproval]);
 
   // Custom protected paths
   const customPaths = settings.customProtectedPaths ?? [];
@@ -167,30 +175,6 @@ export function AgentPolicySection() {
         description="控制 Agent 模式下的命令安全边界"
       >
         <SettingItem
-          id="cmd-timeout"
-          label="命令超时时间"
-          description="Agent 执行单条命令的最大等待时间"
-          sectionId="settings-command-policy"
-          keywords={['timeout', '超时', '命令执行策略', 'Agent']}
-        >
-          <div className="flex items-center gap-3 w-80">
-            <input
-              type="range"
-              min={10}
-              max={300}
-              step={10}
-              value={settings.commandTimeoutSecs ?? 120}
-              onChange={(e) =>
-                update({ commandTimeoutSecs: Number(e.target.value) })
-              }
-              className="flex-1 accent-indigo-500"
-            />
-            <span className="text-sm font-mono text-zinc-300 w-16 text-right">
-              {settings.commandTimeoutSecs ?? 120}s
-            </span>
-          </div>
-        </SettingItem>
-        <SettingItem
           id="cmd-confirm"
           label="每条都手动确认"
           description="每条命令都需要用户确认"
@@ -215,78 +199,6 @@ export function AgentPolicySection() {
             onChange={(checked) => updateAgent({ confirmEditFile: checked })}
             label="Agent 编辑文件时需要用户确认"
           />
-        </SettingItem>
-        <SettingItem
-          id="cmd-model-approval"
-          label="执行前模型审批"
-          description="在执行命令前，用当前 Agent 模型结合上下文判断是否放行、转人工审批或阻止"
-          sectionId="settings-command-policy"
-          keywords={[
-            'model',
-            'approval',
-            '模型',
-            '审批',
-            '命令执行策略',
-            'Agent',
-          ]}
-        >
-          <div className="w-80 space-y-2">
-            <Toggle
-              checked={agent.enableModelCommandApproval ?? false}
-              onChange={(checked) =>
-                updateAgent({ enableModelCommandApproval: checked })
-              }
-              label="在 execute_command 执行前调用模型做一次审批判定"
-            />
-            {agent.enableModelCommandApproval && (
-              <div className="pl-1 space-y-2">
-                <div className="flex gap-2 items-center">
-                  <input
-                    type="text"
-                    value={agent.modelApprovalModel ?? ''}
-                    onChange={(e) =>
-                      updateAgent({ modelApprovalModel: e.target.value })
-                    }
-                    placeholder="留空使用主模型"
-                    className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setApprovalModelsOpen(true)}
-                    className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors whitespace-nowrap"
-                  >
-                    获取模型列表
-                  </button>
-                </div>
-                <p className="text-xs text-zinc-500">
-                  填写模型名可降低审批延迟和成本，如{' '}
-                  <code className="text-indigo-300">MIMo-v2.5</code>
-                </p>
-                <div className="flex items-center justify-between pt-1">
-                  <span className="text-xs text-zinc-400">审批提示词</span>
-                  <button
-                    type="button"
-                    onClick={() => updateAgent({ modelApprovalPrompt: '' })}
-                    className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-                  >
-                    恢复默认
-                  </button>
-                </div>
-                <textarea
-                  value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    updateAgent({
-                      modelApprovalPrompt:
-                        v === DEFAULT_APPROVAL_PROMPT ? '' : v,
-                    });
-                  }}
-                  rows={6}
-                  className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
-                />
-              </div>
-            )}
-          </div>
         </SettingItem>
         <SettingItem
           id="cmd-list-mode"
@@ -543,6 +455,130 @@ export function AgentPolicySection() {
             </div>
           </div>
         </SettingItem>
+
+        {/* 高级：命令超时时间 + 执行前模型审批。折叠收纳避免主面板太长。 */}
+        <div className="px-6 py-4">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((o) => !o)}
+            className="flex items-center gap-2 text-sm font-medium text-zinc-200 hover:text-zinc-100 transition-colors w-full"
+            aria-expanded={advancedOpen}
+          >
+            <svg
+              className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6 4l4 4-4 4" />
+            </svg>
+            <span>高级：超时与模型审批</span>
+            <span className="text-[11px] text-zinc-500 font-normal ml-1">（{advancedSummary}）</span>
+          </button>
+          {advancedOpen && (
+            <div className="mt-3">
+              <SettingItem
+                id="cmd-timeout"
+                label="命令超时时间"
+                description="Agent 执行单条命令的最大等待时间"
+                sectionId="settings-command-policy"
+                keywords={['timeout', '超时', '命令执行策略', 'Agent']}
+              >
+                <div className="flex items-center gap-3 w-80">
+                  <input
+                    type="range"
+                    min={10}
+                    max={300}
+                    step={10}
+                    value={settings.commandTimeoutSecs ?? 120}
+                    onChange={(e) =>
+                      update({ commandTimeoutSecs: Number(e.target.value) })
+                    }
+                    className="flex-1 accent-indigo-500"
+                  />
+                  <span className="text-sm font-mono text-zinc-300 w-16 text-right">
+                    {settings.commandTimeoutSecs ?? 120}s
+                  </span>
+                </div>
+              </SettingItem>
+              <SettingItem
+                id="cmd-model-approval"
+                label="执行前模型审批"
+                description="在执行命令前，用当前 Agent 模型结合上下文判断是否放行、转人工审批或阻止"
+                sectionId="settings-command-policy"
+                keywords={[
+                  'model',
+                  'approval',
+                  '模型',
+                  '审批',
+                  '命令执行策略',
+                  'Agent',
+                ]}
+              >
+                <div className="w-80 space-y-2">
+                  <Toggle
+                    checked={agent.enableModelCommandApproval ?? false}
+                    onChange={(checked) =>
+                      updateAgent({ enableModelCommandApproval: checked })
+                    }
+                    label="在 execute_command 执行前调用模型做一次审批判定"
+                  />
+                  {agent.enableModelCommandApproval && (
+                    <div className="pl-1 space-y-2">
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          value={agent.modelApprovalModel ?? ''}
+                          onChange={(e) =>
+                            updateAgent({ modelApprovalModel: e.target.value })
+                          }
+                          placeholder="留空使用主模型"
+                          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setApprovalModelsOpen(true)}
+                          className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors whitespace-nowrap"
+                        >
+                          获取模型列表
+                        </button>
+                      </div>
+                      <p className="text-xs text-zinc-500">
+                        填写模型名可降低审批延迟和成本，如{' '}
+                        <code className="text-indigo-300">MIMo-v2.5</code>
+                      </p>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-xs text-zinc-400">审批提示词</span>
+                        <button
+                          type="button"
+                          onClick={() => updateAgent({ modelApprovalPrompt: '' })}
+                          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                        >
+                          恢复默认
+                        </button>
+                      </div>
+                      <textarea
+                        value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateAgent({
+                            modelApprovalPrompt:
+                              v === DEFAULT_APPROVAL_PROMPT ? '' : v,
+                          });
+                        }}
+                        rows={6}
+                        className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
+                      />
+                    </div>
+                  )}
+                </div>
+              </SettingItem>
+            </div>
+          )}
+        </div>
       </Card>
       <Card
         id="settings-agent-rounds"

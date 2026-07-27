@@ -29,6 +29,7 @@ describe('settingsStore', () => {
     expect(s.fileManagerTreeUserHidden).toBe(false);
     expect(s.folderUploadCompressionLevel).toBe(6);
     expect(s.hideThinkingDisplay).toBe(false);
+    expect(s.privacyMode).toBe(false);
     expect(s.workspaceLayout).toEqual({
       sidebarBaseWidth: 280,
       agentBaseWidth: 460,

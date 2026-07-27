@@ -139,9 +139,15 @@ impl ToolDispatcher {
     ) -> Self {
         let enable = agent_settings.enable_model_command_approval;
         let approver: Option<std::sync::Arc<dyn CommandApprover>> = if enable {
+            // Always strip extra_body for the approval provider: the user-configured
+            // free-form params (thinking, top_p, etc.) target the main chat model
+            // and would otherwise skew the approval decision. The approval call
+            // uses the user's typed config (provider, base_url, api_key, model,
+            // temperature) but not the free-form extras.
             let approval_provider = if !agent_settings.model_approval_model.is_empty() {
                 let mut cfg = provider.config().clone();
                 cfg.model = agent_settings.model_approval_model.clone();
+                cfg.extra_body = None;
                 match OpenAiProvider::new(cfg) {
                     Ok(p) => {
                         log::info!(
@@ -156,7 +162,15 @@ impl ToolDispatcher {
                     }
                 }
             } else {
-                provider.clone()
+                let mut cfg = provider.config().clone();
+                cfg.extra_body = None;
+                match OpenAiProvider::new(cfg) {
+                    Ok(p) => std::sync::Arc::new(p),
+                    Err(e) => {
+                        log::warn!("模型审批 provider 创建失败，回退主 provider: {}", e);
+                        provider.clone()
+                    }
+                }
             };
             Some(std::sync::Arc::new(ModelApprover::new(
                 approval_provider,

@@ -192,6 +192,16 @@ pub struct LlmConfig {
     /// Whether the configured model accepts image inputs (multimodal / vision).
     #[serde(default)]
     pub vision: bool,
+    /// Free-form JSON object merged into the outgoing chat completion request body.
+    /// Use this to set provider-specific or otherwise-unexposed parameters
+    /// (e.g. `thinking`, `top_p`, `max_tokens`, `seed`). Keys here override
+    /// the typed fields above on conflict. Not used for model-approval calls.
+    ///
+    /// NOTE: 不加 `skip_serializing_if = "Option::is_none"`，是为了让 sync 字段路径
+    /// 测试能读到默认值 `null`（见 `sync::settings_field::tests::test_roundtrip_app_settings`）。
+    /// 反序列化时 `null` 与 `None` 行为一致。
+    #[serde(default)]
+    pub extra_body: Option<serde_json::Value>,
 }
 
 fn default_provider() -> ProviderType {
@@ -230,6 +240,7 @@ impl Default for LlmConfig {
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
             vision: false,
+            extra_body: None,
         }
     }
 }
@@ -305,6 +316,7 @@ mod tests {
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
             vision: false,
+            extra_body: None,
         };
 
         // Serialize to JSON
@@ -419,5 +431,68 @@ mod tests {
         apply_vision_policy(&mut msgs, false);
         assert!(msgs[0].image_paths.is_none());
         assert!(msgs[0].content.contains(IMAGE_PLACEHOLDER));
+    }
+
+    #[test]
+    fn test_llm_config_extra_body_serialized_when_some() {
+        let config = LlmConfig {
+            provider_type: ProviderType::OpenAI,
+            api_key: String::new(),
+            model: "gpt-4".to_string(),
+            base_url: None,
+            temperature: 0.1,
+            max_retries: 1,
+            retry_delay_secs: 5.0,
+            retry_http_statuses: "408, 429, 500-599".into(),
+            vision: false,
+            extra_body: Some(serde_json::json!({ "thinking": { "type": "enabled" } })),
+        };
+        let json = serde_json::to_value(&config).expect("serialize");
+        let extra = json
+            .get("extraBody")
+            .expect("extraBody should serialize when Some");
+        assert_eq!(
+            extra.get("thinking").and_then(|v| v.get("type")).and_then(|v| v.as_str()),
+            Some("enabled")
+        );
+    }
+
+    #[test]
+    fn test_llm_config_extra_body_serialized_as_null_when_none() {
+        // 不加 skip_serializing_if 是为了 sync 字段路径测试能读到默认值。
+        // 验证：None 时序列化为 `extraBody: null`，前端按 null 处理（等同于未设置）。
+        let config = LlmConfig {
+            provider_type: ProviderType::OpenAI,
+            api_key: String::new(),
+            model: "gpt-4".to_string(),
+            base_url: None,
+            temperature: 0.1,
+            max_retries: 1,
+            retry_delay_secs: 5.0,
+            retry_http_statuses: "408, 429, 500-599".into(),
+            vision: false,
+            extra_body: None,
+        };
+        let json = serde_json::to_value(&config).expect("serialize");
+        assert_eq!(
+            json.get("extraBody").and_then(|v| v.as_null()),
+            Some(()),
+            "extraBody should be JSON null when None (sync path requires key present)"
+        );
+    }
+
+    #[test]
+    fn test_llm_config_extra_body_backward_compat() {
+        // 旧 settings.json 没有 extraBody 字段 → 反序列化默认 None
+        let json = r#"{
+            "providerType": "openai",
+            "model": "gpt-4",
+            "temperature": 0.5
+        }"#;
+        let config: LlmConfig = serde_json::from_str(json).expect("deserialize");
+        assert!(
+            config.extra_body.is_none(),
+            "missing extraBody should default to None"
+        );
     }
 }
