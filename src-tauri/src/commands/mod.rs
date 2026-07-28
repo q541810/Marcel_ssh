@@ -14,6 +14,7 @@ pub mod plugin_webview;
 pub mod quick_command;
 pub mod settings;
 pub mod sftp;
+mod sftp_sysopen;
 pub mod skill;
 pub mod ssh;
 pub mod sync;
