@@ -75,22 +75,6 @@ impl Default for CommandListMode {
     }
 }
 
-/// How much recent conversation context the model-based approval step sees.
-///
-/// Lets the user trade off cost/latency against informed decisions.
-/// `Normal` matches the original hard-coded behavior so existing users see no change.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ApprovalContextLevel {
-    /// 2 rounds · 200 / 400 char caps. Cheapest, may miss recent actions.
-    Concise,
-    /// 5 rounds · 500 / 1000 char caps. Default; matches the original hard-coded limits.
-    #[default]
-    Normal,
-    /// 10 rounds · 1500 / 3000 char caps. Best-informed, most tokens.
-    Detailed,
-}
-
 /// Settings for the AGENT mode's command-execution policy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -117,11 +101,6 @@ pub struct AgentModeSettings {
     /// When empty, the built-in approval prompt is used.
     #[serde(default)]
     pub model_approval_prompt: String,
-    /// How much recent conversation context the approval model sees.
-    /// More context = more informed decision but more tokens/latency.
-    /// `Normal` matches the original hard-coded behavior.
-    #[serde(default)]
-    pub model_approval_context_level: ApprovalContextLevel,
     /// User-defined extra content appended to the system prompt sent to the LLM.
     /// Empty means nothing is appended.
     #[serde(default)]
@@ -157,7 +136,6 @@ impl Default for AgentModeSettings {
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
-            model_approval_context_level: ApprovalContextLevel::Normal,
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
@@ -228,6 +206,8 @@ impl Default for ExperimentalSettings {
         }
     }
 }
+
+
 
 /// Notification preferences.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -527,7 +507,6 @@ impl Default for AppSettings {
                 enable_model_command_approval: false,
                 model_approval_model: String::new(),
                 model_approval_prompt: String::new(),
-                model_approval_context_level: ApprovalContextLevel::Normal,
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
                 compact_context: false,
@@ -606,22 +585,6 @@ mod tests {
         assert_eq!(s.list_mode, CommandListMode::Denylist);
         assert!(!s.command_list.is_empty());
         assert!(s.command_list.contains(&"rm".to_string()));
-        assert_eq!(s.model_approval_context_level, ApprovalContextLevel::Normal);
-    }
-
-    #[test]
-    fn old_agent_settings_keep_original_approval_context_limits() {
-        let parsed: AgentModeSettings = serde_json::from_str(
-            r#"{"enableModelCommandApproval":true,"modelApprovalModel":"fast-model"}"#,
-        )
-        .expect("old agent settings should load");
-
-        assert!(parsed.enable_model_command_approval);
-        assert_eq!(parsed.model_approval_model, "fast-model");
-        assert_eq!(
-            parsed.model_approval_context_level,
-            ApprovalContextLevel::Normal
-        );
     }
 
     #[test]
@@ -698,6 +661,8 @@ mod tests {
         assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Html);
         assert_eq!(parsed.web_search_mode, WebSearchMode::Browser);
     }
+
+
 
     #[test]
     fn command_list_mode_default_is_denylist() {

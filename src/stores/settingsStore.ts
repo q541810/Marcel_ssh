@@ -1,44 +1,32 @@
-import { create } from "zustand";
-import * as tauri from "@/lib/tauri";
-import type {
-  AppSettings,
-  AgentModeSettings,
-  LlmConfig,
-  ExperimentalSettings,
-  NotificationSettings,
-  MobileNotificationSettings,
-  MobileBackgroundSettings,
-} from "@/lib/types";
-import { DEFAULT_TERMINAL_COLORS } from "@/lib/constants";
-import {
-  DEFAULT_WORKSPACE_LAYOUT,
-  normalizeWorkspaceLayout,
-} from "@/lib/workspaceLayout";
-import { setNotificationVolume } from "@/lib/notificationSound";
+import { create } from 'zustand';
+import * as tauri from '@/lib/tauri';
+import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings } from '@/lib/types';
+import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
+import { setNotificationVolume } from '@/lib/notificationSound';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
-  listMode: "denylist",
-  commandList: ["rm", "mkfs", "dd", "shutdown", "reboot"],
+  listMode: 'denylist',
+  commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
   enableModelCommandApproval: false,
-  modelApprovalModel: "",
-  modelApprovalPrompt: "",
-  modelApprovalContextLevel: "normal",
-  systemPrompt: "",
+  modelApprovalModel: '',
+  modelApprovalPrompt: '',
+  systemPrompt: '',
   maxToolRounds: 80,
   compactContext: false,
   confirmEditFile: true,
 };
 
 const DEFAULT_LLM_CONFIG: LlmConfig = {
-  providerType: "openai",
-  apiKey: "",
-  model: "",
-  baseUrl: "",
+  providerType: 'openai',
+  apiKey: '',
+  model: '',
+  baseUrl: '',
   temperature: 0.1,
   maxRetries: 1,
   retryDelaySecs: 5,
-  retryHttpStatuses: "408, 429, 500-599",
+  retryHttpStatuses: '408, 429, 500-599',
   vision: false,
   extraBody: null,
 };
@@ -47,10 +35,12 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableWebSearch: true,
   enableHttpFetch: true,
   enableCloudPage: false,
-  webSearchMode: "browser",
-  webSearchApiProvider: "brave",
-  httpFetchMode: "browser",
+  webSearchMode: 'browser',
+  webSearchApiProvider: 'brave',
+  httpFetchMode: 'browser',
 };
+
+
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   agentApproval: true,
@@ -60,13 +50,12 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   notificationVolume: 70,
 };
 
-export const DEFAULT_MOBILE_NOTIFICATION_SETTINGS: MobileNotificationSettings =
-  {
-    agentApproval: true,
-    agentQuestion: true,
-    agentTaskDone: true,
-    agentTaskFailed: true,
-  };
+export const DEFAULT_MOBILE_NOTIFICATION_SETTINGS: MobileNotificationSettings = {
+  agentApproval: true,
+  agentQuestion: true,
+  agentTaskDone: true,
+  agentTaskFailed: true,
+};
 
 export const DEFAULT_MOBILE_BACKGROUND_SETTINGS: MobileBackgroundSettings = {
   keepAliveEnabled: false,
@@ -75,14 +64,13 @@ export const DEFAULT_MOBILE_BACKGROUND_SETTINGS: MobileBackgroundSettings = {
 const DEFAULT_SETTINGS: AppSettings = {
   terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
-  fontFamily:
-    'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace',
-  defaultAgentMode: "agent",
+  fontFamily: 'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace',
+  defaultAgentMode: 'agent',
   llmConfig: DEFAULT_LLM_CONFIG,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
   fileManagerShowHidden: false,
-  fileManagerPath: "/",
+  fileManagerPath: '/',
   fileManagerPaths: {},
   fileManagerTreeWidth: 200,
   fileManagerTreeUserHidden: false,
@@ -146,12 +134,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...DEFAULT_SETTINGS,
         ...fromDisk,
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
-        agentModeSettings: {
-          ...DEFAULT_AGENT_MODE_SETTINGS,
-          ...(fromDisk.agentModeSettings ?? {}),
-          modelApprovalContextLevel:
-            fromDisk.agentModeSettings?.modelApprovalContextLevel ?? "normal",
-        },
+        agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
         experimentalSettings: {
           ...DEFAULT_EXPERIMENTAL_SETTINGS,
@@ -176,11 +159,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         hasWebSearchApiKey: resp.hasWebSearchApiKey ?? false,
         warning: resp.warning ?? null,
       });
-      setNotificationVolume(
-        merged.notificationSettings?.notificationVolume ?? 70,
-      );
+      setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);
     } catch (err) {
-      console.error("加载设置失败:", err);
+      console.error('加载设置失败:', err);
       set({ loaded: false });
       throw err;
     }
@@ -188,7 +169,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   save: async (settings: AppSettings) => {
     if (!get().loaded) {
-      console.warn("[settingsStore] save() blocked — settings not loaded yet");
+      console.warn('[settingsStore] save() blocked — settings not loaded yet');
       return;
     }
     await tauri.saveSettings(settings);
@@ -197,9 +178,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   update: async (patch: Partial<AppSettings>) => {
     if (!get().loaded) {
-      console.warn(
-        "[settingsStore] update() blocked — settings not loaded yet",
-      );
+      console.warn('[settingsStore] update() blocked — settings not loaded yet');
       return;
     }
     const next = { ...get().settings, ...patch };

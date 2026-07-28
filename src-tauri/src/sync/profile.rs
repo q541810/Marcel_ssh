@@ -84,23 +84,18 @@ impl SyncKey {
             // 二级分类：解析 settings 子字段
             let sub = key.strip_prefix("settings.").unwrap_or("");
             match sub {
-                "terminalColors" | "fontSize" | "fontFamily" => {
-                    Some(SyncCategory::TerminalSettings)
+                "terminalColors" | "fontSize" | "fontFamily" => Some(SyncCategory::TerminalSettings),
+                "llmConfig.baseUrl" | "llmConfig.model" | "llmConfig.vision"
+                | "llmConfig.maxRetries" | "llmConfig.retryDelaySecs"
+                | "llmConfig.retryHttpStatuses" | "agentModeSettings.compactContext" => {
+                    Some(SyncCategory::ModelService)
                 }
-                "llmConfig.baseUrl"
-                | "llmConfig.model"
-                | "llmConfig.vision"
-                | "llmConfig.maxRetries"
-                | "llmConfig.retryDelaySecs"
-                | "llmConfig.retryHttpStatuses"
-                | "agentModeSettings.compactContext" => Some(SyncCategory::ModelService),
                 "commandTimeoutSecs"
                 | "agentModeSettings.confirmEachCommand"
                 | "agentModeSettings.confirmEditFile"
                 | "agentModeSettings.enableModelCommandApproval"
                 | "agentModeSettings.modelApprovalModel"
                 | "agentModeSettings.modelApprovalPrompt"
-                | "agentModeSettings.modelApprovalContextLevel"
                 | "agentModeSettings.listMode"
                 | "agentModeSettings.commandList"
                 | "customProtectedPaths"
@@ -318,7 +313,9 @@ impl SyncProfile {
             return false;
         }
         match key.category() {
-            Some(cat) => cat.is_available_on_platform(platform) && self.is_category_enabled(&cat),
+            Some(cat) => {
+                cat.is_available_on_platform(platform) && self.is_category_enabled(&cat)
+            }
             None => true,
         }
     }
@@ -462,9 +459,9 @@ mod tests {
         profile.add_excluded_key("connections.abc");
 
         let keys = vec![
-            SyncKey::new("connections.abc"),   // 被排除
-            SyncKey::new("connections.def"),   // 正常
-            SyncKey::new("settings.fontSize"), // 正常
+            SyncKey::new("connections.abc"),     // 被排除
+            SyncKey::new("connections.def"),     // 正常
+            SyncKey::new("settings.fontSize"),   // 正常
         ];
 
         let filtered = profile.filter_keys(&keys, Platform::Desktop);

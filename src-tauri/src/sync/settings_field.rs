@@ -51,11 +51,7 @@ pub fn get_field(settings_json: &Value, field_path: &str) -> Option<Value> {
 /// 中间节点不存在时自动创建为空 Object（向前兼容字段添加）。
 ///
 /// 注意：调用者需保证 settings_json 是 Object（由 AppSettings 序列化保证）。
-pub fn set_field(
-    settings_json: &mut Value,
-    field_path: &str,
-    value: Value,
-) -> Result<(), AppError> {
+pub fn set_field(settings_json: &mut Value, field_path: &str, value: Value) -> Result<(), AppError> {
     let segments: Vec<&str> = field_path.split('.').filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return Err(AppError::Config("字段路径不能为空".into()));
@@ -105,7 +101,6 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "agentModeSettings.enableModelCommandApproval",
         "agentModeSettings.modelApprovalModel",
         "agentModeSettings.modelApprovalPrompt",
-        "agentModeSettings.modelApprovalContextLevel",
         "agentModeSettings.listMode",
         "agentModeSettings.commandList",
         "customProtectedPaths",
@@ -175,10 +170,7 @@ mod tests {
             get_field(&settings, "llmConfig.baseUrl"),
             Some(json!("http://api.example.com"))
         );
-        assert_eq!(
-            get_field(&settings, "llmConfig.model"),
-            Some(json!("gpt-4"))
-        );
+        assert_eq!(get_field(&settings, "llmConfig.model"), Some(json!("gpt-4")));
     }
 
     #[test]
@@ -200,16 +192,8 @@ mod tests {
         let mut settings = json!({
             "llmConfig": {"baseUrl": "http://old.example.com", "model": "gpt-3"}
         });
-        set_field(
-            &mut settings,
-            "llmConfig.baseUrl",
-            json!("http://new.example.com"),
-        )
-        .unwrap();
-        assert_eq!(
-            settings["llmConfig"]["baseUrl"],
-            json!("http://new.example.com")
-        );
+        set_field(&mut settings, "llmConfig.baseUrl", json!("http://new.example.com")).unwrap();
+        assert_eq!(settings["llmConfig"]["baseUrl"], json!("http://new.example.com"));
         // 其他字段不变
         assert_eq!(settings["llmConfig"]["model"], json!("gpt-3"));
     }
@@ -217,16 +201,8 @@ mod tests {
     #[test]
     fn test_set_field_nested_missing_parent() {
         let mut settings = json!({});
-        set_field(
-            &mut settings,
-            "llmConfig.baseUrl",
-            json!("http://api.example.com"),
-        )
-        .unwrap();
-        assert_eq!(
-            settings["llmConfig"]["baseUrl"],
-            json!("http://api.example.com")
-        );
+        set_field(&mut settings, "llmConfig.baseUrl", json!("http://api.example.com")).unwrap();
+        assert_eq!(settings["llmConfig"]["baseUrl"], json!("http://api.example.com"));
     }
 
     #[test]
@@ -250,20 +226,15 @@ mod tests {
             // 能写入新值并读回
             let new_val = json!(42);
             set_field(&mut json_val, path, new_val.clone()).unwrap();
-            assert_eq!(
-                get_field(&json_val, path),
-                Some(new_val),
-                "字段路径 {} 写入后读不回",
-                path
-            );
+            assert_eq!(get_field(&json_val, path), Some(new_val), "字段路径 {} 写入后读不回", path);
         }
     }
 
     #[test]
     fn test_all_field_paths_covers_profile_keys() {
         // 验证 all_field_paths 覆盖 profile.rs 中所有 settings.* 字段
-        use crate::sync::profile::SyncCategory;
         use crate::sync::profile::SyncKey;
+        use crate::sync::profile::SyncCategory;
 
         let paths: std::collections::HashSet<&str> = all_field_paths().iter().copied().collect();
 
