@@ -1,15 +1,17 @@
-import { useSessionStore } from '@/stores/sessionStore';
-import { useAgentStore } from '@/stores/agentStore';
-import { AGENT_MODES } from '@/lib/constants';
-import type { AgentMode } from '@/lib/types';
+import { useSessionStore } from "@/stores/sessionStore";
+import { useTaskStore } from "@/stores/agentStore";
+import { AGENT_MODES } from "@/lib/constants";
+import type { AgentMode } from "@/lib/types";
 
 export default function TerminalToolbar() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const sessions = useSessionStore((s) => s.sessions);
-  const mode = useAgentStore((s) => s.mode);
-  const setMode = useAgentStore((s) => s.setMode);
+  const mode = useTaskStore((s) => s.mode);
+  const setMode = useTaskStore((s) => s.setMode);
 
-  const activeSession = activeSessionId ? sessions[activeSessionId] ?? null : null;
+  const activeSession = activeSessionId
+    ? (sessions[activeSessionId] ?? null)
+    : null;
 
   return (
     <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-850 border-b border-zinc-800 bg-zinc-900/50">
@@ -39,8 +41,8 @@ export default function TerminalToolbar() {
               px-2 py-0.5 rounded-lg text-xs font-medium transition-colors
               ${
                 mode === m.value
-                  ? 'bg-indigo-600 text-indigo-100'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+                  ? "bg-indigo-600 text-indigo-100"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
               }
             `}
           >

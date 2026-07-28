@@ -1,47 +1,57 @@
-import { useCallback } from 'react';
-import { useAgentStore } from '@/stores/agentStore';
-import type { AgentMode, QuestionAnswer } from '@/lib/types';
+import { useCallback } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { useConversationStore, useTaskStore } from "@/stores/agentStore";
+import type { AgentMode, QuestionAnswer } from "@/lib/types";
 
 export function useAgent() {
-  const store = useAgentStore((s) => ({
-    conversations: s.conversations,
-    activeConversationId: s.activeConversationId,
-    messagesMap: s.messages,
-    tasks: s.tasks,
-    activeTaskId: s.activeTaskId,
-    mode: s.mode,
-    inputDraft: s.inputDraft,
-    pendingApproval: s.pendingApproval,
-    pendingQuestion: s.pendingQuestion,
-    taskTokenUsage: s.taskTokenUsage,
-    startTask: s.startTask,
-    stopTask: s.stopTask,
-    approveOperation: s.approveOperation,
-    rejectOperation: s.rejectOperation,
-    setMode: s.setMode,
-    setInputDraft: s.setInputDraft,
-    setPendingApproval: s.setPendingApproval,
-    setPendingQuestion: s.setPendingQuestion,
-    answerQuestion: s.answerQuestion,
-    newConversation: s.newConversation,
-    switchConversation: s.switchConversation,
-    loadConversation: s.loadConversation,
-    deleteConversation: s.deleteConversation,
-    rollbackToMessage: s.rollbackToMessage,
-    loadConnectionConversations: s.loadConnectionConversations,
-    syncActiveToConnection: s.syncActiveToConnection,
-  }));
+  const taskStore = useTaskStore(
+    useShallow((s) => ({
+      tasks: s.tasks,
+      activeTaskId: s.activeTaskId,
+      mode: s.mode,
+      inputDraft: s.inputDraft,
+      pendingApproval: s.pendingApproval,
+      pendingQuestion: s.pendingQuestion,
+      taskTokenUsage: s.taskTokenUsage,
+      startTask: s.startTask,
+      stopTask: s.stopTask,
+      approveOperation: s.approveOperation,
+      rejectOperation: s.rejectOperation,
+      setMode: s.setMode,
+      setInputDraft: s.setInputDraft,
+      setPendingApproval: s.setPendingApproval,
+      setPendingQuestion: s.setPendingQuestion,
+      answerQuestion: s.answerQuestion,
+    })),
+  );
+  const conversationStore = useConversationStore(
+    useShallow((s) => ({
+      conversations: s.conversations,
+      activeConversationId: s.activeConversationId,
+      messagesMap: s.messages,
+      newConversation: s.newConversation,
+      switchConversation: s.switchConversation,
+      loadConversation: s.loadConversation,
+      deleteConversation: s.deleteConversation,
+      rollbackToMessage: s.rollbackToMessage,
+      loadConnectionConversations: s.loadConnectionConversations,
+      syncActiveToConnection: s.syncActiveToConnection,
+    })),
+  );
 
-  const activeTask = store.activeTaskId ? (store.tasks[store.activeTaskId] ?? null) : null;
+  const activeTask = taskStore.activeTaskId
+    ? (taskStore.tasks[taskStore.activeTaskId] ?? null)
+    : null;
 
-  const messages = store.activeConversationId
-    ? (store.messagesMap[store.activeConversationId] ?? [])
+  const messages = conversationStore.activeConversationId
+    ? (conversationStore.messagesMap[conversationStore.activeConversationId] ??
+      [])
     : [];
 
   const isRunning =
-    activeTask?.status === 'planning' ||
-    activeTask?.status === 'executing' ||
-    activeTask?.status === 'waiting_approval';
+    activeTask?.status === "planning" ||
+    activeTask?.status === "executing" ||
+    activeTask?.status === "waiting_approval";
 
   const sendPrompt = useCallback(
     async (
@@ -51,121 +61,127 @@ export function useAgent() {
       imageDataUrls?: string[],
       replaceImagePaths?: string[],
     ) => {
-      return store.startTask(sessionId, prompt, connectionId, imageDataUrls, replaceImagePaths);
+      return taskStore.startTask(
+        sessionId,
+        prompt,
+        connectionId,
+        imageDataUrls,
+        replaceImagePaths,
+      );
     },
-    [store.startTask],
+    [taskStore.startTask],
   );
 
   const stopActiveTask = useCallback(async () => {
     if (activeTask) {
-      return store.stopTask(activeTask.id);
+      return taskStore.stopTask(activeTask.id);
     }
-  }, [activeTask, store.stopTask]);
+  }, [activeTask, taskStore.stopTask]);
 
   const approveCurrent = useCallback(
     async (operationId: string) => {
-      store.setPendingApproval(null);
+      taskStore.setPendingApproval(null);
       if (activeTask) {
-        return store.approveOperation(activeTask.id, operationId);
+        return taskStore.approveOperation(activeTask.id, operationId);
       }
     },
-    [activeTask, store.approveOperation, store.setPendingApproval],
+    [activeTask, taskStore.approveOperation, taskStore.setPendingApproval],
   );
 
   const rejectCurrent = useCallback(
     async (operationId: string) => {
-      store.setPendingApproval(null);
+      taskStore.setPendingApproval(null);
       if (activeTask) {
-        return store.rejectOperation(activeTask.id, operationId);
+        return taskStore.rejectOperation(activeTask.id, operationId);
       }
     },
-    [activeTask, store.rejectOperation, store.setPendingApproval],
+    [activeTask, taskStore.rejectOperation, taskStore.setPendingApproval],
   );
 
   const submitAnswer = useCallback(
     async (questionId: string, answers: QuestionAnswer[]) => {
-      store.setPendingQuestion(null);
+      taskStore.setPendingQuestion(null);
       if (activeTask) {
-        return store.answerQuestion(activeTask.id, questionId, answers);
+        return taskStore.answerQuestion(activeTask.id, questionId, answers);
       }
     },
-    [activeTask, store.answerQuestion, store.setPendingQuestion],
+    [activeTask, taskStore.answerQuestion, taskStore.setPendingQuestion],
   );
 
   const setMode = useCallback(
     (newMode: AgentMode) => {
-      store.setMode(newMode);
+      taskStore.setMode(newMode);
     },
-    [store.setMode],
+    [taskStore.setMode],
   );
 
   const newConversation = useCallback(
     async (sessionId: string, connectionId: string) => {
-      return store.newConversation(sessionId, connectionId);
+      return conversationStore.newConversation(sessionId, connectionId);
     },
-    [store.newConversation],
+    [conversationStore.newConversation],
   );
 
   const switchConversation = useCallback(
     async (conversationId: string) => {
-      return store.switchConversation(conversationId);
+      return conversationStore.switchConversation(conversationId);
     },
-    [store.switchConversation],
+    [conversationStore.switchConversation],
   );
 
   const loadConversation = useCallback(
     async (conversationId: string) => {
-      return store.loadConversation(conversationId);
+      return conversationStore.loadConversation(conversationId);
     },
-    [store.loadConversation],
+    [conversationStore.loadConversation],
   );
 
   const deleteConversation = useCallback(
     async (conversationId: string) => {
-      return store.deleteConversation(conversationId);
+      return conversationStore.deleteConversation(conversationId);
     },
-    [store.deleteConversation],
+    [conversationStore.deleteConversation],
   );
 
   const rollbackToMessage = useCallback(
     async (conversationId: string, messageId: string) => {
-      return store.rollbackToMessage(conversationId, messageId);
+      return conversationStore.rollbackToMessage(conversationId, messageId);
     },
-    [store.rollbackToMessage],
+    [conversationStore.rollbackToMessage],
   );
 
   const loadConnectionConversations = useCallback(
     async (connectionId: string) => {
-      return store.loadConnectionConversations(connectionId);
+      return conversationStore.loadConnectionConversations(connectionId);
     },
-    [store.loadConnectionConversations],
+    [conversationStore.loadConnectionConversations],
   );
 
   const syncActiveToConnection = useCallback(
     async (connectionId: string) => {
-      return store.syncActiveToConnection(connectionId);
+      return conversationStore.syncActiveToConnection(connectionId);
     },
-    [store.syncActiveToConnection],
+    [conversationStore.syncActiveToConnection],
   );
 
   return {
     messages,
     activeTask,
     isRunning,
-    pendingApproval: store.pendingApproval,
-    pendingQuestion: store.pendingQuestion,
-    mode: store.mode,
-    inputDraft: store.inputDraft,
-    taskTokenUsage: store.taskTokenUsage,
-    conversations: store.conversations,
-    activeConversationId: store.activeConversationId,
+    pendingApproval: taskStore.pendingApproval,
+    pendingQuestion: taskStore.pendingQuestion,
+    mode: taskStore.mode,
+    inputDraft: taskStore.inputDraft,
+    taskTokenUsage: taskStore.taskTokenUsage,
+    conversations: conversationStore.conversations,
+    activeConversationId: conversationStore.activeConversationId,
     sendPrompt,
     stopActiveTask,
     approveCurrent,
     rejectCurrent,
     submitAnswer,
     setMode,
-    setInputDraft: store.setInputDraft,
+    setInputDraft: taskStore.setInputDraft,
     newConversation,
     switchConversation,
     loadConversation,
