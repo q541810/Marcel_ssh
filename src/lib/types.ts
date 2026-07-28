@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from 'react';
+import type { ComponentType, ReactNode } from "react";
 
 // View Registry types
 
@@ -6,13 +6,13 @@ import type { ComponentType, ReactNode } from 'react';
 // - sidebar: 左侧面板，由 NavRail 切换
 // - bottom: 终端底部 tab，由 BottomTabBar 切换
 // center 和 agent 被 builtin 常驻挤占（见 App.tsx 渲染逻辑 + builtinViews.tsx），插件实际无法使用。
-export type MountPoint = 'sidebar' | 'center' | 'bottom' | 'agent';
-export type NavGroup = 'top' | 'bottom';
+export type MountPoint = "sidebar" | "center" | "bottom" | "agent";
+export type NavGroup = "top" | "bottom";
 
 export type ViewIcon =
-  | { kind: 'react'; node: ReactNode }
-  | { kind: 'svg'; path: string }
-  | { kind: 'img'; src: string };
+  | { kind: "react"; node: ReactNode }
+  | { kind: "svg"; path: string }
+  | { kind: "img"; src: string };
 
 export interface ViewProvider {
   id: string;
@@ -29,10 +29,10 @@ export interface ViewProvider {
 
 // Plugin manifest types
 
-export type IconKind = 'svg' | 'img' | 'emoji';
-export type ToolKind = 'ssh' | 'local';
-export type RunAt = 'idle' | 'instant';
-export type PluginViewMount = 'sidebar' | 'settings';
+export type IconKind = "svg" | "img" | "emoji";
+export type ToolKind = "ssh" | "local";
+export type RunAt = "idle" | "instant";
+export type PluginViewMount = "sidebar" | "settings";
 
 export interface PluginIconDef {
   kind: IconKind;
@@ -153,12 +153,12 @@ export interface ConnectionConfig {
 }
 
 export type AuthMethod =
-  | { type: 'Password'; password: string }
-  | { type: 'PrivateKey'; keyPath: string; passphrase?: string }
-  | { type: 'Agent' };
+  | { type: "Password"; password: string }
+  | { type: "PrivateKey"; keyPath: string; passphrase?: string }
+  | { type: "Agent" };
 
 /** Jump auth mode stored on SavedConnection (not runtime credentials). */
-export type JumpAuthMethod = 'withTarget' | 'Password' | 'PrivateKey';
+export type JumpAuthMethod = "withTarget" | "Password" | "PrivateKey";
 
 export interface SavedConnection {
   id: string;
@@ -191,7 +191,11 @@ export interface Session {
   configId?: string;
 }
 
-export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+export type SessionStatus =
+  | "connecting"
+  | "connected"
+  | "disconnected"
+  | "error";
 
 /**
  * Data carried by an AppError whose `kind === "HostKeyMismatch"` (see error.rs
@@ -209,7 +213,7 @@ export interface HostKeyMismatchData {
 
 // Quick command types
 
-export type QuickCommandScope = 'global' | 'session';
+export type QuickCommandScope = "global" | "session";
 
 export interface QuickCommand {
   id: string;
@@ -280,16 +284,16 @@ export interface McpServerListResponse {
 
 // Agent types
 
-export type AgentMode = 'plan' | 'agent' | 'auto';
+export type AgentMode = "plan" | "agent" | "auto";
 
 export type AgentStatus =
-  | 'idle'
-  | 'planning'
-  | 'executing'
-  | 'waiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
+  | "idle"
+  | "planning"
+  | "executing"
+  | "waiting_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface AgentTask {
   id: string;
@@ -303,7 +307,7 @@ export interface AgentTask {
 
 export interface AgentMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   timestamp: string;
   toolCall?: ToolCallInfo;
@@ -347,8 +351,8 @@ export interface AgentMessage {
   retryLastError?: string;
   /** Model approval phase — shown as a distinct progress step on the tool card. */
   modelApproval?: {
-    status: 'checking' | 'done';
-    decision?: 'approve' | 'route_to_human' | 'block';
+    status: "checking" | "done";
+    decision?: "approve" | "route_to_human" | "block";
     reasons?: string[];
   };
 }
@@ -366,11 +370,24 @@ export interface ToolCallInfo {
   metadata?: Record<string, unknown>;
 }
 
-export type RiskLevel = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
+export type RiskLevel =
+  | "ReadOnly"
+  | "LowRisk"
+  | "Moderate"
+  | "HighRisk"
+  | "Destructive";
 
 // Settings
 
-export type CommandListMode = 'allowlist' | 'denylist';
+export type CommandListMode = "allowlist" | "denylist";
+
+/**
+ * How much recent conversation context the model-based approval step sees.
+ * - `concise`: 2 rounds, smaller caps. Cheapest, may miss recent actions.
+ * - `normal` (default): 5 rounds. Matches the original hard-coded behavior.
+ * - `detailed`: 10 rounds, larger caps. Best-informed, most tokens.
+ */
+export type ApprovalContextLevel = "concise" | "normal" | "detailed";
 
 export interface AgentModeSettings {
   listMode: CommandListMode;
@@ -381,6 +398,8 @@ export interface AgentModeSettings {
   modelApprovalModel: string;
   /** Custom system prompt for the approval step. Empty = use built-in prompt. */
   modelApprovalPrompt: string;
+  /** Context length the approval model sees. Default = `normal`. */
+  modelApprovalContextLevel: ApprovalContextLevel;
   systemPrompt: string;
   maxToolRounds: number;
   /** Enable LLM context compression to stay within model window limits */
@@ -388,11 +407,11 @@ export interface AgentModeSettings {
   confirmEditFile: boolean;
 }
 
-export type LlmProviderType = 'openai';
+export type LlmProviderType = "openai";
 
 export interface LlmConfig {
   providerType: LlmProviderType;
-  apiKey?: string;  // Optional - loaded from keychain, not persisted to JSON
+  apiKey?: string; // Optional - loaded from keychain, not persisted to JSON
   model: string;
   baseUrl?: string | null;
   temperature: number;
@@ -443,9 +462,9 @@ export interface TerminalColors {
   brightWhite: string;
 }
 
-export type WebSearchMode = 'browser' | 'api' | 'html';
-export type HttpFetchMode = 'browser' | 'html';
-export type WebSearchApiProvider = 'brave' | 'tavily';
+export type WebSearchMode = "browser" | "api" | "html";
+export type HttpFetchMode = "browser" | "html";
+export type WebSearchApiProvider = "brave" | "tavily";
 
 export interface ExperimentalSettings {
   enableWebSearch: boolean;
@@ -458,8 +477,6 @@ export interface ExperimentalSettings {
   /** http_get backend; independent of webSearchMode; default browser */
   httpFetchMode?: HttpFetchMode;
 }
-
-
 
 export interface NotificationSettings {
   agentApproval: boolean;
@@ -561,16 +578,22 @@ export interface TokenUsage {
 
 // LLM stream events
 export type LlmStreamEvent =
-  | { type: 'textDelta'; text: string }
-  | { type: 'thinkingDelta'; text: string }
-  | { type: 'toolCallStart'; id: string; name: string }
-  | { type: 'toolCallDelta'; id: string; argumentsDelta: string }
-  | { type: 'usage'; usage: TokenUsage }
-  | { type: 'done' }
-  | { type: 'error'; message: string }
-  | { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string }
+  | { type: "textDelta"; text: string }
+  | { type: "thinkingDelta"; text: string }
+  | { type: "toolCallStart"; id: string; name: string }
+  | { type: "toolCallDelta"; id: string; argumentsDelta: string }
+  | { type: "usage"; usage: TokenUsage }
+  | { type: "done" }
+  | { type: "error"; message: string }
+  | {
+      type: "retrying";
+      attempt: number;
+      maxAttempts: number;
+      delaySecs: number;
+      lastError: string;
+    }
   // Tool result — emitted as a separate event on the same channel
-  | { type: 'toolResult' } & ToolResultPayload
+  | ({ type: "toolResult" } & ToolResultPayload)
   // Approval request — emitted when user confirmation is needed
   | ApprovalRequestPayload
   // Model approval progress — shows a distinct step on the tool card
@@ -580,7 +603,7 @@ export type LlmStreamEvent =
   | QuestionRequestPayload;
 
 export interface ToolResultPayload {
-  type: 'toolResult';
+  type: "toolResult";
   toolCallId: string;
   toolName: string;
   summary: string;
@@ -594,7 +617,7 @@ export interface ToolResultPayload {
 }
 
 export interface ApprovalRequestPayload {
-  type: 'approvalRequest';
+  type: "approvalRequest";
   toolCallId: string;
   toolName: string;
   arguments: Record<string, unknown>;
@@ -606,14 +629,14 @@ export interface ApprovalRequestPayload {
 }
 
 export interface ModelApprovalStartPayload {
-  type: 'modelApprovalStart';
+  type: "modelApprovalStart";
   toolCallId: string;
 }
 
 export interface ModelApprovalDonePayload {
-  type: 'modelApprovalDone';
+  type: "modelApprovalDone";
   toolCallId: string;
-  decision: 'approve' | 'route_to_human' | 'block' | 'error';
+  decision: "approve" | "route_to_human" | "block" | "error";
   reasons: string[];
 }
 
@@ -632,7 +655,7 @@ export interface QuestionItem {
 }
 
 export interface QuestionRequestPayload {
-  type: 'questionRequest';
+  type: "questionRequest";
   questionId: string;
   questions: QuestionItem[];
 }
@@ -696,7 +719,12 @@ export interface CommandCheckResult {
 
 // Plan / Todolist types
 
-export type PlanItemStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped';
+export type PlanItemStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "skipped";
 
 export interface PlanItem {
   id: string;
@@ -725,17 +753,70 @@ export interface TruncateConversationResult {
 }
 
 export type PlanStreamEvent =
-  | { type: 'plan-created'; items: PlanItem[] }
-  | { type: 'plan-item-started'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
-  | { type: 'plan-item-completed'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
-  | { type: 'plan-item-failed'; itemId: string; title: string; error: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
-  | { type: 'plan-item-skipped'; itemId: string; title: string; index: number; total: number; items: PlanItem[]; currentIndex: number }
-  | { type: 'plan-completed'; completed: number; total: number; failed: number; items: PlanItem[]; currentIndex: number }
-  | { type: 'plan-edited'; ops: unknown[]; items: PlanItem[]; currentIndex: number };
+  | { type: "plan-created"; items: PlanItem[] }
+  | {
+      type: "plan-item-started";
+      itemId: string;
+      title: string;
+      index: number;
+      total: number;
+      items: PlanItem[];
+      currentIndex: number;
+    }
+  | {
+      type: "plan-item-completed";
+      itemId: string;
+      title: string;
+      index: number;
+      total: number;
+      items: PlanItem[];
+      currentIndex: number;
+    }
+  | {
+      type: "plan-item-failed";
+      itemId: string;
+      title: string;
+      error: string;
+      index: number;
+      total: number;
+      items: PlanItem[];
+      currentIndex: number;
+    }
+  | {
+      type: "plan-item-skipped";
+      itemId: string;
+      title: string;
+      index: number;
+      total: number;
+      items: PlanItem[];
+      currentIndex: number;
+    }
+  | {
+      type: "plan-completed";
+      completed: number;
+      total: number;
+      failed: number;
+      items: PlanItem[];
+      currentIndex: number;
+    }
+  | {
+      type: "plan-edited";
+      ops: unknown[];
+      items: PlanItem[];
+      currentIndex: number;
+    };
 
 // File manager types
 
-export type FileType = 'file' | 'directory' | 'symlink' | 'pipe' | 'socket' | 'block' | 'character' | 'unknown';
+export type FileType =
+  | "file"
+  | "directory"
+  | "symlink"
+  | "pipe"
+  | "socket"
+  | "block"
+  | "character"
+  | "unknown";
 
 export interface FileEntry {
   name: string;
@@ -781,22 +862,27 @@ export interface Skill {
 
 /** 一级同步分类（与 src-tauri/src/sync/profile.rs SyncCategory 对齐） */
 export type SyncCategory =
-  | 'connections'
-  | 'quickCommands'
-  | 'skills'
-  | 'mcpServers'
-  | 'conversations'
-  | 'terminalSettings'
-  | 'modelService'
-  | 'agentPolicy'
-  | 'displaySettings'
-  | 'secrets';
+  | "connections"
+  | "quickCommands"
+  | "skills"
+  | "mcpServers"
+  | "conversations"
+  | "terminalSettings"
+  | "modelService"
+  | "agentPolicy"
+  | "displaySettings"
+  | "secrets";
 
 /** 平台标识（与 sync/profile.rs Platform 对齐，lowercase 序列化） */
-export type SyncPlatform = 'desktop' | 'mobile';
+export type SyncPlatform = "desktop" | "mobile";
 
 /** 同步状态机（与 sync/scheduler.rs SyncState 对齐，camelCase 序列化） */
-export type SyncState = 'idle' | 'pushing' | 'pulling' | 'error' | 'notConfigured';
+export type SyncState =
+  | "idle"
+  | "pushing"
+  | "pulling"
+  | "error"
+  | "notConfigured";
 
 /**
  * sync_profile：用户选择的同步项集合。
@@ -886,12 +972,12 @@ export interface SyncPendingConflict {
  * 使用 serde tag = "type" 序列化。
  */
 export type SyncConflictAction =
-  | { type: 'ours' }
-  | { type: 'theirs' }
-  | { type: 'skipOnce' }
-  | { type: 'skipForever' }
-  | { type: 'custom'; value: string }
-  | { type: 'fork' };
+  | { type: "ours" }
+  | { type: "theirs" }
+  | { type: "skipOnce" }
+  | { type: "skipForever" }
+  | { type: "custom"; value: string }
+  | { type: "fork" };
 
 /** sync_resolve_conflict / sync_resolve_all_conflicts 返回值 */
 export interface SyncResolveResult {

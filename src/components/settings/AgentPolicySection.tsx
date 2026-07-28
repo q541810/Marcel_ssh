@@ -1,14 +1,19 @@
-import { useState, useRef, useMemo } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { CommandListMode, CommandCheckResult } from '@/lib/types';
-import * as tauri from '@/lib/tauri';
-import { getErrorMessage } from '@/lib/errors';
-import Button from '@/components/ui/Button';
-import Toggle from '@/components/ui/Toggle';
-import { Card, SettingItem } from './helpers';
-import { useSettingsActions } from './SettingsActionsContext';
-import ModelListModal from './ModelListModal';
-import { ValidatedInput } from './ValidatedInput';
+import { useState, useRef, useMemo } from "react";
+import { Trash2 } from "lucide-react";
+import type {
+  ApprovalContextLevel,
+  CommandListMode,
+  CommandCheckResult,
+} from "@/lib/types";
+import * as tauri from "@/lib/tauri";
+import { getErrorMessage } from "@/lib/errors";
+import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
+import Toggle from "@/components/ui/Toggle";
+import { Card, SettingItem } from "./helpers";
+import { useSettingsActions } from "./SettingsActionsContext";
+import ModelListModal from "./ModelListModal";
+import { ValidatedInput } from "./ValidatedInput";
 
 export const DEFAULT_APPROVAL_PROMPT = `你是一个命令执行审批助手。Agent 即将在远程服务器上执行一条 shell 命令，你需要结合上下文判断这条命令是否可以安全放行。
 
@@ -23,11 +28,11 @@ export const DEFAULT_APPROVAL_PROMPT = `你是一个命令执行审批助手。A
 - block：应当阻止，reasons 写明阻止原因。`;
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
-  { path: '/etc', reason: '系统配置' },
-  { path: '/boot', reason: '启动分区' },
-  { path: '/sys', reason: 'sysfs 设备' },
-  { path: '/proc', reason: '进程信息' },
-  { path: '/dev', reason: '设备文件' },
+  { path: "/etc", reason: "系统配置" },
+  { path: "/boot", reason: "启动分区" },
+  { path: "/sys", reason: "sysfs 设备" },
+  { path: "/proc", reason: "进程信息" },
+  { path: "/dev", reason: "设备文件" },
 ];
 
 export function preCheckCustomPath(
@@ -53,16 +58,16 @@ function ListModeButton({
   onClick: (v: CommandListMode) => void;
   label: string;
   description: string;
-  position?: 'first' | 'last' | 'middle';
+  position?: "first" | "last" | "middle";
   disabled?: boolean;
 }) {
   const active = value === current;
   const roundedClass =
-    position === 'first'
-      ? 'rounded-l-lg'
-      : position === 'last'
-        ? 'rounded-r-lg'
-        : '';
+    position === "first"
+      ? "rounded-l-lg"
+      : position === "last"
+        ? "rounded-r-lg"
+        : "";
 
   return (
     <button
@@ -71,10 +76,10 @@ function ListModeButton({
       disabled={disabled}
       className={`flex-1 px-4 py-2 text-sm transition-colors border-r border-zinc-700 last:border-r-0 ${roundedClass} ${
         active
-          ? 'bg-indigo-600 text-white'
-          : 'bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700'
+          ? "bg-indigo-600 text-white"
+          : "bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700"
       } disabled:opacity-40 disabled:cursor-not-allowed`}
-      style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
+      style={{ transitionTimingFunction: "var(--spring-bounce)" }}
     >
       {label}
     </button>
@@ -89,23 +94,35 @@ export function AgentPolicySection() {
     update({ agentModeSettings: { ...agent, ...patch } });
   };
 
-  const [newCommand, setNewCommand] = useState('');
-  const [testCommand, setTestCommand] = useState('');
+  const [newCommand, setNewCommand] = useState("");
+  const [testCommand, setTestCommand] = useState("");
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [approvalModelsOpen, setApprovalModelsOpen] = useState(false);
+  const contextLevel: ApprovalContextLevel =
+    agent.modelApprovalContextLevel ?? "normal";
   // 「命令超时」和「执行前模型审批」是偶尔调整的高级项，折叠收纳避免主面板太长。
   // 跟 ModelServiceSection 的「高级：自定义请求参数」折叠风格一致。
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedSummary = useMemo(() => {
     const secs = settings.commandTimeoutSecs ?? 120;
-    const approval = agent.enableModelCommandApproval ? '开' : '关';
-    return `${secs}s · 模型审批：${approval}`;
-  }, [settings.commandTimeoutSecs, agent.enableModelCommandApproval]);
+    const approval = agent.enableModelCommandApproval ? "开" : "关";
+    const ctx = agent.modelApprovalContextLevel ?? "normal";
+    const contextLabel = {
+      concise: "简略",
+      normal: "默认",
+      detailed: "详细",
+    }[ctx];
+    return `${secs}s · 模型审批：${approval} · 上下文：${contextLabel}`;
+  }, [
+    settings.commandTimeoutSecs,
+    agent.enableModelCommandApproval,
+    agent.modelApprovalContextLevel,
+  ]);
 
   // Custom protected paths
   const customPaths = settings.customProtectedPaths ?? [];
-  const [draftPath, setDraftPath] = useState('');
+  const [draftPath, setDraftPath] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -123,7 +140,7 @@ export function AgentPolicySection() {
       return;
     }
     setPathError(null);
-    setDraftPath('');
+    setDraftPath("");
     update({ customProtectedPaths: [...customPaths, trimmed] });
     inputRef.current?.focus();
   };
@@ -136,11 +153,11 @@ export function AgentPolicySection() {
     const v = newCommand.trim();
     if (!v) return;
     if (agent.commandList.includes(v)) {
-      setNewCommand('');
+      setNewCommand("");
       return;
     }
     updateAgent({ commandList: [...agent.commandList, v] });
-    setNewCommand('');
+    setNewCommand("");
   };
 
   const handleRemoveCommand = (cmd: string) => {
@@ -152,14 +169,14 @@ export function AgentPolicySection() {
     if (!cmd) return;
     setTesting(true);
     try {
-      const result = await tauri.agentCheckCommand(cmd, 'agent');
+      const result = await tauri.agentCheckCommand(cmd, "agent");
       setTestResult(result);
     } catch (err) {
       console.error(err);
       setTestResult({
         allowed: false,
         requiresConfirmation: false,
-        riskLevel: 'Moderate',
+        riskLevel: "Moderate",
         reason: `测试失败：${getErrorMessage(err)}`,
       });
     } finally {
@@ -179,7 +196,7 @@ export function AgentPolicySection() {
           label="每条都手动确认"
           description="每条命令都需要用户确认"
           sectionId="settings-command-policy"
-          keywords={['confirm', '确认', '命令执行策略', 'Agent']}
+          keywords={["confirm", "确认", "命令执行策略", "Agent"]}
         >
           <Toggle
             checked={agent.confirmEachCommand}
@@ -192,7 +209,7 @@ export function AgentPolicySection() {
           label="编辑文件审批"
           description="edit_file 工具执行前需要用户确认"
           sectionId="settings-command-policy"
-          keywords={['edit', 'file', '编辑', '审批', '文件操作', 'Agent']}
+          keywords={["edit", "file", "编辑", "审批", "文件操作", "Agent"]}
         >
           <Toggle
             checked={agent.confirmEditFile ?? true}
@@ -206,16 +223,16 @@ export function AgentPolicySection() {
           description="命令过滤方式"
           sectionId="settings-command-policy"
           keywords={[
-            'list',
-            'mode',
-            '黑名单',
-            '白名单',
-            '命令执行策略',
-            'Agent',
+            "list",
+            "mode",
+            "黑名单",
+            "白名单",
+            "命令执行策略",
+            "Agent",
           ]}
         >
           <div
-            className={`transition-opacity ${agent.confirmEachCommand ? 'opacity-40' : ''}`}
+            className={`transition-opacity ${agent.confirmEachCommand ? "opacity-40" : ""}`}
           >
             <div className="flex rounded-lg overflow-hidden border border-zinc-700">
               <ListModeButton
@@ -246,13 +263,13 @@ export function AgentPolicySection() {
         </SettingItem>
         <SettingItem
           id="cmd-list"
-          label={agent.listMode === 'allowlist' ? '允许的命令' : '禁止的命令'}
+          label={agent.listMode === "allowlist" ? "允许的命令" : "禁止的命令"}
           description="按基础命令名匹配（不含路径或参数）"
           sectionId="settings-command-policy"
-          keywords={['command', 'list', '命令列表', '命令执行策略', 'Agent']}
+          keywords={["command", "list", "命令列表", "命令执行策略", "Agent"]}
         >
           <div
-            className={`flex-1 space-y-2 min-w-0 w-80 transition-opacity ${agent.confirmEachCommand ? 'opacity-40' : ''}`}
+            className={`flex-1 space-y-2 min-w-0 w-80 transition-opacity ${agent.confirmEachCommand ? "opacity-40" : ""}`}
           >
             <div className="flex gap-2">
               <input
@@ -260,7 +277,7 @@ export function AgentPolicySection() {
                 value={newCommand}
                 onChange={(e) => setNewCommand(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === "Enter") {
                     e.preventDefault();
                     handleAddCommand();
                   }
@@ -312,11 +329,11 @@ export function AgentPolicySection() {
           label="测试命令"
           description="验证命令是否会被允许"
           sectionId="settings-command-policy"
-          keywords={['test', '验证', '命令执行策略', 'Agent']}
+          keywords={["test", "验证", "命令执行策略", "Agent"]}
         >
           <div className="flex-1 space-y-2 min-w-0 w-80">
             <p className="text-xs text-zinc-500">
-              输入一条命令，查看在 AGENT 模式下是否会被允许。使用的是{' '}
+              输入一条命令，查看在 AGENT 模式下是否会被允许。使用的是{" "}
               <span className="text-amber-400">草稿</span>
               中的规则（未保存也生效）。
             </p>
@@ -326,7 +343,7 @@ export function AgentPolicySection() {
                 value={testCommand}
                 onChange={(e) => setTestCommand(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === "Enter") {
                     e.preventDefault();
                     void runTest();
                   }
@@ -348,12 +365,12 @@ export function AgentPolicySection() {
               <div
                 className={`rounded-xl border px-3 py-2 text-sm ${
                   testResult.allowed
-                    ? 'bg-emerald-950/40 border-emerald-800 text-emerald-200'
-                    : 'bg-red-950/40 border-red-800 text-red-200'
+                    ? "bg-emerald-950/40 border-emerald-800 text-emerald-200"
+                    : "bg-red-950/40 border-red-800 text-red-200"
                 }`}
               >
                 <div className="font-medium">
-                  {testResult.allowed ? '允许' : '阻止'}
+                  {testResult.allowed ? "允许" : "阻止"}
                   {testResult.allowed && testResult.requiresConfirmation && (
                     <span className="ml-2 text-xs text-amber-300">
                       （需要用户确认）
@@ -374,13 +391,13 @@ export function AgentPolicySection() {
           description="Agent 在这些路径下的写操作会触发用户审批。内置 /etc、/boot 等已默认保护。"
           sectionId="settings-command-policy"
           keywords={[
-            'protected',
-            'paths',
-            '受保护',
-            '路径',
-            'agent',
-            '审批',
-            '命令执行策略',
+            "protected",
+            "paths",
+            "受保护",
+            "路径",
+            "agent",
+            "审批",
+            "命令执行策略",
           ]}
         >
           <div className="flex-1 space-y-3 min-w-0">
@@ -408,7 +425,7 @@ export function AgentPolicySection() {
                     setDraftPath(e.target.value);
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === "Enter") {
                       e.preventDefault();
                       void handleAddProtectedPath();
                     }
@@ -465,7 +482,7 @@ export function AgentPolicySection() {
             aria-expanded={advancedOpen}
           >
             <svg
-              className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
+              className={`w-3.5 h-3.5 transition-transform ${advancedOpen ? "rotate-90" : ""}`}
               viewBox="0 0 16 16"
               fill="none"
               stroke="currentColor"
@@ -476,7 +493,9 @@ export function AgentPolicySection() {
               <path d="M6 4l4 4-4 4" />
             </svg>
             <span>高级：超时与模型审批</span>
-            <span className="text-[11px] text-zinc-500 font-normal ml-1">（{advancedSummary}）</span>
+            <span className="text-[11px] text-zinc-500 font-normal ml-1">
+              （{advancedSummary}）
+            </span>
           </button>
           {advancedOpen && (
             <div className="mt-3">
@@ -485,7 +504,7 @@ export function AgentPolicySection() {
                 label="命令超时时间"
                 description="Agent 执行单条命令的最大等待时间"
                 sectionId="settings-command-policy"
-                keywords={['timeout', '超时', '命令执行策略', 'Agent']}
+                keywords={["timeout", "超时", "命令执行策略", "Agent"]}
               >
                 <div className="flex items-center gap-3 w-80">
                   <input
@@ -510,12 +529,12 @@ export function AgentPolicySection() {
                 description="在执行命令前，用当前 Agent 模型结合上下文判断是否放行、转人工审批或阻止"
                 sectionId="settings-command-policy"
                 keywords={[
-                  'model',
-                  'approval',
-                  '模型',
-                  '审批',
-                  '命令执行策略',
-                  'Agent',
+                  "model",
+                  "approval",
+                  "模型",
+                  "审批",
+                  "命令执行策略",
+                  "Agent",
                 ]}
               >
                 <div className="w-80 space-y-2">
@@ -531,7 +550,7 @@ export function AgentPolicySection() {
                       <div className="flex gap-2 items-center">
                         <input
                           type="text"
-                          value={agent.modelApprovalModel ?? ''}
+                          value={agent.modelApprovalModel ?? ""}
                           onChange={(e) =>
                             updateAgent({ modelApprovalModel: e.target.value })
                           }
@@ -547,26 +566,55 @@ export function AgentPolicySection() {
                         </button>
                       </div>
                       <p className="text-xs text-zinc-500">
-                        填写模型名可降低审批延迟和成本，如{' '}
+                        填写模型名可降低审批延迟和成本，如{" "}
                         <code className="text-indigo-300">MIMo-v2.5</code>
                       </p>
+                      <div className="flex items-center gap-3 pt-1">
+                        <span className="text-xs text-zinc-400 shrink-0">
+                          上下文详细度
+                        </span>
+                        <Select<ApprovalContextLevel>
+                          value={contextLevel}
+                          onChange={(value) =>
+                            updateAgent({
+                              modelApprovalContextLevel: value,
+                            })
+                          }
+                          options={[
+                            { value: "concise", label: "简略（2 轮）" },
+                            { value: "normal", label: "默认（5 轮）" },
+                            { value: "detailed", label: "详细（10 轮）" },
+                          ]}
+                          className="min-w-0 flex-1"
+                        />
+                      </div>
+                      <p className="text-xs text-zinc-500">
+                        决定审批模型能看到多少近期对话、工具调用及返回结果。
+                        越详细，审批越准但 token 消耗越高。
+                      </p>
                       <div className="flex items-center justify-between pt-1">
-                        <span className="text-xs text-zinc-400">审批提示词</span>
+                        <span className="text-xs text-zinc-400">
+                          审批提示词
+                        </span>
                         <button
                           type="button"
-                          onClick={() => updateAgent({ modelApprovalPrompt: '' })}
+                          onClick={() =>
+                            updateAgent({ modelApprovalPrompt: "" })
+                          }
                           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
                         >
                           恢复默认
                         </button>
                       </div>
                       <textarea
-                        value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
+                        value={
+                          agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT
+                        }
                         onChange={(e) => {
                           const v = e.target.value;
                           updateAgent({
                             modelApprovalPrompt:
-                              v === DEFAULT_APPROVAL_PROMPT ? '' : v,
+                              v === DEFAULT_APPROVAL_PROMPT ? "" : v,
                           });
                         }}
                         rows={6}
@@ -590,7 +638,7 @@ export function AgentPolicySection() {
           label="最大执行轮数"
           description="Agent 单次任务最多执行的工具调用轮数，超限自动停止"
           sectionId="settings-agent-rounds"
-          keywords={['max', 'rounds', '轮数', '最大', '执行轮数', 'Agent']}
+          keywords={["max", "rounds", "轮数", "最大", "执行轮数", "Agent"]}
         >
           <ValidatedInput
             type="number"
@@ -599,7 +647,7 @@ export function AgentPolicySection() {
             validate={(s) => {
               const v = Number(s);
               if (!Number.isInteger(v) || v < 10 || v > 300)
-                return '须为 10-300 的整数';
+                return "须为 10-300 的整数";
               return null;
             }}
             validatorId="maxToolRounds"
@@ -619,9 +667,9 @@ export function AgentPolicySection() {
         <ModelListModal
           open={approvalModelsOpen}
           onClose={() => setApprovalModelsOpen(false)}
-          currentModel={agent.modelApprovalModel ?? ''}
-          baseUrl={settings.llmConfig?.baseUrl ?? ''}
-          apiKey={settings.llmConfig?.apiKey ?? ''}
+          currentModel={agent.modelApprovalModel ?? ""}
+          baseUrl={settings.llmConfig?.baseUrl ?? ""}
+          apiKey={settings.llmConfig?.apiKey ?? ""}
           onSelect={(id) => updateAgent({ modelApprovalModel: id })}
         />
       </Card>

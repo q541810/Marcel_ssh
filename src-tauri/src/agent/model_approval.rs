@@ -23,9 +23,10 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::agent::templates::TemplateManager;
+use crate::config::settings::ApprovalContextLevel;
 use crate::error::AppError;
 use crate::llm::openai::OpenAiProvider;
-use crate::llm::provider::{LlmMessage, LlmProvider, LlmRole, ToolDefinition};
+use crate::llm::provider::{LlmMessage, LlmProvider, LlmRole, ToolCall, ToolDefinition};
 
 /// Model's decision on whether a command may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +44,7 @@ pub(crate) enum ModelApprovalDecision {
 pub(crate) trait CommandApprover: Send + Sync {
     async fn evaluate(
         &self,
-        command: &str,
+        tool_call: &ToolCall,
         recent_messages: &[LlmMessage],
     ) -> Result<ModelApprovalDecision, AppError>;
 }
@@ -53,6 +54,7 @@ pub(crate) struct ModelApprover {
     provider: Arc<OpenAiProvider>,
     custom_prompt: String,
     plan_mode: bool,
+    context_level: ApprovalContextLevel,
 }
 
 impl ModelApprover {
@@ -60,11 +62,13 @@ impl ModelApprover {
         provider: Arc<OpenAiProvider>,
         custom_prompt: String,
         plan_mode: bool,
+        context_level: ApprovalContextLevel,
     ) -> Self {
         Self {
             provider,
             custom_prompt,
             plan_mode,
+            context_level,
         }
     }
 }
@@ -73,16 +77,10 @@ impl ModelApprover {
 impl CommandApprover for ModelApprover {
     async fn evaluate(
         &self,
-        command: &str,
+        tool_call: &ToolCall,
         recent_messages: &[LlmMessage],
     ) -> Result<ModelApprovalDecision, AppError> {
-        let context = build_context(recent_messages);
-
-        let user_prompt = format!(
-            "用户任务上下文：\n{context}\n\n\
-             待审批命令：\n{command}\n\n\
-             请给出你的判定。"
-        );
+        let user_prompt = build_user_prompt(tool_call, recent_messages, self.context_level)?;
 
         let system_prompt = if self.custom_prompt.is_empty() {
             let mgr = TemplateManager;
@@ -112,14 +110,40 @@ impl CommandApprover for ModelApprover {
     }
 }
 
+fn build_user_prompt(
+    tool_call: &ToolCall,
+    recent_messages: &[LlmMessage],
+    level: ApprovalContextLevel,
+) -> Result<String, AppError> {
+    let context = build_context(recent_messages, level);
+    let current_call = serde_json::to_string(tool_call)
+        .map_err(|e| AppError::Llm(format!("模型审批工具调用序列化失败: {e}")))?;
+
+    Ok(format!(
+        "用户任务上下文：\n{context}\n\n\
+         待审批 Tool Call：\n{current_call}\n\n\
+         请给出你的判定。"
+    ))
+}
+
+/// Per-level limits for the approval context. `Normal` matches the original
+/// hard-coded values so existing users see no change.
+fn context_limits(level: ApprovalContextLevel) -> (usize, usize, usize) {
+    match level {
+        ApprovalContextLevel::Concise => (2, 200, 400),
+        ApprovalContextLevel::Normal => (5, 500, 1000),
+        ApprovalContextLevel::Detailed => (10, 1500, 3000),
+    }
+}
+
 /// Build a compact context string from recent messages.
 ///
 /// Keeps the original user task + recent turns, truncating large tool outputs
 /// so the approval call stays cheap and the model doesn't guess without context.
-fn build_context(messages: &[LlmMessage]) -> String {
-    const MAX_TOOL_OUTPUT: usize = 500;
-    const MAX_OTHER_CONTENT: usize = 1000;
-    const MAX_ROUNDS: usize = 5;
+/// Assistant tool calls (id/name/arguments) are emitted so the approval model
+/// sees what actions the agent took, not just its prose.
+fn build_context(messages: &[LlmMessage], level: ApprovalContextLevel) -> String {
+    let (max_rounds, max_tool_output, max_other_content) = context_limits(level);
 
     let mut parts: Vec<String> = Vec::new();
 
@@ -128,7 +152,7 @@ fn build_context(messages: &[LlmMessage]) -> String {
         .filter(|m| m.role != LlmRole::System)
         .collect();
 
-    // 按轮次切分：每条 User 消息是一个轮次的起点，取最后 MAX_ROUNDS 个完整轮次
+    // 按轮次切分：每条 User 消息是一个轮次的起点，取最后 max_rounds 个完整轮次
     let user_indices: Vec<usize> = non_system
         .iter()
         .enumerate()
@@ -136,8 +160,8 @@ fn build_context(messages: &[LlmMessage]) -> String {
         .map(|(i, _)| i)
         .collect();
 
-    let start = if user_indices.len() > MAX_ROUNDS {
-        user_indices[user_indices.len() - MAX_ROUNDS]
+    let start = if user_indices.len() > max_rounds {
+        user_indices[user_indices.len() - max_rounds]
     } else {
         0
     };
@@ -146,18 +170,43 @@ fn build_context(messages: &[LlmMessage]) -> String {
     if !recent.is_empty() {
         parts.push("[近期对话]".to_string());
         for m in recent {
-            let role = match m.role {
-                LlmRole::User => "用户",
-                LlmRole::Assistant => "助手",
-                LlmRole::Tool => "工具结果",
-                LlmRole::System => "系统",
-            };
-            let cap = if m.role == LlmRole::Tool {
-                MAX_TOOL_OUTPUT
-            } else {
-                MAX_OTHER_CONTENT
-            };
-            parts.push(format!("{role}: {}", truncate(&m.content, cap)));
+            match m.role {
+                LlmRole::Tool => {
+                    let cap = max_tool_output;
+                    let id = m.tool_call_id.as_deref().unwrap_or("unknown");
+                    parts.push(format!(
+                        "[Tool Result] [id={id}]: {}",
+                        truncate(&m.content, cap)
+                    ));
+                }
+                LlmRole::Assistant => {
+                    // Assistant 可能同时有 prose (content) 和 tool_calls。
+                    // 两者都要发给审批模型：prose 是它"怎么想"，tool_calls 是它"做了啥"。
+                    let cap = max_other_content;
+                    if !m.content.is_empty() {
+                        parts.push(format!("助手: {}", truncate(&m.content, cap)));
+                    }
+                    if let Some(calls) = m.tool_calls.as_ref() {
+                        for tc in calls {
+                            let args = tc.arguments.to_string();
+                            let line = format!(
+                                "[Tool Call] {}({}) [id={}]",
+                                tc.name,
+                                truncate(&args, cap),
+                                tc.id
+                            );
+                            parts.push(line);
+                        }
+                    }
+                }
+                LlmRole::User => {
+                    let cap = max_other_content;
+                    parts.push(format!("用户: {}", truncate(&m.content, cap)));
+                }
+                LlmRole::System => {
+                    // 已经过滤，这里不应当进入
+                }
+            }
         }
     }
 
@@ -301,6 +350,27 @@ mod tests {
         }
     }
 
+    fn assistant_with_tool_calls(prose: &str, calls: Vec<(&str, &str)>) -> LlmMessage {
+        LlmMessage {
+            role: LlmRole::Assistant,
+            content: prose.into(),
+            tool_calls: Some(
+                calls
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (name, args))| crate::llm::provider::ToolCall {
+                        id: format!("call_{i}"),
+                        name: name.into(),
+                        arguments: serde_json::from_str(args).expect("valid test arguments"),
+                    })
+                    .collect(),
+            ),
+            tool_call_id: None,
+            reasoning_content: None,
+            image_paths: None,
+        }
+    }
+
     #[test]
     fn build_context_includes_first_user_and_recent() {
         let messages = vec![
@@ -309,10 +379,10 @@ mod tests {
             LlmMessage::assistant("好的"),
             tool_msg("result"),
         ];
-        let ctx = build_context(&messages);
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
         assert!(ctx.contains("[近期对话]"));
         assert!(ctx.contains("助手: 好的"));
-        assert!(ctx.contains("工具结果: result"));
+        assert!(ctx.contains("[Tool Result] [id=1]: result"));
         assert!(!ctx.contains("sys"), "system prompt must not leak");
     }
 
@@ -320,13 +390,13 @@ mod tests {
     fn build_context_truncates_tool_output() {
         let long = "x".repeat(1000);
         let messages = vec![LlmMessage::user("任务"), tool_msg(&long)];
-        let ctx = build_context(&messages);
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
         assert!(ctx.contains("已截断"));
     }
 
     #[test]
     fn build_context_empty_messages() {
-        let ctx = build_context(&[]);
+        let ctx = build_context(&[], ApprovalContextLevel::Normal);
         assert!(ctx.is_empty());
     }
 
@@ -349,12 +419,155 @@ mod tests {
             messages.push(LlmMessage::assistant(format!("助手第{i}轮回复")));
             messages.push(tool_msg(&format!("工具第{i}轮结果")));
         }
-        let ctx = build_context(&messages);
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
         // 第 0、1 轮在近期对话中应该被裁掉（只保留最后 5 轮：2~6）
         let recent_section = ctx.split("[近期对话]").nth(1).unwrap_or("");
         assert!(!recent_section.contains("用户第1轮"));
         assert!(recent_section.contains("用户第2轮"));
         assert!(recent_section.contains("用户第6轮"));
+    }
+
+    #[test]
+    fn build_context_emits_assistant_tool_calls() {
+        // 关键回归：审批模型必须能看到 assistant 之前调了啥工具、参数是啥
+        // （需求 2：tool 调用的 call 和返回结果都要发给审批模型）
+        let messages = vec![
+            LlmMessage::user("看看 /etc/passwd"),
+            assistant_with_tool_calls(
+                "我先读取文件",
+                vec![("read_file", r#"{"path":"/etc/passwd"}"#)],
+            ),
+            tool_msg("root:x:0:0:root:/root:/bin/bash"),
+        ];
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
+        assert!(
+            ctx.contains("[Tool Call] read_file("),
+            "tool call name+args 缺失"
+        );
+        assert!(ctx.contains("/etc/passwd"), "参数 path 必须出现");
+        assert!(
+            ctx.contains("[id=call_0]"),
+            "id 必须保留以便和后续 tool 消息关联"
+        );
+        assert!(
+            ctx.contains("[Tool Result] [id=1]: root:x:0:0"),
+            "tool 返回结果及 call ID 必须保留"
+        );
+        // prose 和 tool_call 都要保留
+        assert!(ctx.contains("助手: 我先读取文件"));
+    }
+
+    #[test]
+    fn build_user_prompt_includes_current_tool_call_and_history_results() {
+        let current = crate::llm::provider::ToolCall {
+            id: "current_call".into(),
+            name: "execute_command".into(),
+            arguments: serde_json::json!({"command": "rm /tmp/old.log"}),
+        };
+        let messages = vec![LlmMessage::user("清理旧日志"), tool_msg("previous result")];
+
+        let prompt = build_user_prompt(&current, &messages, ApprovalContextLevel::Normal)
+            .expect("prompt should build");
+
+        assert!(prompt.contains(r#""id":"current_call""#));
+        assert!(prompt.contains(r#""name":"execute_command""#));
+        assert!(prompt.contains(r#""command":"rm /tmp/old.log""#));
+        assert!(prompt.contains("[Tool Result] [id=1]: previous result"));
+    }
+
+    #[test]
+    fn build_context_assistant_only_tool_calls_no_prose() {
+        // 纯 tool_calls（无 prose）也要正确输出，不能丢
+        let messages = vec![
+            LlmMessage::user("task"),
+            assistant_with_tool_calls("", vec![("execute_command", r#"{"command":"ls"}"#)]),
+        ];
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
+        assert!(
+            ctx.contains(r#"[Tool Call] execute_command({"command":"ls"})"#),
+            "tool call name+完整 args JSON 必须出现"
+        );
+        // 不应出现"助手: " 前缀（因为 prose 为空）
+        assert!(!ctx.contains("助手: "), "空 prose 不应输出「助手: 」");
+    }
+
+    #[test]
+    fn build_context_assistant_multiple_parallel_calls() {
+        // 一次 assistant 返回多个 tool_calls（并行调用）都要列出
+        let messages = vec![
+            LlmMessage::user("task"),
+            assistant_with_tool_calls(
+                "",
+                vec![
+                    ("read_file", r#"{"path":"/a"}"#),
+                    ("read_file", r#"{"path":"/b"}"#),
+                ],
+            ),
+        ];
+        let ctx = build_context(&messages, ApprovalContextLevel::Normal);
+        assert!(ctx.contains("/a"));
+        assert!(ctx.contains("/b"));
+        assert!(ctx.contains("[id=call_0]"));
+        assert!(ctx.contains("[id=call_1]"));
+    }
+
+    #[test]
+    fn build_context_concise_limits_to_2_rounds() {
+        // Concise 档：只保留最后 2 个 user 轮次
+        let mut messages: Vec<LlmMessage> = vec![LlmMessage::system("sys")];
+        for i in 0..5 {
+            messages.push(LlmMessage::user(format!("用户第{i}轮")));
+            messages.push(LlmMessage::assistant(format!("助手第{i}轮")));
+        }
+        let ctx = build_context(&messages, ApprovalContextLevel::Concise);
+        let recent = ctx.split("[近期对话]").nth(1).unwrap_or("");
+        assert!(!recent.contains("用户第0轮"), "0 轮应被裁掉");
+        assert!(!recent.contains("用户第2轮"), "2 轮应被裁掉（只留 3、4）");
+        assert!(recent.contains("用户第3轮"));
+        assert!(recent.contains("用户第4轮"));
+    }
+
+    #[test]
+    fn build_context_detailed_limits_to_10_rounds() {
+        // Detailed 档：保留最后 10 个 user 轮次
+        let mut messages: Vec<LlmMessage> = vec![LlmMessage::system("sys")];
+        for i in 0..15 {
+            messages.push(LlmMessage::user(format!("用户第{i}轮")));
+            messages.push(LlmMessage::assistant(format!("助手第{i}轮")));
+        }
+        let ctx = build_context(&messages, ApprovalContextLevel::Detailed);
+        let recent = ctx.split("[近期对话]").nth(1).unwrap_or("");
+        assert!(!recent.contains("用户第0轮"), "0-4 轮应被裁掉");
+        assert!(!recent.contains("用户第4轮"), "4 轮应被裁掉（只留 5-14）");
+        assert!(recent.contains("用户第5轮"));
+        assert!(recent.contains("用户第14轮"));
+    }
+
+    #[test]
+    fn build_context_concise_uses_smaller_tool_cap() {
+        // Concise 档工具输出 cap 是 200，Normal 是 500
+        let long = "x".repeat(300);
+        let messages = vec![LlmMessage::user("任务"), tool_msg(&long)];
+
+        let concise = build_context(&messages, ApprovalContextLevel::Concise);
+        let normal = build_context(&messages, ApprovalContextLevel::Normal);
+
+        // Concise 在 200 cap 处截断；Normal 在 500 cap 处
+        // 提取"工具结果: "后的有效内容长度
+        fn tool_len(ctx: &str) -> usize {
+            let line = ctx
+                .lines()
+                .find(|l| l.starts_with("[Tool Result]"))
+                .unwrap_or("");
+            line.split_once(": ")
+                .map(|(_, value)| value.len())
+                .unwrap_or(0)
+        }
+        let c_len = tool_len(&concise);
+        let n_len = tool_len(&normal);
+        assert!(c_len < n_len, "concise ({c_len}) 应短于 normal ({n_len})");
+        assert!(c_len <= 200 + "…（已截断）".len());
+        assert!(n_len > 200, "normal 至少要超过 concise 的 cap");
     }
 
     #[test]

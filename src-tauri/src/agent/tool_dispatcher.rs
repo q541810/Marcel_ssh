@@ -176,6 +176,7 @@ impl ToolDispatcher {
                 approval_provider,
                 agent_settings.model_approval_prompt.clone(),
                 matches!(mode, AgentMode::Plan),
+                agent_settings.model_approval_context_level,
             )))
         } else {
             None
@@ -295,7 +296,7 @@ impl ToolDispatcher {
                     },
                 );
 
-                let eval_result = approver.evaluate(cmd, recent_messages).await;
+                let eval_result = approver.evaluate(tc, recent_messages).await;
 
                 match eval_result {
                     Ok(ModelApprovalDecision::Block(rs)) => {
@@ -487,6 +488,7 @@ fn command_list_requires_confirm(cmd: &str, settings: &AgentModeSettings) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::ApprovalContextLevel;
 
     fn default_settings() -> AgentModeSettings {
         AgentModeSettings {
@@ -496,6 +498,7 @@ mod tests {
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
+            model_approval_context_level: ApprovalContextLevel::Normal,
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
@@ -530,6 +533,7 @@ mod tests {
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
+            model_approval_context_level: ApprovalContextLevel::Normal,
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
@@ -551,6 +555,7 @@ mod tests {
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
+            model_approval_context_level: ApprovalContextLevel::Normal,
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,
@@ -582,6 +587,7 @@ mod tests {
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
+            model_approval_context_level: ApprovalContextLevel::Normal,
             system_prompt: String::new(),
             max_tool_rounds: 80,
             compact_context: false,

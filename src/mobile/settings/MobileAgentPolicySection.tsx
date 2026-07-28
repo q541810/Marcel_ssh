@@ -1,43 +1,48 @@
-import { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { CommandCheckResult, CommandListMode } from '@/lib/types';
-import * as tauri from '@/lib/tauri';
-import { getErrorMessage } from '@/lib/errors';
-import Toggle from '@/components/ui/Toggle';
-import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
+import { useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
+import type {
+  ApprovalContextLevel,
+  CommandCheckResult,
+  CommandListMode,
+} from "@/lib/types";
+import * as tauri from "@/lib/tauri";
+import { getErrorMessage } from "@/lib/errors";
+import Toggle from "@/components/ui/Toggle";
+import { useSettingsActions } from "@/components/settings/SettingsActionsContext";
 import {
   DEFAULT_APPROVAL_PROMPT,
   preCheckCustomPath,
-} from '@/components/settings/AgentPolicySection';
-import { MobileSettingRow } from './MobileSettingRow';
+} from "@/components/settings/AgentPolicySection";
+import { MobileSettingRow } from "./MobileSettingRow";
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
-  { path: '/etc', reason: '系统配置' },
-  { path: '/boot', reason: '启动分区' },
-  { path: '/sys', reason: 'sysfs 设备' },
-  { path: '/proc', reason: '进程信息' },
-  { path: '/dev', reason: '设备文件' },
+  { path: "/etc", reason: "系统配置" },
+  { path: "/boot", reason: "启动分区" },
+  { path: "/sys", reason: "sysfs 设备" },
+  { path: "/proc", reason: "进程信息" },
+  { path: "/dev", reason: "设备文件" },
 ];
 
 const inputClass =
-  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40';
+  "w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40";
 
 /** Full agent command policy for mobile — same settings surface as desktop. */
 export function MobileAgentPolicySection() {
   const { settings, update } = useSettingsActions();
   const agent = settings.agentModeSettings;
+  const contextLevel = agent.modelApprovalContextLevel ?? "normal";
 
   const updateAgent = (patch: Partial<typeof agent>) => {
     update({ agentModeSettings: { ...agent, ...patch } });
   };
 
-  const [newCommand, setNewCommand] = useState('');
-  const [testCommand, setTestCommand] = useState('');
+  const [newCommand, setNewCommand] = useState("");
+  const [testCommand, setTestCommand] = useState("");
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
 
   const customPaths = settings.customProtectedPaths ?? [];
-  const [draftPath, setDraftPath] = useState('');
+  const [draftPath, setDraftPath] = useState("");
   const [pathError, setPathError] = useState<string | null>(null);
   const pathInputRef = useRef<HTMLInputElement>(null);
 
@@ -49,7 +54,7 @@ export function MobileAgentPolicySection() {
     if (!agent.commandList.includes(v)) {
       updateAgent({ commandList: [...agent.commandList, v] });
     }
-    setNewCommand('');
+    setNewCommand("");
   };
 
   const handleAddProtectedPath = async () => {
@@ -66,7 +71,7 @@ export function MobileAgentPolicySection() {
       return;
     }
     setPathError(null);
-    setDraftPath('');
+    setDraftPath("");
     update({ customProtectedPaths: [...customPaths, trimmed] });
     pathInputRef.current?.focus();
   };
@@ -76,12 +81,12 @@ export function MobileAgentPolicySection() {
     if (!cmd) return;
     setTesting(true);
     try {
-      setTestResult(await tauri.agentCheckCommand(cmd, 'agent'));
+      setTestResult(await tauri.agentCheckCommand(cmd, "agent"));
     } catch (err) {
       setTestResult({
         allowed: false,
         requiresConfirmation: false,
-        riskLevel: 'Moderate',
+        riskLevel: "Moderate",
         reason: `测试失败：${getErrorMessage(err)}`,
       });
     } finally {
@@ -153,7 +158,7 @@ export function MobileAgentPolicySection() {
           <div className="mt-2 space-y-1.5">
             <input
               type="text"
-              value={agent.modelApprovalModel ?? ''}
+              value={agent.modelApprovalModel ?? ""}
               onChange={(e) =>
                 updateAgent({ modelApprovalModel: e.target.value })
               }
@@ -166,11 +171,37 @@ export function MobileAgentPolicySection() {
             <p className="text-xs text-zinc-500">
               填写轻量模型可降低审批延迟和成本
             </p>
+            <div className="pt-1">
+              <label
+                className="mb-1 block text-xs text-zinc-400"
+                htmlFor="mobile-approval-context-level"
+              >
+                上下文详细度
+              </label>
+              <select
+                id="mobile-approval-context-level"
+                value={contextLevel}
+                onChange={(e) =>
+                  updateAgent({
+                    modelApprovalContextLevel: e.target
+                      .value as ApprovalContextLevel,
+                  })
+                }
+                className={inputClass}
+              >
+                <option value="concise">简略（2 轮）</option>
+                <option value="normal">默认（5 轮）</option>
+                <option value="detailed">详细（10 轮）</option>
+              </select>
+              <p className="mt-1 text-xs text-zinc-500">
+                包含近期对话、工具调用和对应返回；越详细，token 消耗越高
+              </p>
+            </div>
             <div className="flex items-center justify-between pt-1">
               <span className="text-xs text-zinc-400">审批提示词</span>
               <button
                 type="button"
-                onClick={() => updateAgent({ modelApprovalPrompt: '' })}
+                onClick={() => updateAgent({ modelApprovalPrompt: "" })}
                 className="text-xs text-zinc-500 active:text-zinc-300"
               >
                 恢复默认
@@ -181,7 +212,7 @@ export function MobileAgentPolicySection() {
               onChange={(e) => {
                 const v = e.target.value;
                 updateAgent({
-                  modelApprovalPrompt: v === DEFAULT_APPROVAL_PROMPT ? '' : v,
+                  modelApprovalPrompt: v === DEFAULT_APPROVAL_PROMPT ? "" : v,
                 });
               }}
               rows={6}
@@ -196,23 +227,23 @@ export function MobileAgentPolicySection() {
         label="命令列表过滤"
         description={
           listDisabled
-            ? '已开启「每条都手动确认」，列表过滤不生效'
-            : '按基础命令名匹配（不含路径或参数）'
+            ? "已开启「每条都手动确认」，列表过滤不生效"
+            : "按基础命令名匹配（不含路径或参数）"
         }
       >
-        <div className={listDisabled ? 'pointer-events-none opacity-40' : ''}>
+        <div className={listDisabled ? "pointer-events-none opacity-40" : ""}>
           <div className="mt-2 grid grid-cols-2 gap-2">
             {(
               [
                 {
-                  value: 'denylist',
-                  label: '黑名单',
-                  desc: '只阻止列表中的命令',
+                  value: "denylist",
+                  label: "黑名单",
+                  desc: "只阻止列表中的命令",
                 },
                 {
-                  value: 'allowlist',
-                  label: '白名单',
-                  desc: '只允许列表中的命令',
+                  value: "allowlist",
+                  label: "白名单",
+                  desc: "只允许列表中的命令",
                 },
               ] as { value: CommandListMode; label: string; desc: string }[]
             ).map((m) => {
@@ -224,13 +255,13 @@ export function MobileAgentPolicySection() {
                   onClick={() => updateAgent({ listMode: m.value })}
                   className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
                     active
-                      ? 'border-indigo-500 bg-indigo-500/10'
-                      : 'border-zinc-700 bg-zinc-800/60'
+                      ? "border-indigo-500 bg-indigo-500/10"
+                      : "border-zinc-700 bg-zinc-800/60"
                   }`}
                 >
                   <div
                     className={`text-sm font-medium ${
-                      active ? 'text-indigo-200' : 'text-zinc-300'
+                      active ? "text-indigo-200" : "text-zinc-300"
                     }`}
                   >
                     {m.label}
@@ -249,7 +280,7 @@ export function MobileAgentPolicySection() {
               value={newCommand}
               onChange={(e) => setNewCommand(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === "Enter") {
                   e.preventDefault();
                   handleAddCommand();
                 }
@@ -312,7 +343,7 @@ export function MobileAgentPolicySection() {
             value={testCommand}
             onChange={(e) => setTestCommand(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              if (e.key === "Enter") {
                 e.preventDefault();
                 void runTest();
               }
@@ -329,19 +360,19 @@ export function MobileAgentPolicySection() {
             disabled={!testCommand.trim() || testing}
             className="flex-shrink-0 rounded-lg bg-zinc-800 px-4 py-2.5 text-sm text-zinc-200 active:bg-zinc-700 disabled:opacity-40"
           >
-            {testing ? '测试中' : '测试'}
+            {testing ? "测试中" : "测试"}
           </button>
         </div>
         {testResult && (
           <div
             className={`mt-2 rounded-xl border px-3 py-2 text-sm ${
               testResult.allowed
-                ? 'border-emerald-800 bg-emerald-950/40 text-emerald-200'
-                : 'border-red-800 bg-red-950/40 text-red-200'
+                ? "border-emerald-800 bg-emerald-950/40 text-emerald-200"
+                : "border-red-800 bg-red-950/40 text-red-200"
             }`}
           >
             <div className="font-medium">
-              {testResult.allowed ? '允许' : '阻止'}
+              {testResult.allowed ? "允许" : "阻止"}
               {testResult.allowed && testResult.requiresConfirmation && (
                 <span className="ml-2 text-xs text-amber-300">
                   （需要用户确认）
@@ -382,7 +413,7 @@ export function MobileAgentPolicySection() {
                 setDraftPath(e.target.value);
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === "Enter") {
                   e.preventDefault();
                   void handleAddProtectedPath();
                 }
@@ -463,7 +494,7 @@ export function MobileAgentPolicySection() {
         description="Agent 调用 LLM 时追加到系统提示词末尾，留空则不注入"
       >
         <textarea
-          value={agent.systemPrompt ?? ''}
+          value={agent.systemPrompt ?? ""}
           onChange={(e) => updateAgent({ systemPrompt: e.target.value })}
           rows={5}
           placeholder="在此输入需要附加到系统提示词中的内容，将在每次 Agent 任务调用 LLM 时生效"
