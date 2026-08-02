@@ -1,6 +1,6 @@
 {
   "id": "long-term-memory",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "name": "长期记忆",
   "publisher": "marcel",
   "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
@@ -84,6 +84,5 @@
       },
       "riskLevel": "LowRisk"
     }
-  ],
-  "configView": "config.html"
+  ]
 }

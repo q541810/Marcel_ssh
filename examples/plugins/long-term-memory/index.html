@@ -648,7 +648,15 @@
     return { memories: out, errors: errors };
   }
   function serializeJsonl(memories) {
-    return memories.map(function (m) { return JSON.stringify(m); }).join('\n');
+    return memories.map(function (m) {
+      // 剥离 _ 前缀的内存附加字段（_hostPort/_connName），只写真实数据
+      const clean = {};
+      Object.keys(m).forEach(function (k) {
+        if (k.charAt(0) === '_') return;
+        clean[k] = m[k];
+      });
+      return JSON.stringify(clean);
+    }).join('\n');
   }
   function escapeHtml(s) {
     if (s == null) return '';
@@ -899,21 +907,33 @@
     m.type = newType; m.title = newTitle; m.content = newContent; m.tags = newTags;
     m.updatedAt = Math.floor(Date.now() / 1000);
     const hostPort = m._hostPort || state.currentHostPort;
-    const all = state.memories.filter(function (x) { return x._hostPort === hostPort; });
-    writeMemoriesFile(hostPort, serializeJsonl(all)).then(function () {
-      state.editingId = null; renderList();
+    // 重新读文件再合并写回：保留 Agent 在用户编辑期间并发追加/修改的条目，
+    // 避免用内存旧列表全量覆盖导致丢数据
+    readMemoriesFile(hostPort).then(function (text) {
+      const merged = parseJsonl(text).memories;
+      let replaced = false;
+      const next = merged.map(function (x) {
+        if (x.id === m.id) { replaced = true; return m; }
+        return x;
+      });
+      if (!replaced) next.push(m);
+      return writeMemoriesFile(hostPort, serializeJsonl(next));
+    }).then(function () {
+      // 重新读取并渲染，保证列表与文件一致（含 Agent 并发写入的条目）
+      refresh();
     }, function (err) { alert('保存失败：' + (err && err.message ? err.message : err)); });
   }
   function deleteMemory(m) {
     const hostPort = m._hostPort || state.currentHostPort;
-    const remaining = state.memories.filter(function (x) {
-      if (x.id !== m.id) return true;
-      if (state.viewMode === 'all' && x._hostPort !== hostPort) return true;
-      return false;
-    });
-    const hostPortMems = remaining.filter(function (x) { return x._hostPort === hostPort; });
-    writeMemoriesFile(hostPort, serializeJsonl(hostPortMems)).then(function () {
-      state.memories = remaining; state.confirmingId = null; renderList();
+    // 重新读文件再过滤写回：保留 Agent 在用户删除期间并发追加/修改的条目
+    readMemoriesFile(hostPort).then(function (text) {
+      const remaining = parseJsonl(text).memories.filter(function (x) {
+        return x.id !== m.id;
+      });
+      return writeMemoriesFile(hostPort, serializeJsonl(remaining));
+    }).then(function () {
+      state.confirmingId = null;
+      refresh();
     }, function (err) { alert('删除失败：' + (err && err.message ? err.message : err)); });
   }
   function addMemory(type, title, content, tags) {
@@ -1009,6 +1029,8 @@
       if (p.plugin_id !== PLUGIN_ID) return;
       const expectedPath = 'memories/' + (state.currentHostPort || '') + '.jsonl';
       if (p.path !== expectedPath) return;
+      // 编辑/删除确认中不自动刷新（会重置用户正在输入的表单），等操作完成
+      if (state.editingId || state.confirmingId) return;
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(function () {
         refreshTimer = null;
