@@ -123,6 +123,28 @@ fn emit_plan_event(app: &AppHandle, task_id: &str, event: &PlanStreamEvent) {
     emit_event(app, &format!("agent://plan/{}", task_id), event);
 }
 
+/// 把持久化恢复的 plan 以 `plan-edited` 事件重新发射到 `agent://plan/` 通道。
+///
+/// 场景：应用重启 / 切换会话后，前端经 `agent_load_plans_by_conversation`
+/// 从 SQLite 恢复 plan，此时 agent 没在跑，不会再有 plan-* 实时事件。
+/// 但插件（如桌宠）只监听 `plugin://events` 通道，恢复的数据不会触发任何
+/// 事件，导致插件侧 plan 状态与主界面脱节。这里在恢复时补发一次全量事件，
+/// 让所有监听该通道的插件感知到 plan 已加载。
+///
+/// `PlanEdited` 变体携带完整 items + current_index，前后端均已兼容该形状。
+/// 用 `ops: vec![]` 表示"非编辑触发的整量刷新"。
+pub(crate) fn emit_plan_loaded(app: &AppHandle, task_id: &str, plan: &AgentTaskPlan) {
+    emit_plan_event(
+        app,
+        task_id,
+        &PlanStreamEvent::PlanEdited {
+            ops: vec![],
+            items: plan.items.clone(),
+            current_index: plan.current_index,
+        },
+    );
+}
+
 /// 判断 task 是否正在运行（agent 还在跑）。
 /// 用于决定向前端发送 plan 时是否需要把 in_progress 降级为 pending。
 pub(crate) fn is_task_running_for_load(state: &AppState, task_id: &str) -> bool {

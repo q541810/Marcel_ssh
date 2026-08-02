@@ -457,6 +457,7 @@ pub async fn agent_delete_conversations_by_session(
 /// 和 UI 一致，避免 spinning 图标误导。后端 state.plans 不受影响。
 #[tauri::command]
 pub async fn agent_load_plans_by_conversation(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<Vec<StoredPlan>, AppError> {
@@ -506,6 +507,10 @@ pub async fn agent_load_plans_by_conversation(
                     crate::agent::plan_handler::is_task_running_for_load(&state, &task_id);
                 let normalized =
                     crate::agent::plan_handler::normalize_plan_for_frontend(&plan, is_running);
+                // 恢复的 plan 补发一次事件：主界面走 loadPersistedPlans 直接写
+                // store，但插件（桌宠等）只监听 plugin://events 通道，没有事件
+                // 就感知不到 plan 已加载。emit 让插件侧与主界面同步。
+                crate::agent::plan_handler::emit_plan_loaded(&app, &task_id, &normalized);
                 plans.push(StoredPlan {
                     task_id,
                     plan: normalized,
