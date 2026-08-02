@@ -17,11 +17,36 @@ import {
   MAX_ATTACH_IMAGES,
 } from '@/lib/imageAttach';
 import * as tauri from '@/lib/tauri';
+import { bus } from '@/plugins/injection/bus';
 import ChatHistoryModal from '@/components/settings/ChatHistoryModal';
 import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
 import QuestionPanel from './QuestionPanel';
 import PlanList from './PlanList';
+
+// ── Plugin input-activity bridge ──────────────────────────────────────
+// Emits `ui://input-activity` (typing bool only — never the content) so
+// plugins such as a desktop pet can reflect "user is typing". Throttled:
+// only fires on state change, and auto-resets to false after 600ms idle.
+let __inputActivityTimer: number | null = null;
+let __lastTypingState = false;
+function emitInputActivity(typing: boolean) {
+  if (typing === __lastTypingState) return;
+  __lastTypingState = typing;
+  bus.emit('ui://input-activity', { typing });
+}
+function notifyInputTyping() {
+  emitInputActivity(true);
+  if (__inputActivityTimer !== null) window.clearTimeout(__inputActivityTimer);
+  __inputActivityTimer = window.setTimeout(() => emitInputActivity(false), 600);
+}
+function notifyInputStopped() {
+  if (__inputActivityTimer !== null) {
+    window.clearTimeout(__inputActivityTimer);
+    __inputActivityTimer = null;
+  }
+  emitInputActivity(false);
+}
 
 export default function AgentPanel() {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
@@ -277,6 +302,7 @@ export default function AgentPanel() {
     const dataUrls = images.map((i) => i.dataUrl);
     const oldPersisted = images.map((i) => i.persistedPath).filter((p): p is string => !!p);
     setInput('');
+    notifyInputStopped();
     // 只清 UI 状态，blob URL 等成功后再 revoke；save 失败可原样回滚
     setPendingImages([]);
     if (inputRef.current) {
@@ -315,6 +341,7 @@ export default function AgentPanel() {
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     resizeInput();
+    notifyInputTyping();
   };
 
   const resizeInput = () => {

@@ -1,5 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useAgentStore } from '@/stores/agentStore';
+import { bus } from '@/plugins/injection/bus';
 import type { AgentMode, QuestionAnswer } from '@/lib/types';
 
 export function useAgent() {
@@ -42,6 +43,16 @@ export function useAgent() {
     activeTask?.status === 'planning' ||
     activeTask?.status === 'executing' ||
     activeTask?.status === 'waiting_approval';
+
+  // ── Plugin agent-activity bridge ─────────────────────────────────────
+  // Emits `ui://agent-activity` (running bool only — never task content) so
+  // plugins (e.g. a desktop pet) can mirror the main UI's run indicator
+  // (the red stop button). Same source as the button: task status is
+  // non-terminal (planning / executing / waiting_approval). Fires on
+  // mount and whenever the running state changes.
+  useEffect(() => {
+    bus.emit('ui://agent-activity', { running: isRunning });
+  }, [isRunning]);
 
   const sendPrompt = useCallback(
     async (
