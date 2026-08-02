@@ -7,6 +7,7 @@ import type { PluginManifest } from '@/lib/types';
 import { getInjectionStatuses, onStatusChange, retryInjection, type InjectionStatus } from '@/plugins/injection';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
+import Modal from '@/components/ui/Modal';
 import { useSettingsActions } from './SettingsActionsContext';
 import { Card, SettingItem } from './helpers';
 import PluginConfigModal from './PluginConfigModal';
@@ -170,6 +171,7 @@ function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; i
   const isDisabled = disabledSet.has(manifest.id);
   const [showCapabilities, setShowCapabilities] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [showRestartHint, setShowRestartHint] = useState(false);
 
   const togglePlugin = () => {
     const current = settings.disabledPlugins ?? [];
@@ -177,6 +179,13 @@ function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; i
       ? current.filter((id) => id !== manifest.id)
       : [...current, manifest.id];
     update({ disabledPlugins: next });
+
+    // 禁用插件后提示：插件创建的独立窗口在禁用后不会自动关闭，
+    // 重启是最简单可靠的清理方式。不检查插件是否有窗口——
+    // 禁用是低频操作，多一次确认不影响体验。
+    if (!isDisabled) {
+      setShowRestartHint(true);
+    }
   };
 
   const viewCount = manifest.views.length;
@@ -320,6 +329,26 @@ function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; i
         configView={manifest.configView!}
       />
     )}
+
+    <Modal
+      open={showRestartHint}
+      onClose={() => setShowRestartHint(false)}
+      title="重启提示"
+      size="sm"
+    >
+      <div className="px-4 py-3 text-sm text-zinc-300">
+        <p>某些插件禁用后窗口不会完全关闭，重启应用可以解决。</p>
+      </div>
+      <div className="flex justify-end px-4 py-3 border-t border-zinc-700">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => setShowRestartHint(false)}
+        >
+          知道了
+        </Button>
+      </div>
+    </Modal>
     </>
   );
 }
