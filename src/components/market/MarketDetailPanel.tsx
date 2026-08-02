@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Check,
   ExternalLink,
-  RefreshCw,
   ChevronRight,
   ChevronLeft,
 } from 'lucide-react';
@@ -21,7 +20,6 @@ import { openExternalLink } from '@/lib/externalLinks';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel, capabilityRisk } from '@/lib/pluginCapabilities';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
-import { usePluginStore } from '@/stores/pluginStore';
 import { useSettingsLayout } from '@/components/settings/helpers';
 import { getErrorMessage } from '@/lib/errors';
 import type { MarketPlugin, PluginManifest } from '@/lib/types';
@@ -125,9 +123,8 @@ function CapabilityChip({ cap }: { cap: string }) {
 }
 
 /** 分步安装引导。仅在未安装且兼容时显示。 */
-function InstallGuide({ plugin, onInstalled }: { plugin: MarketPlugin; onInstalled: () => void }) {
-  const [step, setStep] = useState(0); // 0=未开始, 1=已下载, 2=已放入目录, 3=已刷新
-  const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+function InstallGuide({ plugin }: { plugin: MarketPlugin }) {
+  const [step, setStep] = useState(0); // 0=未开始, 1=已下载, 2=已放入目录, 3=已完成
 
   const steps = [
     {
@@ -165,20 +162,6 @@ function InstallGuide({ plugin, onInstalled }: { plugin: MarketPlugin; onInstall
     {
       title: '重启应用加载',
       desc: '插件已放入目录，重启应用后插件将自动加载',
-      action: (
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={async () => {
-            await fetchPlugins();
-            setStep(3);
-            onInstalled();
-          }}
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          刷新
-        </Button>
-      ),
       next: null,
       nextLabel: '',
     },
@@ -401,7 +384,7 @@ export function MarketDetailPanel({
 
           {/* 安装引导（未安装且兼容时） */}
           {!installed && !incompatible && (
-            <InstallGuide plugin={plugin} onInstalled={() => {}} />
+            <InstallGuide plugin={plugin} />
           )}
 
           {/* 已安装提示 */}
