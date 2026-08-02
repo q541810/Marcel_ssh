@@ -29,6 +29,8 @@ pub enum SyncCategory {
     AgentPolicy,
     /// 对话显示
     DisplaySettings,
+    /// Agent 工具能力（联网搜索 / HTTP 抓取 / 云页面开关与搜索模式、提供商）
+    AgentTools,
     /// API Key（敏感，默认关）
     Secrets,
 }
@@ -102,6 +104,7 @@ impl SyncKey {
                 | "agentModeSettings.maxToolRounds"
                 | "agentModeSettings.systemPrompt" => Some(SyncCategory::AgentPolicy),
                 "hideThinkingDisplay" => Some(SyncCategory::DisplaySettings),
+                sub if sub.starts_with("experimentalSettings.") => Some(SyncCategory::AgentTools),
                 _ => None,
             }
         } else {
@@ -129,7 +132,15 @@ impl SyncKey {
             return false;
         }
         if key.starts_with("settings.experimentalSettings") {
-            return false;
+            // 手机端放开 Agent 工具能力的 4 个字段（移动端设置 UI 可配置且
+            // 后端已支持 Api 搜索），其余实验性字段仍桌面专属
+            match key.as_str() {
+                "settings.experimentalSettings.enableWebSearch"
+                | "settings.experimentalSettings.enableHttpFetch"
+                | "settings.experimentalSettings.webSearchMode"
+                | "settings.experimentalSettings.webSearchApiProvider" => {}
+                _ => return false,
+            }
         }
         if key == "settings.folderUploadCompressionLevel" {
             return false;
@@ -195,6 +206,11 @@ impl Platform {
     }
 }
 
+/// sync_profile 结构版本。
+/// v1：experimentalSettings.* 无分类映射，走 None => true 默认放行，永远同步；
+/// v2：引入 AgentTools 分类，experimentalSettings.* 受该开关控制。
+pub const SYNC_PROFILE_SCHEMA_VERSION: u32 = 2;
+
 /// sync_profile：用户选择的同步项。
 ///
 /// 存储格式：用 HashSet<SyncCategory> 表示开启的一级分类。
@@ -203,7 +219,7 @@ impl Platform {
 ///
 /// `excluded_keys`：字段级排除清单（用户在冲突 UI 选"永久跳过"时加入）。
 /// 被排除的 key 不会 push 也不会 pull，跨设备生效（因为 SyncProfile 本身同步）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncProfile {
     /// 开启的一级分类集合
@@ -212,6 +228,32 @@ pub struct SyncProfile {
     /// 存储完整 key 字符串（如 "settings.fontSize"）
     #[serde(default)]
     pub excluded_keys: HashSet<String>,
+    /// 结构版本（见 SYNC_PROFILE_SCHEMA_VERSION）。老配置（v1，无此字段）
+    /// 加载后经 `normalize()` 迁移补上新增分类的默认开启项。
+    pub schema_version: u32,
+}
+
+impl<'de> Deserialize<'de> for SyncProfile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Raw {
+            enabled_categories: HashSet<SyncCategory>,
+            #[serde(default)]
+            excluded_keys: HashSet<String>,
+            #[serde(default)]
+            schema_version: u32,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(SyncProfile {
+            enabled_categories: raw.enabled_categories,
+            excluded_keys: raw.excluded_keys,
+            schema_version: raw.schema_version,
+        })
+    }
 }
 
 impl Default for SyncProfile {
@@ -227,11 +269,13 @@ impl Default for SyncProfile {
         enabled.insert(SyncCategory::ModelService);
         enabled.insert(SyncCategory::AgentPolicy);
         enabled.insert(SyncCategory::DisplaySettings);
+        enabled.insert(SyncCategory::AgentTools);
         // Secrets 默认关
         // excluded_keys 默认空（用户在冲突 UI 选"永久跳过"时才加入）
         Self {
             enabled_categories: enabled,
             excluded_keys: HashSet::new(),
+            schema_version: SYNC_PROFILE_SCHEMA_VERSION,
         }
     }
 }
@@ -242,7 +286,25 @@ impl SyncProfile {
         Self {
             enabled_categories: HashSet::new(),
             excluded_keys: HashSet::new(),
+            schema_version: SYNC_PROFILE_SCHEMA_VERSION,
         }
+    }
+
+    /// 结构迁移：把老版本配置补齐新增分类的默认开启项。
+    /// 返回 true 表示本次发生了迁移，调用方应持久化。
+    ///
+    /// v1 → v2：experimentalSettings.* 从"无分类默认放行"改为受 AgentTools
+    /// 分类控制。v1 配置里该分类不存在 = 用户从未有过开关，按默认开启迁移，
+    /// 保持原有"总是同步"的行为不变；用户之后可在 UI 显式关闭。
+    pub fn normalize(&mut self) -> bool {
+        if self.schema_version >= SYNC_PROFILE_SCHEMA_VERSION {
+            return false;
+        }
+        if self.schema_version < 2 {
+            self.enabled_categories.insert(SyncCategory::AgentTools);
+        }
+        self.schema_version = SYNC_PROFILE_SCHEMA_VERSION;
+        true
     }
 
     /// 检查某一级分类是否开启
@@ -330,7 +392,49 @@ mod tests {
         let profile = SyncProfile::default();
         assert!(profile.is_category_enabled(&SyncCategory::Connections));
         assert!(profile.is_category_enabled(&SyncCategory::Conversations));
+        assert!(profile.is_category_enabled(&SyncCategory::AgentTools));
         assert!(!profile.is_category_enabled(&SyncCategory::Secrets));
+    }
+
+    #[test]
+    fn test_schema_version_default() {
+        let profile = SyncProfile::default();
+        assert_eq!(profile.schema_version, SYNC_PROFILE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_normalize_migrates_v1_to_v2() {
+        // v1 老配置：无 schemaVersion 字段、无 agentTools 分类
+        let json = r#"{"enabledCategories":["connections","conversations"],"excludedKeys":[]}"#;
+        let mut profile: SyncProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.schema_version, 0);
+        assert!(!profile.is_category_enabled(&SyncCategory::AgentTools));
+
+        // normalize 补上 AgentTools（保持 v1"总是同步"行为），并升级版本
+        assert!(profile.normalize());
+        assert!(profile.is_category_enabled(&SyncCategory::AgentTools));
+        assert_eq!(profile.schema_version, SYNC_PROFILE_SCHEMA_VERSION);
+
+        // 幂等：再次 normalize 不再迁移
+        assert!(!profile.normalize());
+    }
+
+    #[test]
+    fn test_normalize_keeps_user_choice() {
+        // v2 配置：用户显式关闭了 agentTools（schemaVersion=2、分类不在列表）
+        let json = r#"{"enabledCategories":["connections"],"excludedKeys":[],"schemaVersion":2}"#;
+        let mut profile: SyncProfile = serde_json::from_str(json).unwrap();
+        assert!(!profile.normalize());
+        assert!(!profile.is_category_enabled(&SyncCategory::AgentTools));
+    }
+
+    #[test]
+    fn test_serialize_roundtrip() {
+        let profile = SyncProfile::default();
+        let json = serde_json::to_string(&profile).unwrap();
+        let parsed: SyncProfile = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.enabled_categories, profile.enabled_categories);
+        assert_eq!(parsed.schema_version, SYNC_PROFILE_SCHEMA_VERSION);
     }
 
     #[test]
@@ -359,6 +463,13 @@ mod tests {
         let key = SyncKey::new("secrets.llmApiKey");
         assert_eq!(key.category(), Some(SyncCategory::Secrets));
 
+        let key = SyncKey::new("settings.experimentalSettings.enableWebSearch");
+        assert_eq!(key.category(), Some(SyncCategory::AgentTools));
+        let key = SyncKey::new("settings.experimentalSettings.webSearchApiProvider");
+        assert_eq!(key.category(), Some(SyncCategory::AgentTools));
+        let key = SyncKey::new("settings.experimentalSettings.enableCloudPage");
+        assert_eq!(key.category(), Some(SyncCategory::AgentTools));
+
         let key = SyncKey::new("unknown.key");
         assert_eq!(key.category(), None);
     }
@@ -371,6 +482,16 @@ mod tests {
         assert!(key.is_available_on_platform(Platform::Desktop));
 
         let key = SyncKey::new("settings.experimentalSettings.enableWebSearch");
+        assert!(key.is_available_on_platform(Platform::Mobile));
+        let key = SyncKey::new("settings.experimentalSettings.webSearchMode");
+        assert!(key.is_available_on_platform(Platform::Mobile));
+        let key = SyncKey::new("settings.experimentalSettings.webSearchApiProvider");
+        assert!(key.is_available_on_platform(Platform::Mobile));
+
+        // 移动端无 UI 的实验性字段仍过滤
+        let key = SyncKey::new("settings.experimentalSettings.enableCloudPage");
+        assert!(!key.is_available_on_platform(Platform::Mobile));
+        let key = SyncKey::new("settings.experimentalSettings.httpFetchMode");
         assert!(!key.is_available_on_platform(Platform::Mobile));
 
         let key = SyncKey::new("settings.folderUploadCompressionLevel");
@@ -390,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_should_sync() {
-        let profile = SyncProfile::default();
+        let mut profile = SyncProfile::default();
         let platform = Platform::Desktop;
 
         // 默认 profile 开启的项
@@ -399,6 +520,19 @@ mod tests {
 
         // Secrets 默认关
         assert!(!profile.should_sync(&SyncKey::new("secrets.llmApiKey"), platform));
+
+        // AgentTools 默认开：experimentalSettings.* 同步
+        assert!(profile.should_sync(
+            &SyncKey::new("settings.experimentalSettings.enableWebSearch"),
+            platform
+        ));
+
+        // 关闭 AgentTools 分类后不再同步
+        profile.set_category(SyncCategory::AgentTools, false);
+        assert!(!profile.should_sync(
+            &SyncKey::new("settings.experimentalSettings.webSearchMode"),
+            platform
+        ));
 
         // 手机端 + 桌面专属字段
         assert!(!profile.should_sync(

@@ -20,6 +20,7 @@ export type MobileSettingsCategoryId =
   | 'appearance'
   | 'llm'
   | 'agent-policy'
+  | 'agent-tools'
   | 'commands-skills'
   | 'notification-background'
   | 'sync'
@@ -46,6 +47,11 @@ export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
     id: 'agent-policy',
     title: 'Agent 策略',
     description: '命令安全边界、审批与执行限制',
+  },
+  {
+    id: 'agent-tools',
+    title: 'Agent 工具',
+    description: '联网搜索、网页抓取与搜索 API',
   },
   {
     id: 'commands-skills',

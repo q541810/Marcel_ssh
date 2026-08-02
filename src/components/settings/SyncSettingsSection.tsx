@@ -38,13 +38,18 @@ const CATEGORY_LABELS: Record<SyncCategory, { label: string; description: string
   modelService: { label: '模型服务', description: 'baseUrl / model / vision / 重试策略' },
   agentPolicy: { label: 'Agent 策略', description: '命令确认 / 超时 / 系统提示词等' },
   displaySettings: { label: '对话显示', description: '隐藏思考过程等展示偏好' },
-  secrets: { label: 'API Key', description: '同步 LLM API Key（敏感，默认关闭）', sensitive: true },
+  agentTools: {
+    label: 'Agent 工具',
+    description: '联网搜索 / HTTP 抓取 / 云页面开关，及搜索模式、提供商',
+  },
+  secrets: { label: 'API Key', description: '同步 LLM API Key 与搜索 API Key（敏感，默认关闭）', sensitive: true },
 };
 
 export function SyncSettingsSection() {
   const {
     summary,
     devices,
+    quota,
     loaded,
     actionLoading,
     error,

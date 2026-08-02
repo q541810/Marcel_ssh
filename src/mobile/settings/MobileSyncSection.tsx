@@ -31,7 +31,8 @@ const CATEGORY_LABELS: Partial<
   modelService: { label: '模型服务' },
   agentPolicy: { label: 'Agent 策略' },
   displaySettings: { label: '对话显示' },
-  secrets: { label: 'API Key', sensitive: true },
+  agentTools: { label: 'Agent 工具' },
+  secrets: { label: 'API Key（LLM 与搜索，敏感）', sensitive: true },
 };
 
 const inputClass =

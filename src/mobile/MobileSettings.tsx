@@ -13,6 +13,7 @@ import {
 } from './mobileSettingsModel';
 import { MobileAboutSection } from './settings/MobileAboutSection';
 import { MobileAgentPolicySection } from './settings/MobileAgentPolicySection';
+import { MobileAgentToolsSection } from './settings/MobileAgentToolsSection';
 import { MobileAppearanceSection } from './settings/MobileAppearanceSection';
 import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSection';
 import { MobileModelSection } from './settings/MobileModelSection';
@@ -205,6 +206,12 @@ export default function MobileSettings({
           {activeCategory === 'agent-policy' && (
             <div className="p-3">
               <MobileAgentPolicySection />
+            </div>
+          )}
+
+          {activeCategory === 'agent-tools' && (
+            <div className="p-3">
+              <MobileAgentToolsSection />
             </div>
           )}
 

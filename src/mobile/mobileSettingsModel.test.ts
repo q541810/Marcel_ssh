@@ -20,6 +20,7 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
       'appearance',
       'llm',
       'agent-policy',
+      'agent-tools',
       'commands-skills',
       'notification-background',
       'sync',
@@ -34,6 +35,7 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
 
   it('resolves category by id', () => {
     expect(getMobileSettingsCategory('llm')?.title).toBe('模型服务');
+    expect(getMobileSettingsCategory('agent-tools')?.title).toBe('Agent 工具');
     expect(getMobileSettingsCategory('commands-skills')?.title).toBe('快捷命令与技能');
     expect(getMobileSettingsCategory('notification-background')?.title).toBe('通知与后台');
     expect(getMobileSettingsCategory('nope')).toBeUndefined();
@@ -41,6 +43,7 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
 
   it('isMobileSettingsCategoryId gates unknown ids', () => {
     expect(isMobileSettingsCategoryId('llm')).toBe(true);
+    expect(isMobileSettingsCategoryId('agent-tools')).toBe(true);
     expect(isMobileSettingsCategoryId('plugins')).toBe(false);
     expect(isMobileSettingsCategoryId('agent-policy')).toBe(true);
     expect(isMobileSettingsCategoryId('commands-skills')).toBe(true);

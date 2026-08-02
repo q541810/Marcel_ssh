@@ -151,12 +151,21 @@ impl AgentTool for WebSearchTool {
 }
 
 async fn resolve_search_config(ctx: &ToolContext) -> (WebSearchMode, WebSearchApiProvider) {
-    // Mobile (Android) 无法启动本地 Chrome/Edge 走 CDP，无视用户设置强制走
-    // 裸 Bing HTML 抓取（html）模式，避免工具调用必然失败。
+    // Mobile (Android) 无法启动本地 Chrome/Edge 走 CDP：Browser 模式必然失败，
+    // 因此按用户设置解析后把 Browser 降级为裸 Bing HTML 抓取（html）模式；
+    // Api 模式（Brave/Tavily 纯 HTTP）在手机上完全可用，直接生效。
     #[cfg(mobile)]
     {
-        let _ = ctx;
-        return (WebSearchMode::Html, WebSearchApiProvider::default());
+        if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
+            let settings = state.settings.read().await;
+            let exp = &settings.experimental_settings;
+            let mode = match exp.web_search_mode {
+                WebSearchMode::Browser => WebSearchMode::Html,
+                mode => mode,
+            };
+            return (mode, exp.web_search_api_provider);
+        }
+        (WebSearchMode::Html, WebSearchApiProvider::default())
     }
 
     #[cfg(desktop)]
@@ -469,6 +478,7 @@ mod tests {
 
 
     #[tokio::test]
+    #[ignore = "依赖本机 keychain 为空；本机已存 Key 时会发真实网络请求。空 Key 报错行为由 api.rs 的 api_brave_mode_requires_key / api_tavily_mode_requires_key 确定性覆盖"]
     async fn run_search_api_mode_fails_without_key() {
         let err = run_search(WebSearchMode::Api, WebSearchApiProvider::Brave, "q", 3)
             .await

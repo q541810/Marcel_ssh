@@ -829,6 +829,7 @@ export type SyncCategory =
   | 'modelService'
   | 'agentPolicy'
   | 'displaySettings'
+  | 'agentTools'
   | 'secrets';
 
 /** 平台标识（与 sync/profile.rs Platform 对齐，lowercase 序列化） */
@@ -848,6 +849,9 @@ export interface SyncProfile {
    *  存储完整 key 字符串（如 "settings.fontSize"）
    *  与 Rust 端 HashSet<String> 对齐，序列化为数组 */
   excludedKeys: string[];
+  /** 结构版本（与后端 SYNC_PROFILE_SCHEMA_VERSION 对齐）。
+   *  老版本缺省 = v1，后端加载时会自动迁移补上新增分类默认开启项 */
+  schemaVersion?: number;
 }
 
 /** 同步摘要（GET sync_get_summary 返回） */

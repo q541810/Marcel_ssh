@@ -125,6 +125,8 @@ impl SyncStoreAccessor {
             .flatten()
         } else if key == "secrets.llmApiKey" {
             keychain::get_llm_api_key().ok().flatten()
+        } else if key == "secrets.webSearchApiKey" {
+            keychain::get_web_search_api_key().ok().flatten()
         } else {
             None
         }
@@ -155,6 +157,8 @@ impl SyncStoreAccessor {
             self.apply_conversation(id, value).await?;
         } else if key == "secrets.llmApiKey" {
             self.apply_llm_api_key(value)?;
+        } else if key == "secrets.webSearchApiKey" {
+            self.apply_web_search_api_key(value)?;
         } else {
             // 未知 key，静默跳过（向前兼容）
             log::warn!("[sync] 未知 key，跳过 apply: {}", key);
@@ -437,6 +441,20 @@ impl SyncStoreAccessor {
         Ok(())
     }
 
+    fn apply_web_search_api_key(&self, value: Option<&str>) -> Result<(), AppError> {
+        match value {
+            Some(key) => {
+                if !key.is_empty() {
+                    keychain::save_web_search_api_key(key)?;
+                }
+            }
+            None => {
+                let _ = keychain::delete_web_search_api_key();
+            }
+        }
+        Ok(())
+    }
+
     /// 应用会话完整快照（pull 时整体覆盖：upsert conversation + replace messages）。
     /// value = None 表示删除会话（级联删除 messages + plans + images）。
     async fn apply_conversation(&self, id: &str, value: Option<&str>) -> Result<(), AppError> {
@@ -557,7 +575,7 @@ impl SyncStoreAccessor {
     /// engine.seed_local_versions 会对此列表逐个调用 record_local_change，
     /// 让本地数据进入版本表，随后 push 全量推送到服务端。
     ///
-    /// 注意：secrets.llmApiKey 只在 keychain 中存在时才加入列表。
+    /// 注意：secrets.llmApiKey / secrets.webSearchApiKey 只在 keychain 中存在时才加入列表。
     /// profile 默认排除 secrets，但用户可能启用，此处仍列举由 record_local_change 过滤。
     pub async fn enumerate_all_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
@@ -619,6 +637,14 @@ impl SyncStoreAccessor {
             .is_some()
         {
             keys.push("secrets.llmApiKey".to_string());
+        }
+        // secrets.webSearchApiKey（仅当存在时）
+        if crate::config::keychain::get_web_search_api_key()
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            keys.push("secrets.webSearchApiKey".to_string());
         }
 
         keys

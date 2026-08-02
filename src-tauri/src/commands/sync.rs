@@ -300,6 +300,11 @@ pub async fn sync_update_profile(
     state: State<'_, AppState>,
     profile: SyncProfile,
 ) -> Result<(), AppError> {
+    // 老客户端/老数据发来的 profile 无 schemaVersion（v1）：迁移补上新增分类
+    // 默认开启项，保持 v1"experimentalSettings 总是同步"的行为不变。
+    let mut profile = profile;
+    profile.normalize();
+
     // 在写入前对比，收集新开启的分类（仅关闭时不必播种）
     let newly_enabled: std::collections::HashSet<crate::sync::profile::SyncCategory> =
         match state.sync_engine.as_ref() {

@@ -175,6 +175,7 @@ pub fn is_whole_lww_key(key: &str) -> bool {
         || key.starts_with("skills.")
         || key.starts_with("mcpServers.")
         || key == "secrets.llmApiKey"
+        || key == "secrets.webSearchApiKey"
 }
 
 /// 检查一个 key 是否是 settings 字段级 key（走字段级合并）。
@@ -342,6 +343,7 @@ mod tests {
         assert!(is_whole_lww_key("skills.123"));
         assert!(is_whole_lww_key("mcpServers.m1"));
         assert!(is_whole_lww_key("secrets.llmApiKey"));
+        assert!(is_whole_lww_key("secrets.webSearchApiKey"));
 
         // settings 字段不是 LWW key
         assert!(!is_whole_lww_key("settings.fontSize"));

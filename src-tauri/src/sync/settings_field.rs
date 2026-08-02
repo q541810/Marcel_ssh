@@ -108,8 +108,11 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "agentModeSettings.systemPrompt",
         // DisplaySettings
         "hideThinkingDisplay",
-        // 桌面专属字段（手机端被 profile.is_available_on_platform 过滤，不参与同步）
-        // 这里仍列举，因为同步引擎会按平台过滤，accessor 不重复过滤
+        // 桌面专属字段（手机端被 profile.is_available_on_platform 过滤，不参与同步）：
+        // enableCloudPage / httpFetchMode 仍桌面专属；
+        // enableWebSearch / enableHttpFetch / webSearchMode / webSearchApiProvider
+        // 手机端已放开（移动端 Agent 工具设置支持联网搜索与搜索 API）。
+        // 这里仍全部列举，因为同步引擎会按平台过滤，accessor 不重复过滤
         "notificationSettings.agentApproval",
         "notificationSettings.agentQuestion",
         "notificationSettings.agentTaskDone",

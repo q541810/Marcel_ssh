@@ -28,7 +28,7 @@ use crate::sync::client::{
 use crate::sync::crypto;
 use crate::sync::keychain;
 use crate::sync::merge::{self, MergeResult};
-use crate::sync::profile::{Platform, SyncProfile};
+use crate::sync::profile::{Platform, SyncProfile, SYNC_PROFILE_SCHEMA_VERSION};
 
 /// 本地版本追踪文件名
 const LOCAL_VERSIONS_FILE: &str = "sync_local_versions.json";
@@ -272,11 +272,22 @@ impl SyncEngine {
                 Ok(data) if !data.trim().is_empty() => {
                     match serde_json::from_str::<SyncProfile>(&data) {
                         Ok(loaded) => {
+                            let mut loaded = loaded;
+                            let migrated = loaded.normalize();
+                            if migrated {
+                                log::info!(
+                                    "[sync] SyncProfile 已迁移到 schema v{}（补上新增分类默认开启项）",
+                                    SYNC_PROFILE_SCHEMA_VERSION
+                                );
+                            }
                             log::info!(
                                 "[sync] 已加载 SyncProfile（excluded_keys: {} 项）",
                                 loaded.excluded_keys.len()
                             );
                             *self.profile.write() = loaded;
+                            if migrated {
+                                self.persist_profile().await?;
+                            }
                         }
                         Err(e) => {
                             log::warn!(

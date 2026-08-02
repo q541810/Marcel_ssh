@@ -74,8 +74,12 @@ export const DEFAULT_SYNC_CATEGORIES: SyncCategory[] = [
   'modelService',
   'agentPolicy',
   'displaySettings',
+  'agentTools',
   // secrets 默认关
 ];
+
+/** 与后端 SYNC_PROFILE_SCHEMA_VERSION 对齐 */
+export const SYNC_PROFILE_SCHEMA_VERSION = 2;
 
 interface SyncStoreState {
   /** 是否已加载过 summary */
@@ -245,6 +249,8 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
       const merged: SyncProfile = {
         enabledCategories: profile.enabledCategories,
         excludedKeys: profile.excludedKeys ?? currentExcluded,
+        // 老数据（无版本号）按当前版本提交，后端不会误判为 v1 迁移
+        schemaVersion: profile.schemaVersion ?? SYNC_PROFILE_SCHEMA_VERSION,
       };
       await syncUpdateProfile(merged);
       // 更新本地 summary + excludedKeys
@@ -383,6 +389,11 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
               }
             }
             // secrets.llmApiKey 不需要前端刷新（keychain 变更不影响 UI）
+            if (key === 'secrets.webSearchApiKey') {
+              // 搜索 API Key 有 UI 状态（设置页「已保存」指示），同步后同步刷新
+              const { deleted } = event.payload;
+              useSettingsStore.setState({ hasWebSearchApiKey: !deleted });
+            }
           } catch (e) {
             console.warn('[syncStore] 刷新 store 失败:', key, e);
           }

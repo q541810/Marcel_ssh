@@ -121,6 +121,14 @@ pub async fn config_save_settings(
     // 触发跨设备同步：settings 字段级 diff，对变更字段逐个 record_local_change
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
+            // LLM API Key 不走 settings.*（skip_serializing 不落盘），单独作为 secrets 同步。
+            // 取 snapshot 中的值：前端提供新 key 时为新 key；掩码/空时保留的是旧 key，
+            // record 与 last_synced 相同则不会 bump，无害。
+            if let Some(ref llm) = snapshot.llm_config {
+                if !llm.api_key.is_empty() && !is_masked_key(&llm.api_key) {
+                    let _ = engine.record_local_change("secrets.llmApiKey", &llm.api_key);
+                }
+            }
             let new_json = serde_json::to_value(&snapshot).unwrap_or(serde_json::Value::Null);
             // 对每个字段路径 diff，变更的 bump 版本
             for field_path in crate::sync::settings_field::all_field_paths() {
