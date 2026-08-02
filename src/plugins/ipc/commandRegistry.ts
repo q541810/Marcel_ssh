@@ -128,7 +128,12 @@ export const VIRTUAL_COMMANDS: Record<string, (args: Record<string, unknown>) =>
   },
 };
 
-/** All valid command names (for `isAuthorized` validation). */
+/** All valid command names (for `isAuthorized` validation).
+ *
+ *  NOTE: stateful virtual commands (`events.subscribe` / `config.*`) are
+ *  registered later via `registerStatefulVirtualCommands`, which extends this
+ *  set too. Without that, `isAuthorized` rejects them as unknown commands and
+ *  event subscription / config persistence silently break for every plugin. */
 export const ALL_COMMANDS = new Set([
   ...Object.values(CAPABILITY_TO_COMMAND),
   ...Object.keys(VIRTUAL_COMMANDS),
@@ -150,6 +155,7 @@ export function registerStatefulVirtualCommands(
     const subscribed = subscribeEvents(pid, events);
     return { subscribed };
   };
+  ALL_COMMANDS.add('events.subscribe');
 
   VIRTUAL_COMMANDS['events.unsubscribe'] = (args) => {
     const events = (args.events as string[]) ?? [];
@@ -157,17 +163,20 @@ export function registerStatefulVirtualCommands(
     const unsubscribed = unsubscribeEvents(pid, events);
     return { unsubscribed };
   };
+  ALL_COMMANDS.add('events.unsubscribe');
 
   VIRTUAL_COMMANDS['config.read'] = (args) => {
     const pid = (args._pluginId as string) ?? '';
     return invoke<string>('plugin_fs_read', { pluginId: pid, path: CONFIG_FILE });
   };
+  ALL_COMMANDS.add('config.read');
 
   VIRTUAL_COMMANDS['config.write'] = (args) => {
     const pid = (args._pluginId as string) ?? '';
     const content = (args.content as string) ?? '';
     return invoke('plugin_fs_write', { pluginId: pid, path: CONFIG_FILE, content });
   };
+  ALL_COMMANDS.add('config.write');
 
   VIRTUAL_COMMANDS['config.saved'] = (args) => {
     const pid = (args._pluginId as string) ?? '';
@@ -178,6 +187,7 @@ export function registerStatefulVirtualCommands(
     }
     return { ok: false, error: 'no callback registered' };
   };
+  ALL_COMMANDS.add('config.saved');
 }
 
 /** Look up the plugin-scoped backend command for a given cmd, if any. */
