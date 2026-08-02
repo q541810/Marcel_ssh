@@ -17,6 +17,47 @@ use crate::plugins::enabled::is_plugin_enabled_async;
 #[cfg(mobile)]
 const MOBILE_UNSUPPORTED: &str = "plugin webviews are not supported on mobile";
 
+/// 注入到所有插件配置 WebView 的深色配色 CSS 变量（与主应用 UI 配色一致）。
+/// 子 WebView 是独立文档，无法继承主应用的样式；这里把配色变量写到
+/// `<html>` 上，插件 configView 用 `var(--bg)` 等即可与主应用视觉统一，
+/// 所有插件配置界面统一受益（不是某个插件的特批）。
+/// 注意：主应用目前**没有可切换的主题系统**，这组变量是固定深色配色。
+/// 注意：initialization_script 在 DOM 解析前执行，`document.documentElement`
+/// 此时可能为 null，必须等待 DOM 就绪后再设置变量。
+const CONFIG_COLOR_SCRIPT: &str = r#"
+(() => {
+  const vars = {
+    '--bg': '#18181b',
+    '--bg-secondary': '#27272a',
+    '--bg-elevated': '#1c1c1f',
+    '--border': '#3f3f46',
+    '--border-strong': '#52525b',
+    '--text': '#f4f4f5',
+    '--text-secondary': '#a1a1aa',
+    '--text-muted': '#71717a',
+    '--accent': '#a78bfa',
+    '--accent-hover': '#c4b5fd',
+    '--radius-sm': '6px',
+    '--radius-md': '8px',
+    '--radius-lg': '12px',
+    '--radius-xl': '16px',
+    '--danger': '#f87171',
+    '--success': '#4ade80',
+    '--font': 'system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif',
+  };
+  const apply = () => {
+    const el = document.documentElement;
+    if (!el) return;
+    for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', apply);
+  } else {
+    apply();
+  }
+})();
+"#;
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginWebviewCreateParams {
@@ -82,6 +123,7 @@ pub async fn plugin_webview_create(
         .add_child(
             WebviewBuilder::new(&params.label, webview_url)
                 .background_color(Color(24, 24, 27, 255))
+                .initialization_script(CONFIG_COLOR_SCRIPT)
                 .on_page_load(on_page_load),
             LogicalPosition::new(params.x, params.y),
             LogicalSize::new(params.width.max(1.0), params.height.max(1.0)),

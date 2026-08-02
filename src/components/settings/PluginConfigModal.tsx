@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { pluginWebviewCreate, pluginWebviewSetBounds, pluginWebviewClose } from '@/lib/tauri';
 import { getElementRect } from '@/plugins/rectSync';
+import { getErrorMessage } from '@/lib/errors';
 import { registerConfigSavedCallback, unregisterConfigSavedCallback } from '@/plugins/pluginIpc';
 import Modal from '@/components/ui/Modal';
 
@@ -15,9 +16,7 @@ interface Props {
 }
 
 export default function PluginConfigModal({ open, onClose, pluginId, pluginName, configView }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const label = `plugin-${pluginId}-config`.replace(/[^a-zA-Z0-9\-/:_]/g, '_');
-  const createdRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
@@ -34,10 +33,57 @@ export default function PluginConfigModal({ open, onClose, pluginId, pluginName,
     };
   }, [open, pluginId, handleClose]);
 
-  // WebView lifecycle
-  useEffect(() => {
-    if (!open) return;
+  return (
+    <Modal open={open} onClose={handleClose} title={`${pluginName} - 配置`} size="xl">
+      <div className="w-full h-full relative">
+        {error ? (
+          <div className="w-full h-full flex items-center justify-center bg-zinc-900">
+            <div className="text-center space-y-3 px-4">
+              <div className="text-red-400 text-sm font-medium">配置页面加载失败</div>
+              <div className="text-zinc-500 text-xs break-all">{error}</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setRetryKey((k) => k + 1);
+                }}
+                className="mt-2 px-3 py-1.5 text-xs bg-zinc-700 text-zinc-200 rounded-lg hover:bg-zinc-600 transition-colors"
+              >
+                重试
+              </button>
+            </div>
+          </div>
+        ) : (
+          // WebView 宿主必须放在 Modal children 内部、由子组件挂载后创建：
+          // Modal 的 useAnimatedPresence 会让 children 比 open 翻转晚一帧挂载，
+          // 若在外层 effect 里取 containerRef 会拿到 null 且永不重跑（挂载竞态）。
+          // 子组件挂载时自身 DOM 一定就绪，回调 ref 触发创建，杜绝竞态。
+          <ConfigWebviewHost
+            key={retryKey}
+            label={label}
+            pluginId={pluginId}
+            configView={configView}
+            onError={setError}
+          />
+        )}
+      </div>
+    </Modal>
+  );
+}
 
+interface HostProps {
+  label: string;
+  pluginId: string;
+  configView: string;
+  onError: (msg: string) => void;
+}
+
+/** 子 WebView 宿主：挂载时创建 WebView，卸载时关闭。 */
+function ConfigWebviewHost({ label, pluginId, configView, onError }: HostProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const createdRef = useRef(false);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
@@ -90,7 +136,7 @@ export default function PluginConfigModal({ open, onClose, pluginId, pluginName,
         })
         .catch((err) => {
           console.error('[plugin-config] create failed:', err);
-          setError(String(err));
+          onError(getErrorMessage(err));
         });
     }, 50);
 
@@ -106,34 +152,8 @@ export default function PluginConfigModal({ open, onClose, pluginId, pluginName,
       }
       createdRef.current = false;
     };
-  }, [open, label, pluginId, configView, retryKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [label, pluginId, configView]);
 
-  return (
-    <Modal open={open} onClose={handleClose} title={`${pluginName} - 配置`} size="xl">
-      <div className="w-full h-full relative">
-        {error ? (
-          <div className="w-full h-full flex items-center justify-center bg-zinc-900">
-            <div className="text-center space-y-3 px-4">
-              <div className="text-red-400 text-sm font-medium">配置页面加载失败</div>
-              <div className="text-zinc-500 text-xs break-all">{error}</div>
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  pluginWebviewClose(label).catch(() => {});
-                  createdRef.current = false;
-                  setRetryKey((k) => k + 1);
-                }}
-                className="mt-2 px-3 py-1.5 text-xs bg-zinc-700 text-zinc-200 rounded-lg hover:bg-zinc-600 transition-colors"
-              >
-                重试
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div ref={containerRef} className="w-full h-full min-h-[60vh]" />
-        )}
-      </div>
-    </Modal>
-  );
+  return <div ref={containerRef} className="w-full h-full min-h-[60vh]" />;
 }
