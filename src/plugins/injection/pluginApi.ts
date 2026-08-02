@@ -245,5 +245,32 @@ export function buildPluginApi(pluginId: string, injectionId: string): PluginApi
     error: (...args) => console.error(logPrefix, ...args),
   };
 
-  return { pluginId, injectionId, dom, overlay, ipc, events, onCleanup, log };
+  const void_ = () => undefined;
+
+  const windowApi: PluginApi['window'] = {
+    // 后端 plugin_window_create 接收 `params: PluginWindowCreateParams`（struct），
+    // 必须包成 { params } 嵌套传递（与 plugin_webview_create 一致），平铺会反序列化失败。
+    create: (params) =>
+      ipc.call('window.create', { params }).then(void_),
+    show: (label) => ipc.call('window.show', { label }).then(void_),
+    hide: (label) => ipc.call('window.hide', { label }).then(void_),
+    close: (label) => ipc.call('window.close', { label }).then(void_),
+    focus: (label) => ipc.call('window.focus', { label }).then(void_),
+    setPosition: (label, x, y) => ipc.call('window.set_position', { label, x, y }).then(void_),
+    setSize: (label, width, height) =>
+      ipc.call('window.set_size', { label, width, height }).then(void_),
+    setAlwaysOnTop: (label, alwaysOnTop) =>
+      ipc.call('window.set_always_on_top', { label, alwaysOnTop }).then(void_),
+    setIgnoreCursorEvents: (label, ignore) =>
+      ipc.call('window.set_ignore_cursor_events', { label, ignore }).then(void_),
+  };
+
+  const menuApi: PluginApi['menu'] = {
+    register: (items) => ipc.call('menu.register', { items }).then(void_),
+    update: (items) => ipc.call('menu.update', { items }).then(void_),
+    unregister: () => ipc.call('menu.unregister', {}).then(void_),
+    popup: (label) => ipc.call('menu.popup', { label }).then(void_),
+  };
+
+  return { pluginId, injectionId, dom, overlay, ipc, events, window: windowApi, menu: menuApi, onCleanup, log };
 }

@@ -55,6 +55,29 @@ pub const COMMAND_CAPABILITY_MAP: &[(&str, &str)] = &[
     ("events", "events"),
     ("events.subscribe", "events"),
     ("events.unsubscribe", "events"),
+    // ── window.create (basic window lifecycle; shared by create/show/hide/
+    //    close/set_position/set_size/focus/set_ignore_cursor_events) ──
+    ("window.create", "window.create"),
+    ("window.show", "window.create"),
+    ("window.hide", "window.create"),
+    ("window.close", "window.create"),
+    ("window.set_position", "window.create"),
+    ("window.set_size", "window.create"),
+    ("window.focus", "window.create"),
+    ("window.set_ignore_cursor_events", "window.create"),
+    // ── window.always_on_top (sensitive: cross-app overlay) ──
+    ("window.always_on_top", "window.always_on_top"),
+    ("window.set_always_on_top", "window.always_on_top"),
+    // ── window.transparent (sensitive: invisible/overlay windows) ──
+    ("window.transparent", "window.transparent"),
+    // ── window.skip_taskbar (sensitive: hidden background presence) ──
+    ("window.skip_taskbar", "window.skip_taskbar"),
+    // ── context_menu (native right-click menu registration) ──
+    ("context_menu", "context_menu"),
+    ("menu.register", "context_menu"),
+    ("menu.update", "context_menu"),
+    ("menu.unregister", "context_menu"),
+    ("menu.popup", "context_menu"),
 ];
 
 /// Look up the capability required for `cmd`. Returns `None` for unknown

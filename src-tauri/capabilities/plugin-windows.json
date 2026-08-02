@@ -1,0 +1,20 @@
+{
+  "identifier": "plugin-windows",
+  "description": "Window operation permissions for plugin-created independent windows. Plugin windows have dynamic labels, so this capability targets all windows; the listed permissions are basic window controls already held by the main window.",
+  "windows": ["*"],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-cursor-position",
+    "core:window:allow-inner-position",
+    "core:window:allow-inner-size",
+    "core:window:allow-scale-factor"
+  ]
+}

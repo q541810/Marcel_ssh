@@ -31,6 +31,21 @@ export const PLUGIN_SCOPED_COMMANDS: Record<string, string> = {
   'fs.write': 'plugin_fs_write',
   'net.request': 'plugin_http_request',
   'notification': 'plugin_send_notification',
+  // ── window.create family (independent OS-level windows) ──
+  'window.create': 'plugin_window_create',
+  'window.show': 'plugin_window_show',
+  'window.hide': 'plugin_window_hide',
+  'window.close': 'plugin_window_close',
+  'window.focus': 'plugin_window_focus',
+  'window.set_position': 'plugin_window_set_position',
+  'window.set_size': 'plugin_window_set_size',
+  'window.set_always_on_top': 'plugin_window_set_always_on_top',
+  'window.set_ignore_cursor_events': 'plugin_window_set_ignore_cursor_events',
+  // ── context_menu ──
+  'menu.register': 'plugin_menu_register',
+  'menu.update': 'plugin_menu_update',
+  'menu.unregister': 'plugin_menu_unregister',
+  'menu.popup': 'plugin_menu_popup',
 };
 
 /** Virtual commands handled entirely in the frontend. */

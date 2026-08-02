@@ -42,6 +42,21 @@ const FALLBACK_COMMAND_TO_CAPABILITY: Record<string, string> = {
   'config.read': 'fs.read',
   'config.write': 'fs.write',
   'config.saved': 'fs.write',
+  // ── window.create family: multiple cmds share capabilities ──
+  'window.create': 'window.create',
+  'window.show': 'window.create',
+  'window.hide': 'window.create',
+  'window.close': 'window.create',
+  'window.focus': 'window.create',
+  'window.set_position': 'window.create',
+  'window.set_size': 'window.create',
+  'window.set_ignore_cursor_events': 'window.create',
+  'window.set_always_on_top': 'window.always_on_top',
+  // ── context_menu ──
+  'menu.register': 'context_menu',
+  'menu.update': 'context_menu',
+  'menu.unregister': 'context_menu',
+  'menu.popup': 'context_menu',
 };
 
 /** Live map, populated at init by `pluginIpc.ts`. */

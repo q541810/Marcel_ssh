@@ -519,6 +519,18 @@ pub fn run() {
         .register_uri_scheme_protocol("plugin", |app, request| {
             crate::commands::plugin_uri::handle_plugin_uri(app, request)
         })
+        .on_window_event(|window, event| {
+            // 主窗口关闭时同步关闭所有插件独立窗口：Tauri 只在最后一个窗口
+            // 关闭后退出应用，悬浮的插件窗口（如桌宠）不关会挡住应用退出。
+            #[cfg(desktop)]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    crate::commands::plugin_window::close_all_plugin_windows(
+                        &window.app_handle(),
+                    );
+                }
+            }
+        })
         .setup(|app| {
             let config_dir = app
                 .path()
@@ -526,7 +538,6 @@ pub fn run() {
                 .unwrap_or_else(|_| PathBuf::from("."));
 
             log::info!("App config directory: {}", config_dir.display());
-
             // AppState::new is async — create a short-lived runtime to drive
             // the parallel initialization. Independent stores load via
             // spawn_blocking (thread pool) while KnownHostsStore::load runs
@@ -727,6 +738,19 @@ pub fn run() {
             commands::plugin_webview::plugin_webview_create,
             commands::plugin_webview::plugin_webview_set_bounds,
             commands::plugin_webview::plugin_webview_close,
+            commands::plugin_window::plugin_window_create,
+            commands::plugin_window::plugin_window_show,
+            commands::plugin_window::plugin_window_hide,
+            commands::plugin_window::plugin_window_close,
+            commands::plugin_window::plugin_window_focus,
+            commands::plugin_window::plugin_window_set_position,
+            commands::plugin_window::plugin_window_set_size,
+            commands::plugin_window::plugin_window_set_always_on_top,
+            commands::plugin_window::plugin_window_set_ignore_cursor_events,
+            commands::plugin_menu::plugin_menu_register,
+            commands::plugin_menu::plugin_menu_update,
+            commands::plugin_menu::plugin_menu_unregister,
+            commands::plugin_menu::plugin_menu_popup,
             commands::plugin::plugin_list,
             commands::plugin::plugin_capability_map,
             commands::plugin::plugin_reload,

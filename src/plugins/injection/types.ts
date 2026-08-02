@@ -15,6 +15,32 @@ import type { PluginInjectionDef, PluginManifest } from '@/lib/types';
  *  - `events.on` unifies UI bridge events (`ui:*`, local bus) and backend
  *    events (`ssh://status/*` etc., auto-subscribed + forwarded).
  */
+/** Parameters for `marcel.window.create`. */
+export interface WindowCreateParams {
+  label: string;
+  /** HTML path relative to the plugin root (served via `plugin://`). */
+  entry: string;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  decorations?: boolean;
+  transparent?: boolean;
+  alwaysOnTop?: boolean;
+  skipTaskbar?: boolean;
+  resizable?: boolean;
+}
+
+/** A single native context-menu item. */
+export interface MenuItemDef {
+  /** Stable id returned via the `menu://clicked/*` event on click. */
+  actionId: string;
+  label: string;
+  disabled?: boolean;
+  /** Insert a separator before this item. */
+  separatorBefore?: boolean;
+}
+
 export interface PluginApi {
   readonly pluginId: string;
   readonly injectionId: string;
@@ -57,6 +83,30 @@ export interface PluginApi {
      *  the backend. Use a namespaced name like `<pluginId>:<event>` to avoid
      *  collisions. */
     emit: (eventName: string, data?: unknown) => void;
+  };
+
+  /** Independent OS-level window control (desktop only). Requires the
+   *  `window.create` capability; sensitive flags (`transparent`,
+   *  `alwaysOnTop`, `skipTaskbar`) require their own capabilities. */
+  window: {
+    create: (params: WindowCreateParams) => Promise<void>;
+    show: (label: string) => Promise<void>;
+    hide: (label: string) => Promise<void>;
+    close: (label: string) => Promise<void>;
+    focus: (label: string) => Promise<void>;
+    setPosition: (label: string, x: number, y: number) => Promise<void>;
+    setSize: (label: string, width: number, height: number) => Promise<void>;
+    setAlwaysOnTop: (label: string, alwaysOnTop: boolean) => Promise<void>;
+    setIgnoreCursorEvents: (label: string, ignore: boolean) => Promise<void>;
+  };
+
+  /** Native context-menu registration. Requires the `context_menu` capability. */
+  menu: {
+    register: (items: MenuItemDef[]) => Promise<void>;
+    update: (items: MenuItemDef[]) => Promise<void>;
+    unregister: () => Promise<void>;
+    /** Pop up the registered menu on one of the plugin's owned windows. */
+    popup: (label: string) => Promise<void>;
   };
 
   /** Register a cleanup callback. Called when the injection is deactivated
