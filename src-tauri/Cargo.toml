@@ -62,8 +62,10 @@ tauri-plugin-opener = "^2"
 
 
 # reqwest TLS 后端按平台拆分：桌面用系统原生 TLS；Android 交叉编译没有 OpenSSL，用 rustls。
+# 桌面额外启用 system-proxy：插件市场等 HTTP 请求自动走系统代理（加速工具/Clash 等），
+# 未配置代理时自动直连。Android 不启用（市场功能仅桌面）。
 [target.'cfg(not(target_os = "android"))'.dependencies]
-reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "charset", "gzip", "brotli", "deflate"] }
+reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "system-proxy", "charset", "gzip", "brotli", "deflate"] }
 # 同步 WebSocket：桌面走系统 TLS
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "native-tls"] }
 # 桌面密钥链：Windows Credential Manager / macOS+iOS Keychain / Linux Secret Service

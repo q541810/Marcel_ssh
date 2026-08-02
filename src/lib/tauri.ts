@@ -24,6 +24,8 @@ import type {
   PluginHttpRequest,
   PluginHttpResponse,
   ReloadDiff,
+  MarketIndex,
+  MarketDetail,
   TruncateConversationResult,
   SyncSummary,
   SyncProfile,
@@ -875,4 +877,14 @@ export async function pluginHttpRequest(request: PluginHttpRequest): Promise<Plu
 
 export async function pluginSendNotification(pluginId: string, title: string, body: string): Promise<void> {
   return invoke('plugin_send_notification', { pluginId, title, body });
+}
+
+/** Fetch the plugin market index from a source URL (empty = built-in source). */
+export async function marketList(indexUrl?: string): Promise<MarketIndex> {
+  return invoke<MarketIndex>('market_list', { indexUrl: indexUrl ?? null });
+}
+
+/** Fetch a plugin's plugin.json + README from its GitHub repo. */
+export async function marketDetail(repoUrl: string): Promise<MarketDetail> {
+  return invoke<MarketDetail>('market_detail', { repoUrl });
 }

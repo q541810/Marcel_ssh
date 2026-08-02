@@ -1,5 +1,5 @@
 import type React from 'react';
-import { Bot, Cloud, Cpu, Info, Monitor, Plug, UploadCloud, Wrench } from 'lucide-react';
+import { Bot, Cloud, Cpu, Info, Monitor, Plug, Store, UploadCloud, Wrench } from 'lucide-react';
 
 export interface SettingsCategory {
   id: string;
@@ -22,6 +22,7 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-transfer': 'half',
   'settings-about': 'half',
   'settings-plugins': 'full',
+  'settings-market': 'full',
   'settings-sync': 'full',
 };
 
@@ -67,6 +68,12 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     sections: ['settings-plugins'],
   },
   {
+    id: 'market',
+    label: '插件市场',
+    icon: <Store className="w-4 h-4" />,
+    sections: ['settings-market'],
+  },
+  {
     id: 'sync',
     label: '同步',
     icon: <Cloud className="w-4 h-4" />,
@@ -91,6 +98,7 @@ export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   tools: ['settings-experimental'],
   transfer: ['settings-transfer'],
   plugins: ['settings-plugins'],
+  market: ['settings-market'],
   sync: ['settings-sync'],
   about: ['settings-about'],
 };

@@ -12,6 +12,7 @@ import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
 import { PluginSection } from './PluginSection';
+import { MarketSection } from '@/components/market/MarketSection';
 import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS, SETTINGS_SECTION_SPAN } from './settingsNavigation';
 import { useSettingsLayout } from './helpers';
 
@@ -43,6 +44,16 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
   }, [activeCategory, searchQuery, items]);
 
   const isSearching = searchQuery.trim().length > 0;
+
+  // 市场是浏览型界面，不走设置项的 section grid 框架，全宽渲染。
+  if (activeCategory === 'market' && !isSearching) {
+    return (
+      <div className="flex-1 overflow-hidden bg-zinc-900">
+        <MarketSection />
+      </div>
+    );
+  }
+
   const allSections = [
     { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
     { id: 'settings-display', element: <ConversationDisplaySection /> },
@@ -55,6 +66,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-transfer', element: <TransferSection /> },
     { id: 'settings-about', element: <AboutSection /> },
     { id: 'settings-plugins', element: <PluginSection /> },
+    { id: 'settings-market', element: <MarketSection /> },
     { id: 'settings-sync', element: <SyncSettingsSection /> },
   ];
   // 搜索时渲染全部 Section（隐藏不匹配的），确保所有 SettingItem 注册到搜索索引；

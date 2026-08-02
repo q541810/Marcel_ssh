@@ -1256,6 +1256,43 @@ server-monitor/
 
 ---
 
+## 上架到插件市场
+
+Marcel SSH 有官方插件市场（GitHub 托管，应用内可浏览/跳转下载），仓库：
+
+**https://github.com/q541810/marcel-ssh-plugins**
+
+### 插件仓库规范
+
+- **`plugin.json` 必须位于插件仓库根目录**（市场索引从它提取 id/version/name/description/minAppVersion/capabilities）
+- 建议提供 `README.md`：功能介绍、安装方式、配置说明、使用示例
+- 仓库必须公开
+
+### 上架流程
+
+1. 在[市场仓库](https://github.com/q541810/marcel-ssh-plugins)创建 [插件上架 Issue](../../../q541810/marcel-ssh-plugins/issues/new?template=plugin-submit.md)
+2. 按模板填写插件 ID、仓库地址（owner/repo）、分类、图标，勾选确认事项
+3. 机器人自动校验（仓库可达 / plugin.json 合法 / 确认事项勾选），结果评论在 Issue 中
+   - ✅ 通过 → 自动收录，刷新 `index.json`
+   - ❌ 失败 → 评论原因，编辑 Issue 重新触发或重新提交
+
+**更新插件**：修改插件仓库发布新版本后，重新提交模板（插件 ID 不变即视为更新）或编辑原 Issue。
+
+### 索引协议
+
+应用侧市场功能读取市场仓库的 `index.json`（机器人自动生成，不要手改）：
+
+```jsonc
+{ "plugins": [{ "id", "name", "version", "publisher", "minAppVersion",
+  "description", "capabilities", "category", "icon", "repoUrl", "updatedAt" }] }
+```
+
+- `repoUrl` 指向插件仓库，应用内"下载"即跳转该仓库网页
+- `icon`：`{ "kind": "emoji" | "img", "value": "..." }`
+- 市场源可配置：内置官方源（GitHub），或自定义源（镜像 index.json 地址 + 可选仓库地址重写规则）
+
+---
+
 ## 更多
 
 - [API 参考](./plugin-api.md) — 完整的字段定义、协议格式

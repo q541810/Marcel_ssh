@@ -3,6 +3,7 @@ pub mod agent_lifecycle;
 pub mod agent_policy;
 pub mod connections;
 pub mod keychain;
+pub mod market;
 pub mod mcp;
 pub mod plugin;
 pub mod plugin_api;

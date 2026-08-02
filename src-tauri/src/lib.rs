@@ -683,6 +683,8 @@ pub fn run() {
             commands::keychain::config_save_jump_password,
             commands::keychain::config_has_jump_password,
             commands::keychain::config_delete_jump_password,
+            commands::market::market_list,
+            commands::market::market_detail,
             commands::keychain::config_save_jump_passphrase,
             commands::keychain::config_has_jump_passphrase,
             commands::keychain::config_delete_jump_passphrase,
