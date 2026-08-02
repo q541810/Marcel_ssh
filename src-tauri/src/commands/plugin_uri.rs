@@ -21,7 +21,12 @@ pub fn handle_plugin_uri<R: Runtime>(
     let app = ctx.app_handle();
     let uri = request.uri();
     let plugin_id = uri.host().unwrap_or("").to_string();
-    let path = uri.path().to_string();
+    // Percent-decode the path so non-ASCII filenames (e.g. Chinese GIF names)
+    // resolve correctly. Without this, `assets/%E6%AD%A3....gif` fails
+    // canonicalize in `is_within_base` → 403 instead of serving the file.
+    let path = percent_encoding::percent_decode_str(uri.path())
+        .decode_utf8_lossy()
+        .to_string();
 
     if !is_plugin_enabled(app, &plugin_id) {
         return forbidden("plugin disabled");
@@ -78,7 +83,24 @@ pub(crate) fn guess_mime(path: &std::path::Path) -> &'static str {
         Some("json") => "application/json; charset=utf-8",
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
         Some("svg") => "image/svg+xml",
+        Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("ogg") => "video/ogg",
+        Some("mp3") => "audio/mpeg",
+        Some("wav") => "audio/wav",
+        Some("flac") => "audio/flac",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
+        Some("wasm") => "application/wasm",
+        Some("txt") | Some("md") => "text/plain; charset=utf-8",
+        Some("xml") => "application/xml; charset=utf-8",
         _ => "application/octet-stream",
     }
 }

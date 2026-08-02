@@ -3488,6 +3488,7 @@ dependencies = [
  "ndk-context",
  "notify",
  "parking_lot",
+ "percent-encoding",
  "rand 0.8.6",
  "reqwest 0.12.28",
  "rusqlite",
