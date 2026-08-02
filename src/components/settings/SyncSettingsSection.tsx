@@ -17,6 +17,7 @@ import Modal from '@/components/ui/Modal';
 import { useSyncStore } from '@/stores/syncStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { SyncCategory, SyncProfile } from '@/lib/types';
+import { formatSize } from '@/lib/sftp-helpers';
 import { SYNC_DISCLAIMER_BODY, SYNC_DISCLAIMER_TITLE } from '@/lib/syncDisclaimer';
 import { validateNewAccountPassword } from '@/lib/syncPassword';
 import { OFFICIAL_SYNC_SERVER_URL } from '@/lib/constants';
@@ -516,6 +517,32 @@ export function SyncSettingsSection() {
                 {summary.deviceId?.slice(0, 8) ?? '—'}
               </code>
             </SettingItem>
+
+            {/* 存储配额：仅新版服务端支持；旧服务端（404）/ 网络失败时 quota 为 null，整行不渲染 */}
+            {quota !== null && (
+              <SettingItem
+                id="sync-quota"
+                label="存储配额"
+                description={
+                  quota.quotaLimitBytes > 0
+                    ? `已用 ${formatSize(quota.quotaUsedBytes)} / ${formatSize(quota.quotaLimitBytes)}`
+                    : '自部署服务器，无配额限制'
+                }
+                sectionId={SECTION_ID}
+                keywords={['quota', '配额', '存储', '空间', 'storage']}
+              >
+                {quota.quotaLimitBytes > 0 ? (
+                  <div className="w-44">
+                    <QuotaBar
+                      used={quota.quotaUsedBytes}
+                      limit={quota.quotaLimitBytes}
+                    />
+                  </div>
+                ) : (
+                  <span className="text-xs text-emerald-400">无限制</span>
+                )}
+              </SettingItem>
+            )}
           </Card>
 
           {/* sync_profile 勾选 */}
@@ -668,5 +695,33 @@ function SyncStateBadge({ state }: { state: string }) {
       {c.dot && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
       {c.label}
     </span>
+  );
+}
+
+/** 配额使用进度条：超过 90% 转琥珀色提示接近上限，超过 100% 变红 */
+function QuotaBar({ used, limit }: { used: number; limit: number }) {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const barClass =
+    pct >= 100
+      ? 'bg-red-500'
+      : pct >= 90
+        ? 'bg-amber-400'
+        : 'bg-indigo-500';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 flex-1 rounded-full bg-zinc-800 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${barClass}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span
+        className={`text-xs tabular-nums whitespace-nowrap ${
+          pct >= 90 ? 'text-amber-400' : 'text-zinc-400'
+        }`}
+      >
+        {Math.round(pct)}%
+      </span>
+    </div>
   );
 }

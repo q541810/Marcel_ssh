@@ -18,6 +18,7 @@ import type {
   SyncSummary,
   SyncProfile,
   SyncDeviceInfo,
+  SyncQuota,
   SyncStateEvent,
   SyncCategory,
   SyncPendingConflict,
@@ -32,6 +33,7 @@ import {
   syncPushNow,
   syncPullNow,
   syncListDevices,
+  syncGetQuota,
   syncRemoveDevice,
   syncResetAccount,
   syncDisable,
@@ -88,6 +90,8 @@ interface SyncStoreState {
   summary: SyncSummary | null;
   /** 已配对设备列表 */
   devices: SyncDeviceInfo[];
+  /** 账户配额使用情况（null = 未拉取/旧服务端无此端点/未配置） */
+  quota: SyncQuota | null;
   /** 操作中（pair / disable / reset 等） */
   actionLoading: boolean;
   /** 最近错误 */
@@ -107,7 +111,7 @@ interface SyncStoreState {
 }
 
 interface SyncStoreActions {
-  /** 加载同步摘要 + 设备列表 + 永久跳过项 */
+  /** 加载同步摘要 + 设备列表 + 配额 + 永久跳过项 */
   load: () => Promise<void>;
   /** 第一台设备配对（需账户密码） */
   pairFirst: (serverUrl: string, password: string) => Promise<string | null>;
@@ -159,6 +163,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   loaded: false,
   summary: null,
   devices: [],
+  quota: null,
   actionLoading: false,
   error: null,
   pendingConflicts: [],
@@ -167,12 +172,14 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
 
   async load() {
     try {
-      // summary / excludedKeys 是本机数据，必须成功；devices 走网络，失败不阻塞主界面
-      const [summaryResult, devicesResult, excludedResult] = await Promise.allSettled([
-        syncGetSummary(),
-        syncListDevices(),
-        syncGetExcludedKeys(),
-      ]);
+      // summary / excludedKeys 是本机数据，必须成功；devices / quota 走网络，失败不阻塞主界面
+      const [summaryResult, devicesResult, excludedResult, quotaResult] =
+        await Promise.allSettled([
+          syncGetSummary(),
+          syncListDevices(),
+          syncGetExcludedKeys(),
+          syncGetQuota(),
+        ]);
 
       if (summaryResult.status === 'rejected') {
         set({
@@ -187,6 +194,10 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
         devicesResult.status === 'fulfilled' ? devicesResult.value : [];
       const excludedKeys =
         excludedResult.status === 'fulfilled' ? excludedResult.value : [];
+      // quota 静默降级：旧版服务端无此端点（404）/网络失败时不展示配额行，
+      // 不置 error——否则旧服务端用户进同步页就看到错误红条
+      const quota =
+        quotaResult.status === 'fulfilled' ? quotaResult.value : null;
       const networkError =
         devicesResult.status === 'rejected'
           ? getErrorMessage(devicesResult.reason)
@@ -198,6 +209,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
         summary,
         devices,
         excludedKeys,
+        quota,
         loaded: true,
         error: networkError,
       });
@@ -270,6 +282,13 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   async pushNow() {
     try {
       await syncPushNow();
+      // push 会改变服务端存储用量，推送后刷新配额（失败静默：旧服务端无此端点时保持旧值）
+      try {
+        const quota = await syncGetQuota();
+        set({ quota });
+      } catch (e) {
+        console.warn('[syncStore] 刷新配额失败:', e);
+      }
     } catch (e) {
       set({ error: getErrorMessage(e) });
       throw e;

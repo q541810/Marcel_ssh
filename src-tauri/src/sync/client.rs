@@ -145,6 +145,28 @@ pub struct SnapshotResponse {
     pub total_size: i64,
 }
 
+/// 账户配额使用情况（GET /api/account/quota）
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountQuotaResponse {
+    /// 已用字节数（snapshots + sync_profiles）
+    pub quota_used_bytes: i64,
+    /// 配额上限字节数；0 = 无限制
+    pub quota_limit_bytes: i64,
+    /// "hosted" / "self-hosted"
+    pub mode: String,
+}
+
+/// push 超配额（413）时服务端返回的结构化 detail
+#[derive(Debug, Deserialize)]
+struct QuotaExceededDetail {
+    error: String,
+    #[allow(dead_code)]
+    current: i64,
+    #[allow(dead_code)]
+    push_size: i64,
+    quota: i64,
+}
+
 // ── 客户端实现 ────────────────────────────────────────
 
 impl SyncClient {
@@ -308,6 +330,24 @@ impl SyncClient {
             .send()
             .await
             .map_err(map_network_err)?;
+        if resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+            return Err(parse_quota_exceeded(resp).await);
+        }
+        handle_response(resp).await
+    }
+
+    /// 查询账户配额使用情况（托管模式返回实际用量；自部署 quota=0 表示无限制）
+    pub async fn get_account_quota(
+        &self,
+        api_key: &str,
+    ) -> Result<AccountQuotaResponse, AppError> {
+        let url = self.url("/api/account/quota");
+        let resp = self.http
+            .get(&url)
+            .headers(auth_header(api_key))
+            .send()
+            .await
+            .map_err(map_network_err)?;
         handle_response(resp).await
     }
 
@@ -384,6 +424,61 @@ async fn handle_response_no_body(resp: reqwest::Response) -> Result<(), AppError
     }
 }
 
+/// 解析 413 配额超限响应为友好文案。
+///
+/// 新版服务端返回结构化 detail `{ error, current, push_size, quota }`；
+/// 旧版服务端返回字符串 detail（`{"detail": "配额超限：…"}`），解析失败时回退原始文本。
+async fn parse_quota_exceeded(resp: reqwest::Response) -> AppError {
+    let text = resp.text().await.unwrap_or_default();
+    parse_quota_exceeded_text(&text)
+}
+
+/// 纯函数版 413 解析（便于单测）。
+fn parse_quota_exceeded_text(text: &str) -> AppError {
+    let fallback = || AppError::Network(format!("服务端错误 (413): {}", text));
+
+    // 新版服务端：{"detail": {"error": "quota_exceeded", "current": .., "push_size": .., "quota": ..}}
+    let detail: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) => v,
+        Err(_) => return fallback(),
+    };
+    let detail = match detail.get("detail") {
+        Some(d) => d,
+        None => return fallback(),
+    };
+    let detail: QuotaExceededDetail = match serde_json::from_value(detail.clone()) {
+        Ok(d) => d,
+        Err(_) => return fallback(),
+    };
+    if detail.error != "quota_exceeded" {
+        return fallback();
+    }
+
+    AppError::Network(format!(
+        "同步配额已满：已用 {}，配额 {}，本次需 {}",
+        format_quota_bytes(detail.current),
+        format_quota_bytes(detail.quota),
+        format_quota_bytes(detail.push_size),
+    ))
+}
+
+/// 字节数 → 人类可读（≤1024 用 B，否则 KB/MB/GB）
+fn format_quota_bytes(bytes: i64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let b = bytes as f64;
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.1} KB", b / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,5 +506,46 @@ mod tests {
         let headers = auth_header("test_api_key");
         let auth = headers.get(reqwest::header::AUTHORIZATION).unwrap();
         assert_eq!(auth.to_str().unwrap(), "Bearer test_api_key");
+    }
+
+    #[test]
+    fn test_parse_quota_exceeded_structured() {
+        let body = r#"{"detail":{"error":"quota_exceeded","current":1048576,"push_size":204800,"quota":5242880}}"#;
+        let err = parse_quota_exceeded_text(body);
+        assert!(err.to_string().contains("1.0 MB"));
+        assert!(err.to_string().contains("5.0 MB"));
+        assert!(err.to_string().contains("200.0 KB"));
+    }
+
+    #[test]
+    fn test_parse_quota_exceeded_old_server_falls_back() {
+        // 旧版服务端：detail 是字符串，解析失败应回退原始文本
+        let body = r#"{"detail":"配额超限：当前 1048576 字节 + 推送 204800 字节 > 配额 5242880 字节"}"#;
+        let err = parse_quota_exceeded_text(body);
+        assert!(err.to_string().contains("配额超限"));
+        assert!(err.to_string().contains("413"));
+    }
+
+    #[test]
+    fn test_parse_quota_exceeded_non_json_falls_back() {
+        let err = parse_quota_exceeded_text("server error: nginx 413");
+        assert!(err.to_string().contains("server error"));
+    }
+
+    #[test]
+    fn test_parse_quota_exceeded_other_error_type_falls_back() {
+        // 413 但 error 类型不是 quota_exceeded（异常数据），回退
+        let body = r#"{"detail":{"error":"something_else","current":1,"push_size":2,"quota":3}}"#;
+        let err = parse_quota_exceeded_text(body);
+        assert!(err.to_string().contains("413"));
+    }
+
+    #[test]
+    fn test_format_quota_bytes() {
+        assert_eq!(format_quota_bytes(0), "0 B");
+        assert_eq!(format_quota_bytes(512), "512 B");
+        assert_eq!(format_quota_bytes(1024), "1.0 KB");
+        assert_eq!(format_quota_bytes(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(format_quota_bytes(2 * 1024 * 1024 * 1024), "2.0 GB");
     }
 }

@@ -891,6 +891,16 @@ export interface SyncDeviceInfo {
   lastSeenAt: string;
 }
 
+/** 账户配额使用情况（GET sync_get_quota 返回；旧服务端无此端点时前端静默隐藏配额行） */
+export interface SyncQuota {
+  /** 已用字节数（snapshots + sync_profiles） */
+  quotaUsedBytes: number;
+  /** 配额上限字节数；0 = 无限制 */
+  quotaLimitBytes: number;
+  /** 'hosted' | 'self-hosted' */
+  mode: string;
+}
+
 /** sync_pair_first / sync_pair_join 返回值 */
 export interface SyncPairResult {
   /** 第一台设备返回新生成的配置码（仅此一次，用户必须手抄保存）；其他设备返回 null */

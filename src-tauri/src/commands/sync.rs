@@ -60,6 +60,15 @@ pub struct SyncDeviceInfoDto {
     pub last_seen_at: String,
 }
 
+/// 账户配额使用情况（camelCase，与前端 SyncQuota 对齐）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncQuotaDto {
+    pub quota_used_bytes: i64,
+    pub quota_limit_bytes: i64,
+    pub mode: String,
+}
+
 // ── 辅助：从 AppState 拿 sync 组件 ────────────────
 
 /// 尝试从 keychain 拿 API Key。
@@ -420,6 +429,33 @@ pub async fn sync_list_devices(
             last_seen_at: d.last_seen_at,
         })
         .collect())
+}
+
+/// 查询账户配额使用情况。
+///
+/// 未配置同步时返回 `None`；网络失败（含旧版服务端无此端点 → 404）时返回错误，
+/// 由前端静默降级（不展示配额行），不阻塞同步页面其余内容。
+#[tauri::command]
+pub async fn sync_get_quota(
+    state: State<'_, AppState>,
+) -> Result<Option<SyncQuotaDto>, AppError> {
+    let api_key = match get_api_key(&state).await? {
+        Some(k) => k,
+        None => return Ok(None),
+    };
+
+    let server_url = match sync_keychain::get_server_url()? {
+        Some(url) => url,
+        None => return Ok(None),
+    };
+
+    let client = SyncClient::new(&server_url)?;
+    let quota = client.get_account_quota(&api_key).await?;
+    Ok(Some(SyncQuotaDto {
+        quota_used_bytes: quota.quota_used_bytes,
+        quota_limit_bytes: quota.quota_limit_bytes,
+        mode: quota.mode,
+    }))
 }
 
 /// 删除某设备（撤销其 API Key）。

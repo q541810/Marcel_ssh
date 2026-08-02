@@ -176,6 +176,12 @@ class SyncEngine:
 
         return snapshots + profiles
 
+    async def account_quota(self, account_id: str) -> int:
+        """查询账户当前已用存储字节数（snapshots + sync_profiles，锁内计算）。"""
+        async with self._db._lock:
+            conn = self._db.conn
+            return await self._get_account_size_locked(conn, account_id)
+
     async def check_sync_profile_quota(
         self,
         account_id: str,

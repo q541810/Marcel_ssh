@@ -30,6 +30,7 @@ import type {
   SyncSummary,
   SyncProfile,
   SyncDeviceInfo,
+  SyncQuota,
   SyncPairResult,
   SyncResetResult,
   SyncPendingConflict,
@@ -694,6 +695,11 @@ export async function syncPullNow(): Promise<void> {
 /** 列出已配对设备 */
 export async function syncListDevices(): Promise<SyncDeviceInfo[]> {
   return invoke<SyncDeviceInfo[]>('sync_list_devices');
+}
+
+/** 查询账户配额使用情况（未配置同步返回 null；旧服务端无此端点会报错，调用方静默降级） */
+export async function syncGetQuota(): Promise<SyncQuota | null> {
+  return invoke<SyncQuota | null>('sync_get_quota');
 }
 
 /** 删除（撤销）某设备的 API Key */

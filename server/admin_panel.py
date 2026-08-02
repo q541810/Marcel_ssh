@@ -208,6 +208,7 @@ class SystemResponse(BaseModel):
 
 
 class AccountItem(BaseModel):
+    account_id: str = Field(..., description="账户完整 ID（SHA-256 hex，用于设备列表查询）")
     account_id_short: str = Field(..., description="账户 ID 截断（前 8 位 + …）")
     device_count: int
     quota_used_bytes: int
@@ -428,6 +429,7 @@ async def _collect_accounts() -> AccountListResponse:
     items: list[AccountItem] = []
     for row in rows:
         items.append(AccountItem(
+            account_id=row["account_id"],
             account_id_short=_short_id(row["account_id"]),
             device_count=row["device_count"],
             quota_used_bytes=row["quota_used"],

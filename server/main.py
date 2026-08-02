@@ -52,6 +52,7 @@ from models import (
     PullRequest,
     PullResponse,
     SnapshotResponse,
+    AccountQuotaResponse,
 )
 
 logging.basicConfig(
@@ -399,6 +400,22 @@ async def delete_account(
     return {"status": "deleted"}
 
 
+@app.get("/api/account/quota", response_model=AccountQuotaResponse)
+async def get_account_quota(auth_ctx: tuple[str, str] = Depends(verify_auth)):
+    """查询当前账户的配额使用情况。
+
+    返回已用字节数（snapshots + sync_profiles）与配额上限；
+    自部署模式（hosted=false）quota_limit_bytes=0 表示无限制。
+    """
+    account_id, _ = auth_ctx
+    used = await sync_engine.account_quota(account_id)
+    return AccountQuotaResponse(
+        quota_used_bytes=used,
+        quota_limit_bytes=config.account_quota_bytes,
+        mode="hosted" if config.is_hosted else "self-hosted",
+    )
+
+
 # ── 设备路由 ──────────────────────────────────────────
 
 @app.post("/api/device/register", response_model=DeviceRegisterResponse)
@@ -427,6 +444,17 @@ async def update_sync_profile(
     try:
         await device_mgr.update_sync_profile(account_id, request)
         return {"status": "ok"}
+    except QuotaExceededError as e:
+        # 结构化 detail：客户端解析 current/quota 生成友好文案
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "quota_exceeded",
+                "current": e.current,
+                "push_size": e.push_size,
+                "quota": e.quota,
+            },
+        )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -474,7 +502,16 @@ async def push(
         await ws_manager.notify_changes(account_id, device_id)
         return result
     except QuotaExceededError as e:
-        raise HTTPException(status_code=413, detail=str(e))
+        # 结构化 detail：客户端可解析 current/quota 生成「已用 X / 配额 Y」提示
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "quota_exceeded",
+                "current": e.current,
+                "push_size": e.push_size,
+                "quota": e.quota,
+            },
+        )
 
 
 @app.post("/api/sync/pull", response_model=PullResponse)

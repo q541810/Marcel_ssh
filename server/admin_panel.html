@@ -1053,15 +1053,15 @@
         ? '<span class="acc-online-badge is-online"><span class="dot"></span>在线</span>'
         : '<span class="acc-online-badge is-offline"><span class="dot"></span>离线</span>';
       return ''
-        + '<tr class="acc-row" data-account-id="' + a.account_id_short + '" data-index="' + i + '">'
-        +   '<td><button class="expand-btn" data-expand="' + a.account_id_short + '" aria-label="展开设备">+</button></td>'
+        + '<tr class="acc-row" data-account-id="' + a.account_id + '" data-index="' + i + '">'
+        +   '<td><button class="expand-btn" data-expand="' + a.account_id + '" aria-label="展开设备">+</button></td>'
         +   '<td><span class="acc-id">' + a.account_id_short + '</span></td>'
         +   '<td>' + badge + '</td>'
         +   '<td><div class="quota-cell"><div class="quota-bar"><div class="quota-bar-fill ' + barClass + '" style="width:' + pct + '%"></div></div><span class="quota-text">' + quotaText + '</span></div></td>'
         +   '<td class="num-cell">' + a.device_count + '</td>'
         +   '<td class="time-cell">' + fmtRelative(a.last_active_at) + '</td>'
         + '</tr>'
-        + '<tr class="devices-row is-hidden" data-devices-for="' + a.account_id_short + '"><td colspan="6"><div class="devices-inner"><div class="devices-title">设备列表</div><div class="devices-content">加载中…</div></div></td></tr>';
+        + '<tr class="devices-row is-hidden" data-devices-for="' + a.account_id + '"><td colspan="6"><div class="devices-inner"><div class="devices-title">设备列表</div><div class="devices-content">加载中…</div></div></td></tr>';
     }).join('');
 
     // 绑定展开按钮

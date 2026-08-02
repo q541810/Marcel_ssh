@@ -31,6 +31,7 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/account/setup":   (3, 60),
     "/api/account/join":    (5, 60),
     "/api/account":         (5, 60),  # DELETE
+    "/api/account/quota":   (60, 60),  # GET 配额查询（低频读，与同步类端点一致）
     "/api/device/register": (10, 60),
     "/api/sync/push":       (60, 60),
     "/api/sync/pull":       (60, 60),

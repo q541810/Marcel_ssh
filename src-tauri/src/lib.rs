@@ -770,6 +770,7 @@ pub fn run() {
             commands::sync::sync_push_now,
             commands::sync::sync_pull_now,
             commands::sync::sync_list_devices,
+            commands::sync::sync_get_quota,
             commands::sync::sync_remove_device,
             commands::sync::sync_reset_account,
             commands::sync::sync_disable,

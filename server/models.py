@@ -131,6 +131,13 @@ class SnapshotResponse(BaseModel):
     total_size: int = Field(..., description="总字节数，用于配额展示")
 
 
+class AccountQuotaResponse(BaseModel):
+    """账户配额使用情况（GET /api/account/quota）。"""
+    quota_used_bytes: int = Field(..., description="已用字节数（snapshots + sync_profiles）")
+    quota_limit_bytes: int = Field(..., description="配额上限字节数；0=无限制")
+    mode: str = Field(..., description="hosted / self-hosted")
+
+
 # ── WebSocket ────────────────────────────────────────
 
 class WSMessage(BaseModel):

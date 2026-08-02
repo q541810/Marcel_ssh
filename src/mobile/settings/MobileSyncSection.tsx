@@ -13,6 +13,7 @@ import { RefreshCw, CloudOff, AlertTriangle, ShieldCheck, Info } from 'lucide-re
 import { useSyncStore } from '@/stores/syncStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { SyncCategory, SyncProfile } from '@/lib/types';
+import { formatSize } from '@/lib/sftp-helpers';
 import Toggle from '@/components/ui/Toggle';
 import { MobileSettingRow } from './MobileSettingRow';
 import MobileSyncPairPage, { type MobileSyncPairMode } from '../MobileSyncPairPage';
@@ -41,6 +42,7 @@ const inputClass =
 export function MobileSyncSection() {
   const {
     summary,
+    quota,
     loaded,
     actionLoading,
     error,
@@ -235,6 +237,33 @@ export function MobileSyncSection() {
               </button>
             </div>
           </MobileSettingRow>
+
+          {/* 存储配额：仅新版服务端支持；旧服务端（404）/ 网络失败时 quota 为 null，整行不渲染 */}
+          {quota !== null && (
+            <MobileSettingRow
+              label="存储配额"
+              description={
+                quota.quotaLimitBytes > 0
+                  ? `已用 ${formatSize(quota.quotaUsedBytes)} / ${formatSize(quota.quotaLimitBytes)}`
+                  : '自部署服务器，无配额限制'
+              }
+              trailing={
+                quota.quotaLimitBytes > 0 ? (
+                  <span
+                    className={`text-xs tabular-nums ${
+                      quota.quotaUsedBytes / quota.quotaLimitBytes >= 0.9
+                        ? 'text-amber-400'
+                        : 'text-zinc-400'
+                    }`}
+                  >
+                    {Math.min(100, Math.round((quota.quotaUsedBytes / quota.quotaLimitBytes) * 100))}%
+                  </span>
+                ) : (
+                  <span className="text-xs text-emerald-400">无限制</span>
+                )
+              }
+            />
+          )}
 
           {/* sync_profile */}
           <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">同步内容</div>
