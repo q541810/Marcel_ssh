@@ -33,9 +33,10 @@ pub async fn plugin_reload(
 ) -> Result<ReloadDiff, AppError> {
     let config_dir = state.config_dir.clone();
     let settings = state.settings.read().await.clone();
+    let app_version = app.package_info().version.to_string();
     let diff = {
         let mut reg = state.plugin_registry.write().await;
-        reg.reload(&config_dir, &settings).await
+        reg.reload(&config_dir, &settings, &app_version).await
     };
     let _ = app.emit("plugin-registry-changed", &diff);
     Ok(diff)

@@ -31,6 +31,11 @@ pub enum PluginState {
     Disabled,
     /// Manifest parsed and plugin is enabled.
     Enabled,
+    /// Manifest parsed, user did not disable it, but the running app version
+    /// is lower than the plugin's declared `minAppVersion`. Treated as
+    /// disabled for loading purposes (tools/injections never activate) while
+    /// still visible in the settings UI with the required version shown.
+    Incompatible(String),
     /// Manifest failed to parse or load. The plugin is skipped.
     Error(String),
 }
@@ -71,7 +76,16 @@ impl PluginRegistry {
     /// update state based on `AppSettings.disabled_plugins`, refresh section
     /// cache, and return the diff. Emits `plugin-registry-changed` on the
     /// `AppHandle` so the frontend can diff-refresh.
-    pub async fn reload(&mut self, config_dir: &Path, settings: &AppSettings) -> ReloadDiff {
+    ///
+    /// `app_version` is the running app version (e.g. `package_info().version`).
+    /// Plugins declaring a `minAppVersion` above it are held in state
+    /// `Incompatible` (effectively disabled).
+    pub async fn reload(
+        &mut self,
+        config_dir: &Path,
+        settings: &AppSettings,
+        app_version: &str,
+    ) -> ReloadDiff {
         let scanned = tokio::task::spawn_blocking({
             let config_dir = config_dir.to_path_buf();
             move || scan_plugins(&config_dir)
@@ -107,22 +121,39 @@ impl PluginRegistry {
                 // Compare by serialised form — catches any field change.
                 serde_json::to_string(p).ok() != serde_json::to_string(m).ok()
             });
-            let prev_enabled = prev.map_or(None, |e| match e.state {
+            let prev_effective_enabled = prev.and_then(|e| match e.state {
                 PluginState::Enabled => Some(true),
-                PluginState::Disabled => Some(false),
+                PluginState::Disabled | PluginState::Incompatible(_) => Some(false),
                 _ => None,
             });
-            let now_enabled = !disabled.contains(id);
-            let enabled_changed = prev_enabled.map_or(true, |p| p != now_enabled);
+            let now_effective_enabled =
+                !disabled.contains(id) && min_app_version_satisfied(m, app_version);
+            let enabled_changed = prev_effective_enabled != Some(now_effective_enabled);
 
             if manifest_changed || enabled_changed {
                 changed.push(id.clone());
             }
 
-            let state = if now_enabled {
+            // State: disabled by user > incompatible app version > enabled.
+            // An incompatible plugin is not loaded (tools/injections inactive),
+            // and it is NOT written into `disabled_plugins` — once the app is
+            // upgraded it recovers automatically on the next reload.
+            let state = if disabled.contains(id) {
+                PluginState::Disabled
+            } else if min_app_version_satisfied(m, app_version) {
                 PluginState::Enabled
             } else {
-                PluginState::Disabled
+                let reason = m
+                    .min_app_version
+                    .as_ref()
+                    .map_or_else(|| "版本不兼容".to_string(), |min| format!("需要应用 v{}", min));
+                log::warn!(
+                    "插件 {} 不兼容当前应用版本 {}: {}",
+                    m.id,
+                    app_version,
+                    reason
+                );
+                PluginState::Incompatible(reason)
             };
 
             // Refresh section cache: only if the plugin declares one AND the
@@ -230,6 +261,41 @@ impl PluginRegistry {
 /// Type alias for the Arc-wrapped registry stored on AppState.
 pub type SharedPluginRegistry = Arc<RwLock<PluginRegistry>>;
 
+/// Lenient dot-separated numeric version parser: every segment must be a plain
+/// number (`"1.7"` and `"1.7.0"` both parse). Returns `None` on any malformed
+/// segment (e.g. `"abc"`, `"1.x"`).
+fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
+    s.split('.').map(|seg| seg.trim().parse::<u64>().ok()).collect()
+}
+
+/// Whether the plugin's `minAppVersion` (if declared) is satisfied by the
+/// running `app_version`. Comparison is lenient numeric per-segment (missing
+/// segments count as 0), so `"1.7"` satisfies `"1.7.0"` and vice versa.
+/// Any unparseable version is treated as NOT satisfied (conservative).
+fn min_app_version_satisfied(m: &PluginManifest, app_version: &str) -> bool {
+    let Some(min) = m.min_app_version.as_ref() else {
+        return true;
+    };
+    let Some(min_parts) = parse_version_parts(min) else {
+        return false;
+    };
+    let Some(app_parts) = parse_version_parts(app_version) else {
+        return false;
+    };
+    let len = min_parts.len().max(app_parts.len());
+    for i in 0..len {
+        let app_part = app_parts.get(i).copied().unwrap_or(0);
+        let min_part = min_parts.get(i).copied().unwrap_or(0);
+        if app_part < min_part {
+            return false;
+        }
+        if app_part > min_part {
+            return true;
+        }
+    }
+    true
+}
+
 /// Convenience: build a fresh shared registry (empty; call `reload` to populate).
 pub fn new_shared() -> SharedPluginRegistry {
     Arc::new(RwLock::new(PluginRegistry::default()))
@@ -267,7 +333,7 @@ mod tests {
         write_plugin(&tmp, "a");
         write_plugin(&tmp, "b");
         let mut reg = PluginRegistry::default();
-        let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert_eq!(diff.all_ids.len(), 2);
         assert!(diff.changed.contains(&"a".to_string()));
         assert!(diff.changed.contains(&"b".to_string()));
@@ -280,7 +346,7 @@ mod tests {
         write_plugin(&tmp, "a");
         write_plugin(&tmp, "b");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &settings_with_disabled(&["a"]))
+        reg.reload(tmp.path(), &settings_with_disabled(&["a"]), "1.0.0")
             .await;
         assert!(!reg.is_enabled("a"));
         assert!(reg.is_enabled("b"));
@@ -294,10 +360,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default()).await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         // Remove plugin a
         fs::remove_dir_all(tmp.path().join("plugins/a")).unwrap();
-        let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert!(diff.removed.contains(&"a".to_string()));
         assert!(!reg.get("a").is_some());
     }
@@ -307,10 +373,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &settings_with_disabled(&["a"]))
+        reg.reload(tmp.path(), &settings_with_disabled(&["a"]), "1.0.0")
             .await;
         // Enable plugin a
-        let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert!(diff.changed.contains(&"a".to_string()));
         assert!(reg.is_enabled("a"));
     }
@@ -320,8 +386,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default()).await;
-        let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert!(diff.changed.is_empty());
         assert!(diff.removed.is_empty());
     }
@@ -343,7 +409,7 @@ mod tests {
         );
         fs::write(dir.join("section.md"), "hello section").unwrap();
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default()).await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert_eq!(reg.section_for("a"), Some("hello section"));
     }
 
@@ -351,8 +417,113 @@ mod tests {
     async fn reload_on_missing_plugins_dir_returns_empty() {
         let tmp = TempDir::new().unwrap();
         let mut reg = PluginRegistry::default();
-        let diff = reg.reload(tmp.path(), &AppSettings::default()).await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
         assert!(diff.all_ids.is_empty());
         assert!(diff.changed.is_empty());
+    }
+
+    fn write_plugin_with_min_version(tmp: &TempDir, id: &str, min: Option<&str>) {
+        let dir = tmp.path().join("plugins").join(id);
+        fs::create_dir_all(&dir).unwrap();
+        let mut manifest = serde_json::json!({
+            "id": id,
+            "version": "1.0.0",
+            "name": id,
+            "capabilities": [],
+            "views": [],
+            "agentTools": []
+        });
+        if let Some(min) = min {
+            manifest["minAppVersion"] = serde_json::json!(min);
+        }
+        fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn enabled_when_min_app_version_satisfied() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("1.0.0"));
+        write_plugin_with_min_version(&tmp, "b", Some("0.5"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        assert!(reg.is_enabled("a"));
+        assert!(reg.is_enabled("b"));
+    }
+
+    #[tokio::test]
+    async fn incompatible_when_min_app_version_above_app() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("2.0.0"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        let entry = reg.get("a").unwrap();
+        assert_eq!(
+            entry.state,
+            PluginState::Incompatible("需要应用 v2.0.0".to_string())
+        );
+        // Not enabled anywhere: tools/injections must not activate.
+        assert!(!reg.is_enabled("a"));
+        assert!(reg.enabled_manifests().is_empty());
+        // Still listed so the settings UI can explain why.
+        assert_eq!(reg.all_manifests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn incompatible_recovers_automatically_after_app_upgrade() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("2.0.0"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        assert!(!reg.is_enabled("a"));
+        // App upgraded -> same plugin now compatible, no user action needed.
+        reg.reload(tmp.path(), &AppSettings::default(), "2.0.0")
+            .await;
+        assert!(reg.is_enabled("a"));
+    }
+
+    #[tokio::test]
+    async fn malformed_min_app_version_treated_incompatible() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("abc"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        assert!(!reg.is_enabled("a"));
+        assert_eq!(reg.all_manifests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn incompatible_plugin_not_re_changed_on_second_reload() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("2.0.0"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        assert!(
+            !diff.changed.contains(&"a".to_string()),
+            "stable incompatible plugin must not re-trigger frontend rebuilds"
+        );
+    }
+
+    #[tokio::test]
+    async fn incompatible_recovers_when_user_disable_removed() {
+        let tmp = TempDir::new().unwrap();
+        write_plugin_with_min_version(&tmp, "a", Some("2.0.0"));
+        let mut reg = PluginRegistry::default();
+        reg.reload(tmp.path(), &settings_with_disabled(&["a"]), "1.0.0")
+            .await;
+        assert_eq!(reg.get("a").unwrap().state, PluginState::Disabled);
+        // User enables it again, but the app is still too old -> Incompatible.
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        assert_eq!(
+            reg.get("a").unwrap().state,
+            PluginState::Incompatible("需要应用 v2.0.0".to_string())
+        );
     }
 }

@@ -4,6 +4,9 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getPluginDir, openPluginDir } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import type { PluginManifest } from '@/lib/types';
+import { satisfiesMinVersion } from '@/lib/semver';
+import { capabilityLabel } from '@/lib/pluginCapabilities';
+import { useAppVersion } from '@/hooks/useAppVersion';
 import { getInjectionStatuses, onStatusChange, retryInjection, type InjectionStatus } from '@/plugins/injection';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
@@ -11,19 +14,6 @@ import Modal from '@/components/ui/Modal';
 import { useSettingsActions } from './SettingsActionsContext';
 import { Card, SettingItem } from './helpers';
 import PluginConfigModal from './PluginConfigModal';
-
-const CAPABILITY_LABELS: Record<string, string> = {
-  'ssh.list': '查询 SSH 会话与连接信息',
-  'ssh.exec': '执行远程命令',
-  'sftp.read': '读取远程文件',
-  'sftp.write': '写入远程文件',
-  'fs.read': '读取本地文件',
-  'fs.write': '写入本地文件',
-  'net.request': '发起网络请求',
-  'notification': '发送通知',
-  'events': '订阅应用事件',
-  'ui.inject': '注入主界面（JS/CSS）',
-};
 
 const MOUNT_LABELS: Record<string, string> = {
   sidebar: '左侧面板',
@@ -148,9 +138,9 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
         <div key={cap} className="flex items-center justify-between py-1">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-sm text-zinc-300">
-              {CAPABILITY_LABELS[cap] ?? cap}
+              {capabilityLabel(cap)}
             </span>
-            {CAPABILITY_LABELS[cap] && (
+            {capabilityLabel(cap) !== cap && (
               <code className="text-[11px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">{cap}</code>
             )}
           </div>
@@ -165,13 +155,20 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
   );
 }
 
-function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; injectionStatus?: InjectionStatus }) {
+function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: PluginManifest; appVersion: string; injectionStatus?: InjectionStatus }) {
   const { settings, update } = useSettingsActions();
   const disabledSet = new Set(settings.disabledPlugins ?? []);
   const isDisabled = disabledSet.has(manifest.id);
   const [showCapabilities, setShowCapabilities] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [showRestartHint, setShowRestartHint] = useState(false);
+
+  // Version compatibility is decided by the backend (Incompatible state);
+  // this UI mirror just explains it. Guard on appVersion being loaded to
+  // avoid a flicker while getVersion() is still resolving.
+  const minRequired = manifest.minAppVersion;
+  const incompatible =
+    !!minRequired && appVersion.length > 0 && !satisfiesMinVersion(appVersion, minRequired);
 
   const togglePlugin = () => {
     const current = settings.disabledPlugins ?? [];
@@ -222,9 +219,15 @@ function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; i
               <Settings className="w-3.5 h-3.5" />
               配置
             </Button>
+            {minRequired && (
+              <span className={`text-[11px] px-1.5 py-0.5 rounded flex-shrink-0 ${incompatible ? 'text-amber-400 bg-amber-500/10' : 'text-zinc-500 bg-zinc-800'}`}>
+                最低兼容 v{minRequired}
+              </span>
+            )}
             <Toggle
-              checked={!isDisabled}
+              checked={!isDisabled && !incompatible}
               onChange={togglePlugin}
+              disabled={incompatible}
             />
           </div>
         </div>
@@ -233,6 +236,16 @@ function PluginCard({ manifest, injectionStatus }: { manifest: PluginManifest; i
       {manifest.description && (
         <div className="px-5 py-3 border-b border-zinc-800">
           <p className="text-sm text-zinc-400 leading-relaxed">{manifest.description}</p>
+        </div>
+      )}
+
+      {/* Incompatibility explanation */}
+      {incompatible && minRequired && (
+        <div className="px-5 py-3 border-b border-zinc-800 bg-amber-500/5">
+          <p className="text-xs text-amber-400 leading-relaxed">
+            此插件需要应用 v{minRequired} 及以上版本，当前版本无法启用。
+            升级应用后刷新将自动恢复可用。
+          </p>
         </div>
       )}
 
@@ -360,14 +373,10 @@ export function PluginSection() {
   const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
   const [pluginDir, setPluginDir] = useState('');
   const [copied, setCopied] = useState(false);
+  const appVersion = useAppVersion();
 
   const injectionStatuses = useInjectionStatuses();
   const statusByPlugin = new Map(injectionStatuses.map((s) => [s.pluginId, s]));
-
-  // Safe-mode toggle (disableAllInjections) lives in settings via the shared
-  // SettingsActionsContext, same as other settings.
-  const { settings, update } = useSettingsActions();
-  const safeModeOn = settings.disableAllInjections ?? false;
 
   useEffect(() => {
     getPluginDir().then(setPluginDir);
@@ -386,7 +395,7 @@ export function PluginSection() {
         <SettingItem
           id="plugins-directory"
           label="插件目录"
-          description="将插件放入此目录后点击刷新即可发现"
+          description="将插件放入此目录后重启软件即可发现"
           sectionId="settings-plugins"
           keywords={['plugin', 'directory', 'path', '插件', '目录']}
         >
@@ -423,19 +432,6 @@ export function PluginSection() {
             </Button>
           </div>
         </SettingItem>
-
-        <SettingItem
-          id="plugins-safe-mode"
-          label="注入安全模式"
-          description="开启后跳过所有插件内容脚本注入。插件 JS 卡死主界面时用此开关自救，重启后生效。"
-          sectionId="settings-plugins"
-          keywords={['safe', 'mode', 'injection', '安全模式', '注入', 'disable']}
-        >
-          <Toggle
-            checked={safeModeOn}
-            onChange={() => update({ disableAllInjections: !safeModeOn })}
-          />
-        </SettingItem>
       </Card>
 
       {/* Error */}
@@ -455,7 +451,12 @@ export function PluginSection() {
       )}
 
       {!loading && !error && manifests.map((m) => (
-        <PluginCard key={m.id} manifest={m} injectionStatus={statusByPlugin.get(m.id)} />
+        <PluginCard
+          key={m.id}
+          manifest={m}
+          appVersion={appVersion}
+          injectionStatus={statusByPlugin.get(m.id)}
+        />
       ))}
 
     </div>

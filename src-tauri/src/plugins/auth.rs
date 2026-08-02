@@ -117,6 +117,7 @@ mod tests {
             injections: vec![],
             config_view: None,
             system_prompt_section: None,
+            min_app_version: None,
         }
     }
 

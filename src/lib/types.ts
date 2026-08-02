@@ -97,6 +97,12 @@ export interface PluginManifest {
   configView?: string;
   /** Content-script injections. Requires the `ui.inject` capability. */
   injections: PluginInjectionDef[];
+  /**
+   * Minimum app version this plugin is compatible with (optional). When the
+   * running app version is lower, the plugin is auto-disabled: the backend
+   * refuses to load it and the settings UI shows the required version.
+   */
+  minAppVersion?: string;
 }
 
 export interface PluginHttpRequest {

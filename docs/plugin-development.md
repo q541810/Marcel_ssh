@@ -118,7 +118,8 @@
   "configView": "config.html",     // 可选。配置视图入口文件。
   "views": [...],                 // 可选。视图定义。
   "agentTools": [...],            // 可选。Agent 工具定义。
-  "injections": [...]             // 可选。内容脚本注入（需 ui.inject）。
+  "injections": [...],            // 可选。内容脚本注入（需 ui.inject）。
+  "minAppVersion": "0.6.0"        // 可选。最低兼容的应用版本，低于时插件自动禁用。
 }
 ```
 
@@ -1149,6 +1150,7 @@ server-monitor/
   "version": "1.0.3",
   "name": "长期记忆",
   "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
+  "minAppVersion": "0.6.0",
   "capabilities": ["ssh.list", "fs.read", "fs.write", "events"],
   "systemPromptSection": "system-prompt.md",
   "views": [

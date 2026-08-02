@@ -563,9 +563,10 @@ pub fn run() {
                 let settings = state.settings.blocking_read().clone();
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    let app_version = app_handle.package_info().version.to_string();
                     let diff = {
                         let mut reg = registry.write().await;
-                        reg.reload(&config_dir, &settings).await
+                        reg.reload(&config_dir, &settings, &app_version).await
                     };
                     log::info!(
                         "插件注册表已加载: {} 个插件, {} 个变更",

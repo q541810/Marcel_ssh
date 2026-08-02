@@ -141,9 +141,10 @@ pub async fn config_save_settings(
     // affect the plugin registry. Reload and emit so the frontend can
     // diff-refresh webviews/injections without a nuke-and-rebuild.
     let config_dir = state.config_dir.clone();
+    let app_version = app.package_info().version.to_string();
     let diff = {
         let mut reg = state.plugin_registry.write().await;
-        reg.reload(&config_dir, &snapshot).await
+        reg.reload(&config_dir, &snapshot, &app_version).await
     };
     use tauri::Emitter;
     let _ = app.emit("plugin-registry-changed", &diff);

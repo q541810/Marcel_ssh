@@ -30,6 +30,13 @@ pub struct PluginManifest {
     /// (e.g. `{{__host_port__}}`).
     #[serde(default)]
     pub system_prompt_section: Option<String>,
+    /// Minimum app version this plugin is compatible with (semver-like, optional).
+    /// When the running app version is lower, the plugin is loaded into the
+    /// registry but automatically disabled (state `Incompatible`) — it is not
+    /// enabled, its tools/injections never activate, and the settings UI shows
+    /// the required version.
+    #[serde(default)]
+    pub min_app_version: Option<String>,
 }
 
 /// A content-script injection entry. The plugin's JS runs inside the main
