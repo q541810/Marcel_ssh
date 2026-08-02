@@ -144,7 +144,15 @@ function InstallGuide({ plugin, onInstalled }: { plugin: MarketPlugin; onInstall
     },
     {
       title: '放入插件目录',
-      desc: '解压下载的压缩包，将插件文件夹放入插件目录',
+      desc: (
+        <>
+          <div>解压压缩包到插件目录，目录结构如下：</div>
+          <pre className="mt-1.5 text-[11px] leading-relaxed font-mono text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-md p-2 overflow-x-auto">{`插件目录/
+└── 插件文件夹/
+    ├── plugin.json   ← 必须在这里
+    └── 其他文件/文件夹`}</pre>
+        </>
+      ),
       action: (
         <Button variant="secondary" size="sm" onClick={() => openPluginDir()}>
           <FolderOpen className="w-3.5 h-3.5" />
@@ -217,7 +225,7 @@ function InstallGuide({ plugin, onInstalled }: { plugin: MarketPlugin; onInstall
                   </span>
                   {s.action}
                 </div>
-                <p className="text-xs text-zinc-500 mt-0.5 leading-relaxed">{s.desc}</p>
+                <div className="text-xs text-zinc-500 mt-0.5 leading-relaxed">{s.desc}</div>
                 {current && s.next && (
                   <button
                     type="button"

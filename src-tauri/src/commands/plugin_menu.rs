@@ -21,7 +21,6 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 #[cfg(desktop)]
 use tauri::{AppHandle, Manager};
 
-#[cfg(desktop)]
 use crate::error::AppError;
 
 #[cfg(mobile)]

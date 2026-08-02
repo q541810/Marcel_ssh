@@ -38,6 +38,7 @@ function keyLabel(key: string): string {
   if (key.startsWith('mcpServers.')) return `MCP ${key.substring('mcpServers.'.length).slice(0, 8)}`;
   if (key.startsWith('conversations.')) return `会话 ${key.substring('conversations.'.length).slice(0, 8)}`;
   if (key === 'secrets.llmApiKey') return 'LLM API Key';
+  if (key === 'secrets.webSearchApiKey') return '搜索 API Key';
   return key;
 }
 

@@ -17,21 +17,21 @@ use std::collections::HashMap;
 #[cfg(desktop)]
 use std::sync::Mutex;
 
+use tauri::State;
+
 #[cfg(desktop)]
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, State, WebviewUrl,
+    AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl,
     WebviewWindowBuilder,
 };
 #[cfg(desktop)]
 use tauri::utils::config::Color;
 
-#[cfg(desktop)]
 use crate::error::AppError;
 #[cfg(desktop)]
 use crate::plugins::auth::authorize;
 #[cfg(desktop)]
 use crate::plugins::enabled::is_plugin_enabled_async;
-#[cfg(desktop)]
 use crate::AppState;
 
 #[cfg(mobile)]
