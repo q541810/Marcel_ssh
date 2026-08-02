@@ -453,6 +453,33 @@ marcel.onCleanup(() => clearInterval(interval));
 
 这些命令需要 `fs.read` / `fs.write` capability。
 
+### 配置界面配色变量
+
+配置 WebView 在页面加载前自动注入一组**固定深色配色**的 CSS 变量（写到 `<html>` 上），与主应用的 zinc 深色配色一致。插件配置界面用 `var(--...)` 即可与主应用视觉统一，无需自备样式表。
+
+> **注意**：这不是可切换的主题系统——主应用目前没有主题机制，这组变量是**固定的深色配色**（与主应用 UI 相同），不支持亮色/暗色切换。若未来主应用引入主题系统，此变量会随之扩展。
+
+| 变量 | 值 | 用途 |
+|------|-----|------|
+| `--bg` | `#18181b` | 页面背景 |
+| `--bg-secondary` | `#27272a` | 卡片/面板背景 |
+| `--bg-elevated` | `#1c1c1f` | 浮层/按钮背景 |
+| `--border` | `#3f3f46` | 边框 |
+| `--border-strong` | `#52525b` | 强调边框 / 滑块轨道 |
+| `--text` | `#f4f4f5` | 主文字 |
+| `--text-secondary` | `#a1a1aa` | 次要文字 |
+| `--text-muted` | `#71717a` | 弱化文字 / 说明 |
+| `--accent` | `#a78bfa` | 强调色（开关开启 / 滑块 / 数值） |
+| `--accent-hover` | `#c4b5fd` | 强调色 hover |
+| `--danger` | `#f87171` | 错误 |
+| `--success` | `#4ade80` | 成功反馈 |
+| `--radius-sm` / `--radius-md` / `--radius-lg` / `--radius-xl` | `6px` / `8px` / `12px` / `16px` | 圆角 |
+| `--font` | 系统字体栈 | 字体 |
+
+> 若插件配置界面需要浅色背景等自定义外观，直接覆盖对应变量即可；变量是在 `<html>` 内联样式的 CSS 变量，插件样式表优先级更高时可覆盖。
+
+> **对已有插件的影响**：配色变量从 1.7.0 起自动注入。此前写死颜色（如 `background: #fff`）的界面不受影响；依赖 `--bg` 等变量并带浅色兜底（如 `var(--bg, #ffffff)`）的界面会变为深色配色——这是预期行为，无需改动代码，仅视觉变化。
+
 ### 安全限制
 
 - `config.read` / `config.write` **只能**读写 `config.json`，不能访问其他文件
@@ -503,6 +530,158 @@ async function saveConfig(config) {
 
 ---
 
+## 独立窗口（window）
+
+插件可以创建**独立于主窗口的 OS 级悬浮窗口**（桌面端），用于桌宠、悬浮通知条、小工具等场景。与 `plugin_webview`（主窗口内子 webview）不同，独立窗口可以始终置顶、透明、不进任务栏，主窗口最小化后依然可见。
+
+### 能力声明
+
+独立窗口涉及 4 个 capability，基础 + 3 个敏感子能力，可分别授权：
+
+| Capability | 控制范围 | 必需 |
+|------------|---------|------|
+| `window.create` | 创建窗口 + show/hide/close/move/resize/focus/click-through 等基础生命周期 | 是 |
+| `window.transparent` | 创建透明窗口 | 否（仅 `transparent:true` 时校验） |
+| `window.always_on_top` | 创建置顶窗口 + 运行时 `setAlwaysOnTop` 动态切换 | 否（仅 `alwaysOnTop:true` 时校验） |
+| `window.skip_taskbar` | 窗口不进任务栏 | 否（仅 `skipTaskbar:true` 时校验） |
+
+> 设计意图：用户可授予 `window.create` 但拒绝 `window.always_on_top`，这样插件能创建普通窗口但不能跨应用置顶（防钓鱼悬浮窗）。
+
+> **窗口内页面的 Tauri 原生 API**：独立窗口的页面（`window.create` 的 entry HTML）也可用 Tauri 原生 window API（`window.__TAURI__.window`）——`getCurrentWindow()`、`cursorPosition()`、`innerPosition()`/`innerSize()`/`scaleFactor()`、`setIgnoreCursorEvents()` 等读取/穿透能力已由内核为所有插件独立窗口开放（`plugin-windows.json`，`windows: ["*"]`），无需额外授权。典型用途：穿透模式下的鼠标位置轮询（见[点击穿透](#限制与安全)）。
+
+### `marcel.window` API
+
+| 成员 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `create(params)` | `WindowCreateParams` | `Promise<void>` | 创建独立窗口 |
+| `show(label)` | `string` | `Promise<void>` | 显示窗口 |
+| `hide(label)` | `string` | `Promise<void>` | 隐藏窗口 |
+| `close(label)` | `string` | `Promise<void>` | 关闭窗口 |
+| `focus(label)` | `string` | `Promise<void>` | 聚焦窗口 |
+| `setPosition(label, x, y)` | `string, number, number` | `Promise<void>` | 移动窗口 |
+| `setSize(label, w, h)` | `string, number, number` | `Promise<void>` | 调整大小 |
+| `setAlwaysOnTop(label, onTop)` | `string, boolean` | `Promise<void>` | 动态切换置顶（需 `window.always_on_top`） |
+| `setIgnoreCursorEvents(label, ignore)` | `string, boolean` | `Promise<void>` | 点击穿透开关 |
+
+### `WindowCreateParams`
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `label` | string | — | 窗口唯一标识（插件内唯一） |
+| `entry` | string | — | HTML 入口路径（相对插件根，经 `plugin://` 加载） |
+| `width` / `height` | number | — | 初始尺寸（逻辑像素） |
+| `x` / `y` | number | — | 初始位置（逻辑像素） |
+| `decorations` | boolean | false | 是否显示标题栏 |
+| `transparent` | boolean | false | 透明窗口（需 `window.transparent`） |
+| `shadow` | boolean | false | 窗口阴影（Windows 上透明窗口需设为 `false` 以消除边框） |
+| `alwaysOnTop` | boolean | false | 始终置顶（需 `window.always_on_top`） |
+| `skipTaskbar` | boolean | false | 不进任务栏（需 `window.skip_taskbar`） |
+| `resizable` | boolean | false | 可调整大小 |
+
+### 窗口事件
+
+窗口生命周期事件经 `plugin://events` 扇出，插件用 `marcel.events.on` 订阅：
+
+| 事件 | Payload | 说明 |
+|------|---------|------|
+| `window://created/{label}` | `{pluginId, label}` | 窗口创建 |
+| `window://closed/{label}` | `{label}` | 窗口关闭（用户关或插件关） |
+| `window://focus-changed/{label}` | `{label, focused}` | 聚焦/失焦 |
+| `window://moved/{label}` | `{label, x, y}` | 移动结束 |
+
+### 示例
+
+```js
+// 创建一个透明置顶的桌宠窗口
+await marcel.window.create({
+  label: 'pet',
+  entry: 'pet.html',
+  width: 160, height: 160,
+  x: 1200, y: 700,
+  transparent: true,
+  shadow: false,
+  alwaysOnTop: true,
+  skipTaskbar: true,
+});
+
+// 监听窗口移动（记忆位置）
+marcel.events.on('window://moved/pet', (data) => {
+  console.log('pet moved to', data.x, data.y);
+});
+```
+
+### 限制与安全
+
+- **桌面端独占**：移动端调用返回错误
+- **每插件窗口上限 3 个**：防止滥用
+- **所有权校验**：show/hide/close 等操作只能作用于本插件创建的窗口
+- **用户可强制关闭**：设置页提供"关闭所有插件窗口"入口（规划中）
+- 透明窗口在不同平台的渲染表现可能不同（Windows 需 WebView2 透明支持）
+- **禁用插件不关闭独立窗口**：独立窗口生命周期独立于主窗口 DOM 注入，插件被禁用时窗口不会自动关闭。设置页禁用插件时会提示重启应用清理
+- **点击穿透**：`setIgnoreCursorEvents(label, true)` 让窗口整体穿透（鼠标事件落到下层应用）。注意穿透开启时窗口收不到 `mousemove`/`:hover`，需用 Tauri 原生 window API（`cursorPosition` + `innerPosition`/`innerSize`/`scaleFactor`）轮询鼠标坐标做区域判定——这些读取权限已由内核为所有插件独立窗口开放
+
+---
+
+## 右键菜单（context_menu）
+
+插件可为其拥有的独立窗口注册**原生右键菜单**，点击后通过事件回传 `actionId`。
+
+### 能力声明
+
+| Capability | 控制范围 |
+|------------|---------|
+| `context_menu` | 注册菜单 + 弹出菜单 |
+
+### `marcel.menu` API
+
+| 成员 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `register(items)` | `MenuItemDef[]` | `Promise<void>` | 注册一组菜单项（替换已有） |
+| `update(items)` | `MenuItemDef[]` | `Promise<void>` | 更新菜单项（等同 register） |
+| `unregister()` | — | `Promise<void>` | 清除菜单项 |
+| `popup(label)` | `string` | `Promise<void>` | 在指定窗口弹出菜单 |
+
+### `MenuItemDef`
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `actionId` | string | — | 点击时回传的稳定 id |
+| `label` | string | — | 显示文本 |
+| `disabled` | boolean | false | 禁用 |
+| `separatorBefore` | boolean | false | 在此项前插分隔线 |
+
+### 点击事件
+
+| 事件 | Payload | 说明 |
+|------|---------|------|
+| `menu://clicked/{label}` | `{pluginId, label, actionId}` | 用户点击某菜单项 |
+
+### 示例
+
+```js
+await marcel.menu.register([
+  { actionId: 'show-main', label: '显示主窗口' },
+  { actionId: 'toggle-top', label: '切换置顶', separatorBefore: true },
+  { actionId: 'settings', label: '设置…' },
+  { actionId: 'quit', label: '退出', separatorBefore: true },
+]);
+
+// 在桌宠窗口上监听右键 → 弹菜单
+document.addEventListener('contextmenu', async (e) => {
+  e.preventDefault();
+  await marcel.menu.popup('pet');
+});
+
+// 接收点击
+marcel.events.on('menu://clicked/pet', (data) => {
+  if (data.actionId === 'quit') marcel.window.close('pet');
+});
+```
+
+> 菜单只能在插件**自己拥有**的窗口上弹出（所有权校验，与 window 一致）。
+
+---
+
 ## Capability 系统
 
 | Capability | 授予权限 | 安全等级 |
@@ -517,6 +696,11 @@ async function saveConfig(config) {
 | `notification` | 发送系统通知 | 低 |
 | `events` | 订阅应用事件 | 低 |
 | `ui.inject` | 注入主界面（JS/CSS），访问主窗口 DOM | 高 |
+| `window.create` | 创建独立 OS 级悬浮窗口（基础生命周期：show/hide/close/move/resize） | 中 |
+| `window.always_on_top` | 窗口始终置顶（跨应用悬浮，敏感） | 高 |
+| `window.transparent` | 透明窗口（可做不可见/异形悬浮，敏感） | 高 |
+| `window.skip_taskbar` | 窗口不进任务栏（后台常驻，敏感） | 中 |
+| `context_menu` | 注册原生右键菜单 | 低 |
 
 ### `ssh.list` 授权的命令
 
@@ -596,11 +780,16 @@ async function saveConfig(config) {
 | `ssh://status/*` | SSH 连接状态变化 | `SshStatus`（connected/disconnected/error） |
 | `ssh://session-active` | 当前激活的 SSH 会话 Tab 变化（点 Tab / 新连接激活 / 断开后自动切下一个） | `{ sessionId, connectionId, previousSessionId, previousConnectionId }`（无会话时 `sessionId`/`connectionId` 为 `null`） |
 | `agent://stream/*` | Agent 任务流 | `StreamEvent`（textDelta/toolCall/done/error） |
-| `agent://plan/*` | Agent 计划流 | `PlanStreamEvent` |
+| `agent://plan/*` | Agent 计划流（运行中实时推送；**会话恢复/切换时也会补发一次** `plan-edited` 快照，让插件在重启后同步 plan 状态） | `PlanStreamEvent` |
 | `sftp-upload-progress` | SFTP 上传进度 | `{uploadId, written, total}` |
 | `sftp-upload-done` | SFTP 上传完成 | `{uploadId}` |
 | `sftp-download-progress` | SFTP 下载进度 | `{downloadId, written, total}` |
 | `sftp-download-done` | SFTP 下载完成 | `{downloadId}` |
+| `ui://input-activity` | 用户在 Agent 输入框打字状态（**UI 桥事件，仅布尔，不含输入内容**，节流 600ms） | `{typing: boolean}` |
+| `ui://agent-activity` | Agent 任务进行/停止（**UI 桥事件，与主界面"停止/发送"按钮同源**：task 状态为 planning/executing/waiting_approval 时 `running: true`，completed/failed/cancelled 时 `false`；挂载与状态变化时各发一次；任务创建（等待首字返回）即亮起） | `{running: boolean}` |
+| `window://created/*` | 独立窗口创建（见[独立窗口](#独立窗口window)） | `{pluginId, label}` |
+| `window://closed/*` / `window://focus-changed/*` / `window://moved/*` | 独立窗口生命周期 | 见独立窗口章节 |
+| `menu://clicked/*` | 右键菜单点击（见[右键菜单](#右键菜单context_menu)） | `{pluginId, label, actionId}` |
 
 > 上表只列出主要事件。其他未列出的后端事件（如 `notification-sound`、approval 相关事件等）只要进入 `plugin://events`，同样可通过 `events.subscribe` 订阅。
 
@@ -748,3 +937,5 @@ await emit('plugin-request', {
 | 1.4.0 | 2026-07-02 | 新增内容脚本注入（`injections` 字段 + `ui.inject` capability + `marcel` 运行时 API + `data-region` 区域标记 + UI 事件桥 + 注入安全模式） |
 | 1.5.0 | 2026-07-03 | 新增插件本地工具类型（`kind=local` + `handler`）；新增 6 个通用本地 handler；新增 7 个模板上下文变量；新增 `systemPromptSection` 静态段拼接 |
 | 1.6.0 | 2026-07-04 | **架构重构**：manifest 枚举字段严格校验（`mount`/`kind`/`riskLevel`/`runAt`/icon `kind` 未知值报错，不再静默降级）；挂载点缩减为 `sidebar` + `settings`（移除 `bottom`/`agent`/`center`）；HTTP API 授权与事件 IPC 统一为三层检查（消除用户撤销能力对 HTTP API 无效的安全漏洞）；插件注册表后端有状态化（`PluginRegistry` + mtime 缓存 + diff 刷新）；新增 `plugin_reload` command 和 `plugin-registry-changed` 事件；command→capability 映射改为 Rust 单一真源 |
+| 1.7.0 | 2026-07-31 | **独立窗口 + 右键菜单**：新增 `window.create`（+ `window.transparent`/`window.always_on_top`/`window.skip_taskbar` 三个敏感子能力独立授权）创建独立 OS 级悬浮窗口（透明/置顶/跳过任务栏）；新增 `shadow` 参数控制窗口阴影（Windows 透明窗口需设为 `false` 以消除边框）；新增 `context_menu` 注册原生右键菜单；新增 `marcel.window` / `marcel.menu` 运行时 API；补全 `guess_mime`（`.gif`/`.webp`/`.mp4` 等常见类型）；新增 `ui://input-activity` UI 桥事件（仅布尔，不含内容，节流 600ms）；**修复**：`ALL_COMMANDS` 未包含运行时注册的 `events.subscribe`/`config.*` 等虚拟命令导致这些命令对所有插件被拒（事件订阅 / 配置持久化失效）；`plugin-windows.json` 补全窗口读取权限（`cursor-position`/`inner-position`/`inner-size`/`scale-factor`），使插件窗口页面可用 Tauri 原生 window API 做点击穿透判定；**行为**：禁用插件时设置页弹重启提示（独立窗口不随禁用自动关闭）；**配置视图**：子 WebView 自动注入固定深色配色 CSS 变量（`--bg`/`--text`/`--accent` 等，与主应用 UI 配色一致；非可切换主题系统），所有插件配置界面视觉统一；**事件**：`agent_load_plans_by_conversation` 恢复 plan 时补发 `agent://plan/{taskId}` 事件（`plan-edited` 快照），插件在会话恢复/切换后可同步 plan 状态 |
+| 1.7.1 | 2026-08-01 | 新增 `ui://agent-activity` UI 桥事件：Agent 任务进行/停止状态（与主界面"停止/发送"按钮同源，task 状态 planning/executing/waiting_approval → `running:true`，终态 → `false`；挂载与状态变化各发一次），插件可在任务创建（等待首字返回）即同步运行状态，无需等首条流事件 |

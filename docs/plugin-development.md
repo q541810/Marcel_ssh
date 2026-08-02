@@ -172,7 +172,7 @@
 
 - 每个插件视图是**独立的 OS 窗口**，不是主窗口的 DOM
 - 不能访问主窗口的 DOM 或 React 状态
-- 背景色建议使用 `#18181b`（zinc-900）以匹配应用主题
+- **配色建议使用注入的配色变量**（`var(--bg)`/`var(--text)`/`var(--accent)` 等，见 [API 参考·配置视图·配色变量](./plugin-api.md#配置视图)），与主应用深色配色一致；**不要写死颜色**。注意：配置 WebView 会自动注入一组固定深色配色变量（主应用目前**没有**可切换的主题系统），若你的页面用 `var(--bg, #ffffff)` 这类带白色兜底的写法，注入后背景会变为深色 `#18181b`——这是预期行为
 - Tauri API 通过 `window.__TAURI__` 自动注入
 
 ---
@@ -654,92 +654,321 @@ marcel.onCleanup(() => marcel.overlay.dismiss(btn));
 }
 ```
 
-**config.html**：
+**config.html**（推荐模式：配色变量 + 安全 IPC + 读取失败报错 + 改动即时写盘；无"保存"按钮）：
+
 ```html
 <!DOCTYPE html>
 <html>
-<body style="background:#18181b;color:#e4e4e7;padding:24px;font-family:sans-serif">
-  <h3 style="margin:0 0 16px">服务器监控 - 配置</h3>
-  
-  <div style="margin-bottom:12px">
-    <label style="display:block;margin-bottom:4px;font-size:13px;color:#a1a1aa">刷新间隔 (秒)</label>
-    <input id="interval" type="number" value="5" min="1" max="60"
-      style="width:100%;padding:8px;background:#27272a;border:1px solid #3f3f46;border-radius:6px;color:#e4e4e7">
-  </div>
-  
-  <div style="margin-bottom:16px">
-    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-      <input id="notify" type="checkbox">
-      <span style="font-size:13px">状态变化时发送通知</span>
-    </label>
-  </div>
-  
-  <button id="save" style="padding:8px 16px;background:#4f46e5;color:#fff;border:none;border-radius:6px;cursor:pointer">
-    保存
-  </button>
-  
-  <script>
-    const { emit, listen } = window.__TAURI__.event;
-    let counter = 0;
-
-    // 读取现有配置
-    async function loadConfig() {
-      const id = String(++counter);
-      return new Promise((resolve) => {
-        listen(`plugin-response-${id}`, (e) => {
-          if (e.payload.ok && e.payload.data) {
-            try {
-              const config = JSON.parse(e.payload.data);
-              document.getElementById('interval').value = config.interval ?? 5;
-              document.getElementById('notify').checked = config.notify ?? false;
-            } catch {}
-          }
-          resolve();
-        }).then(() => {
-          emit('plugin-request', {
-            id,
-            pluginId: 'server-monitor',
-            cmd: 'config.read',
-            args: {}
-          });
-        });
-      });
+<head>
+  <meta charset="utf-8">
+  <style>
+    /* 配色全部用注入的变量（见 API 参考·配置视图），不要写死颜色 */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: var(--font, system-ui, sans-serif);
+      background: var(--bg, #18181b);
+      color: var(--text, #f4f4f5);
+      padding: 20px 24px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .card {
+      background: var(--bg-secondary, #27272a);
+      border: 1px solid var(--border, #3f3f46);
+      border-radius: var(--radius-lg, 12px);
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      transition: border-color 180ms ease;
+    }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    label { font-size: 13px; }
+    .desc { font-size: 11px; color: var(--text-muted, #71717a); margin-top: 2px; }
+    input[type="number"], input[type="text"] {
+      width: 140px;
+      padding: 7px 10px;
+      font-size: 13px;
+      background: var(--bg-elevated, #1c1c1f);
+      color: var(--text, #f4f4f5);
+      border: 1px solid var(--border-strong, #52525b);
+      border-radius: var(--radius-md, 8px);
+      outline: none;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    input[type="number"]:focus, input[type="text"]:focus {
+      border-color: var(--accent, #a78bfa);
+      box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.18);
     }
 
-    // 保存配置
-    document.getElementById('save').onclick = async () => {
-      const config = {
-        interval: parseInt(document.getElementById('interval').value) || 5,
-        notify: document.getElementById('notify').checked
-      };
+    /* 尺寸调整：预览框 + 滑块（拖动实时预览，松手写盘） */
+    .size-row { display: flex; align-items: center; gap: 18px; }
+    .preview {
+      width: 120px; height: 120px;
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px dashed var(--border-strong, #52525b);
+      border-radius: var(--radius-md, 8px);
+      overflow: hidden;
+    }
+    .preview .dot {
+      width: var(--preview-size, 48px);
+      height: var(--preview-size, 48px);
+      border-radius: 50%;
+      background: var(--accent, #a78bfa);
+      opacity: 0.85;
+    }
+    .size-controls { flex: 1; min-width: 0; }
+    .size-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+    .size-head label { font-size: 13px; color: var(--text-secondary, #a1a1aa); }
+    .size-val {
+      font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums;
+      color: var(--accent, #a78bfa);
+    }
+    input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 999px;
+      background: var(--border-strong, #52525b);
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--accent, #a78bfa);
+      border: none;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+      cursor: grab;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { box-shadow: 0 0 0 5px rgba(167, 139, 250, 0.2); }
+    input[type="range"]::-webkit-slider-thumb:active {
+      cursor: grabbing;
+      transform: scale(1.2);
+      box-shadow: 0 0 0 8px rgba(167, 139, 250, 0.22);
+    }
+    .size-hint { font-size: 11px; color: var(--text-muted, #71717a); margin-top: 6px; }
 
-      const id = String(++counter);
-      await listen(`plugin-response-${id}`, async (e) => {
-        if (e.payload.ok) {
-          // 通知主应用保存完成
-          const saveId = String(++counter);
-          await emit('plugin-request', {
-            id: saveId,
-            pluginId: 'server-monitor',
-            cmd: 'config.saved',
-            args: {}
+    /* 开关：按下有回弹，滑块弹簧过渡 */
+    .switch {
+      position: relative;
+      width: 40px; height: 24px;
+      flex-shrink: 0;
+      background: var(--border-strong, #52525b);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 180ms ease;
+    }
+    .switch:active { transform: scale(0.94); }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .switch.on { background: var(--accent, #a78bfa); }
+    .switch.on::after { transform: translateX(16px); }
+
+    /* 操作按钮（如"重置"类）：悬停/按下反馈 */
+    button.action {
+      padding: 7px 14px;
+      font-size: 12.5px;
+      font-weight: 550;
+      color: var(--text, #f4f4f5);
+      background: var(--bg-elevated, #1c1c1f);
+      border: 1px solid var(--border-strong, #52525b);
+      border-radius: var(--radius-md, 8px);
+      cursor: pointer;
+      transition: background 150ms ease, border-color 150ms ease, transform 100ms ease;
+    }
+    button.action:hover { background: var(--border, #3f3f46); }
+    button.action:active { transform: scale(0.96); }
+
+    .error-bar {
+      display: none;
+      margin-bottom: 14px;
+      padding: 9px 12px;
+      font-size: 12px;
+      color: var(--danger, #f87171);
+      background: rgba(248, 113, 113, 0.08);
+      border: 1px solid rgba(248, 113, 113, 0.25);
+      border-radius: var(--radius-md, 8px);
+    }
+    .error-bar.show { display: block; }
+
+    /* 自定义滚动条（与主应用一致） */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border, #3f3f46);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-strong, #52525b); }
+  </style>
+</head>
+<body>
+  <div class="error-bar" id="errorBar"></div>
+
+  <!-- 尺寸调整：预览 + 滑块（拖动实时预览，松手写盘） -->
+  <div class="card">
+    <div class="size-row">
+      <div class="preview"><div class="dot" id="previewDot"></div></div>
+      <div class="size-controls">
+        <div class="size-head">
+          <label>元素大小</label>
+          <span class="size-val" id="sizeVal">48 px</span>
+        </div>
+        <input type="range" id="size" min="24" max="96" step="4" value="48">
+        <div class="size-hint">预览随滑块实时变化，松手后写盘</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>刷新间隔（秒）</label>
+        <div class="desc">数字输入框，改动即时生效</div>
+      </div>
+      <input id="interval" type="number" value="5" min="1" max="60">
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>状态变化时发送通知</label>
+        <div class="desc">开关，点击即时生效</div>
+      </div>
+      <div class="switch" id="notify"></div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const PLUGIN_ID = 'server-monitor';
+      const DEFAULTS = { interval: 5, notify: false, size: 48 };
+
+      // __TAURI__ 在子 WebView 可能不可用，安全解构 + 兜底
+      const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
+      const emit = tauriEvent ? tauriEvent.emit.bind(tauriEvent) : () => Promise.reject(new Error('__TAURI__.event unavailable'));
+      const listen = tauriEvent ? tauriEvent.listen.bind(tauriEvent) : () => Promise.reject(new Error('__TAURI__.event unavailable'));
+
+      const intervalInput = document.getElementById('interval');
+      const notifySwitch = document.getElementById('notify');
+      const sizeInput = document.getElementById('size');
+      const sizeVal = document.getElementById('sizeVal');
+      const previewDot = document.getElementById('previewDot');
+      const errorBar = document.getElementById('errorBar');
+
+      let cfg = { ...DEFAULTS };
+
+      function showError(msg) {
+        errorBar.textContent = msg;
+        errorBar.classList.add('show');
+      }
+      function syncSwitch() {
+        notifySwitch.classList.toggle('on', cfg.notify !== false);
+      }
+      function syncSize(px) {
+        sizeVal.textContent = px + ' px';
+        // 预览 1:1 真实像素：所见即所得
+        document.documentElement.style.setProperty('--preview-size', px + 'px');
+      }
+
+      // 带超时和错误分支的 IPC 封装：失败不会永久挂起
+      function ipc(cmd, args, timeoutMs) {
+        timeoutMs = timeoutMs || 5000;
+        args = args || {};
+        const id = 'cfg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new Error('ipc "' + cmd + '" timed out'));
+          }, timeoutMs);
+          listen('plugin-response-' + id, (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            if (e.payload && e.payload.ok) resolve(e.payload.data);
+            else reject(new Error(String(e.payload && e.payload.data)));
+          })
+            .then((unlisten) => {
+              if (settled) { unlisten(); return; }
+              emit('plugin-request', { id, pluginId: PLUGIN_ID, cmd, args }).catch((err) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                reject(new Error('emit failed: ' + err));
+              });
+            })
+            .catch((err) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              reject(new Error('listen failed: ' + err));
+            });
+        });
+      }
+
+      // 改动即时写盘：无需"保存"按钮
+      function persist() {
+        ipc('config.write', { content: JSON.stringify(cfg, null, 2) })
+          .catch((e) => {
+            console.error('[config] save failed:', e);
+            showError('保存失败: ' + e.message);
           });
+      }
+
+      // 初始化：读取真实配置，失败必须明确报错（不显示假状态）
+      (async function init() {
+        try {
+          const raw = await ipc('config.read');
+          if (raw) Object.assign(cfg, JSON.parse(raw));
+        } catch (e) {
+          console.error('[config] init failed:', e);
+          showError('无法读取配置（' + (e && e.message ? e.message : e) + '），当前显示默认值。');
         }
+        intervalInput.value = cfg.interval || DEFAULTS.interval;
+        sizeInput.value = cfg.size || DEFAULTS.size;
+        syncSize(sizeInput.value);
+        syncSwitch();
+      })();
+
+      intervalInput.addEventListener('change', () => {
+        cfg.interval = parseInt(intervalInput.value, 10) || DEFAULTS.interval;
+        persist();
       });
 
-      await emit('plugin-request', {
-        id,
-        pluginId: 'server-monitor',
-        cmd: 'config.write',
-        args: { content: JSON.stringify(config, null, 2) }
+      // 滑块：拖动只改预览（零 IPC），松手才写盘
+      sizeInput.addEventListener('input', () => syncSize(sizeInput.value));
+      sizeInput.addEventListener('change', () => {
+        cfg.size = Number(sizeInput.value);
+        persist();
       });
-    };
 
-    loadConfig();
+      notifySwitch.addEventListener('click', () => {
+        cfg.notify = !(cfg.notify !== false);
+        syncSwitch();
+        persist();
+      });
+    })();
   </script>
 </body>
 </html>
 ```
+
+> 说明：若插件需要在保存后**关闭配置弹窗**（旧式"保存按钮"模式），在 `persist()` 成功后调用 `config.saved` 即可（见 [API 参考·配置视图·保存流程](./plugin-api.md#配置视图)）。即时写盘模式不需要它。
 
 ### 弹窗行为
 
@@ -893,7 +1122,7 @@ server-monitor/
 - 每次会话开始 Agent 自动 `memory_recall` 查看已记录的记忆
 - 通过 `memory_update` / `memory_delete` 修改或删除记忆（先 recall 再全量写回）
 - 记忆按连接（`host_port`）隔离，A 服务器的记忆不会污染 B 服务器
-- 侧栏面板可手工查看/编辑/新增/删除记忆，配置视图可一键清除当前连接所有记忆
+- 侧栏面板可手工查看/编辑/新增/删除记忆
 
 ### 安装
 
@@ -904,7 +1133,6 @@ server-monitor/
   long-term-memory/        ← 从 examples/plugins/long-term-memory/ 复制
     plugin.json
     index.html
-    config.html
     system-prompt.md
     memories/              ← 运行时自动创建
       1.2.3.4_22.jsonl
@@ -918,7 +1146,7 @@ server-monitor/
 ```json
 {
   "id": "long-term-memory",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "name": "长期记忆",
   "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
   "capabilities": ["ssh.list", "fs.read", "fs.write", "events"],
@@ -970,8 +1198,7 @@ server-monitor/
       "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
       "riskLevel": "LowRisk"
     }
-  ],
-  "configView": "config.html"
+  ]
 }
 ```
 
@@ -1011,7 +1238,7 @@ server-monitor/
 3. **正常对话**：当你说"以后提交信息用中文"或 Agent 发现"nginx 在 /opt/nginx"时，它会自动调用 `memory_save` 记录
 4. **下次连接同一服务器**：Agent 会话开始时自动 `memory_recall`，看到之前的记忆，主动避免重复询问
 
-侧栏"记忆"按钮可手动浏览/编辑/删除记忆；设置页插件的"配置"按钮可清除当前连接的所有记忆。
+侧栏"记忆"按钮可手动浏览/编辑/删除记忆。
 
 侧栏「当前连接」列表会订阅 `ssh://session-active` 与 `ssh://status/*`（`events` 能力），在切换 SSH Tab、连接成功/断开时自动刷新，并以低频状态校验作为丢事件兜底。
 
