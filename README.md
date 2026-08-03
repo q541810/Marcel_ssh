@@ -119,6 +119,14 @@ pnpm tauri android build --apk --target aarch64
 
 ***
 
+
+
+### 提交插件到插件市场
+
+见[插件市场的github仓库](https://github.com/q541810/marcel-ssh-plugins)
+
+****
+
 ### 部署自动同步服务端
 
 服务端文档见Marcel SSH\server\DEPLOY.md

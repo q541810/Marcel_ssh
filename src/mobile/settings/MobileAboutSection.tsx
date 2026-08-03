@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getVersion } from '@tauri-apps/api/app';
-import { ExternalLink, Loader2, RotateCcw } from 'lucide-react';
+import { ExternalLink, Loader2, MessageCircle, RotateCcw } from 'lucide-react';
 import { checkUpdate } from '@/lib/tauri';
 import type { UpdateCheckResult } from '@/lib/types';
 import { getErrorMessage } from '@/lib/errors';
-import { openExternalLink } from '@/lib/externalLinks';
+import { openExternalLink, SUPPORT_URL } from '@/lib/externalLinks';
 import { APP_LOGO, APP_NAME } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -116,6 +116,17 @@ export function MobileAboutSection() {
         >
           <RotateCcw className="h-4 w-4" />
           重新运行引导
+        </button>
+      </MobileSettingRow>
+
+      {/* Support / feedback */}
+      <MobileSettingRow label="技术支持 / Bug 反馈" description="遇到问题或想反馈建议？加入官方交流群">
+        <button
+          type="button"
+          onClick={() => openExternalLink(SUPPORT_URL)}
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-zinc-700"
+        >
+          <MessageCircle className="h-4 w-4" />加入交流群
         </button>
       </MobileSettingRow>
 

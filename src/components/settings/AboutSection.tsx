@@ -3,7 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { checkUpdate } from '@/lib/tauri';
 import type { UpdateCheckResult } from '@/lib/types';
 import { getErrorMessage } from '@/lib/errors';
-import { openExternalLink } from '@/lib/externalLinks';
+import { openExternalLink, SUPPORT_URL } from '@/lib/externalLinks';
 import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import Button from '@/components/ui/Button';
 import { Card, SettingItem } from './helpers';
@@ -116,6 +116,17 @@ export default function AboutSection() {
         >
           <Button variant="secondary" onClick={() => setShowHistory(true)}>
             查看聊天历史
+          </Button>
+        </SettingItem>
+      <SettingItem
+          id="about-support"
+          label="技术支持 / Bug 反馈"
+          description="遇到问题或想反馈建议？加入官方交流群"
+          sectionId="settings-about"
+          keywords={['support', 'feedback', 'bug', 'QQ', '群', '帮助', '技术', '反馈', '问题']}
+        >
+          <Button variant="secondary" onClick={() => openExternalLink(SUPPORT_URL)}>
+            加入交流群
           </Button>
         </SettingItem>
       </Card>

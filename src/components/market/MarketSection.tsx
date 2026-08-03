@@ -3,6 +3,7 @@ import {
   Globe,
   RefreshCw,
   Search,
+  Send,
   Store,
   X,
   AlertCircle,
@@ -17,6 +18,7 @@ import { useAppVersion } from '@/hooks/useAppVersion';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityRisk } from '@/lib/pluginCapabilities';
 import { useSettingsLayout } from '@/components/settings/helpers';
+import { openExternalLink, PLUGIN_SUBMIT_URL } from '@/lib/externalLinks';
 import { MarketDetailPanel } from './MarketDetailPanel';
 import type { MarketPlugin } from '@/lib/types';
 
@@ -176,6 +178,17 @@ export function MarketSection() {
     [localManifests],
   );
 
+  // 提交插件页跟随镜像语义：配置了 GitHub 加速镜像前缀时走镜像打开，
+  // 否则直连 GitHub。jsDelivr 单文件镜像不支持网页浏览，保持直连。
+  const submitUrl = useMemo(() => {
+    const trimmed = sourceUrl.trim().replace(/\/+$/, '');
+    const proxied =
+      trimmed &&
+      !trimmed.endsWith('index.json') &&
+      !trimmed.includes('cdn.jsdelivr.net');
+    return proxied ? `${trimmed}/${PLUGIN_SUBMIT_URL}` : PLUGIN_SUBMIT_URL;
+  }, [sourceUrl]);
+
   const saveSource = () => {
     setSource(sourceDraft.trim());
     setSourceOpen(false);
@@ -210,6 +223,15 @@ export function MarketSection() {
             </h1>
             <span className="text-xs text-zinc-600">{plugins.length} 个插件</span>
             <div className="flex-1" />
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => openExternalLink(submitUrl)}
+              title={sourceUrl ? '通过当前镜像打开插件提交仓库' : '打开插件提交仓库'}
+            >
+              <Send className="w-3.5 h-3.5" />
+              我要提交
+            </Button>
             <Button
               variant="secondary"
               size="sm"
