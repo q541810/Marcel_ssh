@@ -26,6 +26,7 @@ import type {
   ReloadDiff,
   MarketIndex,
   MarketDetail,
+  PluginInstallResult,
   TruncateConversationResult,
   SyncSummary,
   SyncProfile,
@@ -885,12 +886,25 @@ export async function pluginSendNotification(pluginId: string, title: string, bo
   return invoke('plugin_send_notification', { pluginId, title, body });
 }
 
-/** Fetch the plugin market index from a source URL (empty = built-in source). */
+/** Fetch the plugin market index. `indexUrl` carries the user-configured
+ *  GitHub mirror (empty = built-in defaults: jsDelivr index + raw fallback). */
 export async function marketList(indexUrl?: string): Promise<MarketIndex> {
   return invoke<MarketIndex>('market_list', { indexUrl: indexUrl ?? null });
 }
 
-/** Fetch a plugin's plugin.json + README from its GitHub repo. */
-export async function marketDetail(repoUrl: string): Promise<MarketDetail> {
-  return invoke<MarketDetail>('market_detail', { repoUrl });
+/** Fetch a plugin's plugin.json + README from its GitHub repo, routed
+ *  through the configured mirror (empty = built-in defaults). */
+export async function marketDetail(repoUrl: string, mirror?: string): Promise<MarketDetail> {
+  return invoke<MarketDetail>('market_detail', { repoUrl, mirror: mirror ?? null });
+}
+
+/** One-click install: download the plugin archive (mirror-first), extract it
+ *  into the plugins directory. Takes effect after an app restart. */
+export async function pluginInstall(repoUrl: string, mirror?: string): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>('plugin_install', { repoUrl, mirror: mirror ?? null });
+}
+
+/** Remove an installed plugin (directory + settings residue). */
+export async function pluginUninstall(pluginId: string): Promise<void> {
+  return invoke('plugin_uninstall', { pluginId });
 }

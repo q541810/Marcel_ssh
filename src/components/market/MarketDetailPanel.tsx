@@ -11,27 +11,49 @@ import {
   ExternalLink,
   ChevronRight,
   ChevronLeft,
+  Trash2,
+  RotateCw,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Button from '@/components/ui/Button';
-import { marketDetail, openPluginDir } from '@/lib/tauri';
+import Modal from '@/components/ui/Modal';
+import { marketDetail, pluginInstall, pluginUninstall } from '@/lib/tauri';
 import { openExternalLink } from '@/lib/externalLinks';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel, capabilityRisk } from '@/lib/pluginCapabilities';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
+import { useMarketStore } from '@/stores/marketStore';
 import { useSettingsLayout } from '@/components/settings/helpers';
 import { getErrorMessage } from '@/lib/errors';
 import type { MarketPlugin, PluginManifest } from '@/lib/types';
 
-/** 从 repoUrl 提取 GitHub 相对路径图片的 raw 前缀。 */
-function rawUrlTransformer(repoUrl: string): (url: string) => string {
+/** 相对路径 → 镜像 URL。跟随后端镜像语义：配置了 GitHub 加速镜像前缀时走
+ *  前缀代理（ghfast.top/https://...）；jsDelivr 域名走 jsDelivr 文件镜像；
+ *  旧版 index.json 配置 / 未配置时回退 jsDelivr main 分支（国内可达）。 */
+function mirrorUrlTransformer(repoUrl: string, mirror: string): (url: string) => string {
   const m = repoUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/?$/);
-  const base = m ? `https://raw.githubusercontent.com/${m[1]}/${m[2]}/HEAD/` : null;
-  return (url: string) => {
-    if (!base || /^https?:\/\//.test(url) || url.startsWith('#') || url.startsWith('data:')) return url;
-    return base + url.replace(/^\.\//, '');
-  };
+  if (!m) return (url: string) => url;
+  const [owner, repo] = [m[1], m[2]];
+  const trimmed = mirror.trim().replace(/\/+$/, '');
+  const rel = (url: string) => url.replace(/^\.\//, '');
+
+  if (!trimmed || trimmed.endsWith('index.json')) {
+    return (url: string) =>
+      /^https?:\/\//.test(url) || url.startsWith('#') || url.startsWith('data:')
+        ? url
+        : `https://cdn.jsdelivr.net/gh/${owner}/${repo}@main/${rel(url)}`;
+  }
+  if (trimmed.includes('cdn.jsdelivr.net')) {
+    return (url: string) =>
+      /^https?:\/\//.test(url) || url.startsWith('#') || url.startsWith('data:')
+        ? url
+        : `${trimmed}/gh/${owner}/${repo}@main/${rel(url)}`;
+  }
+  return (url: string) =>
+    /^https?:\/\//.test(url) || url.startsWith('#') || url.startsWith('data:')
+      ? url
+      : `${trimmed}/https://raw.githubusercontent.com/${owner}/${repo}/HEAD/${rel(url)}`;
 }
 
 /** 按风险等级分组权限。 */
@@ -122,110 +144,62 @@ function CapabilityChip({ cap }: { cap: string }) {
   );
 }
 
-/** 分步安装引导。仅在未安装且兼容时显示。 */
-function InstallGuide({ plugin }: { plugin: MarketPlugin }) {
-  const [step, setStep] = useState(0); // 0=未开始, 1=已下载, 2=已放入目录, 3=已完成
+/** 一键安装 / 卸载逻辑与状态。 */
+function useInstallActions(plugin: MarketPlugin, installed: boolean) {
+  const mirror = useMarketStore((s) => s.sourceUrl);
+  const [installing, setInstalling] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+  const [installDone, setInstallDone] = useState(false);
+  const [uninstallDone, setUninstallDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmUninstall, setConfirmUninstall] = useState(false);
 
-  const steps = [
-    {
-      title: '下载插件',
-      desc: '点击下方按钮前往 GitHub 仓库下载插件压缩包',
-      action: (
-        <Button variant="secondary" size="sm" onClick={() => openExternalLink(plugin.repoUrl)}>
-          <ExternalLink className="w-3.5 h-3.5" />
-          前往仓库
-        </Button>
-      ),
-      next: () => setStep(1),
-      nextLabel: '我已下载',
-    },
-    {
-      title: '放入插件目录',
-      desc: (
-        <>
-          <div>解压压缩包到插件目录，目录结构如下：</div>
-          <pre className="mt-1.5 text-[11px] leading-relaxed font-mono text-zinc-400 bg-zinc-950 border border-zinc-800 rounded-md p-2 overflow-x-auto">{`插件目录/
-└── 插件文件夹/
-    ├── plugin.json   ← 必须在这里
-    └── 其他文件/文件夹`}</pre>
-        </>
-      ),
-      action: (
-        <Button variant="secondary" size="sm" onClick={() => openPluginDir()}>
-          <FolderOpen className="w-3.5 h-3.5" />
-          打开目录
-        </Button>
-      ),
-      next: () => setStep(2),
-      nextLabel: '我已放入',
-    },
-    {
-      title: '重启应用加载',
-      desc: '插件已放入目录，重启应用后插件将自动加载',
-      next: null,
-      nextLabel: '',
-    },
-  ];
+  // 安装/卸载成功后不主动刷新插件列表（后端不广播注册表变更事件，
+  // 避免自动刷新波及其他插件的运行时），用本地状态覆盖展示；
+  // 重启应用后列表自然对齐。
+  const uiInstalled = uninstallDone ? false : installed || installDone;
 
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-zinc-800 flex items-center gap-2">
-        <Download className="w-3.5 h-3.5 text-indigo-400" />
-        <span className="text-xs font-medium text-zinc-300">安装步骤</span>
-      </div>
-      <div className="divide-y divide-zinc-800/60">
-        {steps.map((s, i) => {
-          const completed = step > i;
-          const current = step === i;
-          return (
-            <div
-              key={i}
-              className={`px-4 py-3 flex items-start gap-3 transition-colors ${
-                current ? 'bg-indigo-500/5' : ''
-              }`}
-            >
-              {/* 序号 / 完成标记 */}
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-[11px] font-medium transition-colors ${
-                  completed
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : current
-                      ? 'bg-indigo-500/20 text-indigo-300'
-                      : 'bg-zinc-800 text-zinc-500'
-                }`}
-              >
-                {completed ? <Check className="w-3.5 h-3.5" /> : i + 1}
-              </div>
-              {/* 内容 */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span
-                    className={`text-sm font-medium ${
-                      completed ? 'text-zinc-500 line-through' : 'text-zinc-200'
-                    }`}
-                  >
-                    {s.title}
-                  </span>
-                  {s.action}
-                </div>
-                <div className="text-xs text-zinc-500 mt-0.5 leading-relaxed">{s.desc}</div>
-                {current && s.next && (
-                  <button
-                    type="button"
-                    onClick={s.next}
-                    className="mt-2 inline-flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-                  >
-                    {s.nextLabel}
-                    <ChevronRight className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
+  const install = async () => {
+    setInstalling(true);
+    setError(null);
+    try {
+      await pluginInstall(plugin.repoUrl, mirror || undefined);
+      setInstallDone(true);
+      setUninstallDone(false);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const uninstall = async () => {
+    setUninstalling(true);
+    setError(null);
+    try {
+      await pluginUninstall(plugin.id);
+      setConfirmUninstall(false);
+      setUninstallDone(true);
+    } catch (e) {
+      setError(getErrorMessage(e));
+    } finally {
+      setUninstalling(false);
+    }
+  };
+
+  return {
+    mirror,
+    installing,
+    uninstalling,
+    installDone,
+    uninstallDone,
+    uiInstalled,
+    installError: error,
+    confirmUninstall,
+    setConfirmUninstall,
+    install,
+    uninstall,
+  };
 }
 
 export function MarketDetailPanel({
@@ -245,15 +219,18 @@ export function MarketDetailPanel({
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryKey, setRetryKey] = useState(0);
   const layout = useSettingsLayout();
   const padX = `${layout.contentPaddingX}px`;
+  const { uiInstalled, ...installActions } = useInstallActions(plugin, installed);
+  const { mirror } = installActions;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setDetail({ manifest: null, readme: null });
-    marketDetail(plugin.repoUrl)
+    marketDetail(plugin.repoUrl, mirror || undefined)
       .then((d) => {
         if (!cancelled) setDetail({ manifest: d.manifest, readme: d.readme });
       })
@@ -266,12 +243,12 @@ export function MarketDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [plugin.repoUrl]);
+  }, [plugin.repoUrl, mirror, retryKey]);
 
   const minRequired = plugin.minAppVersion ?? null;
   const incompatible =
     !!minRequired && appVersion.length > 0 && !satisfiesMinVersion(appVersion, minRequired);
-  const urlTransform = rawUrlTransformer(plugin.repoUrl);
+  const urlTransform = mirrorUrlTransformer(plugin.repoUrl, mirror);
   const { high, medium, low } = groupByRisk(plugin.capabilities);
 
   const goToPluginSettings = () => {
@@ -310,7 +287,7 @@ export function MarketDetailPanel({
               <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded font-mono tracking-wide">
                 v{plugin.version}
               </span>
-              {installed && (
+              {uiInstalled && (
                 <span className="inline-flex items-center gap-0.5 text-[11px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
                   <Check className="w-3 h-3" />
                   已安装
@@ -344,21 +321,46 @@ export function MarketDetailPanel({
             )}
           </div>
           {/* 主 CTA：根据状态变化 */}
-          <div className="flex-shrink-0">
-            {installed ? (
-              <Button variant="secondary" size="sm" onClick={goToPluginSettings}>
-                <FolderOpen className="w-3.5 h-3.5" />
-                管理插件
-              </Button>
+          <div className="flex flex-col items-end gap-2 flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => openExternalLink(plugin.repoUrl)}
+              title="打开 GitHub 项目主页"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              项目主页
+            </Button>
+            {uiInstalled ? (
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={goToPluginSettings}>
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  管理插件
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  loading={installActions.uninstalling}
+                  onClick={() => installActions.setConfirmUninstall(true)}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  卸载
+                </Button>
+              </div>
             ) : incompatible ? (
               <Button variant="secondary" size="sm" disabled title="当前应用版本不兼容">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 不兼容
               </Button>
             ) : (
-              <Button variant="primary" size="sm" onClick={() => openExternalLink(plugin.repoUrl)}>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={installActions.installing}
+                onClick={installActions.install}
+              >
                 <Download className="w-3.5 h-3.5" />
-                前往下载
+                {installActions.installing ? '安装中…' : '一键安装'}
               </Button>
             )}
           </div>
@@ -382,13 +384,44 @@ export function MarketDetailPanel({
             <p className="text-sm text-zinc-400 leading-relaxed">{plugin.description}</p>
           )}
 
-          {/* 安装引导（未安装且兼容时） */}
-          {!installed && !incompatible && (
-            <InstallGuide plugin={plugin} />
+          {/* 安装/卸载错误 */}
+          {installActions.installError && (
+            <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <p className="text-xs text-red-400 leading-relaxed flex-1">
+                {installActions.installError}
+              </p>
+            </div>
+          )}
+
+          {/* 安装成功提示 */}
+          {installActions.installDone && uiInstalled && (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
+              <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-emerald-300">安装完成</p>
+                <p className="text-xs text-emerald-400/70 mt-0.5">
+                  重启应用后插件生效
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* 卸载成功提示 */}
+          {installActions.uninstallDone && !uiInstalled && (
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
+              <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-emerald-300">卸载完成</p>
+                <p className="text-xs text-emerald-400/70 mt-0.5">
+                  重启应用后完全移除
+                </p>
+              </div>
+            </div>
           )}
 
           {/* 已安装提示 */}
-          {installed && (
+          {uiInstalled && !installActions.installDone && (
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
               <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <div className="flex-1">
@@ -478,15 +511,21 @@ export function MarketDetailPanel({
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 py-8 text-center">
                 <AlertTriangle className="w-6 h-6 text-zinc-600 mx-auto mb-2" />
                 <p className="text-sm text-zinc-500 mb-1">详情加载失败</p>
-                <p className="text-xs text-zinc-600 mb-3">{error}</p>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => openExternalLink(plugin.repoUrl)}
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  前往仓库查看
-                </Button>
+                <p className="text-xs text-zinc-600 mb-3 px-6">{error}</p>
+                <div className="flex items-center justify-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => setRetryKey((k) => k + 1)}>
+                    <RotateCw className="w-3.5 h-3.5" />
+                    重试
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => openExternalLink(plugin.repoUrl)}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    前往仓库查看
+                  </Button>
+                </div>
               </div>
             ) : detail.readme ? (
               <div className="text-sm leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-2 prose-code:text-pink-300 prose-code:bg-zinc-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-3 prose-headings:text-zinc-100 prose-headings:font-semibold prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic prose-img:rounded-lg prose-img:max-h-80 prose-img:object-contain prose-table:text-xs prose-th:border prose-th:border-zinc-700 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-zinc-800 prose-td:px-2 prose-td:py-1">
@@ -514,7 +553,14 @@ export function MarketDetailPanel({
                         loading="lazy"
                         className="rounded-lg"
                         onError={(e) => {
-                          e.currentTarget.style.opacity = '0.3';
+                          const img = e.currentTarget;
+                          // jsDelivr 形态（@main）404 时回退 @master（与后端
+                          // raw_file_urls 的 main/master 兜底保持一致）。
+                          if (img.src.includes('@main/')) {
+                            img.src = img.src.replace('@main/', '@master/');
+                          } else {
+                            img.style.opacity = '0.3';
+                          }
                         }}
                       />
                     ),
@@ -540,6 +586,38 @@ export function MarketDetailPanel({
           </div>
         </div>
       </div>
+
+      {/* 卸载确认 */}
+      <Modal
+        open={installActions.confirmUninstall}
+        onClose={() => installActions.setConfirmUninstall(false)}
+        title="卸载插件"
+        size="sm"
+      >
+        <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+          <p>
+            确定卸载「{plugin.name}」？将删除插件目录及其全部数据
+            （如记忆文件），重启应用后完全移除。
+          </p>
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-zinc-700">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => installActions.setConfirmUninstall(false)}
+          >
+            取消
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={installActions.uninstalling}
+            onClick={installActions.uninstall}
+          >
+            卸载
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

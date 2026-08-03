@@ -9,6 +9,7 @@ pub mod plugin;
 pub mod plugin_api;
 pub mod plugin_fs;
 pub mod plugin_http;
+pub mod plugin_install;
 pub mod plugin_menu;
 pub mod plugin_notification;
 pub mod plugin_uri;

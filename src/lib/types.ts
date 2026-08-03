@@ -152,6 +152,14 @@ export interface MarketDetail {
   readme: string | null;
 }
 
+/** Result of `plugin_install`. The plugin takes effect after a restart. */
+export interface PluginInstallResult {
+  id: string;
+  name: string;
+  version: string;
+  restartRequired: boolean;
+}
+
 /**
  * Diff returned by `plugin_reload` / emitted via `plugin-registry-changed`.
  * `changed` lists plugin ids whose manifest or enabled-state changed since the

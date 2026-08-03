@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2 } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getPluginDir, openPluginDir } from '@/lib/tauri';
+import { getPluginDir, openPluginDir, pluginUninstall } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import type { PluginManifest } from '@/lib/types';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel } from '@/lib/pluginCapabilities';
+import { getErrorMessage } from '@/lib/errors';
 import { useAppVersion } from '@/hooks/useAppVersion';
 import { getInjectionStatuses, onStatusChange, retryInjection, type InjectionStatus } from '@/plugins/injection';
 import Toggle from '@/components/ui/Toggle';
@@ -162,6 +163,26 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
   const [showCapabilities, setShowCapabilities] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [showRestartHint, setShowRestartHint] = useState(false);
+  const [showUninstall, setShowUninstall] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+  const [uninstallDone, setUninstallDone] = useState(false);
+  const [uninstallError, setUninstallError] = useState<string | null>(null);
+
+  const handleUninstall = async () => {
+    setUninstalling(true);
+    setUninstallError(null);
+    try {
+      await pluginUninstall(manifest.id);
+      setShowUninstall(false);
+      // 不主动刷新插件列表（刷新会导致其他插件运行时崩溃），
+      // 本地标记展示，重启应用后列表自然对齐。
+      setUninstallDone(true);
+    } catch (e) {
+      setUninstallError(getErrorMessage(e));
+    } finally {
+      setUninstalling(false);
+    }
+  };
 
   // Version compatibility is decided by the backend (Incompatible state);
   // this UI mirror just explains it. Guard on appVersion being loaded to
@@ -210,9 +231,19 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
           </div>
           <div className="flex items-center gap-2">
             <Button
+              variant="danger"
+              size="sm"
+              disabled={uninstallDone}
+              onClick={() => setShowUninstall(true)}
+              title="卸载插件（删除目录及其数据）"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              卸载
+            </Button>
+            <Button
               variant="secondary"
               size="sm"
-              disabled={!hasConfigView}
+              disabled={!hasConfigView || uninstallDone}
               onClick={() => hasConfigView && setConfigOpen(true)}
               title={hasConfigView ? '打开配置界面' : '此插件未提供配置界面'}
             >
@@ -227,10 +258,19 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
             <Toggle
               checked={!isDisabled && !incompatible}
               onChange={togglePlugin}
-              disabled={incompatible}
+              disabled={incompatible || uninstallDone}
             />
           </div>
         </div>
+
+      {/* 卸载完成提示 */}
+      {uninstallDone && (
+        <div className="px-5 py-3 border-b border-zinc-800 bg-emerald-500/5">
+          <p className="text-xs text-emerald-400 leading-relaxed">
+            已卸载，重启应用后完全移除
+          </p>
+        </div>
+      )}
 
       {/* Description */}
       {manifest.description && (
@@ -362,6 +402,40 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
         </Button>
       </div>
     </Modal>
+
+    <Modal
+      open={showUninstall}
+      onClose={() => setShowUninstall(false)}
+      title="卸载插件"
+      size="sm"
+    >
+      <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+        <p>
+          确定卸载「{manifest.name}」？将删除插件目录及其全部数据
+          （如记忆文件），重启应用后完全移除。
+        </p>
+        {uninstallError && (
+          <p className="mt-2 text-xs text-red-400">{uninstallError}</p>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 px-4 py-3 border-t border-zinc-700">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setShowUninstall(false)}
+        >
+          取消
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          loading={uninstalling}
+          onClick={handleUninstall}
+        >
+          卸载
+        </Button>
+      </div>
+    </Modal>
     </>
   );
 }
@@ -446,7 +520,7 @@ export function PluginSection() {
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-6 py-12 text-center">
           <Puzzle className="w-8 h-8 text-zinc-700 mx-auto mb-3" />
           <p className="text-sm text-zinc-500">暂无已安装插件</p>
-          <p className="text-xs text-zinc-600 mt-1">将插件放入上方目录后点击刷新</p>
+          <p className="text-xs text-zinc-600 mt-1">将插件放入上方目录后重启应用</p>
         </div>
       )}
 
