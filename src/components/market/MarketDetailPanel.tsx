@@ -25,6 +25,7 @@ import { capabilityLabel, capabilityRisk } from '@/lib/pluginCapabilities';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
 import { useMarketStore } from '@/stores/marketStore';
 import { useSettingsLayout } from '@/components/settings/helpers';
+import { STAR_PROMPT_INSTALL_EVENT } from '@/components/star/StarPromptModal';
 import { getErrorMessage } from '@/lib/errors';
 import type { MarketPlugin, PluginManifest } from '@/lib/types';
 
@@ -166,6 +167,8 @@ function useInstallActions(plugin: MarketPlugin, installed: boolean) {
       await pluginInstall(plugin.repoUrl, mirror || undefined);
       setInstallDone(true);
       setUninstallDone(false);
+      // 安装成功是求 Star 的最佳时机（正反馈时刻），由 StarPromptModal 按限频判定。
+      window.dispatchEvent(new Event(STAR_PROMPT_INSTALL_EVENT));
     } catch (e) {
       setError(getErrorMessage(e));
     } finally {

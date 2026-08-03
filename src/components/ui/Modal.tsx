@@ -19,6 +19,8 @@ interface Props {
   children: ReactNode;
   /** When false, block backdrop / Escape / header close (e.g. mandatory disclaimer). Default true. */
   dismissible?: boolean;
+  /** Extra classes appended to the content panel (e.g. `!max-w-[340px]`). */
+  contentClassName?: string;
 }
 
 export default function Modal({
@@ -28,6 +30,7 @@ export default function Modal({
   size = 'md',
   children,
   dismissible = true,
+  contentClassName = '',
 }: Props) {
   const presence = useAnimatedPresence(open);
 
@@ -65,7 +68,7 @@ export default function Modal({
         onAnimationEnd={presence.onAnimationEnd}
         className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${
           exiting ? 'modal-panel-exit' : 'modal-panel-enter'
-        } ${SIZE_CLASSES[size]}`}
+        } ${SIZE_CLASSES[size]} ${contentClassName}`}
       >
         {/* Header */}
         {title && (

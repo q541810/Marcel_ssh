@@ -8,6 +8,7 @@ import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
 import MobileSyncConflictSheet from './MobileSyncConflictSheet';
 import MobileUpdateToast from './MobileUpdateToast';
+import MobileStarPromptSheet from './MobileStarPromptSheet';
 import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
@@ -168,6 +169,7 @@ export default function MobileApp() {
       )}
 
       <MobileSyncConflictSheet />
+      <MobileStarPromptSheet />
     </div>
   );
 }

@@ -17,6 +17,7 @@ import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import SyncConflictModal from '@/components/settings/SyncConflictModal';
+import StarPromptModal from '@/components/star/StarPromptModal';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
@@ -528,6 +529,7 @@ export default function App() {
       <SettingsWarningToast />
       <HostKeyWarningToast />
       <SyncConflictModal />
+      <StarPromptModal />
 
       {/* Shared overlay container for content-script plugins. Fixed, full
           screen, no pointer events by default; plugins opt-in via
