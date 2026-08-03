@@ -45,7 +45,7 @@ describe('marketStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    useMarketStore.setState({ plugins: [], loading: false, error: null, loadedAt: null, sourceUrl: '' });
+    useMarketStore.setState({ plugins: [], loading: false, error: null, sourceUrl: '' });
   });
 
   it('fetches the index and stores plugins', async () => {
@@ -54,7 +54,6 @@ describe('marketStore', () => {
     expect(marketListMock).toHaveBeenCalledWith(undefined);
     expect(useMarketStore.getState().plugins).toHaveLength(2);
     expect(useMarketStore.getState().error).toBeNull();
-    expect(useMarketStore.getState().loadedAt).not.toBeNull();
   });
 
   it('passes a custom source URL when set', async () => {
@@ -69,12 +68,12 @@ describe('marketStore', () => {
     expect(localStorage.getItem('marcel.market.source')).toBe('https://mirror.example.com/index.json');
   });
 
-  it('clearing source falls back to the built-in official source', () => {
+  it('clearing source falls back to built-in mirrors', () => {
     useMarketStore.getState().setSource('https://mirror.example.com/index.json');
     useMarketStore.getState().setSource('');
     expect(localStorage.getItem('marcel.market.source')).toBeNull();
     expect(useMarketStore.getState().sourceUrl).toBe('');
-    expect(MARKET_DEFAULT_SOURCE).toContain('cdn.jsdelivr.net');
+    expect(MARKET_DEFAULT_SOURCE).toBe('');
   });
 
   it('records a readable error when the fetch fails', async () => {

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { useMarketStore, MARKET_DEFAULT_SOURCE } from '@/stores/marketStore';
+import { useMarketStore } from '@/stores/marketStore';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useAppVersion } from '@/hooks/useAppVersion';
 import { satisfiesMinVersion } from '@/lib/semver';
@@ -217,7 +217,7 @@ export function MarketSection() {
                 setSourceDraft(sourceUrl);
                 setSourceOpen((v) => !v);
               }}
-              title={sourceUrl ? '当前：自定义源' : '当前：内置默认源'}
+              title={sourceUrl ? '当前：自定义镜像' : '当前：内置默认镜像'}
             >
               <Globe className="w-3.5 h-3.5" />
               {sourceUrl ? '自定义' : '默认'}
@@ -289,12 +289,15 @@ export function MarketSection() {
           {sourceOpen && (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
               <p className="text-[11px] text-zinc-500 leading-relaxed">
-                默认使用内置镜像源（jsDelivr CDN，国内可达），GitHub raw 自动兜底。可填写自定义源（index.json 地址），留空恢复内置默认源。
+                填写 GitHub 加速镜像前缀（如 https://ghfast.top），市场列表、详情、图片与插件下载统一走该镜像。留空使用内置默认（jsDelivr 拉取列表 + 内置镜像下载 + GitHub 直连兜底）。
+              </p>
+              <p className="text-[11px] text-zinc-600 leading-relaxed">
+                注意：旧版填写的完整 index.json 地址仍可用，但仅市场列表走该地址，详情与插件下载会直连 GitHub。
               </p>
               <Input
                 value={sourceDraft}
                 onChange={(e) => setSourceDraft(e.target.value)}
-                placeholder={MARKET_DEFAULT_SOURCE}
+                placeholder="https://ghfast.top（留空 = 内置默认镜像）"
                 className="text-xs font-mono"
               />
               <div className="flex justify-between items-center gap-2">
