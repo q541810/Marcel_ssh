@@ -72,9 +72,11 @@ export default function MobileFullscreenPage({
       style={{
         // Push the content area above the soft keyboard / gesture nav bar
         // instead of shrinking the page (shrinking creates a gap that exposes
-        // the pinned tab bar behind).
+        // the pinned tab bar behind). The system navigation bar (3-button
+        // nav) is injected as --nav-bar-bottom from MainActivity since
+        // Android WebView's env(safe-area-inset-bottom) ignores it.
         paddingBottom:
-          'max(env(safe-area-inset-bottom, 0px), var(--ime-bottom, 0px))',
+          'max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px), var(--ime-bottom, 0px))',
         // Portalled pages bypass the shell padding in App.tsx; keep landscape
         // cutouts / rounded corners clear of content.
         paddingLeft: 'env(safe-area-inset-left, 0px)',

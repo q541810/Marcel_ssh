@@ -52,11 +52,12 @@ export default function MobileSheet({
   onClose,
   children,
   title,
-  maxHeightClassName = 'max-h-[85dvh]',
+  maxHeightClassName = 'max-h-[min(85dvh,calc(100dvh-var(--ime-bottom,0px)))]',
   dismissible = true,
   footer,
 }: MobileSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const dragStartYRef = useRef<number | null>(null);
   const dragDeltaRef = useRef(0);
   const velocitySamplesRef = useRef<Array<{ y: number; t: number }>>([]);
@@ -71,6 +72,23 @@ export default function MobileSheet({
       velocitySamplesRef.current = [];
       capturedPointerIdRef.current = null;
     }
+  }, [open]);
+
+  // Keep the focused input visible when the scroll area resizes (the IME
+  // opening shrinks it): the browser does not always scroll the focused
+  // field back into view after such a layout jump.
+  useEffect(() => {
+    if (!open) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && el.contains(active)) {
+        active.scrollIntoView({ block: 'nearest' });
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [open]);
 
   // Android back gesture: dismissible sheets close; modal sheets still
@@ -214,7 +232,7 @@ export default function MobileSheet({
         style={{
           marginBottom: 'var(--ime-bottom, 0px)',
           paddingBottom:
-            'max(env(safe-area-inset-bottom, 0px), var(--ime-bottom, 0px))',
+            'max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px))',
         }}
         role="dialog"
         aria-modal="true"
@@ -246,7 +264,10 @@ export default function MobileSheet({
             </div>
           )}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        >
           {children}
         </div>
         {footer != null && (

@@ -232,7 +232,7 @@ export function MobileModelSection() {
         open={modelsOpen}
         onClose={() => setModelsOpen(false)}
         title="选择模型"
-        maxHeightClassName="max-h-[75dvh]"
+        maxHeightClassName="max-h-[min(75dvh,calc(100dvh-var(--ime-bottom,0px)))]"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
           <input

@@ -20,6 +20,8 @@ class MainActivity : TauriActivity() {
   private var webViewRef: WebView? = null
   /** Last IME height (physical px) pushed to the page — skip no-op updates. */
   private var lastImeBottomPx: Int = -1
+  /** Last system navigation bar height (physical px) pushed to the page. */
+  private var lastNavBottomPx: Int = -1
 
   /** 注入 WebView 的原生桥接对象（window.AndroidBridge）。 */
   private val mobileBridge by lazy { MobileBridge(this) }
@@ -149,6 +151,15 @@ class MainActivity : TauriActivity() {
     // page can pad only the content area and leave the tab bar pinned under
     // the keyboard.
     //
+    // The same applies to the system navigation bar (3-button nav): Android
+    // WebView's env(safe-area-inset-bottom) only reflects the display cutout,
+    // NOT the navigation bar, so edge-to-edge would leave bottom-anchored UI
+    // (tab bar, sheets, fullscreen pages) buried under the 3-button bar. We
+    // publish the navigation bar height as --nav-bar-bottom so the page can
+    // max() it into the same bottom padding. When the IME opens it covers the
+    // navigation bar (navigationBars() insets go to 0), so the two variables
+    // never stack.
+    //
     // Listener must sit on the parent, never on the WebView: a view-level
     // listener replaces View.onApplyWindowInsets, which is how Chromium
     // forwards status bar / nav bar / cutout insets to env(safe-area-inset-*).
@@ -169,14 +180,35 @@ class MainActivity : TauriActivity() {
             null,
           )
         }
+        val navBottom =
+          insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+        if (navBottom != lastNavBottomPx) {
+          lastNavBottomPx = navBottom
+          val density = webView.resources.displayMetrics.density
+          val cssPx =
+            if (density > 0f) navBottom / density else navBottom.toFloat()
+          val cssValue =
+            if (cssPx == cssPx.toInt().toFloat()) "${cssPx.toInt()}px" else "${cssPx}px"
+          webView.evaluateJavascript(
+            "document.documentElement.style.setProperty('--nav-bar-bottom','$cssValue')",
+            null,
+          )
+        }
         insets
       }
       // Seed 0 so the page has a defined variable even before the first
-      // non-zero IME dispatch.
+      // non-zero dispatch.
       if (lastImeBottomPx < 0) {
         lastImeBottomPx = 0
         webView.evaluateJavascript(
           "document.documentElement.style.setProperty('--ime-bottom','0px')",
+          null,
+        )
+      }
+      if (lastNavBottomPx < 0) {
+        lastNavBottomPx = 0
+        webView.evaluateJavascript(
+          "document.documentElement.style.setProperty('--nav-bar-bottom','0px')",
           null,
         )
       }

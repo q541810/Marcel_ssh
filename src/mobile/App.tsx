@@ -118,9 +118,11 @@ export default function MobileApp() {
         paddingLeft: 'env(safe-area-inset-left, 0px)',
         paddingRight: 'env(safe-area-inset-right, 0px)',
         // Tab buttons: min-h-12. Content bottom = max(tab, IME) so the
-        // keyboard covers the tab bar instead of lifting it.
+        // keyboard covers the tab bar instead of lifting it. The navigation
+        // bar (3-button nav) is injected as --nav-bar-bottom from MainActivity
+        // (env(safe-area-inset-bottom) ignores it on Android WebView).
         ['--tab-bar-height' as string]:
-          'calc(3rem + env(safe-area-inset-bottom, 0px))',
+          'calc(3rem + max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px)))',
       }}
     >
       <main

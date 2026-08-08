@@ -20,7 +20,10 @@ export default function MobileTabBar({
   return (
     <nav
       className="flex flex-shrink-0 border-t border-zinc-800 bg-zinc-950"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      style={{
+        paddingBottom:
+          'max(env(safe-area-inset-bottom, 0px), var(--nav-bar-bottom, 0px))',
+      }}
       aria-label="主导航"
     >
       {MOBILE_TABS.map((tab) => {
