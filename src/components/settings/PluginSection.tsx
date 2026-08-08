@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Che
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getPluginDir, openPluginDir, pluginUninstall } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
+import { useMarketStore } from '@/stores/marketStore';
 import type { PluginManifest } from '@/lib/types';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel } from '@/lib/pluginCapabilities';
@@ -177,6 +178,8 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
       // 不主动刷新插件列表（刷新会导致其他插件运行时崩溃），
       // 本地标记展示，重启应用后列表自然对齐。
       setUninstallDone(true);
+      // 同步市场页的已安装状态（会话级），重启前市场页不再误显示已安装。
+      useMarketStore.getState().markUninstalled(manifest.id);
     } catch (e) {
       setUninstallError(getErrorMessage(e));
     } finally {

@@ -128,6 +128,7 @@ function StatusBadges({
 export function MarketSection() {
   const { plugins, loading, error, fetch: fetchMarket, sourceUrl, setSource } = useMarketStore();
   const localManifests = usePluginStore((s) => s.manifests);
+  const installedOverrides = useMarketStore((s) => s.installedOverrides);
   const appVersion = useAppVersion();
   const layout = useSettingsLayout();
   const [query, setQuery] = useState('');
@@ -173,10 +174,16 @@ export function MarketSection() {
     });
   }, [plugins, query, category]);
 
-  const installedIds = useMemo(
-    () => new Set(localManifests.map((m) => m.id)),
-    [localManifests],
-  );
+  // 已安装判定 = 磁盘插件列表 + 本会话安装/卸载覆盖
+  // （安装/卸载后不刷新列表，覆盖表保证重启前状态跨页面进出一致）。
+  const installedIds = useMemo(() => {
+    const set = new Set(localManifests.map((m) => m.id));
+    for (const [id, installed] of Object.entries(installedOverrides)) {
+      if (installed) set.add(id);
+      else set.delete(id);
+    }
+    return set;
+  }, [localManifests, installedOverrides]);
 
   // 提交插件页跟随镜像语义：配置了 GitHub 加速镜像前缀时走镜像打开，
   // 否则直连 GitHub。jsDelivr 单文件镜像不支持网页浏览，保持直连。

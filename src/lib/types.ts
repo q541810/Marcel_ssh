@@ -160,6 +160,16 @@ export interface PluginInstallResult {
   restartRequired: boolean;
 }
 
+/** Progress pushed by `plugin_install` via `plugin-install-progress` events.
+ *  `phase: "downloading"` uses byte counts; `phase: "extracting"` uses zip
+ *  entry counts. `total === 0` means unknown (indeterminate progress bar). */
+export interface PluginInstallProgress {
+  installId: string;
+  phase: 'downloading' | 'extracting';
+  received: number;
+  total: number;
+}
+
 /**
  * Diff returned by `plugin_reload` / emitted via `plugin-registry-changed`.
  * `changed` lists plugin ids whose manifest or enabled-state changed since the

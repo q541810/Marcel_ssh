@@ -341,6 +341,99 @@ pub async fn download_first(urls: &[String]) -> Result<Vec<u8>, AppError> {
     )))
 }
 
+/// GET a URL as raw bytes with a size cap, reporting progress and honouring
+/// cancellation. `on_progress(received, expected_total)` is called as chunks
+/// arrive (total 0 means the server sent no Content-Length). Cancellation is
+/// checked between chunks AND during in-flight reads via `cancel_rx`, so a
+/// stalled connection can be aborted immediately. A cancelled download returns
+/// `AppError::Cancelled`.
+async fn fetch_bytes_with_progress(
+    url: &str,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    on_progress: &(dyn Fn(u64, u64) + Send + Sync),
+) -> Result<Vec<u8>, AppError> {
+    use futures::StreamExt;
+
+    let client = client_with_proxy();
+    let mut resp = match client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("请求失败: {}", e)))
+    {
+        Ok(r) => r,
+        Err(proxy_err) => match client_direct()
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| AppError::Network(format!("请求失败: {}", e)))
+        {
+            Ok(r) => r,
+            Err(direct_err) => {
+                return Err(AppError::Network(format!(
+                    "拉取失败: {}（走代理失败: {}）",
+                    direct_err, proxy_err
+                )))
+            }
+        },
+    };
+    resp = resp
+        .error_for_status()
+        .map_err(|e| AppError::Network(format!("请求失败: {}", e)))?;
+    let total = resp.content_length().unwrap_or(0);
+    if total > MAX_DOWNLOAD_BYTES {
+        return Err(AppError::Other("文件超过大小上限，拒绝下载".into()));
+    }
+    let stream = resp.bytes_stream();
+    futures::pin_mut!(stream);
+    let mut buf: Vec<u8> = Vec::new();
+    let mut received: u64 = 0;
+    loop {
+        let chunk = tokio::select! {
+            chunk = stream.next() => chunk,
+            _ = cancel_rx.changed() => {
+                return Err(AppError::Cancelled("下载已取消".into()));
+            }
+        };
+        let Some(chunk) = chunk else { break };
+        let chunk = chunk.map_err(|e| AppError::Network(format!("下载中断: {}", e)))?;
+        received += chunk.len() as u64;
+        if received > MAX_DOWNLOAD_BYTES {
+            return Err(AppError::Other("文件超过大小上限，拒绝下载".into()));
+        }
+        buf.extend_from_slice(&chunk);
+        on_progress(received, total);
+    }
+    Ok(buf)
+}
+
+/// Try a list of candidate URLs in order, returning the first success (bytes,
+/// size-capped), with progress reporting and cancellation. Used by plugin
+/// install so the frontend can show a live progress bar and let the user abort
+/// a stalled download. A cancelled install returns `AppError::Cancelled` and
+/// does not try the remaining fallback URLs.
+pub async fn download_first_with_progress(
+    urls: &[String],
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    on_progress: impl Fn(u64, u64) + Send + Sync,
+) -> Result<Vec<u8>, AppError> {
+    let mut errors: Vec<String> = Vec::new();
+    for url in urls {
+        if *cancel_rx.borrow() {
+            return Err(AppError::Cancelled("下载已取消".into()));
+        }
+        match fetch_bytes_with_progress(url, cancel_rx, &on_progress).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(e @ AppError::Cancelled(_)) => return Err(e),
+            Err(e) => errors.push(format!("{}: {}", url, e)),
+        }
+    }
+    Err(AppError::Network(format!(
+        "所有源都不可用（{}）",
+        errors.join("；")
+    )))
+}
+
 // ─── Commands ──────────────────────────────────────────────────────────────
 
 /// Fetch the market index. `index_url` carries the user-configured mirror
@@ -540,5 +633,17 @@ mod tests {
         assert_eq!(urls.len(), 2);
         let urls = zip_urls("o", "r", Some("https://x/index.json"));
         assert_eq!(urls.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn download_with_progress_cancelled_before_request() {
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        tx.send(true).unwrap();
+        let urls = vec!["https://invalid.example/a.zip".to_string()];
+        // 取消已置位：不发起任何请求，直接返回 Cancelled
+        let err = download_first_with_progress(&urls, &mut rx, |_, _| {})
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Cancelled(_)));
     }
 }

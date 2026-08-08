@@ -899,9 +899,24 @@ export async function marketDetail(repoUrl: string, mirror?: string): Promise<Ma
 }
 
 /** One-click install: download the plugin archive (mirror-first), extract it
- *  into the plugins directory. Takes effect after an app restart. */
-export async function pluginInstall(repoUrl: string, mirror?: string): Promise<PluginInstallResult> {
-  return invoke<PluginInstallResult>('plugin_install', { repoUrl, mirror: mirror ?? null });
+ *  into the plugins directory. Takes effect after an app restart. Progress is
+ *  pushed via `plugin-install-progress` events keyed by `installId`; the task
+ *  can be aborted via `pluginInstallCancel(installId)`. */
+export async function pluginInstall(
+  repoUrl: string,
+  installId: string,
+  mirror?: string,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>('plugin_install', {
+    repoUrl,
+    installId,
+    mirror: mirror ?? null,
+  });
+}
+
+/** Abort a running plugin install (download or extraction). */
+export async function pluginInstallCancel(installId: string): Promise<void> {
+  return invoke('plugin_install_cancel', { installId });
 }
 
 /** Remove an installed plugin (directory + settings residue). */

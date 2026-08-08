@@ -4,23 +4,33 @@
 //! see `commands::market`), extracts it with zip-slip protection into
 //! `<config>/plugins/<id>/`, and refreshes the registry.
 //!
-//! The frontend intentionally does **not** auto-refresh after install /
-//! uninstall (a restart guarantees a clean, consistent plugin runtime), so
-//! these commands only update the backend registry — they do not emit
-//! `plugin-registry-changed`. The plugin becomes fully loaded after an app
+//! Progress + cancellation: the install runs under a caller-provided
+//! `install_id`. The backend emits `plugin-install-progress` events
+//! (`phase: "downloading"` with bytes, `phase: "extracting"` with zip entries)
+//! so the frontend can drive a progress overlay; the user can abort the
+//! install at any point via `plugin_install_cancel(install_id)`, which emits
+//! `plugin-install-cancelled` and leaves no partial state behind (temp dir is
+//! removed). A successful install emits `plugin-install-done`.
+//!
+//! The frontend intentionally does **not** auto-refresh the plugin list after
+//! install / uninstall (a restart guarantees a clean, consistent plugin
+//! runtime), so these commands only update the backend registry — they do not
+//! emit `plugin-registry-changed`. The plugin becomes fully loaded after an app
 //! restart.
 //!
 //! `plugin_uninstall` removes the plugin directory and cleans up settings
 //! residue (`disabled_plugins` / `authorized_capabilities`).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::commands::market::{download_first, github_repo_parts, zip_urls};
+use crate::commands::market::{download_first_with_progress, github_repo_parts, zip_urls};
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
+use crate::emit_event;
 use crate::error::AppError;
 use crate::plugins::manifest::PluginManifest;
 use crate::AppState;
@@ -77,12 +87,23 @@ fn sanitize_zip_path(name: &str) -> Result<PathBuf, String> {
     Ok(parts.join("/").into())
 }
 
-/// 解压 zip 到 dest：全程路径穿越防护 + 解压总量限制。
-fn extract_zip_archive(bytes: &[u8], dest: &Path) -> Result<(), AppError> {
+/// 解压 zip 到 dest：路径穿越防护 + 总量限制 + 进度回调 + 取消检查。
+/// `on_progress(current_entry, total_entries)` 每处理若干个条目回调一次；
+/// `is_cancelled` 返回 true 时立即中断（安装取消时用于清理半成品）。
+fn extract_zip_archive_with(
+    bytes: &[u8],
+    dest: &Path,
+    on_progress: impl Fn(u64, u64),
+    is_cancelled: impl Fn() -> bool,
+) -> Result<(), AppError> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|e| AppError::Other(format!("zip 解析失败: {}", e)))?;
     let mut total: u64 = 0;
+    let entry_count = archive.len() as u64;
     for i in 0..archive.len() {
+        if is_cancelled() {
+            return Err(AppError::Cancelled("安装已取消".into()));
+        }
         let mut entry = archive
             .by_index(i)
             .map_err(|e| AppError::Other(format!("zip 条目读取失败: {}", e)))?;
@@ -93,21 +114,25 @@ fn extract_zip_archive(bytes: &[u8], dest: &Path) -> Result<(), AppError> {
         if entry.is_dir() {
             std::fs::create_dir_all(&out)
                 .map_err(|e| AppError::Other(format!("创建目录失败 {}: {}", out.display(), e)))?;
-            continue;
+        } else {
+            total += entry.size();
+            if total > MAX_EXTRACT_BYTES {
+                return Err(AppError::Other("压缩包解压后超过大小上限".into()));
+            }
+            if let Some(parent) = out.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| AppError::Other(format!("创建目录失败 {}: {}", parent.display(), e)))?;
+            }
+            let mut file = std::fs::File::create(&out)
+                .map_err(|e| AppError::Other(format!("写入文件失败 {}: {}", out.display(), e)))?;
+            std::io::copy(&mut entry, &mut file)
+                .map_err(|e| AppError::Other(format!("解压失败 {}: {}", out.display(), e)))?;
         }
 
-        total += entry.size();
-        if total > MAX_EXTRACT_BYTES {
-            return Err(AppError::Other("压缩包解压后超过大小上限".into()));
+        // 进度推送节流：目录条目秒回、文件条目可能耗时——每 5 个条目或末尾回调一次。
+        if i % 5 == 0 || i + 1 == entry_count as usize {
+            on_progress((i + 1) as u64, entry_count);
         }
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| AppError::Other(format!("创建目录失败 {}: {}", parent.display(), e)))?;
-        }
-        let mut file = std::fs::File::create(&out)
-            .map_err(|e| AppError::Other(format!("写入文件失败 {}: {}", out.display(), e)))?;
-        std::io::copy(&mut entry, &mut file)
-            .map_err(|e| AppError::Other(format!("解压失败 {}: {}", out.display(), e)))?;
     }
     Ok(())
 }
@@ -154,15 +179,19 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 /// 从已下载的 zip 字节安装插件：解压 → 校验 manifest → 移入插件目录。
 /// 纯函数（不依赖 Tauri 运行时），可单测。返回 (id, name, version)。
-fn install_from_archive(
+/// 解压阶段回调 `on_progress(entry, total_entries)` 并轮询 `is_cancelled`
+/// （取消时中断并清理临时目录）。
+fn install_from_archive_with_progress(
     bytes: &[u8],
     config_dir: &Path,
     tmp_dir: &Path,
+    on_progress: impl Fn(u64, u64),
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<(String, String, String), AppError> {
     std::fs::create_dir_all(tmp_dir)
         .map_err(|e| AppError::Other(format!("创建临时目录失败: {}", e)))?;
     let result = (|| -> Result<(String, String, String), AppError> {
-        extract_zip_archive(bytes, tmp_dir)?;
+        extract_zip_archive_with(bytes, tmp_dir, &on_progress, &is_cancelled)?;
         let root = find_plugin_root(tmp_dir)?;
 
         let manifest_path = root.join("plugin.json");
@@ -198,31 +227,126 @@ fn install_from_archive(
     result
 }
 
+/// Drop guard that removes the cancel sender from AppState on drop. Mirrors
+/// `commands::sftp::TransferCancelGuard`.
+struct InstallCancelGuard {
+    install_id: String,
+    senders: std::sync::Arc<
+        parking_lot::RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    >,
+}
+
+impl Drop for InstallCancelGuard {
+    fn drop(&mut self) {
+        self.senders.write().remove(&self.install_id);
+    }
+}
+
 /// Download a plugin's source archive (mirror-first) and install it into the
 /// plugins directory. Rejects if a plugin with the same id already exists.
+///
+/// Progress is pushed via `plugin-install-progress` events (`installId`,
+/// `phase`, `received`, `total`); completion via `plugin-install-done`. The
+/// user can abort at any point via `plugin_install_cancel(install_id)`, which
+/// emits `plugin-install-cancelled` and leaves no partial state.
 #[tauri::command]
 pub async fn plugin_install(
     app: AppHandle,
     state: State<'_, AppState>,
     repo_url: String,
     mirror: Option<String>,
+    install_id: String,
 ) -> Result<PluginInstallResult, AppError> {
     let Some((owner, repo)) = github_repo_parts(&repo_url) else {
         return Err(AppError::Other("非 GitHub 仓库无法自动安装".into()));
     };
 
+    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
+    state
+        .plugin_install_cancel_senders
+        .write()
+        .insert(install_id.clone(), cancel_tx);
+    let _guard = InstallCancelGuard {
+        install_id: install_id.clone(),
+        senders: state.plugin_install_cancel_senders.clone(),
+    };
+
     let urls = zip_urls(&owner, &repo, mirror.as_deref());
-    let bytes = download_first(&urls)
-        .await
-        .map_err(|e| AppError::Network(format!("插件下载失败: {}", e)))?;
+    let bytes = {
+        let app_for_emit = app.clone();
+        let install_id_for_emit = install_id.clone();
+        let on_progress = move |received: u64, total: u64| {
+            let _ = emit_event(
+                &app_for_emit,
+                "plugin-install-progress",
+                serde_json::json!({
+                    "installId": install_id_for_emit,
+                    "phase": "downloading",
+                    "received": received,
+                    "total": total,
+                }),
+            );
+        };
+        match download_first_with_progress(&urls, &mut cancel_rx, on_progress).await {
+            Ok(bytes) => bytes,
+            Err(e @ AppError::Cancelled(_)) => {
+                let _ = emit_event(
+                    &app,
+                    "plugin-install-cancelled",
+                    serde_json::json!({ "installId": &install_id }),
+                );
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        }
+    };
 
     let config_dir = state.config_dir.clone();
     let tmp_dir = std::env::temp_dir().join(format!("marcel-plugin-{}", uuid::Uuid::new_v4()));
 
-    let installed = tokio::task::spawn_blocking(move || install_from_archive(&bytes, &config_dir, &tmp_dir))
+    let installed = {
+        let config_dir = config_dir.clone();
+        let tmp_dir = tmp_dir.clone();
+        let app_for_emit = app.clone();
+        let install_id_for_emit = install_id.clone();
+        let cancel_rx_for_blocking = cancel_rx.clone();
+        tokio::task::spawn_blocking(move || {
+            let on_progress = move |current: u64, total: u64| {
+                let _ = emit_event(
+                    &app_for_emit,
+                    "plugin-install-progress",
+                    serde_json::json!({
+                        "installId": install_id_for_emit,
+                        "phase": "extracting",
+                        "received": current,
+                        "total": total,
+                    }),
+                );
+            };
+            let is_cancelled = move || *cancel_rx_for_blocking.borrow();
+            install_from_archive_with_progress(
+                &bytes,
+                &config_dir,
+                &tmp_dir,
+                on_progress,
+                is_cancelled,
+            )
+        })
         .await
         .map_err(|e| AppError::Other(format!("安装线程异常: {}", e)))?
-    ?;
+    };
+    let installed = match installed {
+        Ok(r) => r,
+        Err(e @ AppError::Cancelled(_)) => {
+            let _ = emit_event(
+                &app,
+                "plugin-install-cancelled",
+                serde_json::json!({ "installId": &install_id }),
+            );
+            return Err(e);
+        }
+        Err(e) => return Err(e),
+    };
 
     // 更新 registry（内存与磁盘保持一致，已卸载插件实时从后端移除），
     // 但不 emit `plugin-registry-changed`——前端不自动刷新，重启后生效。
@@ -234,12 +358,35 @@ pub async fn plugin_install(
         reg.reload(&config_dir, &settings, &app_version).await;
     }
 
+    let _ = emit_event(
+        &app,
+        "plugin-install-done",
+        serde_json::json!({ "installId": &install_id }),
+    );
+
     Ok(PluginInstallResult {
         id: installed.0,
         name: installed.1,
         version: installed.2,
         restart_required: true,
     })
+}
+
+/// Abort a running plugin install. The install loop notices the flag between
+/// download chunks / during extraction, cleans up and returns `Cancelled`.
+#[tauri::command]
+pub async fn plugin_install_cancel(
+    state: State<'_, AppState>,
+    install_id: String,
+) -> Result<(), AppError> {
+    if let Some(sender) = state
+        .plugin_install_cancel_senders
+        .write()
+        .remove(&install_id)
+    {
+        let _ = sender.send(true);
+    }
+    Ok(())
 }
 
 /// Remove an installed plugin (directory + settings residue). The frontend
@@ -350,7 +497,7 @@ mod tests {
             ("plug-main/plugin.json", "{}"),
             ("plug-main/index.html", "<html></html>"),
         ]);
-        extract_zip_archive(&zip, tmp.path()).unwrap();
+        extract_zip_archive_with(&zip, tmp.path(), |_, _| {}, || false).unwrap();
         assert!(tmp.path().join("plug-main/plugin.json").exists());
         assert!(tmp.path().join("plug-main/index.html").exists());
 
@@ -359,7 +506,7 @@ mod tests {
             ("plug-main/plugin.json", "{}"),
             ("../escaped.txt", "evil"),
         ]);
-        assert!(extract_zip_archive(&evil, tmp.path()).is_err());
+        assert!(extract_zip_archive_with(&evil, tmp.path(), |_, _| {}, || false).is_err());
         assert!(!tmp.path().parent().unwrap().join("escaped.txt").exists());
     }
 
@@ -386,7 +533,7 @@ mod tests {
             ("plug-main/index.html", "<html></html>"),
         ]);
         let (id, name, _ver) =
-            install_from_archive(&zip, config.path(), &tmp.path().join("work")).unwrap();
+            install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap();
         assert_eq!(id, "plug-a");
         assert_eq!(name, "A");
         assert!(config.path().join("plugins/plug-a/index.html").exists());
@@ -406,7 +553,7 @@ mod tests {
             "plug-main/plugin.json",
             r#"{"id":"plug-a","version":"1.0.0","name":"A","capabilities":[],"views":[],"agentTools":[]}"#,
         )]);
-        let err = install_from_archive(&zip, config.path(), &tmp.path().join("work")).unwrap_err();
+        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
         assert!(err.to_string().contains("已安装"));
     }
 
@@ -415,7 +562,7 @@ mod tests {
         let config = TempDir::new().unwrap();
         let tmp = TempDir::new().unwrap();
         let zip = make_zip(&[("plug-main/index.html", "<html></html>")]);
-        let err = install_from_archive(&zip, config.path(), &tmp.path().join("work")).unwrap_err();
+        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
         assert!(err.to_string().contains("缺少 plugin.json"));
     }
 
@@ -427,8 +574,73 @@ mod tests {
             "plug-main/plugin.json",
             r#"{"id":"../evil","version":"1.0.0","name":"E","capabilities":[],"views":[],"agentTools":[]}"#,
         )]);
-        let err = install_from_archive(&zip, config.path(), &tmp.path().join("work")).unwrap_err();
+        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
         assert!(err.to_string().contains("非法字符"));
         assert!(!config.path().join("plugins").exists());
+    }
+
+    #[test]
+    fn extract_reports_progress() {
+        let tmp = TempDir::new().unwrap();
+        let zip = make_zip(&[
+            ("plug-main/plugin.json", "{}"),
+            ("plug-main/a.js", "x"),
+            ("plug-main/b.js", "y"),
+            ("plug-main/c.js", "z"),
+        ]);
+        let events = std::cell::RefCell::new(Vec::new());
+        extract_zip_archive_with(&zip, tmp.path(), |cur, total| {
+            events.borrow_mut().push((cur, total));
+        }, || false)
+        .unwrap();
+        let events = events.borrow();
+        assert!(!events.is_empty(), "进度回调必须触发");
+        assert_eq!(events.last().copied(), Some((4, 4)), "末尾回调需覆盖总量");
+    }
+
+    #[test]
+    fn extract_cancels_mid_way() {
+        let tmp = TempDir::new().unwrap();
+        let zip = make_zip(&[
+            ("plug-main/plugin.json", "{}"),
+            ("plug-main/index.html", "<html></html>"),
+        ]);
+        let calls = std::cell::Cell::new(0u32);
+        let is_cancelled = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= 2
+        };
+        let err = extract_zip_archive_with(&zip, tmp.path(), |_, _| {}, is_cancelled).unwrap_err();
+        assert!(matches!(err, AppError::Cancelled(_)));
+    }
+
+    #[test]
+    fn install_with_progress_cancels_and_cleans_up() {
+        let config = TempDir::new().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let zip = make_zip(&[
+            (
+                "plug-main/plugin.json",
+                r#"{"id":"plug-a","version":"1.0.0","name":"A","capabilities":[],"views":[],"agentTools":[]}"#,
+            ),
+            ("plug-main/index.html", "<html></html>"),
+        ]);
+        let calls = std::cell::Cell::new(0u32);
+        let is_cancelled = || {
+            calls.set(calls.get() + 1);
+            calls.get() >= 2
+        };
+        let err = install_from_archive_with_progress(
+            &zip,
+            config.path(),
+            &tmp.path().join("work"),
+            |_, _| {},
+            is_cancelled,
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::Cancelled(_)));
+        // 取消后不落插件目录，临时目录已清理
+        assert!(!config.path().join("plugins").exists());
+        assert!(!tmp.path().join("work").exists());
     }
 }

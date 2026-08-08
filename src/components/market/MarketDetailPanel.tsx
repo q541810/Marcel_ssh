@@ -14,11 +14,13 @@ import {
   Trash2,
   RotateCw,
 } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
-import { marketDetail, pluginInstall, pluginUninstall } from '@/lib/tauri';
+import { marketDetail, pluginInstall, pluginInstallCancel, pluginUninstall } from '@/lib/tauri';
+import type { PluginInstallProgress } from '@/lib/types';
 import { openExternalLink } from '@/lib/externalLinks';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel, capabilityRisk } from '@/lib/pluginCapabilities';
@@ -28,6 +30,11 @@ import { useSettingsLayout } from '@/components/settings/helpers';
 import { STAR_PROMPT_INSTALL_EVENT } from '@/components/star/StarPromptModal';
 import { getErrorMessage } from '@/lib/errors';
 import type { MarketPlugin, PluginManifest } from '@/lib/types';
+import InstallOverlay, {
+  type InstallOverlayKind,
+  type InstallOverlayProgress,
+  type InstallOverlayStatus,
+} from './InstallOverlay';
 
 /** 相对路径 → 镜像 URL。跟随后端镜像语义：配置了 GitHub 加速镜像前缀时走
  *  前缀代理（ghfast.top/https://...）；jsDelivr 域名走 jsDelivr 文件镜像；
@@ -145,63 +152,120 @@ function CapabilityChip({ cap }: { cap: string }) {
   );
 }
 
-/** 一键安装 / 卸载逻辑与状态。 */
-function useInstallActions(plugin: MarketPlugin, installed: boolean) {
+/** 一键安装 / 卸载：全屏覆盖层驱动（运行中不可关闭、可取消），完成后把
+ *  安装状态写入 marketStore（会话级），重启前跨页面进出保持一致。 */
+function useInstallActions(plugin: MarketPlugin) {
   const mirror = useMarketStore((s) => s.sourceUrl);
-  const [installing, setInstalling] = useState(false);
-  const [uninstalling, setUninstalling] = useState(false);
-  const [installDone, setInstallDone] = useState(false);
-  const [uninstallDone, setUninstallDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const markInstalled = useMarketStore((s) => s.markInstalled);
+  const markUninstalled = useMarketStore((s) => s.markUninstalled);
+
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayKind, setOverlayKind] = useState<InstallOverlayKind>('install');
+  const [status, setStatus] = useState<InstallOverlayStatus>({ kind: 'running' });
+  const [progress, setProgress] = useState<InstallOverlayProgress | null>(null);
+  const [installId, setInstallId] = useState<string | null>(null);
   const [confirmUninstall, setConfirmUninstall] = useState(false);
 
-  // 安装/卸载成功后不主动刷新插件列表（后端不广播注册表变更事件，
-  // 避免自动刷新波及其他插件的运行时），用本地状态覆盖展示；
-  // 重启应用后列表自然对齐。
-  const uiInstalled = uninstallDone ? false : installed || installDone;
+  // 订阅本次安装任务的进度/完成/取消事件。installId 非空时挂载监听，
+  // 关闭覆盖层时解除。
+  useEffect(() => {
+    if (!installId) return;
+    let disposed = false;
+    let unlistenFns: Array<() => void> = [];
+    Promise.all([
+      listen<PluginInstallProgress>('plugin-install-progress', (e) => {
+        if (e.payload.installId !== installId) return;
+        setProgress({ received: e.payload.received, total: e.payload.total });
+      }),
+      listen<{ installId: string }>('plugin-install-done', (e) => {
+        if (e.payload.installId !== installId) return;
+        markInstalled(plugin.id);
+        setStatus({ kind: 'done' });
+      }),
+      listen<{ installId: string }>('plugin-install-cancelled', (e) => {
+        if (e.payload.installId !== installId) return;
+        setStatus({ kind: 'cancelled' });
+      }),
+    ]).then((fns) => {
+      if (disposed) {
+        fns.forEach((fn) => fn());
+      } else {
+        unlistenFns = fns;
+      }
+    });
+    return () => {
+      disposed = true;
+      unlistenFns.forEach((fn) => fn());
+    };
+  }, [installId, plugin.id, markInstalled]);
 
   const install = async () => {
-    setInstalling(true);
-    setError(null);
+    const id = crypto.randomUUID();
+    setOverlayKind('install');
+    setStatus({ kind: 'running' });
+    setProgress(null);
+    setInstallId(id);
+    setOverlayOpen(true);
     try {
-      await pluginInstall(plugin.repoUrl, mirror || undefined);
-      setInstallDone(true);
-      setUninstallDone(false);
+      await pluginInstall(plugin.repoUrl, id, mirror || undefined);
+      markInstalled(plugin.id);
+      setStatus({ kind: 'done' });
       // 安装成功是求 Star 的最佳时机（正反馈时刻），由 StarPromptModal 按限频判定。
       window.dispatchEvent(new Event(STAR_PROMPT_INSTALL_EVENT));
     } catch (e) {
-      setError(getErrorMessage(e));
+      // 取消路径由 cancelled 事件置态；这里只兜底非取消错误
+      setStatus((cur) =>
+        cur.kind === 'cancelling' || cur.kind === 'cancelled'
+          ? cur
+          : { kind: 'error', message: getErrorMessage(e) },
+      );
     } finally {
-      setInstalling(false);
+      setInstallId(null);
+    }
+  };
+
+  const cancelInstall = async () => {
+    if (!installId) return;
+    setStatus({ kind: 'cancelling' });
+    try {
+      await pluginInstallCancel(installId);
+    } catch (e) {
+      console.error('cancel install failed:', e);
     }
   };
 
   const uninstall = async () => {
-    setUninstalling(true);
-    setError(null);
+    setOverlayKind('uninstall');
+    setStatus({ kind: 'running' });
+    setProgress(null);
+    setOverlayOpen(true);
     try {
       await pluginUninstall(plugin.id);
-      setConfirmUninstall(false);
-      setUninstallDone(true);
+      markUninstalled(plugin.id);
+      setStatus({ kind: 'done' });
     } catch (e) {
-      setError(getErrorMessage(e));
-    } finally {
-      setUninstalling(false);
+      setStatus({ kind: 'error', message: getErrorMessage(e) });
     }
+  };
+
+  const closeOverlay = () => {
+    setOverlayOpen(false);
+    setStatus({ kind: 'running' });
+    setProgress(null);
   };
 
   return {
     mirror,
-    installing,
-    uninstalling,
-    installDone,
-    uninstallDone,
-    uiInstalled,
-    installError: error,
+    status,
+    progress,
+    overlayOpen,
+    overlayKind,
     confirmUninstall,
     setConfirmUninstall,
     install,
+    cancelInstall,
     uninstall,
+    closeOverlay,
   };
 }
 
@@ -225,8 +289,9 @@ export function MarketDetailPanel({
   const [retryKey, setRetryKey] = useState(0);
   const layout = useSettingsLayout();
   const padX = `${layout.contentPaddingX}px`;
-  const { uiInstalled, ...installActions } = useInstallActions(plugin, installed);
+  const installActions = useInstallActions(plugin);
   const { mirror } = installActions;
+  const uiInstalled = installed;
 
   useEffect(() => {
     let cancelled = false;
@@ -343,7 +408,6 @@ export function MarketDetailPanel({
                 <Button
                   variant="danger"
                   size="sm"
-                  loading={installActions.uninstalling}
                   onClick={() => installActions.setConfirmUninstall(true)}
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -359,11 +423,11 @@ export function MarketDetailPanel({
               <Button
                 variant="primary"
                 size="sm"
-                loading={installActions.installing}
+                disabled={installActions.overlayOpen}
                 onClick={installActions.install}
               >
                 <Download className="w-3.5 h-3.5" />
-                {installActions.installing ? '安装中…' : '一键安装'}
+                一键安装
               </Button>
             )}
           </div>
@@ -387,44 +451,8 @@ export function MarketDetailPanel({
             <p className="text-sm text-zinc-400 leading-relaxed">{plugin.description}</p>
           )}
 
-          {/* 安装/卸载错误 */}
-          {installActions.installError && (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-              <p className="text-xs text-red-400 leading-relaxed flex-1">
-                {installActions.installError}
-              </p>
-            </div>
-          )}
-
-          {/* 安装成功提示 */}
-          {installActions.installDone && uiInstalled && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
-              <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm text-emerald-300">安装完成</p>
-                <p className="text-xs text-emerald-400/70 mt-0.5">
-                  重启应用后插件生效
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* 卸载成功提示 */}
-          {installActions.uninstallDone && !uiInstalled && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
-              <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              <div className="flex-1">
-                <p className="text-sm text-emerald-300">卸载完成</p>
-                <p className="text-xs text-emerald-400/70 mt-0.5">
-                  重启应用后完全移除
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* 已安装提示 */}
-          {uiInstalled && !installActions.installDone && (
+          {uiInstalled && (
             <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
               <Check className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <div className="flex-1">
@@ -614,13 +642,26 @@ export function MarketDetailPanel({
           <Button
             variant="danger"
             size="sm"
-            loading={installActions.uninstalling}
-            onClick={installActions.uninstall}
+            onClick={() => {
+              installActions.setConfirmUninstall(false);
+              installActions.uninstall();
+            }}
           >
             卸载
           </Button>
         </div>
       </Modal>
+
+      {/* 安装/卸载全屏覆盖层：运行中不可关闭，完成后提示重启生效 */}
+      <InstallOverlay
+        open={installActions.overlayOpen}
+        kind={installActions.overlayKind}
+        pluginName={plugin.name}
+        status={installActions.status}
+        progress={installActions.progress}
+        onCancel={installActions.cancelInstall}
+        onClose={installActions.closeOverlay}
+      />
     </div>
   );
 }

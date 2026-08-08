@@ -42,4 +42,7 @@ server/data/
 # 官网
 website/
 
+# 沙箱测试环境（本机实验用，不入仓库）
+sandbox-test/
+
 .workbuddy/

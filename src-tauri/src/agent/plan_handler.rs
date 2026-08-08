@@ -478,10 +478,17 @@ pub(crate) async fn handle_update_plan_item(
             original_status
         );
 
-        let reminder = "你刚尝试把最后一个 plan item 标记为完成的行动已被系统拦截，这个 plan item 仍非完成状态。请反思：任务真的都完成了吗？\n\
-             - 如果确实完成，请再次调用 update_plan_item 把该 item 标记为终态，届时不会被拦截。\n\
-             - 如果还有未完成的工作，请用 update_plan_item 把对应 item 改回 in_progress 继续执行，\n\
-               或用 edit_plan 增补新步骤。"
+        let reminder = "你尝试将最后一个 plan item 标记为终态的操作已被系统拦截，本次完成声明未生效。\n\
+\n\
+plan 的全部步骤已进入终态，这将被视为任务收尾。请逐项核对：\n\
+- 针对任务声明的每个目标，提供对应的可验证证据（命令输出、文件内容、\n\
+  请求结果、计算/搜索结果等），而非仅描述\"已完成\"\n\
+- 证据须来自用户可感知的结果（实际访问、实际输出、实际内容），\n\
+  而不是中间状态（进程在跑、端口在监听、任务在运行）\n\
+- 任何目标未达成或无法提供证据，都不得宣告完成\n\
+\n\
+- 验证全部通过：再次调用 update_plan_item 标记终态，届时不会拦截\n\
+- 验证发现遗漏：update_plan_item 改回 in_progress 继续，或 edit_plan 增补步骤"
             .to_string();
         // NLL: plan 的最后一次使用已结束，释放对 plans 的写锁借用
         drop(plans);

@@ -33,6 +33,8 @@ pub enum AppError {
     Update(String),
     #[error("Network error: {0}")]
     Network(String),
+    #[error("已取消: {0}")]
+    Cancelled(String),
     #[error("{0}")]
     Other(String),
 }
@@ -80,6 +82,7 @@ impl Serialize for AppError {
                     AppError::Config(_) => "Config",
                     AppError::Update(_) => "Update",
                     AppError::Network(_) => "Network",
+                    AppError::Cancelled(_) => "Cancelled",
                     AppError::Io(_) => "Io",
                     AppError::Serde(_) => "Serde",
                     AppError::HostKeyVerification(_) => "HostKeyVerification",
@@ -184,6 +187,7 @@ mod tests {
                 "HostKeyVerification",
                 AppError::HostKeyVerification("test".into()),
             ),
+            ("Cancelled", AppError::Cancelled("test".into())),
             ("Other", AppError::Other("test".into())),
         ];
         for (expected_kind, err) in cases {

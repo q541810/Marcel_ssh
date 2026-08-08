@@ -75,6 +75,9 @@ pub struct AppState {
     /// Cancellation signals for SFTP downloads: download_id -> watch sender.
     pub download_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Cancellation signals for plugin installs: install_id -> watch sender.
+    pub plugin_install_cancel_senders:
+        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Cancellation signals for long-running SSH commands (compress, etc.): task_id -> watch sender.
     pub long_exec_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
@@ -395,6 +398,7 @@ impl AppState {
                         cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -430,6 +434,7 @@ impl AppState {
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -761,6 +766,7 @@ pub fn run() {
             commands::plugin::open_plugin_dir,
             commands::plugin_install::plugin_install,
             commands::plugin_install::plugin_uninstall,
+            commands::plugin_install::plugin_install_cancel,
             commands::plugin_fs::plugin_fs_read,
             commands::plugin_fs::plugin_fs_write,
             commands::plugin_http::plugin_http_request,

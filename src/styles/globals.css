@@ -82,7 +82,19 @@
   animation-timing-function: var(--spring-bounce);
 }
 
-.spring-smooth {
+/* Install overlay indeterminate progress bar */
+@keyframes indeterminate-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+.indeterminate-bar {
+  animation: indeterminate-slide 1.4s ease-in-out infinite;
+}.spring-smooth {
   animation-timing-function: var(--spring-smooth);
 }
 
