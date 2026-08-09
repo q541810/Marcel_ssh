@@ -37,6 +37,7 @@ export function SyncRestoreFlow({ onDone }: SyncRestoreFlowProps) {
   const actionLoading = useSyncStore((s) => s.actionLoading);
   const storeError = useSyncStore((s) => s.error);
   const clearError = useSyncStore((s) => s.clearError);
+  const progress = useSyncStore((s) => s.summary?.progress ?? null);
   const updateSettings = useSettingsStore((s) => s.update);
 
   const [serverSource, setServerSource] = useState<'official' | 'custom'>('official');
@@ -83,13 +84,29 @@ export function SyncRestoreFlow({ onDone }: SyncRestoreFlowProps) {
 
   // ── syncing ──────────────────────────────────────────────
   if (phase === 'syncing') {
+    const pr = progress && progress.total > 0 ? progress : null;
+    const pct = pr ? Math.min(100, Math.round((pr.done / pr.total) * 100)) : null;
     return (
       <div className="flex flex-col items-center px-6 py-12 text-center">
         <RefreshCw className="mb-4 h-6 w-6 animate-spin text-zinc-400" />
         <div className="text-sm font-medium text-zinc-200">正在恢复配置</div>
-        <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-          首次同步可能需要 1 分钟，请不要关闭应用
-        </p>
+        {pr && pct !== null ? (
+          <>
+            <div className="mt-3 h-1.5 w-52 overflow-hidden rounded-full bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-indigo-500 transition-[width] duration-200"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+              正在拉取 {pr.done}/{pr.total} 项 · {pct}%
+            </p>
+          </>
+        ) : (
+          <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
+            首次同步可能需要 1 分钟，请不要关闭应用
+          </p>
+        )}
       </div>
     );
   }

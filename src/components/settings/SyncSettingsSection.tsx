@@ -501,7 +501,11 @@ export function SyncSettingsSection() {
                 </Button>
                 <Button variant="secondary" onClick={() => pullNow()} disabled={summary.state === 'pulling'}>
                   <RefreshCw className={`w-4 h-4 ${summary.state === 'pulling' ? 'animate-spin' : ''}`} />
-                  拉取
+                  {summary.state === 'pulling' &&
+                  summary.progress &&
+                  summary.progress.total > 0
+                    ? `拉取 ${Math.min(100, Math.round((summary.progress.done / summary.progress.total) * 100))}%`
+                    : '拉取'}
                 </Button>
               </div>
             </SettingItem>

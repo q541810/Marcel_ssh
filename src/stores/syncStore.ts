@@ -45,25 +45,7 @@ import {
   syncGetExcludedKeys,
 } from '../lib/tauri';
 import { getErrorMessage } from '../lib/errors';
-import { useSettingsStore } from './settingsStore';
-import { useConnectionStore } from './connectionStore';
-import { useQuickCommandStore } from './quickCommandStore';
-import { useSkillStore } from './skillStore';
-import { useMcpStore } from './mcpStore';
-import { useConversationStore } from './conversationStore';
-import { useSessionStore } from './sessionStore';
-
-/** pull 会连发多个 settings.*；合并成一次 load，避免设置页 draft 跟进时反复 dirty 闪烁 */
-let settingsReloadTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleSettingsReloadFromSync() {
-  if (settingsReloadTimer != null) clearTimeout(settingsReloadTimer);
-  settingsReloadTimer = setTimeout(() => {
-    settingsReloadTimer = null;
-    void useSettingsStore.getState().load(true).catch((e) => {
-      console.warn('[syncStore] 刷新 settings 失败:', e);
-    });
-  }, 120);
-}
+import { collectSyncApplied } from '../lib/syncRefresh';
 
 /** 默认 sync_profile（与后端 profile.rs SyncProfile::default() 对齐） */
 export const DEFAULT_SYNC_CATEGORIES: SyncCategory[] = [
@@ -106,6 +88,8 @@ interface SyncStoreState {
   _unlisten?: UnlistenFn;
   /** 事件监听器取消函数（sync-data-applied） */
   _unlistenDataApplied?: UnlistenFn;
+  /** 事件监听器取消函数（sync-batch-applied） */
+  _unlistenBatchApplied?: UnlistenFn;
   /** 事件监听器取消函数（sync-conflicts-detected） */
   _unlistenConflicts?: UnlistenFn;
 }
@@ -353,7 +337,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     if (get()._unlisten) return;
 
     try {
-      // 1. 监听同步状态变更（pushing/pulling/idle/error）
+      // 1. 监听同步状态变更（pushing/pulling/idle/error + pull 进度）
       const unlisten = await listen<SyncStateEvent>('sync-state-changed', (event) => {
         const payload = event.payload;
         const summary = get().summary;
@@ -364,6 +348,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
               state: payload.state,
               pendingCount: payload.pendingCount,
               error: payload.error,
+              progress: payload.progress ?? null,
             },
           });
         }
@@ -371,56 +356,26 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
       set({ _unlisten: unlisten });
 
       // 2. 监听同步数据应用事件（远程 pull 后应用到本地）
-      // 根据 key 前缀刷新对应 store，确保前端 UI 与后端状态一致
+      // 单 key 事件（Fork 等）与批量事件都进统一收集器，debounce 后只刷新一轮
       const unlistenDataApplied = await listen<{ key: string; deleted: boolean }>(
         'sync-data-applied',
-        async (event) => {
-          const { key } = event.payload;
-          try {
-            // settings 字段级：一次 pull 会连发多个 settings.*，合并成一次 load
-            if (key === 'settings' || key.startsWith('settings.')) {
-              scheduleSettingsReloadFromSync();
-            } else if (key.startsWith('connections.')) {
-              await useConnectionStore.getState().fetchConnections();
-            } else if (key.startsWith('quickCommands.')) {
-              await useQuickCommandStore.getState().load();
-            } else if (key.startsWith('skills.')) {
-              await useSkillStore.getState().fetchSkills();
-            } else if (key.startsWith('mcpServers.')) {
-              await useMcpStore.getState().fetchServers();
-            } else if (key.startsWith('conversations.')) {
-              const conversationId = key.substring('conversations.'.length);
-              // 如果是当前激活的对话，刷新消息列表；否则只更新会话列表
-              const activeId = useConversationStore.getState().activeConversationId;
-              if (activeId === conversationId) {
-                await useConversationStore.getState().loadConversation(conversationId);
-              }
-              // 刷新当前激活会话所属连接的会话列表（涵盖新增/标题更新/删除）
-              const sessionStore = useSessionStore.getState();
-              const activeSessionId = sessionStore.activeSessionId;
-              if (activeSessionId) {
-                const session = sessionStore.sessions[activeSessionId];
-                if (session?.configId) {
-                  await useConversationStore
-                    .getState()
-                    .loadConnectionConversations(session.configId);
-                }
-              }
-            }
-            // secrets.llmApiKey 不需要前端刷新（keychain 变更不影响 UI）
-            if (key === 'secrets.webSearchApiKey') {
-              // 搜索 API Key 有 UI 状态（设置页「已保存」指示），同步后同步刷新
-              const { deleted } = event.payload;
-              useSettingsStore.setState({ hasWebSearchApiKey: !deleted });
-            }
-          } catch (e) {
-            console.warn('[syncStore] 刷新 store 失败:', key, e);
-          }
+        (event) => {
+          collectSyncApplied(event.payload.key, event.payload.deleted);
         },
       );
       set({ _unlistenDataApplied: unlistenDataApplied });
 
-      // 3. 监听冲突检测事件（pull 后发现有冲突时 emit）
+      // 3. 监听批量应用事件（pull 主路径：一次 pull 只发一个事件）
+      const unlistenBatchApplied = await listen<{
+        applied: { key: string; deleted: boolean }[];
+      }>('sync-batch-applied', (event) => {
+        for (const item of event.payload.applied ?? []) {
+          collectSyncApplied(item.key, item.deleted);
+        }
+      });
+      set({ _unlistenBatchApplied: unlistenBatchApplied });
+
+      // 4. 监听冲突检测事件（pull 后发现有冲突时 emit）
       const unlistenConflicts = await listen<SyncConflictsEvent>(
         'sync-conflicts-detected',
         (event) => {
@@ -450,6 +405,11 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     if (unlistenDataApplied) {
       unlistenDataApplied();
       set({ _unlistenDataApplied: undefined });
+    }
+    const unlistenBatchApplied = get()._unlistenBatchApplied;
+    if (unlistenBatchApplied) {
+      unlistenBatchApplied();
+      set({ _unlistenBatchApplied: undefined });
     }
     const unlistenConflicts = get()._unlistenConflicts;
     if (unlistenConflicts) {

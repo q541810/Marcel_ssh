@@ -296,7 +296,7 @@ export default function MobileOnboarding({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div key={animKey} className="mobile-panel-enter min-h-full">
+          <div key={animKey} className="mobile-panel-enter h-full min-h-full">
             {phase === 'gate' && (
               <GateStep
                 onRestore={() => setPhase('restore')}

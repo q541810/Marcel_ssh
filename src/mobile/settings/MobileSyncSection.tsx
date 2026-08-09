@@ -55,6 +55,13 @@ export function MobileSyncSection() {
     clearError,
   } = useSyncStore();
 
+  // pull 进度（pulling 时显示百分比）
+  const progress = summary?.progress ?? null;
+  const pullPct =
+    progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.done / progress.total) * 100))
+      : null;
+
   // 配对全屏页面
   const [pairPageOpen, setPairPageOpen] = useState(false);
   const [pairMode, setPairMode] = useState<MobileSyncPairMode>('first');
@@ -233,7 +240,11 @@ export function MobileSyncSection() {
                 disabled={summary.state === 'pulling'}
                 className="flex-1 rounded-lg border border-zinc-700 text-zinc-200 text-xs py-2 active:bg-zinc-800"
               >
-                {summary.state === 'pulling' ? '拉取中…' : '拉取'}
+                {summary.state === 'pulling'
+                  ? pullPct !== null
+                    ? `拉取中 ${pullPct}%`
+                    : '拉取中…'
+                  : '拉取'}
               </button>
             </div>
           </MobileSettingRow>

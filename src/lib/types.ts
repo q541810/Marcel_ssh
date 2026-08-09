@@ -856,6 +856,14 @@ export type SyncPlatform = 'desktop' | 'mobile';
 /** 同步状态机（与 sync/scheduler.rs SyncState 对齐，camelCase 序列化） */
 export type SyncState = 'idle' | 'pushing' | 'pulling' | 'error' | 'notConfigured';
 
+/** pull 进度（与 sync/scheduler.rs SyncProgress 对齐） */
+export interface SyncProgress {
+  /** 本次 pull 待处理的 item 总数（profile 过滤后） */
+  total: number;
+  /** 已处理 item 数 */
+  done: number;
+}
+
 /**
  * sync_profile：用户选择的同步项集合。
  * Rust 端用 HashSet<SyncCategory>，序列化后是数组；前端用数组以保持顺序与可遍历。
@@ -890,6 +898,8 @@ export interface SyncSummary {
   pendingCount: number;
   /** 最近错误信息（无错为 null） */
   error: string | null;
+  /** pull 进度（pulling 时非 null） */
+  progress: SyncProgress | null;
 }
 
 /** sync-state-changed 事件 payload */
@@ -897,6 +907,7 @@ export interface SyncStateEvent {
   state: SyncState;
   pendingCount: number;
   error: string | null;
+  progress: SyncProgress | null;
 }
 
 /** 已配对设备信息 */

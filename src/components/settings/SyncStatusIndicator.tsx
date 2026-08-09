@@ -35,6 +35,10 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
 
   const state = summary.state;
   const conflictCount = pendingConflicts.length;
+  // pull 进度（pulling 时显示百分比）
+  const progress = summary.progress;
+  const pr = progress && progress.total > 0 ? progress : null;
+  const pullPct = pr ? Math.min(100, Math.round((pr.done / pr.total) * 100)) : null;
 
   const config: Record<
     SyncState,
@@ -69,12 +73,16 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
     ? compact
       ? `${conflictCount}`
       : `冲突 ${conflictCount}`
-    : c.label;
+    : state === 'pulling' && pullPct !== null
+      ? `同步中 ${pullPct}%`
+      : c.label;
   const title = hasConflicts
     ? `有 ${conflictCount} 项未解决冲突，点击处理`
     : summary.error
       ? `错误：${summary.error}`
-      : c.label;
+      : state === 'pulling' && pr
+        ? `正在拉取 ${pr.done}/${pr.total} 项 · ${pullPct}%`
+        : c.label;
 
   return (
     <button
@@ -86,6 +94,9 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
     >
       <Icon className={`w-3.5 h-3.5 ${!hasConflicts && c.spin ? 'animate-spin' : ''}`} />
       {!compact && <span>{displayLabel}</span>}
+      {compact && state === 'pulling' && pullPct !== null && (
+        <span className="tabular-nums">{pullPct}%</span>
+      )}
       {!hasConflicts && state === 'idle' && summary.pendingCount > 0 && (
         <span className="text-amber-400">({summary.pendingCount})</span>
       )}

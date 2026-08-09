@@ -13,7 +13,7 @@ import type { SyncState } from '@/lib/types';
 
 export type InitialSyncWaitResult = 'idle' | 'timeout' | 'error';
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 180_000;
 /** pairJoin 返回后 start() 异步拉起；极快 pull 可能错过 busy 事件 */
 const IDLE_GRACE_MS = 2_500;
 
