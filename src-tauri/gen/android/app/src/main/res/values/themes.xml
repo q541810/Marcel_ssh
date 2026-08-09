@@ -1,6 +1,15 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.marcel_ssh" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- windowBackground 用纯深色背景，覆盖 splash 消失后到 WebView 首帧
+             渲染之间的窗口，消除白屏。 -->
+        <item name="android:windowBackground">@drawable/marcel_splash_window_background</item>
     </style>
+
+    <!-- 启动主题：不依赖 AndroidX SplashScreen API（core-splashscreen 的 api-stub
+         里 Kotlin 元数据有缺陷，installSplashScreen 无法编译通过）。
+         直接用深色 windowBackground 作为冷启动画面（继承 Theme.marcel_ssh）：
+         系统绘制 windowBackground → Activity 首帧（WebView 深色背景）
+         → React UI，全程 zinc-950 深色无缝无白屏。 -->
+    <style name="Theme.marcel_ssh.Splash" parent="Theme.marcel_ssh" />
 </resources>

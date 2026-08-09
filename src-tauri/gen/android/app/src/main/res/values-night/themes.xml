@@ -1,6 +1,11 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Theme.marcel_ssh" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
+        <!-- windowBackground 用纯深色背景，覆盖 splash 消失后到 WebView 首帧
+             渲染之间的窗口，消除白屏。values-night 与 values 保持一致。 -->
+        <item name="android:windowBackground">@drawable/marcel_splash_window_background</item>
     </style>
+
+    <!-- 启动主题：与 values 中定义一致，夜间模式同样使用深色 splash。 -->
+    <style name="Theme.marcel_ssh.Splash" parent="Theme.marcel_ssh" />
 </resources>

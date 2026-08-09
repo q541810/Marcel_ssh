@@ -8,7 +8,11 @@
     />
     <title>Marcel SSH</title>
   </head>
-  <body>
+  <!-- inline 背景色：HTML 解析时立即生效，确保 WebView 首帧渲染时已是深色背景，
+       不会在 splash 消失后、CSS/JS 加载前露出白底。zinc-950 与移动端 splash 背景
+       (@color/marcel_splash_bg) 及 React UI 根 (bg-zinc-950) 完全一致。桌面端
+       窗口默认 visible:false 直到 appReady，不受影响。 -->
+  <body style="background-color: #09090B;">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

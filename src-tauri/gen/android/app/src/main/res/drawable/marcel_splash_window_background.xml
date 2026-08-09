@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Activity windowBackground：splash 消失后、WebView 首帧渲染前显示的纯深色背景。
+     zinc-950 与前端 MobileApp 根 bg-zinc-950 一致，全程深色无白屏。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/marcel_splash_bg" />
+</layer-list>

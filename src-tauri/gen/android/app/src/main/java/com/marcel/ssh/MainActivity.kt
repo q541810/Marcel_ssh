@@ -32,6 +32,11 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // 冷启动画面由 Theme.marcel_ssh.Splash 的 windowBackground（深色纯色背景）
+    // 提供：系统在 Activity 首帧绘制前展示它，无需 AndroidX SplashScreen API
+    // （core-splashscreen 的 api-stub Kotlin 元数据有缺陷，编译无法通过）。
+    // WebView 自身背景设为深色（onWebViewCreate），覆盖 HTML 解析前的窗口，
+    // 保证 splash → WebView → React 全程深色无白屏。
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
 
@@ -139,6 +144,9 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
     webViewRef = webView
+    // HTML 解析完成前 WebView 是白底：设为 zinc-950（与 windowBackground /
+    // index.html / React UI 一致），消除 splash 消失到页面首帧之间的白闪。
+    webView.setBackgroundColor(0xFF09090B.toInt())
 
     // 注入原生桥接对象，前端通过 window.AndroidBridge.* 调用
     // @JavascriptInterface 注解的方法，用于前台保活服务与 Agent 通知
