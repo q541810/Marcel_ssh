@@ -173,6 +173,31 @@ impl LocalVersionTable {
     }
 }
 
+/// pull 中待应用的一项（阶段 1 合并计算产出，阶段 2 批量写）。
+#[derive(Debug, Clone)]
+struct ApplyOp {
+    key: String,
+    /// 远程版本号（record_synced 用）
+    version: i64,
+    /// 远程密文（record_synced 存为三方合并 base）
+    encrypted_value: Option<String>,
+    /// 合并后的目标明文值（None = 删除）
+    value: Option<String>,
+    /// merge 时版本表里的本地版本号（写前校验：变了说明用户并发修改，跳过不覆盖）
+    version_at_merge: i64,
+}
+
+/// 判断 merge 后的目标值与本地当前值是否相同（相同则无需写盘，只推进版本表）。
+/// 空字符串与 None 等价（与 merge_key 的规范化一致）。
+fn value_unchanged(ours: Option<&str>, target: Option<&str>) -> bool {
+    match (ours, target) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => true,
+        (Some(a), None) => a.is_empty(),
+        (None, Some(b)) => b.is_empty(),
+    }
+}
+
 /// 同步引擎状态
 pub struct SyncEngine {
     /// 配置目录（用于持久化 local_versions.json）
@@ -1090,10 +1115,19 @@ impl SyncEngine {
     /// - 如果本地与远程相同 → 无冲突
     ///
     /// 对于 conversations：Phase 4 实现 fork 逻辑，当前按整体 LWW 处理。
+    ///
+    /// 性能：三阶段结构（阶段 1 合并计算 → 阶段 2 按 store 批量写 → 阶段 3 推进版本表），
+    /// 一次 pull 每个 store 只写一次磁盘（替代逐 key 全量重写）。
+    /// - 值未变的 Resolved 跳过 apply（只推进版本表）
+    /// - 写前版本号校验：pull 期间用户并发修改的 key 跳过，不覆盖用户新值
+    /// - 单项失败收集，不中断其余 key（下次 pull 自动重试）
+    ///
+    /// `progress`：可选进度回调 (done, total)，阶段 1 每处理一个 item 调用一次。
     pub async fn pull_with_accessor(
         &self,
         client: &SyncClient,
         api_key: &str,
+        progress: Option<&(dyn Fn(usize, usize) + Sync)>,
     ) -> Result<PullResponse, AppError> {
         let accessor = self.accessor.read().clone();
         let accessor = accessor.ok_or_else(|| {
@@ -1130,10 +1164,19 @@ impl SyncEngine {
                 .cloned()
                 .collect()
         };
+        let total = filtered_items.len();
+        if let Some(cb) = progress {
+            cb(0, total);
+        }
+        log::info!("[sync] pull 收到 {} 项变更", total);
+        let started = std::time::Instant::now();
 
-        // 预读 base（last_synced_values 的加密值）+ ours（accessor 实时读取）
-        // 解密 base 后做三方合并
+        // ── 阶段 1：逐 item 解密 + 读 ours + 三方合并（纯计算，不写盘） ──
+        let mut apply_ops: Vec<ApplyOp> = Vec::new();
         let mut new_conflicts: Vec<PendingConflict> = Vec::new();
+        // 无需写盘的项（BothDeleted / 值未变）：直接推进版本表
+        let mut synced_keys: Vec<(String, i64, Option<String>)> = Vec::new();
+        let mut done = 0usize;
 
         for item in &filtered_items {
             // 解密 theirs
@@ -1179,30 +1222,36 @@ impl SyncEngine {
                         item.key,
                         source
                     );
-                    // apply 解决后的值
                     let apply_value = if value.is_empty() {
                         None
                     } else {
-                        Some(value.as_str())
+                        Some(value)
                     };
-                    accessor.apply_value(&item.key, apply_value).await?;
-
-                    // 更新版本表：用远程加密值作为 last_synced（保持与远程一致）
-                    let synced_encrypted = item.encrypted_value.clone();
-                    let mut local = self.local_versions.write();
-                    local.record_synced(
-                        &item.key,
-                        item.version,
-                        synced_encrypted.as_deref(),
-                    );
+                    // 目标值与本地当前值相同：无需写盘（值没变），只推进版本表
+                    if value_unchanged(ours_plaintext.as_deref(), apply_value.as_deref()) {
+                        synced_keys.push((
+                            item.key.clone(),
+                            item.version,
+                            item.encrypted_value.clone(),
+                        ));
+                    } else {
+                        let version_at_merge = self.local_versions.read().get_version(&item.key);
+                        apply_ops.push(ApplyOp {
+                            key: item.key.clone(),
+                            version: item.version,
+                            encrypted_value: item.encrypted_value.clone(),
+                            value: apply_value,
+                            version_at_merge,
+                        });
+                    }
                 }
                 MergeResult::Conflict { base, ours, theirs } => {
                     log::info!(
                         "[sync] merge conflict: key={}, base={:?}, ours={:?}, theirs={:?}",
                         item.key,
-                        base.as_deref().map(|s| &s[..s.len().min(50)]),
-                        ours.as_deref().map(|s| &s[..s.len().min(50)]),
-                        theirs.as_deref().map(|s| &s[..s.len().min(50)]),
+                        base.as_deref().map(|s| s.get(..50).unwrap_or(s)),
+                        ours.as_deref().map(|s| s.get(..50).unwrap_or(s)),
+                        theirs.as_deref().map(|s| s.get(..50).unwrap_or(s)),
                     );
                     // 缓存冲突，不 apply
                     new_conflicts.push(PendingConflict {
@@ -1215,13 +1264,76 @@ impl SyncEngine {
                 }
                 MergeResult::BothDeleted => {
                     // 两端都删除，无需 apply
-                    let mut local = self.local_versions.write();
-                    local.record_synced(&item.key, item.version, None);
+                    synced_keys.push((item.key.clone(), item.version, None));
+                }
+            }
+
+            done += 1;
+            if let Some(cb) = progress {
+                cb(done, total);
+            }
+        }
+
+        // ── 阶段 2：写前版本号校验 + 按 store 批量写 ──
+        if !apply_ops.is_empty() {
+            // 校验：pull 期间用户并发修改过的 key（版本已 bump）跳过，不覆盖用户新值。
+            // 不推进版本表 → 下次 pull 用新 ours 重新合并（theirs==base 时收敛为 Ours）。
+            let mut to_apply: Vec<(String, Option<String>)> = Vec::with_capacity(apply_ops.len());
+            let mut applied_keys: Vec<String> = Vec::with_capacity(apply_ops.len());
+            let mut skipped = 0usize;
+            for op in apply_ops {
+                let current_version = self.local_versions.read().get_version(&op.key);
+                if current_version != op.version_at_merge {
+                    log::info!(
+                        "[sync] pull 跳过 key={}（版本已变，用户并发修改）",
+                        op.key
+                    );
+                    skipped += 1;
+                    continue;
+                }
+                applied_keys.push(op.key.clone());
+                to_apply.push((op.key.clone(), op.value.clone()));
+                synced_keys.push((op.key, op.version, op.encrypted_value));
+            }
+            if skipped > 0 {
+                log::info!("[sync] pull 跳过 {} 个并发修改的 key", skipped);
+            }
+
+            if !to_apply.is_empty() {
+                let failed_set: std::collections::HashSet<String> =
+                    match accessor.apply_batch(to_apply).await {
+                        Ok(batch) => {
+                            if !batch.failed_keys.is_empty() {
+                                log::warn!(
+                                    "[sync] pull 应用失败 {} 个 key（不推进版本，下次重试）：{:?}",
+                                    batch.failed_keys.len(),
+                                    batch.failed_keys
+                                );
+                            }
+                            batch.failed_keys.into_iter().collect()
+                        }
+                        Err(e) => {
+                            // 整组保存失败：该组全部不推进版本，下次 pull 重试
+                            log::warn!("[sync] pull 批量应用失败，相关 key 不推进版本：{}", e);
+                            applied_keys.into_iter().collect()
+                        }
+                    };
+                if !failed_set.is_empty() {
+                    synced_keys.retain(|(k, _, _)| !failed_set.contains(k));
                 }
             }
         }
 
+        // ── 阶段 3：推进版本表 + 冲突入库 + 持久化 ──
+        {
+            let mut local = self.local_versions.write();
+            for (key, version, encrypted) in synced_keys {
+                local.record_synced(&key, version, encrypted.as_deref());
+            }
+        }
+
         // 把新冲突追加到 pending_conflicts（同 key 替换，避免推迟后重复）
+        let this_pull_conflicts = new_conflicts.len();
         if !new_conflicts.is_empty() {
             let new_count = new_conflicts.len();
             {
@@ -1243,6 +1355,18 @@ impl SyncEngine {
         }
 
         self.persist().await?;
+
+        if let Some(cb) = progress {
+            cb(total, total);
+        }
+
+        let conflict_count = this_pull_conflicts;
+        log::info!(
+            "[sync] pull 处理完成（耗时 {:?}，{} 项，冲突 {} 项）",
+            started.elapsed(),
+            total,
+            conflict_count
+        );
 
         Ok(response)
     }
@@ -1358,5 +1482,22 @@ mod tests {
         );
         // 仍有 pending（7 > 6）
         assert!(table.get_version("k") > table.last_sync_versions["k"]);
+    }
+
+    #[test]
+    fn test_value_unchanged_same_values() {
+        assert!(value_unchanged(Some("a"), Some("a")));
+        assert!(value_unchanged(None, None));
+        // 空字符串与 None 等价（与 merge_key 规范化一致）
+        assert!(value_unchanged(Some(""), None));
+        assert!(value_unchanged(None, Some("")));
+        assert!(value_unchanged(Some(""), Some("")));
+    }
+
+    #[test]
+    fn test_value_unchanged_different_values() {
+        assert!(!value_unchanged(Some("a"), Some("b")));
+        assert!(!value_unchanged(Some("a"), None));
+        assert!(!value_unchanged(None, Some("a")));
     }
 }

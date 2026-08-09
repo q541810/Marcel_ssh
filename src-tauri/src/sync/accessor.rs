@@ -22,6 +22,7 @@
 //! apply 后 emit "sync-data-applied" 事件，payload = { key, deleted: bool }。
 //! 前端监听后根据 key 前缀刷新对应 store。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -38,6 +39,13 @@ use crate::config::settings::AppSettings;
 use crate::error::AppError;
 use crate::mcp::store::{McpServerConfig, McpServerStore};
 use crate::skills::store::SkillStore;
+
+/// 批量应用一次 pull 变更的结果。
+#[derive(Debug, Default)]
+pub struct AppliedBatch {
+    /// 应用失败的 key（调用方不应推进版本表，下次 pull 自动重试）
+    pub failed_keys: Vec<String>,
+}
 
 /// 同步数据访问器
 pub struct SyncStoreAccessor {
@@ -168,6 +176,255 @@ impl SyncStoreAccessor {
         Ok(())
     }
 
+    // ── 批量应用（pull 主路径：一次 pull 每个 store 只写一次磁盘） ──
+
+    /// 批量应用一次 pull 产生的全部变更（按 store 分组，避免逐 key 全量重写文件）。
+    ///
+    /// - settings.*：一次读 settings，全部字段 set_field，一次 atomic_write
+    /// - settings（旧整体 key）：降级为整体覆盖
+    /// - connections.* / quickCommands.* / skills.* / mcpServers.*：同模式批量
+    /// - conversations.*：一次 spawn_blocking + 逐会话事务（坏会话失败收集继续）
+    /// - secrets.*：直接写 keychain
+    ///
+    /// 返回失败的 key 列表：调用方据此不推进版本表，下次 pull 自动重试。
+    /// 单项解析失败只记失败不中断；整组保存失败时该组全部计入失败。
+    /// 应用成功后统一 emit 一次 `sync-batch-applied` 事件（替代逐 key emit）。
+    pub async fn apply_batch(
+        &self,
+        ops: Vec<(String, Option<String>)>,
+    ) -> Result<AppliedBatch, AppError> {
+        let mut failed_keys: Vec<String> = Vec::new();
+        let mut applied: Vec<(String, bool)> = Vec::new();
+
+        // ── 分组 ──
+        let mut settings_fields: Vec<(String, Option<String>)> = Vec::new();
+        let mut settings_whole: Option<(String, Option<String>)> = None;
+        let mut connections: Vec<(String, Option<String>)> = Vec::new();
+        let mut quick_commands: Vec<(String, Option<String>)> = Vec::new();
+        let mut skills: Vec<(String, Option<String>)> = Vec::new();
+        let mut mcp_servers: Vec<(String, Option<String>)> = Vec::new();
+        let mut conversations: Vec<(String, Option<String>)> = Vec::new();
+
+        for (key, value) in ops {
+            if crate::sync::settings_field::is_settings_field_key(&key) {
+                settings_fields.push((key, value));
+            } else if key == "settings" {
+                settings_whole = Some((key, value));
+            } else if key.starts_with("connections.") {
+                connections.push((key, value));
+            } else if key.starts_with("quickCommands.") {
+                quick_commands.push((key, value));
+            } else if key.starts_with("skills.") {
+                skills.push((key, value));
+            } else if key.starts_with("mcpServers.") {
+                mcp_servers.push((key, value));
+            } else if key.starts_with("conversations.") {
+                conversations.push((key, value));
+            } else if key == "secrets.llmApiKey" {
+                match self.apply_llm_api_key(value.as_deref()) {
+                    Ok(()) => applied.push((key, value.is_none())),
+                    Err(e) => {
+                        log::warn!("[sync] 应用 secrets.llmApiKey 失败：{}", e);
+                        failed_keys.push(key);
+                    }
+                }
+            } else if key == "secrets.webSearchApiKey" {
+                match self.apply_web_search_api_key(value.as_deref()) {
+                    Ok(()) => applied.push((key, value.is_none())),
+                    Err(e) => {
+                        log::warn!("[sync] 应用 secrets.webSearchApiKey 失败：{}", e);
+                        failed_keys.push(key);
+                    }
+                }
+            } else {
+                // 未知 key，静默跳过（向前兼容，与单 key apply_value 一致）
+                log::warn!("[sync] 未知 key，跳过 apply: {}", key);
+            }
+        }
+
+        // ── settings 字段级：一次读 + 改 + 写 ──
+        if !settings_fields.is_empty() {
+            let result = self.apply_settings_fields(&settings_fields).await;
+            merge_group_result(&settings_fields, result, "settings 字段", &mut failed_keys, &mut applied);
+        }
+
+        // ── 旧整体 settings key：降级为整体覆盖 ──
+        if let Some((key, value)) = settings_whole {
+            log::warn!("[sync] 收到旧格式整体 'settings' key，降级为整体覆盖（建议对端升级到字段级同步）");
+            match self.apply_settings_whole(value.as_deref()).await {
+                Ok(()) => applied.push((key, value.is_none())),
+                Err(e) => {
+                    log::warn!("[sync] 应用整体 settings 失败：{}", e);
+                    failed_keys.push(key);
+                }
+            }
+        }
+
+        // ── 连接 / 快捷命令 / 技能 / MCP：同模式批量 ──
+        if !connections.is_empty() {
+            let path = ConnectionStore::default_file(&self.config_dir);
+            let result = apply_json_store_batch(
+                self.connection_store.clone(),
+                path,
+                &connections,
+                |s: &mut ConnectionStore, key, value| {
+                    let id = match key.strip_prefix("connections.") {
+                        Some(id) => id,
+                        None => return false,
+                    };
+                    match value {
+                        Some(json) => match serde_json::from_str::<SavedConnection>(json) {
+                            Ok(conn) => {
+                                s.remove(id);
+                                s.add(conn);
+                                true
+                            }
+                            Err(e) => {
+                                log::warn!("[sync] 反序列化 SavedConnection 失败: {}", e);
+                                false
+                            }
+                        },
+                        None => {
+                            s.remove(id);
+                            true
+                        }
+                    }
+                },
+            )
+            .await;
+            merge_group_result(&connections, result, "connections", &mut failed_keys, &mut applied);
+        }
+        if !quick_commands.is_empty() {
+            let path = QuickCommandStore::default_file(&self.config_dir);
+            let result = apply_json_store_batch(
+                self.quick_command_store.clone(),
+                path,
+                &quick_commands,
+                |s: &mut QuickCommandStore, key, value| {
+                    let id = match key.strip_prefix("quickCommands.") {
+                        Some(id) => id,
+                        None => return false,
+                    };
+                    match value {
+                        Some(json) => {
+                            match serde_json::from_str::<crate::config::quick_commands::QuickCommand>(
+                                json,
+                            ) {
+                                Ok(cmd) => {
+                                    s.remove(id);
+                                    s.commands.push(cmd);
+                                    true
+                                }
+                                Err(e) => {
+                                    log::warn!("[sync] 反序列化 QuickCommand 失败: {}", e);
+                                    false
+                                }
+                            }
+                        }
+                        None => {
+                            s.remove(id);
+                            true
+                        }
+                    }
+                },
+            )
+            .await;
+            merge_group_result(&quick_commands, result, "quickCommands", &mut failed_keys, &mut applied);
+        }
+        if !skills.is_empty() {
+            let path = SkillStore::default_file(&self.config_dir);
+            let result = apply_json_store_batch(
+                self.skill_store.clone(),
+                path,
+                &skills,
+                |s: &mut SkillStore, key, value| {
+                    let id = match key.strip_prefix("skills.") {
+                        Some(id) => id,
+                        None => return false,
+                    };
+                    match value {
+                        Some(json) => match serde_json::from_str::<crate::skills::store::Skill>(json)
+                        {
+                            Ok(skill) => {
+                                s.delete(id);
+                                s.add(skill);
+                                true
+                            }
+                            Err(e) => {
+                                log::warn!("[sync] 反序列化 Skill 失败: {}", e);
+                                false
+                            }
+                        },
+                        None => {
+                            s.delete(id);
+                            true
+                        }
+                    }
+                },
+            )
+            .await;
+            merge_group_result(&skills, result, "skills", &mut failed_keys, &mut applied);
+        }
+        if !mcp_servers.is_empty() {
+            let path = McpServerStore::default_file(&self.config_dir);
+            let result = apply_json_store_batch(
+                self.mcp_store.clone(),
+                path,
+                &mcp_servers,
+                |s: &mut McpServerStore, key, value| {
+                    let id = match key.strip_prefix("mcpServers.") {
+                        Some(id) => id,
+                        None => return false,
+                    };
+                    match value {
+                        Some(json) => match serde_json::from_str::<McpServerConfig>(json) {
+                            Ok(server) => {
+                                s.servers.retain(|x| x.id != id);
+                                s.add(server);
+                                true
+                            }
+                            Err(e) => {
+                                log::warn!("[sync] 反序列化 McpServerConfig 失败: {}", e);
+                                false
+                            }
+                        },
+                        None => {
+                            s.servers.retain(|x| x.id != id);
+                            true
+                        }
+                    }
+                },
+            )
+            .await;
+            merge_group_result(&mcp_servers, result, "mcpServers", &mut failed_keys, &mut applied);
+        }
+
+        // ── conversations：一次 spawn_blocking，逐会话事务（坏会话不连累其他） ──
+        if !conversations.is_empty() {
+            match self.apply_conversations_batch(&conversations).await {
+                Ok(failed) => {
+                    let failed_set: HashSet<&str> = failed.iter().map(String::as_str).collect();
+                    for (key, value) in &conversations {
+                        if failed_set.contains(key.as_str()) {
+                            failed_keys.push(key.clone());
+                        } else {
+                            applied.push((key.clone(), value.is_none()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[sync] 批量应用 conversations 失败：{}", e);
+                    failed_keys.extend(conversations.iter().map(|(k, _)| k.clone()));
+                }
+            }
+        }
+
+        // ── 统一 emit 一次批量事件 ──
+        self.emit_applied_batch(&applied);
+
+        Ok(AppliedBatch { failed_keys })
+    }
+
     // ── 各 store 的 apply 实现 ────────────────────────────────
 
     /// 字段级 settings 写入：只改单个字段，其他字段不动。
@@ -246,6 +503,109 @@ impl SyncStoreAccessor {
             .await
             .map_err(|e| AppError::Config(format!("持久化 settings 失败: {}", e)))??;
         Ok(())
+    }
+
+    /// 批量字段级 settings 写入：一次读 settings → 应用全部字段变更 → 一次保存。
+    ///
+    /// 与单 key `apply_settings_field` 的语义一致：
+    /// - value=Some(json)：只改该字段，其他字段不动
+    /// - value=None：字段不允许删除，恢复为默认值
+    /// - 保留本机 LLM API Key（secrets 独立同步，不走 settings）
+    ///
+    /// 返回成功应用的 key 列表；字段级解析失败只记 warn 并跳过（不中断其他字段）。
+    /// 反序列化/保存失败返回 Err（整组失败，调用方全部记入 failed_keys）。
+    async fn apply_settings_fields(
+        &self,
+        ops: &[(String, Option<String>)],
+    ) -> Result<Vec<String>, AppError> {
+        // 读取当前 settings → JSON Value，逐个字段应用（字段路径互不相交，顺序无关）
+        let mut settings_json = {
+            let settings = self.settings.read().await;
+            serde_json::to_value(&*settings)
+                .map_err(|e| AppError::Config(format!("序列化 settings 失败: {}", e)))?
+        };
+
+        let mut ok_keys: Vec<String> = Vec::new();
+        for (key, value) in ops {
+            let field_path = match crate::sync::settings_field::extract_field_path(key) {
+                Some(p) => p,
+                None => {
+                    log::warn!("[sync] 无效的 settings 字段 key: {}", key);
+                    continue;
+                }
+            };
+            match value {
+                Some(json) => {
+                    let field_value: serde_json::Value = match serde_json::from_str(json) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            log::warn!("[sync] 反序列化 settings 字段值失败 ({}): {}", key, e);
+                            continue;
+                        }
+                    };
+                    if let Err(e) =
+                        crate::sync::settings_field::set_field(&mut settings_json, field_path, field_value)
+                    {
+                        log::warn!("[sync] 设置 settings 字段失败 ({}): {}", key, e);
+                        continue;
+                    }
+                }
+                None => {
+                    // 字段不允许删除：恢复为默认值（而非真正删除）
+                    let defaults = serde_json::to_value(AppSettings::default())
+                        .map_err(|e| AppError::Config(format!("序列化默认 settings 失败: {}", e)))?;
+                    if let Some(default_val) =
+                        crate::sync::settings_field::get_field(&defaults, field_path)
+                    {
+                        if let Err(e) = crate::sync::settings_field::set_field(
+                            &mut settings_json,
+                            field_path,
+                            default_val,
+                        ) {
+                            log::warn!("[sync] 恢复 settings 字段默认值失败 ({}): {}", key, e);
+                            continue;
+                        }
+                    }
+                    // 默认 settings 中也没有该字段（未知字段），什么都不做
+                }
+            }
+            ok_keys.push(key.clone());
+        }
+
+        // 反序列化回 AppSettings（会丢弃未知字段，向前兼容）
+        let new_settings: AppSettings = serde_json::from_value(settings_json).map_err(|e| {
+            AppError::Config(format!("反序列化 AppSettings 失败: {}", e))
+        })?;
+
+        // 保留本机 LLM API Key（secrets 通过独立 key 同步，不走 settings）
+        let preserved_api_key = {
+            let current = self.settings.read().await;
+            current.llm_config.as_ref().and_then(|c| {
+                if c.api_key.is_empty() {
+                    None
+                } else {
+                    Some(c.api_key.clone())
+                }
+            })
+        };
+        let mut final_settings = new_settings;
+        if let Some(api_key) = preserved_api_key {
+            if let Some(ref mut llm) = final_settings.llm_config {
+                llm.api_key = api_key;
+            }
+        }
+
+        // 写入 store + 持久化（一次）
+        {
+            let mut settings = self.settings.write().await;
+            *settings = final_settings;
+        }
+        let snapshot = self.settings.read().await.clone();
+        let path = AppSettings::default_file(&self.config_dir);
+        tokio::task::spawn_blocking(move || snapshot.save_to_path(&path))
+            .await
+            .map_err(|e| AppError::Config(format!("持久化 settings 失败: {}", e)))??;
+        Ok(ok_keys)
     }
 
     /// 兼容旧整体 settings 同步：整体覆盖。
@@ -491,6 +851,53 @@ impl SyncStoreAccessor {
         Ok(())
     }
 
+    /// 批量应用会话变更：一次 spawn_blocking，逐会话调 ConversationDb（坏会话失败收集继续）。
+    ///
+    /// 返回失败的完整 key 列表（如 `conversations.xxx`）。
+    async fn apply_conversations_batch(
+        &self,
+        ops: &[(String, Option<String>)],
+    ) -> Result<Vec<String>, AppError> {
+        let db = self.conversation_db.clone();
+        let ops_owned: Vec<(String, Option<String>)> = ops.to_vec();
+        let failed = tokio::task::spawn_blocking(move || -> Vec<String> {
+            let mut failed = Vec::new();
+            for (key, value) in ops_owned {
+                let id = match key.strip_prefix("conversations.") {
+                    Some(id) => id.to_string(),
+                    None => continue,
+                };
+                let result = match &value {
+                    Some(json) => {
+                        let snapshot: ConversationWithMessages = match serde_json::from_str(json) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                log::warn!(
+                                    "[sync] 反序列化 ConversationWithMessages 失败 ({}): {}",
+                                    key,
+                                    e
+                                );
+                                failed.push(key.clone());
+                                continue;
+                            }
+                        };
+                        db.upsert_conversation(&snapshot.conversation)
+                            .and_then(|_| db.replace_messages(&id, &snapshot.messages))
+                    }
+                    None => db.delete_conversation(&id),
+                };
+                if let Err(e) = result {
+                    log::warn!("[sync] 应用 conversation {} 失败：{}", key, e);
+                    failed.push(key.clone());
+                }
+            }
+            failed
+        })
+        .await
+        .map_err(|e| AppError::Config(format!("会话批量应用任务失败: {}", e)))?;
+        Ok(failed)
+    }
+
     /// Fork 会话（Phase 4 冲突解决）。
     ///
     /// 用于冲突解决 Fork 动作——本地和远程都改了同一会话时，
@@ -565,6 +972,22 @@ impl SyncStoreAccessor {
                 "deleted": deleted,
             });
             let _ = handle.emit("sync-data-applied", &payload);
+        }
+    }
+
+    /// emit 一次批量应用事件（pull 主路径：几十个 key 只发一个事件，前端合并刷新一轮）。
+    fn emit_applied_batch(&self, applied: &[(String, bool)]) {
+        if applied.is_empty() {
+            return;
+        }
+        if let Some(ref handle) = *self.app_handle.read() {
+            let payload = serde_json::json!({
+                "applied": applied
+                    .iter()
+                    .map(|(key, deleted)| serde_json::json!({ "key": key, "deleted": deleted }))
+                    .collect::<Vec<_>>()
+            });
+            let _ = handle.emit("sync-batch-applied", &payload);
         }
     }
 
@@ -648,5 +1071,260 @@ impl SyncStoreAccessor {
         }
 
         keys
+    }
+}
+
+// ── 批量辅助 ────────────────────────────────────────────
+
+/// 通用 JSON store 批量应用：一次写锁内应用全部变更 → 一次原子写盘。
+///
+/// `apply_one` 接收 (完整 key, 明文值)，返回是否成功；失败项只记录不中断。
+/// 写盘失败返回 Err（整组失败）。
+async fn apply_json_store_batch<S, F>(
+    store: std::sync::Arc<TokioRwLock<S>>,
+    path: PathBuf,
+    ops: &[(String, Option<String>)],
+    apply_one: F,
+) -> Result<Vec<String>, AppError>
+where
+    S: Clone + JsonPersistable + Send + 'static,
+    F: Fn(&mut S, &str, Option<&str>) -> bool,
+{
+    let mut ok_keys: Vec<String> = Vec::new();
+    {
+        let mut s = store.write().await;
+        for (key, value) in ops {
+            if apply_one(&mut s, key, value.as_deref()) {
+                ok_keys.push(key.clone());
+            }
+        }
+    }
+    let snapshot = store.read().await.clone();
+    let path_for_write = path.clone();
+    tokio::task::spawn_blocking(move || snapshot.save_to_path(&path_for_write))
+        .await
+        .map_err(|e| {
+            AppError::Config(format!("持久化 {} 失败: {}", path.display(), e))
+        })??;
+    Ok(ok_keys)
+}
+
+/// 合并一组批量应用的结果到 failed_keys / applied（applied 项携带 deleted 标志）。
+fn merge_group_result(
+    ops: &[(String, Option<String>)],
+    result: Result<Vec<String>, AppError>,
+    label: &str,
+    failed_keys: &mut Vec<String>,
+    applied: &mut Vec<(String, bool)>,
+) {
+    match result {
+        Ok(ok_keys) => {
+            let ok: HashSet<&str> = ok_keys.iter().map(String::as_str).collect();
+            for (key, value) in ops {
+                if ok.contains(key.as_str()) {
+                    applied.push((key.clone(), value.is_none()));
+                } else {
+                    failed_keys.push(key.clone());
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("[sync] 批量应用 {} 失败：{}", label, e);
+            failed_keys.extend(ops.iter().map(|(k, _)| k.clone()));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "sync_accessor_test_{}_{}_{}",
+            std::process::id(),
+            tag,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn test_accessor(tag: &str) -> (PathBuf, Arc<SyncStoreAccessor>) {
+        let dir = temp_dir(tag);
+        let accessor = Arc::new(SyncStoreAccessor::new(
+            dir.clone(),
+            Arc::new(TokioRwLock::new(AppSettings::default())),
+            Arc::new(TokioRwLock::new(ConnectionStore::new())),
+            Arc::new(TokioRwLock::new(QuickCommandStore::new())),
+            Arc::new(TokioRwLock::new(SkillStore::new())),
+            Arc::new(TokioRwLock::new(McpServerStore::new())),
+            Arc::new(ConversationDb::new(dir.join("conv.db")).unwrap()),
+        ));
+        (dir, accessor)
+    }
+
+    #[tokio::test]
+    async fn apply_batch_settings_fields_applies_all_and_persists() {
+        let (dir, accessor) = test_accessor("settings");
+        let ops = vec![
+            ("settings.fontSize".to_string(), Some("18".to_string())),
+            (
+                "settings.fontFamily".to_string(),
+                Some("\"monospace\"".to_string()),
+            ),
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        assert!(batch.failed_keys.is_empty());
+
+        // 内存 store 更新
+        {
+            let settings = accessor.settings.read().await;
+            assert_eq!(settings.font_size, 18);
+            assert_eq!(settings.font_family, "monospace");
+        }
+        // 文件一次写盘，内容包含全部字段
+        let content = std::fs::read_to_string(AppSettings::default_file(&dir)).unwrap();
+        assert!(content.contains("\"fontSize\": 18"));
+        assert!(content.contains("\"monospace\""));
+    }
+
+    #[tokio::test]
+    async fn apply_batch_settings_bad_field_value_collects_failed() {
+        let (_dir, accessor) = test_accessor("settings_bad");
+        let ops = vec![
+            ("settings.fontSize".to_string(), Some("18".to_string())),
+            // 非法 JSON：该字段失败，不影响其他字段
+            ("settings.fontFamily".to_string(), Some("not-json".to_string())),
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        assert_eq!(batch.failed_keys, vec!["settings.fontFamily".to_string()]);
+        let settings = accessor.settings.read().await;
+        assert_eq!(settings.font_size, 18);
+        assert_eq!(settings.font_family, AppSettings::default().font_family);
+    }
+
+    #[tokio::test]
+    async fn apply_batch_connections_upsert_and_delete() {
+        let (dir, accessor) = test_accessor("connections");
+        let conn_json = serde_json::json!({
+            "id": "conn-1",
+            "name": "test",
+            "host": "example.com",
+            "port": 22,
+            "username": "root",
+            "authMethod": "password"
+        })
+        .to_string();
+        let ops = vec![
+            ("connections.conn-1".to_string(), Some(conn_json.clone())),
+            ("connections.conn-2".to_string(), None), // 删除不存在的 id：无害
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        assert!(batch.failed_keys.is_empty());
+
+        {
+            let store = accessor.connection_store.read().await;
+            let conns = store.get_all();
+            assert_eq!(conns.len(), 1);
+            assert_eq!(conns[0].id, "conn-1");
+            assert_eq!(conns[0].host, "example.com");
+        }
+        let content = std::fs::read_to_string(ConnectionStore::default_file(&dir)).unwrap();
+        assert!(content.contains("conn-1"));
+    }
+
+    #[tokio::test]
+    async fn apply_batch_unknown_key_skipped_not_failed() {
+        let (_dir, accessor) = test_accessor("unknown");
+        let ops = vec![
+            ("unknown.xyz".to_string(), Some("v".to_string())),
+            ("settings.fontSize".to_string(), Some("14".to_string())),
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        // 未知 key 跳过（与单 key apply_value 一致），不算失败
+        assert!(batch.failed_keys.is_empty());
+        let settings = accessor.settings.read().await;
+        assert_eq!(settings.font_size, 14);
+    }
+
+    #[tokio::test]
+    async fn apply_batch_conversations_upsert_and_delete() {
+        let (_dir, accessor) = test_accessor("conversations");
+        let now = chrono::Utc::now().to_rfc3339();
+        let snapshot = serde_json::json!({
+            "conversation": {
+                "id": "conv-1",
+                "connectionId": "conn-1",
+                "title": "hello",
+                "createdAt": now,
+                "updatedAt": now
+            },
+            "messages": [
+                {
+                    "id": "msg-1",
+                    "conversationId": "conv-1",
+                    "role": "user",
+                    "content": "hi",
+                    "timestamp": now,
+                    "createdAt": now
+                }
+            ]
+        })
+        .to_string();
+        let ops = vec![
+            ("conversations.conv-1".to_string(), Some(snapshot.clone())),
+            ("conversations.conv-2".to_string(), None), // 删除不存在的会话：无害
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        assert!(batch.failed_keys.is_empty());
+
+        let db = accessor.conversation_db.clone();
+        let loaded = tokio::task::spawn_blocking(move || {
+            db.get_conversation_with_messages("conv-1")
+                .unwrap()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(loaded.conversation.title, "hello");
+        assert_eq!(loaded.messages.len(), 1);
+        assert_eq!(loaded.messages[0].content, "hi");
+    }
+
+    #[tokio::test]
+    async fn apply_batch_conversations_bad_json_collects_failed() {
+        let (_dir, accessor) = test_accessor("conversations_bad");
+        let now = chrono::Utc::now().to_rfc3339();
+        let good = serde_json::json!({
+            "conversation": {
+                "id": "conv-good",
+                "connectionId": "conn-1",
+                "title": "ok",
+                "createdAt": now,
+                "updatedAt": now
+            },
+            "messages": []
+        })
+        .to_string();
+        let ops = vec![
+            ("conversations.conv-bad".to_string(), Some("not-json".to_string())),
+            ("conversations.conv-good".to_string(), Some(good)),
+        ];
+        let batch = accessor.apply_batch(ops).await.unwrap();
+        assert_eq!(batch.failed_keys, vec!["conversations.conv-bad".to_string()]);
+
+        let db = accessor.conversation_db.clone();
+        let exists = tokio::task::spawn_blocking(move || {
+            db.get_conversation_with_messages("conv-good")
+                .unwrap()
+                .is_some()
+        })
+        .await
+        .unwrap();
+        assert!(exists);
     }
 }

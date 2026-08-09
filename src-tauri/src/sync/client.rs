@@ -9,8 +9,15 @@ use std::time::Duration;
 
 use crate::error::AppError;
 
-/// 默认 HTTP 超时
+/// 默认 HTTP 超时（轻量请求：summary/devices/quota/join/setup 等）
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 大载荷请求超时（pull 全量 / push 全量：6MB 级响应/请求在官方服务器
+/// 序列化 + 传输下可能 30~120 秒，30s 会触发超时循环）
+const LONG_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// 连接超时（独立于总超时：服务器不可达时快速失败，不占满总超时）
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 同步服务端 API 客户端
 ///
@@ -174,6 +181,7 @@ impl SyncClient {
     pub fn new(base_url: &str) -> Result<Self, AppError> {
         let http = reqwest::Client::builder()
             .timeout(DEFAULT_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .map_err(|e| AppError::Config(format!("HTTP 客户端初始化失败：{}", e)))?;
 
@@ -217,7 +225,7 @@ impl SyncClient {
     ) -> Result<AccountSetupResponse, AppError> {
         let url = self.url("/api/account/setup");
         let resp = self.http.post(&url).json(&request).send().await.map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "setup").await
     }
 
     /// 后续设备加入账户
@@ -227,7 +235,7 @@ impl SyncClient {
     ) -> Result<AccountJoinResponse, AppError> {
         let url = self.url("/api/account/join");
         let resp = self.http.post(&url).json(&request).send().await.map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "join").await
     }
 
     /// 账户重置（删除账户及所有数据）
@@ -268,7 +276,7 @@ impl SyncClient {
             .send()
             .await
             .map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "register").await
     }
 
     /// 更新 sync_profile
@@ -300,7 +308,7 @@ impl SyncClient {
             .send()
             .await
             .map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "devices").await
     }
 
     /// 删除（撤销）某设备
@@ -327,13 +335,14 @@ impl SyncClient {
             .post(&url)
             .headers(auth_header(api_key))
             .json(&request)
+            .timeout(LONG_TIMEOUT)
             .send()
             .await
             .map_err(map_network_err)?;
         if resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
             return Err(parse_quota_exceeded(resp).await);
         }
-        handle_response(resp).await
+        handle_response(resp, "push").await
     }
 
     /// 查询账户配额使用情况（托管模式返回实际用量；自部署 quota=0 表示无限制）
@@ -348,7 +357,7 @@ impl SyncClient {
             .send()
             .await
             .map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "quota").await
     }
 
     /// 增量拉取
@@ -362,22 +371,24 @@ impl SyncClient {
             .post(&url)
             .headers(auth_header(api_key))
             .json(&request)
+            .timeout(LONG_TIMEOUT)
             .send()
             .await
             .map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "pull").await
     }
 
-    /// 全量快照拉取（新设备首次同步）
+    /// 全量快照拉取（新设备首次同步；当前未被调用，防御性保留长超时）
     pub async fn snapshot(&self, api_key: &str) -> Result<SnapshotResponse, AppError> {
         let url = self.url("/api/sync/snapshot");
         let resp = self.http
             .get(&url)
             .headers(auth_header(api_key))
+            .timeout(LONG_TIMEOUT)
             .send()
             .await
             .map_err(map_network_err)?;
-        handle_response(resp).await
+        handle_response(resp, "snapshot").await
     }
 }
 
@@ -392,13 +403,29 @@ fn map_network_err(e: reqwest::Error) -> AppError {
     }
 }
 
-/// 处理响应：成功解析 JSON，失败提取错误信息
-async fn handle_response<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T, AppError> {
+/// 处理响应：成功解析 JSON（移出异步工作线程，避免大响应阻塞事件循环），
+/// 失败提取错误信息。`label` 用于日志（如 "pull"），便于定位响应字节数。
+async fn handle_response<T>(
+    resp: reqwest::Response,
+    label: &str,
+) -> Result<T, AppError>
+where
+    T: serde::de::DeserializeOwned + Send + 'static,
+{
     let status = resp.status();
     if status.is_success() {
-        resp.json::<T>().await.map_err(|e| {
-            AppError::Network(format!("解析响应失败：{}", e))
-        })
+        let bytes = resp.bytes().await.map_err(|e| {
+            AppError::Network(format!("读取响应失败 ({}): {}", label, e))
+        })?;
+        log::info!("[sync] {} 响应 {} 字节", label, bytes.len());
+        tokio::task::spawn_blocking(move || serde_json::from_slice::<T>(&bytes))
+            .await
+            .map_err(|e| {
+                AppError::Network(format!("解析任务失败 ({}): {}", label, e))
+            })?
+            .map_err(|e| {
+                AppError::Network(format!("解析响应失败 ({}): {}", label, e))
+            })
     } else {
         let text = resp.text().await.unwrap_or_default();
         Err(AppError::Network(format!(

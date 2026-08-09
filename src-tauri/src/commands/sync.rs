@@ -17,7 +17,7 @@ use crate::sync::crypto;
 use crate::sync::engine::{ConflictAction, ResolveOutcome};
 use crate::sync::keychain as sync_keychain;
 use crate::sync::profile::{Platform, SyncProfile};
-use crate::sync::scheduler::SyncState;
+use crate::sync::scheduler::{SyncProgress, SyncState};
 use crate::AppState;
 
 // ── 响应结构（与前端 types.ts 对齐，camelCase） ────────────────
@@ -33,6 +33,8 @@ pub struct SyncSummary {
     pub state: SyncState,
     pub pending_count: usize,
     pub error: Option<String>,
+    /// pull 进度（pulling 时非 None）
+    pub progress: Option<SyncProgress>,
 }
 
 #[derive(Debug, Serialize)]
@@ -95,9 +97,13 @@ pub async fn sync_get_summary(state: State<'_, AppState>) -> Result<SyncSummary,
         None => SyncProfile::default(),
     };
 
-    let (sync_state, last_error) = match state.sync_scheduler.as_ref() {
-        Some(scheduler) => (scheduler.state(), scheduler.last_error()),
-        None => (SyncState::NotConfigured, None),
+    let (sync_state, last_error, progress) = match state.sync_scheduler.as_ref() {
+        Some(scheduler) => (
+            scheduler.state(),
+            scheduler.last_error(),
+            scheduler.last_progress(),
+        ),
+        None => (SyncState::NotConfigured, None, None),
     };
 
     let pending_count = match state.sync_engine.as_ref() {
@@ -114,6 +120,7 @@ pub async fn sync_get_summary(state: State<'_, AppState>) -> Result<SyncSummary,
         state: sync_state,
         pending_count,
         error: last_error,
+        progress,
     })
 }
 
@@ -395,11 +402,11 @@ pub async fn sync_push_now(state: State<'_, AppState>) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 手动触发 pull。
+/// 手动触发 pull（用户显式操作，不受失败退避限制）。
 #[tauri::command]
 pub async fn sync_pull_now(state: State<'_, AppState>) -> Result<(), AppError> {
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
-        scheduler.trigger_pull_now().await;
+        scheduler.trigger_pull_manual().await;
     }
     Ok(())
 }

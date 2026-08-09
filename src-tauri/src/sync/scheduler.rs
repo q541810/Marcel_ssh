@@ -12,7 +12,7 @@
 //!
 //! 并发控制：同一时间只允许一个 push 或 pull 操作（用 Mutex 串行化）。
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,6 +65,16 @@ impl Default for SyncState {
     }
 }
 
+/// pull 进度（pulling 状态时非 None；push 不产生进度）
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgress {
+    /// 本次 pull 待处理的 item 总数（profile 过滤后）
+    pub total: usize,
+    /// 已处理 item 数
+    pub done: usize,
+}
+
 /// 同步状态变更事件 payload
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,6 +82,8 @@ pub struct SyncStateEvent {
     pub state: SyncState,
     pub pending_count: usize,
     pub error: Option<String>,
+    /// pull 进度（非 pulling 状态为 None）
+    pub progress: Option<SyncProgress>,
 }
 
 /// 冲突检测事件 payload（pull 后发现有冲突时 emit）
@@ -96,6 +108,8 @@ pub struct SyncScheduler {
     state: RwLock<SyncState>,
     /// 最近错误（用于事件 payload）
     last_error: RwLock<Option<String>>,
+    /// 最近一次 pull 进度（供 sync_get_summary 读取，打开同步页时展示）
+    last_progress: RwLock<Option<SyncProgress>>,
     /// 操作锁（push/pull 串行化）
     operation_lock: Mutex<()>,
     /// push 防抖通知
@@ -108,8 +122,23 @@ pub struct SyncScheduler {
     ws_generation: AtomicU64,
     /// 明确要求 WS 停止（disable / 无 api_key）
     ws_stop: AtomicBool,
+    /// pull 是否在执行（防排队风暴：执行期间的其他 pull 触发直接跳过）
+    pull_in_flight: Arc<AtomicBool>,
+    /// 连续 pull 失败次数（退避用，成功清零）
+    consecutive_failures: AtomicU32,
+    /// 自动 pull（轮询 / WS 通知）的最早允许时间（unix 毫秒），手动拉取不受限
+    next_auto_pull_at_ms: AtomicU64,
     /// Tauri AppHandle（用于 emit 事件给前端），在 setup 阶段注入
     app_handle: RwLock<Option<AppHandle>>,
+}
+
+/// RAII：pull 执行标志（panic / future 取消时 drop 复位，不会永久锁死）
+struct InFlightGuard(Arc<AtomicBool>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl SyncScheduler {
@@ -120,12 +149,16 @@ impl SyncScheduler {
             api_key: RwLock::new(None),
             state: RwLock::new(SyncState::NotConfigured),
             last_error: RwLock::new(None),
+            last_progress: RwLock::new(None),
             operation_lock: Mutex::new(()),
             push_notify: tokio::sync::Notify::new(),
             ws_pull_notify: tokio::sync::Notify::new(),
             started: parking_lot::Mutex::new(false),
             ws_generation: AtomicU64::new(0),
             ws_stop: AtomicBool::new(true),
+            pull_in_flight: Arc::new(AtomicBool::new(false)),
+            consecutive_failures: AtomicU32::new(0),
+            next_auto_pull_at_ms: AtomicU64::new(0),
             app_handle: RwLock::new(None),
         }
     }
@@ -148,6 +181,9 @@ impl SyncScheduler {
             self.ws_stop.store(false, Ordering::SeqCst);
             // 换密钥 / 重新配对：踢掉旧 WS，重连循环会用新 key
             self.ws_generation.fetch_add(1, Ordering::SeqCst);
+            // 新凭证即新起点：重置失败退避，配对后的首次 pull 不被旧失败卡住
+            self.consecutive_failures.store(0, Ordering::SeqCst);
+            self.next_auto_pull_at_ms.store(0, Ordering::SeqCst);
         } else {
             self.ws_stop.store(true, Ordering::SeqCst);
             self.ws_generation.fetch_add(1, Ordering::SeqCst);
@@ -159,7 +195,7 @@ impl SyncScheduler {
             SyncState::NotConfigured
         };
         // 状态变化时立即 emit 事件
-        self.update_state_and_emit(new_state, None);
+        self.update_state_and_emit(new_state, None, None);
     }
 
     /// 配对 / 换服务器后更新客户端 base_url。
@@ -182,6 +218,11 @@ impl SyncScheduler {
         self.last_error.read().clone()
     }
 
+    /// 最近一次 pull 进度（未 pull / 非 pulling 时为 None）。
+    pub fn last_progress(&self) -> Option<SyncProgress> {
+        *self.last_progress.read()
+    }
+
     /// 触发 push（防抖 700ms）。
     ///
     /// 由配置变更触发点调用。连续多次调用只会在最后一次后 700ms 执行一次。
@@ -189,8 +230,24 @@ impl SyncScheduler {
         self.push_notify.notify_one();
     }
 
-    /// 立即触发 pull（如 App 启动、收到 WebSocket 通知）。
+    /// 自动触发 pull（App 启动 / 收到 WebSocket 通知 / 轮询）。
+    ///
+    /// 受失败退避约束：连续失败后按 30→60→120s 抑制自动拉取，
+    /// 避免"30 秒超时 + 15 秒重试"的无限循环。手动拉取用 `trigger_pull_manual`。
     pub async fn trigger_pull_now(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if now < self.next_auto_pull_at_ms.load(Ordering::SeqCst) {
+            log::debug!("[sync] 自动 pull 被退避抑制（失败退避中）");
+            return;
+        }
+        self.do_pull().await;
+    }
+
+    /// 手动触发 pull（用户显式操作，不受失败退避限制）。
+    pub async fn trigger_pull_manual(&self) {
         self.do_pull().await;
     }
 
@@ -263,7 +320,11 @@ impl SyncScheduler {
 
         loop {
             ticker.tick().await;
-            self.do_pull().await;
+            self.trigger_pull_now().await;
+            // reset：以「本轮 pull 完成」为起点重新计时。
+            // 不 reset 时若 pull 耗时超过 15 秒，下一次 tick 立即到期，
+            // 轮询会退化成连续 pull（风暴）。
+            ticker.reset();
         }
     }
 
@@ -349,12 +410,19 @@ impl SyncScheduler {
             None => return,
         };
 
+        let started = std::time::Instant::now();
+        log::info!("[sync] push 开始（先 pull 合并）");
+
         // 1) pull first（已持锁，勿再调 do_pull）
-        self.update_state_and_emit(SyncState::Pulling, None);
-        match self.engine.pull_with_accessor(&self.client, &api_key).await {
+        self.update_state_and_emit(SyncState::Pulling, None, None);
+        match self
+            .engine
+            .pull_with_accessor(&self.client, &api_key, None)
+            .await
+        {
             Ok(_) => {
                 if self.engine.has_pending_conflicts() {
-                    self.update_state_and_emit(SyncState::Idle, None);
+                    self.update_state_and_emit(SyncState::Idle, None, None);
                     self.emit_conflicts_detected();
                     log::info!("[sync] push 前 pull 发现冲突，跳过本次 push");
                     return;
@@ -367,24 +435,33 @@ impl SyncScheduler {
         }
 
         // 2) push
-        self.update_state_and_emit(SyncState::Pushing, None);
+        self.update_state_and_emit(SyncState::Pushing, None, None);
         let result = self.engine.push_with_accessor(&self.client, &api_key).await;
 
         match result {
             Ok(_) => {
                 let pending = self.engine.pending_count();
-                self.update_state_and_emit(SyncState::Idle, None);
+                log::info!("[sync] push 完成（耗时 {:?}）", started.elapsed());
+                self.update_state_and_emit(SyncState::Idle, None, None);
                 tracing_log_pending(pending);
             }
             Err(e) => {
                 let msg = e.to_string();
-                self.update_state_and_emit(SyncState::Error, Some(msg));
+                log::warn!("[sync] push 失败（耗时 {:?}）：{}", started.elapsed(), e);
+                self.update_state_and_emit(SyncState::Error, Some(msg), None);
             }
         }
     }
 
     /// 执行 pull 操作。
     async fn do_pull(&self) {
+        // PullGuard：已有 pull 在执行（或排队等待）时直接跳过，防止排队 pull 风暴。
+        // guard 先于 operation_lock 声明：drop 顺序逆序 → 锁先释放、标志后复位，
+        // 下一个 pull 在无锁竞争时启动。
+        if self.pull_in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _guard = InFlightGuard(self.pull_in_flight.clone());
         let _lock = self.operation_lock.lock().await;
 
         let api_key = {
@@ -396,13 +473,52 @@ impl SyncScheduler {
             None => return,
         };
 
-        self.update_state_and_emit(SyncState::Pulling, None);
+        let started = std::time::Instant::now();
+        log::info!("[sync] pull 开始");
+        self.update_state_and_emit(SyncState::Pulling, None, None);
 
-        let result = self.engine.pull_with_accessor(&self.client, &api_key).await;
+        // 进度回调：1s 节流 + done == total 强制末次 + 首个立即发
+        let last_emit = std::sync::Arc::new(parking_lot::Mutex::new(None::<std::time::Instant>));
+        let progress_cb = |done: usize, total: usize| {
+            let now = std::time::Instant::now();
+            let should_emit = {
+                let mut last = last_emit.lock();
+                match *last {
+                    None => {
+                        *last = Some(now);
+                        true
+                    }
+                    Some(prev) => {
+                        let elapsed = now.duration_since(prev);
+                        if elapsed >= Duration::from_secs(1) || done >= total {
+                            *last = Some(now);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+            };
+            if should_emit {
+                self.update_state_and_emit(
+                    SyncState::Pulling,
+                    None,
+                    Some(SyncProgress { total, done }),
+                );
+            }
+        };
+
+        let result = self
+            .engine
+            .pull_with_accessor(&self.client, &api_key, Some(&progress_cb))
+            .await;
 
         match result {
             Ok(_) => {
-                self.update_state_and_emit(SyncState::Idle, None);
+                self.consecutive_failures.store(0, Ordering::SeqCst);
+                self.next_auto_pull_at_ms.store(0, Ordering::SeqCst);
+                log::info!("[sync] pull 完成（耗时 {:?}）", started.elapsed());
+                self.update_state_and_emit(SyncState::Idle, None, None);
                 // pull 后检测冲突，emit 事件让前端弹冲突 UI
                 if self.engine.has_pending_conflicts() {
                     self.emit_conflicts_detected();
@@ -410,7 +526,26 @@ impl SyncScheduler {
             }
             Err(e) => {
                 let msg = e.to_string();
-                self.update_state_and_emit(SyncState::Error, Some(msg));
+                // 失败退避：30→60→120s（只抑制自动触发，手动拉取不受限）
+                let failures = self
+                    .consecutive_failures
+                    .fetch_add(1, Ordering::SeqCst)
+                    .saturating_add(1);
+                let backoff_secs = 15u64 * 2u64.pow(failures.min(3));
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                self.next_auto_pull_at_ms
+                    .store(now + backoff_secs * 1000, Ordering::SeqCst);
+                log::warn!(
+                    "[sync] pull 失败（耗时 {:?}，连续失败 {} 次，自动重试退避 {}s）：{}",
+                    started.elapsed(),
+                    failures,
+                    backoff_secs,
+                    msg
+                );
+                self.update_state_and_emit(SyncState::Error, Some(msg), None);
             }
         }
     }
@@ -426,7 +561,15 @@ impl SyncScheduler {
     }
 
     /// 更新状态并发送 sync-state-changed 事件。
-    fn update_state_and_emit(&self, new_state: SyncState, error: Option<String>) {
+    ///
+    /// `progress`：pull 进度；同步写入 last_progress（供 sync_get_summary 读取），
+    /// 非 pulling 状态传 None 会清空。
+    fn update_state_and_emit(
+        &self,
+        new_state: SyncState,
+        error: Option<String>,
+        progress: Option<SyncProgress>,
+    ) {
         {
             let mut state = self.state.write();
             *state = new_state;
@@ -435,6 +578,10 @@ impl SyncScheduler {
             let mut err = self.last_error.write();
             *err = error.clone();
         }
+        {
+            let mut p = self.last_progress.write();
+            *p = progress;
+        }
 
         // emit 事件给前端（如果 app_handle 已注入）
         if let Some(ref handle) = *self.app_handle.read() {
@@ -442,6 +589,7 @@ impl SyncScheduler {
                 state: new_state,
                 pending_count: self.engine.pending_count(),
                 error,
+                progress,
             };
             let _ = handle.emit("sync-state-changed", &payload);
         }
@@ -474,5 +622,29 @@ mod tests {
         assert_eq!(state, SyncState::Pulling);
     }
 
-    // 注意：SyncScheduler 的完整测试需要 mock client，这里只测状态枚举
+    #[test]
+    fn test_in_flight_guard_resets_on_drop() {
+        // PullGuard 语义：drop（正常返回 / panic 展开 / future 取消）后标志复位，
+        // 不会永久锁死后续 pull。
+        let flag = Arc::new(AtomicBool::new(true));
+        {
+            let _guard = InFlightGuard(flag.clone());
+            assert!(flag.load(Ordering::SeqCst));
+        }
+        assert!(!flag.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_in_flight_guard_swap_excludes_concurrent() {
+        // swap 语义：已有 pull 在执行时，后来的触发直接返回 true（跳过）。
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.swap(true, Ordering::SeqCst)); // 第一个进入
+        assert!(flag.swap(true, Ordering::SeqCst)); // 第二个跳过
+        let _guard = InFlightGuard(flag.clone());
+        drop(_guard);
+        assert!(!flag.swap(true, Ordering::SeqCst)); // 复位后可再进入
+        let _guard = InFlightGuard(flag.clone());
+    }
+
+    // 注意：SyncScheduler 的完整测试需要 mock client，这里只测状态枚举与 guard
 }
