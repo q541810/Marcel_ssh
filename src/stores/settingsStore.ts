@@ -37,6 +37,7 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableCloudPage: false,
   webSearchMode: 'browser',
   webSearchApiProvider: 'brave',
+  webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
 };
 

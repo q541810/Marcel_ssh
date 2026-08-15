@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type {
   ExperimentalSettings,
   WebSearchApiProvider,
+  WebSearchEndpoint,
   WebSearchMode,
 } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
@@ -16,6 +17,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   enableCloudPage: false,
   webSearchMode: 'browser',
   webSearchApiProvider: 'brave',
+  webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
 };
 
@@ -31,6 +33,11 @@ const SEARCH_MODE_OPTIONS: readonly {
 const PROVIDER_OPTIONS: readonly { value: WebSearchApiProvider; label: string }[] = [
   { value: 'brave', label: 'Brave Search' },
   { value: 'tavily', label: 'Tavily' },
+];
+
+const ENDPOINT_OPTIONS: readonly { value: WebSearchEndpoint; label: string; desc?: string }[] = [
+  { value: 'cn', label: 'cn.bing.com', desc: '中国区节点，中英文混合查询更稳定（推荐）' },
+  { value: 'www', label: 'www.bing.com', desc: '国际节点' },
 ];
 
 /** 手机端搜索方式的 UI 归并：browser（桌面同步而来，本机不可用）在 UI 上视为裸抓。 */
@@ -181,6 +188,21 @@ export function MobileAgentToolsSection() {
               Bing HTML；如搜索结果质量不佳，可切换为搜索 API。
             </p>
           )}
+        </MobileSettingRow>
+      )}
+
+      {experimental.enableWebSearch && !isApiMode && (
+        <MobileSettingRow
+          label="搜索端点"
+          description="裸抓 / 浏览器模式使用的 Bing 域名"
+        >
+          <ChoiceGroup
+            options={ENDPOINT_OPTIONS}
+            value={experimental.webSearchEndpoint ?? 'cn'}
+            onChange={(v) =>
+              updateExperimental({ webSearchEndpoint: v as WebSearchEndpoint })
+            }
+          />
         </MobileSettingRow>
       )}
 

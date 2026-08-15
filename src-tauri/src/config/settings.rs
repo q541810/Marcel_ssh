@@ -167,6 +167,17 @@ pub enum HttpFetchMode {
     Html,
 }
 
+/// Which Bing host `web_search` uses for browser/html modes.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum WebSearchEndpoint {
+    /// cn.bing.com — China-region node; stable tokenization for mixed CN/EN queries.
+    #[default]
+    Cn,
+    /// www.bing.com — international CDN node; may degrade on some networks.
+    Www,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum WebSearchApiProvider {
@@ -189,6 +200,9 @@ pub struct ExperimentalSettings {
     /// Which search API vendor to use when `web_search_mode == Api`.
     #[serde(default)]
     pub web_search_api_provider: WebSearchApiProvider,
+    /// Which Bing host `web_search` uses for browser/html modes.
+    #[serde(default)]
+    pub web_search_endpoint: WebSearchEndpoint,
     /// Which backend `http_get` uses. Independent of search mode.
     #[serde(default)]
     pub http_fetch_mode: HttpFetchMode,
@@ -202,6 +216,7 @@ impl Default for ExperimentalSettings {
             enable_cloud_page: false,
             web_search_mode: WebSearchMode::Browser,
             web_search_api_provider: WebSearchApiProvider::Brave,
+            web_search_endpoint: WebSearchEndpoint::Cn,
             http_fetch_mode: HttpFetchMode::Browser,
         }
     }
@@ -621,6 +636,7 @@ mod tests {
         assert!(!s.enable_cloud_page);
         assert_eq!(s.web_search_mode, WebSearchMode::Browser);
         assert_eq!(s.web_search_api_provider, WebSearchApiProvider::Brave);
+        assert_eq!(s.web_search_endpoint, WebSearchEndpoint::Cn);
         assert_eq!(s.http_fetch_mode, HttpFetchMode::Browser);
     }
 
@@ -632,6 +648,7 @@ mod tests {
         assert!(parsed.enable_web_search);
         assert_eq!(parsed.web_search_mode, WebSearchMode::Browser);
         assert_eq!(parsed.web_search_api_provider, WebSearchApiProvider::Brave);
+        assert_eq!(parsed.web_search_endpoint, WebSearchEndpoint::Cn);
         assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Browser);
     }
 

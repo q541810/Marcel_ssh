@@ -57,6 +57,7 @@ describe('settingsStore', () => {
     expect(es?.enableCloudPage).toBe(false);
     expect(es?.webSearchMode).toBe('browser');
     expect(es?.webSearchApiProvider).toBe('brave');
+    expect(es?.webSearchEndpoint).toBe('cn');
     expect(es?.httpFetchMode).toBe('browser');
   });
 

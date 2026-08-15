@@ -576,6 +576,7 @@ mod tests {
             enable_cloud_page: false,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
         };
         let r = ToolRegistry::build_for_mode(&[], &disabled);
@@ -598,9 +599,9 @@ mod tests {
             enable_cloud_page: true,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
         };
-
 
         let r = ToolRegistry::build_for_mode(&[], &enabled);
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
@@ -618,6 +619,7 @@ mod tests {
             enable_cloud_page: false,
             web_search_mode: crate::config::settings::WebSearchMode::Html,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Html,
         };
         let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_search)
@@ -634,6 +636,7 @@ mod tests {
             enable_cloud_page: false,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
+            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
         };
         let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_http)
@@ -644,7 +647,6 @@ mod tests {
         assert!(!names.iter().any(|n| n == "web_search"));
         assert!(names.iter().any(|n| n == "http_get"));
     }
-
 
     #[test]
     fn tool_output_ok_builder() {

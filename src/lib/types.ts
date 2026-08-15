@@ -505,6 +505,8 @@ export interface TerminalColors {
 export type WebSearchMode = 'browser' | 'api' | 'html';
 export type HttpFetchMode = 'browser' | 'html';
 export type WebSearchApiProvider = 'brave' | 'tavily';
+/** Bing host used by web_search browser/html modes; default cn */
+export type WebSearchEndpoint = 'cn' | 'www';
 
 export interface ExperimentalSettings {
   enableWebSearch: boolean;
@@ -514,6 +516,8 @@ export interface ExperimentalSettings {
   webSearchMode?: WebSearchMode;
   /** used when webSearchMode === 'api' */
   webSearchApiProvider?: WebSearchApiProvider;
+  /** Bing host for browser/html modes; default cn */
+  webSearchEndpoint?: WebSearchEndpoint;
   /** http_get backend; independent of webSearchMode; default browser */
   httpFetchMode?: HttpFetchMode;
 }

@@ -3,6 +3,7 @@ import type {
   ExperimentalSettings,
   HttpFetchMode,
   WebSearchApiProvider,
+  WebSearchEndpoint,
   WebSearchMode,
 } from '@/lib/types';
 import Button from '@/components/ui/Button';
@@ -19,6 +20,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   enableCloudPage: false,
   webSearchMode: 'browser',
   webSearchApiProvider: 'brave',
+  webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
 };
 
@@ -38,6 +40,7 @@ export function ToolCapabilitiesSection() {
 
   const searchMode = experimental.webSearchMode ?? 'browser';
   const apiProvider = experimental.webSearchApiProvider ?? 'brave';
+  const searchEndpoint = experimental.webSearchEndpoint ?? 'cn';
   const httpFetchMode = experimental.httpFetchMode ?? 'browser';
 
   const persistSearchKey = async (value: string) => {
@@ -97,6 +100,26 @@ export function ToolCapabilitiesSection() {
               className="w-52"
             />
           </SettingItem>
+
+          {searchMode !== 'api' && (
+            <SettingItem
+              id="exp-websearch-endpoint"
+              label="搜索端点"
+              description="cn.bing.com 中国区节点对混合中英文查询更稳定（默认）；www.bing.com 为国际节点"
+              sectionId="settings-experimental"
+              keywords={['web', 'search', 'bing', 'cn', 'www', '端点']}
+            >
+              <Select
+                value={searchEndpoint}
+                onChange={(v) => updateExperimental({ webSearchEndpoint: v as WebSearchEndpoint })}
+                options={[
+                  { value: 'cn', label: 'cn.bing.com（推荐）' },
+                  { value: 'www', label: 'www.bing.com' },
+                ]}
+                className="w-52"
+              />
+            </SettingItem>
+          )}
 
           {searchMode === 'api' && (
             <>

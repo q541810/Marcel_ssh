@@ -138,7 +138,8 @@ impl SyncKey {
                 "settings.experimentalSettings.enableWebSearch"
                 | "settings.experimentalSettings.enableHttpFetch"
                 | "settings.experimentalSettings.webSearchMode"
-                | "settings.experimentalSettings.webSearchApiProvider" => {}
+                | "settings.experimentalSettings.webSearchApiProvider"
+                | "settings.experimentalSettings.webSearchEndpoint" => {}
                 _ => return false,
             }
         }

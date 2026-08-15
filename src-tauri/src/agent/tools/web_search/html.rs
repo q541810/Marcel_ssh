@@ -3,6 +3,7 @@
 use reqwest::Client;
 use std::time::Duration;
 
+use crate::config::settings::WebSearchEndpoint;
 use crate::error::AppError;
 
 use super::parse::{looks_like_challenge_page, parse_bing_results};
@@ -11,16 +12,17 @@ use super::urlencoding;
 
 const TIMEOUT_SECS: u64 = 15;
 
-pub async fn search(query: &str, max_results: usize) -> Result<SearchOutcome, AppError> {
+pub async fn search(
+    endpoint: WebSearchEndpoint,
+    query: &str,
+    max_results: usize,
+) -> Result<SearchOutcome, AppError> {
     let client = Client::builder()
         .timeout(Duration::from_secs(TIMEOUT_SECS))
         .build()
         .map_err(|e| AppError::Agent(format!("failed to create HTTP client: {}", e)))?;
 
-    let url = format!(
-        "https://www.bing.com/search?q={}",
-        urlencoding::encode(query)
-    );
+    let url = search_url(endpoint, query);
 
     let resp = client
         .get(&url)
@@ -57,6 +59,15 @@ pub async fn search(query: &str, max_results: usize) -> Result<SearchOutcome, Ap
     outcome_from_html(&html, max_results)
 }
 
+/// Build the Bing SERP URL for the configured endpoint.
+pub fn search_url(endpoint: WebSearchEndpoint, query: &str) -> String {
+    let host = match endpoint {
+        WebSearchEndpoint::Cn => "https://cn.bing.com",
+        WebSearchEndpoint::Www => "https://www.bing.com",
+    };
+    format!("{}/search?q={}", host, urlencoding::encode(query))
+}
+
 /// Shared HTML → SearchOutcome path used by the html mode (and unit tests).
 pub fn outcome_from_html(html: &str, max_results: usize) -> Result<SearchOutcome, AppError> {
     if looks_like_challenge_page(html) {
@@ -76,6 +87,19 @@ pub fn outcome_from_html(html: &str, max_results: usize) -> Result<SearchOutcome
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::WebSearchEndpoint;
+
+    #[test]
+    fn search_url_uses_configured_endpoint() {
+        let url = search_url(WebSearchEndpoint::Cn, "绝区零 hello");
+        assert_eq!(
+            url,
+            "https://cn.bing.com/search?q=%E7%BB%9D%E5%8C%BA%E9%9B%B6%20hello"
+        );
+
+        let url = search_url(WebSearchEndpoint::Www, "tokio");
+        assert_eq!(url, "https://www.bing.com/search?q=tokio");
+    }
 
     #[test]
     fn html_mode_parses_fixture_serp() {

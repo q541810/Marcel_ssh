@@ -15,7 +15,7 @@ use crate::agent::sandbox::RiskLevel;
 
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;
-use crate::config::settings::{WebSearchApiProvider, WebSearchMode};
+use crate::config::settings::{WebSearchApiProvider, WebSearchEndpoint, WebSearchMode};
 use crate::error::AppError;
 
 mod api;
@@ -134,9 +134,9 @@ impl AgentTool for WebSearchTool {
             None => return Ok(ToolOutput::fail("web_search", "missing 'query' parameter")),
         };
 
-        let (mode, api_provider) = resolve_search_config(ctx).await;
+        let (mode, api_provider, endpoint) = resolve_search_config(ctx).await;
 
-        let outcome = match run_search(mode, api_provider, &query, max_results).await {
+        let outcome = match run_search(mode, api_provider, endpoint, &query, max_results).await {
             Ok(o) => o,
             Err(e) => {
                 return Ok(ToolOutput::fail(
@@ -150,7 +150,9 @@ impl AgentTool for WebSearchTool {
     }
 }
 
-async fn resolve_search_config(ctx: &ToolContext) -> (WebSearchMode, WebSearchApiProvider) {
+async fn resolve_search_config(
+    ctx: &ToolContext,
+) -> (WebSearchMode, WebSearchApiProvider, WebSearchEndpoint) {
     // Mobile (Android) 无法启动本地 Chrome/Edge 走 CDP：Browser 模式必然失败，
     // 因此按用户设置解析后把 Browser 降级为裸 Bing HTML 抓取（html）模式；
     // Api 模式（Brave/Tavily 纯 HTTP）在手机上完全可用，直接生效。
@@ -163,9 +165,17 @@ async fn resolve_search_config(ctx: &ToolContext) -> (WebSearchMode, WebSearchAp
                 WebSearchMode::Browser => WebSearchMode::Html,
                 mode => mode,
             };
-            return (mode, exp.web_search_api_provider);
+            return (
+                mode,
+                exp.web_search_api_provider,
+                exp.web_search_endpoint,
+            );
         }
-        (WebSearchMode::Html, WebSearchApiProvider::default())
+        (
+            WebSearchMode::Html,
+            WebSearchApiProvider::default(),
+            WebSearchEndpoint::default(),
+        )
     }
 
     #[cfg(desktop)]
@@ -174,21 +184,30 @@ async fn resolve_search_config(ctx: &ToolContext) -> (WebSearchMode, WebSearchAp
         if let Some(state) = ctx.app_handle.try_state::<crate::AppState>() {
             let settings = state.settings.read().await;
             let exp = &settings.experimental_settings;
-            return (exp.web_search_mode, exp.web_search_api_provider);
+            return (
+                exp.web_search_mode,
+                exp.web_search_api_provider,
+                exp.web_search_endpoint,
+            );
         }
-        (WebSearchMode::default(), WebSearchApiProvider::default())
+        (
+            WebSearchMode::default(),
+            WebSearchApiProvider::default(),
+            WebSearchEndpoint::default(),
+        )
     }
 }
 
 async fn run_search(
     mode: WebSearchMode,
     api_provider: WebSearchApiProvider,
+    endpoint: WebSearchEndpoint,
     query: &str,
     max_results: usize,
 ) -> Result<SearchOutcome, AppError> {
     match mode {
-        WebSearchMode::Browser => browser::search(query, max_results).await,
-        WebSearchMode::Html => html::search(query, max_results).await,
+        WebSearchMode::Browser => browser::search(endpoint, query, max_results).await,
+        WebSearchMode::Html => html::search(endpoint, query, max_results).await,
         WebSearchMode::Api => {
             let key = keychain::get_web_search_api_key()?.unwrap_or_default();
             api::search(api_provider, &key, query, max_results).await
@@ -303,6 +322,7 @@ fn search_result_metadata(query: &str, results: &[SearchResult]) -> Vec<serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::WebSearchEndpoint;
 
     #[test]
     fn urlencoding_spaces() {
@@ -480,9 +500,15 @@ mod tests {
     #[tokio::test]
     #[ignore = "依赖本机 keychain 为空；本机已存 Key 时会发真实网络请求。空 Key 报错行为由 api.rs 的 api_brave_mode_requires_key / api_tavily_mode_requires_key 确定性覆盖"]
     async fn run_search_api_mode_fails_without_key() {
-        let err = run_search(WebSearchMode::Api, WebSearchApiProvider::Brave, "q", 3)
-            .await
-            .expect_err("no key");
+        let err = run_search(
+            WebSearchMode::Api,
+            WebSearchApiProvider::Brave,
+            WebSearchEndpoint::Cn,
+            "q",
+            3,
+        )
+        .await
+        .expect_err("no key");
         let msg = err.to_string().to_ascii_lowercase();
         assert!(msg.contains("key"), "{msg}");
     }

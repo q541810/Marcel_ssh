@@ -651,12 +651,20 @@ impl CdpPage {
 }
 
 /// Search Bing SERP HTML via browser (used by web_search browser mode).
-pub async fn fetch_bing_search_html(query: &str) -> Result<String, AppError> {
+pub async fn fetch_bing_search_html(
+    endpoint: crate::config::settings::WebSearchEndpoint,
+    query: &str,
+) -> Result<String, AppError> {
     use crate::agent::tools::web_search::urlencoding;
 
     with_browser(|mut page| async move {
+        let host = match endpoint {
+            crate::config::settings::WebSearchEndpoint::Cn => "https://cn.bing.com",
+            crate::config::settings::WebSearchEndpoint::Www => "https://www.bing.com",
+        };
         let url = format!(
-            "https://www.bing.com/search?q={}",
+            "{}/search?q={}",
+            host,
             urlencoding::encode(query)
         );
         page.navigate(&url).await?;
@@ -703,7 +711,7 @@ mod tests {
             },
             {
                 "type": "page",
-                "url": "https://www.bing.com/search?q=x",
+                "url": "https://cn.bing.com/search?q=x",
                 "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/bing"
             }
         ]);

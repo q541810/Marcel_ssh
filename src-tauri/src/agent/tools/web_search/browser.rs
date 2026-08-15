@@ -1,13 +1,18 @@
 //! Bing search via shared local headless browser CDP.
 
 use crate::agent::tools::browser_cdp;
+use crate::config::settings::WebSearchEndpoint;
 use crate::error::AppError;
 
 use super::parse::{looks_like_challenge_page, parse_bing_results};
 use super::types::SearchOutcome;
 
-pub async fn search(query: &str, max_results: usize) -> Result<SearchOutcome, AppError> {
-    let html = browser_cdp::fetch_bing_search_html(query).await?;
+pub async fn search(
+    endpoint: WebSearchEndpoint,
+    query: &str,
+    max_results: usize,
+) -> Result<SearchOutcome, AppError> {
+    let html = browser_cdp::fetch_bing_search_html(endpoint, query).await?;
     outcome_from_browser_html(&html, max_results)
 }
 
@@ -30,6 +35,7 @@ pub fn outcome_from_browser_html(html: &str, max_results: usize) -> Result<Searc
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::settings::WebSearchEndpoint;
 
     #[test]
     fn browser_mode_parses_fixture_as_provider_browser() {
@@ -65,7 +71,9 @@ mod tests {
     #[tokio::test]
     #[ignore = "live browser + Bing; run with --ignored when available"]
     async fn browser_mode_live_search_smoke() {
-        let out = search("tokio rust runtime", 3).await.expect("browser search");
+        let out = search(WebSearchEndpoint::Cn, "tokio rust runtime", 3)
+            .await
+            .expect("browser search");
         assert_eq!(out.provider, "browser");
         let _ = out.results;
     }

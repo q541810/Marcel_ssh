@@ -123,6 +123,7 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "experimentalSettings.enableCloudPage",
         "experimentalSettings.webSearchMode",
         "experimentalSettings.webSearchApiProvider",
+        "experimentalSettings.webSearchEndpoint",
         "experimentalSettings.httpFetchMode",
         "folderUploadCompressionLevel",
         "disabledPlugins",
