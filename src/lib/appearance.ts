@@ -1,3 +1,5 @@
+import hljsLightUrl from 'highlight.js/styles/github.css?url';
+import hljsDarkUrl from 'highlight.js/styles/github-dark.css?url';
 import type { AppearanceSettings, AppearanceTheme } from '@/lib/types';
 
 /**
@@ -10,8 +12,8 @@ import type { AppearanceSettings, AppearanceTheme } from '@/lib/types';
  *   render a light Fluent look; the native effect call simply no-ops.
  */
 
-const HLJS_LIGHT = 'highlight.js/styles/github.css';
-const HLJS_DARK = 'highlight.js/styles/github-dark.css';
+const HLJS_LIGHT = hljsLightUrl;
+const HLJS_DARK = hljsDarkUrl;
 const HLJS_ID = 'marcel-hljs-theme';
 
 export function resolveAppearanceTheme(theme: AppearanceTheme): 'light' | 'dark' {
