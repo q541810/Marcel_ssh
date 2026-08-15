@@ -48,24 +48,54 @@ export function applyAppearance(appearance: AppearanceSettings) {
 /**
  * Applies / clears the native window backdrop (WinUI Acrylic on Windows).
  * Browser preview and unsupported platforms fall back to CSS only.
+ *
+ * 桌面端模糊依赖原生 DWM 效果（CSS backdrop-filter 无法模糊窗口外的桌面）。
+ * 窗口创建初期（visible:false）调用可能不生效，这里会延迟重试几次，
+ * Acrylic 不可用时回退到 Mica（同样带模糊），仍失败则保持 CSS-only（透出但无模糊）。
  */
 export async function applyWindowAcrylic(enabled: boolean): Promise<void> {
   const root = document.documentElement;
   if (root.dataset.marcelPlatform === 'mobile') return;
-  try {
-    const { getCurrentWindow, Effect } = await import('@tauri-apps/api/window');
-    const win = getCurrentWindow();
-    if (enabled) {
-      await win.setEffects({ effects: [Effect.Acrylic] });
-      root.dataset.nativeAcrylic = 'true';
-    } else {
-      await win.clearEffects();
-      root.dataset.nativeAcrylic = 'false';
+
+  const setNative = (v: boolean) => {
+    root.dataset.nativeAcrylic = v ? 'true' : 'false';
+  };
+
+  if (!enabled) {
+    setNative(false);
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      await getCurrentWindow().clearEffects();
+    } catch (err) {
+      console.warn('[appearance] clearEffects failed:', err);
     }
-  } catch (err) {
-    // Non-Tauri (browser preview) or unsupported platform: CSS-only fallback.
-    root.dataset.nativeAcrylic = 'false';
-    console.debug('[appearance] native window effects unavailable:', err);
+    return;
+  }
+
+  const attempt = async (): Promise<boolean> => {
+    try {
+      const { getCurrentWindow, Effect } = await import('@tauri-apps/api/window');
+      const win = getCurrentWindow();
+      try {
+        await win.setEffects({ effects: [Effect.Acrylic] });
+      } catch {
+        // 部分系统/版本不支持 Acrylic，回退 Mica（同样带模糊）
+        await win.setEffects({ effects: [Effect.Mica] });
+      }
+      setNative(true);
+      return true;
+    } catch (err) {
+      setNative(false);
+      console.warn('[appearance] native window effects unavailable:', err);
+      return false;
+    }
+  };
+
+  // 立即尝试；窗口刚创建（visible:false）时可能不生效，错峰重试
+  if (await attempt()) return;
+  for (const delay of [300, 1200, 3000]) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (await attempt()) return;
   }
 }
 

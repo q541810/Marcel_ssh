@@ -410,7 +410,8 @@ html[data-native-acrylic='true'] .win-wallpaper {
 /* 毛玻璃开启：整个内容区与标题栏一致，统一模糊磨砂 */
 html[data-acrylic='true'] .win-app-surface {
   background: rgba(var(--app-bg-rgb), 0.04);
-  /* 不加大面积 backdrop-filter：WebView2 透明窗口下整屏 blur 可能被合成成不透明层 */
+  -webkit-backdrop-filter: blur(36px) saturate(150%);
+  backdrop-filter: blur(36px) saturate(150%);
 }
 
 /* 关闭毛玻璃：无模糊、无桌面透出，但面板与背景融为一体（不发白） */
@@ -1250,8 +1251,8 @@ html[data-theme='dark'][data-acrylic='false'] {
 /* Terminal frosted glass + backdrop image */
 .win-terminal {
   background: rgba(var(--app-bg-rgb), 0.66);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
 }
 
 /* ------------------------------------------------------------------
