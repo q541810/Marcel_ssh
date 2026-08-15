@@ -72,7 +72,7 @@
   --app-bg-rgb: 243, 243, 243;
   --window-bg: #F3F3F3;
   --wallpaper-base: rgba(228, 230, 234, 0.6);
-  --wallpaper-glow: rgba(255, 255, 255, 0.4);
+  --wallpaper-glow: rgba(255, 255, 255, 0.32);
   --wallpaper-glow-2: rgba(0, 0, 0, 0.06);
 
   /* text */
@@ -382,8 +382,7 @@ html[data-acrylic='true'] #root {
   opacity: 0;
   transition: opacity 300ms ease;
   background:
-    radial-gradient(1200px 800px at 18% -8%, var(--wallpaper-glow), transparent 60%),
-    radial-gradient(1000px 700px at 110% 10%, var(--wallpaper-glow-2), transparent 55%),
+    linear-gradient(180deg, var(--wallpaper-glow) 0%, transparent 42%),
     var(--wallpaper-base);
 }
 
