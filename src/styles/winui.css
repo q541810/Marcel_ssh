@@ -381,9 +381,7 @@ html[data-acrylic='true'] #root {
   pointer-events: none;
   opacity: 0;
   transition: opacity 300ms ease;
-  background:
-    linear-gradient(180deg, var(--wallpaper-glow) 0%, transparent 42%),
-    var(--wallpaper-base);
+  background: var(--wallpaper-base);
 }
 
 /* 浏览器模式：壁纸层全量显示，内容面板磨砂叠加其上 */
