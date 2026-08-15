@@ -207,19 +207,47 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       // (or StreamEvent::Done) would arrive, so we synchronously mark the card here
       // with wasAborted + an interruption note. The backend persists the same note
       // separately, keeping the LLM history chain complete.
-      useConversationStore.getState().markAbortedToolFlags();
-      cleanupTaskListeners(taskId);
+      // 级联：收集该任务及其全部后代子agent（task 工具派发）。停止主任务会
+      // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
+      // 子任务收到 Done 会被 handleDone 误标为 completed（实际是被取消的）。
+      const ids = [taskId];
+      let i = 0;
+      while (i < ids.length) {
+        const parent = ids[i++];
+        for (const [id, t] of Object.entries(get().tasks)) {
+          if (t.parentTaskId === parent && !ids.includes(id)) ids.push(id);
+        }
+      }
+      // 只处理运行中的任务（限定到各自所属对话，不误伤其他对话的工具卡片）。
+      // 已终态的任务跳过：避免把「子任务已自然完成、主任务仍在等结果」误标成取消。
+      const runningIds: string[] = [];
+      for (const id of ids) {
+        const t = get().tasks[id];
+        if (!t || !['planning', 'executing', 'waiting_approval'].includes(t.status)) continue;
+        runningIds.push(id);
+        useConversationStore.getState().markAbortedToolFlags(t.conversationId);
+        cleanupTaskListeners(id);
+        useConversationStore.getState().clearAllAssistantFlags(t.conversationId);
+      }
       set((state) => {
-        const task = state.tasks[taskId];
-        if (!task) return state;
+        const tasks = { ...state.tasks };
+        let nextActive = state.activeTaskId;
+        let found = false;
+        for (const id of runningIds) {
+          const task = tasks[id];
+          if (!task) continue;
+          tasks[id] = { ...task, status: 'cancelled' };
+          found = true;
+          if (state.activeTaskId === id) nextActive = null;
+        }
+        if (!found) return state;
         return {
-          tasks: { ...state.tasks, [taskId]: { ...task, status: 'cancelled' } },
-          activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
+          tasks,
+          activeTaskId: nextActive,
           pendingApproval: null,
           pendingQuestion: null,
         };
       });
-      useConversationStore.getState().clearAllAssistantFlags();
     }
   },
 

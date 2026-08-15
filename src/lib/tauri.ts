@@ -191,6 +191,10 @@ export async function agentListConversations(sessionId: string): Promise<AgentCo
   return invoke<AgentConversation[]>('agent_list_conversations', { sessionId });
 }
 
+export async function agentGetConversation(conversationId: string): Promise<AgentConversation> {
+  return invoke<AgentConversation>('agent_get_conversation', { conversationId });
+}
+
 export async function agentListConversationsByConnection(connectionId: string): Promise<AgentConversation[]> {
   return invoke<AgentConversation[]>('agent_list_conversations_by_connection', { connectionId });
 }

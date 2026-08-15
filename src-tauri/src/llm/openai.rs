@@ -849,11 +849,10 @@ fn build_request_body(
                     .collect()
             }),
             tool_call_id: m.tool_call_id.clone(),
-            reasoning_content: if m.tool_calls.is_some() {
-                None
-            } else {
-                m.reasoning_content.clone()
-            },
+            // DeepSeek thinking 模式（默认开启）：带 tool_calls 的 assistant 消息
+            // 的 reasoning_content 必须完整回传，否则 400。非 DeepSeek 提供商的
+            // 响应没有 reasoning（messages 里为 None），保留逻辑与置 None 等价。
+            reasoning_content: m.reasoning_content.clone(),
         })
         .collect();
 
@@ -1179,6 +1178,58 @@ mod build_request_body_tests {
             vision: false,
             extra_body: None,
         }
+    }
+
+    #[test]
+    fn tool_calls_assistant_keeps_reasoning_content() {
+        // DeepSeek thinking 模式：带 tool_calls 的 assistant 必须回传
+        // reasoning_content（build_request_body 不得再置 None）
+        let cfg = base_config();
+        let msg = LlmMessage {
+            role: LlmRole::Assistant,
+            content: "".to_string(),
+            tool_calls: Some(vec![crate::llm::provider::ToolCall {
+                id: "call-1".into(),
+                name: "execute_command".into(),
+                arguments: serde_json::json!({ "command": "ls" }),
+            }]),
+            tool_call_id: None,
+            reasoning_content: Some("let me check the directory".to_string()),
+            image_paths: None,
+        };
+        let body = build_request_body(&cfg, &[msg], &[], true);
+        let messages = body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages");
+        let assistant = &messages[0];
+        // DeepSeek 协议字段为 snake_case reasoning_content
+        assert_eq!(
+            assistant
+                .get("reasoning_content")
+                .and_then(|v| v.as_str()),
+            Some("let me check the directory")
+        );
+        assert!(assistant.get("tool_calls").is_some());
+    }
+
+    #[test]
+    fn no_reasoning_assistant_omits_field() {
+        let cfg = base_config();
+        let msg = LlmMessage {
+            role: LlmRole::Assistant,
+            content: "plain reply".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            image_paths: None,
+        };
+        let body = build_request_body(&cfg, &[msg], &[], true);
+        let messages = body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages");
+        assert!(messages[0].get("reasoning_content").is_none());
     }
 
     #[test]

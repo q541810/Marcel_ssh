@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { storedMessageToAgentMessage } from './messageConversion';
+import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import type { StoredMessage } from '@/lib/types';
 
 describe('storedMessageToAgentMessage', () => {
@@ -431,5 +431,44 @@ describe('storedMessageToAgentMessage', () => {
       expect(legacyResult.toolResult!.toolName).toBe('execute_command');
       expect(newResult.toolResult!.toolName).toBe('read_file');
     });
+  });
+});
+
+describe('clearIntermediateReasoning', () => {
+  it('keeps reasoningContent but clears isThinking for assistant followed by tool', () => {
+    const assistant = storedMessageToAgentMessage({
+      id: 'a1',
+      conversationId: 'c1',
+      role: 'assistant',
+      content: 'checking',
+      timestamp: 't',
+      createdAt: 't',
+      reasoningContent: 'thinking...',
+    });
+    const tool = storedMessageToAgentMessage({
+      id: 't1',
+      conversationId: 'c1',
+      role: 'tool',
+      content: '',
+      timestamp: 't',
+      createdAt: 't',
+      toolCallsJson: JSON.stringify({
+        id: 'call-1',
+        name: 'read_file',
+        arguments: {},
+        success: true,
+        blocked: false,
+      }),
+    });
+
+    const result = clearIntermediateReasoning([
+      { ...assistant, isThinking: true },
+      tool,
+    ]);
+
+    // reasoningContent 保留（LLM 回传需要，DeepSeek thinking 模式）
+    expect(result[0].reasoningContent).toBe('thinking...');
+    // 显示标志清除（UI 不显示"思考中"）
+    expect(result[0].isThinking).toBe(false);
   });
 });

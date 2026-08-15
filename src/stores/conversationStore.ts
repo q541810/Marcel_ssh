@@ -44,9 +44,23 @@ export interface ConversationState {
   ensureConversation: (sessionId: string, connectionId: string, fallbackTitle: string) => Promise<string>;
   appendMessages: (conversationId: string, messages: AgentMessage[]) => void;
   updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => void;
-  clearAllAssistantFlags: () => void;
+  /**
+   * 注册 task 工具派发的子agent对话：插入 conversation 条目 + 骨架消息
+   * （user=prompt、assistant=loading 占位）。子agent流式 listener 挂上后
+   * 会实时更新该对话；不改变当前 active 对话。
+   * 返回骨架 loading 消息 id（供 attachStreamListener 使用）；已注册过时返回 null。
+   */
+  registerSubConversation: (
+    conversationId: string,
+    connectionId: string,
+    title: string,
+    subTaskId: string,
+    prompt: string,
+    parentConversationId: string,
+  ) => string | null;
+  clearAllAssistantFlags: (conversationId?: string) => void;
   clearExecutingToolFlags: () => void;
-  markAbortedToolFlags: () => void;
+  markAbortedToolFlags: (conversationId?: string) => void;
   buildLlmHistory: (conversationId: string) => Array<{
     role: string;
     content: string;
@@ -71,17 +85,158 @@ function pickPreferredConversationId(
   connectionId: string,
   rememberedId: string | undefined,
 ): string | null {
-  if (rememberedId && conversations[rememberedId]?.connectionId === connectionId) {
+  // 排除子agent对话：切 SSH tab 时不自动恢复进子对话
+  if (
+    rememberedId &&
+    conversations[rememberedId]?.connectionId === connectionId &&
+    !conversations[rememberedId]?.parentConversationId
+  ) {
     return rememberedId;
   }
   const sorted = Object.values(conversations)
-    .filter((c) => c.connectionId === connectionId)
+    .filter((c) => c.connectionId === connectionId && !c.parentConversationId)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   return sorted[0]?.id ?? null;
 }
 
+type LlmHistoryItem = {
+  role: string;
+  content: string;
+  reasoningContent?: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  toolCallId?: string;
+  imagePaths?: string[];
+};
+
+/**
+ * LLM 协议要求：assistant 消息的 tool_calls 必须全部被紧随的 tool 消息回复。
+ * 应用重启/崩溃（tool 执行中进程退出）会在历史里留下未闭合的 tool_calls ——
+ * assistant(tool_calls) 后没有对应 tool 回复，直接发送会 400
+ * ("must be followed by tool messages responding to each tool_call_id")。
+ * 发送前做一次闭合校验：
+ * - 全部已回复（正常历史 / 用户停止任务后后端补的 aborted tool 消息）：原样保留
+ * - 部分已回复：toolCalls 过滤为已回复子集（按 id 匹配，保持原顺序）
+ * - 全部未回复且 content 非空：移除 toolCalls，降级为纯 assistant 文本
+ * - 全部未回复且 content 为空：整条移除（避免空消息）
+ */
+function closeToolCallGroups(output: LlmHistoryItem[]): LlmHistoryItem[] {
+  const result: LlmHistoryItem[] = [];
+  let openIdx: number | null = null;
+  let replied = new Set<string>();
+
+  const settle = () => {
+    if (openIdx == null) return;
+    // 先保存局部 idx 与 replied 快照：openIdx/replied 重置后再用会导致
+    // result[null] 附加 'null' 属性（JSON 不可见但 toEqual 失败）以及
+    // kept 恒为空（闭合组被误判未闭合而误裁剪）。
+    const idx = openIdx;
+    const item = result[idx];
+    const calls = item.toolCalls;
+    const repliedSnapshot = replied;
+    openIdx = null;
+    replied = new Set();
+    if (!calls || calls.length === 0) return;
+    const kept = calls.filter((c) => repliedSnapshot.has(c.id));
+    if (kept.length === calls.length) return;
+    if (kept.length > 0) {
+      result[idx] = { ...item, toolCalls: kept };
+    } else if (item.content.trim() === '' && !item.reasoningContent) {
+      result.splice(idx, 1);
+    } else {
+      const { toolCalls: _drop, ...rest } = item;
+      result[idx] = rest;
+    }
+  };
+
+  for (const item of output) {
+    if (item.role === 'assistant' && item.toolCalls && item.toolCalls.length > 0) {
+      // 新组开始：结算上一组（若未闭合则裁剪）
+      settle();
+      openIdx = result.length;
+      replied = new Set();
+      result.push(item);
+      continue;
+    }
+    if (item.role === 'tool' && openIdx != null && item.toolCallId) {
+      replied.add(item.toolCallId);
+    }
+    if (item.role === 'user') {
+      settle();
+    }
+    result.push(item);
+  }
+  settle();
+  return result;
+}
+
+/**
+ * 协议合法性最后防线：确保每条 tool 消息都有前置的 assistant(tool_calls)，
+ * 且每个 assistant 的 tool_calls 都被回复。
+ * 裁剪（closeToolCallGroups）可能导致 tool 消息失去前置 assistant——
+ * 孤立 tool 属于异常数据（正常历史中 tool 必跟在 assistant(tool_calls) 后），
+ * 直接移除，不合成新消息（合成的空 content assistant 在 DeepSeek thinking
+ * 模式下会触发 "reasoning_content must be passed back" 400）。
+ */
+function enforceToolProtocol(output: LlmHistoryItem[]): LlmHistoryItem[] {
+  const result: LlmHistoryItem[] = [];
+  let hasOpenCalls = false;
+  for (const item of output) {
+    if (item.role === 'assistant' && item.toolCalls && item.toolCalls.length > 0) {
+      hasOpenCalls = true;
+      result.push(item);
+      continue;
+    }
+    if (item.role === 'tool' && item.toolCallId) {
+      if (!hasOpenCalls) {
+        // 孤立 tool 消息（无前置 assistant(tool_calls)）：异常数据，直接丢弃
+        continue;
+      }
+      result.push(item);
+      continue;
+    }
+    if (item.role === 'assistant') {
+      // 纯 assistant 文本：结束当前 tool 组（tool 消息必须紧跟 assistant(tool_calls)）
+      hasOpenCalls = false;
+    }
+    result.push(item);
+  }
+  return result;
+}
+
 /** 快速切换 SSH tab 时丢弃过期的 sync 结果 */
 let syncActiveGeneration = 0;
+
+/**
+ * 该对话下是否存在正在运行的任务（主 agent 或子 agent）。
+ * sessionId 非空排除重启恢复的占位 task。
+ */
+function conversationHasRunningTask(conversationId: string): boolean {
+  return Object.values(useTaskStore.getState().tasks).some(
+    (t) =>
+      t.conversationId === conversationId &&
+      !!t.sessionId &&
+      (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
+  );
+}
+
+/**
+ * 切换对话后恢复"当前活动任务"：
+ * 该对话有 running task（主 agent / 子 agent）→ 设为 activeTaskId（停止按钮、
+ * isRunning 随之恢复）；否则清空。
+ */
+function restoreRunningTaskForConversation(conversationId: string) {
+  const taskStore = useTaskStore.getState();
+  taskStore.clearActiveTask();
+  const running = Object.values(taskStore.tasks).find(
+    (t) =>
+      t.conversationId === conversationId &&
+      !!t.sessionId &&
+      (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
+  );
+  if (running) {
+    useTaskStore.setState({ activeTaskId: running.id });
+  }
+}
 
 function reorderByUpdatedAt(convs: Record<string, AgentConversation>): Record<string, AgentConversation> {
   const sorted = Object.values(convs).sort(
@@ -144,14 +299,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   switchConversation: async (conversationId: string) => {
-    const [stored, storedPlans] = await Promise.all([
-      tauri.agentLoadConversation(conversationId),
-      tauri.agentLoadPlansByConversation(conversationId),
+    // map 缺失时（如重启后从 task 卡片跳转子对话）补拉元数据，
+    // 保证输入区能识别子对话并渲染"返回主对话"条。
+    const known = get().conversations[conversationId];
+    // 运行中的对话（主 agent / 子 agent 在跑）：跳过 DB 重载，保留内存消息
+    // （运行中的 tool 卡片等流式状态尚未落库，重载会导致卡片消失）。
+    const running = conversationHasRunningTask(conversationId);
+    const [stored, storedPlans, meta] = await Promise.all([
+      running ? Promise.resolve(null) : tauri.agentLoadConversation(conversationId),
+      running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
+      known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
-    const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
+    const msgs: AgentMessage[] = running
+      ? (get().messages[conversationId] ?? [])
+      : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
       return {
+        conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
         activeConversationId: conversationId,
         activeConversationByConnection: connectionId
@@ -159,19 +324,28 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : state.activeConversationByConnection,
       };
     });
-    useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans);
-    useTaskStore.getState().clearActiveTask();
+    if (!running) {
+      useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans ?? []);
+    }
+    // 恢复该对话的运行中任务（主 agent / 子 agent），保证停止按钮与 isRunning 状态正确
+    restoreRunningTaskForConversation(conversationId);
   },
 
   loadConversation: async (conversationId: string) => {
-    const [stored, storedPlans] = await Promise.all([
-      tauri.agentLoadConversation(conversationId),
-      tauri.agentLoadPlansByConversation(conversationId),
+    const known = get().conversations[conversationId];
+    const running = conversationHasRunningTask(conversationId);
+    const [stored, storedPlans, meta] = await Promise.all([
+      running ? Promise.resolve(null) : tauri.agentLoadConversation(conversationId),
+      running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
+      known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
-    const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
+    const msgs: AgentMessage[] = running
+      ? (get().messages[conversationId] ?? [])
+      : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
       return {
+        conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
         activeConversationId: conversationId,
         activeConversationByConnection: connectionId
@@ -179,22 +353,37 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : state.activeConversationByConnection,
       };
     });
-    useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans);
-    useTaskStore.getState().clearActiveTask();
+    if (!running) {
+      useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans ?? []);
+    }
+    restoreRunningTaskForConversation(conversationId);
   },
 
   deleteConversation: async (conversationId: string) => {
     await tauri.agentDeleteConversation(conversationId);
+    // 级联：主对话 + 其全部子agent对话（后端已级联删 DB）。
+    // 在 set 之前从当前 map 快照收集（set 后子对话条目已不存在）。
+    const ids = [
+      conversationId,
+      ...Object.values(get().conversations)
+        .filter((c) => c.parentConversationId === conversationId)
+        .map((c) => c.id),
+    ];
     set((state) => {
-      const removed = state.conversations[conversationId];
-      const { [conversationId]: _, ...conversations } = state.conversations;
-      const { [conversationId]: __, ...messages } = state.messages;
+      const conversations = { ...state.conversations };
+      const messages = { ...state.messages };
       const byConnection = { ...state.activeConversationByConnection };
-      if (removed && byConnection[removed.connectionId] === conversationId) {
-        delete byConnection[removed.connectionId];
+      for (const id of ids) {
+        const removed = conversations[id];
+        delete conversations[id];
+        delete messages[id];
+        if (removed && byConnection[removed.connectionId] === id) {
+          delete byConnection[removed.connectionId];
+        }
       }
       let nextActive = state.activeConversationId;
-      if (state.activeConversationId === conversationId) {
+      if (state.activeConversationId != null && ids.includes(state.activeConversationId)) {
+        const removed = state.conversations[conversationId];
         nextActive = removed
           ? pickPreferredConversationId(conversations, removed.connectionId, byConnection[removed.connectionId])
           : Object.keys(conversations)[0] || null;
@@ -209,8 +398,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         activeConversationByConnection: byConnection,
       };
     });
-    // 级联清理 taskStore 中该 conversation 的 plans 和 tasks
-    useTaskStore.getState().clearPlansByConversation(conversationId);
+    // 级联清理 taskStore 中这些 conversation 的 plans 和 tasks
+    for (const id of ids) {
+      useTaskStore.getState().clearPlansByConversation(id);
+    }
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {
@@ -288,7 +479,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const incomingConvIds = new Set(convs.map((c) => c.id));
 
       const toRemove = Object.values(state.conversations)
-        .filter((c) => c.connectionId === connectionId && !incomingConvIds.has(c.id))
+        .filter(
+          (c) =>
+            c.connectionId === connectionId &&
+            !incomingConvIds.has(c.id) &&
+            // 子agent对话被后端列表接口过滤（不在 incoming 中），不是多余项
+            !c.parentConversationId,
+        )
         .map((c) => c.id);
 
       const newConversations: Record<string, AgentConversation> = { ...state.conversations };
@@ -358,18 +555,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     const restoreActiveTaskForConversation = (conversationId: string) => {
       if (!stillTarget()) return;
-      useTaskStore.getState().clearActiveTask();
-      const running = Object.values(useTaskStore.getState().tasks).find(
-        (t) =>
-          t.conversationId === conversationId &&
-          !!t.sessionId &&
-          (t.status === 'planning' ||
-            t.status === 'executing' ||
-            t.status === 'waiting_approval'),
-      );
-      if (running) {
-        useTaskStore.setState({ activeTaskId: running.id });
-      }
+      restoreRunningTaskForConversation(conversationId);
     };
 
     const applyActive = (conversationId: string, msgs?: AgentMessage[]) => {
@@ -548,16 +734,64 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }));
   },
 
-  clearAllAssistantFlags: () => {
+  registerSubConversation: (conversationId, connectionId, title, subTaskId, prompt, parentConversationId) => {
+    const now = new Date().toISOString();
+    const loadingId = `sub-loading-${subTaskId}`;
+    let result: string | null = loadingId;
+    set((state) => {
+      // 幂等：已注册过（可能由 toolResult 兜底路径先注册）则不再覆盖骨架，
+      // 避免把已有实时流式消息冲掉。
+      if (state.conversations[conversationId]) {
+        result = null;
+        return state;
+      }
+      return {
+        conversations: {
+          ...state.conversations,
+          [conversationId]: {
+            id: conversationId,
+            connectionId,
+            title,
+            createdAt: now,
+            updatedAt: now,
+            parentConversationId,
+          },
+        },
+        messages: {
+          ...state.messages,
+          [conversationId]: [
+            {
+              id: `sub-user-${subTaskId}`,
+              role: 'user',
+              content: prompt,
+              timestamp: now,
+            },
+            {
+              id: loadingId,
+              role: 'assistant',
+              content: '',
+              timestamp: now,
+              isLoading: true,
+            },
+          ],
+        },
+      };
+    });
+    return result;
+  },
+
+  clearAllAssistantFlags: (conversationId?: string) => {
     set((state) => ({
       messages: Object.fromEntries(
         Object.entries(state.messages).map(([convId, msgs]) => [
           convId,
-          msgs.map((m) =>
-            m.role === 'assistant' && (m.isThinking || m.isLoading)
-              ? { ...m, isThinking: false, isLoading: false }
-              : m,
-          ),
+          !conversationId || convId === conversationId
+            ? msgs.map((m) =>
+                m.role === 'assistant' && (m.isThinking || m.isLoading)
+                  ? { ...m, isThinking: false, isLoading: false }
+                  : m,
+              )
+            : msgs,
         ]),
       ),
     }));
@@ -576,7 +810,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }));
   },
 
-  markAbortedToolFlags: () => {
+  markAbortedToolFlags: (conversationId?: string) => {
     // 用户点停止时调用。把所有正在执行的 tool 卡片标记为「已中断」：
     // - isExecuting=false, modelApproval 清除
     // - wasAborted=true
@@ -586,29 +820,33 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // 与后端 agent_loop 检查点4 的中断文案保持一致，确保 UI 与 LLM 视角同步。
     // 注意：非流式工具后端有完整 output 但前端不可能收到（listener 已卸载），
     // 这里只反映用户视角的 UI 状态；LLM 历史由后端持久化保证完整。
+    // conversationId 参数：子agent存在后，停止某个任务只标记该任务所属对话的
+    // 卡片，避免误伤其他对话（主/子对话）并行执行中的工具卡片。
     set((state) => ({
       messages: Object.fromEntries(
         Object.entries(state.messages).map(([convId, msgs]) => [
           convId,
-          msgs.map((m) => {
-            if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
-            const isStreaming = m.toolResult?.toolName === 'execute_command';
-            const STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]';
-            const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
-            const existing = m.toolResult?.result ?? '';
-            // 已有流式输出时追加，否则整体替换为提示
-            const result = isStreaming
-              ? (existing ? existing + STREAMING_SUFFIX : STREAMING_SUFFIX.trimStart())
-              : (existing ? existing + NON_STREAMING_SUFFIX : NON_STREAMING_SUFFIX.trimStart());
-            return {
-              ...m,
-              isExecuting: false,
-              modelApproval: undefined,
-              toolResult: m.toolResult
-                ? { ...m.toolResult, wasAborted: true, success: false, result }
-                : m.toolResult,
-            };
-          }),
+          !conversationId || convId === conversationId
+            ? msgs.map((m) => {
+                if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
+                const isStreaming = m.toolResult?.toolName === 'execute_command';
+                const STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]';
+                const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
+                const existing = m.toolResult?.result ?? '';
+                // 已有流式输出时追加，否则整体替换为提示
+                const result = isStreaming
+                  ? (existing ? existing + STREAMING_SUFFIX : STREAMING_SUFFIX.trimStart())
+                  : (existing ? existing + NON_STREAMING_SUFFIX : NON_STREAMING_SUFFIX.trimStart());
+                return {
+                  ...m,
+                  isExecuting: false,
+                  modelApproval: undefined,
+                  toolResult: m.toolResult
+                    ? { ...m.toolResult, wasAborted: true, success: false, result }
+                    : m.toolResult,
+                };
+              })
+            : msgs,
         ]),
       ),
     }));
@@ -685,7 +923,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               : null;
 
         if (fullCalls) {
-          output.push({
+          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
             role: 'assistant',
             content: m.content,
             toolCalls: fullCalls.map((tc) => ({
@@ -693,7 +931,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               name: tc.name,
               arguments: tc.arguments || {},
             })),
-          });
+          };
+          // DeepSeek thinking 模式：带 tool_calls 的 assistant 必须回传
+          // reasoning_content（落库已保留，重载后这里原样带上）
+          if (m.reasoningContent) {
+            item.reasoningContent = m.reasoningContent;
+          }
+          output.push(item);
           // assistant 已带完整 tool_calls，后续 tool 只负责 result
           pendingAssistantIndex = null;
           openToolGroup = true;
@@ -724,12 +968,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         };
 
         if (pendingAssistantIndex != null) {
-          // 纯文案 assistant 后的第一个 tool：把 toolCalls 挂上去
-          const preamble = output[pendingAssistantIndex].content;
+          // 纯文案 assistant 后的第一个 tool：把 toolCalls 挂上去。
+          // reasoningContent 一并带上（DeepSeek thinking 模式回传要求）
+          const prev = output[pendingAssistantIndex];
           output[pendingAssistantIndex] = {
             role: 'assistant',
-            content: preamble,
+            content: prev.content,
             toolCalls: [callEntry],
+            ...(prev.reasoningContent ? { reasoningContent: prev.reasoningContent } : {}),
           };
           pendingAssistantIndex = null;
           openToolGroup = true;
@@ -767,6 +1013,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
     }
 
-    return output;
+    // 协议闭合校验：裁剪重启/崩溃残留的未闭合 tool_calls，避免 LLM 400
+    return enforceToolProtocol(closeToolCallGroups(output));
   },
 }));

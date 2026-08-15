@@ -54,6 +54,28 @@ pub async fn agent_create_conversation(
     Ok(conversation.id)
 }
 
+/// 读取单个会话元数据（含 parent_conversation_id，用于子对话"返回主对话"）。
+#[tauri::command]
+pub async fn agent_get_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Conversation, AppError> {
+    state
+        .conversation_db
+        .get_conversation(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to get conversation: {}", e)))?
+        .ok_or_else(|| AppError::Agent(format!("会话不存在: {}", conversation_id)))
+}
+
+/// 过滤掉子agent对话（task 工具创建，parent_conversation_id 非空）：
+/// 子对话不出现在会话列表/历史/搜索中，只通过主对话的 task 卡片进入。
+fn filter_sub_conversations(convs: Vec<Conversation>) -> Vec<Conversation> {
+    convs
+        .into_iter()
+        .filter(|c| c.parent_conversation_id.is_none())
+        .collect()
+}
+
 /// List all conversations for a given SSH session.
 #[tauri::command]
 pub async fn agent_list_conversations(
@@ -70,7 +92,7 @@ pub async fn agent_list_conversations(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(conversations)
+    Ok(filter_sub_conversations(conversations))
 }
 
 /// Load all messages for a conversation.
@@ -86,22 +108,24 @@ pub async fn agent_load_conversation(
     Ok(messages)
 }
 
-/// Delete a single conversation.
+/// Delete a single conversation and all its subagent conversations (cascade).
 #[tauri::command]
 pub async fn agent_delete_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<(), AppError> {
-    state
+    let deleted = state
         .conversation_db
-        .delete_conversation(&conversation_id)
+        .delete_conversation_cascade(&conversation_id)
         .map_err(|e| AppError::Agent(format!("Failed to delete conversation: {}", e)))?;
-    log::info!("Deleted conversation: {}", conversation_id);
+    log::info!("Deleted conversation: {} (cascade: {})", conversation_id, deleted.len());
 
-    // 触发跨设备同步：conversations 删除
+    // 触发跨设备同步：主对话 + 全部子对话逐个 delete 事件
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_delete(&format!("conversations.{}", conversation_id));
+            for id in &deleted {
+                let _ = engine.record_local_delete(&format!("conversations.{}", id));
+            }
             scheduler.schedule_push();
         }
     }
@@ -379,7 +403,7 @@ pub async fn agent_list_conversations_by_connection(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(conversations)
+    Ok(filter_sub_conversations(conversations))
 }
 
 /// 全文搜索聊天历史（消息 content），按会话聚合。

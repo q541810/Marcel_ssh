@@ -660,6 +660,7 @@ pub fn run() {
             commands::agent_lifecycle::agent_answer_question,
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
+            commands::agent_conversation::agent_get_conversation,
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
             commands::agent_conversation::agent_delete_conversation,

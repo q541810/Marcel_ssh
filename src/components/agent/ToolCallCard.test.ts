@@ -19,4 +19,25 @@ describe('getCommandPreview', () => {
       urls: ['https://example.com/a', 'https://example.org/b', 'https://example.net/c'],
     })).toBe('https://example.com/a +2 more');
   });
+
+  it('shows task description preview', () => {
+    expect(getCommandPreview('task', { description: 'explore nginx config' })).toBe(
+      'explore nginx config',
+    );
+  });
+
+  it('falls back to prompt when task has no description', () => {
+    expect(getCommandPreview('task', { prompt: 'look at /etc/nginx/nginx.conf' })).toBe(
+      'look at /etc/nginx/nginx.conf',
+    );
+  });
+
+  it('truncates long task descriptions', () => {
+    const long = 'a'.repeat(100);
+    expect(getCommandPreview('task', { description: long })).toBe('a'.repeat(40) + '...');
+  });
+
+  it('returns empty preview for task without arguments', () => {
+    expect(getCommandPreview('task', {})).toBe('');
+  });
 });

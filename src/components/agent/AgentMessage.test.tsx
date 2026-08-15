@@ -131,3 +131,66 @@ describe('AgentMessage retry indicator', () => {
     expect(html).not.toContain('(2/');
   });
 });
+
+describe('AgentMessage thinking display', () => {
+  function makeAssistantMessage(
+    overrides: Partial<AgentMessageType> = {},
+  ): AgentMessageType {
+    return {
+      id: 'think-1',
+      role: 'assistant',
+      content: 'answer',
+      timestamp: '2026-01-01T00:01:00Z',
+      ...overrides,
+    };
+  }
+
+  it('shows thinking while streaming (isThinking + reasoningContent)', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeAssistantMessage({ isThinking: true, reasoningContent: '正在思考...' })}
+      />,
+    );
+
+    expect(html).toContain('思考中');
+    // 折叠逻辑照旧：默认收起，思考内容不直接展开
+    expect(html).not.toContain('正在思考...');
+  });
+
+  it('hides thinking once the reply completes (isThinking cleared, reasoning kept)', () => {
+    // 完成即删：isThinking=false 时即使 reasoningContent 保留也不显示
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeAssistantMessage({ isThinking: false, reasoningContent: '思考内容' })}
+      />,
+    );
+
+    expect(html).not.toContain('思考中');
+    expect(html).not.toContain('已思考');
+    expect(html).not.toContain('思考内容');
+    // 正文照常显示
+    expect(html).toContain('answer');
+  });
+
+  it('hides thinking for tool_calls messages even with reasoningContent', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        message={makeAssistantMessage({
+          isThinking: false,
+          reasoningContent: '思考内容',
+          toolCalls: [
+            {
+              id: 'call-1',
+              name: 'execute_command',
+              arguments: { command: 'ls' },
+              riskLevel: 'LowRisk' as const,
+            },
+          ],
+        })}
+      />,
+    );
+
+    expect(html).not.toContain('思考中');
+    expect(html).not.toContain('已思考');
+  });
+});

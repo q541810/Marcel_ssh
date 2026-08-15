@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useTaskStore } from '@/stores/taskStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import type { AgentMessage } from '@/lib/types';
+import type { AgentMessage, AgentTask } from '@/lib/types';
 
 const {
   agentListConversationsByConnection,
@@ -9,12 +10,16 @@ const {
   agentTruncateConversation,
   agentLoadPlansByConversation,
   agentCreateConversation,
+  agentDeleteConversation,
+  agentGetConversation,
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
   agentTruncateConversation: vi.fn(),
   agentLoadPlansByConversation: vi.fn(),
   agentCreateConversation: vi.fn(),
+  agentDeleteConversation: vi.fn(),
+  agentGetConversation: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
@@ -23,6 +28,8 @@ vi.mock('@/lib/tauri', () => ({
   agentTruncateConversation,
   agentLoadPlansByConversation,
   agentCreateConversation,
+  agentDeleteConversation,
+  agentGetConversation,
 }));
 
 describe('conversationStore', () => {
@@ -551,6 +558,359 @@ describe('conversationStore', () => {
       const m = useConversationStore.getState().messages['conv-1'][0];
       expect(m.isExecuting).toBe(false);
       // No toolResult so wasAborted can't be set; just no crash
+    });
+
+    it('only marks cards in the targeted conversation when conversationId is passed', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({
+              id: 'm6',
+              role: 'tool',
+              content: '',
+              isExecuting: true,
+              toolResult: { toolName: 'execute_command', summary: '', result: '', success: true, blocked: false },
+            }),
+          ],
+          'conv-2': [
+            makeMessage({
+              id: 'm7',
+              role: 'tool',
+              content: '',
+              isExecuting: true,
+              toolResult: { toolName: 'execute_command', summary: '', result: '', success: true, blocked: false },
+            }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags('conv-1');
+
+      const m1 = useConversationStore.getState().messages['conv-1'][0];
+      expect(m1.toolResult?.wasAborted).toBe(true);
+      const m2 = useConversationStore.getState().messages['conv-2'][0];
+      expect(m2.toolResult?.wasAborted).toBeUndefined();
+      expect(m2.isExecuting).toBe(true);
+    });
+
+    it('keeps other conversations intact when conversationId is passed', () => {
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            makeMessage({ id: 'm8', role: 'tool', content: '', isExecuting: true }),
+          ],
+          'conv-2': [
+            makeMessage({ id: 'm9', role: 'assistant', content: 'hi', isLoading: true }),
+          ],
+        },
+      });
+
+      useConversationStore.getState().markAbortedToolFlags('conv-1');
+
+      const m2 = useConversationStore.getState().messages['conv-2'][0];
+      expect(m2.isLoading).toBe(true);
+    });
+  });
+
+  describe('switchConversation with running tasks', () => {
+    const now = new Date().toISOString();
+
+    function seedConversation(convId: string, msgs: AgentMessage[]) {
+      useConversationStore.setState({
+        conversations: {
+          [convId]: {
+            id: convId,
+            connectionId: 'conn-1',
+            title: convId,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        messages: { [convId]: msgs },
+        activeConversationId: convId,
+        activeConversationByConnection: { 'conn-1': convId },
+      });
+    }
+
+    function seedTask(taskId: string, convId: string, status: AgentTask['status']) {
+      useTaskStore.setState({
+        tasks: {
+          [taskId]: {
+            id: taskId,
+            sessionId: 's1',
+            conversationId: convId,
+            prompt: 'p',
+            mode: 'agent',
+            status,
+            createdAt: now,
+          },
+        },
+        activeTaskId: taskId,
+      });
+    }
+
+    it('keeps in-memory messages and restores the running task (no DB reload)', async () => {
+      agentLoadConversation.mockResolvedValue([
+        { id: 'db-msg', conversationId: 'conv-1', role: 'user', content: 'from-db', timestamp: now, createdAt: now },
+      ]);
+      agentLoadPlansByConversation.mockResolvedValue([]);
+      const memoryMsg = makeMessage({ id: 'mem-msg', content: 'in-memory' });
+      seedConversation('conv-1', [memoryMsg]);
+      seedTask('task-1', 'conv-1', 'executing');
+
+      await useConversationStore.getState().switchConversation('conv-1');
+
+      // 运行中：不重载 DB，内存消息保留
+      expect(agentLoadConversation).not.toHaveBeenCalled();
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].id).toBe('mem-msg');
+      // 运行中任务恢复为 activeTaskId（停止按钮 / isRunning 可用）
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+    });
+
+    it('reloads from DB and clears active task when no task is running', async () => {
+      agentLoadConversation.mockResolvedValue([
+        { id: 'db-msg', conversationId: 'conv-1', role: 'user', content: 'from-db', timestamp: now, createdAt: now },
+      ]);
+      agentLoadPlansByConversation.mockResolvedValue([]);
+      seedConversation('conv-1', [makeMessage({ id: 'mem-msg', content: 'stale' })]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      await useConversationStore.getState().switchConversation('conv-1');
+
+      expect(agentLoadConversation).toHaveBeenCalledWith('conv-1');
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(1);
+      expect(msgs[0].content).toBe('from-db');
+      // 无运行中任务 → activeTaskId 清空
+      expect(useTaskStore.getState().activeTaskId).toBeNull();
+    });
+
+    it('subagent (plan-mode) running task is restored after switching to its conversation', async () => {
+      agentLoadConversation.mockResolvedValue([]);
+      agentLoadPlansByConversation.mockResolvedValue([]);
+      seedConversation('sub-conv-1', [makeMessage({ id: 'skel' })]);
+      useTaskStore.setState({
+        tasks: {
+          'parent-1': {
+            id: 'parent-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: now,
+          },
+          'sub-1': {
+            id: 'sub-1',
+            sessionId: 's1',
+            conversationId: 'sub-conv-1',
+            prompt: 'p',
+            mode: 'plan',
+            status: 'planning',
+            createdAt: now,
+            parentTaskId: 'parent-1',
+          },
+        },
+        activeTaskId: 'parent-1',
+      });
+
+      await useConversationStore.getState().switchConversation('sub-conv-1');
+
+      // 切到子对话：恢复子任务为 activeTaskId（而不是清空）
+      expect(useTaskStore.getState().activeTaskId).toBe('sub-1');
+      // 子对话运行中也不重载
+      expect(agentLoadConversation).not.toHaveBeenCalled();
+    });
+
+    it('loadConversation behaves the same for running conversations', async () => {
+      agentLoadConversation.mockResolvedValue([
+        { id: 'db-msg', conversationId: 'conv-1', role: 'user', content: 'from-db', timestamp: now, createdAt: now },
+      ]);
+      agentLoadPlansByConversation.mockResolvedValue([]);
+      seedConversation('conv-1', [makeMessage({ id: 'mem-msg' })]);
+      seedTask('task-1', 'conv-1', 'waiting_approval');
+
+      await useConversationStore.getState().loadConversation('conv-1');
+
+      expect(agentLoadConversation).not.toHaveBeenCalled();
+      expect(useConversationStore.getState().messages['conv-1'][0].id).toBe('mem-msg');
+      expect(useTaskStore.getState().activeTaskId).toBe('task-1');
+    });
+  });
+
+  describe('registerSubConversation', () => {
+    it('registers a sub-conversation with skeleton messages and parent link', () => {
+      useConversationStore.setState({
+        conversations: {},
+        messages: {},
+        activeConversationId: null,
+      });
+
+      const loadingId = useConversationStore.getState().registerSubConversation(
+        'sub-conv-1',
+        'conn-1',
+        'explore nginx（子agent）',
+        'sub-task-1',
+        'look at /etc/nginx',
+        'main-conv-1',
+      );
+
+      const state = useConversationStore.getState();
+      expect(loadingId).toBe('sub-loading-sub-task-1');
+      expect(state.conversations['sub-conv-1']).toMatchObject({
+        id: 'sub-conv-1',
+        connectionId: 'conn-1',
+        title: 'explore nginx（子agent）',
+        parentConversationId: 'main-conv-1',
+      });
+      const msgs = state.messages['sub-conv-1'];
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0]).toMatchObject({ role: 'user', content: 'look at /etc/nginx' });
+      expect(msgs[1]).toMatchObject({ role: 'assistant', isLoading: true, id: loadingId });
+    });
+
+    it('is idempotent: returns null and keeps existing messages when already registered', () => {
+      useConversationStore.setState({
+        conversations: {},
+        messages: {},
+        activeConversationId: null,
+      });
+      const first = useConversationStore.getState().registerSubConversation(
+        'sub-conv-1',
+        'conn-1',
+        't',
+        'sub-task-1',
+        'prompt',
+        'main-conv-1',
+      );
+      expect(first).not.toBeNull();
+
+      const second = useConversationStore.getState().registerSubConversation(
+        'sub-conv-1',
+        'conn-1',
+        't',
+        'sub-task-1',
+        'prompt',
+        'main-conv-1',
+      );
+      expect(second).toBeNull();
+      expect(useConversationStore.getState().messages['sub-conv-1']).toHaveLength(2);
+    });
+
+    it('does not touch the active conversation', () => {
+      useConversationStore.setState({
+        conversations: {},
+        messages: {},
+        activeConversationId: 'main-conv',
+      });
+
+      useConversationStore.getState().registerSubConversation(
+        'sub-conv-2',
+        'conn-1',
+        't',
+        'sub-task-2',
+        'prompt',
+        'main-conv',
+      );
+
+      const state = useConversationStore.getState();
+      expect(state.activeConversationId).toBe('main-conv');
+      expect(state.messages['main-conv']).toBeUndefined();
+    });
+  });
+
+  describe('deleteConversation cascade', () => {
+    it('deletes the conversation and all its sub-conversations from the store', async () => {
+      agentDeleteConversation.mockResolvedValue(undefined);
+      const now = new Date().toISOString();
+      useConversationStore.setState({
+        activeConversationId: 'main-conv',
+        conversations: {
+          'main-conv': {
+            id: 'main-conv',
+            connectionId: 'conn-1',
+            title: 'Main',
+            createdAt: now,
+            updatedAt: now,
+          },
+          'sub-conv-1': {
+            id: 'sub-conv-1',
+            connectionId: 'conn-1',
+            title: 'Sub1（子agent）',
+            createdAt: now,
+            updatedAt: now,
+            parentConversationId: 'main-conv',
+          },
+          'sub-conv-2': {
+            id: 'sub-conv-2',
+            connectionId: 'conn-1',
+            title: 'Sub2（子agent）',
+            createdAt: now,
+            updatedAt: now,
+            parentConversationId: 'main-conv',
+          },
+          'other-conv': {
+            id: 'other-conv',
+            connectionId: 'conn-1',
+            title: 'Other',
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        messages: {
+          'main-conv': [makeMessage({ id: 'm1' })],
+          'sub-conv-1': [makeMessage({ id: 'm2' })],
+        },
+      });
+
+      await useConversationStore.getState().deleteConversation('main-conv');
+
+      const state = useConversationStore.getState();
+      expect(state.conversations['main-conv']).toBeUndefined();
+      expect(state.conversations['sub-conv-1']).toBeUndefined();
+      expect(state.conversations['sub-conv-2']).toBeUndefined();
+      expect(state.conversations['other-conv']).toBeDefined();
+      expect(state.messages['main-conv']).toBeUndefined();
+      expect(state.messages['sub-conv-1']).toBeUndefined();
+      // active 被删除 → 切换到其他主对话
+      expect(state.activeConversationId).toBe('other-conv');
+    });
+
+    it('keeps parent when deleting a sub-conversation only', async () => {
+      agentDeleteConversation.mockResolvedValue(undefined);
+      const now = new Date().toISOString();
+      useConversationStore.setState({
+        activeConversationId: 'main-conv',
+        conversations: {
+          'main-conv': {
+            id: 'main-conv',
+            connectionId: 'conn-1',
+            title: 'Main',
+            createdAt: now,
+            updatedAt: now,
+          },
+          'sub-conv-1': {
+            id: 'sub-conv-1',
+            connectionId: 'conn-1',
+            title: 'Sub1（子agent）',
+            createdAt: now,
+            updatedAt: now,
+            parentConversationId: 'main-conv',
+          },
+        },
+        messages: {},
+      });
+
+      await useConversationStore.getState().deleteConversation('sub-conv-1');
+
+      const state = useConversationStore.getState();
+      expect(state.conversations['sub-conv-1']).toBeUndefined();
+      expect(state.conversations['main-conv']).toBeDefined();
+      expect(state.activeConversationId).toBe('main-conv');
     });
   });
 
@@ -1243,6 +1603,348 @@ describe('conversationStore', () => {
         expect(tm.content).toBe(content);
         expect(tm.content).not.toContain('旧Tool Result');
       }
+    });
+
+    // ── 未闭合 tool_calls 裁剪（应用重启/崩溃后残留）──
+
+    function makeAssistantWithCalls(id: string, content: string, callIds: string[]): AgentMessage {
+      return makeMessage({
+        id,
+        role: 'assistant',
+        content,
+        toolCalls: callIds.map((cid, i) => ({
+          id: cid,
+          name: `tool_${i}`,
+          arguments: { x: i },
+          riskLevel: 'LowRisk' as const,
+        })),
+      });
+    }
+
+    function makeToolResultMsg(id: string, callId: string, result = 'ok'): AgentMessage {
+      return makeMessage({
+        id,
+        role: 'tool',
+        content: '',
+        toolResult: {
+          toolName: 'read_file',
+          summary: '',
+          result,
+          success: true,
+          blocked: false,
+          toolCallId: callId,
+        },
+      });
+    }
+
+    it('strips dangling tool_calls at the end (app restart mid-tool)', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-1': [
+            makeMessage({ id: 'u1', role: 'user', content: '调研一下' }),
+            makeAssistantWithCalls('a1', '让我看看', ['call-1']),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-1');
+      expect(history).toEqual([
+        { role: 'user', content: '调研一下' },
+        { role: 'assistant', content: '让我看看' }, // toolCalls 被移除，文本保留
+      ]);
+    });
+
+    it('removes empty assistant whose tool_calls were all stripped', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-2': [
+            makeMessage({ id: 'u1', role: 'user', content: 'x' }),
+            makeAssistantWithCalls('a1', '', ['call-1', 'call-2']),
+            makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-2');
+      expect(history).toEqual([
+        { role: 'user', content: 'x' },
+        { role: 'user', content: '继续' },
+      ]);
+    });
+
+    it('keeps only replied tool_calls when partially replied', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-3': [
+            makeMessage({ id: 'u1', role: 'user', content: 'x' }),
+            makeAssistantWithCalls('a1', '开始', ['call-1', 'call-2', 'call-3']),
+            makeToolResultMsg('t1', 'call-1'),
+            makeToolResultMsg('t2', 'call-3'),
+            makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-3');
+      const assistant = history.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistant?.toolCalls?.map((c) => c.id)).toEqual(['call-1', 'call-3']);
+      // tool 消息都保留（两条都有对应回复）
+      expect(history.filter((m) => m.role === 'tool')).toHaveLength(2);
+    });
+
+    it('keeps closed groups untouched (normal stop + user follow-up)', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-4': [
+            makeMessage({ id: 'u1', role: 'user', content: 'x' }),
+            makeAssistantWithCalls('a1', '开始', ['call-1', 'call-2']),
+            makeToolResultMsg('t1', 'call-1'),
+            makeToolResultMsg('t2', 'call-2'),
+            makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-4');
+      const assistant = history.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistant?.toolCalls?.map((c) => c.id)).toEqual(['call-1', 'call-2']);
+      expect(history.filter((m) => m.role === 'tool')).toHaveLength(2);
+    });
+
+    it('settles groups independently: open group stripped, closed group kept', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-5': [
+            makeMessage({ id: 'u1', role: 'user', content: 'x' }),
+            makeAssistantWithCalls('a1', '第一步', ['call-a']),
+            // 组1 未闭合（call-a 无回复）
+            makeAssistantWithCalls('a2', '第二步', ['call-b']),
+            makeToolResultMsg('t1', 'call-b'),
+            makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-5');
+      const withCalls = history.filter((m) => m.role === 'assistant' && m.toolCalls);
+      expect(withCalls).toHaveLength(1);
+      expect(withCalls[0].toolCalls?.map((c) => c.id)).toEqual(['call-b']);
+      // 组1 的 assistant 文本保留
+      const texts = history.filter((m) => m.role === 'assistant').map((m) => m.content);
+      expect(texts).toContain('第一步');
+      expect(texts).toContain('第二步');
+    });
+
+    it('strips tool_calls when user message interrupts an open group', () => {
+      useConversationStore.setState({
+        messages: {
+          'open-6': [
+            makeMessage({ id: 'u1', role: 'user', content: 'x' }),
+            makeAssistantWithCalls('a1', '开始', ['call-1']),
+            makeMessage({ id: 'u2', role: 'user', content: '手动打断' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('open-6');
+      expect(history).toEqual([
+        { role: 'user', content: 'x' },
+        { role: 'assistant', content: '开始' },
+        { role: 'user', content: '手动打断' },
+      ]);
+    });
+
+    // ── 协议合法性 fuzz：任意历史形态（含重启/中断残留）输出必须协议合法 ──
+
+    /** 校验输出符合 LLM tool_calls 协议：assistant(tool_calls) 全部被回复，tool 消息都有前置 */
+    function assertProtocolValid(history: Array<Record<string, unknown>>) {
+      let openCalls: Set<string> | null = null;
+      for (const m of history) {
+        if (m.role === 'assistant') {
+          const calls = m.toolCalls as Array<{ id: string }> | undefined;
+          if (calls && calls.length > 0) {
+            openCalls = new Set(calls.map((c) => c.id));
+          } else {
+            openCalls = null;
+          }
+        } else if (m.role === 'tool') {
+          expect(openCalls, `tool ${m.toolCallId} must have preceding assistant(tool_calls)`).not.toBeNull();
+          expect(openCalls!.has(m.toolCallId as string), `tool ${m.toolCallId} must match open calls`).toBe(true);
+          // tool 回复后从开放组移除（组内全部回复即闭合）
+          openCalls!.delete(m.toolCallId as string);
+        }
+      }
+      // 结尾仍开放的组（还有未回复的 calls）→ 协议非法（LLM 400）
+      if (openCalls && openCalls.size > 0) {
+        throw new Error('dangling tool_calls at end: ' + [...openCalls].join(','));
+      }
+    }
+
+    it('fuzz: every message shape produces protocol-valid history', () => {
+      // 穷举形态组合：未闭合结尾 / 部分回复 / 跨组 / user 打断 / 无 toolCallId / 孤立 tool
+      const shapes: AgentMessage[][] = [
+        // 1. 重启在工具执行中：assistant(tool_calls) 结尾
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '开始', ['c1']),
+        ],
+        // 2. 并行 calls 部分完成
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '开始', ['c1', 'c2', 'c3']),
+          makeToolResultMsg('t1', 'c1'),
+          makeToolResultMsg('t2', 'c2'),
+        ],
+        // 3. 组1 闭合 + 组2 未闭合（重启在第二个工具执行中）
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '一', ['c1']),
+          makeToolResultMsg('t1', 'c1'),
+          makeAssistantWithCalls('a2', '二', ['c2']),
+        ],
+        // 4. 未闭合组被 user 打断
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '一', ['c1']),
+          makeMessage({ id: 'u2', role: 'user', content: '打断' }),
+          makeMessage({ id: 'u3', role: 'user', content: '继续' }),
+        ],
+        // 5. 空 content 的未闭合 assistant
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '', ['c1']),
+          makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+        ],
+        // 6. 无 toolCallId 的 tool 消息（legacy 损坏形态）
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '开始', ['c1']),
+          makeMessage({
+            id: 't-legacy',
+            role: 'tool',
+            content: 'legacy',
+            toolResult: { toolName: 'read_file', summary: '', result: 'r', success: true, blocked: false },
+          }),
+          makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+        ],
+        // 7. 孤立 tool（无前置 assistant）
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeToolResultMsg('t-orphan', 'c9'),
+          makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+        ],
+        // 8. 完整正常历史（不应被改动）
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '一', ['c1', 'c2']),
+          makeToolResultMsg('t1', 'c1'),
+          makeToolResultMsg('t2', 'c2'),
+          makeMessage({ id: 'a2', role: 'assistant', content: '完成' }),
+          makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+        ],
+        // 9. 连续多轮混合：闭合组 + 未闭合组交错
+        [
+          makeMessage({ id: 'u', role: 'user', content: 'x' }),
+          makeAssistantWithCalls('a1', '一', ['c1']),
+          makeToolResultMsg('t1', 'c1'),
+          makeMessage({ id: 'a2', role: 'assistant', content: '中间文本' }),
+          makeAssistantWithCalls('a3', '二', ['c2', 'c3']),
+          makeToolResultMsg('t2', 'c2'),
+          makeMessage({ id: 'u2', role: 'user', content: '继续' }),
+        ],
+      ];
+
+      shapes.forEach((msgs, i) => {
+        useConversationStore.setState({ messages: { [`fuzz-${i}`]: msgs } });
+        const history = useConversationStore.getState().buildLlmHistory(`fuzz-${i}`);
+        assertProtocolValid(history);
+      });
+    });
+
+    it('fuzz: closed groups are never modified (byte-identical toolCalls)', () => {
+      // 完全闭合的历史：输出应与未裁剪的 buildLlmHistory 一致
+      const msgs = [
+        makeMessage({ id: 'u', role: 'user', content: 'x' }),
+        makeAssistantWithCalls('a1', '一', ['c1', 'c2']),
+        makeToolResultMsg('t1', 'c1'),
+        makeToolResultMsg('t2', 'c2'),
+        makeMessage({ id: 'a2', role: 'assistant', content: '完成' }),
+      ];
+      useConversationStore.setState({ messages: { 'closed-1': msgs } });
+      const history = useConversationStore.getState().buildLlmHistory('closed-1');
+
+      const assistant = history.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistant?.toolCalls?.map((c) => c.id)).toEqual(['c1', 'c2']);
+      // user + assistant(tool_calls) + tool + tool + assistant = 5 条
+      expect(history).toHaveLength(5);
+      expect(history.filter((m) => m.role === 'tool')).toHaveLength(2);
+    });
+
+    // ── reasoning_content 回传保留（DeepSeek thinking 模式）──
+
+    it('carries reasoningContent on assistant(tool_calls) messages', () => {
+      useConversationStore.setState({
+        messages: {
+          'reason-1': [
+            makeMessage({ id: 'u', role: 'user', content: 'x' }),
+            makeMessage({
+              id: 'a1',
+              role: 'assistant',
+              content: '让我看看',
+              toolCalls: [
+                { id: 'call-1', name: 'execute_command', arguments: { command: 'ls' }, riskLevel: 'LowRisk' as const },
+              ],
+              reasoningContent: '先列目录',
+            }),
+            makeToolResultMsg('t1', 'call-1'),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('reason-1');
+      const assistant = history.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistant?.reasoningContent).toBe('先列目录');
+      expect(assistant?.toolCalls).toHaveLength(1);
+    });
+
+    it('carries reasoningContent when tool is mounted onto a plain assistant', () => {
+      useConversationStore.setState({
+        messages: {
+          'reason-2': [
+            makeMessage({ id: 'u', role: 'user', content: 'x' }),
+            makeMessage({
+              id: 'a1',
+              role: 'assistant',
+              content: '开始检查',
+              reasoningContent: '思考中...',
+            }),
+            makeToolResultMsg('t1', 'call-1'),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('reason-2');
+      const assistant = history.find((m) => m.role === 'assistant' && m.toolCalls);
+      expect(assistant?.reasoningContent).toBe('思考中...');
+    });
+
+    it('keeps reasoningContent on plain assistant messages unchanged', () => {
+      useConversationStore.setState({
+        messages: {
+          'reason-3': [
+            makeMessage({ id: 'u', role: 'user', content: 'x' }),
+            makeMessage({
+              id: 'a1',
+              role: 'assistant',
+              content: '完成',
+              reasoningContent: '思考结论',
+            }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('reason-3');
+      expect(history[1]).toMatchObject({ role: 'assistant', content: '完成', reasoningContent: '思考结论' });
     });
   });
 });

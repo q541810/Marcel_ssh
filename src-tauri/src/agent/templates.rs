@@ -24,6 +24,7 @@ impl TemplateManager {
         let _ = reg.register_template_string("网页访问", include_str!("../../templates/agent/网页访问.hbs"));
         let _ = reg.register_template_string("技能", include_str!("../../templates/agent/技能.hbs"));
         let _ = reg.register_template_string("规划模式", include_str!("../../templates/agent/规划模式.hbs"));
+        let _ = reg.register_template_string("子agent", include_str!("../../templates/agent/子agent.hbs"));
         let _ = reg.register_template_string("用户指令", include_str!("../../templates/agent/用户指令.hbs"));
         let _ = reg.register_template_string("插件指令", include_str!("../../templates/agent/插件指令.hbs"));
         reg
@@ -47,6 +48,7 @@ impl TemplateManager {
         has_web_search: bool,
         has_http_get: bool,
         plan_mode: bool,
+        has_task: bool,
     ) -> Result<String, AppError> {
         let reg = Self::build_agent_registry();
         let plugin_joined = vars.plugin_sections.join("\n\n");
@@ -78,6 +80,9 @@ impl TemplateManager {
         }
         if plan_mode {
             parts.push(render("规划模式"));
+        }
+        if has_task {
+            parts.push(render("子agent"));
         }
         if !vars.user_prompt.is_empty() {
             parts.push(render("用户指令"));
@@ -114,9 +119,10 @@ mod tests {
         ws: bool,
         hg: bool,
         plan: bool,
+        task: bool,
     ) -> String {
         TemplateManager
-            .render_agent_prompt(vars, skills, ws, hg, plan)
+            .render_agent_prompt(vars, skills, ws, hg, plan, task)
             .unwrap()
     }
 
@@ -127,13 +133,14 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
 
         assert!(!prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(!prompt.contains("skill_"));
         assert!(!prompt.contains("插件扩展指令"));
         assert!(!prompt.contains("Plan 模式"));
+        assert!(!prompt.contains("子agent调研"));
     }
 
     #[test]
@@ -143,11 +150,12 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, true, true, false, false);
+        let prompt = build(&vars, true, true, false, false, true);
 
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(prompt.contains("skill_"));
+        assert!(prompt.contains("子agent调研"));
     }
 
     #[test]
@@ -157,7 +165,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, true);
+        let prompt = build(&vars, false, false, false, true, false);
         assert!(prompt.contains("Plan 模式"));
         assert!(prompt.contains("write_file"));
     }
@@ -169,8 +177,34 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
         assert!(!prompt.contains("Plan 模式"));
+    }
+
+    #[test]
+    fn prompt_task_section_when_task_tool_present() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+        let prompt = build(&vars, false, false, false, false, true);
+        assert!(prompt.contains("子agent调研"));
+        assert!(prompt.contains("task"));
+        // 联网调研优先派发子agent 的引导（token 消耗/会话时长）
+        assert!(prompt.contains("联网调研"));
+        assert!(prompt.contains("token"));
+    }
+
+    #[test]
+    fn prompt_task_section_omitted_when_task_tool_absent() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+        let prompt = build(&vars, false, false, false, false, false);
+        assert!(!prompt.contains("子agent调研"));
     }
 
     #[test]
@@ -180,7 +214,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
         assert!(!prompt.contains("插件扩展指令"));
     }
 
@@ -191,7 +225,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec!["记住用户偏好".into()],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
         assert!(prompt.contains("插件扩展指令"));
         assert!(prompt.contains("记住用户偏好"));
     }
@@ -203,7 +237,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec!["插件A 指令".into(), "插件B 指令".into()],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
         assert!(prompt.contains("插件A 指令\n\n插件B 指令"));
     }
 
@@ -214,7 +248,7 @@ mod tests {
             user_prompt: "USER_MARKER".into(),
             plugin_sections: vec!["PLUGIN_MARKER".into()],
         };
-        let prompt = build(&vars, false, false, false, false);
+        let prompt = build(&vars, false, false, false, false, false);
         let user_pos = prompt.find("USER_MARKER").unwrap();
         let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
         assert!(user_pos < plugin_pos);

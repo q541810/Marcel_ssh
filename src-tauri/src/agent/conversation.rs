@@ -30,6 +30,10 @@ pub struct Conversation {
     pub title: String,
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
+    /// 子agent对话（task 工具创建）的父对话 id；主对话为 None。
+    /// 用于：会话列表隐藏子对话、子对话内"返回主对话"、删除主对话级联删除。
+    #[serde(default)]
+    pub parent_conversation_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -105,7 +109,8 @@ impl ConversationDb {
                 connection_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                parent_conversation_id TEXT
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -121,6 +126,10 @@ impl ConversationDb {
 
             CREATE INDEX IF NOT EXISTS idx_conversations_connection ON conversations(connection_id);
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+            -- 注意：idx_conversations_parent 依赖 parent_conversation_id 列，
+            -- 旧库（无该列）在此处建索引会报 no such column 导致整个 execute_batch
+            -- 失败（进而 ConversationDb::new 失败、AppState fallback 到内存空库，
+            -- 磁盘历史全部不可见）。该索引在下方迁移块中 ALTER 之后统一创建。
 
             CREATE TABLE IF NOT EXISTS plans (
                 task_id TEXT PRIMARY KEY,
@@ -182,6 +191,25 @@ impl ConversationDb {
             log::info!("Migration complete: image_paths_json column added");
         }
 
+        // Migration: add parent_conversation_id for subagent (task tool) conversations.
+        // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
+        if !column_exists(&conn, "conversations", "parent_conversation_id") {
+            log::info!(
+                "Migrating conversation database: adding parent_conversation_id column"
+            );
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: parent_conversation_id column added");
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conversations_parent ON conversations(parent_conversation_id)",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
+
         // Migration: plan_snapshots for older DBs that already had plans table only
         conn.execute_batch(
             "
@@ -211,15 +239,43 @@ impl ConversationDb {
         connection_id: &str,
         title: &str,
     ) -> RusqliteResult<Conversation> {
+        self.insert_conversation(connection_id, title, None)
+    }
+
+    /// 创建子agent对话（task 工具派发的子 agent 专属）。
+    /// parent_conversation_id 记录主对话 id：会话列表据此隐藏子对话，
+    /// 子对话内提供"返回主对话"，删除主对话时级联删除子对话。
+    pub fn create_sub_conversation(
+        &self,
+        connection_id: &str,
+        title: &str,
+        parent_conversation_id: &str,
+    ) -> RusqliteResult<Conversation> {
+        self.insert_conversation(connection_id, title, Some(parent_conversation_id))
+    }
+
+    fn insert_conversation(
+        &self,
+        connection_id: &str,
+        title: &str,
+        parent_conversation_id: Option<&str>,
+    ) -> RusqliteResult<Conversation> {
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
         let now_str = now.to_rfc3339();
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (&id, connection_id, title, &now_str, &now_str),
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (
+                &id,
+                connection_id,
+                title,
+                &now_str,
+                &now_str,
+                parent_conversation_id,
+            ),
         )?;
 
         Ok(Conversation {
@@ -228,13 +284,14 @@ impl ConversationDb {
             title: title.to_string(),
             created_at: now,
             updated_at: now,
+            parent_conversation_id: parent_conversation_id.map(String::from),
         })
     }
 
     pub fn list_conversations(&self, connection_id: &str) -> RusqliteResult<Vec<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id
              FROM conversations
              WHERE connection_id = ?1
              ORDER BY updated_at DESC",
@@ -254,6 +311,7 @@ impl ConversationDb {
                         .get::<_, String>(4)?
                         .parse()
                         .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+                    parent_conversation_id: row.get(5).ok(),
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -289,6 +347,7 @@ impl ConversationDb {
              INNER JOIN conversations c ON c.id = m.conversation_id
              WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
                AND c.connection_id = ?2
+               AND c.parent_conversation_id IS NULL
              ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
         } else {
             "SELECT m.id, m.content, m.created_at,
@@ -296,6 +355,7 @@ impl ConversationDb {
              FROM messages m
              INNER JOIN conversations c ON c.id = m.conversation_id
              WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+               AND c.parent_conversation_id IS NULL
              ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
         };
 
@@ -494,6 +554,43 @@ impl ConversationDb {
         Ok(())
     }
 
+    /// 级联删除：删除该对话及其全部子agent对话（task 工具创建）。
+    /// 返回被删除的对话 id 列表（含自身）。
+    /// 子agent不能再派发子agent（plan 工具集无 task 工具 + 工具内嵌套防御），
+    /// 这里用 BFS 遍历防御任何残留的多层结构。
+    pub fn delete_conversation_cascade(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Vec<String>> {
+        let mut to_delete: Vec<String> = vec![conversation_id.to_string()];
+        let mut idx = 0;
+        while idx < to_delete.len() {
+            let parent = to_delete[idx].clone();
+            let children: Vec<String> = {
+                let conn = self.conn.lock().unwrap();
+                let mut stmt = conn.prepare(
+                    "SELECT id FROM conversations WHERE parent_conversation_id = ?1",
+                )?;
+                let rows: Vec<String> = stmt
+                    .query_map([&parent], |row| row.get(0))?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                rows
+            };
+            for child in children {
+                if !to_delete.contains(&child) {
+                    to_delete.push(child);
+                }
+            }
+            idx += 1;
+        }
+        // 先删子对话再删自身（顺序无硬性要求，逐个走完整清理逻辑）
+        for id in to_delete.iter().rev() {
+            self.delete_conversation(id)?;
+        }
+        Ok(to_delete)
+    }
+
     pub fn delete_messages_from_timestamp(
         &self,
         conversation_id: &str,
@@ -595,7 +692,7 @@ impl ConversationDb {
     pub fn get_conversation(&self, conversation_id: &str) -> RusqliteResult<Option<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id
              FROM conversations
              WHERE id = ?1",
         )?;
@@ -612,6 +709,7 @@ impl ConversationDb {
                     .get::<_, String>(4)?
                     .parse()
                     .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+                parent_conversation_id: row.get(5).ok(),
             })
         })?;
         match rows.next() {
@@ -642,19 +740,21 @@ impl ConversationDb {
     pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 title = excluded.title,
                 created_at = excluded.created_at,
-                updated_at = excluded.updated_at",
+                updated_at = excluded.updated_at,
+                parent_conversation_id = excluded.parent_conversation_id",
             (
                 &conv.id,
                 &conv.connection_id,
                 &conv.title,
                 conv.created_at.to_rfc3339(),
                 conv.updated_at.to_rfc3339(),
+                &conv.parent_conversation_id,
             ),
         )?;
         Ok(())
@@ -1370,5 +1470,174 @@ mod tests {
             .load_plan_snapshot_before(&conversation.id, "9999-01-01T00:00:00Z")
             .expect("query");
         assert!(snap.is_none());
+    }
+
+    #[test]
+    fn test_create_sub_conversation_sets_parent() {
+        let db = create_test_db();
+        let parent = db
+            .create_conversation("conn_1", "Parent")
+            .expect("create parent");
+        let sub = db
+            .create_sub_conversation("conn_1", "explore（子agent）", &parent.id)
+            .expect("create sub");
+
+        assert_eq!(sub.parent_conversation_id.as_deref(), Some(parent.id.as_str()));
+
+        // 列表同时返回两者（DB 层不过滤，过滤在命令层）
+        let all = db.list_conversations("conn_1").expect("list");
+        assert_eq!(all.len(), 2);
+
+        // get_conversation 读回 parent 字段
+        let loaded = db.get_conversation(&sub.id).expect("get").expect("exists");
+        assert_eq!(loaded.parent_conversation_id.as_deref(), Some(parent.id.as_str()));
+
+        let parent_loaded = db.get_conversation(&parent.id).expect("get").expect("exists");
+        assert!(parent_loaded.parent_conversation_id.is_none());
+    }
+
+    #[test]
+    fn test_delete_conversation_cascade_deletes_sub_conversations() {
+        let db = create_test_db();
+        let parent = db
+            .create_conversation("conn_1", "Parent")
+            .expect("create parent");
+        let sub1 = db
+            .create_sub_conversation("conn_1", "Sub1（子agent）", &parent.id)
+            .expect("create sub1");
+        let sub2 = db
+            .create_sub_conversation("conn_1", "Sub2（子agent）", &parent.id)
+            .expect("create sub2");
+
+        db.save_message(&sub1.id, "user", "hello", "2026-01-01T00:00:00Z", None, None)
+            .expect("save msg");
+
+        let deleted = db
+            .delete_conversation_cascade(&parent.id)
+            .expect("cascade delete");
+        assert_eq!(deleted.len(), 3);
+        assert!(deleted.contains(&parent.id));
+        assert!(deleted.contains(&sub1.id));
+        assert!(deleted.contains(&sub2.id));
+
+        assert!(db.get_conversation(&parent.id).expect("q").is_none());
+        assert!(db.get_conversation(&sub1.id).expect("q").is_none());
+        assert!(db.get_conversation(&sub2.id).expect("q").is_none());
+        // 子对话消息也清理
+        assert!(db.load_messages(&sub1.id).expect("q").is_empty());
+    }
+
+    #[test]
+    fn test_delete_conversation_cascade_keeps_unrelated_conversations() {
+        let db = create_test_db();
+        let parent = db
+            .create_conversation("conn_1", "Parent")
+            .expect("create parent");
+        db.create_sub_conversation("conn_1", "Sub（子agent）", &parent.id)
+            .expect("create sub");
+        let other = db
+            .create_conversation("conn_1", "Other")
+            .expect("create other");
+
+        db.delete_conversation_cascade(&parent.id).expect("cascade");
+
+        assert!(db.get_conversation(&other.id).expect("q").is_some());
+    }
+
+    #[test]
+    fn test_search_conversations_excludes_sub_conversations() {
+        let db = create_test_db();
+        let parent = db
+            .create_conversation("conn_1", "Parent")
+            .expect("create parent");
+        let sub = db
+            .create_sub_conversation("conn_1", "Sub（子agent）", &parent.id)
+            .expect("create sub");
+
+        db.save_message(&parent.id, "user", "needle in parent", "2026-01-01T00:00:00Z", None, None)
+            .expect("msg parent");
+        db.save_message(&sub.id, "user", "needle in sub", "2026-01-01T00:00:00Z", None, None)
+            .expect("msg sub");
+
+        let results = db.search_conversations("needle", None).expect("search");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].conversation_id, parent.id);
+    }
+
+    /// 回归测试：旧 schema（无 parent_conversation_id 列）的真实数据库文件
+    /// 必须能正常打开并迁移——若迁移前在旧列上建索引，ConversationDb::new
+    /// 会失败，AppState 将 fallback 到内存空库，用户全部历史会话不可见。
+    #[test]
+    fn test_old_schema_db_migrates_and_keeps_data() {
+        use rusqlite::Connection;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("old-conversations.db");
+        // 手工构造旧版 schema（5 列，无 parent_conversation_id）+ 一条历史数据
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE conversations (
+                    id TEXT PRIMARY KEY,
+                    connection_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    tool_calls_json TEXT,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                );
+                CREATE TABLE plans (
+                    task_id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    plan_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                );
+                CREATE INDEX idx_conversations_connection ON conversations(connection_id);
+                CREATE INDEX idx_messages_conversation ON messages(conversation_id);",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO conversations (id, connection_id, title, created_at, updated_at)
+                 VALUES ('conv-old', 'conn-1', '历史会话', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at)
+                 VALUES ('msg-old', 'conv-old', 'user', 'hello', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 打开旧库：迁移必须成功、数据必须保留、新列必须可用
+        let db = ConversationDb::new(&db_path).expect("old-schema db must open and migrate");
+
+        let convs = db.list_conversations("conn-1").expect("list");
+        assert_eq!(convs.len(), 1);
+        assert_eq!(convs[0].id, "conv-old");
+        assert!(convs[0].parent_conversation_id.is_none());
+
+        // 新列真实可写可读（子对话创建 + 查询）
+        let sub = db
+            .create_sub_conversation("conn-1", "Sub（子agent）", "conv-old")
+            .expect("create sub");
+        let loaded = db.get_conversation(&sub.id).expect("get").expect("exists");
+        assert_eq!(loaded.parent_conversation_id.as_deref(), Some("conv-old"));
+
+        // 历史消息保留
+        let msgs = db.load_messages("conv-old").expect("load");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content, "hello");
     }
 }

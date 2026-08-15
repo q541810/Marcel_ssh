@@ -260,13 +260,18 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
 }
 
 /**
- * Post-process loaded messages to strip reasoningContent from assistant messages
- * that are immediately followed by a tool card.
+ * Post-process loaded messages to strip the live "thinking" flag from assistant
+ * messages that are immediately followed by a tool card.
  *
  * This mirrors the live-streaming behaviour where handleToolCallStart clears the
  * thinking before a tool executes.  Old DB rows (written before the fix) may still
  * carry reasoning_content for these intermediate assistant messages; this function
- * cleans them up so the UI matches what streaming would have shown.
+ * cleans up the UI flag so the UI matches what streaming would have shown.
+ *
+ * reasoningContent 字段本身保留：DeepSeek thinking 模式要求带 tool_calls 的
+ * assistant 消息回传 reasoning_content，重载后缺失会 400。UI 是否展示由
+ * AgentMessage 的 hasReasoning（含 toolCalls 条件）与 isThinking 控制，
+ * 保留字段不影响展示。
  */
 export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessage[] {
   return messages.map((msg, i) => {
@@ -277,6 +282,7 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
       (next.role === 'tool' && !!next.toolResult) ||
       (next.role === 'assistant' && (!!next.toolCall || !!next.toolCalls?.length));
     if (!nextIsTool) return msg;
-    return { ...msg, reasoningContent: undefined, isThinking: false };
+    // 只清显示标志，保留 reasoningContent 供 LLM 回传
+    return { ...msg, isThinking: false };
   });
 }

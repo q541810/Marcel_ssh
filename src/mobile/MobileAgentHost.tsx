@@ -120,7 +120,11 @@ export default function MobileAgentHost({
   const sessionConversations = useMemo(
     () =>
       Object.values(conversations).filter(
-        (c) => ids?.configId != null && c.connectionId === ids.configId,
+        (c) =>
+          ids?.configId != null &&
+          c.connectionId === ids.configId &&
+          // 子agent对话不在会话列表展示：只通过主对话的 task 卡片进入/返回
+          !c.parentConversationId,
       ),
     [conversations, ids?.configId],
   );
@@ -269,6 +273,19 @@ export default function MobileAgentHost({
     );
     await submitAnswer(pendingQuestion.questionId, answers);
   }, [pendingQuestion, submitAnswer]);
+
+  // 子agent对话：输入区替换为"返回主对话"条（子agent由主 Agent 停止，停止主 Agent 级联停止）
+  const activeConversation = activeConversationId
+    ? (conversations[activeConversationId] ?? null)
+    : null;
+  const isSubConversation = !!activeConversation?.parentConversationId;
+  const parentConversationId = activeConversation?.parentConversationId ?? null;
+
+  const handleBackToParent = useCallback(() => {
+    if (parentConversationId) {
+      void switchConversation(parentConversationId);
+    }
+  }, [parentConversationId, switchConversation]);
 
   const handleNewConversation = useCallback(async () => {
     if (!canInteract || !ids) return;
@@ -625,6 +642,29 @@ export default function MobileAgentHost({
           onSubmit={handleSubmitQuestion}
           onCancel={() => void handleCancelQuestion()}
         />
+      ) : isSubConversation ? (
+        <div className="flex-shrink-0 border-t border-zinc-800 p-3">
+          <div className="flex items-center gap-3 rounded-xl border border-zinc-700/60 bg-zinc-900/70 px-3 py-3">
+            <button
+              type="button"
+              onClick={handleBackToParent}
+              className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600/20 px-2.5 py-2 text-xs font-medium text-indigo-300 transition-transform duration-100 active:scale-95 active:bg-indigo-600/30"
+            >
+              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              返回主对话
+            </button>
+            <div className="min-w-0 flex-1 border-l border-zinc-700/50 pl-3">
+              <div className="truncate text-xs text-zinc-400">
+                子agent调研 · {activeConversation?.title ?? '子agent对话'}
+              </div>
+              <div className="mt-0.5 text-[11px] text-zinc-600">
+                由主 Agent 派发的只读调研，不支持输入
+              </div>
+            </div>
+          </div>
+        </div>
       ) : (
         <div className="flex-shrink-0 border-t border-zinc-800 p-3">
           <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">

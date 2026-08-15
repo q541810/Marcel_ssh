@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Agent operation mode — determines how much autonomy the agent has.
@@ -78,4 +77,8 @@ pub struct AgentTask {
     pub status: AgentStatus,
     pub has_plan: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 父任务 id：task 工具派发的子agent（强制 Plan 模式调研）持有。
+    /// 主任务为 None。用于级联取消与嵌套防御。
+    #[serde(default)]
+    pub parent_task_id: Option<String>,
 }

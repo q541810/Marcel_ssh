@@ -41,9 +41,9 @@ pub mod question;
 pub mod search;
 pub mod sftp_transfer;
 pub mod skill;
+pub mod subagent;
 pub mod system;
 pub mod web_search;
-
 
 // ───────────────────────── Public types ─────────────────────────
 
@@ -133,6 +133,9 @@ pub struct ToolContext {
     pub config_dir: PathBuf,
     pub tool_call_id: Option<String>,
     pub event_name: Option<String>,
+    /// 当前所属的 agent task id（agent_loop 构造时注入）。
+    /// `task` 工具用它做子agent嵌套检查与子agent注册。
+    pub task_id: Option<String>,
     /// Optional security policy. When set, tools that run a sandbox
     /// (e.g. `execute_command`) should honour it instead of falling back
     /// to [`crate::agent::sandbox::Sandbox::default`].
@@ -155,10 +158,17 @@ impl ToolContext {
             config_dir: PathBuf::new(),
             tool_call_id: None,
             event_name: None,
+            task_id: None,
             policy: None,
             local_handlers: Arc::new(HashMap::new()),
             pending_questions: Arc::new(PlRwLock::new(HashMap::new())),
         }
+    }
+
+    /// Attach the owning agent task id (builder-style).
+    pub fn with_task_id(mut self, task_id: impl Into<String>) -> Self {
+        self.task_id = Some(task_id.into());
+        self
     }
 
     /// Attach a security policy to this context (builder-style).
@@ -495,6 +505,7 @@ impl ToolRegistry {
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
         r.register(Arc::new(plan::EditPlanTool::new()));
         r.register(Arc::new(question::QuestionTool));
+        r.register(Arc::new(subagent::TaskTool));
         r
     }
 
@@ -523,13 +534,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_with_builtins_has_fourteen_tools() {
+    fn registry_with_builtins_has_fifteen_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            14,
-            "expected 14 built-in tools, got {:?}",
+            15,
+            "expected 15 built-in tools, got {:?}",
             names
         );
         for expected in [
@@ -547,6 +558,7 @@ mod tests {
             "create_plan",
             "update_plan_item",
             "edit_plan",
+            "task",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),

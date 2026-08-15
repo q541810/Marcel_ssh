@@ -356,6 +356,8 @@ export interface AgentTask {
   mode: AgentMode;
   status: AgentStatus;
   createdAt: string;
+  /** Parent task id — set when this task is a subagent dispatched via the `task` tool. */
+  parentTaskId?: string;
 }
 
 export interface AgentMessage {
@@ -650,6 +652,33 @@ export interface ToolResultPayload {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Subagent (task tool) launch notification — emitted on the PARENT task's
+ * stream channel right after the backend spawned the sub-task. The frontend
+ * uses it to register the sub-conversation (hidden from the chat list, live
+ * streaming attached) and attach the sub-task's own stream listener.
+ */
+export interface SubTaskStartPayload {
+  type: 'subTaskStart';
+  toolCallId: string;
+  subTaskId: string;
+  subConversationId: string;
+  description: string;
+  prompt: string;
+  /** Parent (main) conversation id — used for hiding, back button, cascade delete. */
+  parentConversationId: string;
+}
+
+/**
+ * Structured sub-task result metadata attached to the parent's toolResult
+ * (TaskTool output metadata): { subTaskId, subConversationId, status }.
+ */
+export interface SubTaskResultMetadata {
+  subTaskId: string;
+  subConversationId: string;
+  status: 'completed' | 'failed' | 'cancelled';
+}
+
 export interface ApprovalRequestPayload {
   type: 'approvalRequest';
   toolCallId: string;
@@ -660,6 +689,13 @@ export interface ApprovalRequestPayload {
   reasons?: string[];
   /** Preview metadata (e.g. edit_file file_content / line_position). */
   metadata?: Record<string, unknown>;
+  /**
+   * Originating task id — injected by the frontend listener (the backend event
+   * carries no task id; the listener knows it from the channel it subscribed
+   * to). Used to route approve/reject back to the correct task (subagents
+   * run on their own channel while the active task may still be the parent).
+   */
+  taskId?: string;
 }
 
 export interface ModelApprovalStartPayload {
@@ -692,6 +728,12 @@ export interface QuestionRequestPayload {
   type: 'questionRequest';
   questionId: string;
   questions: QuestionItem[];
+  /**
+   * Originating task id — injected by the frontend listener (see
+   * ApprovalRequestPayload.taskId). Used to route answers back to the
+   * correct task.
+   */
+  taskId?: string;
 }
 
 export interface QuestionAnswer {
@@ -709,6 +751,8 @@ export interface AgentConversation {
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** 子agent对话（task 工具创建）的父对话 id；主对话无此字段。 */
+  parentConversationId?: string;
 }
 
 export interface StoredMessage {

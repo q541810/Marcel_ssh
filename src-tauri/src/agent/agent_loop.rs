@@ -71,10 +71,18 @@ pub(crate) struct LoopContext {
     /// Application config dir. Passed to `ToolContext` so plugin local handlers
     /// (fs.read/fs.write/fs.append) can resolve plugin-relative paths.
     pub config_dir: std::path::PathBuf,
+    /// 子agent（task 工具派发的调研任务）标记：跳过系统通知，
+    /// 避免子agent完成/失败与主任务的通知叠加打扰用户。
+    pub is_subtask: bool,
 }
 
 /// The main agentic loop:
 ///   LLM call → tool_calls? → execute → feed result → repeat
+///
+/// Returns the final assistant text when the loop ended with a natural
+/// (no-tool-call) response; `None` when it stopped for any other reason
+/// (cancelled, LLM error, max rounds). Main tasks ignore the return value;
+/// the `task` tool uses it as the subagent's research result.
 pub(crate) async fn run_agent_loop(
     task_id: String,
     provider: OpenAiProvider,
@@ -83,7 +91,7 @@ pub(crate) async fn run_agent_loop(
     mode: AgentMode,
     agent_settings: AgentModeSettings,
     ctx: LoopContext,
-) {
+) -> Option<String> {
     let event_name = format!("agent://stream/{}", task_id);
     let LoopContext {
         ssh,
@@ -95,6 +103,7 @@ pub(crate) async fn run_agent_loop(
         conv_db,
         mut cancel_rx,
         config_dir,
+        is_subtask,
     } = ctx;
 
     let persister = ConversationPersister::new(conv_db, conversation_id.clone())
@@ -127,7 +136,7 @@ pub(crate) async fn run_agent_loop(
             log::info!("Agent task {} cancelled, stopping loop", task_id);
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
-            return;
+            return None;
         }
 
         // 0. 注入 plan 上下文：用临时 system 消息（不是 user），避免模型当成用户新发言。
@@ -171,7 +180,7 @@ pub(crate) async fn run_agent_loop(
                 let _ = forwarder.await;
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
-                return;
+                return None;
             }
         };
         let _ = forwarder.await;
@@ -188,7 +197,7 @@ pub(crate) async fn run_agent_loop(
                         message: err_msg.clone(),
                     },
                 );
-                {
+                if !is_subtask {
                     let ns = state.settings.read().await.notification_settings.clone();
                     let body = format!("错误信息: {}", err_msg.lines().next().unwrap_or(&err_msg));
                     send_notification(
@@ -199,7 +208,7 @@ pub(crate) async fn run_agent_loop(
                         &body,
                     );
                 }
-                return;
+                return None;
             }
         };
 
@@ -208,7 +217,7 @@ pub(crate) async fn run_agent_loop(
         if tool_calls.is_empty() {
             let cleaned_content = strip_thinking_tags(&assistant_msg.content);
             let cleaned_msg = LlmMessage {
-                content: cleaned_content,
+                content: cleaned_content.clone(),
                 ..assistant_msg
             };
             let _ = persister.save_msg(
@@ -220,7 +229,7 @@ pub(crate) async fn run_agent_loop(
             messages.push(cleaned_msg);
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
-            {
+            if !is_subtask {
                 let ns = state.settings.read().await.notification_settings.clone();
                 send_notification(
                     &app,
@@ -230,15 +239,16 @@ pub(crate) async fn run_agent_loop(
                     "您的 Agent 任务已成功完成",
                 );
             }
-            return;
+            return Some(cleaned_content);
         }
 
         // 3. 将带 tool_calls 的 assistant 消息写入 history。
         //    完整持久化 tool_calls 列表，跨 task 重建 history 时才能把并行调用
         //    保留在同一条 assistant 上，避免被拆成多条假 assistant。
-        //    此处不持久化 reasoning_content —— tool call 前的 thinking 是临时的，
-        //    不应在 reload 后残留。（前端 live 流里 handleToolCallStart 会清掉；
-        //    落库写 None 与前端行为一致。）
+        //    reasoning_content 一并落库：DeepSeek thinking 模式要求带 tool_calls
+        //    的 assistant 消息回传 reasoning_content，重载后缺失会 400。
+        //    （前端 live 流里 handleToolCallStart 会清掉临时 thinking 的显示，
+        //    落库保留不影响 UI；重载后 UI 由 toolCalls 条件控制不显示。）
         let tool_calls_json = serde_json::to_string(
             &tool_calls
                 .iter()
@@ -254,7 +264,7 @@ pub(crate) async fn run_agent_loop(
             "assistant",
             &assistant_msg.content,
             tool_calls_json.as_deref(),
-            None,
+            assistant_msg.reasoning_content.as_deref(),
         );
         messages.push(assistant_msg);
 
@@ -271,6 +281,7 @@ pub(crate) async fn run_agent_loop(
                     ));
                 ToolContext::new(ssh.clone(), session_id.clone(), app.clone())
                     .with_policy(policy)
+                    .with_task_id(&task_id)
                     .with_tool_call_id(&tc.id)
                     .with_event_name(&event_name)
                     .with_config_dir(config_dir.clone())
@@ -284,7 +295,7 @@ pub(crate) async fn run_agent_loop(
                 );
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
-                return;
+                return None;
             }
 
             let mut exec = dispatcher
@@ -365,7 +376,7 @@ pub(crate) async fn run_agent_loop(
 
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Done);
-                return;
+                return None;
             }
 
             // Handle plan-related tool outputs (borrows tc fields).
@@ -445,7 +456,7 @@ pub(crate) async fn run_agent_loop(
             message: msg.clone(),
         },
     );
-    {
+    if !is_subtask {
         let ns = state.settings.read().await.notification_settings.clone();
         send_notification(
             &app,
@@ -455,6 +466,7 @@ pub(crate) async fn run_agent_loop(
             &msg,
         );
     }
+    None
 }
 
 #[cfg(test)]

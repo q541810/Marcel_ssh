@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useRef } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
+import { useConversationStore } from '@/stores/conversationStore';
 
 interface Props {
   message: AgentMessage;
@@ -51,6 +52,11 @@ const TOOL_ICONS: Record<string, JSX.Element> = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
   ),
+  task: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4" />
+    </svg>
+  ),
 };
 
 const DEFAULT_ICON = (
@@ -94,7 +100,18 @@ function formatToolName(toolName: string): { display: string; isSkill: boolean }
   if (toolName.startsWith('skill_')) {
     return { display: `SKILL ${toolName.slice(6)}`, isSkill: true };
   }
+  if (toolName === 'task') {
+    return { display: '子agent', isSkill: false };
+  }
   return { display: toolName, isSkill: false };
+}
+
+/** 打开 task 工具对应的子agent对话（查看完整调研过程）。 */
+function openSubConversation(metadata: Record<string, unknown> | undefined) {
+  const convId = metadata?.subConversationId;
+  if (typeof convId === 'string' && convId) {
+    void useConversationStore.getState().switchConversation(convId);
+  }
 }
 
 export function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
@@ -146,6 +163,12 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
       const first = urls[0].length > 40 ? urls[0].slice(0, 40) + '...' : urls[0];
       return `${first} +${urls.length - 1} more`;
     }
+  }
+  if (toolName === 'task') {
+    const description = asStr(args.description);
+    const prompt = asStr(args.prompt);
+    const preview = description || prompt || '';
+    return preview.length > 40 ? preview.slice(0, 40) + '...' : preview;
   }
   return '';
 }
@@ -265,6 +288,29 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             )}
           </div>
         </button>
+        {/* 运行中的 task 卡片：提供"查看"入口跳转子对话（实时调研过程） */}
+        {tr.toolName === 'task' && isExecuting && (
+          (() => {
+            const meta = tr.metadata as Record<string, unknown> | undefined;
+            const subConvId = meta?.subConversationId;
+            if (typeof subConvId !== 'string' || !subConvId) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => openSubConversation(meta)}
+                className="group/task w-full border-t border-zinc-700/50 px-3 py-1.5 text-left transition-colors"
+              >
+                <span className="flex items-center gap-1.5 text-xs font-medium text-sky-400 group-hover/task:text-sky-300">
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  查看实时调研过程 →
+                </span>
+              </button>
+            );
+          })()
+        )}
         {/* Model approval phase — distinct from execution progress */}
         {message.modelApproval?.status === 'checking' && (
           <div className="border-t border-zinc-700/50 px-3 py-1.5">
@@ -312,6 +358,18 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
             <div className="min-w-0 border-t border-zinc-700/50 px-3 py-1.5">
+              {tr.toolName === 'task' && tr.success && (
+                <button
+                  onClick={() => openSubConversation(tr.metadata)}
+                  className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  查看完整调研过程 →
+                </button>
+              )}
               <pre className="text-xs text-zinc-400 whitespace-pre max-h-64 max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed">
                 {tr.result || 'no output'}
               </pre>

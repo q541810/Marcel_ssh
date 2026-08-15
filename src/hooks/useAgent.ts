@@ -76,31 +76,35 @@ export function useAgent() {
   const approveCurrent = useCallback(
     async (operationId: string) => {
       store.setPendingApproval(null);
-      if (activeTask) {
-        return store.approveOperation(activeTask.id, operationId);
+      // 优先用事件来源 taskId（子agent在独立通道上运行，activeTaskId 可能仍是父任务）
+      const taskId = store.pendingApproval?.taskId ?? activeTask?.id;
+      if (taskId) {
+        return store.approveOperation(taskId, operationId);
       }
     },
-    [activeTask, store.approveOperation, store.setPendingApproval],
+    [activeTask?.id, store.approveOperation, store.setPendingApproval, store.pendingApproval],
   );
 
   const rejectCurrent = useCallback(
     async (operationId: string) => {
       store.setPendingApproval(null);
-      if (activeTask) {
-        return store.rejectOperation(activeTask.id, operationId);
+      const taskId = store.pendingApproval?.taskId ?? activeTask?.id;
+      if (taskId) {
+        return store.rejectOperation(taskId, operationId);
       }
     },
-    [activeTask, store.rejectOperation, store.setPendingApproval],
+    [activeTask?.id, store.rejectOperation, store.setPendingApproval, store.pendingApproval],
   );
 
   const submitAnswer = useCallback(
     async (questionId: string, answers: QuestionAnswer[]) => {
       store.setPendingQuestion(null);
-      if (activeTask) {
-        return store.answerQuestion(activeTask.id, questionId, answers);
+      const taskId = store.pendingQuestion?.taskId ?? activeTask?.id;
+      if (taskId) {
+        return store.answerQuestion(taskId, questionId, answers);
       }
     },
-    [activeTask, store.answerQuestion, store.setPendingQuestion],
+    [activeTask?.id, store.answerQuestion, store.setPendingQuestion, store.pendingQuestion],
   );
 
   const setMode = useCallback(

@@ -180,10 +180,29 @@ describe('taskStore', () => {
         },
       });
 
+      // 第一次 stopTask 已把 task-1 置 cancelled；新逻辑对已终态任务不再重复
+      // mark/cleanup，这里重置为运行中再验证顺序。
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
       await useTaskStore.getState().stopTask('task-1');
 
       expect(clearOrder.indexOf('mark')).toBeLessThan(clearOrder.indexOf('cleanup'));
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+      // 恢复被覆盖的 action，避免污染后续测试（zustand setState 会覆盖 store action）
+      useConversationStore.setState({ markAbortedToolFlags: origMark });
     });
 
     it('marks non-streaming tool messages as aborted with non-streaming note', async () => {
@@ -299,6 +318,181 @@ describe('taskStore', () => {
       expect(toolMsg.isExecuting).toBe(false);
       expect(toolMsg.toolResult?.wasAborted).toBe(true);
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+    });
+
+    it('only marks tool cards in the stopped task conversation (subagents stay intact)', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      const conv1Tool: AgentMessage = {
+        id: 'tool-a',
+        role: 'tool',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'execute_command',
+          summary: '',
+          result: '',
+          success: true,
+          blocked: false,
+        },
+      };
+      const conv2Tool: AgentMessage = {
+        id: 'tool-b',
+        role: 'tool',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'task',
+          summary: '',
+          result: '',
+          success: true,
+          blocked: false,
+        },
+      };
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [conv1Tool],
+          'conv-2': [conv2Tool],
+        },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      const conv1Msg = useConversationStore.getState().messages['conv-1'][0];
+      expect(conv1Msg.toolResult?.wasAborted).toBe(true);
+      // Other conversation's in-flight card must NOT be marked aborted
+      const conv2Msg = useConversationStore.getState().messages['conv-2'][0];
+      expect(conv2Msg.isExecuting).toBe(true);
+      expect(conv2Msg.toolResult?.wasAborted).toBeUndefined();
+    });
+
+    it('cascades to running subtasks: marks, unlistens and cancels them', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      const mainTool: AgentMessage = {
+        id: 'tool-main',
+        role: 'tool',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'task',
+          summary: '',
+          result: '',
+          success: true,
+          blocked: false,
+        },
+      };
+      const subTool: AgentMessage = {
+        id: 'tool-sub',
+        role: 'tool',
+        content: '',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'execute_command',
+          summary: '',
+          result: 'partial',
+          success: true,
+          blocked: false,
+        },
+      };
+      useConversationStore.setState({
+        activeConversationId: 'main-conv',
+        messages: { 'main-conv': [mainTool], 'sub-conv': [subTool] },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'main-1': {
+            id: 'main-1',
+            sessionId: 's1',
+            conversationId: 'main-conv',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+          'sub-1': {
+            id: 'sub-1',
+            sessionId: 's1',
+            conversationId: 'sub-conv',
+            prompt: 'research',
+            mode: 'plan',
+            status: 'planning',
+            createdAt: new Date().toISOString(),
+            parentTaskId: 'main-1',
+          },
+        },
+        activeTaskId: 'main-1',
+      });
+
+      await useTaskStore.getState().stopTask('main-1');
+
+      const tasks = useTaskStore.getState().tasks;
+      expect(tasks['main-1'].status).toBe('cancelled');
+      // 子任务必须同步标记 cancelled（否则后端级联取消后 Done 事件会被
+      // 残留 listener 消费，handleDone 误标 completed）
+      expect(tasks['sub-1'].status).toBe('cancelled');
+      // 主 + 子 listener 都被清理
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('main-1');
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('sub-1');
+      // 子对话执行中的工具卡片也被标记中断
+      const subMsg = useConversationStore.getState().messages['sub-conv'][0];
+      expect(subMsg.toolResult?.wasAborted).toBe(true);
+    });
+
+    it('does not overwrite terminal subtask status when stopping parent', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      // 子任务已自然完成、主任务仍在等 task 工具结果 → 停止主任务时
+      // 子任务保持 completed，不能被误标成 cancelled。
+      useTaskStore.setState({
+        tasks: {
+          'main-1': {
+            id: 'main-1',
+            sessionId: 's1',
+            conversationId: 'main-conv',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+          'sub-1': {
+            id: 'sub-1',
+            sessionId: 's1',
+            conversationId: 'sub-conv',
+            prompt: 'research',
+            mode: 'plan',
+            status: 'completed',
+            createdAt: new Date().toISOString(),
+            parentTaskId: 'main-1',
+          },
+        },
+        activeTaskId: 'main-1',
+      });
+
+      await useTaskStore.getState().stopTask('main-1');
+
+      const tasks = useTaskStore.getState().tasks;
+      expect(tasks['main-1'].status).toBe('cancelled');
+      expect(tasks['sub-1'].status).toBe('completed');
+      // 已终态子任务不做 listener 清理（其 listener 早已在 done 分支卸载）
+      expect(cleanupTaskListenersMock).toHaveBeenCalledTimes(1);
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('main-1');
     });
   });
 });

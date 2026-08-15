@@ -201,7 +201,12 @@ function AgentMessage({
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
-  const hasReasoning = !!message.reasoningContent && !hideThinkingDisplay;
+  // 思考只在输出过程中显示（isThinking），回复完成后即消失（完成即删）；
+  // 带 tool_calls 的消息 live 时 handleToolCallStart 已清 reasoningContent，
+  // 无需单独条件。reasoningContent 字段始终保留供 LLM 回传
+  // （DeepSeek thinking 模式要求）。
+  const hasReasoning =
+    !!message.isThinking && !!message.reasoningContent && !hideThinkingDisplay;
 
   // Hide empty assistant messages without loading, tool calls, or visible reasoning
   if (
