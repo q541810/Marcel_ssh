@@ -21,9 +21,12 @@ export default function Terminal() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [pasteConfirm, setPasteConfirm] = useState(() => terminalInstanceManager.getPasteConfirm());
-  const fitFrameRef = useRef<number | null>(null);
+  const fitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeInstanceIdRef = useRef<string | null>(null);
   const lastWrapperSizeRef = useRef<{ width: number; height: number } | null>(null);
+  /** 侧栏/底栏/窗口尺寸过渡期间高频触发 ResizeObserver，防抖后再 fit，
+      避免每帧 re-fit + 反复发 SSH resize 导致的掉帧与终端闪烁 */
+  const FIT_DEBOUNCE_MS = 120;
 
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
@@ -93,16 +96,16 @@ export default function Terminal() {
   }, [activeInstanceId]);
 
   const scheduleActiveFit = () => {
-    if (fitFrameRef.current !== null) return;
-    fitFrameRef.current = requestAnimationFrame(() => {
-      fitFrameRef.current = null;
+    if (fitTimeoutRef.current !== null) clearTimeout(fitTimeoutRef.current);
+    fitTimeoutRef.current = setTimeout(() => {
+      fitTimeoutRef.current = null;
       const instanceId = activeInstanceIdRef.current;
       if (!instanceId) return;
       const instance = terminalInstanceManager.get(instanceId);
       if (!instance) return;
       instance.fitAddon.fit();
       terminalInstanceManager.resizeRemoteIfChanged(instance);
-    });
+    }, FIT_DEBOUNCE_MS);
   };
 
   // Sync terminals with sessions
@@ -184,9 +187,9 @@ export default function Terminal() {
 
     return () => {
       resizeObserver.disconnect();
-      if (fitFrameRef.current !== null) {
-        cancelAnimationFrame(fitFrameRef.current);
-        fitFrameRef.current = null;
+      if (fitTimeoutRef.current !== null) {
+        clearTimeout(fitTimeoutRef.current);
+        fitTimeoutRef.current = null;
       }
     };
   }, []);
