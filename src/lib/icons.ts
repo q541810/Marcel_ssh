@@ -1,0 +1,46 @@
+/**
+ * Segoe Fluent Icons glyph map (bundled SEGOEICONS.TTF, from WinUIonWeb).
+ * Codepoints verified against the font's cmap — only present glyphs are listed.
+ */
+export const SEGOE_GLYPHS = {
+  hamburger: '\uE700',
+  quickNote: '\uE70B',
+  chevronDown: '\uE70D',
+  add: '\uE710',
+  cancel: '\uE711',
+  setting: '\uE713',
+  shop: '\uE719',
+  allApps: '\uE71D',
+  back: '\uE72B',
+  refresh: '\uE72C',
+  checkMark: '\uE73E',
+  remove: '\uE738',
+  plug: '\uE746',
+  link: '\uE71B',
+  delete: '\uE74D',
+  save: '\uE74E',
+  commandPrompt: '\uE756',
+  chevronLeft: '\uE76B',
+  chevronRight: '\uE76C',
+  tvMonitor: '\uE7F4',
+  home: '\uE80F',
+  folder: '\uE8B7',
+  close: '\uE8BB',
+  copy: '\uE8C8',
+  bookmarks: '\uE8A4',
+  lightbulb: '\uE8D9',
+  sync: '\uE895',
+  download: '\uE896',
+  help: '\uE897',
+  upload: '\uE898',
+  library: '\uE8F1',
+  comment: '\uE90A',
+  repair: '\uE90F',
+  minimize: '\uE921',
+  maximize: '\uE922',
+  restore: '\uE923',
+  info: '\uE946',
+  processing: '\uE9F5',
+} as const;
+
+export type SegoeGlyph = keyof typeof SEGOE_GLYPHS;

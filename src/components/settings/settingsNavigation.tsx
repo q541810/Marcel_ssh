@@ -1,5 +1,6 @@
 import type React from 'react';
-import { Bot, Cloud, Cpu, Info, Monitor, Plug, Store, UploadCloud, Wrench } from 'lucide-react';
+import { Bot } from 'lucide-react';
+import WinIcon from '@/components/ui/WinIcon';
 
 export interface SettingsCategory {
   id: string;
@@ -12,6 +13,7 @@ export type SettingsSectionSpan = 'half' | 'full';
 
 export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-appearance': 'half',
+  'settings-appearance-ui': 'half',
   'settings-display': 'half',
   'settings-llm': 'full',
   'settings-llm-retry': 'full',
@@ -30,13 +32,13 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: 'interface',
     label: '界面',
-    icon: <Monitor className="w-4 h-4" />,
-    sections: ['settings-appearance', 'settings-display'],
+    icon: <WinIcon glyph="tvMonitor" size={16} />,
+    sections: ['settings-appearance-ui', 'settings-appearance', 'settings-display'],
   },
   {
     id: 'model',
     label: '模型',
-    icon: <Cpu className="w-4 h-4" />,
+    icon: <WinIcon glyph="processing" size={16} />,
     sections: ['settings-llm', 'settings-llm-retry'],
   },
   {
@@ -52,43 +54,43 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   {
     id: 'tools',
     label: '工具能力',
-    icon: <Wrench className="w-4 h-4" />,
+    icon: <WinIcon glyph="repair" size={16} />,
     sections: ['settings-experimental'],
   },
   {
     id: 'transfer',
     label: '文件传输',
-    icon: <UploadCloud className="w-4 h-4" />,
+    icon: <WinIcon glyph="upload" size={16} />,
     sections: ['settings-transfer'],
   },
   {
     id: 'plugins',
     label: '插件',
-    icon: <Plug className="w-4 h-4" />,
+    icon: <WinIcon glyph="allApps" size={16} />,
     sections: ['settings-plugins'],
   },
   {
     id: 'market',
     label: '插件市场',
-    icon: <Store className="w-4 h-4" />,
+    icon: <WinIcon glyph="shop" size={16} />,
     sections: ['settings-market'],
   },
   {
     id: 'sync',
     label: '同步',
-    icon: <Cloud className="w-4 h-4" />,
+    icon: <WinIcon glyph="sync" size={16} />,
     sections: ['settings-sync'],
   },
   {
     id: 'about',
     label: '关于',
-    icon: <Info className="w-4 h-4" />,
+    icon: <WinIcon glyph="info" size={16} />,
     sections: ['settings-about'],
   },
 ];
 
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
-  interface: ['settings-appearance', 'settings-display'],
+  interface: ['settings-appearance-ui', 'settings-appearance', 'settings-display'],
   model: ['settings-llm', 'settings-llm-retry'],
   agent: [
     'settings-command-policy',

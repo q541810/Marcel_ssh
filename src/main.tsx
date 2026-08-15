@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import ErrorBoundary from './components/layout/ErrorBoundary';
 import { collectPlatformHints, getAppPlatform } from './platform';
+import { applyAppearance } from './lib/appearance';
 import './styles/globals.css';
 
 async function bootstrap() {
@@ -11,6 +12,9 @@ async function bootstrap() {
   console.info(`[marcel] platform=${platform}`, hints);
 
   document.documentElement.dataset.marcelPlatform = platform;
+
+  // 默认浅色 + 亚克力，先于首次渲染应用，避免暗色闪屏
+  applyAppearance({ theme: 'light', acrylic: true });
 
   // Window starts visible:false. Desktop App calls appReady; mobile must too.
   // Fire ASAP so a late React mount never leaves an invisible process.

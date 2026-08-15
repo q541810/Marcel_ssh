@@ -24,13 +24,13 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
   return createPortal(
     <div
       role="menu"
-      className="context-menu-enter fixed z-50 bg-zinc-800 border border-zinc-700 rounded-xl shadow-lg py-1 min-w-32"
+      className="win-flyout win-flyout-enter fixed z-50 py-1 min-w-32"
       style={{ top: y, left: x }}
       onClick={(e) => e.stopPropagation()}
     >
       {items.map((item, idx) =>
         item.divider ? (
-          <hr key={idx} className="border-zinc-700 my-1" />
+          <hr key={idx} className="win-menu-divider" />
         ) : (
           <button
             key={idx}
@@ -38,9 +38,7 @@ export default function ContextMenu({ x, y, items, onClose }: ContextMenuProps) 
               item.onClick();
               onClose();
             }}
-            className={`w-full text-left px-3 py-1.5 text-sm hover:bg-zinc-700 transition-colors ${
-              item.variant === 'danger' ? 'text-red-400' : 'text-zinc-200'
-            }`}
+            className={`win-menu-item ${item.variant === 'danger' ? 'win-menu-item--danger' : ''}`}
           >
             {item.label}
           </button>

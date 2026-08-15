@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import WinIcon from '@/components/ui/WinIcon';
 
 interface ListPanelProps {
   title: string;
@@ -34,23 +35,11 @@ export default function ListPanel({
         {onAdd && (
           <button
             onClick={onAdd}
-            className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+            className="win-icon-btn win-icon-btn--sm"
             title={addButtonTitle}
             aria-label={addButtonTitle}
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
+            <WinIcon glyph="add" size={16} />
           </button>
         )}
       </div>
@@ -62,7 +51,7 @@ export default function ListPanel({
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
-          className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-2 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+          className="win-input"
         />
       </div>
 

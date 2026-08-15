@@ -1,0 +1,1283 @@
+/* ============================================================
+   winui.css — WinUI-on-Web design system port for Marcel SSH
+   Adapted from the Fluent/WinUI token language in
+   github.com/Furry-Xiyi/WinUIonWeb (theme.css / animations.css).
+   Default: Light theme + Acrylic. Dark available via settings.
+   ============================================================ */
+
+/* ------------------------------------------------------------------
+   0) Segoe Fluent Icons (bundled from WinUIonWeb for non-Windows/browser;
+   on Windows the system font of the same name is used automatically)
+   ------------------------------------------------------------------ */
+@font-face {
+  font-family: 'Segoe Fluent Icons';
+  src: url('../assets/fonts/SEGOEICONS.TTF') format('truetype');
+  font-display: block;
+}
+
+.win-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Segoe Fluent Icons', 'Segoe MDL2 Assets', sans-serif;
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 400;
+  font-style: normal;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------
+   1) Tailwind palette remap (light-first inversion)
+
+   The app was authored against a dark zinc/indigo palette. To re-skin
+   the whole UI without touching every component, we remap the zinc
+   scale to Fluent light surfaces/text and indigo to the WinUI accent
+   blue. html[data-theme='dark'] flips them back to dark values.
+   ------------------------------------------------------------------ */
+@theme {
+  --color-zinc-950: #EEEEEE; /* nav rail / deepest chrome       */
+  --color-zinc-900: rgba(248, 248, 250, 0.72); /* 浅色面板接近 WinUI 亚克力：约 72% 白，内容可读又保留磨砂透出 */
+  --color-zinc-800: rgba(0, 0, 0, 0.13); /* fills + dividers     */
+  --color-zinc-700: rgba(0, 0, 0, 0.10); /* hover fill / border  */
+  --color-zinc-600: rgba(0, 0, 0, 0.16); /* strong border        */
+  --color-zinc-500: rgba(0, 0, 0, 0.45); /* tertiary text        */
+  --color-zinc-400: rgba(0, 0, 0, 0.62); /* secondary text       */
+  --color-zinc-300: rgba(0, 0, 0, 0.78);
+  --color-zinc-200: rgba(0, 0, 0, 0.89); /* primary text         */
+  --color-zinc-100: rgba(0, 0, 0, 0.89); /* primary text         */
+  --color-zinc-50:  rgba(0, 0, 0, 0.62);
+
+  --color-indigo-950: #002750;
+  --color-indigo-900: #003054;
+  --color-indigo-800: #004080;
+  --color-indigo-700: #00539B;
+  --color-indigo-600: #0067C0; /* WinUI accent default */
+  --color-indigo-500: #0078D4; /* WinUI accent hover   */
+  --color-indigo-400: #2F8BD8;
+  --color-indigo-300: #6BB5F0;
+  --color-indigo-200: #B0D9F7;
+  --color-indigo-100: #D7EBFA;
+  --color-indigo-50:  #EDF6FC;
+}
+
+/* ------------------------------------------------------------------
+   2) Fluent design tokens — Light (default)
+   ------------------------------------------------------------------ */
+:root {
+  color-scheme: light;
+  --app-bg: #F3F3F3;
+  --app-bg-rgb: 243, 243, 243;
+  --window-bg: #F3F3F3;
+  --wallpaper-base: rgba(228, 230, 234, 0.6);
+  --wallpaper-glow: rgba(255, 255, 255, 0.4);
+  --wallpaper-glow-2: rgba(0, 0, 0, 0.06);
+
+  /* text */
+  --text-primary: rgba(0, 0, 0, 0.89);
+  --text-secondary: rgba(0, 0, 0, 0.62);
+  --text-tertiary: rgba(0, 0, 0, 0.45);
+  --text-disabled: rgba(0, 0, 0, 0.36);
+
+  /* accent */
+  --accent: #0067C0;
+  --accent-hover: #0078D4;
+  --accent-pressed: #005FB8;
+  --accent-fill-disabled: rgba(0, 0, 0, 0.22);
+  --accent-aa: #004E8C;
+  --accent-text: #FFFFFF;
+  --accent-text-secondary: rgba(255, 255, 255, 0.70);
+
+  /* layers / strokes */
+  --layer-default: rgba(255, 255, 255, 0.50);
+  --layer-on-acrylic: rgba(255, 255, 255, 0.50);
+  --stroke-divider: rgba(0, 0, 0, 0.06);
+  --stroke-flyout: rgba(0, 0, 0, 0.06);
+  --ctrl-border: rgba(0, 0, 0, 0.06);
+  --ctrl-border-accent: rgba(0, 0, 0, 0.16);
+
+  /* fills */
+  --subtle-transparent: transparent;
+  --subtle-secondary: rgba(0, 0, 0, 0.04);
+  --subtle-tertiary: rgba(0, 0, 0, 0.02);
+  --subtle-pressed: rgba(0, 0, 0, 0.06);
+  --ctrl-fill-default: rgba(255, 255, 255, 0.70);
+  --ctrl-fill-secondary: rgba(249, 249, 249, 0.50);
+  --ctrl-fill-tertiary: rgba(249, 249, 249, 0.30);
+  --ctrl-fill-input: #FFFFFF;
+  --ctrl-strong-fill: rgba(0, 0, 0, 0.45);
+
+  /* acrylic / flyout */
+  --flyout-bg: rgba(252, 252, 252, 0.92);
+  --flyout-border: rgba(0, 0, 0, 0.06);
+  --flyout-backdrop: blur(30px) saturate(160%) brightness(1.02);
+  --card-bg: rgba(255, 255, 255, 0.70);
+  --card-stroke: rgba(0, 0, 0, 0.06);
+
+  /* nav pane: translucent so the acrylic/desktop shows through */
+  --host-nav-pane-bg: rgba(var(--app-bg-rgb), 0.64);
+  --host-nav-pane-stroke: rgba(0, 0, 0, 0.06);
+
+  /* toggle */
+  --toggle-border: rgba(0, 0, 0, 0.45);
+  --toggle-thumb: rgba(0, 0, 0, 0.61);
+  --toggle-thumb-hover: rgba(0, 0, 0, 0.89);
+  --toggle-on-thumb: #FFFFFF;
+
+  /* dialog */
+  --dialog-bg: #FCFCFC;
+  --dialog-overlay: rgba(0, 0, 0, 0.30);
+  --dialog-divider: rgba(0, 0, 0, 0.06);
+
+  /* status (WinUI system colors) */
+  --system-success: #0F7B0F;
+  --system-caution: #9D5D00;
+  --system-critical: #C42B1C;
+  --system-neutral: #8A8A8A;
+
+  /* scrollbar */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.35);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.55);
+
+  /* legacy Tailwind-agnostic tokens (range slider etc.) */
+  --color-bg-primary: #FFFFFF;
+  --color-accent: #0067C0;
+
+  /* motion (WinUI durations + curves) */
+  --faster-duration: 0.083s;
+  --fast-duration: 0.167s;
+  --normal-duration: 0.2s;
+  --fast-out-slow-in: cubic-bezier(0, 0, 0, 1);
+  --standard-easing: cubic-bezier(0.8, 0, 0.2, 1);
+  --control-fast-out-slow-in: cubic-bezier(0.33, 0, 0.67, 1);
+  --spring-standard: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ------------------------------------------------------------------
+   3) Dark theme tokens
+   ------------------------------------------------------------------ */
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --color-zinc-950: #131315;
+  --color-zinc-900: rgba(22, 22, 26, 0.55); /* 深色内容面板半透明，透出壁纸/桌面 */
+  --color-zinc-800: rgba(38, 38, 42, 0.55);
+  --color-zinc-700: rgba(63, 63, 70, 0.5);
+  --color-zinc-600: #52525B;
+  --color-zinc-500: #8A8A92;
+  --color-zinc-400: #A1A1AA;
+  --color-zinc-300: #D4D4D8;
+  --color-zinc-200: #E4E4E7;
+  --color-zinc-100: #F4F4F5;
+  --color-zinc-50:  #FAFAFA;
+
+  --color-indigo-950: #BFDFFF;
+  --color-indigo-900: #B8D9FF;
+  --color-indigo-800: #9CCDFF;
+  --color-indigo-700: #60CDFF;
+  --color-indigo-600: #4CC2FF;
+  --color-indigo-500: #0078D4;
+  --color-indigo-400: #3A96DD;
+  --color-indigo-300: #2F6FA3;
+  --color-indigo-200: #1F4F79;
+  --color-indigo-100: #163C5E;
+  --color-indigo-50:  #0E2A45;
+
+  --app-bg: #202020;
+  --app-bg-rgb: 32, 32, 32;
+  --window-bg: #202020;
+  --wallpaper-base: rgba(28, 28, 32, 0.62);
+  --wallpaper-glow: rgba(255, 255, 255, 0.045);
+  --wallpaper-glow-2: rgba(0, 0, 0, 0.28);
+  --text-primary: rgba(255, 255, 255, 0.89);
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --text-tertiary: rgba(255, 255, 255, 0.45);
+  --text-disabled: rgba(255, 255, 255, 0.36);
+
+  --accent: #60CDFF;
+  --accent-hover: #4CC2FF;
+  --accent-pressed: #2FA9F2;
+  --accent-fill-disabled: rgba(255, 255, 255, 0.22);
+  --accent-aa: #004E8C;
+  --accent-text: #003060;
+  --accent-text-secondary: rgba(0, 48, 96, 0.70);
+
+  --layer-default: rgba(58, 58, 58, 0.30);
+  --layer-on-acrylic: rgba(58, 58, 58, 0.30);
+  --stroke-divider: rgba(255, 255, 255, 0.08);
+  --stroke-flyout: rgba(255, 255, 255, 0.10);
+  --ctrl-border: rgba(255, 255, 255, 0.08);
+  --ctrl-border-accent: rgba(255, 255, 255, 0.16);
+
+  --subtle-secondary: rgba(255, 255, 255, 0.06);
+  --subtle-tertiary: rgba(255, 255, 255, 0.04);
+  --subtle-pressed: rgba(255, 255, 255, 0.10);
+  --ctrl-fill-default: rgba(255, 255, 255, 0.06);
+  --ctrl-fill-secondary: rgba(255, 255, 255, 0.08);
+  --ctrl-fill-tertiary: rgba(255, 255, 255, 0.04);
+  --ctrl-fill-input: #2C2C2C;
+  --ctrl-strong-fill: rgba(255, 255, 255, 0.55);
+
+  --flyout-bg: rgba(44, 44, 44, 0.86);
+  --flyout-border: rgba(255, 255, 255, 0.10);
+  --flyout-backdrop: blur(44px) saturate(190%) brightness(1.22) contrast(1.05);
+  --card-bg: rgba(255, 255, 255, 0.05);
+  --card-stroke: rgba(255, 255, 255, 0.10);
+
+  --host-nav-pane-bg: rgba(var(--app-bg-rgb), 0.64);
+  --host-nav-pane-stroke: rgba(255, 255, 255, 0.08);
+
+  --toggle-border: rgba(255, 255, 255, 0.45);
+  --toggle-thumb: rgba(255, 255, 255, 0.61);
+  --toggle-thumb-hover: rgba(255, 255, 255, 0.89);
+  --toggle-on-thumb: #FFFFFF;
+
+  --dialog-bg: #2C2C2C;
+  --dialog-overlay: rgba(0, 0, 0, 0.50);
+  --dialog-divider: rgba(255, 255, 255, 0.08);
+
+  --system-success: #6CCB5F;
+  --system-caution: #FCE100;
+  --system-critical: #FF99A4;
+  --system-neutral: #9D9D9D;
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.35);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.55);
+
+  --color-bg-primary: #2C2C2C;
+  --color-accent: #4CC2FF;
+}
+
+/* system-follow theme */
+@media (prefers-color-scheme: dark) {
+  html[data-theme='system'] {
+    color-scheme: dark;
+    --color-zinc-950: #131315;
+    --color-zinc-900: rgba(22, 22, 26, 0.55); /* 深色内容面板半透明 */
+    --color-zinc-800: rgba(38, 38, 42, 0.55);
+    --color-zinc-700: rgba(63, 63, 70, 0.5);
+    --color-zinc-600: #52525B;
+    --color-zinc-500: #8A8A92;
+    --color-zinc-400: #A1A1AA;
+    --color-zinc-300: #D4D4D8;
+    --color-zinc-200: #E4E4E7;
+    --color-zinc-100: #F4F4F5;
+    --color-zinc-50:  #FAFAFA;
+
+    --color-indigo-950: #BFDFFF;
+    --color-indigo-900: #B8D9FF;
+    --color-indigo-800: #9CCDFF;
+    --color-indigo-700: #60CDFF;
+    --color-indigo-600: #4CC2FF;
+    --color-indigo-500: #0078D4;
+    --color-indigo-400: #3A96DD;
+    --color-indigo-300: #2F6FA3;
+    --color-indigo-200: #1F4F79;
+    --color-indigo-100: #163C5E;
+    --color-indigo-50:  #0E2A45;
+
+    --app-bg: #202020;
+    --app-bg-rgb: 32, 32, 32;
+    --window-bg: #202020;
+    --wallpaper-base: rgba(28, 28, 32, 0.62);
+    --wallpaper-glow: rgba(255, 255, 255, 0.045);
+    --wallpaper-glow-2: rgba(0, 0, 0, 0.28);
+    --text-primary: rgba(255, 255, 255, 0.89);
+    --text-secondary: rgba(255, 255, 255, 0.62);
+    --text-tertiary: rgba(255, 255, 255, 0.45);
+    --text-disabled: rgba(255, 255, 255, 0.36);
+
+    --accent: #60CDFF;
+    --accent-hover: #4CC2FF;
+    --accent-pressed: #2FA9F2;
+    --accent-fill-disabled: rgba(255, 255, 255, 0.22);
+    --accent-aa: #004E8C;
+    --accent-text: #003060;
+    --accent-text-secondary: rgba(0, 48, 96, 0.70);
+
+    --layer-default: rgba(58, 58, 58, 0.30);
+    --layer-on-acrylic: rgba(58, 58, 58, 0.30);
+    --stroke-divider: rgba(255, 255, 255, 0.08);
+    --stroke-flyout: rgba(255, 255, 255, 0.10);
+    --ctrl-border: rgba(255, 255, 255, 0.08);
+    --ctrl-border-accent: rgba(255, 255, 255, 0.16);
+
+    --subtle-secondary: rgba(255, 255, 255, 0.06);
+    --subtle-tertiary: rgba(255, 255, 255, 0.04);
+    --subtle-pressed: rgba(255, 255, 255, 0.10);
+    --ctrl-fill-default: rgba(255, 255, 255, 0.06);
+    --ctrl-fill-secondary: rgba(255, 255, 255, 0.08);
+    --ctrl-fill-tertiary: rgba(255, 255, 255, 0.04);
+    --ctrl-fill-input: #2C2C2C;
+    --ctrl-strong-fill: rgba(255, 255, 255, 0.55);
+
+    --flyout-bg: rgba(44, 44, 44, 0.86);
+    --flyout-border: rgba(255, 255, 255, 0.10);
+    --flyout-backdrop: blur(44px) saturate(190%) brightness(1.22) contrast(1.05);
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --card-stroke: rgba(255, 255, 255, 0.10);
+
+    --host-nav-pane-bg: rgba(var(--app-bg-rgb), 0.64);
+    --host-nav-pane-stroke: rgba(255, 255, 255, 0.08);
+
+    --toggle-border: rgba(255, 255, 255, 0.45);
+    --toggle-thumb: rgba(255, 255, 255, 0.61);
+    --toggle-thumb-hover: rgba(255, 255, 255, 0.89);
+    --toggle-on-thumb: #FFFFFF;
+
+    --dialog-bg: #2C2C2C;
+    --dialog-overlay: rgba(0, 0, 0, 0.50);
+    --dialog-divider: rgba(255, 255, 255, 0.08);
+
+    --system-success: #6CCB5F;
+    --system-caution: #FCE100;
+    --system-critical: #FF99A4;
+    --system-neutral: #9D9D9D;
+
+    --scrollbar-thumb: rgba(255, 255, 255, 0.35);
+    --scrollbar-thumb-hover: rgba(255, 255, 255, 0.55);
+
+    --color-bg-primary: #2C2C2C;
+    --color-accent: #4CC2FF;
+  }
+}
+
+/* ------------------------------------------------------------------
+   4) Acrylic system
+   html[data-acrylic='true'] -> body turns transparent so the native
+   DWM acrylic (Tauri window effects) can show the desktop through the
+   translucent surfaces. When off, a solid window background is used.
+   ------------------------------------------------------------------ */
+html,
+body,
+#root {
+  background-color: var(--window-bg);
+}
+
+/* 亚克力开启：整页背景改为透明 —— 否则 <html>/<body> 的不透明背景会完全盖住
+   原生 DWM Acrylic（Tauri）和桌面，导致“透不出桌面/看不到毛玻璃”。 */
+html[data-acrylic='true'] {
+  --window-bg: transparent;
+  background-color: transparent;
+}
+
+html[data-acrylic='true'] body,
+html[data-acrylic='true'] #root {
+  background-color: transparent;
+}
+
+/* App shell */
+.win-app-shell {
+  position: relative;
+}
+
+/* 模拟“桌面壁纸”层：毛玻璃模糊有东西可磨，透过半透明面板能明显看到颜色变化 */
+.win-wallpaper {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 300ms ease;
+  background:
+    radial-gradient(1200px 800px at 18% -8%, var(--wallpaper-glow), transparent 60%),
+    radial-gradient(1000px 700px at 110% 10%, var(--wallpaper-glow-2), transparent 55%),
+    var(--wallpaper-base);
+}
+
+/* 浏览器模式：壁纸层全量显示，内容面板磨砂叠加其上 */
+html[data-acrylic='true'] .win-wallpaper {
+  opacity: 1;
+}
+
+/* 原生 DWM 亚克力（Tauri）：壁纸层保持高可见度，确保“打开毛玻璃”在任何环境
+   （包括尚未重新编译 Rust 的旧二进制）都有明显的磨砂反馈；重编译后可透出桌面 */
+html[data-native-acrylic='true'] .win-wallpaper {
+  opacity: 0.18;
+}
+
+/* 内容面位于壁纸层之上，半透明 + 统一毛玻璃模糊 */
+.win-app-surface {
+  position: relative;
+  z-index: 1;
+  background: rgba(var(--app-bg-rgb), 0.78);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 毛玻璃开启：整个内容区与标题栏一致，统一模糊磨砂 */
+html[data-acrylic='true'] .win-app-surface {
+  background: rgba(var(--app-bg-rgb), 0.04);
+  /* 不加大面积 backdrop-filter：WebView2 透明窗口下整屏 blur 可能被合成成不透明层 */
+}
+
+/* 关闭毛玻璃：无模糊、无桌面透出，但面板与背景融为一体（不发白） */
+html[data-acrylic='false'] .win-app-surface {
+  background: rgba(var(--app-bg-rgb), 0.92);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 关闭亚克力时，按主题恢复不透明的原始面板色（避免深色下变白） */
+html[data-theme='light'][data-acrylic='false'],
+html[data-theme='system'][data-acrylic='false'] {
+  --color-zinc-900: #F7F7F7;
+}
+html[data-theme='dark'][data-acrylic='false'] {
+  --color-zinc-900: #18181B;
+}
+
+/* Acrylic chrome: nav pane, title bar, tabs, flyouts */
+.win-acrylic {
+  background: var(--host-nav-pane-bg);
+  backdrop-filter: blur(48px) saturate(150%);
+  -webkit-backdrop-filter: blur(48px) saturate(150%);
+}
+
+.win-flyout {
+  background: var(--flyout-bg);
+  backdrop-filter: var(--flyout-backdrop);
+  -webkit-backdrop-filter: var(--flyout-backdrop);
+  border: 1px solid var(--flyout-border);
+  border-radius: 8px;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 16px 40px rgba(0, 0, 0, 0.16);
+}
+
+/* ------------------------------------------------------------------
+   5) WinUI control classes
+   ------------------------------------------------------------------ */
+
+/* Button */
+.win-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 14px;
+  border: 1px solid var(--ctrl-border);
+  border-bottom-color: var(--ctrl-border-accent);
+  border-radius: 4px;
+  background: var(--ctrl-fill-default);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    border-color var(--fast-duration) var(--control-fast-out-slow-in),
+    color var(--fast-duration) var(--control-fast-out-slow-in),
+    transform var(--faster-duration) var(--control-fast-out-slow-in),
+    box-shadow var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-btn:hover {
+  background: var(--ctrl-fill-secondary);
+  border-color: var(--ctrl-border-accent);
+}
+
+.win-btn:active {
+  background: var(--ctrl-fill-tertiary);
+  transform: scale(0.97);
+}
+
+.win-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.win-btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.win-btn--accent {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.win-btn--accent:hover {
+  background: var(--accent-hover);
+}
+
+.win-btn--accent:active {
+  background: var(--accent-pressed);
+}
+
+.win-btn--subtle {
+  background: transparent;
+  border-color: transparent;
+}
+
+.win-btn--subtle:hover {
+  background: var(--subtle-secondary);
+  border-color: transparent;
+}
+
+.win-btn--danger {
+  color: var(--system-critical);
+}
+
+/* Icon button (AppBarButton-ish) */
+.win-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  position: relative;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    color var(--fast-duration) var(--control-fast-out-slow-in),
+    transform var(--faster-duration) var(--control-fast-out-slow-in);
+}
+
+.win-icon-btn:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.win-icon-btn:active {
+  background: var(--subtle-pressed);
+  transform: scale(0.92);
+}
+
+.win-icon-btn--active,
+.win-icon-btn[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--subtle-secondary);
+}
+
+.win-icon-btn--sm {
+  width: 28px;
+  height: 28px;
+}
+
+/* TextBox */
+.win-input {
+  width: 100%;
+  background: var(--ctrl-fill-input);
+  border: 1px solid var(--ctrl-border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 5px 10px;
+  font-size: 14px;
+  line-height: 20px;
+  transition:
+    border-color var(--fast-duration) var(--control-fast-out-slow-in),
+    box-shadow var(--fast-duration) var(--control-fast-out-slow-in),
+    background-color var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.win-input:hover {
+  border-color: var(--ctrl-border-accent);
+}
+
+.win-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.win-input:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ToggleSwitch */
+.win-toggle {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  width: 40px;
+  height: 20px;
+  border-radius: 10px;
+  border: 1px solid var(--toggle-border);
+  background: transparent;
+  cursor: default;
+  padding: 0;
+  transition:
+    background-color var(--normal-duration) var(--control-fast-out-slow-in),
+    border-color var(--normal-duration) var(--control-fast-out-slow-in);
+}
+
+.win-toggle .win-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--toggle-thumb);
+  transition:
+    transform var(--normal-duration) cubic-bezier(0.5, 0, 0, 1),
+    background-color var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-toggle:hover .win-toggle-thumb {
+  background: var(--toggle-thumb-hover);
+}
+
+.win-toggle.on {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.win-toggle.on .win-toggle-thumb {
+  background: var(--toggle-on-thumb);
+  transform: translateX(20px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.win-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.win-toggle:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ContentDialog */
+.win-dialog {
+  background: var(--dialog-bg);
+  border: 1px solid var(--dialog-divider);
+  border-radius: 8px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.18),
+    0 2px 6px rgba(0, 0, 0, 0.10);
+}
+
+.win-dialog-header {
+  border-bottom: 1px solid var(--dialog-divider);
+}
+
+.win-dialog-title {
+  color: var(--text-primary);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Nav rail item (NavigationView rail) */
+.win-nav-item {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    color var(--fast-duration) var(--control-fast-out-slow-in),
+    transform var(--faster-duration) var(--control-fast-out-slow-in);
+}
+
+.win-nav-item:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.win-nav-item:active {
+  transform: scale(0.9);
+}
+
+.win-nav-item.active {
+  color: var(--accent);
+}
+
+/* 共享滑动指示条：位置由 NavRail 按激活项测量后通过 --indicator-y 驱动，
+   transform 过渡形成从上一个图标“滑”到下一个图标的动画。 */
+.win-nav-indicator {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transform: translateY(0) scaleY(0.5);
+  transition:
+    transform 260ms var(--spring-smooth),
+    opacity 180ms ease;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.win-nav-indicator.visible {
+  opacity: 1;
+  transform: translateY(var(--indicator-y, 0px)) scaleY(1);
+}
+
+/* Selected pill indicator (Windows 11 style) */
+.win-nav-item.active .win-nav-pill {
+  position: absolute;
+  inset: 4px;
+  border-radius: 6px;
+  background: var(--subtle-secondary);
+  z-index: -1;
+  transform: scale(0.8);
+  opacity: 0;
+  transition:
+    transform var(--fast-duration) var(--spring-smooth),
+    opacity var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-nav-item.active .win-nav-pill {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Tab (TabView) */
+.win-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+  max-width: 200px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  cursor: default;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    color var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-tab:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.win-tab.active {
+  color: var(--text-primary);
+}
+
+.win-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  transform-origin: center;
+  animation: win-tab-indicator var(--fast-duration) var(--spring-smooth) both;
+}
+
+/* Caption (window control) buttons */
+.win-caption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    color var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-caption:hover {
+  background: var(--subtle-secondary);
+  color: var(--text-primary);
+}
+
+.win-caption--close:hover {
+  background: var(--system-critical);
+  color: #FFFFFF;
+}
+
+.win-caption:active {
+  background: var(--subtle-pressed);
+}
+
+.win-caption--close:active {
+  background: #9D2216;
+  color: #FFFFFF;
+}
+
+/* Badge */
+.win-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--subtle-secondary);
+  color: var(--text-secondary);
+  border: 1px solid var(--ctrl-border);
+}
+
+.win-badge--accent {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: transparent;
+}
+
+.win-badge--success { color: var(--system-success); }
+.win-badge--caution { color: var(--system-caution); }
+.win-badge--critical { color: var(--system-critical); }
+
+/* Menu / dropdown item */
+.win-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 14px;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  transition: background-color var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-menu-item:hover {
+  background: var(--subtle-secondary);
+}
+
+.win-menu-item--active {
+  background: var(--subtle-secondary);
+}
+
+.win-menu-item:active {
+  background: var(--subtle-pressed);
+}
+
+.win-menu-item--danger {
+  color: var(--system-critical);
+}
+
+.win-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  border: none;
+  background: var(--dialog-divider);
+}
+
+/* List item reveal (subtle hover highlight) */
+.win-list-item {
+  border-radius: 6px;
+  transition:
+    background-color var(--fast-duration) var(--control-fast-out-slow-in),
+    transform var(--faster-duration) var(--control-fast-out-slow-in),
+    box-shadow var(--fast-duration) var(--control-fast-out-slow-in);
+}
+
+.win-list-item:hover {
+  background: var(--subtle-secondary);
+}
+
+/* Card */
+.win-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-stroke);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* ------------------------------------------------------------------
+   6) Animations
+   ------------------------------------------------------------------ */
+
+/* Tab indicator */
+@keyframes win-tab-indicator {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+/* Flyout (adapted from WinUIonWeb animations.css) */
+@keyframes win-flyout-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.win-flyout-enter {
+  transform-origin: top center;
+  animation: win-flyout-enter var(--fast-duration) var(--spring-smooth) both;
+}
+
+@keyframes win-flyout-exit {
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.win-flyout-exit {
+  transform-origin: top center;
+  animation: win-flyout-exit 120ms ease-in both;
+}
+
+/* Content dialog */
+@keyframes win-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.win-dialog-enter {
+  animation: win-dialog-enter var(--normal-duration) var(--spring-smooth) both;
+}
+
+@keyframes win-dialog-exit {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+}
+
+.win-dialog-exit {
+  animation: win-dialog-exit 140ms ease-in both;
+}
+
+@keyframes win-dialog-backdrop-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.win-dialog-backdrop-enter {
+  animation: win-dialog-backdrop-enter var(--normal-duration) ease-out both;
+}
+
+@keyframes win-dialog-backdrop-exit {
+  to { opacity: 0; }
+}
+
+.win-dialog-backdrop-exit {
+  animation: win-dialog-backdrop-exit 140ms ease-in both;
+}
+
+/* View enter (content navigation) */
+@keyframes win-view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.win-view-enter {
+  animation: win-view-enter 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+/* WinUI navigation transitions (from WinUIonWeb animations.css) */
+.win-nav-enter {
+  will-change: opacity, transform;
+  transform-origin: center center;
+  animation: win-nav-entrance 400ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes win-nav-entrance {
+  0% {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  33.333% {
+    opacity: 0;
+    transform: translateY(32px);
+  }
+  33.334% {
+    opacity: 1;
+    transform: translateY(32px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.win-nav-slide-from-right {
+  will-change: opacity, transform;
+  animation: win-nav-slide-right 320ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+}
+
+@keyframes win-nav-slide-right {
+  0% {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+  33.333% {
+    opacity: 0;
+    transform: translateX(48px);
+  }
+  33.334% {
+    opacity: 1;
+    transform: translateX(48px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.win-nav-drill-in {
+  will-change: opacity, transform;
+  animation:
+    win-nav-drill-scale 300ms cubic-bezier(0.1, 0.9, 0.2, 1) both,
+    win-nav-drill-opacity 300ms cubic-bezier(0.17, 0.17, 0, 1) both;
+}
+
+@keyframes win-nav-drill-scale {
+  from {
+    transform: scale(0.94);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes win-nav-drill-opacity {
+  0% {
+    opacity: 0;
+  }
+  42.529% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Chevron press/release (WinUIonWeb) */
+@keyframes win-chevron-press {
+  from {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0.167, 0.167, 0.65, 1);
+  }
+  to {
+    transform: translateY(1.875px);
+  }
+}
+
+@keyframes win-chevron-release {
+  0% {
+    transform: translateY(1.875px);
+    animation-timing-function: cubic-bezier(0.55, 0, 0.75, 1);
+  }
+  27.778% {
+    transform: translateY(-0.75px);
+    animation-timing-function: cubic-bezier(0.35, 0, 0, 1);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+.chevron-animate.pressing {
+  animation: win-chevron-press 150ms both;
+}
+
+.chevron-animate.releasing {
+  animation: win-chevron-release 300ms both;
+}
+
+/* Progress */
+@keyframes win-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.win-progress {
+  position: relative;
+  overflow: hidden;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--subtle-secondary);
+}
+
+.win-progress > span {
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: win-progress-slide 1.4s var(--standard-easing) infinite;
+}
+
+/* Reveal sweep on hover for cards/list rows */
+.win-reveal {
+  position: relative;
+  overflow: hidden;
+}
+
+.win-reveal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.35) 50%, transparent 60%);
+  transform: translateX(-120%);
+  pointer-events: none;
+  transition: transform 500ms var(--standard-easing);
+}
+
+.win-reveal:hover::after {
+  transform: translateX(120%);
+}
+
+/* Stagger entrance helper */
+.win-stagger > * {
+  animation: win-view-enter var(--fast-duration) var(--spring-smooth) both;
+}
+
+.win-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.win-stagger > *:nth-child(2) { animation-delay: 24ms; }
+.win-stagger > *:nth-child(3) { animation-delay: 48ms; }
+.win-stagger > *:nth-child(4) { animation-delay: 72ms; }
+.win-stagger > *:nth-child(5) { animation-delay: 96ms; }
+.win-stagger > *:nth-child(6) { animation-delay: 120ms; }
+.win-stagger > *:nth-child(7) { animation-delay: 144ms; }
+.win-stagger > *:nth-child(8) { animation-delay: 168ms; }
+.win-stagger > *:nth-child(9) { animation-delay: 192ms; }
+.win-stagger > *:nth-child(10) { animation-delay: 216ms; }
+
+/* Animated icons (WinUIonWeb) */
+.animated-icon-hamburger {
+  display: inline-flex;
+  transform-origin: center;
+}
+
+.animated-icon-hamburger.pressing {
+  animation: hamburger-press 0.15s cubic-bezier(0.167, 0.167, 0, 1) forwards;
+}
+
+.animated-icon-hamburger.releasing {
+  animation: hamburger-release 0.317s cubic-bezier(0.35, 0, 0, 1) forwards;
+}
+
+@keyframes hamburger-press {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0.521); }
+}
+
+@keyframes hamburger-release {
+  0% {
+    transform: scaleX(0.521);
+    animation-timing-function: cubic-bezier(0.85, 0, 0.75, 1);
+  }
+  42% {
+    transform: scaleX(1.048);
+    animation-timing-function: cubic-bezier(0.35, 0, 0, 1);
+  }
+  100% { transform: scaleX(1); }
+}
+
+.animated-icon-gear {
+  display: inline-flex;
+  transition: transform 0.1s ease;
+}
+
+.animated-icon-gear.gear-rewind {
+  animation: animated-icon-gear-rewind 0.15s cubic-bezier(0.167, 0.167, 1, 1) forwards;
+}
+
+.animated-icon-gear.gear-spin {
+  animation: animated-icon-gear-spin 0.65s cubic-bezier(0, 0, 0, 1) forwards;
+}
+
+@keyframes animated-icon-gear-rewind {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(-20deg); }
+}
+
+@keyframes animated-icon-gear-spin {
+  from { transform: rotate(-20deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Terminal frosted glass + backdrop image */
+.win-terminal {
+  background: rgba(var(--app-bg-rgb), 0.66);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ------------------------------------------------------------------
+   7) Reduced motion
+   ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  .win-flyout-enter,
+  .win-flyout-exit,
+  .win-dialog-enter,
+  .win-dialog-exit,
+  .win-dialog-backdrop-enter,
+  .win-dialog-backdrop-exit,
+  .win-view-enter,
+  .win-nav-enter,
+  .win-nav-slide-from-right,
+  .win-nav-drill-in,
+  .animated-icon-hamburger.pressing,
+  .animated-icon-hamburger.releasing,
+  .animated-icon-gear.gear-rewind,
+  .animated-icon-gear.gear-spin,
+  .chevron-animate.pressing,
+  .chevron-animate.releasing,
+  .win-stagger > *,
+  .win-tab.active::after,
+  .win-reveal::after {
+    animation: none !important;
+    transition-duration: 1ms !important;
+  }
+}

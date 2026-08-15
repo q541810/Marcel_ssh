@@ -9,6 +9,7 @@ import { ModelRetrySection } from './ModelRetrySection';
 import { NotificationSection } from './NotificationSection';
 import { SyncSettingsSection } from './SyncSettingsSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
+import { AppearanceSection } from './AppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
 import { PluginSection } from './PluginSection';
@@ -56,6 +57,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
 
   const allSections = [
     { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
+    { id: 'settings-appearance-ui', element: <AppearanceSection /> },
     { id: 'settings-display', element: <ConversationDisplaySection /> },
     { id: 'settings-llm', element: <ModelServiceSection /> },
     { id: 'settings-llm-retry', element: <ModelRetrySection /> },

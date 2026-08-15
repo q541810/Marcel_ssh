@@ -26,8 +26,9 @@ import { useSyncStore } from '@/stores/syncStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate, sftpPreviewCleanup } from '@/lib/tauri';
+import { applyAppearance, applyWindowAcrylic, watchSystemTheme } from '@/lib/appearance';
 import { playNotificationSound } from '@/lib/notificationSound';
-import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
+import type { AgentMode, ViewProvider, WorkspaceLayoutSettings, AppearanceSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
   displayedWidthToBaseWidth,
@@ -93,6 +94,17 @@ export default function App() {
 
   const sidebarOpen = workspaceLayout?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen;
   const agentPanelOpen = workspaceLayout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
+  const appearance = useSettingsStore((s) => s.settings.appearance);
+  const appearancePreview = useSettingsStore((s) => s.preview?.appearance);
+  // 仅当 theme/acrylic 实际变化时才重建，避免每次渲染都重跑外观副作用
+  // （否则切换 AI 助手等操作会导致窗口效果反复调用、闪烁卡顿）
+  const effectiveAppearance = useMemo<AppearanceSettings>(
+    () => ({
+      theme: appearancePreview?.theme ?? appearance.theme,
+      acrylic: appearancePreview?.acrylic ?? appearance.acrylic,
+    }),
+    [appearance, appearancePreview],
+  );
   const disabledPlugins = useSettingsStore((s) => s.settings.disabledPlugins);
   const disableAllInjections = useSettingsStore((s) => s.settings.disableAllInjections);
   const authorizedCapabilities = useSettingsStore((s) => s.settings.authorizedCapabilities);
@@ -119,6 +131,20 @@ export default function App() {
   useEffect(() => {
     attachTransferListeners();
     return () => detachTransferListeners();
+  }, []);
+
+  // 外观：主题（浅色/深色/跟随系统）+ 亚克力窗口效果
+  useEffect(() => {
+    applyAppearance(effectiveAppearance);
+    applyWindowAcrylic(effectiveAppearance.acrylic).catch(() => {});
+  }, [effectiveAppearance]);
+
+  // 跟随系统主题时，响应系统深浅色切换
+  useEffect(() => {
+    const unsubscribe = watchSystemTheme(() => {
+      applyAppearance(useSettingsStore.getState().settings.appearance);
+    });
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -409,7 +435,8 @@ export default function App() {
   const AgentView = agentProvider ? getLazy(agentProvider) : null;
 
   return (
-    <div className="relative">
+    <div className="relative win-app-shell">
+      <div className="win-wallpaper" aria-hidden="true" />
       <AppHeader
         onToggleSidebar={handleToggleSidebar}
         onToggleAgentPanel={handleToggleAgentPanel}
@@ -417,7 +444,7 @@ export default function App() {
       />
 
       <div
-        className="flex flex-col h-screen bg-zinc-900 text-zinc-100 overflow-hidden pt-8"
+        className="flex flex-col h-screen win-app-surface text-zinc-100 overflow-hidden pt-8"
         data-window-resizing={isWindowResizing ? 'true' : undefined}
       >
         <div
@@ -477,11 +504,13 @@ export default function App() {
               <>
                 <TabBar />
                 <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                  {centerProvider && centerProvider.pluginId !== 'builtin' ? (
-                    <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
-                  ) : (
-                    <Suspense fallback={null}>{CenterView && <CenterView />}</Suspense>
-                  )}
+                  <div key={centerProvider?.id ?? 'center'} className="flex-1 flex flex-col min-w-0 overflow-hidden win-view-enter">
+                    {centerProvider && centerProvider.pluginId !== 'builtin' ? (
+                      <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
+                    ) : (
+                      <Suspense fallback={null}>{CenterView && <CenterView />}</Suspense>
+                    )}
+                  </div>
                 </main>
               </>
             )}

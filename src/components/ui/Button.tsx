@@ -11,14 +11,10 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantStyles: Record<ButtonVariant, string> = {
-  primary:
-    'bg-indigo-600 text-white hover:bg-indigo-500 focus:ring-indigo-500 disabled:bg-indigo-800',
-  secondary:
-    'bg-zinc-700 text-zinc-200 hover:bg-zinc-600 focus:ring-zinc-500 disabled:bg-zinc-800',
-  danger:
-    'bg-red-600 text-white hover:bg-red-500 focus:ring-red-500 disabled:bg-red-800',
-  ghost:
-    'bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100 focus:ring-zinc-600',
+  primary: 'win-btn--accent',
+  secondary: '',
+  danger: 'win-btn--danger',
+  ghost: 'win-btn--subtle',
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
@@ -39,17 +35,7 @@ export default function Button({
   return (
     <button
       disabled={disabled || loading}
-      className={`
-        inline-flex items-center justify-center gap-2 rounded-lg font-medium
-        transition-all duration-200
-        focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-offset-zinc-900
-        disabled:opacity-50 disabled:cursor-not-allowed
-        active:scale-95
-        ${variantStyles[variant]}
-        ${sizeStyles[size]}
-        ${className}
-      `}
-      style={{ transitionTimingFunction: 'var(--spring-bounce)' }}
+      className={`win-btn ${variantStyles[variant]} ${sizeStyles[size]} ${className}`}
       {...props}
     >
       {loading && (

@@ -14,20 +14,10 @@ export default function Input({ label, error, className = '', ...props }: Props)
         </label>
       )}
       <input
-        className={`
-          w-full rounded-lg bg-zinc-800 border px-3 py-2 text-sm text-zinc-100
-          placeholder:text-zinc-500 focus:outline-none transition-colors
-          ${
-            error
-              ? 'border-red-500 focus:border-red-400'
-              : 'border-zinc-700 focus:border-indigo-500'
-          }
-          disabled:opacity-50 disabled:cursor-not-allowed
-          ${className}
-        `}
+        className={`win-input ${error ? '!border-red-500' : ''} ${className}`}
         {...props}
       />
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
   );
 }

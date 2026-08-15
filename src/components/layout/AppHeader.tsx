@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { APP_NAME } from '@/lib/constants';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import WindowControls from '@/components/layout/WindowControls';
+import WinIcon from '@/components/ui/WinIcon';
 import { SyncStatusIndicator } from '@/components/settings/SyncStatusIndicator';
 
 interface Props {
@@ -10,8 +12,10 @@ interface Props {
 }
 
 export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, className }: Props) {
+  const [menuPressed, setMenuPressed] = useState(false);
+
   return (
-    <header className={`flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8 ${className ?? ''}`}>
+    <header className={`flex items-center justify-between win-acrylic border-b border-zinc-800 select-none h-8 ${className ?? ''}`}>
       <div
         className="flex items-center gap-3 px-2 flex-1"
         data-tauri-drag-region
@@ -28,13 +32,17 @@ export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, classNa
       >
         <button
           onClick={onToggleSidebar}
-          className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="win-icon-btn win-icon-btn--sm"
           title="切换侧边栏"
+          onPointerDown={() => setMenuPressed(true)}
+          onPointerUp={() => setMenuPressed(false)}
+          onPointerLeave={() => setMenuPressed(false)}
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-              d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-          </svg>
+          <WinIcon
+            glyph="hamburger"
+            size={16}
+            className={`animated-icon-hamburger ${menuPressed ? 'pressing' : 'releasing'}`}
+          />
         </button>
         <h1 className="text-xs font-bold tracking-wide text-zinc-200" data-tauri-drag-region>
           {APP_NAME}
@@ -43,7 +51,7 @@ export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, classNa
         <div className="flex-1" data-tauri-drag-region />
         <button
           onClick={onToggleAgentPanel}
-          className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="win-icon-btn win-icon-btn--sm"
           title="切换智能助手面板"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, type ReactNode } from 'react';
-import { HelpCircle, ArrowUpDown } from 'lucide-react';
 import HelpModal from '../HelpModal';
+import WinIcon from '@/components/ui/WinIcon';
 import TransferQueue from '../sftp/TransferQueue';
 import { useViewStore, byNavGroup } from '@/stores/viewStore';
 import { useTransferStore, selectBadgeCount } from '@/stores/transferStore';
@@ -44,21 +44,12 @@ function NavButton({
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`
-        relative flex items-center justify-center w-12 h-12 rounded-lg transition-colors
-        ${
-          active
-            ? 'bg-zinc-800 text-indigo-400'
-            : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60'
-        }
-      `}
+      className={`win-nav-item ${active ? 'active' : ''}`}
     >
-      {active && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-6 rounded-r bg-indigo-400" />
-      )}
-      {icon}
+      {active && <span className="win-nav-pill" />}
+      <span className="relative z-[1] flex items-center justify-center">{icon}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-indigo-500 text-[10px] leading-4 text-white text-center">
+        <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-indigo-500 text-[10px] leading-4 text-white text-center z-[2]">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -75,6 +66,31 @@ export default function NavRail({ activeId, onChange }: Props) {
   const transferOpen = useTransferStore((s) => s.open);
   const setTransferOpen = useTransferStore((s) => s.setOpen);
   const transferBtnRef = useRef<HTMLButtonElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const [indicatorY, setIndicatorY] = useState<number | null>(null);
+
+  // 计算激活项在导航栏内的纵向位置，驱动共享小蓝条滑动
+  useEffect(() => {
+    const updateIndicator = () => {
+      const nav = navRef.current;
+      if (!nav) return;
+      const active = nav.querySelector<HTMLElement>('.win-nav-item.active');
+      if (!active) {
+        setIndicatorY((prev) => (prev === null ? null : prev));
+        return;
+      }
+      const navRect = nav.getBoundingClientRect();
+      const btnRect = active.getBoundingClientRect();
+      setIndicatorY(btnRect.top - navRect.top + (btnRect.height - 20) / 2);
+    };
+    updateIndicator();
+    const raf = requestAnimationFrame(updateIndicator);
+    window.addEventListener('resize', updateIndicator);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', updateIndicator);
+    };
+  }, [activeId, transferOpen, providers]);
 
   useEffect(() => {
     registerTransferTarget(transferBtnRef.current);
@@ -82,7 +98,14 @@ export default function NavRail({ activeId, onChange }: Props) {
   }, []);
 
   return (
-    <nav className="flex flex-col items-center justify-between w-14 flex-shrink-0 bg-zinc-950 border-r border-zinc-800 py-2">
+    <nav
+      ref={navRef}
+      className="relative flex flex-col items-center justify-between w-14 flex-shrink-0 win-acrylic border-r border-zinc-800 py-2"
+    >
+      <span
+        className={`win-nav-indicator ${indicatorY !== null ? 'visible' : ''}`}
+        style={indicatorY !== null ? { ['--indicator-y' as string]: `${indicatorY}px` } : undefined}
+      />
       <div className="flex flex-col gap-1">
         {topItems.map((p) => (
           <NavButton
@@ -97,13 +120,13 @@ export default function NavRail({ activeId, onChange }: Props) {
       <div className="flex flex-col gap-1">
         <NavButton
           title="帮助"
-          icon={<HelpCircle className="w-5 h-5" />}
+          icon={<WinIcon glyph="help" size={20} />}
           active={false}
           onClick={() => setHelpOpen(true)}
         />
         <NavButton
-          title="传输中心"
-          icon={<ArrowUpDown className="w-5 h-5" />}
+          title="同步中心"
+          icon={<WinIcon glyph="sync" size={20} />}
           active={transferOpen}
           onClick={() => setTransferOpen(!transferOpen)}
           badge={transferBadge}

@@ -1,5 +1,6 @@
 import { useEffect, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import WinIcon from '@/components/ui/WinIcon';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -55,9 +56,7 @@ export default function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
-          exiting ? 'modal-backdrop-exit' : 'modal-backdrop-enter'
-        }`}
+        className={`absolute inset-0 bg-black/30 backdrop-blur-sm ${exiting ? 'win-dialog-backdrop-exit' : 'win-dialog-backdrop-enter'}`}
         onClick={dismissible ? onClose : undefined}
       />
 
@@ -66,33 +65,27 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         onAnimationEnd={presence.onAnimationEnd}
-        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${
-          exiting ? 'modal-panel-exit' : 'modal-panel-enter'
-        } ${SIZE_CLASSES[size]} ${contentClassName}`}
+        className={`win-dialog relative w-full mx-4 max-h-[90vh] flex flex-col ${exiting ? 'win-dialog-exit' : 'win-dialog-enter'} ${SIZE_CLASSES[size]} ${contentClassName}`}
       >
         {/* Header */}
         {title && (
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700 flex-shrink-0">
-            <h2 className="text-lg font-semibold text-zinc-100">{title}</h2>
+          <div className="win-dialog-header flex items-center justify-between px-5 py-4 flex-shrink-0">
+            <h2 className="win-dialog-title">{title}</h2>
             {dismissible && (
               <button
                 onClick={onClose}
-                className="text-zinc-400 hover:text-zinc-200 text-xl leading-none"
+                className="win-icon-btn win-icon-btn--sm"
                 aria-label="关闭"
               >
-                &times;
+                <WinIcon glyph="close" size={14} />
               </button>
             )}
           </div>
         )}
 
-        {/* Body：表单变高时可滚动，避免跳板等区块把密码/按钮裁切掉 */}
+        {/* Body：表单变高时可滚动，避免跳板块把密码/按钮裁剪掉 */}
         <div
-          className={`${title ? '' : 'pt-4'} ${
-            size === 'xl'
-              ? 'flex-1 overflow-hidden flex flex-col min-h-0'
-              : 'overflow-y-auto min-h-0'
-          }`}
+          className={`${title ? '' : 'pt-4'} ${size === 'xl' ? 'flex-1 overflow-hidden flex flex-col min-h-0' : 'overflow-y-auto min-h-0'}`}
         >
           {children}
         </div>

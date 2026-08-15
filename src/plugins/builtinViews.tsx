@@ -1,5 +1,6 @@
-import { Terminal, Wand, Plug, Settings } from 'lucide-react';
+import { Terminal, Wand } from 'lucide-react';
 import type { ViewProvider } from '@/lib/types';
+import WinIcon from '@/components/ui/WinIcon';
 import { useViewStore } from '@/stores/viewStore';
 
 const BUILTIN_PLUGIN_ID = 'builtin';
@@ -39,7 +40,7 @@ export function registerBuiltinViews(): void {
       pluginId: BUILTIN_PLUGIN_ID,
       mount: 'sidebar',
       title: '自定义 MCP',
-      icon: { kind: 'react', node: <Plug className="w-5 h-5" /> },
+      icon: { kind: 'react', node: <WinIcon glyph="link" size={20} /> },
       navGroup: 'top',
       order: 30,
       component: async () => ({
@@ -51,7 +52,7 @@ export function registerBuiltinViews(): void {
       pluginId: BUILTIN_PLUGIN_ID,
       mount: 'center',
       title: '终端',
-      icon: { kind: 'react', node: <Terminal className="w-5 h-5" /> },
+      icon: { kind: 'react', node: <WinIcon glyph="commandPrompt" size={20} /> },
       order: 10,
       component: async () => ({
         default: (await import('@/components/terminal/Terminal')).default,
@@ -62,7 +63,7 @@ export function registerBuiltinViews(): void {
       pluginId: BUILTIN_PLUGIN_ID,
       mount: 'center',
       title: '设置',
-      icon: { kind: 'react', node: <Settings className="w-5 h-5" /> },
+      icon: { kind: 'react', node: <WinIcon glyph="setting" size={20} /> },
       navGroup: 'bottom',
       order: 20,
       exclusive: true,

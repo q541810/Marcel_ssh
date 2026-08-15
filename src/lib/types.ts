@@ -551,6 +551,16 @@ export interface MobileBackgroundSettings {
   keepAliveEnabled: boolean;
 }
 
+export type AppearanceTheme = 'light' | 'dark' | 'system';
+
+export interface AppearanceSettings {
+  /** UI theme. 'system' follows the OS light/dark preference. */
+  theme: AppearanceTheme;
+  /** WinUI Acrylic window backdrop — lets the desktop show through the UI. */
+  acrylic: boolean;
+
+}
+
 export interface WorkspaceLayoutSettings {
   sidebarBaseWidth: number;
   agentBaseWidth: number;
@@ -611,6 +621,8 @@ export interface AppSettings {
    *  startup. Used to recover from a plugin whose injected JS hangs the
    *  main window. */
   disableAllInjections: boolean;
+  /** Appearance: UI theme + acrylic window backdrop (desktop). */
+  appearance: AppearanceSettings;
 }
 
 // LLM token usage — returned by the LLM provider in its API response

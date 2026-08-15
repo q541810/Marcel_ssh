@@ -250,7 +250,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       {menuProcess && createPortal(
         <div
           ref={menuRef}
-          className="context-menu-enter fixed z-50 w-36 rounded-lg border border-zinc-700 bg-zinc-800 p-1 shadow-lg"
+          className="win-flyout win-flyout-enter fixed z-50 w-40 py-1"
           style={{
             top: menuPos.y,
             left: menuPos.x,
@@ -259,7 +259,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
           <button
             type="button"
             onClick={() => handleCopyInfo(menuProcess)}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
+            className="win-menu-item text-xs"
           >
             复制所有信息
           </button>
@@ -269,7 +269,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
               setKillConfirm(menuProcess);
               setMenuProcess(null);
             }}
-            className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
+            className="win-menu-item win-menu-item--danger text-xs"
           >
             终止进程
           </button>
@@ -278,28 +278,20 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
       )}
 
       {killConfirm && createPortal(
-        <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl p-4">
-            <h3 className="text-sm font-semibold text-red-300 mb-2">确认终止进程</h3>
-            <p className="text-xs text-zinc-400 mb-1">
-              PID: <span className="text-zinc-200">{killConfirm.pid}</span>
+        <div className="win-dialog-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="win-dialog win-dialog-enter w-80 p-4">
+            <h3 className="text-sm font-semibold text-red-500 mb-2">确认终止进程</h3>
+            <p className="text-xs text-zinc-500 mb-1">
+              PID: <span className="text-zinc-800 font-medium">{killConfirm.pid}</span>
             </p>
-            <p className="text-xs text-zinc-400 mb-4">
-              命令: <span className="text-zinc-200">{killConfirm.comm}</span>
+            <p className="text-xs text-zinc-500 mb-4">
+              命令: <span className="text-zinc-800 font-medium">{killConfirm.comm}</span>
             </p>
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setKillConfirm(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-zinc-600"
-              >
+              <button type="button" onClick={() => setKillConfirm(null)} className="win-btn win-btn--sm">
                 取消
               </button>
-              <button
-                type="button"
-                onClick={() => handleKill(killConfirm)}
-                className="px-3 py-1.5 rounded-lg text-xs text-white bg-red-600 hover:bg-red-500"
-              >
+              <button type="button" onClick={() => handleKill(killConfirm)} className="win-btn win-btn--sm win-btn--danger">
                 确认终止
               </button>
             </div>

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
+import WinIcon from '@/components/ui/WinIcon';
 
 export interface SelectOption<T extends string = string> {
   value: T;
@@ -15,11 +16,7 @@ interface Props<T extends string = string> {
   className?: string;
 }
 
-const chevron = (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="m6 9 6 6 6-6" />
-  </svg>
-);
+const chevron = <WinIcon glyph="chevronDown" size={16} />;
 
 export default function Select<T extends string = string>({
   value,
@@ -117,17 +114,10 @@ export default function Select<T extends string = string>({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className={`
-          w-full flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm text-left
-          transition-colors active:scale-[0.98]
-          ${disabled
-            ? 'border-zinc-700 bg-zinc-800/50 text-zinc-500 cursor-not-allowed'
-            : 'border-zinc-700 bg-zinc-800 text-zinc-100 hover:border-zinc-600 focus:outline-none focus:border-indigo-500'
-          }
-        `}
+        className={`win-input flex items-center gap-2 text-left ${disabled ? 'opacity-45 pointer-events-none' : ''}`}
       >
         <span className="flex-1 truncate">{selectedLabel}</span>
-        <span className={`flex-shrink-0 text-zinc-500 transition-transform ${open ? 'rotate-180' : ''}`}>
+        <span className={`chevron-animate flex-shrink-0 text-zinc-500 ${open ? 'pressing' : ''}`}>
           {chevron}
         </span>
       </button>
@@ -136,43 +126,29 @@ export default function Select<T extends string = string>({
         <div
           ref={listRef}
           role="listbox"
-          className={`
-            absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto
-            rounded-lg border border-zinc-700 bg-zinc-800 shadow-2xl
-          `}
+          className="win-flyout win-flyout-enter absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto py-1"
           style={{ top: '100%' }}
         >
           {options.map((opt, i) => {
             const active = i === focusIdx;
-            const selected = opt.value === value;
+            const selectedOpt = opt.value === value;
             return (
               <div
                 key={opt.value}
                 role="option"
-                aria-selected={selected}
+                aria-selected={selectedOpt}
                 aria-disabled={opt.disabled}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   select(opt);
                 }}
                 onPointerEnter={() => setFocusIdx(i)}
-                className={`
-                  flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
-                  ${active ? 'bg-zinc-700' : ''}
-                  ${selected ? 'text-indigo-400' : 'text-zinc-200'}
-                  ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-700'}
-                `}
+                className={`win-menu-item ${active ? 'win-menu-item--active' : ''} ${opt.disabled ? 'opacity-45' : ''}`}
               >
-                {selected ? (
-                  <span className="flex-shrink-0 w-4">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  </span>
-                ) : (
-                  <span className="flex-shrink-0 w-4" />
-                )}
                 <span className="flex-1 truncate">{opt.label}</span>
+                {selectedOpt && (
+                  <WinIcon glyph="checkMark" size={16} className="flex-shrink-0" />
+                )}
               </div>
             );
           })}

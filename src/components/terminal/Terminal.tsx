@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
 import { sshSendInput } from '@/lib/tauri';
+import { resolveTerminalBackground } from '@/lib/terminalBackground';
 import { BOTTOM_TABS, DEFAULT_TERMINAL_COLORS, type BottomTab } from '@/lib/constants';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -68,6 +69,12 @@ export default function Terminal() {
   const fontSize = preview?.fontSize ?? storeSettings.fontSize;
   const fontFamily = preview?.fontFamily ?? storeSettings.fontFamily;
   const terminalColors = preview?.terminalColors ?? storeSettings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+  const appearance = preview?.appearance ?? storeSettings.appearance;
+  const acrylicOn = appearance?.acrylic ?? true;
+  const effectiveTerminalColors = useMemo(
+    () => resolveTerminalBackground(terminalColors, acrylicOn),
+    [terminalColors, acrylicOn],
+  );
 
   // Register callbacks for paste confirm and copy
   useEffect(() => {
@@ -189,7 +196,7 @@ export default function Terminal() {
     for (const [, instance] of terminalInstanceManager.getAll()) {
       instance.terminal.options.fontSize = fontSize;
       instance.terminal.options.fontFamily = fontFamily;
-      instance.terminal.options.theme = terminalColors;
+      instance.terminal.options.theme = effectiveTerminalColors;
       requestAnimationFrame(() => {
         instance.fitAddon.fit();
         if (instance.id === activeInstanceId) {
@@ -197,12 +204,16 @@ export default function Terminal() {
         }
       });
     }
-  }, [fontSize, fontFamily, terminalColors, activeInstanceId]);
+  }, [fontSize, fontFamily, effectiveTerminalColors, activeInstanceId]);
 
   const hasSessions = Object.keys(sessions).length > 0;
 
   return (
-    <div ref={terminalRootRef} data-region="terminal" className="flex flex-col flex-1 h-full bg-zinc-900">
+    <div
+      ref={terminalRootRef}
+      data-region="terminal"
+      className="flex flex-col flex-1 h-full win-terminal"
+    >
       <div className="relative flex-1 min-h-0">
         <div ref={wrapperRef} className="absolute inset-0" />
         {!hasSessions && (

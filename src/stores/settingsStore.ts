@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings, AppearanceSettings } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { setNotificationVolume } from '@/lib/notificationSound';
@@ -62,6 +62,12 @@ export const DEFAULT_MOBILE_BACKGROUND_SETTINGS: MobileBackgroundSettings = {
   keepAliveEnabled: false,
 };
 
+export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
+  // 默认浅色（非暗色），亚克力默认开启（可在设置中关闭）
+  theme: 'light',
+  acrylic: true,
+};
+
 const DEFAULT_SETTINGS: AppSettings = {
   terminalColors: DEFAULT_TERMINAL_COLORS,
   fontSize: 14,
@@ -90,6 +96,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   disabledPlugins: [],
   authorizedCapabilities: {},
   disableAllInjections: false,
+  appearance: DEFAULT_APPEARANCE_SETTINGS,
 };
 
 interface SettingsState {
@@ -151,6 +158,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         mobileBackgroundSettings: {
           ...DEFAULT_MOBILE_BACKGROUND_SETTINGS,
           ...(fromDisk.mobileBackgroundSettings ?? {}),
+        },
+        appearance: {
+          ...DEFAULT_APPEARANCE_SETTINGS,
+          ...(fromDisk.appearance ?? {}),
         },
       };
       set({

@@ -389,6 +389,31 @@ impl Default for WorkspaceLayoutSettings {
     }
 }
 
+/// UI appearance preferences (light/dark/system theme + acrylic backdrop).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AppearanceSettings {
+    /// UI theme: "light" | "dark" | "system" (system follows the OS).
+    #[serde(default = "default_appearance_theme")]
+    pub theme: String,
+    /// WinUI Acrylic window backdrop that lets the desktop show through.
+    #[serde(default = "default_true")]
+    pub acrylic: bool,
+}
+
+fn default_appearance_theme() -> String {
+    "light".to_string()
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            theme: default_appearance_theme(),
+            acrylic: true,
+        }
+    }
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -474,6 +499,9 @@ pub struct AppSettings {
     /// main window.
     #[serde(default)]
     pub disable_all_injections: bool,
+    /// UI appearance (theme + acrylic). Local preference, not synced.
+    #[serde(default)]
+    pub appearance: AppearanceSettings,
 }
 
 fn default_file_manager_path() -> String {
@@ -547,6 +575,7 @@ impl Default for AppSettings {
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
+            appearance: AppearanceSettings::default(),
         }
     }
 }

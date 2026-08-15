@@ -47,7 +47,7 @@ export function SettingsSidebar({
 
   return (
     <div
-      className="settings-sidebar flex-shrink-0 bg-zinc-950 border-r border-zinc-800 flex flex-col"
+      className="settings-sidebar flex-shrink-0 bg-zinc-900 border-r border-zinc-800 flex flex-col"
       style={{ width: `${layout.sidebarWidth}px` }}
     >
       <div className={`settings-sidebar-padding ${layout.mode === 'wide' ? 'p-5' : 'p-4'}`}>

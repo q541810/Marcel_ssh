@@ -16,7 +16,7 @@ const sizeStyles: Record<BadgeSize, string> = {
   lg: 'px-2.5 py-1 text-sm',
 };
 
-const defaultStyle = 'bg-zinc-700 text-zinc-300';
+const defaultStyle = 'win-badge';
 
 export default function Badge({ variant = 'default', size = 'sm', children }: Props) {
   const colorClass =

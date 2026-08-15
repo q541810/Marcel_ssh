@@ -6,6 +6,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { resolveTerminalBackground } from '@/lib/terminalBackground';
 import { openExternalLink } from '@/lib/externalLinks';
 import { useSettingsStore } from '@/stores/settingsStore';
 
@@ -67,10 +68,15 @@ class TerminalInstanceManager {
 
     const initialFontSize = useSettingsStore.getState().settings.fontSize;
     const initialFontFamily = useSettingsStore.getState().settings.fontFamily;
-    const initialColors = useSettingsStore.getState().settings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+    const settingsAtCreate = useSettingsStore.getState().settings;
+    const initialColors = settingsAtCreate.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+    const effectiveColors = resolveTerminalBackground(
+      initialColors,
+      settingsAtCreate.appearance?.acrylic ?? true,
+    );
 
     const terminal = new XTerm({
-      theme: initialColors,
+      theme: effectiveColors,
       fontSize: initialFontSize,
       fontFamily: initialFontFamily,
       cursorBlink: true,

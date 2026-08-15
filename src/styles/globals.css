@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
-@import 'highlight.js/styles/github-dark.css';
+@import "./winui.css";
+/* hljs theme is swapped at runtime by lib/appearance (github.css <-> github-dark.css) */
 
 /* xterm.js styles */
 @import "@xterm/xterm/css/xterm.css";
@@ -156,7 +157,7 @@ body,
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #18181b;
+  background-color: var(--window-bg);
 }
 
 /*
@@ -191,18 +192,18 @@ html[data-marcel-platform='mobile'] #root {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Firefox scrollbar */
 html {
   scrollbar-width: thin;
-  scrollbar-color: #3f3f46 transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 /* ── Custom range slider ── */
@@ -212,8 +213,8 @@ input[type='range']::-webkit-slider-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--color-bg-primary, #18181b);
-  border: 2px solid var(--color-accent, #a78bfa);
+  background: var(--color-bg-primary, #ffffff);
+  border: 2px solid var(--color-accent, #0067c0);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -222,8 +223,8 @@ input[type='range']::-moz-range-thumb {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--color-bg-primary, #18181b);
-  border: 2px solid var(--color-accent, #a78bfa);
+  background: var(--color-bg-primary, #ffffff);
+  border: 2px solid var(--color-accent, #0067c0);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -340,7 +341,7 @@ button:active {
 }
 
 .animate-slide-up {
-  animation: slideUp 250ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: slideUp 220ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
 }
 
 @keyframes slideDownOut {
@@ -405,11 +406,11 @@ button:active {
 }
 
 .animate-settings-workspace-enter {
-  animation: settingsWorkspaceEnter 320ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: settingsWorkspaceEnter 280ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
 }
 
 .settings-shell > :first-child {
-  animation: settingsSidebarEnter 320ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: settingsSidebarEnter 280ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -434,7 +435,7 @@ button:active {
 }
 
 .modal-panel-enter {
-  animation: scaleIn 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: scaleIn 200ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
 }
 
 .modal-panel-exit {
@@ -451,7 +452,7 @@ button:active {
 
 /* Context menu：快进快出，退出直接卸载（贴近原生菜单行为） */
 .context-menu-enter {
-  animation: scaleIn 120ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: scaleIn 120ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
   transform-origin: top left;
 }
 
@@ -467,7 +468,8 @@ button:active {
 
 /* Dropdown animations（menu 由 .context-menu-enter 单独控制） */
 [role="listbox"] {
-  animation: slideDown 100ms cubic-bezier(0.4, 0, 0.2, 1);
+  animation: slideDown 140ms cubic-bezier(0.1, 0.9, 0.2, 1);
+  transform-origin: top center;
 }
 
 /* Smooth hover effects */
@@ -483,7 +485,7 @@ button,
 
 /* Focus ring animations */
 :focus-visible {
-  outline: 2px solid #6366f1;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   transition: outline-offset 200ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1));
 }
@@ -713,7 +715,7 @@ button,
 }
 
 .main-row-enter {
-  animation: mainRowEnter 900ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: mainRowEnter 560ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
 }
 
 /* ── Mobile shell animations ── */
