@@ -1168,7 +1168,7 @@ impl SyncEngine {
         if let Some(cb) = progress {
             cb(0, total);
         }
-        log::info!("[sync] pull 收到 {} 项变更", total);
+        log::debug!("[sync] pull 收到 {} 项变更", total);
         let started = std::time::Instant::now();
 
         // ── 阶段 1：逐 item 解密 + 读 ours + 三方合并（纯计算，不写盘） ──
@@ -1361,7 +1361,7 @@ impl SyncEngine {
         }
 
         let conflict_count = this_pull_conflicts;
-        log::info!(
+        log::debug!(
             "[sync] pull 处理完成（耗时 {:?}，{} 项，冲突 {} 项）",
             started.elapsed(),
             total,

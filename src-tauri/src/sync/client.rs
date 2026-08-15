@@ -417,7 +417,7 @@ where
         let bytes = resp.bytes().await.map_err(|e| {
             AppError::Network(format!("读取响应失败 ({}): {}", label, e))
         })?;
-        log::info!("[sync] {} 响应 {} 字节", label, bytes.len());
+        log::debug!("[sync] {} 响应 {} 字节", label, bytes.len());
         tokio::task::spawn_blocking(move || serde_json::from_slice::<T>(&bytes))
             .await
             .map_err(|e| {

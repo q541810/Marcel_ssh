@@ -411,7 +411,7 @@ impl SyncScheduler {
         };
 
         let started = std::time::Instant::now();
-        log::info!("[sync] push 开始（先 pull 合并）");
+        log::debug!("[sync] push 开始（先 pull 合并）");
 
         // 1) pull first（已持锁，勿再调 do_pull）
         self.update_state_and_emit(SyncState::Pulling, None, None);
@@ -441,7 +441,7 @@ impl SyncScheduler {
         match result {
             Ok(_) => {
                 let pending = self.engine.pending_count();
-                log::info!("[sync] push 完成（耗时 {:?}）", started.elapsed());
+                log::debug!("[sync] push 完成（耗时 {:?}）", started.elapsed());
                 self.update_state_and_emit(SyncState::Idle, None, None);
                 tracing_log_pending(pending);
             }
@@ -474,7 +474,7 @@ impl SyncScheduler {
         };
 
         let started = std::time::Instant::now();
-        log::info!("[sync] pull 开始");
+        log::debug!("[sync] pull 开始");
         self.update_state_and_emit(SyncState::Pulling, None, None);
 
         // 进度回调：1s 节流 + done == total 强制末次 + 首个立即发
@@ -517,7 +517,7 @@ impl SyncScheduler {
             Ok(_) => {
                 self.consecutive_failures.store(0, Ordering::SeqCst);
                 self.next_auto_pull_at_ms.store(0, Ordering::SeqCst);
-                log::info!("[sync] pull 完成（耗时 {:?}）", started.elapsed());
+                log::debug!("[sync] pull 完成（耗时 {:?}）", started.elapsed());
                 self.update_state_and_emit(SyncState::Idle, None, None);
                 // pull 后检测冲突，emit 事件让前端弹冲突 UI
                 if self.engine.has_pending_conflicts() {
