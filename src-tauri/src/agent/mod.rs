@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod approval;
+pub mod context;
 pub mod conversation;
 pub mod conversation_persister;
 pub mod image_store;

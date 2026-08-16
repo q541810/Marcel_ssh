@@ -56,6 +56,60 @@ fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
         .map_or(false, |t| t.status == AgentStatus::Cancelled)
 }
 
+/// 把单个压缩生命周期事件实时转发为前端 stream 事件（压缩可感知/可监视）。
+/// 压缩期间摘要文本增量也会经 `Progress` 事件实时推送，前端据此显示进度。
+pub(crate) fn forward_compaction_event(
+    app: &AppHandle,
+    event_name: &str,
+    ev: crate::agent::context::CompactionEvent,
+) {
+    match ev {
+        crate::agent::context::CompactionEvent::SummarizingStart { trigger } => {
+            emit_event(
+                app,
+                event_name,
+                StreamEvent::CompactionStart {
+                    trigger: trigger.to_string(),
+                },
+            );
+        }
+        crate::agent::context::CompactionEvent::Progress { text } => {
+            emit_event(app, event_name, StreamEvent::CompactionProgress { text });
+        }
+        crate::agent::context::CompactionEvent::Done { outcome } => {
+            emit_event(
+                app,
+                event_name,
+                StreamEvent::CompactionDone {
+                    summary: outcome.summary.clone(),
+                    shadowed_messages: outcome.shadowed_messages,
+                    shadowed_tokens: outcome.shadowed_tokens,
+                    shadowed_start_non_system: outcome.shadowed_start_non_system,
+                    shadowed_roles: outcome
+                        .shadowed_roles
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                    shadowed_tool_call_ids: outcome.shadowed_tool_call_ids.clone(),
+                },
+            );
+        }
+        crate::agent::context::CompactionEvent::Skipped {
+            reason,
+            attempted,
+        } => {
+            emit_event(
+                app,
+                event_name,
+                StreamEvent::CompactionSkipped {
+                    reason: reason.clone(),
+                    attempted,
+                },
+            );
+        }
+    }
+}
+
 /// Groups all parameters needed by the agent loop into a single context struct.
 pub(crate) struct LoopContext {
     pub ssh: SshManager,
@@ -113,6 +167,8 @@ pub(crate) async fn run_agent_loop(
     persister.save_last_user_msg(&messages);
 
     let max_rounds = agent_settings.max_tool_rounds.max(10);
+    // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
+    let mut overflow_retries = 0usize;
 
     // Wrap the provider in Arc so the dispatcher's command approver can share
     // it without cloning the underlying HTTP client / config.
@@ -121,7 +177,7 @@ pub(crate) async fn run_agent_loop(
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
         mode.clone(),
-        agent_settings,
+        agent_settings.clone(),
         task_id.clone(),
         app.clone(),
         state.clone(),
@@ -148,6 +204,36 @@ pub(crate) async fn run_agent_loop(
         });
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
             messages.push(LlmMessage::system(plan_context));
+        }
+
+        // 0.5 运行时上下文治理（pressure 触发，对齐 DSH compaction）：
+        //     估算 token 超窗口阈值（context_window × 0.8）时，先修剪旧工具结果，
+        //     再对旧轮次做 LLM 摘要替换。压缩全过程经 on_event 实时发前端事件
+        //     （开始即显示进行中卡片，摘要文本增量实时推送，可感知/可监视）。
+        //     成功后由前端落库压缩卡片（含被压消息 id 列表，重启回放重建视图）；
+        //     本处不再落库，避免与前端重复。失败只记日志，不阻断任务。
+        let on_event = |ev: crate::agent::context::CompactionEvent| {
+            forward_compaction_event(&app, &event_name, ev);
+        };
+        let run = crate::agent::context::compact_if_needed(
+            &mut messages,
+            &provider,
+            &tools,
+            agent_settings.context_window,
+            crate::agent::context::CompactionTrigger::Pressure,
+            &mut cancel_rx,
+            &on_event,
+        )
+        .await;
+        if let Some(outcome) = &run.outcome {
+            let persisted = persister.persist_compaction(outcome);
+            log::info!(
+                "Agent {} compacted: {} messages, ~{} tokens (persisted={})",
+                task_id,
+                outcome.shadowed_messages,
+                outcome.shadowed_tokens,
+                persisted
+            );
         }
 
         // 1. Call LLM (streaming) — with cancellation support
@@ -186,9 +272,68 @@ pub(crate) async fn run_agent_loop(
         let _ = forwarder.await;
 
         let assistant_msg = match result {
-            Ok(msg) => msg,
+            Ok(msg) => {
+                // 一轮成功响应重置溢出恢复预算（对齐 DSH：assistant/message 重置）
+                overflow_retries = 0;
+                msg
+            }
             Err(e) => {
                 let err_msg = e.to_string();
+                // 上下文超限恢复（对齐 DSH request-error 恢复）：压缩一次后重试该轮
+                if crate::agent::context::is_context_overflow_error(&err_msg)
+                    && overflow_retries < crate::agent::context::DEFAULT_MAX_OVERFLOW_RETRIES
+                {
+                    let on_event = |ev: crate::agent::context::CompactionEvent| {
+                        forward_compaction_event(&app, &event_name, ev);
+                    };
+                    let run = crate::agent::context::compact_if_needed(
+                        &mut messages,
+                        &provider,
+                        &tools,
+                        agent_settings.context_window,
+                        crate::agent::context::CompactionTrigger::ContextOverflow,
+                        &mut cancel_rx,
+                        &on_event,
+                    )
+                    .await;
+                    if let Some(outcome) = &run.outcome {
+                        let persisted = persister.persist_compaction(outcome);
+                        overflow_retries += 1;
+                        log::info!(
+                            "Agent {} context overflow: compacted {} messages, retrying round (persisted={})",
+                            task_id,
+                            outcome.shadowed_messages,
+                            persisted
+                        );
+                        continue;
+                    }
+                    let reasons = run
+                        .events
+                        .iter()
+                        .filter_map(|ev| match ev {
+                            crate::agent::context::CompactionEvent::Skipped {
+                                reason, ..
+                            } => Some(reason.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    log::warn!(
+                        "Agent {} context overflow recovery failed: {}",
+                        task_id,
+                        if reasons.is_empty() {
+                            "no compactable range"
+                        } else {
+                            &reasons
+                        }
+                    );
+                    // 压缩期间用户取消 → 走取消路径而非错误路径
+                    if is_task_cancelled(&state, &task_id) {
+                        emit_final_plan_normalized(&app, &state, &task_id);
+                        emit_event(&app, &event_name, StreamEvent::Done);
+                        return None;
+                    }
+                }
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(
                     &app,
@@ -212,7 +357,25 @@ pub(crate) async fn run_agent_loop(
             }
         };
 
-        // 2. Check if assistant returned tool calls
+        // 2. max-tokens 截断处理（对齐 DSH BlockAssembler：丢弃未闭合的 tool-call block）。
+        //    finish_reason == "length" 时，工具调用参数可能被截断不完整，执行会以残缺
+        //    参数跑命令（安全相关）。整体丢弃 tool_calls（无法区分完整/残缺），
+        //    并把本轮视为"未完成"：有文本则保存后继续下一轮补完，无文本则直接跳过。
+        let truncated = assistant_msg.finish_reason.as_deref() == Some("length");
+        let mut assistant_msg = assistant_msg;
+        if truncated {
+            if let Some(calls) = assistant_msg.tool_calls.take() {
+                if !calls.is_empty() {
+                    log::info!(
+                        "Agent {} response truncated at token cap: dropped {} incomplete tool call(s)",
+                        task_id,
+                        calls.len()
+                    );
+                }
+            }
+        }
+
+        // 3. Check if assistant returned tool calls
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
             let cleaned_content = strip_thinking_tags(&assistant_msg.content);
@@ -220,6 +383,17 @@ pub(crate) async fn run_agent_loop(
                 content: cleaned_content.clone(),
                 ..assistant_msg
             };
+            // 截断且无有效文本：不落库、不进消息链（对齐 DSH"空内容不进派生历史"），
+            // 直接下一轮。save_msg 必须在此检查之后：否则空 content 会落库成一条空
+            // assistant 行（save_message 无条件 INSERT），与 live store（前端收不到
+            // 空文本）漂移——重启后出现空消息，压缩 count-walk 也与前端投影对不上。
+            if truncated && cleaned_content.is_empty() {
+                log::warn!(
+                    "Agent {} truncated at token cap with empty text; skipping message and continuing",
+                    task_id
+                );
+                continue;
+            }
             let _ = persister.save_msg(
                 "assistant",
                 &cleaned_msg.content,
@@ -227,6 +401,14 @@ pub(crate) async fn run_agent_loop(
                 cleaned_msg.reasoning_content.as_deref(),
             );
             messages.push(cleaned_msg);
+            // 截断但已产生文本：保存消息后继续下一轮，让模型补完（不视为自然结束）
+            if truncated {
+                log::info!(
+                    "Agent {} truncated at token cap; continuing to next round",
+                    task_id
+                );
+                continue;
+            }
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
             if !is_subtask {
@@ -365,6 +547,7 @@ pub(crate) async fn run_agent_loop(
                     tool_call_id: Some(tc.id),
                     reasoning_content: None,
                     image_paths: None,
+                    finish_reason: None,
                 };
                 let _ = persister.save_msg(
                     "tool",
@@ -436,6 +619,7 @@ pub(crate) async fn run_agent_loop(
                 tool_call_id: Some(tc.id),
                 reasoning_content: None,
                 image_paths: None,
+                finish_reason: None,
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).

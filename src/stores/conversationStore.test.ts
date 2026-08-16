@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useTaskStore } from '@/stores/taskStore';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { getStreamState, setStreamState } from './agentStreamHandlers';
 import type { AgentMessage, AgentTask } from '@/lib/types';
 
 const {
@@ -12,6 +12,8 @@ const {
   agentCreateConversation,
   agentDeleteConversation,
   agentGetConversation,
+  agentCompactConversation,
+  listen,
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
@@ -20,6 +22,8 @@ const {
   agentCreateConversation: vi.fn(),
   agentDeleteConversation: vi.fn(),
   agentGetConversation: vi.fn(),
+  agentCompactConversation: vi.fn(),
+  listen: vi.fn(),
 }));
 
 vi.mock('@/lib/tauri', () => ({
@@ -30,11 +34,19 @@ vi.mock('@/lib/tauri', () => ({
   agentCreateConversation,
   agentDeleteConversation,
   agentGetConversation,
+  agentCompactConversation,
+}));
+
+// compactConversation 经 attachStreamListener 订阅 `agent://stream/{taskId}`；
+// 测试环境无 Tauri 事件系统，mock listen 返回 no-op unlisten。
+vi.mock('@tauri-apps/api/event', () => ({
+  listen,
 }));
 
 describe('conversationStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listen.mockResolvedValue(() => {});
     agentLoadPlansByConversation.mockResolvedValue([]);
     useConversationStore.setState({
       conversations: {},
@@ -689,6 +701,32 @@ describe('conversationStore', () => {
       expect(useTaskStore.getState().activeTaskId).toBeNull();
     });
 
+    it('loads the backend-compacted view as-is (card already positioned by created_at, no replay)', async () => {
+      // 后端结构化落库后 load_messages 直接返回压缩视图：卡片在 span 位置、
+      // 被压消息已归档隐藏——前端原样展示，不需要任何回放/位置修正。
+      agentLoadConversation.mockResolvedValue([
+        {
+          id: 'card1',
+          conversationId: 'conv-1',
+          role: 'system',
+          content: '【上下文已压缩】已整理 3 条历史消息（约 1000 tokens）\n\n## Primary Request\n- s1',
+          timestamp: now,
+          createdAt: now,
+        },
+        { id: 'm4', conversationId: 'conv-1', role: 'user', content: 'u2', timestamp: now, createdAt: now },
+      ]);
+      agentLoadPlansByConversation.mockResolvedValue([]);
+      seedConversation('conv-1', []);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      await useConversationStore.getState().switchConversation('conv-1');
+
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs.map((m) => m.id)).toEqual(['card1', 'm4']);
+      expect(msgs[0].compaction?.status).toBe('done');
+      expect(msgs[0].compaction?.summary).toContain('s1');
+    });
+
     it('subagent (plan-mode) running task is restored after switching to its conversation', async () => {
       agentLoadConversation.mockResolvedValue([]);
       agentLoadPlansByConversation.mockResolvedValue([]);
@@ -971,6 +1009,51 @@ describe('conversationStore', () => {
       expect(history).toEqual([
         { role: 'user', content: 'hi' },
         { role: 'assistant', content: 'answer' },
+      ]);
+    });
+
+    it('emits a user checkpoint for a done compaction card, positioned at the card site', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-cp': [
+            makeMessage({
+              id: 'card1',
+              role: 'system',
+              content: '【上下文已压缩】已整理 3 条历史消息（约 1000 tokens）',
+              compaction: { status: 'done', summary: '## Primary Request\n- build a terminal', shadowedMessages: 3, shadowedTokens: 1000 },
+            }),
+            makeMessage({ id: 'm4', role: 'user', content: 'continue' }),
+            makeMessage({ id: 'm5', role: 'assistant', content: 'ok' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-cp');
+      expect(history).toHaveLength(3);
+      // checkpoint 是 user 角色、framing 与后端逐字节一致
+      expect(history[0].role).toBe('user');
+      expect(history[0].content).toContain('<compacted-summary>');
+      expect(history[0].content).toContain('## Primary Request\n- build a terminal');
+      expect(history[0].content.startsWith('This is an automatically generated checkpoint')).toBe(true);
+      expect(history[1]).toEqual({ role: 'user', content: 'continue' });
+      expect(history[2]).toEqual({ role: 'assistant', content: 'ok' });
+    });
+
+    it('skips running compaction cards and other system notices in history', () => {
+      useConversationStore.setState({
+        messages: {
+          'conv-cp2': [
+            makeMessage({ id: 'u1', role: 'user', content: 'go' }),
+            makeMessage({ id: 'rc', role: 'system', content: '上下文压缩中…', compaction: { status: 'running' } }),
+            makeMessage({ id: 'a1', role: 'assistant', content: 'done' }),
+          ],
+        },
+      });
+
+      const history = useConversationStore.getState().buildLlmHistory('conv-cp2');
+      expect(history).toEqual([
+        { role: 'user', content: 'go' },
+        { role: 'assistant', content: 'done' },
       ]);
     });
 
@@ -1320,290 +1403,7 @@ describe('conversationStore', () => {
     });
   });
 
-  describe('buildLlmHistory compression', () => {
-    function makeRoundMessages(
-      round: number,
-      toolResultContent: string,
-    ): AgentMessage[] {
-      return [
-        makeMessage({ id: `u${round}`, role: 'user', content: `prompt ${round}` }),
-        makeMessage({ id: `a${round}`, role: 'assistant', content: `Let me check round ${round}...` }),
-        makeMessage({
-          id: `t${round}`,
-          role: 'tool',
-          content: '',
-          toolResult: {
-            toolName: 'execute_command',
-            summary: `$ cmd ${round}`,
-            result: toolResultContent,
-            success: true,
-            blocked: false,
-            arguments: { command: `ls ${round}` },
-            toolCallId: `call-${round}`,
-          },
-        }),
-        makeMessage({ id: `a2-${round}`, role: 'assistant', content: `Result for round ${round} done.` }),
-      ];
-    }
-
-    function enableCompactContext() {
-      const current = useSettingsStore.getState().settings;
-      useSettingsStore.setState({
-        settings: {
-          ...current,
-          agentModeSettings: {
-            ...current.agentModeSettings,
-            compactContext: true,
-          },
-        },
-      });
-    }
-
-    function disableCompactContext() {
-      const current = useSettingsStore.getState().settings;
-      useSettingsStore.setState({
-        settings: {
-          ...current,
-          agentModeSettings: {
-            ...current.agentModeSettings,
-            compactContext: false,
-          },
-        },
-      });
-    }
-
-    it('does not compress when compactContext is off', () => {
-      disableCompactContext();
-      const manyLines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join('\n');
-      const msgs = [
-        ...makeRoundMessages(1, manyLines),
-      ];
-      useConversationStore.setState({ messages: { 'comp-1': msgs } });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-1');
-      const toolMsg = history.find((m) => m.role === 'tool');
-      expect(toolMsg!.content).toBe(manyLines);
-      expect(toolMsg!.content).not.toContain('旧Tool Result');
-    });
-
-    it('does not compress when cumulative tokens under 80k', () => {
-      enableCompactContext();
-      const manyLines = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join('\n');
-      useConversationStore.setState({
-        messages: {
-          'comp-2': [
-            makeMessage({ id: 'u1', role: 'user', content: 'go' }),
-            makeMessage({ id: 'a1', role: 'assistant', content: 'OK' }),
-            makeMessage({
-              id: 't1',
-              role: 'tool',
-              content: '',
-              toolResult: {
-                toolName: 'cmd',
-                summary: '',
-                result: manyLines,
-                success: true,
-                blocked: false,
-                toolCallId: 'call-x',
-              },
-            }),
-          ],
-        },
-      });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-2');
-      const toolMsg = history.find((m) => m.role === 'tool');
-      expect(toolMsg!.content).toBe(manyLines);
-    });
-
-    it('does not compress when rounds <= 5 even if over 80k', () => {
-      enableCompactContext();
-      // Need > 80k tokens = 320_001+ chars
-      const bigToolResult = 'x'.repeat(320_100);
-
-      useConversationStore.setState({
-        messages: {
-          'comp-3': [
-            makeMessage({ id: 'u1', role: 'user', content: 'r1' }),
-            makeMessage({ id: 'a1', role: 'assistant', content: 'Check...' }),
-            makeMessage({
-              id: 't1',
-              role: 'tool',
-              content: '',
-              toolResult: {
-                toolName: 'cmd',
-                summary: '',
-                result: bigToolResult,
-                success: true,
-                blocked: false,
-                toolCallId: 'call-b1',
-              },
-            }),
-            makeMessage({ id: 'a1b', role: 'assistant', content: 'Done round 1.' }),
-          ],
-        },
-      });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-3');
-      // Only 1 round, cumulative > 80k but rounds <= 5 → no compression
-      const toolMsg = history.find((m) => m.role === 'tool');
-      expect(toolMsg!.content).toBe(bigToolResult);
-    });
-
-    it('truncates tool result when over 80k and over 5 rounds and content > 20 lines', () => {
-      enableCompactContext();
-      // 6 rounds, each with a big tool result so cumulative > 80k
-      // Total: 6 * 55k = 330k chars = 82.5k tokens > 80k
-      const roundToolContent = 'x'.repeat(55_000);
-
-      const msgs: AgentMessage[] = [];
-      for (let r = 1; r <= 6; r++) {
-        msgs.push(...makeRoundMessages(r, roundToolContent));
-      }
-      useConversationStore.setState({ messages: { 'comp-4': msgs } });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-4');
-
-      // Tool results from rounds 1-5: under 80k threshold during build → not compressed
-      // Last round: cumulative passed 80k and rounds > 5 → but content is 1 line (not > 20) → not compressed
-      // So verify the last tool result is also not compressed (single line)
-      const toolMsgs = history.filter((m) => m.role === 'tool');
-      expect(toolMsgs.length).toBe(6);
-      // All tool results are single-line (one long 'x'...) → no truncation
-      for (const tm of toolMsgs) {
-        expect(tm.content).not.toContain('旧Tool Result');
-      }
-    });
-
-    it('truncates multi-line tool result when over 80k and over 5 rounds', () => {
-      enableCompactContext();
-      // 6 rounds, each with multi-line content so cumulative > 80k
-      const multiLines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
-      const multiLineChars = multiLines.length; // ~250 chars
-      // Need total > 320k chars: each round has ~250 chars in tool result + ~50 chars other
-      // 320k / 300 = ~1067 rounds. That's way too many.
-      // Let's make the tool result longer.
-      // Use multi-line with long lines: 30 lines * 200 chars/line = 6000 chars per tool result
-      const longLine = 'x'.repeat(200);
-      const longMultiLines = Array.from({ length: 30 }, (_, i) => `${longLine} ${i}`).join('\n');
-      // ~6000 chars per tool result. Need 320k / 6200 ≈ 52 rounds. Still too many.
-      
-      // Better approach: pad with a long prefix to reach threshold quickly
-      // 3 rounds of pad + 3 rounds of actual content (total 6 rounds below threshold line for earlier ones)
-      // Actually, let me think differently. The cumulative builds up over ALL messages.
-      // I'll use 6 rounds × ~55k chars = 330k chars
-      const padContent = 'x'.repeat(55_000 - 500); // most of this is a single long line
-      const multiLineContent = [
-        padContent + '\n',
-        ...Array.from({ length: 30 }, (_, i) => `result line ${i + 1}`),
-      ].join('\n');
-
-      const msgs: AgentMessage[] = [];
-      for (let r = 1; r <= 6; r++) {
-        msgs.push(...makeRoundMessages(r, multiLineContent));
-      }
-      useConversationStore.setState({ messages: { 'comp-5': msgs } });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-5');
-
-      // Rounds 1-5: cumulative < 80k until round 6
-      // Round 6: cumulative > 80k, rounds = 6 > 5, lines = 31 > 20 → truncated
-      const lastTool = [...history].reverse().find((m) => m.role === 'tool');
-      expect(lastTool!.content).toContain('旧Tool Result，部分内容已清除');
-      expect(lastTool!.content).toContain('result line 1');
-      expect(lastTool!.content).toContain('result line 30');
-    });
-
-    it('replaces tool result completely when cumulative exceeds aggressive threshold', () => {
-      enableCompactContext();
-      // Need > 130k tokens = 520_001+ chars. 6 rounds × 90k = 540k.
-      const roundContent = 'x'.repeat(90_000);
-
-      const msgs: AgentMessage[] = [];
-      for (let r = 1; r <= 6; r++) {
-        msgs.push(...makeRoundMessages(r, roundContent));
-      }
-      useConversationStore.setState({ messages: { 'comp-6': msgs } });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-6');
-
-      // Last tool result: cumulative > 130k (aggressive threshold) → replaced
-      const lastTool = [...history].reverse().find((m) => m.role === 'tool');
-      expect(lastTool!.content).toBe('旧Tool Result，部分内容已清除');
-      // Assistant tool_calls message should still exist
-      const assistants = history.filter((m) => m.role === 'assistant' && m.toolCalls);
-      expect(assistants.length).toBe(6);
-    });
-
-    it('consecutive user messages do not increase round count', () => {
-      enableCompactContext();
-      const bigContent = 'x'.repeat(320_000);
-      useConversationStore.setState({
-        messages: {
-          'comp-7': [
-            makeMessage({ id: 'u1', role: 'user', content: 'rounds here' }),
-            makeMessage({ id: 'u2', role: 'user', content: 'still same round' }),
-            makeMessage({ id: 'a1', role: 'assistant', content: 'OK...' }),
-            makeMessage({
-              id: 't1',
-              role: 'tool',
-              content: '',
-              toolResult: {
-                toolName: 'cmd',
-                summary: '',
-                result: bigContent,
-                success: true,
-                blocked: false,
-                toolCallId: 'call-zz',
-              },
-            }),
-          ],
-        },
-      });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-7');
-      // Only 1 round (2 consecutive user messages count as 1)
-      // Cumulative > 80k but rounds = 1 ≤ 5 → no compression
-      const toolMsg = history.find((m) => m.role === 'tool');
-      expect(toolMsg!.content).toBe(bigContent);
-    });
-
-    it('never compresses skill tool results regardless of thresholds', () => {
-      enableCompactContext();
-      // Push way past aggressive threshold
-      const content = 'x'.repeat(200_000);
-
-      // 6 rounds to cross everything
-      const msgs: AgentMessage[] = [];
-      for (let r = 1; r <= 6; r++) {
-        msgs.push(
-          makeMessage({ id: `u${r}`, role: 'user', content: `p ${r}` }),
-          makeMessage({ id: `a${r}`, role: 'assistant', content: `OK ${r}` }),
-          makeMessage({
-            id: `ts${r}`,
-            role: 'tool',
-            content: '',
-            toolResult: {
-              toolName: `skill_my_skill`,
-              summary: '',
-              result: content,
-              success: true,
-              blocked: false,
-              toolCallId: `call-sk-${r}`,
-            },
-          }),
-          makeMessage({ id: `a2-${r}`, role: 'assistant', content: `done ${r}` }),
-        );
-      }
-      useConversationStore.setState({ messages: { 'comp-8': msgs } });
-
-      const history = useConversationStore.getState().buildLlmHistory('comp-8');
-      const toolMsgs = history.filter((m) => m.role === 'tool');
-      for (const tm of toolMsgs) {
-        expect(tm.content).toBe(content);
-        expect(tm.content).not.toContain('旧Tool Result');
-      }
-    });
+  describe('buildLlmHistory protocol closure', () => {
 
     // ── 未闭合 tool_calls 裁剪（应用重启/崩溃后残留）──
 
@@ -1945,6 +1745,187 @@ describe('conversationStore', () => {
 
       const history = useConversationStore.getState().buildLlmHistory('reason-3');
       expect(history[1]).toMatchObject({ role: 'assistant', content: '完成', reasoningContent: '思考结论' });
+    });
+  });
+
+  describe('compactConversation 手动压缩反馈', () => {
+    const now = new Date().toISOString();
+
+    function seedConversation(convId: string, msgs: AgentMessage[]) {
+      useConversationStore.setState({
+        conversations: {
+          [convId]: {
+            id: convId,
+            connectionId: 'conn-1',
+            title: convId,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        messages: { [convId]: msgs },
+        activeConversationId: convId,
+        activeConversationByConnection: { 'conn-1': convId },
+      });
+    }
+
+    function seedTask(taskId: string, convId: string, status: AgentTask['status']) {
+      useTaskStore.setState({
+        tasks: {
+          [taskId]: {
+            id: taskId,
+            sessionId: 's1',
+            conversationId: convId,
+            prompt: 'p',
+            mode: 'agent',
+            status,
+            createdAt: now,
+          },
+        },
+        activeTaskId: taskId,
+      });
+    }
+
+    function mockCompactResult(overrides: Record<string, unknown>) {
+      agentCompactConversation.mockResolvedValue({
+        compacted: false,
+        summary: null,
+        shadowedMessages: 0,
+        shadowedTokens: 0,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: [],
+        shadowedToolCallIds: [],
+        reason: null,
+        attempted: false,
+        ...overrides,
+      });
+    }
+
+    it('无可压区间（attempted=false）时插入"无需压缩"通知', async () => {
+      mockCompactResult({ reason: '没有可压缩的早期历史区间' });
+      seedConversation('conv-1', [makeMessage({ id: 'u1', content: 'go' })]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      const result = await useConversationStore.getState().compactConversation('conv-1');
+
+      expect(result.compacted).toBe(false);
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2);
+      const notice = msgs[1];
+      expect(notice.role).toBe('system');
+      expect(notice.content).toBe('无需压缩：没有可压缩的早期历史区间');
+      expect(notice.compaction).toBeUndefined();
+    });
+
+    it('摘要失败且 Skipped 事件丢失（attempted=true + 残留 running 卡）时把卡转为未完成文本', async () => {
+      mockCompactResult({
+        attempted: true,
+        reason: '生成的摘要未比原文更短（约 200 ≥ 100 tokens），已放弃本次压缩',
+      });
+      seedConversation('conv-1', [
+        makeMessage({ id: 'u1', content: 'go' }),
+        {
+          id: 'running-1',
+          role: 'system',
+          content: '上下文压缩中…',
+          timestamp: now,
+          compaction: { status: 'running' },
+        },
+      ]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      // 固定 taskId（compactConversation 内部用 crypto.randomUUID 生成），
+      // 预置残留的 running 卡占位 id，模拟 Skipped 事件在 listener 清理前丢失。
+      const uuid = '00000000-0000-4000-8000-000000000000';
+      const uuidSpy = vi
+        .spyOn(crypto, 'randomUUID')
+        .mockReturnValue(uuid as `${string}-${string}-${string}-${string}-${string}`);
+      setStreamState(uuid, { ...getStreamState(uuid), compactionMessageId: 'running-1' });
+      try {
+        await useConversationStore.getState().compactConversation('conv-1');
+      } finally {
+        uuidSpy.mockRestore();
+      }
+
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2); // 不新增消息
+      const card = msgs.find((m) => m.id === 'running-1');
+      expect(card?.content).toContain('上下文压缩未完成');
+      expect(card?.content).toContain('已放弃本次压缩');
+      expect(card?.compaction).toBeUndefined(); // 转普通 system 文本
+      expect(getStreamState(uuid).compactionMessageId).toBeNull(); // 占位 id 释放
+    });
+
+    it('摘要失败但事件已正常处理（attempted=true + 无残留卡）时不重复插入', async () => {
+      mockCompactResult({ attempted: true, reason: '摘要被输出长度上限截断（生成不完整），已放弃本次压缩' });
+      seedConversation('conv-1', [
+        makeMessage({ id: 'u1', content: 'go' }),
+        // 事件路径已把 running 卡转成普通 system 文本（compaction 字段清除、占位 id 释放）
+        { id: 'card-1', role: 'system', content: '上下文压缩未完成：摘要被输出长度上限截断（生成不完整），已放弃本次压缩', timestamp: now },
+      ]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      await useConversationStore.getState().compactConversation('conv-1');
+
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2); // 不新增任何消息（防重复）
+      expect(msgs.map((m) => m.id)).toEqual(['u1', 'card-1']);
+    });
+
+    it('命令失败（未配置 LLM）且无 running 卡时插入失败提示', async () => {
+      agentCompactConversation.mockRejectedValue(new Error('尚未配置 LLM，请前往设置填写'));
+      seedConversation('conv-1', [makeMessage({ id: 'u1', content: 'go' })]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      await expect(useConversationStore.getState().compactConversation('conv-1')).rejects.toThrow(
+        '尚未配置 LLM',
+      );
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1].role).toBe('system');
+      expect(msgs[1].content).toBe('上下文压缩失败：尚未配置 LLM，请前往设置填写');
+      expect(msgs[1].compaction).toBeUndefined();
+    });
+
+    it('会话有运行中任务时插入提示并拒绝压缩', async () => {
+      seedConversation('conv-1', [makeMessage({ id: 'u1', content: 'go' })]);
+      seedTask('task-1', 'conv-1', 'executing');
+
+      await expect(useConversationStore.getState().compactConversation('conv-1')).rejects.toThrow(
+        '会话正在运行任务',
+      );
+      // 不调用后端（守卫在调用前拦截）
+      expect(agentCompactConversation).not.toHaveBeenCalled();
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1].role).toBe('system');
+      expect(msgs[1].content).toContain('会话正在运行任务');
+    });
+
+    it('压缩成功时原位替换被压区间（成功路径回归）', async () => {
+      mockCompactResult({
+        compacted: true,
+        summary: '## Primary Request\n- build',
+        shadowedMessages: 2,
+        shadowedTokens: 100,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: ['user', 'assistant'],
+        shadowedToolCallIds: [],
+      });
+      seedConversation('conv-1', [
+        makeMessage({ id: 'u1', content: 'go' }),
+        makeMessage({ id: 'a1', role: 'assistant', content: 'ok' }),
+        makeMessage({ id: 'u2', content: 'next' }),
+      ]);
+      seedTask('task-1', 'conv-1', 'completed');
+
+      await useConversationStore.getState().compactConversation('conv-1');
+
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs).toHaveLength(2);
+      expect(msgs[0].compaction?.status).toBe('done');
+      expect(msgs[0].compaction?.summary).toBe('## Primary Request\n- build');
+      expect(msgs[0].compaction?.shadowedMessages).toBe(2);
+      expect(msgs[1].id).toBe('u2');
     });
   });
 });

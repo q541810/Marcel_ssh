@@ -658,6 +658,7 @@ pub fn run() {
             commands::agent_lifecycle::agent_approve_operation,
             commands::agent_lifecycle::agent_reject_operation,
             commands::agent_lifecycle::agent_answer_question,
+            commands::agent_compact::agent_compact_conversation,
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
             commands::agent_conversation::agent_get_conversation,

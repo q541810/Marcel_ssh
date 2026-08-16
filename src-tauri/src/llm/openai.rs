@@ -17,6 +17,15 @@ pub struct OpenAiProvider {
     client: reqwest::Client,
 }
 
+/// 流式文本回调（用于压缩摘要等内嵌 LLM 调用）。
+/// - `reset`：新一轮流开始前调用（重试会重新发起请求），调用方应清空已展示的进度文本。
+/// - `delta`：每次收到内容增量时调用。
+#[derive(Clone, Copy)]
+pub struct TextSink<'a> {
+    pub reset: &'a (dyn Fn() + Send + Sync),
+    pub delta: &'a (dyn Fn(&str) + Send + Sync),
+}
+
 impl OpenAiProvider {
     pub fn new(config: LlmConfig) -> Result<Self, AppError> {
         let client = reqwest::Client::builder()
@@ -58,6 +67,21 @@ impl OpenAiProvider {
         tools: &[ToolDefinition],
         event_tx: mpsc::UnboundedSender<StreamEvent>,
     ) -> Result<LlmMessage, AppError> {
+        self.chat_stream_with_sink(messages, tools, &event_tx, None, None)
+            .await
+    }
+
+    /// `chat_stream` 的变体：额外把内容增量实时推给 `sink`（压缩摘要进度展示用）。
+    /// 重试会先调 `sink.reset()` 再重新发起请求，保证进度文本不会跨轮次残留。
+    /// `max_tokens`：摘要等内嵌调用的输出上限；`None` = provider 默认。
+    pub async fn chat_stream_with_sink(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[ToolDefinition],
+        event_tx: &mpsc::UnboundedSender<StreamEvent>,
+        sink: Option<TextSink<'_>>,
+        max_tokens: Option<u32>,
+    ) -> Result<LlmMessage, AppError> {
         let max_retries = self.config.max_retries;
         let retry_conditions = parse_retry_conditions(&self.config.retry_http_statuses);
         let delay = Duration::from_secs_f32(self.config.retry_delay_secs);
@@ -65,7 +89,13 @@ impl OpenAiProvider {
         let mut attempt: u32 = 0;
         loop {
             attempt += 1;
-            match self.chat_stream_inner(messages, tools, &event_tx).await {
+            if let Some(s) = sink {
+                (s.reset)();
+            }
+            match self
+                .chat_stream_inner(messages, tools, event_tx, sink, max_tokens)
+                .await
+            {
                 Ok(msg) => return Ok(msg),
                 Err(e) => {
                     let max_attempts = max_retries + 1;
@@ -98,9 +128,11 @@ impl OpenAiProvider {
         messages: &[LlmMessage],
         tools: &[ToolDefinition],
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
+        sink: Option<TextSink<'_>>,
+        max_tokens: Option<u32>,
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
-        let req_body = build_request_body(&self.config, messages, tools, true);
+        let req_body = build_request_body_with_max_tokens(&self.config, messages, tools, true, max_tokens);
 
         let response = self
             .send_llm_request(&url, &req_body, messages.len())
@@ -109,6 +141,7 @@ impl OpenAiProvider {
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<PartialToolCall> = Vec::new();
+        let mut finish_reason: Option<String> = None;
         let mut buffer = String::new();
         let mut consecutive_parse_errors: u32 = 0;
         let mut stream = response.bytes_stream();
@@ -137,13 +170,21 @@ impl OpenAiProvider {
                 match serde_json::from_str::<ChatChunk>(payload) {
                     Ok(chunk) => {
                         consecutive_parse_errors = 0;
+                        let text_before = accumulated_text.len();
                         process_chunk(
                             &chunk,
                             &mut accumulated_text,
                             &mut accumulated_reasoning,
                             &mut tool_calls,
+                            &mut finish_reason,
                             event_tx,
                         );
+                        if let Some(s) = sink {
+                            let delta = &accumulated_text[text_before..];
+                            if !delta.is_empty() {
+                                (s.delta)(delta);
+                            }
+                        }
                         if let Some(usage) = chunk.usage {
                             let _ = event_tx.send(StreamEvent::Usage {
                                 usage: TokenUsage::from(usage),
@@ -174,6 +215,7 @@ impl OpenAiProvider {
             accumulated_text,
             accumulated_reasoning,
             tool_calls,
+            finish_reason,
         ))
     }
 
@@ -602,9 +644,16 @@ fn process_chunk(
     accumulated_text: &mut String,
     accumulated_reasoning: &mut String,
     tool_calls: &mut Vec<PartialToolCall>,
+    finish_reason: &mut Option<String>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
 ) {
     for choice in &chunk.choices {
+        // finish_reason 只在流末尾的 chunk 上携带（stop/length/tool_calls/content_filter）
+        if let Some(fr) = choice.finish_reason.as_deref() {
+            if !fr.is_empty() {
+                *finish_reason = Some(fr.to_string());
+            }
+        }
         if let Some(ref delta) = choice.delta {
             if let Some(ref reasoning) = delta.reasoning_content {
                 if !reasoning.is_empty() {
@@ -637,6 +686,7 @@ fn assemble_final_message(
     accumulated_text: String,
     accumulated_reasoning: String,
     tool_calls: Vec<PartialToolCall>,
+    finish_reason: Option<String>,
 ) -> LlmMessage {
     let final_tool_calls: Option<Vec<ToolCall>> = if tool_calls.is_empty() {
         None
@@ -669,6 +719,7 @@ fn assemble_final_message(
             Some(accumulated_reasoning)
         },
         image_paths: None,
+        finish_reason,
     }
 }
 
@@ -730,6 +781,9 @@ struct ChatCompletionRequest {
     tools: Option<Vec<RequestTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<StreamOptions>,
+    /// 摘要等内嵌调用的输出上限；主循环不设（用 provider 默认）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -804,6 +858,17 @@ fn build_request_body(
     messages: &[LlmMessage],
     tools: &[ToolDefinition],
     stream: bool,
+) -> serde_json::Value {
+    build_request_body_with_max_tokens(config, messages, tools, stream, None)
+}
+
+/// `build_request_body` 的内嵌调用变体：可显式设 `max_tokens`（摘要截断保护）。
+fn build_request_body_with_max_tokens(
+    config: &LlmConfig,
+    messages: &[LlmMessage],
+    tools: &[ToolDefinition],
+    stream: bool,
+    max_tokens: Option<u32>,
 ) -> serde_json::Value {
     use crate::llm::provider::VISION_RECENT_USER_TURNS;
 
@@ -885,6 +950,7 @@ fn build_request_body(
         } else {
             None
         },
+        max_tokens,
     };
 
     let mut body = serde_json::to_value(&typed).unwrap_or(serde_json::Value::Null);
@@ -1043,6 +1109,8 @@ impl From<ApiUsage> for TokenUsage {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     delta: Option<ChatDelta>,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1196,6 +1264,7 @@ mod build_request_body_tests {
             tool_call_id: None,
             reasoning_content: Some("let me check the directory".to_string()),
             image_paths: None,
+            finish_reason: None,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body
@@ -1223,6 +1292,7 @@ mod build_request_body_tests {
             tool_call_id: None,
             reasoning_content: None,
             image_paths: None,
+            finish_reason: None,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body

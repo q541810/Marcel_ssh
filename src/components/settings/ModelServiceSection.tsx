@@ -4,7 +4,9 @@ import type { LlmConfig, AgentModeSettings } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
 import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
+import { ValidatedInput } from './ValidatedInput';
 import { useSettingsActions } from './SettingsActionsContext';
+import { contextWindowHint } from '@/lib/contextWindowHints';
 import ModelListModal from './ModelListModal';
 
 /** Validate that `extraBody` is a valid JSON object. Returns null on success. */
@@ -198,11 +200,28 @@ export function ModelServiceSection() {
           label="允许向模型发送图片（Ctrl+V / 拖拽）"
         />
       </SettingItem>
-      <SettingItem id="llm-compact-context" label="压缩上下文" description="历史累积 token 过多时自动裁剪旧工具结果" sectionId="settings-llm" keywords={['compact', '压缩', 'token', '上下文']}>
-        <Toggle
-          checked={settings.agentModeSettings?.compactContext ?? false}
-          onChange={(checked) => update({ agentModeSettings: { ...(settings.agentModeSettings ?? {}), compactContext: checked } as AgentModeSettings })}
-          label="上下文超过 80k tokens 且对话超过 5 轮时截断超长结果；超过 130k tokens 时清除旧结果"
+      <SettingItem id="llm-context-window" label="模型上下文窗口 (tokens)" description="留空或 0 = 仅在模型报告上下文超限时压缩旧历史；填写后按窗口的 80% 阈值预防式压缩" sectionId="settings-llm" keywords={['context', '上下文', 'token', '窗口', 'window', '压缩', 'compaction']}>
+        <ValidatedInput
+          type="number"
+          value={settings.agentModeSettings?.contextWindow ?? 0}
+          onChange={(v) => update({ agentModeSettings: { ...(settings.agentModeSettings ?? {}), contextWindow: v } as AgentModeSettings })}
+          validate={(s) => {
+            const v = Number(s);
+            // 无硬上限（未来超大窗口模型可配）；仅要求非负整数
+            if (!Number.isInteger(v) || v < 0) return '须为非负整数（0 = 不启用预防式压缩）';
+            return null;
+          }}
+          validatorId="contextWindow"
+          validatorFn={(draft) => {
+            const v = draft.agentModeSettings?.contextWindow;
+            if (v === undefined) return null;
+            if (!Number.isInteger(v) || v < 0) return `模型上下文窗口须为非负整数（当前值：${v}）`;
+            return null;
+          }}
+          hint={contextWindowHint(settings.agentModeSettings?.contextWindow)}
+          min={0} step={1000}
+          suffix="tokens"
+          className="w-32"
         />
       </SettingItem>
 

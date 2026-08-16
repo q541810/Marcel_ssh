@@ -25,6 +25,10 @@ import {
   handleModelApprovalStart,
   handleModelApprovalDone,
   handleQuestionRequest,
+  handleCompactionStart,
+  handleCompactionProgress,
+  handleCompactionDone,
+  handleCompactionSkipped,
   type StreamHandler,
   cleanupStreamState,
 } from './agentStreamHandlers';
@@ -336,6 +340,34 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'retrying')) {
         handleRetrying(handler, taskId, conversationId, ev);
+        return;
+      }
+
+      if (hasEventType(ev, 'compactionStart')) {
+        handleCompactionStart(handler, taskId, conversationId, ev as unknown as { type: 'compactionStart'; trigger: string });
+        return;
+      }
+
+      if (hasEventType(ev, 'compactionProgress')) {
+        handleCompactionProgress(handler, taskId, conversationId, ev as unknown as { type: 'compactionProgress'; text: string });
+        return;
+      }
+
+      if (hasEventType(ev, 'compactionDone')) {
+        handleCompactionDone(handler, taskId, conversationId, ev as unknown as {
+          type: 'compactionDone';
+          summary: string;
+          shadowedMessages: number;
+          shadowedTokens: number;
+          shadowedStartNonSystem: number;
+          shadowedRoles: Array<'user' | 'assistant' | 'tool'>;
+          shadowedToolCallIds: Array<string | null>;
+        });
+        return;
+      }
+
+      if (hasEventType(ev, 'compactionSkipped')) {
+        handleCompactionSkipped(handler, taskId, conversationId, ev as unknown as { type: 'compactionSkipped'; reason: string; attempted: boolean });
         return;
       }
 

@@ -5,18 +5,17 @@ import type {
   StoredMessage,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
-import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
-import { useTaskStore } from './taskStore';
-import { useSettingsStore } from './settingsStore';
+import type { AgentCompactResult } from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import {
-  COMPACT_MAX_CONTEXT_TOKENS,
-  COMPACT_AGGRESSIVE_TOKENS,
-  COMPACT_MIN_ROUNDS,
-  COMPACT_MAX_LINES,
-  COMPACT_HEAD_TAIL_LINES,
-  COMPACT_TRUNCATION_MSG,
-  CHARS_PER_TOKEN,
-} from '@/lib/constants';
+  storedMessageToAgentMessage,
+  clearIntermediateReasoning,
+  compactionCheckpoint,
+  applyCompactionSplice,
+} from './messageConversion';
+import { useTaskStore } from './taskStore';
+import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
+import { getStreamState, setStreamState } from './agentStreamHandlers';
 
 export interface ConversationState {
   conversations: Record<string, AgentConversation>;
@@ -44,6 +43,13 @@ export interface ConversationState {
   ensureConversation: (sessionId: string, connectionId: string, fallbackTitle: string) => Promise<string>;
   appendMessages: (conversationId: string, messages: AgentMessage[]) => void;
   updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => void;
+  /**
+   * 手动压缩上下文（命令面板「压缩上下文」）：调用后端触发一次原有压缩
+   * 管线，返回统计结果。压缩只在后端内存副本上发生、**不写 DB**（原始
+   * 历史保留）。前端在消息列表插入"压缩中"占位，完成后原位更新为
+   * 压缩完成卡片（复用 CompactionCard）/ 未完成文案 / 失败文案。
+   */
+  compactConversation: (conversationId: string) => Promise<AgentCompactResult>;
   /**
    * 注册 task 工具派发的子agent对话：插入 conversation 条目 + 骨架消息
    * （user=prompt、assistant=loading 占位）。子agent流式 listener 挂上后
@@ -210,7 +216,7 @@ let syncActiveGeneration = 0;
  * 该对话下是否存在正在运行的任务（主 agent 或子 agent）。
  * sessionId 非空排除重启恢复的占位 task。
  */
-function conversationHasRunningTask(conversationId: string): boolean {
+export function conversationHasRunningTask(conversationId: string): boolean {
   return Object.values(useTaskStore.getState().tasks).some(
     (t) =>
       t.conversationId === conversationId &&
@@ -734,6 +740,135 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }));
   },
 
+  compactConversation: async (conversationId: string) => {
+    // busy 守卫（与后端一致）：运行中不允许手动压缩（'/' 菜单运行中也不唤出）。
+    // 守卫在 listener 建立之前，事件路径不可达 → 直接给可见提示再拒绝。
+    if (conversationHasRunningTask(conversationId)) {
+      const err = new Error('会话正在运行任务，请等待任务结束或停止后再压缩');
+      get().updateConversationMessages(conversationId, (msgs) => [
+        ...msgs,
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: getErrorMessage(err),
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      throw err;
+    }
+    const taskId = crypto.randomUUID();
+    // 压缩对象 = buildLlmHistory 产物（与 agent_start_task 同源，tool 协议
+    // 已闭合修正，避免中断遗留的未闭合 tool 调用组导致无法压缩）
+    const history = get().buildLlmHistory(conversationId);
+    try {
+      // 完整复用现有 stream 监听：后端把压缩事件实时转发到
+      // `agent://stream/{taskId}`，经 attachStreamListener 分发到
+      // handleCompactionStart/Progress/Done/Skipped —— 进行中卡片、原位替换、
+      // attempted 区分、进度实时文本全在其中。
+      await attachStreamListener(taskId, conversationId, '');
+      const result = await tauri.agentCompactConversation(conversationId, history, taskId);
+      // Done 事件与命令结果携带同一份区间信息，且可能乱序/丢失：
+      // 结果路径再应用一次（applyCompactionSplice 幂等——先到者应用，
+      // 后到者区间已被替换、校验失败 no-op），保证原位替换必然落地。
+      if (result.compacted) {
+        const header = `【上下文已压缩】已整理 ${result.shadowedMessages} 条历史消息（约 ${result.shadowedTokens} tokens）`;
+        const card: AgentMessage = {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: header,
+          timestamp: new Date().toISOString(),
+          compaction: {
+            status: 'done',
+            summary: result.summary ?? '',
+            shadowedMessages: result.shadowedMessages,
+            shadowedTokens: result.shadowedTokens,
+          },
+        };
+        const runningCardId = getStreamState(taskId).compactionMessageId;
+        get().updateConversationMessages(conversationId, (msgs) => {
+          const applied = applyCompactionSplice(
+            msgs,
+            {
+              start: result.shadowedStartNonSystem,
+              count: result.shadowedMessages,
+              roles: result.shadowedRoles,
+              toolIds: result.shadowedToolCallIds,
+            },
+            card,
+            runningCardId,
+          );
+          if (!applied.applied) return msgs; // 事件路径已应用或校验失败 → 不重复处理
+          // 持久化由后端结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
+          // 前端只负责 live store 视图，不再落库。
+          return applied.msgs;
+        });
+      } else {
+        // compacted:false 兜底：Skipped 事件可能已处理或已丢失，按残留状态收尾
+        const state = getStreamState(taskId);
+        const cardId = state.compactionMessageId;
+        if (cardId) {
+          // 残留 running 卡 = Skipped 事件丢失：结果路径兜底，
+          // 语义与 handleCompactionSkipped 一致（attempted → 转文本；否则移除）。
+          state.compactionMessageId = null;
+          setStreamState(taskId, state);
+          get().updateConversationMessages(conversationId, (msgs) => {
+            const idx = msgs.findIndex((m) => m.id === cardId);
+            if (idx === -1) return msgs;
+            const newMsgs = [...msgs];
+            if (result.attempted) {
+              newMsgs[idx] = {
+                ...newMsgs[idx],
+                content: `上下文压缩未完成：${result.reason ?? '压缩未完成'}`,
+                compaction: undefined,
+              };
+            } else {
+              newMsgs.splice(idx, 1);
+            }
+            return newMsgs;
+          });
+        } else if (!result.attempted) {
+          // 无可压区间 / 区间过小（attempted=false）：事件路径刻意不留痕，
+          // 结果路径给手动场景可见提示（普通 system 通知，不落库）。
+          get().updateConversationMessages(conversationId, (msgs) => [
+            ...msgs,
+            {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `无需压缩：${result.reason ?? '没有可压缩的早期历史区间'}`,
+              timestamp: new Date().toISOString(),
+            },
+          ]);
+        }
+        // attempted=true 且无残留卡 = 事件已正常处理（卡已转"未完成"文本）→ 不重复插入
+      }
+      return result;
+    } catch (err) {
+      // 命令失败（未配置 LLM / 任务运行中 等）：进行中卡片转错误文本（若有）；
+      // 无卡时插入普通 system 失败提示，避免静默无反馈。
+      const cardId = getStreamState(taskId).compactionMessageId;
+      if (cardId) {
+        get().updateConversationMessages(conversationId, (msgs) =>
+          msgs.map((m) =>
+            m.id === cardId ? { ...m, content: `上下文压缩失败：${getErrorMessage(err)}` } : m,
+          ),
+        );
+      } else {
+        get().updateConversationMessages(conversationId, (msgs) => [
+          ...msgs,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `上下文压缩失败：${getErrorMessage(err)}`,
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
+      throw err;
+    } finally {
+      cleanupTaskListeners(taskId);
+    }
+  },
+
   registerSubConversation: (conversationId, connectionId, title, subTaskId, prompt, parentConversationId) => {
     const now = new Date().toISOString();
     const loadingId = `sub-loading-${subTaskId}`;
@@ -854,50 +989,31 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
   buildLlmHistory: (conversationId: string) => {
     const msgs = get().messages[conversationId] || [];
-    const settings = useSettingsStore.getState().settings;
-    const { compactContext } = settings.agentModeSettings;
 
     const output: ReturnType<ConversationState['buildLlmHistory']> = [];
     let pendingAssistantIndex: number | null = null;
     /** 为 true 时，后续连续 tool 消息追加到同一条 assistant 的 toolCalls */
     let openToolGroup = false;
-    let roundCount = 0;
-    let cumulativeTokens = 0;
     let prevOutputRole: string | null = null;
-
-    function estimateTokens(text: string): number {
-      return Math.ceil(text.length / CHARS_PER_TOKEN);
-    }
-
-    function compressToolContent(rawContent: string, toolName: string): string {
-      if (!compactContext) return rawContent;
-
-      // skill 是用户自定义内容，压缩时绝不裁剪
-      if (toolName.startsWith('skill_')) return rawContent;
-
-      if (cumulativeTokens > COMPACT_AGGRESSIVE_TOKENS) {
-        return COMPACT_TRUNCATION_MSG;
-      }
-
-      if (cumulativeTokens > COMPACT_MAX_CONTEXT_TOKENS && roundCount > COMPACT_MIN_ROUNDS) {
-        const lines = rawContent.split('\n');
-        if (lines.length > COMPACT_MAX_LINES) {
-          const head = lines.slice(0, COMPACT_HEAD_TAIL_LINES).join('\n');
-          const tail = lines.slice(-COMPACT_HEAD_TAIL_LINES).join('\n');
-          return head + '\n' + COMPACT_TRUNCATION_MSG + '\n' + tail;
-        }
-      }
-
-      return rawContent;
-    }
 
     for (const m of msgs) {
       if (m.isLoading) continue;
 
-      if (m.role === 'system') continue;
+      if (m.role === 'system') {
+        // 压缩 done 卡 → user 角色 checkpoint（framing 与后端逐字节一致，
+        // 二次压缩的 PRIOR checkpoint 识别依赖它），让模型把压缩历史当作
+        // 既有背景；其余 system（通知/运行中卡）照旧跳过。
+        const checkpoint = compactionCheckpoint(m);
+        if (checkpoint) {
+          output.push(checkpoint);
+          pendingAssistantIndex = null;
+          openToolGroup = false;
+          prevOutputRole = 'user';
+        }
+        continue;
+      }
 
       if (m.role === 'user') {
-        if (prevOutputRole !== 'user') roundCount++;
         const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
           role: 'user',
           content: m.content,
@@ -908,13 +1024,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         output.push(item);
         pendingAssistantIndex = null;
         openToolGroup = false;
-        cumulativeTokens += estimateTokens(m.content);
         prevOutputRole = 'user';
         continue;
       }
 
       if (m.role === 'assistant') {
-        cumulativeTokens += estimateTokens(m.content);
         const fullCalls =
           m.toolCalls && m.toolCalls.length > 0
             ? m.toolCalls
@@ -958,9 +1072,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
 
       if (m.role === 'tool' && m.toolResult && m.toolResult.toolCallId) {
-        const rawToolContent = m.toolResult.result || m.content;
-        cumulativeTokens += estimateTokens(rawToolContent);
-        const toolContent = compressToolContent(rawToolContent, m.toolResult.toolName);
+        const toolContent = m.toolResult.result || m.content;
         const callEntry = {
           id: m.toolResult.toolCallId,
           name: m.toolResult.toolName,

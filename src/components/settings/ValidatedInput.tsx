@@ -25,6 +25,8 @@ type CommonProps = {
   placeholder?: string;
   className?: string;
   suffix?: string;
+  /** 非阻塞提示（灰字，无错误时展示；有错误时让位于错误文案）。 */
+  hint?: string;
   validatorId?: string;
   validatorFn?: (draft: AppSettings) => string | null;
 };
@@ -43,7 +45,7 @@ export function getValidatedInputClassName(hasError: boolean): string {
 // ─── 组件 ───
 
 export function ValidatedInput(props: ValidatedInputProps) {
-  const { validate, onBlur: onBlurProp, placeholder, className, suffix,
+  const { validate, onBlur: onBlurProp, placeholder, className, suffix, hint,
     validatorId, validatorFn, type } = props;
 
   const { registerValidator, clearValidationErrors } = useSettingsActions();
@@ -102,6 +104,9 @@ export function ValidatedInput(props: ValidatedInputProps) {
       </div>
       {error && (
         <p className="text-xs text-red-400">{error}</p>
+      )}
+      {!error && hint && (
+        <p className="text-xs text-zinc-500">{hint}</p>
       )}
     </div>
   );

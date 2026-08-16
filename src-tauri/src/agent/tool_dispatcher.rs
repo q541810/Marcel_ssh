@@ -498,7 +498,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
-            compact_context: false,
+            context_window: 0,
             confirm_edit_file: false,
         }
     }
@@ -532,7 +532,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
-            compact_context: false,
+            context_window: 0,
             confirm_edit_file: false,
         };
         assert!(!command_list_requires_confirm("ls -la", &s));
@@ -553,7 +553,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
-            compact_context: false,
+            context_window: 0,
             confirm_edit_file: false,
         };
         assert!(command_list_requires_confirm("rm -rf /tmp", &s));
@@ -584,7 +584,7 @@ mod tests {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
-            compact_context: false,
+            context_window: 0,
             confirm_edit_file: false,
         };
         assert!(command_list_requires_confirm("echo hello", &s));

@@ -7,6 +7,7 @@ import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import { validateRetryHttpStatuses } from '@/components/settings/ModelRetrySection';
+import { contextWindowHint } from '@/lib/contextWindowHints';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
 
@@ -136,22 +137,36 @@ export function MobileModelSection() {
       />
 
       <MobileSettingRow
-        label="压缩上下文"
-        description="历史累积 token 过多时自动裁剪旧工具结果"
-        trailing={
-          <Toggle
-            checked={settings.agentModeSettings?.compactContext ?? false}
-            onChange={(checked) =>
+        label="模型上下文窗口 (tokens)"
+        description="留空或 0 = 仅在模型报告上下文超限时压缩旧历史；填写后按窗口的 80% 阈值预防式压缩"
+      >
+        <div className="w-full space-y-1">
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1000}
+            value={settings.agentModeSettings?.contextWindow ?? 0}
+            onChange={(e) => {
+              const v = Math.max(0, Math.trunc(Number(e.target.value) || 0));
               update({
                 agentModeSettings: {
                   ...(settings.agentModeSettings ?? {}),
-                  compactContext: checked,
+                  contextWindow: v,
                 } as AgentModeSettings,
-              })
-            }
+              });
+            }}
+            placeholder="0 = 仅超限后压缩"
+            className={inputClass}
           />
-        }
-      />
+          {(() => {
+            const hint = contextWindowHint(settings.agentModeSettings?.contextWindow);
+            return hint ? (
+              <p className="text-xs leading-relaxed text-zinc-500">{hint}</p>
+            ) : null;
+          })()}
+        </div>
+      </MobileSettingRow>
 
       {/* Request retry — mirrors desktop ModelRetrySection (0-10 retries, 1-60s delay) */}
       <MobileSettingRow

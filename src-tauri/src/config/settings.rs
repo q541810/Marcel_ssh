@@ -108,10 +108,12 @@ pub struct AgentModeSettings {
     /// Maximum number of consecutive LLM ↔ tool-execution round-trips per task.
     #[serde(default = "default_max_tool_rounds")]
     pub max_tool_rounds: usize,
-    /// When true, tool results in LLM history are compressed when
-    /// cumulative token count exceeds configured thresholds.
+    /// Model context window size in tokens. `0` = unset: only the overflow
+    /// trigger compacts (after the provider reports a context-length error).
+    /// When > 0, pressure-based proactive compaction is enabled (estimated
+    /// tokens beyond 80% of this window trigger compaction of old history).
     #[serde(default)]
-    pub compact_context: bool,
+    pub context_window: u64,
     /// When true, edit_file requires human confirmation before execution.
     #[serde(default = "default_true")]
     pub confirm_edit_file: bool,
@@ -138,7 +140,7 @@ impl Default for AgentModeSettings {
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
             max_tool_rounds: 80,
-            compact_context: false,
+            context_window: 0,
             confirm_edit_file: true,
         }
     }
@@ -524,7 +526,7 @@ impl Default for AppSettings {
                 model_approval_prompt: String::new(),
                 system_prompt: String::new(),
                 max_tool_rounds: 80,
-                compact_context: false,
+                context_window: 0,
                 confirm_edit_file: true,
             },
             experimental_settings: ExperimentalSettings::default(),

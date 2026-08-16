@@ -191,6 +191,19 @@ impl ConversationDb {
             log::info!("Migration complete: image_paths_json column added");
         }
 
+        // Migration: add archived for context compaction（被压消息归档行：
+        // 原文保留、加载/搜索隐藏；压缩卡片行用 created_at 定位在 span 末尾，
+        // load_messages 直接返回压缩视图，无需前端回放）
+        if !column_exists(&conn, "messages", "archived") {
+            log::info!("Migrating conversation database: adding archived column");
+            conn.execute(
+                "ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: archived column added");
+        }
+
         // Migration: add parent_conversation_id for subagent (task tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
@@ -346,6 +359,7 @@ impl ConversationDb {
              FROM messages m
              INNER JOIN conversations c ON c.id = m.conversation_id
              WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+               AND m.archived = 0
                AND c.connection_id = ?2
                AND c.parent_conversation_id IS NULL
              ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
@@ -355,6 +369,7 @@ impl ConversationDb {
              FROM messages m
              INNER JOIN conversations c ON c.id = m.conversation_id
              WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+               AND m.archived = 0
                AND c.parent_conversation_id IS NULL
              ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
         };
@@ -441,7 +456,7 @@ impl ConversationDb {
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
              FROM messages
-             WHERE conversation_id = ?1
+             WHERE conversation_id = ?1 AND archived = 0
              ORDER BY created_at ASC, rowid ASC",
         )?;
 
@@ -532,6 +547,58 @@ impl ConversationDb {
             reasoning_content: reasoning_content.map(String::from),
             image_paths_json: image_paths_json.map(String::from),
         })
+    }
+
+    /// 提交一次上下文压缩（单事务）：
+    /// - 被压消息行 `archived = 1`（原文保留、加载/搜索隐藏）；
+    /// - 插入压缩摘要卡片行（role=system），`card_created_at` 定位在 span 末尾
+    ///   （= 被压末行的 created_at），使 `load_messages` 的行序直接呈现压缩视图。
+    /// `archive_ids` 为空 = 降级路径：不归档、卡片落尾部（created_at = now）。
+    pub fn commit_compaction(
+        &self,
+        conversation_id: &str,
+        archive_ids: &[String],
+        card_content: &str,
+        card_created_at: &str,
+    ) -> RusqliteResult<()> {
+        let now = Utc::now();
+        let id = Uuid::new_v4().to_string();
+        let now_str = now.to_rfc3339();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        // 归档被压行（按块执行，避免超过 SQLite 参数上限 ~999）
+        for chunk in archive_ids.chunks(500) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "UPDATE messages SET archived = 1
+                 WHERE conversation_id = ?1 AND id IN ({placeholders})"
+            );
+            let mut params: Vec<&dyn rusqlite::ToSql> = vec![&conversation_id];
+            params.extend(chunk.iter().map(|s| s as &dyn rusqlite::ToSql));
+            tx.execute(&sql, rusqlite::params_from_iter(params))?;
+        }
+
+        tx.execute(
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (
+                &id,
+                conversation_id,
+                "system",
+                card_content,
+                &now_str,
+                card_created_at,
+                None::<&str>,
+                None::<&str>,
+                None::<&str>,
+            ),
+        )?;
+        tx.commit()?;
+        drop(conn);
+
+        self.touch_conversation(conversation_id)?;
+        Ok(())
     }
 
     pub fn delete_conversation(&self, conversation_id: &str) -> RusqliteResult<()> {
@@ -637,6 +704,26 @@ impl ConversationDb {
             conn.execute(
                 "DELETE FROM messages WHERE conversation_id = ?1 AND timestamp >= ?2",
                 (conversation_id, from_timestamp),
+            )?
+        };
+
+        // 撤回反归档：被压行若其"直接覆盖卡"（按 created_at,rowid 排序第一个 ≥ 该行的
+        // 压缩卡片行）已被截断删除 → 恢复可见（撤回越过压缩点 = 部分"解压"）。
+        // 覆盖卡仍在（目标在压缩点之后）→ 保持归档，压缩视图不变。
+        let _ = {
+            let conn = self.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET archived = 0
+                 WHERE conversation_id = ?1 AND archived = 1
+                   AND NOT EXISTS (
+                     SELECT 1 FROM messages c
+                     WHERE c.conversation_id = messages.conversation_id
+                       AND c.role = 'system'
+                       AND c.content LIKE '【上下文已压缩】%'
+                       AND (c.created_at > messages.created_at
+                            OR (c.created_at = messages.created_at AND c.rowid > messages.rowid))
+                   )",
+                [conversation_id],
             )?
         };
 
@@ -1639,5 +1726,114 @@ mod tests {
         let msgs = db.load_messages("conv-old").expect("load");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hello");
+    }
+
+    #[test]
+    fn test_commit_compaction_archives_and_positions_card() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+
+        let rows = db.load_messages(&conv.id).expect("load");
+        let span_ids: Vec<String> = rows.iter().take(3).map(|r| r.id.clone()).collect();
+        let span_end_created_at = rows[2].created_at.to_rfc3339();
+
+        db.commit_compaction(
+            &conv.id,
+            &span_ids,
+            "【上下文已压缩】已整理 3 条历史消息（约 100 tokens）\n\nsummary",
+            &span_end_created_at,
+        )
+        .expect("commit");
+
+        // 被压 3 条归档隐藏；卡片位于 span 末尾（第 4 条之前）→ 加载即压缩视图
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].role, "system");
+        assert!(after[0].content.starts_with("【上下文已压缩】"));
+        assert_eq!(after[0].created_at.to_rfc3339(), span_end_created_at);
+        assert_eq!(after[1].content, "u2");
+    }
+
+    #[test]
+    fn test_commit_compaction_degraded_appends_at_end() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        // 降级：不归档、卡片 created_at = 当前时间（晚于既有行）→ 落在末尾
+        db.commit_compaction(
+            &conv.id,
+            &[],
+            "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\ns",
+            &chrono::Utc::now().to_rfc3339(),
+        )
+        .expect("commit");
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 3);
+        assert_eq!(after[2].role, "system");
+        assert_eq!(after[2].content, "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\ns");
+    }
+
+    #[test]
+    fn test_truncate_unarchives_when_covering_card_deleted() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:04Z", None, None).expect("m5");
+
+        let rows = db.load_messages(&conv.id).expect("load");
+        let span_ids: Vec<String> = rows.iter().take(3).map(|r| r.id.clone()).collect();
+        let span_end = rows[2].created_at.to_rfc3339();
+        db.commit_compaction(
+            &conv.id,
+            &span_ids,
+            "【上下文已压缩】已整理 3 条历史消息（约 100 tokens）\n\ns",
+            &span_end,
+        )
+        .expect("commit");
+        // 压缩后视图：[card, u2, a2]
+        assert_eq!(db.load_messages(&conv.id).expect("load").len(), 3);
+
+        // 撤回目标 = u2（timestamp 00:03）→ 删除其后所有行（含卡片）→ 归档行"解压"
+        db.delete_messages_from_timestamp(&conv.id, "2026-01-01T00:00:03Z")
+            .expect("truncate");
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 3);
+        assert_eq!(after[0].content, "u1");
+        assert_eq!(after[1].content, "a1");
+        assert_eq!(after[2].content, "out");
+    }
+
+    #[test]
+    fn test_truncate_keeps_archived_when_covering_card_survives() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        let rows = db.load_messages(&conv.id).expect("load");
+        let span_ids: Vec<String> = rows.iter().take(1).map(|r| r.id.clone()).collect();
+        let span_end = rows[0].created_at.to_rfc3339();
+        db.commit_compaction(
+            &conv.id,
+            &span_ids,
+            "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\ns",
+            &span_end,
+        )
+        .expect("commit");
+
+        // 用未来时间戳作撤回目标 → 不删除任何行（含卡片）→ 归档保持
+        db.delete_messages_from_timestamp(&conv.id, "2999-01-01T00:00:00Z")
+            .expect("truncate");
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 2);
+        assert!(after[0].content.starts_with("【上下文已压缩】"));
+        assert_eq!(after[1].content, "u2");
     }
 }

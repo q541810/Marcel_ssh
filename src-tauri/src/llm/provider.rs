@@ -45,6 +45,11 @@ pub struct LlmMessage {
     /// Serialized to multimodal content only when vision is enabled.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub image_paths: Option<Vec<String>>,
+    /// Stream terminal reason from the provider (`stop` / `length` / `tool_calls`
+    /// / `content_filter`). `None` when the provider does not report it.
+    /// `length` means the response was truncated at the token cap.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub finish_reason: Option<String>,
 }
 
 impl LlmRole {
@@ -67,6 +72,7 @@ impl LlmMessage {
             tool_call_id: None,
             reasoning_content: None,
             image_paths: None,
+            finish_reason: None,
         }
     }
 
@@ -78,6 +84,7 @@ impl LlmMessage {
             tool_call_id: None,
             reasoning_content: None,
             image_paths: None,
+            finish_reason: None,
         }
     }
 
@@ -89,6 +96,7 @@ impl LlmMessage {
             tool_call_id: None,
             reasoning_content: None,
             image_paths: None,
+            finish_reason: None,
         }
     }
 }

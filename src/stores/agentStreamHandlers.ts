@@ -7,6 +7,7 @@ import type {
   ModelApprovalDonePayload,
   QuestionRequestPayload,
 } from '@/lib/types';
+import { applyCompactionSplice, type CompactionRole } from './messageConversion';
 
 // ---------------------------------------------------------------------------
 // StreamHandler interface
@@ -190,6 +191,8 @@ interface TaskStreamState {
   pendingTextDelta: string;
   pendingThinkingDelta: string;
   flushRafId: number | null;
+  /** 上下文压缩占位消息 id（compactionStart → done/未完成 原位更新） */
+  compactionMessageId: string | null;
 }
 
 const taskStreamState: Map<string, TaskStreamState> = new Map();
@@ -205,6 +208,7 @@ export function getStreamState(taskId: string): TaskStreamState {
     pendingTextDelta: '',
     pendingThinkingDelta: '',
     flushRafId: null,
+    compactionMessageId: null,
   };
 }
 
@@ -541,6 +545,187 @@ export function handleRetrying(
         retryLastError: ev.lastError,
       },
     ];
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Context compaction handlers — visibility for LLM summarization
+// ---------------------------------------------------------------------------
+
+function upsertCompactionMessage(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  patch: {
+    content: string;
+    compaction: NonNullable<AgentMessage['compaction']>;
+  },
+) {
+  const state = getStreamState(taskId);
+  const existingId = state.compactionMessageId;
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const existingIdx = existingId
+      ? convMsgs.findIndex((m) => m.id === existingId)
+      : -1;
+    if (existingIdx !== -1) {
+      // 原位更新：保持消息位置与组件实例（不删旧建新），
+      // 避免完成瞬间卡片跳位、实时文本原地消失
+      const newMsgs = [...convMsgs];
+      newMsgs[existingIdx] = {
+        ...newMsgs[existingIdx],
+        content: patch.content,
+        compaction: patch.compaction,
+      };
+      return newMsgs;
+    }
+    const id = crypto.randomUUID();
+    state.compactionMessageId = id;
+    setStreamState(taskId, state);
+    return [
+      ...convMsgs,
+      {
+        id,
+        role: 'system',
+        content: patch.content,
+        timestamp: new Date().toISOString(),
+        compaction: patch.compaction,
+      },
+    ];
+  });
+}
+
+export function handleCompactionStart(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'compactionStart'; trigger: string },
+) {
+  upsertCompactionMessage(handler, taskId, conversationId, {
+    content: '上下文压缩中…正在总结早期历史以释放上下文空间，请稍候',
+    compaction: { status: 'running', trigger: ev.trigger },
+  });
+}
+
+export function handleCompactionProgress(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'compactionProgress'; text: string },
+) {
+  const state = getStreamState(taskId);
+  const id = state.compactionMessageId;
+  if (!id) return; // 没有进行中的压缩卡片（正常情况 start 必先于 progress）
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const idx = convMsgs.findIndex((m) => m.id === id);
+    if (idx === -1) return convMsgs;
+    const newMsgs = [...convMsgs];
+    newMsgs[idx] = {
+      ...newMsgs[idx],
+      // content 同步为实时文本：让 AgentPanel 的 lastMessageSize 变化，
+      // 外层列表跟随卡片增长滚动到底（与 assistant 流式同一机制）
+      content: ev.text,
+      compaction: {
+        ...(newMsgs[idx].compaction ?? {}),
+        status: 'running',
+        // text 为累计全文，直接替换（后端重试时会从头重发，替换可自愈）
+        summary: ev.text,
+      },
+    };
+    return newMsgs;
+  });
+}
+
+export function handleCompactionDone(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: {
+    type: 'compactionDone';
+    summary: string;
+    shadowedMessages: number;
+    shadowedTokens: number;
+    shadowedStartNonSystem: number;
+    shadowedRoles: CompactionRole[];
+    shadowedToolCallIds: Array<string | null>;
+  },
+) {
+  const state = getStreamState(taskId);
+  const runningCardId = state.compactionMessageId;
+  // 完成后释放占位 id：本次完成卡独立存在，不占用"进行中"槽位。
+  state.compactionMessageId = null;
+  setStreamState(taskId, state);
+
+  const header = `【上下文已压缩】已整理 ${ev.shadowedMessages} 条历史消息（约 ${ev.shadowedTokens} tokens）`;
+  const card: AgentMessage = {
+    id: crypto.randomUUID(),
+    role: 'system',
+    content: header,
+    timestamp: new Date().toISOString(),
+    compaction: {
+      status: 'done',
+      summary: ev.summary,
+      shadowedMessages: ev.shadowedMessages,
+      shadowedTokens: ev.shadowedTokens,
+    },
+  };
+
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const result = applyCompactionSplice(
+      convMsgs,
+      {
+        start: ev.shadowedStartNonSystem,
+        count: ev.shadowedMessages,
+        roles: ev.shadowedRoles,
+        toolIds: ev.shadowedToolCallIds,
+      },
+      card,
+      runningCardId,
+    );
+    if (result.applied) {
+      // 原位替换成功：live store 呈现压缩视图。
+      // 持久化由后端结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
+      // 前端不再落库——重启后 load_messages 直接返回压缩视图。
+      return result.msgs;
+    }
+    // 校验失败（旧数据/孤儿 tool 等投影漂移场景）：降级——不删任何消息，
+    // 移除运行中卡，完成卡追加到列表尾部（后端同样会降级，重启后原文全见 + 卡片在尾部）。
+    console.warn('[agent] compaction splice validation failed; degrading to append-only', {
+      start: ev.shadowedStartNonSystem,
+      count: ev.shadowedMessages,
+    });
+    const degraded = runningCardId ? convMsgs.filter((m) => m.id !== runningCardId) : convMsgs;
+    return [...degraded, card];
+  });
+}
+
+export function handleCompactionSkipped(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  ev: { type: 'compactionSkipped'; reason: string; attempted: boolean },
+) {
+  const state = getStreamState(taskId);
+  const id = state.compactionMessageId;
+  if (!id) return; // 孤儿 skip（无进行中卡片）直接忽略
+  state.compactionMessageId = null;
+  setStreamState(taskId, state);
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const idx = convMsgs.findIndex((m) => m.id === id);
+    if (idx === -1) return convMsgs;
+    const newMsgs = [...convMsgs];
+    if (ev.attempted) {
+      // 摘要已跑但失败：低调交代——占位卡转普通 system 文本（不再有卡片边框），
+      // 避免"压缩跑完了却什么都没留下"的困惑
+      newMsgs[idx] = {
+        ...newMsgs[idx],
+        content: `上下文压缩未完成：${ev.reason}`,
+        compaction: undefined,
+      };
+    } else {
+      // 未开始就跳过（无区间/结构异常）：不留痕迹
+      newMsgs.splice(idx, 1);
+    }
+    return newMsgs;
   });
 }
 

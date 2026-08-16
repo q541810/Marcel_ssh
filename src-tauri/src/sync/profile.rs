@@ -89,7 +89,7 @@ impl SyncKey {
                 "terminalColors" | "fontSize" | "fontFamily" => Some(SyncCategory::TerminalSettings),
                 "llmConfig.baseUrl" | "llmConfig.model" | "llmConfig.vision"
                 | "llmConfig.maxRetries" | "llmConfig.retryDelaySecs"
-                | "llmConfig.retryHttpStatuses" | "agentModeSettings.compactContext" => {
+                | "llmConfig.retryHttpStatuses" | "agentModeSettings.contextWindow" => {
                     Some(SyncCategory::ModelService)
                 }
                 "commandTimeoutSecs"

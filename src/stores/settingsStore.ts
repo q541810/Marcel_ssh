@@ -14,7 +14,7 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   modelApprovalPrompt: '',
   systemPrompt: '',
   maxToolRounds: 80,
-  compactContext: false,
+  contextWindow: 0,
   confirmEditFile: true,
 };
 

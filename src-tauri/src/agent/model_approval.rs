@@ -298,6 +298,7 @@ mod tests {
             tool_call_id: Some("1".into()),
             reasoning_content: None,
             image_paths: None,
+            finish_reason: None,
         }
     }
 

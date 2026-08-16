@@ -156,6 +156,46 @@ export async function agentStopTask(taskId: string): Promise<void> {
   return invoke('agent_stop_task', { taskId });
 }
 
+/** 手动压缩上下文的结果。 */
+export interface AgentCompactResult {
+  compacted: boolean;
+  summary: string | null;
+  shadowedMessages: number;
+  shadowedTokens: number;
+  /** 被压区间在"非 system 消息投影"中的起点（前端定位 store 中被压消息）。 */
+  shadowedStartNonSystem: number;
+  /** 被压区间角色序列（前端校验 store 投影与后端一致，防止误删）。 */
+  shadowedRoles: Array<'user' | 'assistant' | 'tool'>;
+  /** 被压区间内 tool 消息的 toolCallId 序列（保序，前端校验用）。 */
+  shadowedToolCallIds: Array<string | null>;
+  reason: string | null;
+  /** 是否已进入摘要阶段（false=未开始就跳过，前端不留痕；true=摘要已跑但失败） */
+  attempted: boolean;
+}
+
+/** 手动压缩指定会话的上下文（命令面板「压缩上下文」）。
+ *  history 由 buildLlmHistory 提供（与 agent_start_task 同一来源）；
+ *  taskId 由前端生成，作为 `agent://stream/{taskId}` 事件通道（压缩事件
+ *  实时转发，前端复用 attachStreamListener 显示卡片）。 */
+export async function agentCompactConversation(
+  conversationId: string,
+  history: {
+    role: string;
+    content: string;
+    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+    toolCallId?: string;
+    reasoningContent?: string;
+    imagePaths?: string[];
+  }[],
+  taskId: string,
+): Promise<AgentCompactResult> {
+  return invoke<AgentCompactResult>('agent_compact_conversation', {
+    conversationId,
+    taskId,
+    history,
+  });
+}
+
 export async function agentApproveOperation(
   taskId: string,
   operationId: string,

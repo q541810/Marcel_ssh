@@ -327,6 +327,10 @@ function AgentMessage({
     if (message.isRetrying) {
       return <RetryIndicator message={message} />;
     }
+    // 上下文压缩卡片：进行中（防停滞误解）→ 完成（可见摘要）→ 跳过
+    if (message.compaction) {
+      return <CompactionCard message={message} />;
+    }
     return (
       <div className="flex justify-center my-1">
         <div className="text-xs text-zinc-500 italic px-2 py-1 break-words [overflow-wrap:anywhere]">
@@ -457,3 +461,124 @@ function AgentMessage({
 }
 
 export default memo(AgentMessage);
+
+/** 压缩进行中卡片：实时生成的摘要文本是主角，逐字增长即"没卡住"。 */
+function CompactionRunningCard({ message }: { message: AgentMessageType }) {
+  const comp = message.compaction;
+  const live = comp?.summary ?? '';
+  const isOverflow = comp?.trigger === 'context-overflow';
+  const previewRef = useRef<HTMLDivElement>(null);
+  // 仅当用户已在底部附近时跟随滚动；用户上翻看历史时不打扰
+  useEffect(() => {
+    const el = previewRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }, [live]);
+
+  return (
+    <div className="my-1.5 flex justify-start">
+      <div className="min-w-0 max-w-[85%] rounded-md border border-zinc-700/60 bg-zinc-800/50 px-3 py-2.5">
+        <div className="flex items-baseline gap-2">
+          {/* 静态状态点（不转圈，避免与"思考中"的 spinner 混淆） */}
+          <span className="h-2 w-2 shrink-0 translate-y-[-1px] rounded-full bg-violet-400/90 ring-2 ring-violet-400/15" />
+          <span className="text-xs font-medium text-zinc-200">
+            正在压缩上下文
+          </span>
+          <span className="truncate text-[11px] text-zinc-500">
+            {isOverflow
+              ? '上下文超限，压缩早期历史后自动重试'
+              : '总结早期历史、释放上下文空间'}
+          </span>
+        </div>
+        {/* 实时进度是主角：生成中的摘要，逐字增长就是"没卡住"的最好证明 */}
+        <div
+          ref={previewRef}
+          className="mt-2 max-h-44 overflow-y-auto rounded-md border border-zinc-700/40 bg-zinc-950/60 px-2.5 py-2"
+        >
+          {live ? (
+            <pre className="whitespace-pre-wrap font-mono text-[13px] leading-relaxed text-zinc-300 [overflow-wrap:anywhere]">
+              {live}
+            </pre>
+          ) : (
+            <span className="text-xs italic text-zinc-500">
+              正在生成摘要…
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 上下文压缩卡片：进行中（实时进度）→ 完成（摘要可见）。 */
+function CompactionCard({ message }: { message: AgentMessageType }) {
+  const comp = message.compaction;
+  const [expanded, setExpanded] = useState(false);
+  // 完成瞬间默认展开摘要：用户正看着实时文本，别让它在原地"消失"成一行折叠
+  const status = comp?.status;
+  useEffect(() => {
+    if (status === 'done') setExpanded(true);
+  }, [status]);
+  if (!comp) return null;
+
+  // ── 压缩进行中 ──
+  if (comp.status === 'running') {
+    return <CompactionRunningCard message={message} />;
+  }
+
+  // ── 压缩完成：统计 + 摘要（默认展开）──
+  const hasStats =
+    comp.shadowedMessages != null && comp.shadowedTokens != null;
+  return (
+    <div className="my-1.5 flex justify-start">
+      <div className="min-w-0 max-w-[85%] rounded-md border border-zinc-700/60 bg-zinc-800/50 px-2 py-1.5 text-xs text-zinc-300">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="group flex w-full items-center justify-between gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-zinc-700/20"
+        >
+          <span className="flex items-center gap-1.5 text-emerald-300">
+            <svg
+              className="h-3.5 w-3.5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+            上下文已压缩
+          </span>
+          {hasStats && (
+            <span className="tabular-nums text-zinc-500">
+              已整理 {comp.shadowedMessages} 条 · ~{comp.shadowedTokens} tokens
+            </span>
+          )}
+          <svg
+            className={`h-3 w-3 shrink-0 text-zinc-500 transition-transform duration-200 group-hover:text-zinc-300 ${expanded ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M19 9l-7 7-7-7"
+            />
+          </svg>
+        </button>
+        {expanded && comp.summary && (
+          <div className="mt-1.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded-md bg-zinc-950/60 p-2 font-mono text-[12px] leading-relaxed text-zinc-400 [overflow-wrap:anywhere]">
+            {comp.summary}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

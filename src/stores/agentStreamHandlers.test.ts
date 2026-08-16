@@ -6,6 +6,10 @@ import {
   handleDone,
   handleError,
   handleRetrying,
+  handleCompactionStart,
+  handleCompactionProgress,
+  handleCompactionDone,
+  handleCompactionSkipped,
   getStreamState,
   cleanupStreamState,
   setStreamState,
@@ -100,6 +104,7 @@ describe('agentStreamHandlers', () => {
         pendingTextDelta: '',
         pendingThinkingDelta: '',
         flushRafId: null,
+        compactionMessageId: null,
       });
       const state = getStreamState(taskId);
       expect(state.assistantMessageId).toBe('msg-1');
@@ -389,6 +394,250 @@ describe('agentStreamHandlers', () => {
         argumentsDelta: '{"x":1}',
       });
       expect(handler._messages[convId]).toHaveLength(0);
+    });
+  });
+
+  describe('compaction handlers', () => {
+    it('inserts a running indicator on start', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      expect(handler._messages[convId]).toHaveLength(1);
+      expect(handler._messages[convId][0].role).toBe('system');
+      expect(handler._messages[convId][0].compaction?.status).toBe('running');
+    });
+
+    it('done splices the shadowed span in place and persists with removed ids', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+      const t1: AgentMessage = {
+        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
+      };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
+
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      const runningId = handler._messages[convId][4].id; // 运行中卡在尾部
+      expect(getStreamState(taskId).compactionMessageId).toBe(runningId);
+
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: '## Primary Request\n- do the thing',
+        shadowedMessages: 3,
+        shadowedTokens: 34_000,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: ['user', 'assistant', 'tool'],
+        shadowedToolCallIds: ['X1'],
+      });
+
+      // 原位替换：卡片站在被压区间的位置，尾部保留；运行中卡被移除
+      expect(handler._messages[convId]).toHaveLength(2);
+      const done = handler._messages[convId][0];
+      expect(done.role).toBe('system');
+      expect(done.compaction?.status).toBe('done');
+      expect(done.compaction?.summary).toContain('do the thing');
+      expect(done.compaction?.shadowedMessages).toBe(3);
+      expect(done.compaction?.shadowedTokens).toBe(34_000);
+      expect(handler._messages[convId][1].id).toBe('u2');
+      // 完成后释放占位 id
+      expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('a later compaction absorbs the previous done card (span starts at the head)', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+      const t1: AgentMessage = {
+        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
+      };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
+
+      // 第一次压缩 → [card1, u2]
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: '## Primary Request\n- first round',
+        shadowedMessages: 3,
+        shadowedTokens: 1_000,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: ['user', 'assistant', 'tool'],
+        shadowedToolCallIds: ['X1'],
+      });
+      expect(handler._messages[convId]).toHaveLength(2);
+      const firstCardId = handler._messages[convId][0].id;
+
+      // 第二次压缩：区间从头部开始（含上次的 done 卡）→ 吞并 → 只剩新卡
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
+      expect(handler._messages[convId]).toHaveLength(3);
+      expect(handler._messages[convId][2].compaction?.status).toBe('running'); // 运行中卡在尾部
+      expect(getStreamState(taskId).compactionMessageId).toBe(handler._messages[convId][2].id);
+
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: '## Primary Request\n- second round',
+        shadowedMessages: 2,
+        shadowedTokens: 2_000,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: ['user', 'user'],
+        shadowedToolCallIds: [],
+      });
+      expect(handler._messages[convId]).toHaveLength(1);
+      const done = handler._messages[convId][0];
+      expect(done.id).not.toBe(firstCardId); // 新卡取代旧卡
+      expect(done.compaction?.summary).toContain('second round');
+    });
+
+    it('degrades to append-only when splice validation fails (never removes a wrong message)', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+      const t1: AgentMessage = {
+        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
+      };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
+
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
+      // 角色序列与 store 投影不一致（模拟投影漂移/旧数据）→ 拒绝替换
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: '## Primary Request\n- degrade',
+        shadowedMessages: 3,
+        shadowedTokens: 1_000,
+        shadowedStartNonSystem: 0,
+        shadowedRoles: ['user', 'user', 'user'],
+        shadowedToolCallIds: ['X1'],
+      });
+
+      // 不删任何消息：运行中卡被移除、完成卡追加到尾部（降级，不误删）
+      expect(handler._messages[convId]).toHaveLength(5);
+      expect(handler._messages[convId].slice(0, 4).map((m) => m.id)).toEqual(['u1', 'a1', 't1', 'u2']);
+      const card = handler._messages[convId][4];
+      expect(card.compaction?.status).toBe('done');
+      expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('streams live summary text into the running card on progress', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      const runningId = handler._messages[convId][0].id;
+
+      handleCompactionProgress(handler, taskId, convId, {
+        type: 'compactionProgress',
+        text: '## Primary Request',
+      });
+      handleCompactionProgress(handler, taskId, convId, {
+        type: 'compactionProgress',
+        text: '## Primary Request\n- build a terminal',
+      });
+
+      expect(handler._messages[convId]).toHaveLength(1);
+      const live = handler._messages[convId][0];
+      expect(live.id).toBe(runningId);
+      expect(live.compaction?.status).toBe('running');
+      // 累计文本直接替换（后端重试会从头重发，替换语义可自愈）
+      expect(live.compaction?.summary).toBe('## Primary Request\n- build a terminal');
+      // content 同步为实时文本，驱动外层列表跟随滚动
+      expect(live.content).toBe('## Primary Request\n- build a terminal');
+    });
+
+    it('ignores progress without a prior running card', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionProgress(handler, taskId, convId, {
+        type: 'compactionProgress',
+        text: 'orphan',
+      });
+      expect(handler._messages[convId]).toHaveLength(0);
+    });
+
+    it('turns the card into a plain notice when summarization was attempted but failed', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'context-overflow',
+      });
+      const runningId = handler._messages[convId][0].id;
+      expect(getStreamState(taskId).compactionMessageId).toBe(runningId);
+
+      handleCompactionSkipped(handler, taskId, convId, {
+        type: 'compactionSkipped',
+        reason: '生成的摘要未比原文更短，已放弃本次压缩',
+        attempted: true,
+      });
+
+      expect(handler._messages[convId]).toHaveLength(1);
+      const notice = handler._messages[convId][0];
+      expect(notice.id).toBe(runningId); // 原位转文本，不跳位
+      expect(notice.compaction).toBeUndefined();
+      expect(notice.content).toContain('上下文压缩未完成');
+      expect(notice.content).toContain('未比原文更短');
+      expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('removes the card entirely when skipped before summarization (no trace)', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      const runningId = handler._messages[convId][0].id;
+      expect(getStreamState(taskId).compactionMessageId).toBe(runningId);
+
+      handleCompactionSkipped(handler, taskId, convId, {
+        type: 'compactionSkipped',
+        reason: '没有可压缩的早期历史区间',
+        attempted: false,
+      });
+
+      expect(handler._messages[convId]).toHaveLength(0);
+      expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('ignores an orphan skipped event without a prior start', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionSkipped(handler, taskId, convId, {
+        type: 'compactionSkipped',
+        reason: 'no compactable range',
+        attempted: false,
+      });
+      expect(handler._messages[convId]).toHaveLength(0);
+      expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('can start a fresh card after a skip', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      handleCompactionSkipped(handler, taskId, convId, {
+        type: 'compactionSkipped',
+        reason: 'cancelled',
+        attempted: true,
+      });
+      // attempted=true → 原地转普通文本，消息还在但不是卡片
+      expect(handler._messages[convId]).toHaveLength(1);
+      expect(handler._messages[convId][0].compaction).toBeUndefined();
+
+      // 后续再触发压缩 → 新卡片，不复用旧 id
+      handleCompactionStart(handler, taskId, convId, {
+        type: 'compactionStart',
+        trigger: 'pressure',
+      });
+      expect(handler._messages[convId]).toHaveLength(2);
+      const card = handler._messages[convId][1];
+      expect(card.compaction?.status).toBe('running');
+      expect(getStreamState(taskId).compactionMessageId).toBe(card.id);
     });
   });
 });

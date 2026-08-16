@@ -38,6 +38,61 @@ describe('storedMessageToAgentMessage', () => {
     });
   });
 
+  describe('compaction summary messages (persisted display)', () => {
+    it('reconstructs compaction card data from a persisted summary', () => {
+      const stored = createStoredMessage({
+        role: 'system',
+        content:
+          '【上下文已压缩】已整理 240 条历史消息（约 34000 tokens）\n\n' +
+          '## Primary Request and Intent\n- build a terminal',
+      });
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.role).toBe('system');
+      expect(result.compaction).toEqual({
+        status: 'done',
+        summary: '## Primary Request and Intent\n- build a terminal',
+        shadowedMessages: 240,
+        shadowedTokens: 34000,
+      });
+    });
+
+    it('leaves non-compaction system messages untouched', () => {
+      const stored = createStoredMessage({
+        role: 'system',
+        content: '上下文压缩中…正在总结早期历史以释放上下文空间，请稍候',
+      });
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.compaction).toBeUndefined();
+    });
+
+    it('degrades safely when the header stats are missing or malformed', () => {
+      const noStats = createStoredMessage({
+        role: 'system',
+        content: '【上下文已压缩】已整理历史消息\n\n## Next Step\n- none',
+      });
+      const result = storedMessageToAgentMessage(noStats);
+      expect(result.compaction).toEqual({
+        status: 'done',
+        summary: '## Next Step\n- none',
+      });
+      expect(result.compaction?.shadowedMessages).toBeUndefined();
+      expect(result.compaction?.shadowedTokens).toBeUndefined();
+
+      const noSummary = createStoredMessage({
+        role: 'system',
+        content: '【上下文已压缩】已整理 5 条历史消息（约 800 tokens）',
+      });
+      const result2 = storedMessageToAgentMessage(noSummary);
+      expect(result2.compaction).toEqual({
+        status: 'done',
+        shadowedMessages: 5,
+        shadowedTokens: 800,
+      });
+    });
+  });
+
   describe('legacy tool result messages (no toolCallsJson)', () => {
     it('should handle legacy tool result with execute_command default', () => {
       const stored = createStoredMessage({
