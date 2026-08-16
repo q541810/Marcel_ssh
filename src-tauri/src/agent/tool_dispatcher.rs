@@ -125,6 +125,10 @@ pub(crate) struct ToolDispatcher {
     /// settings or the tool is not `execute_command`. Inserted after the
     /// sandbox risk assessment and before the human-approval trigger.
     approver: Option<std::sync::Arc<dyn CommandApprover>>,
+    /// 本任务内已观察过的路径（`read_file` / `write_file` / `edit_file` 成功
+    /// 后按 `normalize_path` 归一化记账）。`edit_file` 的目标必须已读取，
+    /// `write_file` 覆盖已存在文件也必须已读取，否则工具直接失败并提示先读取。
+    read_files: parking_lot::RwLock<std::collections::HashSet<String>>,
 }
 
 impl ToolDispatcher {
@@ -187,6 +191,7 @@ impl ToolDispatcher {
             approval: ApprovalManager::new(app, state.pending_approvals.clone()),
             registry,
             approver,
+            read_files: parking_lot::RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -230,6 +235,37 @@ impl ToolDispatcher {
             _ => tool.risk_level(),
         };
         let requires_default_approval = tool.requires_approval_by_default();
+
+        // 0.5 编辑前必须已读取（read-before-edit）：
+        //     edit_file 的目标文件必须在本任务内先经 read_file 成功读取过
+        //     （路径按 normalize_path 归一化比较），否则直接失败并提示先读取，
+        //     不进入审批流程（注定失败的编辑不需要用户审批）。
+        if tc.name == "edit_file" {
+            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
+                if !path_was_read(&self.read_files.read(), path) {
+                    return DispatchResult::from_tool_output(
+                        ToolOutput::fail(format!("edit {}", path), read_before_edit_error(path)),
+                        effective_risk,
+                    );
+                }
+            }
+        }
+
+        // 0.6 覆盖已有文件前必须已读取（read-before-overwrite）：
+        //     write_file 的目标已存在（覆盖）且本任务未读过 → 拦截提示先读取；
+        //     目标不存在（新建）→ 放行。已读过的路径跳过 stat，省一次往返。
+        if tc.name == "write_file" {
+            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
+                if !path_was_read(&self.read_files.read(), path)
+                    && remote_file_exists(&ctx.ssh, &ctx.session_id, path).await
+                {
+                    return DispatchResult::from_tool_output(
+                        ToolOutput::fail(format!("write {}", path), read_before_write_error(path)),
+                        effective_risk,
+                    );
+                }
+            }
+        }
 
         // 1. Compute sandbox/mode-level need for human confirmation.
         let sandbox_needs_confirm: Option<bool> = match &self.mode {
@@ -431,7 +467,21 @@ impl ToolDispatcher {
         }
 
         match tool.execute(tc.arguments.clone(), ctx).await {
-            Ok(out) => DispatchResult::from_tool_output(out, effective_risk),
+            Ok(out) => {
+                // read_file / write_file / edit_file 成功即记账：模型刚读过，
+                // 或刚写入/改过的文件内容都在其上下文中，等价于"已观察"。
+                // 后续 edit_file 与 write_file 覆盖的预读检查以此集合为准。
+                if matches!(tc.name.as_str(), "read_file" | "write_file" | "edit_file")
+                    && out.success
+                {
+                    if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
+                        self.read_files
+                            .write()
+                            .insert(crate::agent::sandbox::normalize_path(path));
+                    }
+                }
+                DispatchResult::from_tool_output(out, effective_risk)
+            }
             Err(e) => DispatchResult {
                 summary: format!("{} (error)", tc.name),
                 output: format!("tool error: {}", e),
@@ -443,6 +493,41 @@ impl ToolDispatcher {
                 risk_level: effective_risk,
             },
         }
+    }
+}
+
+/// read-before-edit：目标路径是否已被本任务成功读取（归一化比较）。
+/// 复用 sandbox 的 `normalize_path`（折叠 `//`、`.`、`..`、尾斜杠）。
+fn path_was_read(read_files: &std::collections::HashSet<String>, path: &str) -> bool {
+    read_files.contains(&crate::agent::sandbox::normalize_path(path))
+}
+
+/// read-before-edit 拦截时的固定错误文案（xxx 为本次 edit 传入的 path）。
+fn read_before_edit_error(path: &str) -> String {
+    format!(
+        "错误：编辑操作需要先读取\"{}\" —— 请先读取该文件，然后再重试。",
+        path
+    )
+}
+
+/// read-before-overwrite 拦截时的固定错误文案（xxx 为本次 write 传入的 path）。
+fn read_before_write_error(path: &str) -> String {
+    format!(
+        "错误：覆盖已有文件需要先读取\"{}\" —— 请先读取该文件，然后再重试。",
+        path
+    )
+}
+
+/// 远程目标是否存在（SFTP stat）。stat 失败按"不存在"处理：
+/// 连接问题会由 write 自己报 SFTP 错误，这里不双重误拦新建。
+async fn remote_file_exists(
+    ssh: &crate::ssh::connection::SshManager,
+    session_id: &str,
+    path: &str,
+) -> bool {
+    match ssh.open_sftp(session_id).await {
+        Ok(sftp) => sftp.metadata(path).await.is_ok(),
+        Err(_) => false,
     }
 }
 
@@ -614,5 +699,40 @@ mod tests {
         assert!(command_list_requires_confirm("ls $(rm -rf /)", &s));
         // Backtick subshell
         assert!(command_list_requires_confirm("ls `rm -rf /`", &s));
+    }
+
+    // ── read-before-edit ──
+
+    #[test]
+    fn read_before_edit_error_message_format() {
+        let msg = read_before_edit_error("/var/www/app.js");
+        assert_eq!(
+            msg,
+            "错误：编辑操作需要先读取\"/var/www/app.js\" —— 请先读取该文件，然后再重试。"
+        );
+    }
+
+    #[test]
+    fn read_before_write_error_message_format() {
+        let msg = read_before_write_error("/var/www/app.js");
+        assert_eq!(
+            msg,
+            "错误：覆盖已有文件需要先读取\"/var/www/app.js\" —— 请先读取该文件，然后再重试。"
+        );
+    }
+
+    #[test]
+    fn path_was_read_matches_after_normalization() {
+        let mut read = std::collections::HashSet::new();
+        // 读取时带了冗余路径成分，编辑时用干净路径 → 归一化后应匹配
+        read.insert(crate::agent::sandbox::normalize_path("/var//www/./app.js"));
+        assert!(path_was_read(&read, "/var/www/app.js"));
+        // 尾斜杠差异也应匹配
+        assert!(path_was_read(&read, "/var/www/app.js/"));
+        // 未读过的路径不匹配
+        assert!(!path_was_read(&read, "/var/www/other.js"));
+        // 空集合不匹配任何路径
+        let empty = std::collections::HashSet::new();
+        assert!(!path_was_read(&empty, "/var/www/app.js"));
     }
 }
