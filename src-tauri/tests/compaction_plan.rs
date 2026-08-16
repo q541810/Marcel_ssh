@@ -14,7 +14,8 @@
 //!    整区间无锚点时返回 None（跳过压缩）。
 
 /// 简化消息：System（提示词/plan 注入）、User、Asst(n)（携带 n 个 tool_calls）、
-/// Tool、UserUnanchored（无 db_id 的用户消息——运行中未回填的极端窗口）。
+/// Tool、UserUnanchored（无 db_id——运行中未回填的极端窗口）、
+/// UserBackend（有 db_id 但前端 store 未知——save 回填的运行中消息）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
     System,
@@ -22,6 +23,7 @@ enum Item {
     Asst(usize),
     Tool,
     UserUnanchored,
+    UserBackend,
 }
 
 /// `pairing.rs::cut_balance` 的忠实模型：
@@ -109,17 +111,32 @@ fn range_pairing_closed(items: &[Item], cuts: &[bool], start: usize, end: usize)
     in_progress == 0 // 区间内所有调用都在区间内闭合
 }
 
-/// 消息是否缺少 db_id 锚点（`UserUnanchored` = 运行中未回填的极端窗口）。
+/// 消息是否缺少 db_id 锚点（`UserUnanchored` = 无 id 的极端窗口）。
 fn is_unanchored(it: Item) -> bool {
     matches!(it, Item::UserUnanchored)
 }
 
+/// 消息是否对前端 store 可见（pressure known_only 的锚点条件）：
+/// `User`（历史 load）可见；`UserBackend`（save 回填）前端不知 id，不可见。
+fn is_frontend_known(it: Item) -> bool {
+    !matches!(it, Item::UserUnanchored | Item::UserBackend)
+}
+
 /// `context/mod.rs::shrink_to_known_tail` 的忠实模型：从 end 向前找最近一条
 /// "切点平衡（cuts[e+1]）且有 id 锚点"的消息作为新区间末条；找不到返回 None。
-fn shrink_to_known_tail(items: &[Item], cuts: &[bool], start: usize, end: usize) -> Option<(usize, usize)> {
+/// `known_only`：pressure 传 true（末条必须前端可见），overflow 传 false
+/// （只要 DB 有行——`UserBackend` 可作锚点，超长任务恢复）。
+fn shrink_to_known_tail(
+    items: &[Item],
+    cuts: &[bool],
+    start: usize,
+    end: usize,
+    known_only: bool,
+) -> Option<(usize, usize)> {
     let mut e = end;
     loop {
-        if cuts[e + 1] && !is_unanchored(items[e]) {
+        let anchored = !is_unanchored(items[e]) && (!known_only || is_frontend_known(items[e]));
+        if cuts[e + 1] && anchored {
             return Some((start, e));
         }
         if e == start {
@@ -246,7 +263,8 @@ mod tests {
     fn shrink_keeps_end_when_anchored() {
         let items = [Item::User, Item::User, Item::User];
         let cuts = cut_balance(&items).unwrap();
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2), Some((0, 2)));
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 2)));
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 2)));
     }
 
     #[test]
@@ -258,14 +276,31 @@ mod tests {
             Item::UserUnanchored, // 2 无 id
         ];
         let cuts = cut_balance(&items).unwrap();
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2), Some((0, 0)));
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 0)));
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 0)));
+    }
+
+    #[test]
+    fn shrink_known_only_rejects_backend_filled_ids() {
+        // 历史（User）→ 前端可见；save 回填（UserBackend）→ 前端不知 id
+        let items = [
+            Item::User,        // 0 前端已知
+            Item::UserBackend, // 1 运行中 save 回填
+            Item::UserBackend, // 2 运行中 save 回填
+        ];
+        let cuts = cut_balance(&items).unwrap();
+        // pressure（known_only）：收缩到前端已知的 m0 → 前端必能找到，live 不降级
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 0)));
+        // overflow：只要求 DB 有行 → 末条 m2 可作锚点（超长任务恢复）
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 2)));
     }
 
     #[test]
     fn shrink_none_when_span_fully_unanchored() {
         let items = [Item::UserUnanchored, Item::UserUnanchored];
         let cuts = cut_balance(&items).unwrap();
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 1), None);
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 1, true), None);
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 1, false), None);
     }
 
     #[test]
@@ -281,7 +316,7 @@ mod tests {
         let cuts = cut_balance(&items).unwrap();
         assert!(!cuts[2], "assistant(tool_calls) 之后切点不平衡");
         // 从 end=3 收缩：3 无 id → 2 处 cuts[3] 平衡且 Tool 有 id（非 unanchored）→ 停
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 3), Some((0, 2)));
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 3, true), Some((0, 2)));
     }
 
     #[test]
@@ -299,12 +334,12 @@ mod tests {
             Item::User,          // 8
         ];
         let cuts = cut_balance(&items).unwrap();
-        let (s, e) = shrink_to_known_tail(&items, &cuts, 0, 8).unwrap();
+        let (s, e) = shrink_to_known_tail(&items, &cuts, 0, 8, true).unwrap();
         assert!(
             range_pairing_closed(&items, &cuts, s, e),
             "收缩后区间 [{s},{e}] 必须配对闭合"
         );
         assert!(cuts[s] && cuts[e + 1], "收缩后两端切点必须平衡");
-        assert!(!is_unanchored(items[e]), "收缩后末条必有 id 锚点");
+        assert!(is_frontend_known(items[e]), "收缩后末条必对前端可见（known_only）");
     }
 }

@@ -157,6 +157,15 @@ pub(crate) async fn run_agent_loop(
     let persister = ConversationPersister::new(conv_db, conversation_id.clone())
         .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
 
+    // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
+    // （db_id_known=true，自动 pressure 压缩据此收缩到前端能找到的区间末条）；
+    // 运行中 save 回填的消息保持 false（前端不知 id）。
+    for m in &mut messages {
+        if m.db_id.is_some() {
+            m.db_id_known = true;
+        }
+    }
+
     persister.update_title_from_last_user_msg(&messages);
     persister.save_last_user_msg(&mut messages);
 
@@ -549,6 +558,7 @@ pub(crate) async fn run_agent_loop(
                     image_paths: None,
                     finish_reason: None,
                     db_id: None,
+                    db_id_known: false,
                 };
                 if let Some(db_id) = persister.save_msg(
                     "tool",
@@ -624,6 +634,7 @@ pub(crate) async fn run_agent_loop(
                 image_paths: None,
                 finish_reason: None,
                 db_id: None,
+                db_id_known: false,
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).

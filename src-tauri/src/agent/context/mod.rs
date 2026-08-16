@@ -169,20 +169,27 @@ fn region_shadowed_tokens(msgs: &[LlmMessage], range: &region::RangeSelection) -
         .sum()
 }
 
-/// 收缩区间末条到"最近一条有 `db_id` 的平衡切点"。
+/// 收缩区间末条到"最近一条满足锚点条件的平衡切点"。
 ///
 /// 统一 id 指针（`tail_db_id`）要求被压区间末条消息在 DB 里有行可定位；运行中
 /// 新增且尚未回填 id 的消息（极端窗口）不能作为锚点，向前收缩到最近有 id 的
 /// 平衡切点（`cuts[end+1]` 为真 = 不破坏工具配对）。返回 `None` = 整区间无
-/// 可定位锚点（正常数据不会发生——历史消息必带 dbId），调用方跳过本次压缩。
+/// 可定位锚点，调用方跳过本次压缩。
+///
+/// `known_only`：pressure（预防式）压缩传 `true`——末条必须是**前端 store
+/// 也有 dbId 的消息**（`db_id_known`），前端按 id 必能找到插入点，live 降级
+/// 路径实际不再触发；overflow（强制恢复）传 `false`——只要 DB 有行即可
+/// （运行中消息可压，超长任务仍能恢复）。
 fn shrink_to_known_tail(
     msgs: &[LlmMessage],
     cuts: &[bool],
     range: &region::RangeSelection,
+    known_only: bool,
 ) -> Option<region::RangeSelection> {
     let mut end = range.end;
     loop {
-        if cuts.get(end + 1).copied().unwrap_or(false) && msgs[end].db_id.is_some() {
+        let anchored = msgs[end].db_id.is_some() && (!known_only || msgs[end].db_id_known);
+        if cuts.get(end + 1).copied().unwrap_or(false) && anchored {
             return Some(region::RangeSelection {
                 start: range.start,
                 end,
@@ -272,12 +279,12 @@ pub async fn compact_if_needed(
             }
             // 手动 = 队尾语义：**不收缩**（本会话产生、尚未回填 db_id 的消息
             // 也一并压掉；`tail_db_id` 恒为 None，persist 按最后一行定位队尾）。
-            // 自动（Overflow）收缩到有 id 的平衡末条：保证 `tail_db_id` 指针
-            // 有值（无锚点则跳过）。
+            // 自动（Overflow，known_only=false）收缩到有 DB 行的平衡末条：
+            // 运行中消息也可压（超长任务恢复）；无锚点则跳过。
             let range = if trigger == CompactionTrigger::Manual {
                 range
             } else {
-                match shrink_to_known_tail(msgs, &cuts, &range) {
+                match shrink_to_known_tail(msgs, &cuts, &range, false) {
                     Some(r) => r,
                     None => {
                         record_event(
@@ -395,8 +402,10 @@ pub async fn compact_if_needed(
                     }
                     break;
                 };
-                // 收缩到有 id 的平衡末条：保证 `tail_db_id` 指针有值
-                let Some(range) = shrink_to_known_tail(msgs, &cuts, &range) else {
+                // 收缩到"前端已知 id"的平衡末条（known_only=true）：区间末条
+                // 必是前端 store 有 dbId 的消息 → 前端按 id 必能找到插入点，
+                // live 降级路径实际不再触发。运行中消息留在尾部保留。
+                let Some(range) = shrink_to_known_tail(msgs, &cuts, &range, true) else {
                     if result.is_none() {
                         record_event(
                             &mut events,
@@ -636,14 +645,20 @@ mod tests {
     fn shrink_keeps_known_tail_id_when_end_has_one() {
         let mut m0 = LlmMessage::user("u0");
         m0.db_id = Some("row-0".into());
+        m0.db_id_known = true;
         let mut m1 = LlmMessage::user("u1");
         m1.db_id = Some("row-1".into());
+        m1.db_id_known = true;
         let msgs = vec![m0, m1];
         let cuts = pairing::cut_balance(&msgs).unwrap();
         let range = region::RangeSelection { start: 0, end: 1 };
-        // 末条已有 id → 原样返回
+        // 末条已有 id 且前端已知 → 原样返回（pressure 与 overflow 一致）
         assert_eq!(
-            shrink_to_known_tail(&msgs, &cuts, &range),
+            shrink_to_known_tail(&msgs, &cuts, &range, true),
+            Some(region::RangeSelection { start: 0, end: 1 })
+        );
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range, false),
             Some(region::RangeSelection { start: 0, end: 1 })
         );
     }
@@ -652,6 +667,7 @@ mod tests {
     fn shrink_rolls_back_to_nearest_known_id() {
         let mut m0 = LlmMessage::user("u0");
         m0.db_id = Some("row-0".into());
+        m0.db_id_known = true;
         let m1 = LlmMessage::user("u1"); // 无 id（运行中未回填）
         let m2 = LlmMessage::user("u2"); // 无 id
         let msgs = vec![m0, m1, m2];
@@ -659,8 +675,40 @@ mod tests {
         let range = region::RangeSelection { start: 0, end: 2 };
         // 收缩到最近有 id 的平衡末条 = u0
         assert_eq!(
-            shrink_to_known_tail(&msgs, &cuts, &range),
+            shrink_to_known_tail(&msgs, &cuts, &range, true),
             Some(region::RangeSelection { start: 0, end: 0 })
+        );
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range, false),
+            Some(region::RangeSelection { start: 0, end: 0 })
+        );
+    }
+
+    #[test]
+    fn shrink_known_only_rejects_backend_filled_ids() {
+        // pressure（known_only）：运行中 save 回填的 db_id（known=false）
+        // 不被接受为锚点 → 收缩到前端已知的消息 → 前端必能找到，live 不降级
+        let mut m0 = LlmMessage::user("u0");
+        m0.db_id = Some("row-0".into());
+        m0.db_id_known = true; // 历史（前端 load）
+        let mut m1 = LlmMessage::user("u1");
+        m1.db_id = Some("row-1".into());
+        m1.db_id_known = false; // 运行中 save 回填（前端不知 id）
+        let mut m2 = LlmMessage::user("u2");
+        m2.db_id = Some("row-2".into());
+        m2.db_id_known = false;
+        let msgs = vec![m0, m1, m2];
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let range = region::RangeSelection { start: 0, end: 2 };
+        // pressure：收缩到前端已知的 m0（运行中消息留在尾部保留）
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range, true),
+            Some(region::RangeSelection { start: 0, end: 0 })
+        );
+        // overflow：只要求 DB 有行 → 末条 m2 可作锚点（超长任务恢复）
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range, false),
+            Some(region::RangeSelection { start: 0, end: 2 })
         );
     }
 
@@ -669,7 +717,8 @@ mod tests {
         let msgs = vec![LlmMessage::user("u1"), LlmMessage::user("u2")];
         let cuts = pairing::cut_balance(&msgs).unwrap();
         let range = region::RangeSelection { start: 0, end: 1 };
-        assert_eq!(shrink_to_known_tail(&msgs, &cuts, &range), None);
+        assert_eq!(shrink_to_known_tail(&msgs, &cuts, &range, true), None);
+        assert_eq!(shrink_to_known_tail(&msgs, &cuts, &range, false), None);
     }
 
     #[test]
@@ -678,8 +727,10 @@ mod tests {
         // user, assistant(call), tool(result), user —— 收缩不能停在配对中间
         let mut m0 = LlmMessage::user("go");
         m0.db_id = Some("row-0".into());
+        m0.db_id_known = true;
         let mut asst = LlmMessage::assistant("run");
         asst.db_id = Some("row-1".into());
+        asst.db_id_known = true;
         asst.tool_calls = Some(vec![ToolCall {
             id: "c1".into(),
             name: "cmd".into(),
@@ -691,12 +742,13 @@ mod tests {
         t.content = "output".into();
         let mut m3 = LlmMessage::user("next");
         m3.db_id = Some("row-3".into());
+        m3.db_id_known = true;
         let msgs = vec![m0, asst, t, m3];
         let cuts = pairing::cut_balance(&msgs).unwrap();
         // 区间 [0,3]：末条有 id → 不收缩（cuts[4] 平衡）
         let range = region::RangeSelection { start: 0, end: 3 };
         assert_eq!(
-            shrink_to_known_tail(&msgs, &cuts, &range),
+            shrink_to_known_tail(&msgs, &cuts, &range, true),
             Some(region::RangeSelection { start: 0, end: 3 })
         );
         // 若末条无 id：收缩时不得停在 tool 结果之前（cuts[3] 不平衡）→ 到 m0
@@ -705,7 +757,7 @@ mod tests {
         let cuts2 = pairing::cut_balance(&msgs2).unwrap();
         let range2 = region::RangeSelection { start: 0, end: 3 };
         assert_eq!(
-            shrink_to_known_tail(&msgs2, &cuts2, &range2),
+            shrink_to_known_tail(&msgs2, &cuts2, &range2, true),
             Some(region::RangeSelection { start: 0, end: 0 })
         );
     }

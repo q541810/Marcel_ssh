@@ -721,6 +721,7 @@ fn assemble_final_message(
         image_paths: None,
         finish_reason,
         db_id: None,
+        db_id_known: false,
     }
 }
 
@@ -1267,6 +1268,7 @@ mod build_request_body_tests {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body
@@ -1296,6 +1298,7 @@ mod build_request_body_tests {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body

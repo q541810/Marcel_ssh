@@ -56,6 +56,15 @@ pub struct LlmMessage {
     /// 指针交给前端/DB 定位卡片——取代一切位置数数与指纹验证。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub db_id: Option<String>,
+    /// `db_id` 是否对前端 store 可见（前端消息有 `dbId`）：
+    /// - history 入口（`buildLlmHistory` 携带 dbId 的消息）→ `true`；
+    /// - 运行中 `save_msg`/`save_last_user_msg` 回填 → `false`（前端不知 id）。
+    ///
+    /// 自动 pressure 压缩按 `known_only` 收缩：区间末条必是前端能找到的消息，
+    /// **live 降级路径实际不再触发**；overflow 强制压缩允许压运行中消息
+    /// （恢复超长任务，降级作为救命场景的防御保留）。
+    #[serde(skip_serializing_if = "std::ops::Not::not", default)]
+    pub db_id_known: bool,
 }
 
 impl LlmRole {
@@ -80,6 +89,7 @@ impl LlmMessage {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         }
     }
 
@@ -93,6 +103,7 @@ impl LlmMessage {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         }
     }
 
@@ -106,6 +117,7 @@ impl LlmMessage {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         }
     }
 }

@@ -300,6 +300,7 @@ mod tests {
             image_paths: None,
             finish_reason: None,
             db_id: None,
+            db_id_known: false,
         }
     }
 

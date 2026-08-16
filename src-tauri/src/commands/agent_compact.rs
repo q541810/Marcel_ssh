@@ -87,6 +87,13 @@ pub async fn agent_compact_conversation(
             attempted: false,
         });
     }
+    // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
+    // （db_id_known=true，与 run_agent_loop 入口同规则）。
+    for m in &mut messages {
+        if m.db_id.is_some() {
+            m.db_id_known = true;
+        }
+    }
 
     // 触发压缩（Manual：与 ContextOverflow 同一条强制缩减管线，跳过阈值；
     // 触发名 "manual" 让前端 running 卡显示"总结早期历史"而非
