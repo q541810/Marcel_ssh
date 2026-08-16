@@ -45,4 +45,7 @@ website/
 # 沙箱测试环境（本机实验用，不入仓库）
 sandbox-test/
 
+# 本地 scratch（visualize 卡片等临时产物，不入仓库）
+viz/
+
 .workbuddy/
