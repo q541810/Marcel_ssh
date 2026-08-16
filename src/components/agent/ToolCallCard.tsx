@@ -2,6 +2,7 @@ import { memo, useState, useEffect, useRef } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 interface Props {
   message: AgentMessage;
@@ -180,6 +181,8 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   const onExpandChangeRef = useRef(onExpandChange);
   const lastNotifiedExpandedRef = useRef<boolean | null>(null);
   const expandNotifyId = messageId ?? message.id;
+  // 真实命令超时来自用户设置（后端 command_timeout_secs），不是模型传参。
+  const commandTimeoutSecs = useSettingsStore((s) => s.settings.commandTimeoutSecs);
 
   onExpandChangeRef.current = onExpandChange;
 
@@ -406,9 +409,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     }
     const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tc.name, tc.arguments);
-    const timeoutSecs = tc.name === 'execute_command'
-      ? (typeof tc.arguments?.timeout_secs === 'number' ? tc.arguments.timeout_secs as number : 120)
-      : 0;
+    const timeoutSecs = tc.name === 'execute_command' ? commandTimeoutSecs : 0;
 
     return (
       <div className="rounded-md border border-zinc-700/60 bg-zinc-800/50">
@@ -421,7 +422,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             {preview && (
               <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
             )}
-            {timeoutSecs > 60 && (
+            {timeoutSecs > 0 && (
               <span className="flex items-center gap-1 flex-shrink-0 text-xs text-amber-400">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />

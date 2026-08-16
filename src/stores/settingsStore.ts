@@ -84,7 +84,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   mobileBackgroundSettings: DEFAULT_MOBILE_BACKGROUND_SETTINGS,
   workspaceLayout: DEFAULT_WORKSPACE_LAYOUT,
   customProtectedPaths: [],
-  commandTimeoutSecs: 120,
+  commandTimeoutSecs: 180,
   hasCompletedOnboarding: false,
   hasAcceptedSyncDisclaimer: false,
   disabledPlugins: [],
