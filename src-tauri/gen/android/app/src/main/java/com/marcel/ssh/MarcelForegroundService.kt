@@ -3,6 +3,7 @@ package com.marcel.ssh
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -34,6 +35,7 @@ class MarcelForegroundService : Service() {
         const val ACTION_UPDATE = "com.marcel.ssh.action.UPDATE"
         const val ACTION_STOP = "com.marcel.ssh.action.STOP"
         const val ACTION_NOTIFY = "com.marcel.ssh.action.NOTIFY"
+        const val ACTION_RESTORE = "com.marcel.ssh.action.RESTORE"
         const val EXTRA_TITLE = "title"
         const val EXTRA_BODY = "body"
         const val EXTRA_NOTIFICATION_ID = "notification_id"
@@ -124,6 +126,9 @@ class MarcelForegroundService : Service() {
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
+    /** 最近一次常驻通知内容，通知被移除后自愈重建时使用。 */
+    private var lastTitle: String = "Marcel SSH"
+    private var lastBody: String = "运行中"
 
     override fun onCreate() {
         super.onCreate()
@@ -149,10 +154,19 @@ class MarcelForegroundService : Service() {
                 }
                 return START_NOT_STICKY
             }
+            ACTION_RESTORE -> {
+                // 常驻通知被移除（滑动/系统清理等）后的自愈：
+                // 前台服务通知一旦消失，系统会立即把服务降级为普通后台服务并可能杀掉，
+                // 因此必须立刻重新 startForeground 把通知贴回来，保证保活不中断。
+                startForeground(NOTIFICATION_ID_SERVICE, buildNotification(lastTitle, lastBody))
+                return START_STICKY
+            }
             else -> {
                 // ACTION_START / ACTION_UPDATE / null：前台保活通知
                 val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Marcel SSH"
                 val body = intent?.getStringExtra(EXTRA_BODY) ?: "运行中"
+                lastTitle = title
+                lastBody = body
                 startForeground(NOTIFICATION_ID_SERVICE, buildNotification(title, body))
             }
         }
@@ -173,6 +187,7 @@ class MarcelForegroundService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setContentIntent(launchAppPendingIntent())
             .setSound(null)
             .setVibrate(longArrayOf(0, 250, 250, 250))
             .setAutoCancel(true)
@@ -192,12 +207,52 @@ class MarcelForegroundService : Service() {
             .setContentTitle(title)
             .setContentText(body)
             .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(launchAppPendingIntent())
+            // 防移除自愈：通知被滑动/系统清理移除时，系统派发 deleteIntent，
+            // 服务收到 ACTION_RESTORE 后立即重新 startForeground，保活不中断
+            .setDeleteIntent(restorePendingIntent())
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setSound(null)
             .setVibrate(null)
             .setLocalOnly(true)
             .build()
+    }
+
+    /**
+     * 通知被移除（滑动删除/系统清理）时系统派发的自愈 Intent。
+     * O+ 用 getForegroundService 以 startForegroundService 语义派发，
+     * 保证服务未运行时也能合法地在 onStartCommand 里调用 startForeground
+     * （Android 12+ 普通 startService 启动的服务不允许再切前台）。
+     */
+    private fun restorePendingIntent(): PendingIntent {
+        val intent = Intent(this, MarcelForegroundService::class.java).apply {
+            action = ACTION_RESTORE
+        }
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(this, 0, intent, flags)
+        } else {
+            PendingIntent.getService(this, 0, intent, flags)
+        }
+    }
+
+    /**
+     * 通知点击回应用：调起 MainActivity（launchMode=singleTask）。
+     * 用 SINGLE_TOP|CLEAR_TOP 复用已有任务栈（与 tauri-plugin-notification 的
+     * buildIntent 行为一致），不重建 Activity、不丢应用状态。
+     * targetSdk 36（Android 12+）必须 FLAG_IMMUTABLE，否则点击时崩溃。
+     */
+    private fun launchAppPendingIntent(): PendingIntent {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private fun acquireWakeLock() {
