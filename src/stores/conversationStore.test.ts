@@ -472,8 +472,8 @@ describe('conversationStore', () => {
       expect(m.toolResult?.wasAborted).toBe(true);
       expect(m.toolResult?.success).toBe(false);
       expect(m.toolResult?.result).toContain('partial stdout');
-      expect(m.toolResult?.result).toContain('用户手动中断');
-      expect(m.toolResult?.result).toContain('远端命令');
+      expect(m.toolResult?.result).toContain('用户手动触发中断');
+      expect(m.toolResult?.result).toContain('远端进程可能仍在运行');
     });
 
     it('marks executing non-streaming tool messages with non-streaming note', () => {

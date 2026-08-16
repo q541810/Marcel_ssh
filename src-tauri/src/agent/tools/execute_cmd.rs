@@ -167,7 +167,7 @@ impl AgentTool for ExecuteCommandTool {
                 let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
                 if was_timeout {
                     truncated.push_str(&format!(
-                        "\n\n[命令执行在 {} 秒后超时，已停止等待输出；远端进程可能仍在运行]",
+                        "\n\n[命令执行因超过{} 秒触发超时，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
                         timeout_secs
                     ));
                 }

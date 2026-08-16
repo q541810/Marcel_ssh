@@ -923,7 +923,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // - isExecuting=false, modelApproval 清除
     // - wasAborted=true
     // - 流式工具（execute_command，前端通过 toolOutput 事件已累积部分 result）：
-    //   追加「远端命令可能已执行完成或仍在后台运行」提示
+    //   追加「系统未停止进程，但已停止等待输出」提示
     // - 非流式工具（前端 result 为空）：用「工具可能已执行完成」提示
     // 与后端 agent_loop 检查点4 的中断文案保持一致，确保 UI 与 LLM 视角同步。
     // 注意：非流式工具后端有完整 output 但前端不可能收到（listener 已卸载），
@@ -938,7 +938,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ? msgs.map((m) => {
                 if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
                 const isStreaming = m.toolResult?.toolName === 'execute_command';
-                const STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]';
+                const STREAMING_SUFFIX = '\n\n[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]';
                 const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
                 const existing = m.toolResult?.result ?? '';
                 // 已有流式输出时追加，否则整体替换为提示

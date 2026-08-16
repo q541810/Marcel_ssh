@@ -164,8 +164,8 @@ describe('taskStore', () => {
       expect(toolMsg.isExecuting).toBe(false);
       expect(toolMsg.toolResult?.wasAborted).toBe(true);
       expect(toolMsg.toolResult?.success).toBe(false);
-      expect(toolMsg.toolResult?.result).toContain('用户手动中断');
-      expect(toolMsg.toolResult?.result).toContain('远端命令');
+      expect(toolMsg.toolResult?.result).toContain('用户手动触发中断');
+      expect(toolMsg.toolResult?.result).toContain('远端进程可能仍在运行');
 
       // The mark happened BEFORE cleanupTaskListeners
       const clearOrder: string[] = [];

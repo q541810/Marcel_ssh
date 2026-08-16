@@ -502,11 +502,11 @@ pub(crate) async fn run_agent_loop(
                 if tc.name == "execute_command" {
                     if !exec.output.is_empty() {
                         exec.output.push_str(
-                            "\n\n[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]",
+                            "\n\n[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
                         );
                     } else {
                         exec.output = String::from(
-                            "[用户手动中断，已停止等待结果；远端命令可能已执行完成或仍在后台运行]",
+                            "[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
                         );
                     }
                 } else {
