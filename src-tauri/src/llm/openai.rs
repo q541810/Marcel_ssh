@@ -720,6 +720,7 @@ fn assemble_final_message(
         },
         image_paths: None,
         finish_reason,
+        db_id: None,
     }
 }
 
@@ -1265,6 +1266,7 @@ mod build_request_body_tests {
             reasoning_content: Some("let me check the directory".to_string()),
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body
@@ -1293,6 +1295,7 @@ mod build_request_body_tests {
             reasoning_content: None,
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         };
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body

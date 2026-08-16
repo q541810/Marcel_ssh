@@ -424,6 +424,9 @@ export interface AgentMessage {
     shadowedTokens?: number;
     reason?: string;
   };
+  /** 持久化消息的 DB row id（`messages.id`，统一 id 域）：load 时填充，
+   *  压缩事件据此按 id 定位卡片插入点（取代位置数数与指纹验证）。 */
+  dbId?: string;
 }
 
 export interface ToolCallInfo {
@@ -651,7 +654,7 @@ export type LlmStreamEvent =
   | { type: 'compactionStart'; trigger: string }
   // 压缩进行中的实时进度：summary 文本已生成的累计内容（随流增量推送）。
   | { type: 'compactionProgress'; text: string }
-  | { type: 'compactionDone'; summary: string; shadowedMessages: number; shadowedTokens: number; shadowedStartNonSystem: number }
+  | { type: 'compactionDone'; summary: string; shadowedMessages: number; shadowedTokens: number; tailDbId: string | null }
   // attempted=false：未开始就跳过（无区间/结构异常），前端不留痕；
   // attempted=true：摘要已跑但失败（截断/未遵循指令/校验不过），前端低调交代。
   | { type: 'compactionSkipped'; reason: string; attempted: boolean }

@@ -7,7 +7,7 @@ import type {
   ModelApprovalDonePayload,
   QuestionRequestPayload,
 } from '@/lib/types';
-import { applyCompactionSplice, type CompactionRole } from './messageConversion';
+import { applyCompactionSplice } from './messageConversion';
 
 // ---------------------------------------------------------------------------
 // StreamHandler interface
@@ -193,6 +193,9 @@ interface TaskStreamState {
   flushRafId: number | null;
   /** 上下文压缩占位消息 id（compactionStart → done/未完成 原位更新） */
   compactionMessageId: string | null;
+  /** 本次压缩的触发来源（pressure / context-overflow / manual）：
+   *  Done 事件据此走手动队尾语义或自动 id 定位。 */
+  compactionTrigger: string | null;
 }
 
 const taskStreamState: Map<string, TaskStreamState> = new Map();
@@ -209,6 +212,7 @@ export function getStreamState(taskId: string): TaskStreamState {
     pendingThinkingDelta: '',
     flushRafId: null,
     compactionMessageId: null,
+    compactionTrigger: null,
   };
 }
 
@@ -600,6 +604,9 @@ export function handleCompactionStart(
   conversationId: string,
   ev: { type: 'compactionStart'; trigger: string },
 ) {
+  const state = getStreamState(taskId);
+  state.compactionTrigger = ev.trigger;
+  setStreamState(taskId, state);
   upsertCompactionMessage(handler, taskId, conversationId, {
     content: '上下文压缩中…正在总结早期历史以释放上下文空间，请稍候',
     compaction: { status: 'running', trigger: ev.trigger },
@@ -644,15 +651,17 @@ export function handleCompactionDone(
     summary: string;
     shadowedMessages: number;
     shadowedTokens: number;
-    shadowedStartNonSystem: number;
-    shadowedRoles: CompactionRole[];
-    shadowedToolCallIds: Array<string | null>;
+    tailDbId: string | null;
   },
 ) {
   const state = getStreamState(taskId);
   const runningCardId = state.compactionMessageId;
+  // 手动（compactConversation）→ 队尾语义（不依赖 dbId）；自动 → id 定位。
+  // 防御：trigger 缺失时按 tailDbId 是否为 null 推断（null 只可能来自手动）。
+  const isManual = state.compactionTrigger === 'manual' || ev.tailDbId === null;
   // 完成后释放占位 id：本次完成卡独立存在，不占用"进行中"槽位。
   state.compactionMessageId = null;
+  state.compactionTrigger = null;
   setStreamState(taskId, state);
 
   const header = `【上下文已压缩】已整理 ${ev.shadowedMessages} 条历史消息（约 ${ev.shadowedTokens} tokens）`;
@@ -672,29 +681,37 @@ export function handleCompactionDone(
   handler.updateMessages(conversationId, (convMsgs) => {
     const result = applyCompactionSplice(
       convMsgs,
-      {
-        start: ev.shadowedStartNonSystem,
-        count: ev.shadowedMessages,
-        roles: ev.shadowedRoles,
-        toolIds: ev.shadowedToolCallIds,
-      },
+      { tailDbId: ev.tailDbId },
       card,
       runningCardId,
+      { manual: isManual },
     );
     if (result.applied) {
-      // 原位替换成功：live store 呈现压缩视图。
-      // 持久化由后端结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
-      // 前端不再落库——重启后 load_messages 直接返回压缩视图。
+      // 手动：卡片在对话末尾；自动：卡片在被压区间末条之后（原文可见）。
+      // 持久化由后端结构化落库（手动按最后一行、自动按 id），前端不落库。
       return result.msgs;
     }
-    // 校验失败（旧数据/孤儿 tool 等投影漂移场景）：降级——不删任何消息，
-    // 移除运行中卡，完成卡追加到列表尾部（后端同样会降级，重启后原文全见 + 卡片在尾部）。
-    console.warn('[agent] compaction splice validation failed; degrading to append-only', {
-      start: ev.shadowedStartNonSystem,
-      count: ev.shadowedMessages,
+    // 自动 id 指针未命中（该消息在前端 store 无 dbId = 运行中消息的极端窗口）：
+    // 降级——**不产生 done 卡**，运行中卡转普通提示（后端已按 id 落库，
+    // 重启 load 后可见；原文保留、请求不屏蔽）。
+    console.warn('[agent] compaction splice failed to locate tail dbId; originals preserved', {
+      tailDbId: ev.tailDbId,
     });
-    const degraded = runningCardId ? convMsgs.filter((m) => m.id !== runningCardId) : convMsgs;
-    return [...degraded, card];
+    const notice = '上下文已压缩（本会话结束后显示压缩摘要）';
+    if (runningCardId) {
+      return convMsgs.map((m) =>
+        m.id === runningCardId ? { ...m, content: notice, compaction: undefined } : m,
+      );
+    }
+    return [
+      ...convMsgs,
+      {
+        id: crypto.randomUUID(),
+        role: 'system',
+        content: notice,
+        timestamp: new Date().toISOString(),
+      },
+    ];
   });
 }
 

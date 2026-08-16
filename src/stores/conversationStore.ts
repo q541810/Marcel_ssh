@@ -11,7 +11,6 @@ import {
   storedMessageToAgentMessage,
   clearIntermediateReasoning,
   compactionCheckpoint,
-  applyCompactionSplice,
 } from './messageConversion';
 import { useTaskStore } from './taskStore';
 import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
@@ -74,6 +73,7 @@ export interface ConversationState {
     toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
     toolCallId?: string;
     imagePaths?: string[];
+    dbId?: string;
   }>;
 }
 
@@ -112,6 +112,9 @@ type LlmHistoryItem = {
   toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
   toolCallId?: string;
   imagePaths?: string[];
+  /** 持久化消息的 DB row id（统一 id 域）：后端据此给 loop 消息带 db_id，
+   *  压缩的 tail_db_id 指针依赖它（load 的消息必有；运行中消息由后端 save 回填）。 */
+  dbId?: string;
 };
 
 /**
@@ -767,41 +770,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       // attempted 区分、进度实时文本全在其中。
       await attachStreamListener(taskId, conversationId, '');
       const result = await tauri.agentCompactConversation(conversationId, history, taskId);
-      // Done 事件与命令结果携带同一份区间信息，且可能乱序/丢失：
-      // 结果路径再应用一次（applyCompactionSplice 幂等——先到者应用，
-      // 后到者区间已被替换、校验失败 no-op），保证原位替换必然落地。
+      // live store 的原位插入由 Done 事件路径（handleCompactionDone）负责；
+      // 结果路径不再操作 store——原文全保留，事件丢失时缺的只是卡片标记
+      // （DB 已由后端落库，重载可见），无副作用风险。
       if (result.compacted) {
-        const header = `【上下文已压缩】已整理 ${result.shadowedMessages} 条历史消息（约 ${result.shadowedTokens} tokens）`;
-        const card: AgentMessage = {
-          id: crypto.randomUUID(),
-          role: 'system',
-          content: header,
-          timestamp: new Date().toISOString(),
-          compaction: {
-            status: 'done',
-            summary: result.summary ?? '',
-            shadowedMessages: result.shadowedMessages,
-            shadowedTokens: result.shadowedTokens,
-          },
-        };
-        const runningCardId = getStreamState(taskId).compactionMessageId;
-        get().updateConversationMessages(conversationId, (msgs) => {
-          const applied = applyCompactionSplice(
-            msgs,
-            {
-              start: result.shadowedStartNonSystem,
-              count: result.shadowedMessages,
-              roles: result.shadowedRoles,
-              toolIds: result.shadowedToolCallIds,
-            },
-            card,
-            runningCardId,
-          );
-          if (!applied.applied) return msgs; // 事件路径已应用或校验失败 → 不重复处理
-          // 持久化由后端结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
-          // 前端只负责 live store 视图，不再落库。
-          return applied.msgs;
-        });
+        // 压缩已由后端持久化；前端 live 视图靠事件更新。
       } else {
         // compacted:false 兜底：Skipped 事件可能已处理或已丢失，按残留状态收尾
         const state = getStreamState(taskId);
@@ -996,8 +969,22 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     let openToolGroup = false;
     let prevOutputRole: string | null = null;
 
-    for (const m of msgs) {
+    // 请求侧屏蔽：最后一张 done 卡（被压区间末尾的边界标记）之前的所有内容
+    // 不进 LLM 请求（原文仍全部可见，仅请求屏蔽）。卡片由 live splice /
+    // 持久化 created_at 定位在 span 末尾 → "卡前"恰为被压区间（手动压到最末时
+    // 卡在对话末尾 → 全部屏蔽 → 请求只剩 checkpoint）。旧卡已被吸收，恒单卡。
+    let lastCardIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'system' && msgs[i].compaction?.status === 'done') {
+        lastCardIdx = i;
+        break;
+      }
+    }
+
+    for (let i = 0; i < msgs.length; i++) {
+      const m = msgs[i];
       if (m.isLoading) continue;
+      if (i < lastCardIdx) continue; // 屏蔽卡前内容（被压区间 + 通知）
 
       if (m.role === 'system') {
         // 压缩 done 卡 → user 角色 checkpoint（framing 与后端逐字节一致，
@@ -1017,6 +1004,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
           role: 'user',
           content: m.content,
+          ...(m.dbId ? { dbId: m.dbId } : {}),
         };
         if (m.imagePaths && m.imagePaths.length > 0) {
           item.imagePaths = m.imagePaths;
@@ -1045,6 +1033,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
               name: tc.name,
               arguments: tc.arguments || {},
             })),
+            ...(m.dbId ? { dbId: m.dbId } : {}),
           };
           // DeepSeek thinking 模式：带 tool_calls 的 assistant 必须回传
           // reasoning_content（落库已保留，重载后这里原样带上）
@@ -1059,6 +1048,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
             role: 'assistant',
             content: m.content,
+            ...(m.dbId ? { dbId: m.dbId } : {}),
           };
           if (m.reasoningContent) {
             item.reasoningContent = m.reasoningContent;
@@ -1081,13 +1071,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
         if (pendingAssistantIndex != null) {
           // 纯文案 assistant 后的第一个 tool：把 toolCalls 挂上去。
-          // reasoningContent 一并带上（DeepSeek thinking 模式回传要求）
+          // reasoningContent 一并带上（DeepSeek thinking 模式回传要求）；
+          // dbId 保留（压缩定位锚点）。
           const prev = output[pendingAssistantIndex];
           output[pendingAssistantIndex] = {
             role: 'assistant',
             content: prev.content,
             toolCalls: [callEntry],
             ...(prev.reasoningContent ? { reasoningContent: prev.reasoningContent } : {}),
+            ...(prev.dbId ? { dbId: prev.dbId } : {}),
           };
           pendingAssistantIndex = null;
           openToolGroup = true;
@@ -1118,6 +1110,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           role: 'tool',
           content: toolContent,
           toolCallId: m.toolResult.toolCallId,
+          ...(m.dbId ? { dbId: m.dbId } : {}),
         });
         prevOutputRole = 'tool';
       } else {

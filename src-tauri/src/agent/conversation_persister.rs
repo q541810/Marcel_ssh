@@ -1,6 +1,6 @@
 use chrono::Utc;
 
-use crate::agent::conversation::{ConversationDb, StoredMessage};
+use crate::agent::conversation::ConversationDb;
 use crate::agent::context::CompactionOutcome;
 use crate::llm::provider::{LlmMessage, LlmRole};
 use crate::sync::engine::SyncEngine;
@@ -57,53 +57,66 @@ impl ConversationPersister {
         }
     }
 
-    /// Persist the last user message.
-    pub fn save_last_user_msg(&self, messages: &[LlmMessage]) {
-        if let Some(msg) = messages.iter().rev().find(|m| m.role == LlmRole::User) {
-            let has_images = msg
+    /// Persist the last user message；成功时把 DB row id 回填到该消息的 `db_id`
+    /// （压缩的 `tail_db_id` 指针依赖它——用户消息必须能作为卡片定位锚点）。
+    pub fn save_last_user_msg(&self, messages: &mut [LlmMessage]) {
+        if let Some(idx) = messages.iter().rposition(|m| m.role == LlmRole::User) {
+            let has_images = messages[idx]
                 .image_paths
                 .as_ref()
                 .map(|p| !p.is_empty())
                 .unwrap_or(false);
-            if msg.content.is_empty() && !has_images {
+            if messages[idx].content.is_empty() && !has_images {
                 return;
             }
-            let image_paths_json = msg.image_paths.as_ref().and_then(|paths| {
+            let image_paths_json = messages[idx].image_paths.as_ref().and_then(|paths| {
                 if paths.is_empty() {
                     None
                 } else {
                     serde_json::to_string(paths).ok()
                 }
             });
-            let _ = self.conv_db.save_message_with_images(
-                &self.conversation_id,
-                "user",
-                &msg.content,
-                &Utc::now().to_rfc3339(),
-                None,
-                None,
-                image_paths_json.as_deref(),
-            );
+            let saved = self
+                .conv_db
+                .save_message_with_images(
+                    &self.conversation_id,
+                    "user",
+                    &messages[idx].content,
+                    &Utc::now().to_rfc3339(),
+                    None,
+                    None,
+                    image_paths_json.as_deref(),
+                )
+                .ok();
+            if let Some(stored) = saved {
+                messages[idx].db_id = Some(stored.id);
+            }
             self.trigger_sync();
         }
     }
 
+    /// 持久化一条消息；返回 DB row id（`messages.id`，压缩定位锚点）。
+    /// 调用方负责把它回填到对应 `LlmMessage.db_id`。
     pub fn save_msg(
         &self,
         role: &str,
         content: &str,
         tool_result_json: Option<&str>,
         reasoning: Option<&str>,
-    ) {
-        let _ = self.conv_db.save_message(
-            &self.conversation_id,
-            role,
-            content,
-            &Utc::now().to_rfc3339(),
-            tool_result_json,
-            reasoning,
-        );
+    ) -> Option<String> {
+        let saved = self
+            .conv_db
+            .save_message(
+                &self.conversation_id,
+                role,
+                content,
+                &Utc::now().to_rfc3339(),
+                tool_result_json,
+                reasoning,
+            )
+            .ok()?;
         self.trigger_sync();
+        Some(saved.id)
     }
 
     /// 触发跨设备同步：记录本地变更 + 调度 push（防抖 700ms）。
@@ -124,19 +137,19 @@ impl ConversationPersister {
 
     /// 提交一次上下文压缩到会话库（压缩由 LLM 完成后、splice 之外的结构化落库）。
     ///
-    /// 算法（不依赖任何消息 id 对应关系——前端 store id 与 DB 行 id 是不同域）：
-    /// 1. count-walk：按行序遍历未归档行，跳过 system 通知、卡片行计为
-    ///    history-relevant（与前端投影同规则），取前 `shadowed_messages` 行；
-    ///    （区间恒为 head-anchored 前缀 ⇒ 这 N 行就是被压区间。）
-    /// 2. 指纹校验：walk 出的行提取 (role, tool 调用 id) 序列，与压缩区间的
-    ///    `shadowed_roles` / `shadowed_tool_call_ids` 比对（tool 行的调用 id
-    ///    取 `tool_calls_json.id`——与 loop 的 `tc.id` 同源）。不一致（旧数据
-    ///    孤儿行等投影漂移）→ **不归档**、卡片落尾部（降级，绝不误删）。
-    /// 3. 提交：被压行 `archived=1`（原文保留、加载/搜索隐藏）；卡片行
-    ///    `created_at = 被压末行的 created_at`（行序上紧贴 span 末尾、尾首之前）
-    ///    → `load_messages` 直接呈现压缩视图，前端零回放。
+    /// 算法（统一 id 指针 / 手动队尾，取代位置数数与指纹验证）：
+    /// 1. 定位：
+    ///    - `outcome.tail_db_id` 有值（自动压缩）→ 被压区间末条消息的 DB row id，
+    ///      在 `load_messages` 行序中直接按 id 查行；
+    ///    - `None`（**手动压缩 = 队尾语义**，本会话消息可能没有 db_id）→ 取
+    ///      **最后一行**（卡片 = 对话末尾，与前端队尾追加位置严格一致）；
+    /// 2. 吸收：定位行**之前最近一张**压缩卡（恒单卡——旧卡已被吸收）删除；
+    /// 3. 提交：插入新卡片，`created_at` / `timestamp` 取**定位行**的值 →
+    ///    `load_messages` 行序 = 原文 + 卡片紧贴被压区间末尾（保留尾部之前 /
+    ///    手动为对话末尾），前端按"最后一张卡之前"屏蔽请求。
     ///
-    /// 返回是否真正归档（false = 降级或失败；降级时卡片仍落库在尾部）。
+    /// 返回是否真正提交（false = 行不存在 / 库为空 / 失败；**不落任何卡片**，
+    /// 原文完整保留）。
     pub fn persist_compaction(&self, outcome: &CompactionOutcome) -> bool {
         let rows = match self.conv_db.load_messages(&self.conversation_id) {
             Ok(r) => r,
@@ -149,48 +162,53 @@ impl ConversationPersister {
                 return false;
             }
         };
-        let count = outcome.shadowed_messages;
-
-        // count-walk：跳过 system 通知，卡片行计为 history-relevant
-        let mut span_rows: Vec<&StoredMessage> = Vec::new();
-        for row in &rows {
-            let is_card =
-                row.role == "system" && row.content.starts_with(COMPACTION_CARD_PREFIX);
-            if row.role == "system" && !is_card {
-                continue;
-            }
-            span_rows.push(row);
-            if span_rows.len() >= count {
-                break;
-            }
-        }
-        let ok = span_rows.len() == count
-            && fingerprint_matches(
-                &span_rows,
-                &outcome.shadowed_roles,
-                &outcome.shadowed_tool_call_ids,
-            );
+        // 定位：自动按 id 查行；手动（None）取最后一行（队尾）
+        let tail_idx = match &outcome.tail_db_id {
+            Some(tail_id) => match rows.iter().position(|r| r.id == *tail_id) {
+                Some(i) => i,
+                None => {
+                    log::warn!(
+                        "persist_compaction: tail row {} not found for {}; skipping persist",
+                        tail_id,
+                        self.conversation_id
+                    );
+                    return false;
+                }
+            },
+            None => match rows.len().checked_sub(1) {
+                Some(i) => i,
+                None => {
+                    log::warn!(
+                        "persist_compaction: no rows to anchor manual tail for {}; skipping persist",
+                        self.conversation_id
+                    );
+                    return false;
+                }
+            },
+        };
 
         let card_content = format!(
             "{COMPACTION_CARD_PREFIX}已整理 {} 条历史消息（约 {} tokens）\n\n{}",
             outcome.shadowed_messages, outcome.shadowed_tokens, outcome.summary
         );
-        let created_at = if ok {
-            span_rows.last().expect("ok ⇒ non-empty").created_at.to_rfc3339()
-        } else {
-            chrono::Utc::now().to_rfc3339()
-        };
-        let archive_ids: Vec<String> = if ok {
-            span_rows.iter().map(|r| r.id.clone()).collect()
-        } else {
-            Vec::new()
-        };
+        // 吸收：定位行之前最近一张旧压缩卡（恒单卡——只留最新一张）
+        let mut remove_card_ids: Vec<String> = Vec::new();
+        for row in rows[..tail_idx].iter().rev() {
+            if row.role == "system" && row.content.starts_with(COMPACTION_CARD_PREFIX) {
+                remove_card_ids.push(row.id.clone());
+                break;
+            }
+        }
+        let span_end = &rows[tail_idx];
+        let created_at = span_end.created_at.to_rfc3339();
+        let timestamp = span_end.timestamp.clone();
 
         if let Err(e) = self.conv_db.commit_compaction(
             &self.conversation_id,
-            &archive_ids,
+            &remove_card_ids,
             &card_content,
             &created_at,
+            &timestamp,
         ) {
             log::warn!(
                 "persist_compaction: commit failed for {}: {}",
@@ -200,85 +218,23 @@ impl ConversationPersister {
             return false;
         }
         self.trigger_sync();
-
-        if !ok {
-            log::warn!(
-                "persist_compaction: span fingerprint mismatch for {} (rows={}, expected={}); degraded to append-only",
-                self.conversation_id,
-                span_rows.len(),
-                count
-            );
-        }
-        ok
-    }
-}
-
-/// 行序列指纹与压缩区间指纹比对（角色序列 + tool 调用 id 序列）。
-fn fingerprint_matches(
-    rows: &[&StoredMessage],
-    expected_roles: &[&str],
-    expected_tool_ids: &[String],
-) -> bool {
-    let mut roles: Vec<&str> = Vec::with_capacity(rows.len());
-    let mut tool_ids: Vec<String> = Vec::new();
-    for row in rows {
-        if row.role == "system" {
-            roles.push("user"); // 压缩卡片行 ↔ loop 的 framed checkpoint（user）
-        } else {
-            roles.push(match row.role.as_str() {
-                "user" => "user",
-                "assistant" => "assistant",
-                "tool" => "tool",
-                _ => "user",
-            });
-        }
-        if row.role == "tool" {
-            tool_ids.push(extract_tool_call_id(row).unwrap_or_default());
-        }
-    }
-    roles.len() == expected_roles.len()
-        && roles.iter().zip(expected_roles).all(|(a, b)| *a == *b)
-        && tool_ids.len() == expected_tool_ids.len()
-        && tool_ids
-            .iter()
-            .zip(expected_tool_ids)
-            .all(|(a, b)| a == b)
-}
-
-/// 从 tool 行提取工具调用 id（tool_calls_json：PersistedToolResult{id} 或 legacy 数组首元素）。
-fn extract_tool_call_id(row: &StoredMessage) -> Option<String> {
-    let json = row.tool_calls_json.as_deref()?;
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    match &v {
-        serde_json::Value::Object(map) => map
-            .get("id")
-            .and_then(|i| i.as_str())
-            .map(String::from),
-        serde_json::Value::Array(arr) => arr
-            .first()
-            .and_then(|f| f.get("id"))
-            .and_then(|i| i.as_str())
-            .map(String::from),
-        _ => None,
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::conversation::StoredMessage;
     use crate::agent::context::CompactionOutcome;
 
-    fn outcome(
-        shadowed_messages: usize,
-        roles: Vec<&'static str>,
-        tool_ids: Vec<String>,
-    ) -> CompactionOutcome {
+    /// 构造 outcome：`tail_db_id` 指向 DB 中最后保存的（第 `shadowed_messages` 条）
+    /// 消息行 id——模拟压缩"被压区间末条"。
+    fn outcome_with_tail(shadowed_messages: usize, rows: &[StoredMessage]) -> CompactionOutcome {
         CompactionOutcome {
             shadowed_messages,
             shadowed_tokens: 100,
-            shadowed_start_non_system: 0,
-            shadowed_roles: roles,
-            shadowed_tool_call_ids: tool_ids,
+            tail_db_id: Some(rows[shadowed_messages - 1].id.clone()),
             summary: "## Primary Request\n- s".into(),
         }
     }
@@ -294,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn persist_compaction_matches_and_archives() {
+    fn persist_compaction_locates_by_tail_id_and_keeps_originals() {
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
         db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
@@ -302,54 +258,170 @@ mod tests {
         db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", tool_result_json("X1").as_deref(), None).expect("m3");
         db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
 
+        let rows = db.load_messages(&conv.id).expect("load");
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
-        let ok = persister.persist_compaction(&outcome(3, vec!["user", "assistant", "tool"], vec!["X1".into()]));
-        assert!(ok, "指纹一致 → 应真正归档");
+        let ok = persister.persist_compaction(&outcome_with_tail(3, &rows));
+        assert!(ok, "id 指针命中 → 应提交");
 
-        // 加载即压缩视图：卡片在 span 末尾，被压 3 条隐藏
+        // 原文全保留；卡片紧贴被压区间末条（第 3 条）之后、保留尾部之前
         let after = db.load_messages(&conv.id).expect("load");
-        assert_eq!(after.len(), 2);
-        assert!(after[0].content.starts_with(COMPACTION_CARD_PREFIX));
-        assert_eq!(after[0].content.contains("3 条历史消息"), true);
-        assert_eq!(after[1].content, "u2");
-    }
-
-    #[test]
-    fn persist_compaction_tool_id_mismatch_degrades() {
-        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
-        let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", tool_result_json("X1").as_deref(), None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
-
-        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
-        // 期望 tool id 是别的值 → 指纹不一致 → 降级（不归档、卡片落尾部）
-        let ok = persister.persist_compaction(&outcome(3, vec!["user", "assistant", "tool"], vec!["WRONG".into()]));
-        assert!(!ok);
-
-        let after = db.load_messages(&conv.id).expect("load");
-        assert_eq!(after.len(), 5); // 原文 4 条全保留 + 卡片在尾部
+        assert_eq!(after.len(), 5);
         assert_eq!(after[0].content, "u1");
-        assert_eq!(after[4].content.contains("3 条历史消息"), true);
+        assert_eq!(after[1].content, "a1");
+        assert_eq!(after[2].content, "out");
+        assert!(after[3].content.starts_with(COMPACTION_CARD_PREFIX));
+        assert_eq!(after[3].content.contains("3 条历史消息"), true);
+        assert_eq!(after[4].content, "u2");
     }
 
     #[test]
-    fn persist_compaction_row_shortage_degrades() {
+    fn persist_compaction_manual_tail_none_anchors_to_last_row() {
+        // 手动压缩（tail_db_id = None）→ 队尾语义：卡片插在最后一行之后；
+        // 全新会话（本会话消息无 db_id）也能落库。
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
+
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+        let outcome = CompactionOutcome {
+            shadowed_messages: 3,
+            shadowed_tokens: 100,
+            tail_db_id: None, // 手动队尾
+            summary: "## Primary Request\n- s".into(),
+        };
+        let ok = persister.persist_compaction(&outcome);
+        assert!(ok, "手动队尾 → 应提交");
+
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 4);
+        assert_eq!(after[0].content, "u1");
+        assert_eq!(after[1].content, "a1");
+        assert_eq!(after[2].content, "u2");
+        assert!(after[3].content.starts_with(COMPACTION_CARD_PREFIX), "卡片在队尾");
+    }
+
+    #[test]
+    fn persist_compaction_manual_tail_absorbs_previous_card() {
+        // 手动二次压缩：吸收最后一行之前最近一张旧卡（恒单卡）
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
+
+        // 第一次手动压缩 → [u1, a1, u2, 卡]
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+        let first = CompactionOutcome {
+            shadowed_messages: 3,
+            shadowed_tokens: 100,
+            tail_db_id: None,
+            summary: "s1".into(),
+        };
+        assert!(persister.persist_compaction(&first));
+        let mid = db.load_messages(&conv.id).expect("load");
+        assert_eq!(mid.len(), 4);
+        let first_card_id = mid[3].id.clone();
+
+        // 第二次手动压缩（又有新消息）→ [u1, a1, u2, 新卡]（旧卡被吸收）
+        db.save_message(&conv.id, "user", "u3", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        let second = CompactionOutcome {
+            shadowed_messages: 4,
+            shadowed_tokens: 200,
+            tail_db_id: None,
+            summary: "s2".into(),
+        };
+        assert!(persister.persist_compaction(&second));
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 5); // 原文 4 + 新卡
+        assert!(!after.iter().any(|r| r.id == first_card_id), "旧卡被吸收");
+        assert!(after[4].content.starts_with(COMPACTION_CARD_PREFIX));
+        assert!(after[4].content.contains("4 条历史消息"));
+    }
+
+    #[test]
+    fn persist_compaction_empty_db_manual_tail_skips() {
+        // 防御：库为空时手动队尾无锚点 → 跳过落库
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+        let outcome = CompactionOutcome {
+            shadowed_messages: 1,
+            shadowed_tokens: 100,
+            tail_db_id: None,
+            summary: "s".into(),
+        };
+        let ok = persister.persist_compaction(&outcome);
+        assert!(!ok);
+        assert!(db.load_messages(&conv.id).expect("load").is_empty());
+    }
+
+    #[test]
+    fn persist_compaction_unknown_tail_id_skips() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+        // tail id 指向不存在的行（如被回滚删除）→ 跳过落库，原文保留
+        let outcome = CompactionOutcome {
+            shadowed_messages: 1,
+            shadowed_tokens: 100,
+            tail_db_id: Some("ghost-row".into()),
+            summary: "s".into(),
+        };
+        let ok = persister.persist_compaction(&outcome);
+        assert!(!ok);
+        let after = db.load_messages(&conv.id).expect("load");
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].content, "u1");
+    }
+
+    #[test]
+    fn persist_compaction_absorbs_previous_card() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+
+        // 第一次压缩：压 2 条（u1, a1），卡片插在 a1 后
+        let rows = db.load_messages(&conv.id).expect("load");
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+        assert!(persister.persist_compaction(&outcome_with_tail(2, &rows)));
+        let mid = db.load_messages(&conv.id).expect("load");
+        assert_eq!(mid.len(), 5); // u1 a1 卡 u2 a2
+        let card_id = mid[2].id.clone();
+
+        // 第二次压缩：压到 a2（含旧卡）→ 旧卡被吸收，新卡在 a2 后
+        let rows2 = db.load_messages(&conv.id).expect("load");
+        let ok = persister.persist_compaction(&outcome_with_tail(5, &rows2));
+        assert!(ok);
+        let after = db.load_messages(&conv.id).expect("load");
+        // u1 a1 u2 a2 卡（旧卡被删除）
+        assert_eq!(after.len(), 5);
+        assert!(after[4].content.starts_with(COMPACTION_CARD_PREFIX));
+        assert!(!after.iter().any(|r| r.id == card_id), "旧卡应被吸收删除");
+    }
+
+    #[test]
+    fn persist_compaction_row_shortage_no_longer_needed() {
+        // 回归锚点：旧 count-walk 的"行数不足"防御已由 tail_db_id 定位取代——
+        // 只要 id 指向存在的行，即使 shadowed_messages 描述与实际行数不一致也照常落库。
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
         db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
         db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None).expect("m2");
 
+        let rows = db.load_messages(&conv.id).expect("load");
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
-        // 期望 3 条但 DB 只有 2 条 → 降级
-        let ok = persister.persist_compaction(&outcome(3, vec!["user", "user", "user"], vec![]));
-        assert!(!ok);
-
+        let ok = persister.persist_compaction(&outcome_with_tail(2, &rows));
+        assert!(ok);
         let after = db.load_messages(&conv.id).expect("load");
-        assert_eq!(after.len(), 3); // 原文 2 条 + 卡片（尾部、未归档）
-        assert_eq!(after[0].content, "u1");
-        assert_eq!(after[1].content, "u2");
+        assert_eq!(after.len(), 3);
         assert!(after[2].content.starts_with(COMPACTION_CARD_PREFIX));
     }
 }

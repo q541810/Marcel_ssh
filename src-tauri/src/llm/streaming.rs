@@ -43,12 +43,9 @@ pub enum StreamEvent {
         summary: String,
         shadowed_messages: usize,
         shadowed_tokens: usize,
-        /// 被压区间在"非 system 消息投影"中的起点（前端定位 store 中被压消息）。
-        shadowed_start_non_system: usize,
-        /// 被压区间角色序列（"user"/"assistant"/"tool"，保序）。
-        shadowed_roles: Vec<String>,
-        /// 被压区间内 tool 消息的 tool_call_id 序列（保序，仅 tool 消息）。
-        shadowed_tool_call_ids: Vec<String>,
+        /// 被压区间末条消息的 DB row id（统一 id 指针）：前端按 `dbId`
+        /// 定位插卡，取代位置数数与指纹验证。
+        tail_db_id: Option<String>,
     },
     /// Context compaction was skipped. `attempted` 标记是否已进入摘要阶段：
     /// `false` = 未开始就跳过（无区间/结构异常，前端不留痕）；

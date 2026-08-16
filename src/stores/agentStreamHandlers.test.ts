@@ -105,6 +105,7 @@ describe('agentStreamHandlers', () => {
         pendingThinkingDelta: '',
         flushRafId: null,
         compactionMessageId: null,
+        compactionTrigger: null,
       });
       const state = getStreamState(taskId);
       expect(state.assistantMessageId).toBe('msg-1');
@@ -409,14 +410,14 @@ describe('agentStreamHandlers', () => {
       expect(handler._messages[convId][0].compaction?.status).toBe('running');
     });
 
-    it('done splices the shadowed span in place and persists with removed ids', () => {
-      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
-      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+    it('done splices by tailDbId pointer and originals stay', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '', dbId: 'row-1' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '', dbId: 'row-2' };
       const t1: AgentMessage = {
-        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        id: 't1', role: 'tool', content: 'out', timestamp: '', dbId: 'row-3',
         toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
       };
-      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '', dbId: 'row-4' };
       const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
 
       handleCompactionStart(handler, taskId, convId, {
@@ -425,103 +426,164 @@ describe('agentStreamHandlers', () => {
       });
       const runningId = handler._messages[convId][4].id; // 运行中卡在尾部
       expect(getStreamState(taskId).compactionMessageId).toBe(runningId);
+      expect(getStreamState(taskId).compactionTrigger).toBe('pressure');
 
       handleCompactionDone(handler, taskId, convId, {
         type: 'compactionDone',
         summary: '## Primary Request\n- do the thing',
         shadowedMessages: 3,
         shadowedTokens: 34_000,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: ['user', 'assistant', 'tool'],
-        shadowedToolCallIds: ['X1'],
+        tailDbId: 'row-3',
       });
 
-      // 原位替换：卡片站在被压区间的位置，尾部保留；运行中卡被移除
-      expect(handler._messages[convId]).toHaveLength(2);
-      const done = handler._messages[convId][0];
+      // 原文全保留；卡片插在被压区间末条（t1）之后；运行中卡被移除
+      expect(handler._messages[convId]).toHaveLength(5);
+      const done = handler._messages[convId][3];
       expect(done.role).toBe('system');
       expect(done.compaction?.status).toBe('done');
       expect(done.compaction?.summary).toContain('do the thing');
       expect(done.compaction?.shadowedMessages).toBe(3);
       expect(done.compaction?.shadowedTokens).toBe(34_000);
-      expect(handler._messages[convId][1].id).toBe('u2');
+      expect(handler._messages[convId].map((m) => m.id)).toEqual(['u1', 'a1', 't1', done.id, 'u2']);
       // 完成后释放占位 id
       expect(getStreamState(taskId).compactionMessageId).toBeNull();
     });
 
-    it('a later compaction absorbs the previous done card (span starts at the head)', () => {
-      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
-      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+    it('a later compaction absorbs the previous done card, originals stay', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '', dbId: 'row-1' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '', dbId: 'row-2' };
       const t1: AgentMessage = {
-        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        id: 't1', role: 'tool', content: 'out', timestamp: '', dbId: 'row-3',
         toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
       };
-      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '', dbId: 'row-4' };
       const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
 
-      // 第一次压缩 → [card1, u2]
+      // 第一次压缩 → [u1, a1, t1, card1, u2]
       handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
       handleCompactionDone(handler, taskId, convId, {
         type: 'compactionDone',
         summary: '## Primary Request\n- first round',
         shadowedMessages: 3,
         shadowedTokens: 1_000,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: ['user', 'assistant', 'tool'],
-        shadowedToolCallIds: ['X1'],
+        tailDbId: 'row-3',
       });
-      expect(handler._messages[convId]).toHaveLength(2);
-      const firstCardId = handler._messages[convId][0].id;
+      expect(handler._messages[convId]).toHaveLength(5);
+      const firstCardId = handler._messages[convId][3].id;
 
-      // 第二次压缩：区间从头部开始（含上次的 done 卡）→ 吞并 → 只剩新卡
+      // 第二次压缩：区间到 u2 → 吸收 card1、新卡插在 u2 后（队尾）
       handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
-      expect(handler._messages[convId]).toHaveLength(3);
-      expect(handler._messages[convId][2].compaction?.status).toBe('running'); // 运行中卡在尾部
-      expect(getStreamState(taskId).compactionMessageId).toBe(handler._messages[convId][2].id);
+      expect(handler._messages[convId]).toHaveLength(6);
+      expect(handler._messages[convId][5].compaction?.status).toBe('running'); // 运行中卡在尾部
+      expect(getStreamState(taskId).compactionMessageId).toBe(handler._messages[convId][5].id);
 
       handleCompactionDone(handler, taskId, convId, {
         type: 'compactionDone',
         summary: '## Primary Request\n- second round',
         shadowedMessages: 2,
         shadowedTokens: 2_000,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: ['user', 'user'],
-        shadowedToolCallIds: [],
+        tailDbId: 'row-4',
       });
-      expect(handler._messages[convId]).toHaveLength(1);
-      const done = handler._messages[convId][0];
-      expect(done.id).not.toBe(firstCardId); // 新卡取代旧卡
+      // 原文 4 条全保留；旧卡被吸收；新卡在 u2 之后（区间末尾）
+      expect(handler._messages[convId]).toHaveLength(5);
+      const ids = handler._messages[convId].map((m) => m.id);
+      expect(ids.slice(0, 4)).toEqual(['u1', 'a1', 't1', 'u2']);
+      expect(ids).not.toContain(firstCardId); // 旧卡被吸收
+      const done = handler._messages[convId][4];
       expect(done.compaction?.summary).toContain('second round');
     });
 
-    it('degrades to append-only when splice validation fails (never removes a wrong message)', () => {
-      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
-      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+    it('degrades to a plain notice when tailDbId cannot be located (no done card, originals preserved)', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '', dbId: 'row-1' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '', dbId: 'row-2' };
       const t1: AgentMessage = {
-        id: 't1', role: 'tool', content: 'out', timestamp: '',
+        id: 't1', role: 'tool', content: 'out', timestamp: '', dbId: 'row-3',
         toolResult: { toolName: 'x', summary: '', result: 'out', success: true, blocked: false, toolCallId: 'X1' },
       };
-      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '' };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '', dbId: 'row-4' };
       const handler = mockHandler({ [convId]: [u1, a1, t1, u2] });
 
       handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'pressure' });
-      // 角色序列与 store 投影不一致（模拟投影漂移/旧数据）→ 拒绝替换
+      const runningId = handler._messages[convId][4].id;
+      // tailDbId 悬空（该消息在前端 store 无 dbId 的极端窗口）→ 降级
       handleCompactionDone(handler, taskId, convId, {
         type: 'compactionDone',
         summary: '## Primary Request\n- degrade',
         shadowedMessages: 3,
         shadowedTokens: 1_000,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: ['user', 'user', 'user'],
-        shadowedToolCallIds: ['X1'],
+        tailDbId: 'ghost-row',
       });
 
-      // 不删任何消息：运行中卡被移除、完成卡追加到尾部（降级，不误删）
+      // 不产生 done 卡（请求不屏蔽、原文保留）：运行中卡原位转普通提示
       expect(handler._messages[convId]).toHaveLength(5);
-      expect(handler._messages[convId].slice(0, 4).map((m) => m.id)).toEqual(['u1', 'a1', 't1', 'u2']);
-      const card = handler._messages[convId][4];
-      expect(card.compaction?.status).toBe('done');
+      expect(handler._messages[convId].map((m) => m.id)).toEqual(['u1', 'a1', 't1', 'u2', runningId]);
+      expect(handler._messages[convId][4].compaction).toBeUndefined();
+      expect(handler._messages[convId][4].content).toContain('上下文已压缩');
       expect(getStreamState(taskId).compactionMessageId).toBeNull();
+    });
+
+    it('manual done with null tailDbId appends the card at the tail (no dbId needed)', () => {
+      // 全新会话：消息全无 dbId（本会话产生），手动压缩 = 队尾语义
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '' };
+      const handler = mockHandler({ [convId]: [u1, a1] });
+
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'manual' });
+      expect(getStreamState(taskId).compactionTrigger).toBe('manual');
+      const runningId = handler._messages[convId][2].id;
+
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: '## Primary Request\n- manual round',
+        shadowedMessages: 2,
+        shadowedTokens: 1_000,
+        tailDbId: null,
+      });
+
+      // 原文全保留 + 卡片在队尾；运行中卡被移除
+      expect(handler._messages[convId]).toHaveLength(3);
+      const done = handler._messages[convId][2];
+      expect(done.compaction?.status).toBe('done');
+      expect(done.compaction?.summary).toContain('manual round');
+      expect(handler._messages[convId].map((m) => m.id)).toEqual(['u1', 'a1', done.id]);
+      expect(handler._messages[convId].some((m) => m.id === runningId)).toBe(false);
+      expect(getStreamState(taskId).compactionTrigger).toBeNull();
+    });
+
+    it('manual done absorbs the previous done card and stays single-card', () => {
+      const u1: AgentMessage = { id: 'u1', role: 'user', content: 'u1', timestamp: '', dbId: 'row-1' };
+      const a1: AgentMessage = { id: 'a1', role: 'assistant', content: 'a1', timestamp: '', dbId: 'row-2' };
+      const u2: AgentMessage = { id: 'u2', role: 'user', content: 'u2', timestamp: '', dbId: 'row-3' };
+      const handler = mockHandler({ [convId]: [u1, a1, u2] });
+
+      // 第一次手动 → [u1, a1, u2, card1]
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'manual' });
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: 's1',
+        shadowedMessages: 3,
+        shadowedTokens: 100,
+        tailDbId: null,
+      });
+      expect(handler._messages[convId]).toHaveLength(4);
+      const firstCardId = handler._messages[convId][3].id;
+
+      // 第二次手动（又有新消息）→ 吸收旧卡，新卡在队尾，恒单卡
+      const u4: AgentMessage = { id: 'u4', role: 'user', content: 'u4', timestamp: '' };
+      handler._messages[convId].push(u4);
+      handleCompactionStart(handler, taskId, convId, { type: 'compactionStart', trigger: 'manual' });
+      handleCompactionDone(handler, taskId, convId, {
+        type: 'compactionDone',
+        summary: 's2',
+        shadowedMessages: 4,
+        shadowedTokens: 200,
+        tailDbId: null,
+      });
+      expect(handler._messages[convId]).toHaveLength(5);
+      expect(handler._messages[convId].some((m) => m.id === firstCardId)).toBe(false);
+      const dones = handler._messages[convId].filter((m) => m.compaction?.status === 'done');
+      expect(dones).toHaveLength(1);
+      expect(handler._messages[convId][handler._messages[convId].length - 1].id).toBe(dones[0].id);
     });
 
     it('streams live summary text into the running card on progress', () => {

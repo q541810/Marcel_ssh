@@ -7,14 +7,15 @@
 //! 与 DSH 的关键差异（msl 架构下的等价替代）：
 //! - 无事件溯源/surface：压缩直接作用于运行中 `messages: Vec<LlmMessage>`；
 //!   DB 保留原始完整内容（日志留史），前端 store 由调用方按 Done 事件携带的
-//!   投影区间**原位替换**（删被压消息、卡片插回原位，重启经回放重建同一视图）。
+//!   **`tail_db_id` 指针**定位插卡（被压区间末条的 DB row id，统一 id 域，
+//!   取代一切位置数数与指纹验证）；重启经 load_messages 按卡片行序重建同一视图。
 //! - 无 durable 锁：单任务单循环天然互斥；手动压缩有 busy 守卫（运行中拒绝）。
 //! - 可见性：生命周期事件（开始/进度/完成/跳过）经 `on_event` 回调**实时**
 //!   回报，由调用方负责发前端事件与落库；同时收集进 `CompactionRun.events`
 //!   供日志。本模块自身无副作用（除 LLM 摘要调用与 messages 变更）。
-//! - 原位替换安全校验：Done 事件携带被压区间角色序列 + tool 调用 id 序列，
-//!   前端逐项比对 store 投影，任何不匹配都拒绝删除（降级为尾部追加），
-//!   保证投影漂移（旧数据 legacy tool 等）下绝不误删。
+//! - 定位：`tail_db_id` = 被压区间末条消息的 `db_id`（历史来自前端
+//!   `buildLlmHistory` 携带、运行中消息由 `save_msg` 回填）。区间收缩保证
+//!   末条必有 id；前端/后端按 id 精确插卡，**无指纹、无数数**。
 //!
 //! 正确性不变量（全部经测试保证）：
 //! - 只改写旧 Tool 消息 content 或 splice 替换完整平衡区间；协议配对不破坏。
@@ -30,7 +31,7 @@ pub mod summarizer;
 use tokio::sync::watch;
 
 use crate::llm::openai::OpenAiProvider;
-use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
+use crate::llm::provider::{LlmMessage, ToolDefinition};
 
 use meter::estimate_total;
 use summarizer::{CHECKPOINT_PREAMBLE, SUMMARY_CLOSE_TAG, SUMMARY_OPEN_TAG};
@@ -70,14 +71,9 @@ pub struct CompactionOutcome {
     pub shadowed_messages: usize,
     /// 被压内容的估算 token 数。
     pub shadowed_tokens: usize,
-    /// 被压区间在"非 system 消息投影"中的起点（前端据此定位 store 中被压消息）。
-    pub shadowed_start_non_system: usize,
-    /// 被压区间的角色序列（"user"/"assistant"/"tool"，done 卡对应 loop 的
-    /// framed checkpoint 归一为 user）。前端据此校验 store 投影与 loop 缓冲一致。
-    pub shadowed_roles: Vec<&'static str>,
-    /// 被压区间内 tool 消息的 tool_call_id 序列（保序，仅 tool 消息）。
-    /// 与角色序列共同构成校验指纹：任一不匹配 → 前端降级不删，绝不误删。
-    pub shadowed_tool_call_ids: Vec<String>,
+    /// 被压区间末条消息的 DB row id（统一 id 指针）：前端按 `dbId` 定位插卡、
+    /// 后端按 id 查行取 created_at。区间收缩保证必有值（除非无 id 锚点而跳过）。
+    pub tail_db_id: Option<String>,
     /// LLM 摘要文本（不含 framing/标签，供展示与落库）。
     pub summary: String,
 }
@@ -173,42 +169,30 @@ fn region_shadowed_tokens(msgs: &[LlmMessage], range: &region::RangeSelection) -
         .sum()
 }
 
-/// 前导 system 消息数（loop 缓冲 = [system 提示词] + history；手动命令传入的
-/// history 无 system 前导）。
-fn leading_system_count(msgs: &[LlmMessage]) -> usize {
-    msgs.iter()
-        .take_while(|m| m.role == LlmRole::System)
-        .count()
-}
-
-/// 被压区间在"非 system 消息投影"里的起点：`range.start` 减去前导 system 数。
-/// 前端据此在 store 的 history-relevant 投影中定位被压区间（投影不含 system 通知/
-/// 运行中卡，done 卡归一化为 user 与 loop 的 framed checkpoint 一一对应）。
-fn shadowed_start_non_system(msgs: &[LlmMessage], range_start: usize) -> usize {
-    range_start - leading_system_count(msgs)
-}
-
-/// 被压区间校验指纹：(角色序列, tool 消息 tool_call_id 序列)。
-/// 前端用同样的投影规则重建 store 侧序列并逐项比对，任何不匹配都拒绝替换
-/// （旧数据 legacy tool、孤儿 tool 等投影漂移场景下绝不误删）。
-fn shadowed_span_fingerprint(
+/// 收缩区间末条到"最近一条有 `db_id` 的平衡切点"。
+///
+/// 统一 id 指针（`tail_db_id`）要求被压区间末条消息在 DB 里有行可定位；运行中
+/// 新增且尚未回填 id 的消息（极端窗口）不能作为锚点，向前收缩到最近有 id 的
+/// 平衡切点（`cuts[end+1]` 为真 = 不破坏工具配对）。返回 `None` = 整区间无
+/// 可定位锚点（正常数据不会发生——历史消息必带 dbId），调用方跳过本次压缩。
+fn shrink_to_known_tail(
     msgs: &[LlmMessage],
+    cuts: &[bool],
     range: &region::RangeSelection,
-) -> (Vec<&'static str>, Vec<String>) {
-    let mut roles = Vec::with_capacity(range.end - range.start + 1);
-    let mut tool_ids = Vec::new();
-    for m in &msgs[range.start..=range.end] {
-        match m.role {
-            LlmRole::User => roles.push("user"),
-            LlmRole::Assistant => roles.push("assistant"),
-            LlmRole::Tool => {
-                roles.push("tool");
-                tool_ids.push(m.tool_call_id.clone().unwrap_or_default());
-            }
-            LlmRole::System => roles.push("user"), // 防御：区间内不应出现 system
+) -> Option<region::RangeSelection> {
+    let mut end = range.end;
+    loop {
+        if cuts.get(end + 1).copied().unwrap_or(false) && msgs[end].db_id.is_some() {
+            return Some(region::RangeSelection {
+                start: range.start,
+                end,
+            });
         }
+        if end == range.start {
+            return None;
+        }
+        end -= 1;
     }
-    (roles, tool_ids)
 }
 
 /// 入口：按触发来源执行一次压缩管线，返回结果 + 生命周期事件。
@@ -266,7 +250,7 @@ pub async fn compact_if_needed(
                     };
                 }
             };
-            let Some(range) = region::select_compactable_range(msgs, &cuts, 0) else {
+            let Some(mut range) = region::select_compactable_range(msgs, &cuts, 0) else {
                 record_event(
                     &mut events,
                     on_event,
@@ -279,6 +263,37 @@ pub async fn compact_if_needed(
                     outcome: None,
                     events,
                 };
+            };
+            // 手动 = 全力压缩：区间延伸到最后一条消息（含）。平衡性保证：
+            // `cut_balance` 对合法消息流恒有 `cuts[len] == true`（所有调用已闭合，
+            // 否则直接 Err），延伸不破坏配对。
+            if trigger == CompactionTrigger::Manual {
+                range.end = msgs.len() - 1;
+            }
+            // 手动 = 队尾语义：**不收缩**（本会话产生、尚未回填 db_id 的消息
+            // 也一并压掉；`tail_db_id` 恒为 None，persist 按最后一行定位队尾）。
+            // 自动（Overflow）收缩到有 id 的平衡末条：保证 `tail_db_id` 指针
+            // 有值（无锚点则跳过）。
+            let range = if trigger == CompactionTrigger::Manual {
+                range
+            } else {
+                match shrink_to_known_tail(msgs, &cuts, &range) {
+                    Some(r) => r,
+                    None => {
+                        record_event(
+                            &mut events,
+                            on_event,
+                            CompactionEvent::Skipped {
+                                reason: "没有可定位的压缩区间（消息缺少数据库 id）".into(),
+                                attempted: false,
+                            },
+                        );
+                        return CompactionRun {
+                            outcome: None,
+                            events,
+                        };
+                    }
+                }
             };
             // 最小收益门槛：区间太小则 framing 开销吞掉全部收益，shrink 必败
             let shadowed = region_shadowed_tokens(msgs, &range);
@@ -374,6 +389,20 @@ pub async fn compact_if_needed(
                             on_event,
                             CompactionEvent::Skipped {
                                 reason: "没有可压缩的早期历史区间".into(),
+                                attempted: false,
+                            },
+                        );
+                    }
+                    break;
+                };
+                // 收缩到有 id 的平衡末条：保证 `tail_db_id` 指针有值
+                let Some(range) = shrink_to_known_tail(msgs, &cuts, &range) else {
+                    if result.is_none() {
+                        record_event(
+                            &mut events,
+                            on_event,
+                            CompactionEvent::Skipped {
+                                reason: "没有可定位的压缩区间（消息缺少数据库 id）".into(),
                                 attempted: false,
                             },
                         );
@@ -530,16 +559,21 @@ async fn compact_region(
     }
 
     let shadowed_messages = range.end - range.start + 1;
-    let shadowed_start_non_system = shadowed_start_non_system(msgs, range.start);
-    let (shadowed_roles, shadowed_tool_call_ids) = shadowed_span_fingerprint(msgs, range);
+    // 统一 id 指针：被压区间末条的 DB row id（自动路径调用方已收缩保证有值，
+    // 前端按 dbId 定位插卡、后端按 id 查行取 created_at）。
+    // **手动 = 队尾语义**：恒 `None`（本会话消息可能没有 db_id），后端按
+    // 最后一行定位队尾、前端队尾追加——前后端位置严格一致，不依赖 id。
+    let tail_db_id = if trigger == "manual" {
+        None
+    } else {
+        msgs[range.end].db_id.clone()
+    };
     msgs.splice(range.start..=range.end, [framed_msg]);
 
     Ok(CompactionOutcome {
         shadowed_messages,
         shadowed_tokens,
-        shadowed_start_non_system,
-        shadowed_roles,
-        shadowed_tool_call_ids,
+        tail_db_id,
         summary: summary_text,
     })
 }
@@ -599,30 +633,80 @@ mod tests {
     }
 
     #[test]
-    fn shadowed_start_offsets_leading_system_prompt() {
-        // loop 缓冲：前导 system 提示词 → 投影起点 = range.start - 1
-        let msgs = vec![
-            LlmMessage::system("you are an agent"),
-            LlmMessage::user("u1"),
-            LlmMessage::user("u2"),
-            LlmMessage::user("u3"),
-        ];
-        assert_eq!(shadowed_start_non_system(&msgs, 1), 0);
-        assert_eq!(shadowed_start_non_system(&msgs, 2), 1);
+    fn shrink_keeps_known_tail_id_when_end_has_one() {
+        let mut m0 = LlmMessage::user("u0");
+        m0.db_id = Some("row-0".into());
+        let mut m1 = LlmMessage::user("u1");
+        m1.db_id = Some("row-1".into());
+        let msgs = vec![m0, m1];
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let range = region::RangeSelection { start: 0, end: 1 };
+        // 末条已有 id → 原样返回
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range),
+            Some(region::RangeSelection { start: 0, end: 1 })
+        );
     }
 
     #[test]
-    fn shadowed_start_without_system_manual_history() {
-        // 手动压缩命令传入的 history 无 system 前导 → 投影起点 = range.start
+    fn shrink_rolls_back_to_nearest_known_id() {
+        let mut m0 = LlmMessage::user("u0");
+        m0.db_id = Some("row-0".into());
+        let m1 = LlmMessage::user("u1"); // 无 id（运行中未回填）
+        let m2 = LlmMessage::user("u2"); // 无 id
+        let msgs = vec![m0, m1, m2];
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let range = region::RangeSelection { start: 0, end: 2 };
+        // 收缩到最近有 id 的平衡末条 = u0
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range),
+            Some(region::RangeSelection { start: 0, end: 0 })
+        );
+    }
+
+    #[test]
+    fn shrink_none_when_no_known_id_in_span() {
         let msgs = vec![LlmMessage::user("u1"), LlmMessage::user("u2")];
-        assert_eq!(shadowed_start_non_system(&msgs, 0), 0);
-        assert_eq!(shadowed_start_non_system(&msgs, 1), 1);
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let range = region::RangeSelection { start: 0, end: 1 };
+        assert_eq!(shrink_to_known_tail(&msgs, &cuts, &range), None);
     }
 
     #[test]
-    fn shadowed_start_system_only_never_used() {
-        // 防御：纯 system 输入下 range_start 恒 >= 前导 system 数（不 panic）
-        let msgs = vec![LlmMessage::system("s1"), LlmMessage::system("s2")];
-        assert_eq!(shadowed_start_non_system(&msgs, 2), 0);
+    fn shrink_respects_balanced_cut() {
+        use crate::llm::provider::{LlmRole, ToolCall};
+        // user, assistant(call), tool(result), user —— 收缩不能停在配对中间
+        let mut m0 = LlmMessage::user("go");
+        m0.db_id = Some("row-0".into());
+        let mut asst = LlmMessage::assistant("run");
+        asst.db_id = Some("row-1".into());
+        asst.tool_calls = Some(vec![ToolCall {
+            id: "c1".into(),
+            name: "cmd".into(),
+            arguments: serde_json::json!({}),
+        }]);
+        let mut t = LlmMessage::assistant("");
+        t.role = LlmRole::Tool;
+        t.tool_call_id = Some("c1".into());
+        t.content = "output".into();
+        let mut m3 = LlmMessage::user("next");
+        m3.db_id = Some("row-3".into());
+        let msgs = vec![m0, asst, t, m3];
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        // 区间 [0,3]：末条有 id → 不收缩（cuts[4] 平衡）
+        let range = region::RangeSelection { start: 0, end: 3 };
+        assert_eq!(
+            shrink_to_known_tail(&msgs, &cuts, &range),
+            Some(region::RangeSelection { start: 0, end: 3 })
+        );
+        // 若末条无 id：收缩时不得停在 tool 结果之前（cuts[3] 不平衡）→ 到 m0
+        let mut msgs2 = msgs.clone();
+        msgs2[3].db_id = None;
+        let cuts2 = pairing::cut_balance(&msgs2).unwrap();
+        let range2 = region::RangeSelection { start: 0, end: 3 };
+        assert_eq!(
+            shrink_to_known_tail(&msgs2, &cuts2, &range2),
+            Some(region::RangeSelection { start: 0, end: 0 })
+        );
     }
 }

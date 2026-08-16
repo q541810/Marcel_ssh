@@ -701,10 +701,13 @@ describe('conversationStore', () => {
       expect(useTaskStore.getState().activeTaskId).toBeNull();
     });
 
-    it('loads the backend-compacted view as-is (card already positioned by created_at, no replay)', async () => {
-      // 后端结构化落库后 load_messages 直接返回压缩视图：卡片在 span 位置、
-      // 被压消息已归档隐藏——前端原样展示，不需要任何回放/位置修正。
+    it('loads the backend-compacted conversation with originals preserved and card at span end', async () => {
+      // 后端落库后 load_messages 返回：原文全保留 + 卡片在 span 末尾（created_at 定位）——
+      // 前端原样展示，不需要任何回放/位置修正。
       agentLoadConversation.mockResolvedValue([
+        { id: 'm1', conversationId: 'conv-1', role: 'user', content: 'u1', timestamp: now, createdAt: now },
+        { id: 'm2', conversationId: 'conv-1', role: 'assistant', content: 'a1', timestamp: now, createdAt: now },
+        { id: 'm3', conversationId: 'conv-1', role: 'tool', content: 'out', timestamp: now, createdAt: now },
         {
           id: 'card1',
           conversationId: 'conv-1',
@@ -722,9 +725,9 @@ describe('conversationStore', () => {
       await useConversationStore.getState().switchConversation('conv-1');
 
       const msgs = useConversationStore.getState().messages['conv-1'];
-      expect(msgs.map((m) => m.id)).toEqual(['card1', 'm4']);
-      expect(msgs[0].compaction?.status).toBe('done');
-      expect(msgs[0].compaction?.summary).toContain('s1');
+      expect(msgs.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'card1', 'm4']);
+      expect(msgs[3].compaction?.status).toBe('done');
+      expect(msgs[3].compaction?.summary).toContain('s1');
     });
 
     it('subagent (plan-mode) running task is restored after switching to its conversation', async () => {
@@ -1791,9 +1794,7 @@ describe('conversationStore', () => {
         summary: null,
         shadowedMessages: 0,
         shadowedTokens: 0,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: [],
-        shadowedToolCallIds: [],
+        tailDbId: null,
         reason: null,
         attempted: false,
         ...overrides,
@@ -1901,15 +1902,13 @@ describe('conversationStore', () => {
       expect(msgs[1].content).toContain('会话正在运行任务');
     });
 
-    it('压缩成功时原位替换被压区间（成功路径回归）', async () => {
+    it('压缩成功时结果路径不操作 store（live 更新由 Done 事件负责，原文全保留）', async () => {
       mockCompactResult({
         compacted: true,
         summary: '## Primary Request\n- build',
         shadowedMessages: 2,
         shadowedTokens: 100,
-        shadowedStartNonSystem: 0,
-        shadowedRoles: ['user', 'assistant'],
-        shadowedToolCallIds: [],
+        tailDbId: 'row-2',
       });
       seedConversation('conv-1', [
         makeMessage({ id: 'u1', content: 'go' }),
@@ -1920,12 +1919,10 @@ describe('conversationStore', () => {
 
       await useConversationStore.getState().compactConversation('conv-1');
 
+      // 结果路径不改 store：压缩由后端落库 + Done 事件更新 live 视图；
+      // 原文一条不少（无隐藏）。
       const msgs = useConversationStore.getState().messages['conv-1'];
-      expect(msgs).toHaveLength(2);
-      expect(msgs[0].compaction?.status).toBe('done');
-      expect(msgs[0].compaction?.summary).toBe('## Primary Request\n- build');
-      expect(msgs[0].compaction?.shadowedMessages).toBe(2);
-      expect(msgs[1].id).toBe('u2');
+      expect(msgs.map((m) => m.id)).toEqual(['u1', 'a1', 'u2']);
     });
   });
 });

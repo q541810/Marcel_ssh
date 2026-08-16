@@ -104,6 +104,7 @@ export async function agentStartTask(
     toolCallId?: string;
     reasoningContent?: string;
     imagePaths?: string[];
+    dbId?: string;
   }[],
 ): Promise<string> {
   return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
@@ -162,12 +163,8 @@ export interface AgentCompactResult {
   summary: string | null;
   shadowedMessages: number;
   shadowedTokens: number;
-  /** 被压区间在"非 system 消息投影"中的起点（前端定位 store 中被压消息）。 */
-  shadowedStartNonSystem: number;
-  /** 被压区间角色序列（前端校验 store 投影与后端一致，防止误删）。 */
-  shadowedRoles: Array<'user' | 'assistant' | 'tool'>;
-  /** 被压区间内 tool 消息的 toolCallId 序列（保序，前端校验用）。 */
-  shadowedToolCallIds: Array<string | null>;
+  /** 被压区间末条消息的 DB row id（统一 id 指针，前端按 dbId 定位插卡）。 */
+  tailDbId: string | null;
   reason: string | null;
   /** 是否已进入摘要阶段（false=未开始就跳过，前端不留痕；true=摘要已跑但失败） */
   attempted: boolean;
@@ -186,6 +183,7 @@ export async function agentCompactConversation(
     toolCallId?: string;
     reasoningContent?: string;
     imagePaths?: string[];
+    dbId?: string;
   }[],
   taskId: string,
 ): Promise<AgentCompactResult> {

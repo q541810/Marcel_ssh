@@ -282,6 +282,8 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     timestamp: m.timestamp,
     reasoningContent: m.reasoningContent || undefined,
     imagePaths: parseImagePaths(m.imagePathsJson),
+    // 统一 id 域：DB row id 贯穿三层（load 时填充，压缩事件据此定位插卡）
+    dbId: m.id,
   };
 
   // 压缩摘要落库消息：还原为 CompactionCard 展示（done 卡，默认展开摘要）
@@ -327,7 +329,7 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
   });
 }
 
-// ───────────────────────── 压缩视图重建（原位替换 + 重启回放） ─────────────────────────
+// ───────────────────────── 压缩视图重建（id 指针定位 + 重启重建） ─────────────────────────
 
 /** 镜像 summarizer.rs 的 CHECKPOINT_PREAMBLE（保持逐字节一致；改后端时同步这里）。 */
 export const CHECKPOINT_PREAMBLE =
@@ -336,38 +338,10 @@ export const CHECKPOINT_PREAMBLE =
 const SUMMARY_OPEN_TAG = '<compacted-summary>';
 const SUMMARY_CLOSE_TAG = '</compacted-summary>';
 
-export type CompactionRole = 'user' | 'assistant' | 'tool';
-
-/**
- * history-relevant 投影：跳过 loading 与 system 通知/运行中卡（非 done 压缩卡）；
- * done 压缩卡计入投影并归一化为 user 角色（对应后端 loop 缓冲里被压区间的
- * framed checkpoint user 消息，两者每条压缩各占一个投影位）。
- */
-export function historyRelevantMessages(
-  msgs: AgentMessage[],
-): Array<{ m: AgentMessage; i: number }> {
-  return msgs
-    .map((m, i) => ({ m, i }))
-    .filter(({ m }) => !m.isLoading && !(m.role === 'system' && m.compaction?.status !== 'done'));
-}
-
-/** 角色归一化：done 压缩卡 → user（loop 的 framed checkpoint）；其余取原角色。 */
-export function compactionNormalizedRole(m: AgentMessage): CompactionRole {
-  if (m.role === 'system' && m.compaction?.status === 'done') return 'user';
-  if (m.role === 'user' || m.role === 'assistant' || m.role === 'tool') return m.role;
-  return 'user'; // 兜底（正常数据不应出现）
-}
-
-/** 后端 Done 事件携带的被压区间校验信息。 */
-export interface CompactionSpanSpec {
-  /** 区间在投影中的起点。 */
-  start: number;
-  /** 区间长度（= shadowedMessages）。 */
-  count: number;
-  /** 角色序列（保序）。 */
-  roles: CompactionRole[];
-  /** tool 消息 toolCallId 序列（保序，仅 tool 消息）。 */
-  toolIds: Array<string | null>;
+/** 后端 Done 事件携带的定位信息：统一 id 指针（取代位置数数与指纹验证）。 */
+export interface CompactionTailSpec {
+  /** 被压区间末条消息的 DB row id（`AgentMessage.dbId`）。 */
+  tailDbId: string | null;
 }
 
 export interface CompactionSpliceResult {
@@ -377,42 +351,77 @@ export interface CompactionSpliceResult {
 }
 
 /**
- * 原位替换：校验（数量不越界 + 角色序列一致 + tool 调用 id 序列一致）全部通过
- * 才删被压消息、原位插入 done 卡；任一不匹配 → 不动任何消息（applied=false），
- * 由调用方降级（卡片留在尾部）。幂等：重复应用时区间已被替换 → 校验失败 → no-op。
- * 注：持久化由后端结构化落库（count-walk + 指纹校验 + 归档），本函数只负责
- * live store 视图；被压 id 仅用于删除，不落库。
+ * 插入压缩卡（原文全保留）：
+ *
+ * **自动（id 指针定位）**：
+ * - 卡片插在**被压区间末条消息之后**（`tailDbId` 定位；保留尾部时卡片在
+ *   保留内容上面——与后端按 id 查行取 created_at 的落库定位一致）；
+ * - 吸收：末条之前最近一张旧 done 卡（恒单卡）+ 运行中卡；
+ * - 幂等：末条之后已有 done 卡 → no-op（重复事件不插第二张）；
+ * - 找不到 `tailDbId`（运行中消息无 dbId 的极端窗口）→ `applied=false`，
+ *   调用方降级（不插卡、原文保留；后端已按 id 落库，重启 load 可见）。
+ *
+ * **手动（`opts.manual` = 队尾语义，不依赖 dbId）**：本会话产生的消息可能
+ * 没有 dbId，手动压缩"压全部、卡片在对话末尾"——移除全部旧 done 卡
+ * （恒单卡，防御残留）+ 运行中卡，卡片追加到队尾，与后端最后一行定位一致。
+ *
+ * **无指纹、无数数、无校验。**
  */
 export function applyCompactionSplice(
   msgs: AgentMessage[],
-  span: CompactionSpanSpec,
+  spec: CompactionTailSpec,
   card: AgentMessage,
   runningCardId?: string | null,
+  opts?: { manual?: boolean },
 ): CompactionSpliceResult {
-  const proj = historyRelevantMessages(msgs);
-  if (span.start + span.count > proj.length) {
-    return { msgs, removedIds: [], applied: false };
+  // 手动 = 队尾语义：不依赖 tailDbId
+  if (opts?.manual) {
+    const removedIds = msgs
+      .filter((m) => m.role === 'system' && m.compaction?.status === 'done')
+      .map((m) => m.id);
+    if (runningCardId) removedIds.push(runningCardId);
+    const drop = new Set(removedIds);
+    return {
+      msgs: [...msgs.filter((m) => !drop.has(m.id)), card],
+      removedIds,
+      applied: true,
+    };
   }
-  const slice = proj.slice(span.start, span.start + span.count);
-  const roles = slice.map(({ m }) => compactionNormalizedRole(m));
-  const toolIds = slice
-    .filter(({ m }) => m.role === 'tool')
-    .map(({ m }) => m.toolResult?.toolCallId ?? null);
-  if (roles.length !== span.roles.length || roles.some((r, i) => r !== span.roles[i])) {
-    return { msgs, removedIds: [], applied: false };
+  // 自动：id 指针定位：被压区间末条（从后向前找，防同 id 重复行的边缘情况取最新）
+  let tailIdx = -1;
+  if (spec.tailDbId) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].dbId === spec.tailDbId) {
+        tailIdx = i;
+        break;
+      }
+    }
   }
-  if (
-    toolIds.length !== span.toolIds.length ||
-    toolIds.some((id, i) => id !== span.toolIds[i])
-  ) {
+  if (tailIdx === -1) {
     return { msgs, removedIds: [], applied: false };
   }
 
-  const removedIds = slice.map((p) => p.m.id);
+  // 幂等：末条之后已有 done 卡（本次压缩已应用过）→ no-op
+  const afterTail = msgs[tailIdx + 1];
+  if (afterTail && afterTail.role === 'system' && afterTail.compaction?.status === 'done') {
+    return { msgs, removedIds: [], applied: false };
+  }
+
+  // 吸收：末条之前最近一张旧 done 卡（恒单卡——只留最新一张）+ 运行中卡
+  const removedIds: string[] = [];
+  for (let i = tailIdx - 1; i >= 0; i--) {
+    if (msgs[i].role === 'system' && msgs[i].compaction?.status === 'done') {
+      removedIds.push(msgs[i].id);
+      break;
+    }
+  }
+  if (runningCardId) removedIds.push(runningCardId);
   const drop = new Set(removedIds);
-  if (runningCardId) drop.add(runningCardId);
-  const insertAt = slice[0].i;
   const out = msgs.filter((m) => !drop.has(m.id));
+
+  // 插入位置 = 末条消息之后（该消息是原文、未移除；用 id 定位稳妥）
+  const tailMsgId = msgs[tailIdx].id;
+  const insertAt = out.findIndex((m) => m.id === tailMsgId) + 1;
   out.splice(insertAt, 0, card);
   return { msgs: out, removedIds, applied: true };
 }

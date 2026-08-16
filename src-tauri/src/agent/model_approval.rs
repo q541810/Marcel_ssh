@@ -299,6 +299,7 @@ mod tests {
             reasoning_content: None,
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         }
     }
 

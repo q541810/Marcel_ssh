@@ -50,6 +50,12 @@ pub struct LlmMessage {
     /// `length` means the response was truncated at the token cap.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub finish_reason: Option<String>,
+    /// 持久化消息的 DB row id（`messages.id`，统一 id 域）：
+    /// 历史消息来自前端 `buildLlmHistory` 携带的 `dbId`；运行中新增消息由
+    /// `save_msg` 返回的 id 回填。压缩时被压区间末条的 id 作为 `tail_db_id`
+    /// 指针交给前端/DB 定位卡片——取代一切位置数数与指纹验证。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub db_id: Option<String>,
 }
 
 impl LlmRole {
@@ -73,6 +79,7 @@ impl LlmMessage {
             reasoning_content: None,
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         }
     }
 
@@ -85,6 +92,7 @@ impl LlmMessage {
             reasoning_content: None,
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         }
     }
 
@@ -97,6 +105,7 @@ impl LlmMessage {
             reasoning_content: None,
             image_paths: None,
             finish_reason: None,
+            db_id: None,
         }
     }
 }

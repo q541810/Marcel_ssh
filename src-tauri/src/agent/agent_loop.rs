@@ -84,13 +84,7 @@ pub(crate) fn forward_compaction_event(
                     summary: outcome.summary.clone(),
                     shadowed_messages: outcome.shadowed_messages,
                     shadowed_tokens: outcome.shadowed_tokens,
-                    shadowed_start_non_system: outcome.shadowed_start_non_system,
-                    shadowed_roles: outcome
-                        .shadowed_roles
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect(),
-                    shadowed_tool_call_ids: outcome.shadowed_tool_call_ids.clone(),
+                    tail_db_id: outcome.tail_db_id.clone(),
                 },
             );
         }
@@ -164,7 +158,7 @@ pub(crate) async fn run_agent_loop(
         .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
 
     persister.update_title_from_last_user_msg(&messages);
-    persister.save_last_user_msg(&messages);
+    persister.save_last_user_msg(&mut messages);
 
     let max_rounds = agent_settings.max_tool_rounds.max(10);
     // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
@@ -271,7 +265,7 @@ pub(crate) async fn run_agent_loop(
         };
         let _ = forwarder.await;
 
-        let assistant_msg = match result {
+        let mut assistant_msg = match result {
             Ok(msg) => {
                 // 一轮成功响应重置溢出恢复预算（对齐 DSH：assistant/message 重置）
                 overflow_retries = 0;
@@ -379,7 +373,7 @@ pub(crate) async fn run_agent_loop(
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
             let cleaned_content = strip_thinking_tags(&assistant_msg.content);
-            let cleaned_msg = LlmMessage {
+            let mut cleaned_msg = LlmMessage {
                 content: cleaned_content.clone(),
                 ..assistant_msg
             };
@@ -394,12 +388,15 @@ pub(crate) async fn run_agent_loop(
                 );
                 continue;
             }
-            let _ = persister.save_msg(
+            // 保存并回填 DB row id：压缩的 tail_db_id 指针依赖它
+            if let Some(db_id) = persister.save_msg(
                 "assistant",
                 &cleaned_msg.content,
                 None,
                 cleaned_msg.reasoning_content.as_deref(),
-            );
+            ) {
+                cleaned_msg.db_id = Some(db_id);
+            }
             messages.push(cleaned_msg);
             // 截断但已产生文本：保存消息后继续下一轮，让模型补完（不视为自然结束）
             if truncated {
@@ -442,12 +439,15 @@ pub(crate) async fn run_agent_loop(
                 .collect::<Vec<_>>(),
         )
         .ok();
-        let _ = persister.save_msg(
+        // 保存并回填 DB row id：压缩的 tail_db_id 指针依赖它
+        if let Some(db_id) = persister.save_msg(
             "assistant",
             &assistant_msg.content,
             tool_calls_json.as_deref(),
             assistant_msg.reasoning_content.as_deref(),
-        );
+        ) {
+            assistant_msg.db_id = Some(db_id);
+        }
         messages.push(assistant_msg);
 
         // 4. Execute each tool call via the dispatcher.
@@ -540,7 +540,7 @@ pub(crate) async fn run_agent_loop(
                 })
                 .ok();
 
-                let tool_msg = LlmMessage {
+                let mut tool_msg = LlmMessage {
                     role: LlmRole::Tool,
                     content: exec.output,
                     tool_calls: None,
@@ -548,13 +548,16 @@ pub(crate) async fn run_agent_loop(
                     reasoning_content: None,
                     image_paths: None,
                     finish_reason: None,
+                    db_id: None,
                 };
-                let _ = persister.save_msg(
+                if let Some(db_id) = persister.save_msg(
                     "tool",
                     &tool_msg.content,
                     tool_result_json.as_deref(),
                     None,
-                );
+                ) {
+                    tool_msg.db_id = Some(db_id);
+                }
                 messages.push(tool_msg);
 
                 emit_final_plan_normalized(&app, &state, &task_id);
@@ -612,7 +615,7 @@ pub(crate) async fn run_agent_loop(
             .ok();
 
             // Build tool message — move exec.output into content.
-            let tool_msg = LlmMessage {
+            let mut tool_msg = LlmMessage {
                 role: LlmRole::Tool,
                 content: exec.output,
                 tool_calls: None,
@@ -620,11 +623,16 @@ pub(crate) async fn run_agent_loop(
                 reasoning_content: None,
                 image_paths: None,
                 finish_reason: None,
+                db_id: None,
             };
 
             // Save to conversation DB (borrows tool_msg.content, no extra clone).
-            let _ =
-                persister.save_msg("tool", &tool_msg.content, tool_result_json.as_deref(), None);
+            // 回填 DB row id：压缩的 tail_db_id 指针依赖它。
+            if let Some(db_id) =
+                persister.save_msg("tool", &tool_msg.content, tool_result_json.as_deref(), None)
+            {
+                tool_msg.db_id = Some(db_id);
+            }
 
             messages.push(tool_msg);
         }

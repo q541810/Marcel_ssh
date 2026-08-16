@@ -21,13 +21,9 @@ pub struct CompactionCommandResult {
     pub shadowed_messages: usize,
     /// 被压内容的估算 token 数（compacted 为 true 时有值）。
     pub shadowed_tokens: usize,
-    /// 被压区间在"非 system 消息投影"中的起点（compacted 为 true 时有值，
-    /// 前端据此在 store 中定位被压消息并原位替换）。
-    pub shadowed_start_non_system: usize,
-    /// 被压区间角色序列（compacted 为 true 时有值，前端校验用）。
-    pub shadowed_roles: Vec<String>,
-    /// 被压区间内 tool 消息的 tool_call_id 序列（compacted 为 true 时有值，前端校验用）。
-    pub shadowed_tool_call_ids: Vec<String>,
+    /// 被压区间末条消息的 DB row id（统一 id 指针，compacted 为 true 时有值，
+    /// 前端按 dbId 定位插卡）。
+    pub tail_db_id: Option<String>,
     /// 跳过原因（compacted 为 false 时有值，供前端提示）。
     pub reason: Option<String>,
     /// 是否已进入摘要阶段（attempted=false：未开始就跳过，前端不留痕；
@@ -43,8 +39,9 @@ pub struct CompactionCommandResult {
 /// - 压缩事件经 `forward_compaction_event` 实时转发到
 ///   `agent://stream/{task_id}`（task_id 由前端生成，作为事件通道），前端
 ///   复用 `attachStreamListener` + `handleCompaction*` 显示卡片；
-/// - 压缩成功后由**前端**原位替换 store 并落库（含被压消息 id 列表，
-///   重启回放重建视图）；本命令不再落库，避免重复。DB 原文永不删改。
+/// - 压缩成功后由后端结构化落库（按 `tail_db_id` 指针定位卡片，取代
+///   count-walk + 指纹），前端经 Done 事件按 `dbId` 原位插入 live store；
+///   原文永不删改。
 #[tauri::command]
 pub async fn agent_compact_conversation(
     app: AppHandle,
@@ -85,9 +82,7 @@ pub async fn agent_compact_conversation(
             summary: None,
             shadowed_messages: 0,
             shadowed_tokens: 0,
-            shadowed_start_non_system: 0,
-            shadowed_roles: Vec::new(),
-            shadowed_tool_call_ids: Vec::new(),
+            tail_db_id: None,
             reason: Some("会话还没有消息，无需压缩".into()),
             attempted: false,
         });
@@ -141,9 +136,7 @@ pub async fn agent_compact_conversation(
             summary: None,
             shadowed_messages: 0,
             shadowed_tokens: 0,
-            shadowed_start_non_system: 0,
-            shadowed_roles: Vec::new(),
-            shadowed_tool_call_ids: Vec::new(),
+            tail_db_id: None,
             reason: Some(if reason.is_empty() {
                 "没有可压缩的早期历史区间".into()
             } else {
@@ -173,9 +166,7 @@ pub async fn agent_compact_conversation(
         summary: Some(outcome.summary.clone()),
         shadowed_messages: outcome.shadowed_messages,
         shadowed_tokens: outcome.shadowed_tokens,
-        shadowed_start_non_system: outcome.shadowed_start_non_system,
-        shadowed_roles: outcome.shadowed_roles.iter().map(|s| s.to_string()).collect(),
-        shadowed_tool_call_ids: outcome.shadowed_tool_call_ids.clone(),
+        tail_db_id: outcome.tail_db_id.clone(),
         reason: None,
         attempted: true,
     })

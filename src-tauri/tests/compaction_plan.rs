@@ -1,24 +1,27 @@
-//! 压缩方案（原位替换 + 重启回放）的 Rust 侧算法证明。
+//! 压缩方案（id 指针定位 + 重启重建）的 Rust 侧算法证明。
 //!
 //! 自包含、零依赖（仅 std），不链接 crate 内部实现：把方案要求的数学与
 //! 不变量独立建模验证（实施时以此为 spec）。忠实镜像：
 //! - `pairing.rs::cut_balance`（open-call 计数；tool 结果无匹配调用 → corrupt）
 //! - `region.rs::select_compactable_range`（head-anchored + retain 尾部 + 回退平衡切点）
+//! - `context/mod.rs::shrink_to_known_tail`（收缩区间末条到"最近有 db_id 的
+//!   平衡切点"，保证 `tail_db_id` 指针有值——取代位置数数与指纹验证）
 //!
 //! 证明目标：
-//! 1. `shadowed_start_non_system = range.start - 前导 system 数`（loop 前导=1，
-//!    手动 history 前导=0）——前端据此定位 store 中被压区间。
-//! 2. 区间永远从第一条非 system 消息开始 → 投影起点恒为 0 → 卡片永远插在
-//!    原位（头部），与 store 投影对齐。
-//! 3. 区间两端切点平衡 → 区间内工具配对闭合（不拆散任何 call/result 对）。
+//! 1. 区间永远从第一条非 system 消息开始（head-anchored 前缀）。
+//! 2. 区间两端切点平衡 → 区间内工具配对闭合（不拆散任何 call/result 对）。
+//! 3. `shrink_to_known_tail` 收缩后：末条必有 id 锚点、两端仍平衡、区间配对闭合；
+//!    整区间无锚点时返回 None（跳过压缩）。
 
-/// 简化消息：System（提示词/plan 注入）、User、Asst(n)（携带 n 个 tool_calls）、Tool。
+/// 简化消息：System（提示词/plan 注入）、User、Asst(n)（携带 n 个 tool_calls）、
+/// Tool、UserUnanchored（无 db_id 的用户消息——运行中未回填的极端窗口）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
     System,
     User,
     Asst(usize),
     Tool,
+    UserUnanchored,
 }
 
 /// `pairing.rs::cut_balance` 的忠实模型：
@@ -42,16 +45,6 @@ fn cut_balance(items: &[Item]) -> Result<Vec<bool>, String> {
         cuts.push(in_progress == 0);
     }
     Ok(cuts)
-}
-
-/// 前导 system 消息数（loop 缓冲 = [system 提示词] + history；手动命令 history 无 system）。
-fn leading_system_count(items: &[Item]) -> usize {
-    items.iter().take_while(|it| **it == Item::System).count()
-}
-
-/// 方案要求：Done 事件携带的 shadowedStartNonSystem = range.start - 前导 system 数。
-fn shadowed_start_non_system(items: &[Item], range_start: usize) -> usize {
-    range_start - leading_system_count(items)
 }
 
 /// `region.rs::select_compactable_range` 的忠实模型：
@@ -116,22 +109,29 @@ fn range_pairing_closed(items: &[Item], cuts: &[bool], start: usize, end: usize)
     in_progress == 0 // 区间内所有调用都在区间内闭合
 }
 
+/// 消息是否缺少 db_id 锚点（`UserUnanchored` = 运行中未回填的极端窗口）。
+fn is_unanchored(it: Item) -> bool {
+    matches!(it, Item::UserUnanchored)
+}
+
+/// `context/mod.rs::shrink_to_known_tail` 的忠实模型：从 end 向前找最近一条
+/// "切点平衡（cuts[e+1]）且有 id 锚点"的消息作为新区间末条；找不到返回 None。
+fn shrink_to_known_tail(items: &[Item], cuts: &[bool], start: usize, end: usize) -> Option<(usize, usize)> {
+    let mut e = end;
+    loop {
+        if cuts[e + 1] && !is_unanchored(items[e]) {
+            return Some((start, e));
+        }
+        if e == start {
+            return None;
+        }
+        e -= 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn offset_with_leading_system_prompt() {
-        let items = [Item::System, Item::User, Item::Asst(1), Item::Tool, Item::User];
-        assert_eq!(shadowed_start_non_system(&items, 1), 0);
-        assert_eq!(shadowed_start_non_system(&items, 3), 2);
-    }
-
-    #[test]
-    fn offset_without_system_prompt_manual_history() {
-        let items = [Item::User, Item::Asst(1), Item::Tool];
-        assert_eq!(shadowed_start_non_system(&items, 0), 0);
-    }
 
     #[test]
     fn span_always_starts_at_first_non_system_and_is_a_prefix() {
@@ -147,16 +147,9 @@ mod tests {
         ];
         let weights = vec![1usize; items.len()];
         let cuts = cut_balance(&items).unwrap();
-        let non_system = items.iter().filter(|it| **it != Item::System).count();
         for retain in 0..items.len() {
             if let Some((s, e)) = select_compactable_range(&items, &weights, retain) {
                 assert_eq!(s, 1, "起点恒为第一条非 system");
-                assert_eq!(
-                    shadowed_start_non_system(&items, s),
-                    0,
-                    "投影起点恒为 0 → 卡片永远插在 store 原位（头部）"
-                );
-                assert!(e - s + 1 <= non_system, "区间不超出非 system 序列");
                 assert!(e < items.len() - 1, "尾部至少保留最后一条消息（最新指令守卫）");
                 let tail_tokens: usize = weights[e + 1..].iter().sum();
                 if retain > 0 {
@@ -224,5 +217,94 @@ mod tests {
         let items = [Item::System, Item::System];
         let weights = vec![1usize; 2];
         assert!(select_compactable_range(&items, &weights, 0).is_none());
+    }
+
+    #[test]
+    fn manual_extension_to_last_message_stays_balanced() {
+        // 手动压缩 = 全力压缩：区间延伸到最后一条（含）。平衡性由两端切点保证：
+        // cuts[0] 恒 true（空首切）；cuts[len]（尾部切点）恒 true（合法流所有
+        // 调用已闭合，否则 cut_balance 直接 Err）。
+        let items = [
+            Item::User,
+            Item::Asst(2),
+            Item::Tool,
+            Item::Tool,
+            Item::User,
+            Item::Asst(1),
+            Item::Tool,
+        ];
+        let cuts = cut_balance(&items).unwrap();
+        assert!(cuts[0], "首切恒平衡");
+        assert!(cuts[items.len()], "尾切恒平衡（合法流）→ 延伸 [start, len-1] 合法");
+        // 延伸区间 = [0, len-1] 覆盖全部消息，配对闭合
+        assert!(range_pairing_closed(&items, &cuts, 0, items.len() - 1));
+    }
+
+    // ── shrink_to_known_tail：tail_db_id 指针恒有值 ──
+
+    #[test]
+    fn shrink_keeps_end_when_anchored() {
+        let items = [Item::User, Item::User, Item::User];
+        let cuts = cut_balance(&items).unwrap();
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2), Some((0, 2)));
+    }
+
+    #[test]
+    fn shrink_rolls_back_to_nearest_anchor() {
+        // 末两条无 id → 收缩到第一条有 id 的平衡末条
+        let items = [
+            Item::User,          // 0 有 id
+            Item::UserUnanchored, // 1 无 id
+            Item::UserUnanchored, // 2 无 id
+        ];
+        let cuts = cut_balance(&items).unwrap();
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2), Some((0, 0)));
+    }
+
+    #[test]
+    fn shrink_none_when_span_fully_unanchored() {
+        let items = [Item::UserUnanchored, Item::UserUnanchored];
+        let cuts = cut_balance(&items).unwrap();
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 1), None);
+    }
+
+    #[test]
+    fn shrink_never_splits_a_tool_pair() {
+        // user, assistant(call), tool(result), user(无 id)
+        // 收缩必须停在配对完整处：不能停在 assistant 之后（cuts[2] 不平衡）
+        let items = [
+            Item::User,      // 0 有 id
+            Item::Asst(1),   // 1 call c1
+            Item::Tool,      // 2 result c1
+            Item::UserUnanchored, // 3 无 id
+        ];
+        let cuts = cut_balance(&items).unwrap();
+        assert!(!cuts[2], "assistant(tool_calls) 之后切点不平衡");
+        // 从 end=3 收缩：3 无 id → 2 处 cuts[3] 平衡且 Tool 有 id（非 unanchored）→ 停
+        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 3), Some((0, 2)));
+    }
+
+    #[test]
+    fn shrink_result_stays_pairing_closed_and_balanced() {
+        // 任意区间收缩后：两端平衡、配对闭合（与 select 相同的不变量）
+        let items = [
+            Item::User,          // 0
+            Item::Asst(1),       // 1
+            Item::Tool,          // 2
+            Item::User,          // 3
+            Item::Asst(2),       // 4
+            Item::Tool,          // 5
+            Item::Tool,          // 6
+            Item::UserUnanchored, // 7 无 id
+            Item::User,          // 8
+        ];
+        let cuts = cut_balance(&items).unwrap();
+        let (s, e) = shrink_to_known_tail(&items, &cuts, 0, 8).unwrap();
+        assert!(
+            range_pairing_closed(&items, &cuts, s, e),
+            "收缩后区间 [{s},{e}] 必须配对闭合"
+        );
+        assert!(cuts[s] && cuts[e + 1], "收缩后两端切点必须平衡");
+        assert!(!is_unanchored(items[e]), "收缩后末条必有 id 锚点");
     }
 }

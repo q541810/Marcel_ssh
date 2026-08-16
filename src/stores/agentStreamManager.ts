@@ -359,9 +359,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
           summary: string;
           shadowedMessages: number;
           shadowedTokens: number;
-          shadowedStartNonSystem: number;
-          shadowedRoles: Array<'user' | 'assistant' | 'tool'>;
-          shadowedToolCallIds: Array<string | null>;
+          tailDbId: string | null;
         });
         return;
       }
