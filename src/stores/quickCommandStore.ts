@@ -68,7 +68,11 @@ export const useQuickCommandStore = create<QuickCommandState>((set, get) => ({
     set({ executingId: command.id, error: null });
     try {
       for (let i = 0; i < lines.length; i += 1) {
-        await tauri.sshSendInput(sessionId, normalizeCommandLine(lines[i]));
+        const isLast = i === lines.length - 1;
+        // 仅插入模式：最后一行不追加换行，不自动回车执行，便于手动改参数
+        const line =
+          command.insertOnly && isLast ? lines[i] : normalizeCommandLine(lines[i]);
+        await tauri.sshSendInput(sessionId, line);
         if (i < lines.length - 1 && command.intervalMs > 0) {
           await sleep(command.intervalMs);
         }

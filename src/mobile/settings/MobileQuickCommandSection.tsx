@@ -9,6 +9,7 @@ import * as tauri from '@/lib/tauri';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { getErrorMessage } from '@/lib/errors';
 import MobileSheet from '../ui/MobileSheet';
+import Toggle from '@/components/ui/Toggle';
 
 interface FormState {
   id?: string;
@@ -18,6 +19,8 @@ interface FormState {
   name: string;
   commandsText: string;
   intervalMs: number;
+  /** 仅插入内容（最后一行不回车），不自动执行 */
+  insertOnly: boolean;
 }
 
 const EMPTY_FORM: FormState = {
@@ -26,6 +29,7 @@ const EMPTY_FORM: FormState = {
   name: '',
   commandsText: '',
   intervalMs: 300,
+  insertOnly: false,
 };
 
 function parseCommands(text: string): string[] {
@@ -124,6 +128,10 @@ export function MobileQuickCommandSection() {
       setMessage('至少需要一条命令');
       return;
     }
+    if (form.insertOnly && lines.length > 1) {
+      setMessage('仅插入模式只支持一行命令');
+      return;
+    }
     if (form.scope === 'session' && !form.sessionKey) {
       setMessage('请选择该命令所属的连接');
       return;
@@ -134,6 +142,7 @@ export function MobileQuickCommandSection() {
       name: form.name.trim(),
       commands: lines,
       intervalMs: form.intervalMs,
+      insertOnly: form.insertOnly,
     };
     setSaving(true);
     setMessage(null);
@@ -162,6 +171,21 @@ export function MobileQuickCommandSection() {
       setMessage(getErrorMessage(err));
       setDeleteTarget(null);
     }
+  };
+
+  /** 切换"点击后自动执行"开关：仅插入模式只能输入单行内容 */
+  const handleToggleInsertOnly = (autoRun: boolean) => {
+    if (!form) return;
+    const nextInsertOnly = !autoRun;
+    if (nextInsertOnly) {
+      const lines = parseCommands(form.commandsText);
+      if (lines.length > 1) {
+        setMessage('仅插入模式只支持一行命令，已保留第一行，其余行已移除');
+        setForm({ ...form, insertOnly: true, commandsText: lines[0] });
+        return;
+      }
+    }
+    setForm({ ...form, insertOnly: nextInsertOnly });
   };
 
   const displayError = message ?? loadError;
@@ -211,6 +235,11 @@ export function MobileQuickCommandSection() {
                   ? '全局'
                   : (connectionName(cmd.sessionKey) ?? '指定连接')}
               </span>
+              {cmd.insertOnly && (
+                <span className="flex-shrink-0 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                  仅插入
+                </span>
+              )}
             </div>
             <div className="mt-0.5 truncate font-mono text-xs text-zinc-500">
               {cmd.commands.join(' ; ')}
@@ -227,6 +256,7 @@ export function MobileQuickCommandSection() {
                 name: cmd.name,
                 commandsText: cmd.commands.join('\n'),
                 intervalMs: cmd.intervalMs,
+                insertOnly: cmd.insertOnly,
               });
             }}
             className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800"
@@ -365,40 +395,72 @@ export function MobileQuickCommandSection() {
             </div>
             <div>
               <label className="mb-1 block text-xs text-zinc-400">
-                命令（每行一条，按顺序执行）
+                {form.insertOnly
+                  ? '命令（仅插入模式，单行内容）'
+                  : '命令（每行一条，按顺序执行）'}
               </label>
-              <textarea
-                value={form.commandsText}
-                onChange={(e) =>
-                  setForm({ ...form, commandsText: e.target.value })
-                }
-                rows={5}
-                placeholder={'git pull\npnpm build\npm2 restart app'}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                className={`${inputClass} resize-none font-mono`}
-              />
+              {form.insertOnly ? (
+                <input
+                  type="text"
+                  value={form.commandsText}
+                  onChange={(e) =>
+                    setForm({ ...form, commandsText: e.target.value })
+                  }
+                  placeholder="例如：docker run -it --name app nginx"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className={`${inputClass} font-mono`}
+                />
+              ) : (
+                <textarea
+                  value={form.commandsText}
+                  onChange={(e) =>
+                    setForm({ ...form, commandsText: e.target.value })
+                  }
+                  rows={5}
+                  placeholder={'git pull\npnpm build\npm2 restart app'}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className={`${inputClass} resize-none font-mono`}
+                />
+              )}
             </div>
-            <div>
-              <div className="mb-1 flex items-center justify-between">
-                <label className="text-xs text-zinc-400">多条命令间隔</label>
-                <span className="font-mono text-xs text-indigo-300">
-                  {form.intervalMs}ms
-                </span>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-800/60 px-3 py-2.5">
+              <div className="min-w-0 pr-3">
+                <div className="text-sm text-zinc-200">点击后自动执行</div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                  关闭后点击仅插入内容、不自动回车，可先手动改参数再执行
+                </div>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={3000}
-                step={100}
-                value={form.intervalMs}
-                onChange={(e) =>
-                  setForm({ ...form, intervalMs: Number(e.target.value) })
-                }
-                className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+              <Toggle
+                checked={!form.insertOnly}
+                onChange={handleToggleInsertOnly}
+                size="sm"
               />
             </div>
+            {!form.insertOnly && (
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="text-xs text-zinc-400">多条命令间隔</label>
+                  <span className="font-mono text-xs text-indigo-300">
+                    {form.intervalMs}ms
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={3000}
+                  step={100}
+                  value={form.intervalMs}
+                  onChange={(e) =>
+                    setForm({ ...form, intervalMs: Number(e.target.value) })
+                  }
+                  className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+                />
+              </div>
+            )}
           </div>
         )}
       </MobileSheet>

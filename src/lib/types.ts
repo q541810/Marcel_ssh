@@ -275,6 +275,8 @@ export interface QuickCommand {
   name: string;
   commands: string[];
   intervalMs: number;
+  /** 点击后仅插入内容（最后一行不回车），不自动执行，便于手动改参数 */
+  insertOnly: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -285,6 +287,7 @@ export interface QuickCommandInput {
   name: string;
   commands: string[];
   intervalMs: number;
+  insertOnly: boolean;
 }
 
 export interface QuickCommandPatch {
@@ -293,6 +296,7 @@ export interface QuickCommandPatch {
   name?: string;
   commands?: string[];
   intervalMs?: number;
+  insertOnly?: boolean;
 }
 
 // MCP types

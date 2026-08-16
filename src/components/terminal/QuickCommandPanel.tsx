@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { QuickCommand, QuickCommandInput, QuickCommandScope } from '@/lib/types';
 import { useQuickCommandStore } from '@/stores/quickCommandStore';
 import { getErrorMessage } from '@/lib/errors';
+import Toggle from '@/components/ui/Toggle';
 
 interface QuickCommandPanelProps {
   sessionId: string;
@@ -15,6 +16,7 @@ interface FormState {
   name: string;
   commandsText: string;
   intervalMs: number;
+  insertOnly: boolean;
 }
 
 type QuickCommandTab = 'all' | QuickCommandScope;
@@ -24,6 +26,7 @@ const emptyForm = (scope: QuickCommandScope | ''): FormState => ({
   name: '',
   commandsText: '',
   intervalMs: 300,
+  insertOnly: false,
 });
 
 function commandToForm(command: QuickCommand): FormState {
@@ -33,6 +36,7 @@ function commandToForm(command: QuickCommand): FormState {
     name: command.name,
     commandsText: command.commands.join('\n'),
     intervalMs: command.intervalMs,
+    insertOnly: command.insertOnly,
   };
 }
 
@@ -95,6 +99,21 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
     setMessage(null);
   };
 
+  /** 切换"点击后自动执行"开关：仅插入模式只能输入单行内容 */
+  const handleToggleInsertOnly = (autoRun: boolean) => {
+    if (!form) return;
+    const nextInsertOnly = !autoRun;
+    if (nextInsertOnly) {
+      const lines = parseCommands(form.commandsText);
+      if (lines.length > 1) {
+        setMessage('仅插入模式只支持一行命令，已保留第一行，其余行已移除');
+        setForm({ ...form, insertOnly: true, commandsText: lines[0] });
+        return;
+      }
+    }
+    setForm({ ...form, insertOnly: nextInsertOnly });
+  };
+
   const handleSubmit = async () => {
     if (!form) return;
     const commandLines = parseCommands(form.commandsText);
@@ -110,6 +129,10 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
       setMessage('至少需要一条命令');
       return;
     }
+    if (form.insertOnly && commandLines.length > 1) {
+      setMessage('仅插入模式只支持一行命令');
+      return;
+    }
     if (form.scope === 'session' && !sessionKey) {
       setMessage('当前会话未绑定保存的连接配置，不能创建当前连接快捷指令');
       return;
@@ -121,6 +144,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
       name: form.name.trim(),
       commands: commandLines,
       intervalMs: Math.max(0, Number(form.intervalMs) || 0),
+      insertOnly: form.insertOnly,
     };
 
     try {
@@ -230,6 +254,11 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                   <div className="text-sm font-medium text-zinc-100 transition-colors group-hover:text-zinc-50">{command.name}</div>
                   <div className="mt-0.5 text-xs text-zinc-500 transition-colors group-hover:text-zinc-400">
                     {tab === 'all' && `${command.scope === 'global' ? '全局' : '当前连接'} · `}
+                    {command.insertOnly && (
+                      <span className="mr-1 rounded bg-amber-500/15 px-1 py-px text-[10px] font-medium text-amber-300">
+                        仅插入
+                      </span>
+                    )}
                     {command.commands.length} 条命令 · 间隔 {command.intervalMs} ms
                   </div>
                 </button>
@@ -310,25 +339,51 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                     <option value="session" disabled={!canUseSessionCommands}>当前连接</option>
                   </select>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-400">间隔 ms</label>
-                  <input
-                    type="number"
-                    min={0}
-                    value={form.intervalMs}
-                    onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
-                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
-                  />
-                </div>
+                {!form.insertOnly && (
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">间隔 ms</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.intervalMs}
+                      onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
+                      className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                )}
               </div>
               <div>
-                <label className="mb-1 block text-xs text-zinc-400">命令（一行一条，按顺序执行）</label>
-                <textarea
-                  value={form.commandsText}
-                  onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
-                  rows={4}
-                  className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
-                  placeholder={'pwd\ndf -h'}
+                <label className="mb-1 block text-xs text-zinc-400">
+                  {form.insertOnly ? '命令（仅插入模式，单行内容）' : '命令（一行一条，按顺序执行）'}
+                </label>
+                {form.insertOnly ? (
+                  <input
+                    value={form.commandsText}
+                    onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
+                    className="w-full rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    placeholder="例如：docker run -it --name app nginx"
+                  />
+                ) : (
+                  <textarea
+                    value={form.commandsText}
+                    onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
+                    rows={4}
+                    className="w-full resize-none rounded-md bg-zinc-900 border border-zinc-700 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                    placeholder={'pwd\ndf -h'}
+                  />
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2.5">
+                <div>
+                  <div className="text-xs text-zinc-200">点击后自动执行</div>
+                  <div className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">
+                    关闭后点击仅插入内容、不自动回车，可先手动改参数再执行
+                  </div>
+                </div>
+                <Toggle
+                  checked={!form.insertOnly}
+                  onChange={handleToggleInsertOnly}
+                  size="sm"
                 />
               </div>
             </div>

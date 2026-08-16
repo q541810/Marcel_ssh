@@ -25,6 +25,7 @@ describe('mobile quick commands', () => {
           name: '部署',
           commands: ['git pull', 'pnpm build', ' pm2 restart app '],
           intervalMs: 500,
+          insertOnly: true,
         },
         { id: '2', name: '空', commands: ['', '  '], intervalMs: 0 },
         { id: '3', name: '', commands: ['  pwd  '], intervalMs: 0 },
@@ -35,8 +36,15 @@ describe('mobile quick commands', () => {
         label: '部署',
         lines: ['git pull', 'pnpm build', 'pm2 restart app'],
         intervalMs: 500,
+        insertOnly: true,
       },
-      { id: '3', label: 'pwd', lines: ['pwd'], intervalMs: 0 },
+      {
+        id: '3',
+        label: 'pwd',
+        lines: ['pwd'],
+        intervalMs: 0,
+        insertOnly: false,
+      },
     ]);
   });
 
@@ -51,10 +59,22 @@ describe('mobile quick commands', () => {
 
   it('prefers store commands when available', () => {
     const store = [
-      { id: 'a', name: '自定义', commands: ['echo hi'], intervalMs: 100 },
+      {
+        id: 'a',
+        name: '自定义',
+        commands: ['echo hi'],
+        intervalMs: 100,
+        insertOnly: false,
+      },
     ];
     expect(resolveMobileQuickCommands(store)).toEqual([
-      { id: 'a', label: '自定义', lines: ['echo hi'], intervalMs: 100 },
+      {
+        id: 'a',
+        label: '自定义',
+        lines: ['echo hi'],
+        intervalMs: 100,
+        insertOnly: false,
+      },
     ]);
   });
 
@@ -64,9 +84,11 @@ describe('mobile quick commands', () => {
       label: '部署',
       lines: ['git pull', 'pnpm build'],
       intervalMs: 300,
+      insertOnly: true,
     });
     expect(cmd.commands).toEqual(['git pull', 'pnpm build']);
     expect(cmd.intervalMs).toBe(300);
+    expect(cmd.insertOnly).toBe(true);
     expect(cmd.id).toBe('a');
   });
 });

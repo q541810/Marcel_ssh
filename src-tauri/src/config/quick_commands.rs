@@ -20,6 +20,9 @@ pub struct QuickCommand {
     pub name: String,
     pub commands: Vec<String>,
     pub interval_ms: u64,
+    /// 点击后仅插入内容（最后一行不回车），不自动执行，便于手动改参数
+    #[serde(default)]
+    pub insert_only: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -33,6 +36,9 @@ pub struct QuickCommandInput {
     pub commands: Vec<String>,
     #[serde(default)]
     pub interval_ms: u64,
+    /// 点击后仅插入内容（最后一行不回车），不自动执行，便于手动改参数
+    #[serde(default)]
+    pub insert_only: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,6 +49,7 @@ pub struct QuickCommandPatch {
     pub name: Option<String>,
     pub commands: Option<Vec<String>>,
     pub interval_ms: Option<u64>,
+    pub insert_only: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -81,6 +88,7 @@ impl QuickCommandStore {
             name: input.name.trim().to_string(),
             commands: normalize_commands(input.commands),
             interval_ms: input.interval_ms,
+            insert_only: input.insert_only,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -109,6 +117,9 @@ impl QuickCommandStore {
         }
         if let Some(interval_ms) = patch.interval_ms {
             command.interval_ms = interval_ms;
+        }
+        if let Some(insert_only) = patch.insert_only {
+            command.insert_only = insert_only;
         }
 
         if command.scope == QuickCommandScope::Global {
@@ -198,6 +209,7 @@ mod tests {
             name: "My Command".into(),
             commands: vec!["echo hello".into(), "date".into()],
             interval_ms: 1000,
+            insert_only: false,
         }
     }
 
@@ -208,6 +220,7 @@ mod tests {
             name: "Session Cmd".into(),
             commands: vec!["ls -la".into()],
             interval_ms: 0,
+            insert_only: false,
         }
     }
 
@@ -227,6 +240,44 @@ mod tests {
         let cmd = s.add("id-2".into(), valid_session_input()).unwrap();
         assert_eq!(cmd.scope, QuickCommandScope::Session);
         assert_eq!(cmd.session_key.as_deref(), Some("conn-123"));
+    }
+
+    #[test]
+    fn add_persists_insert_only_flag() {
+        let mut s = store();
+        let input = QuickCommandInput {
+            insert_only: true,
+            ..valid_global_input()
+        };
+        let cmd = s.add("id-1".into(), input).unwrap();
+        assert!(cmd.insert_only);
+        let list = s.list_for_session(None);
+        assert!(list[0].insert_only);
+    }
+
+    #[test]
+    fn update_toggles_insert_only_flag() {
+        let mut s = store();
+        s.add("id-1".into(), valid_global_input()).unwrap();
+        assert!(!s.list_for_session(None)[0].insert_only);
+
+        let patch = QuickCommandPatch {
+            insert_only: Some(true),
+            scope: None,
+            session_key: None,
+            name: None,
+            commands: None,
+            interval_ms: None,
+        };
+        s.update("id-1", patch).unwrap();
+        assert!(s.list_for_session(None)[0].insert_only);
+    }
+
+    #[test]
+    fn old_json_without_insert_only_defaults_to_false() {
+        let json = r#"{"id":"id-1","scope":"global","sessionKey":null,"name":"Old","commands":["ls"],"intervalMs":0,"createdAt":"t","updatedAt":"t"}"#;
+        let cmd: QuickCommand = serde_json::from_str(json).unwrap();
+        assert!(!cmd.insert_only);
     }
 
     #[test]
@@ -271,6 +322,7 @@ mod tests {
             session_key: None,
             commands: None,
             interval_ms: None,
+            insert_only: None,
         };
         s.update("id-1", patch).unwrap();
         let list = s.list_for_session(None);
@@ -286,6 +338,7 @@ mod tests {
             session_key: None,
             commands: None,
             interval_ms: None,
+            insert_only: None,
         };
         assert!(s.update("nonexistent", patch).is_err());
     }
@@ -301,6 +354,7 @@ mod tests {
             name: None,
             commands: None,
             interval_ms: None,
+            insert_only: None,
         };
         s.update("id-1", patch).unwrap();
         let list = s.list_for_session(None);
@@ -332,6 +386,7 @@ mod tests {
                 commands: vec!["g".into()],
                 session_key: None,
                 interval_ms: 0,
+                insert_only: false,
             },
         )
         .unwrap();
@@ -343,6 +398,7 @@ mod tests {
                 commands: vec!["sa".into()],
                 session_key: Some("conn-a".into()),
                 interval_ms: 0,
+                insert_only: false,
             },
         )
         .unwrap();
