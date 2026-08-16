@@ -5,6 +5,7 @@ import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useConversationStore, conversationHasRunningTask } from '@/stores/conversationStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMode, AgentMessage, QuestionAnswer } from '@/lib/types';
 import {
@@ -23,6 +24,7 @@ import AgentMessageList from './AgentMessageList';
 import ApprovalDialog from './ApprovalDialog';
 import QuestionPanel from './QuestionPanel';
 import PlanList from './PlanList';
+import AgentCommandMenu, { type AgentCommandMenuHandle } from './AgentCommandMenu';
 
 // ── Plugin input-activity bridge ──────────────────────────────────────
 // Emits `ui://input-activity` (typing bool only — never the content) so
@@ -62,6 +64,7 @@ export default function AgentPanel() {
   const lastScrolledMessageRef = useRef<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const commandMenuRef = useRef<AgentCommandMenuHandle>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
   const attachHintTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
@@ -348,7 +351,41 @@ export default function AgentPanel() {
     }
   };
 
+  // ── `/` 命令面板 ─────────────────────────────────────────────────────
+  // 输入以 "/" 开头且不含空格时激活（含空格视为普通文本，避免路径输入误弹）。
+  // 任务运行中不唤出：手动压缩与运行中任务并发会造成替换竞态（对齐 DSH
+  // compactNow 的 busy 语义），其它命令（模式切换）在运行中也没有意义。
+  // 键盘事件在打开时交给面板组件消费（↑↓/Enter/Esc/子菜单 Backspace）。
+  const commandMenuOpen =
+    input.startsWith('/') &&
+    !/\s/.test(input) &&
+    (!activeConversationId || !conversationHasRunningTask(activeConversationId));
+  const commandMenuQuery = commandMenuOpen ? input.slice(1) : '';
+
+  const handleCompact = () => {
+    if (!activeConversationId) return;
+    // 压缩结果/失败会以消息卡片形式出现在会话列表里（compactConversation 内部处理）
+    useConversationStore
+      .getState()
+      .compactConversation(activeConversationId)
+      .catch((err) => {
+        console.error('Failed to compact conversation:', err);
+      });
+  };
+
+  const handleInsertSkill = (prompt: string) => {
+    setInput(prompt);
+    requestAnimationFrame(() => {
+      resizeInput();
+      inputRef.current?.focus();
+    });
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (commandMenuOpen && commandMenuRef.current?.handleKeyDown(e)) {
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -797,6 +834,17 @@ export default function AgentPanel() {
               dragOver ? 'border-indigo-400 ring-1 ring-indigo-500/40' : 'border-zinc-700'
             }`}
           >
+          {/* `/` 命令面板：锚定输入框上方，键盘事件由面板消费 */}
+          <AgentCommandMenu
+            ref={commandMenuRef}
+            open={commandMenuOpen}
+            query={commandMenuQuery}
+            currentMode={mode}
+            onSelectMode={setMode}
+            onInsertSkill={handleInsertSkill}
+            onCompact={handleCompact}
+            onClose={() => setInput('')}
+          />
           {/* Mode selector (inside input) */}
           <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
             <button

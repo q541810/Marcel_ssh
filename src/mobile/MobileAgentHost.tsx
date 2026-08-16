@@ -5,10 +5,13 @@ import { useAgent } from '@/hooks/useAgent';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useConversationStore, conversationHasRunningTask } from '@/stores/conversationStore';
 import { AGENT_MODES } from '@/lib/constants';
 import type { AgentMessage, AgentMode, QuestionAnswer } from '@/lib/types';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import PlanList from '@/components/agent/PlanList';
+import AgentCommandMenu from '@/components/agent/AgentCommandMenu';
+import { registerBackHandler } from './backHandler';
 import MobileApprovalSheet from './MobileApprovalSheet';
 import MobileQuestionSheet from './MobileQuestionSheet';
 import MobileChatHistorySheet from './MobileChatHistorySheet';
@@ -394,6 +397,46 @@ export default function MobileAgentHost({
     }
   };
 
+  // ── `/` 命令面板（与桌面同款组件）：输入以 "/" 开头时在输入框上方弹出，
+  // 手机端以触摸点选为主；软键盘回车/发送语义不变（handleKeyDown 不拦截）。
+  // 任务运行中不唤出（与桌面一致）：手动压缩与运行中任务并发会造成替换竞态。
+  const commandMenuOpen =
+    inputDraft.startsWith('/') &&
+    !/\s/.test(inputDraft) &&
+    (!activeConversationId || !conversationHasRunningTask(activeConversationId));
+  const commandMenuQuery = commandMenuOpen ? inputDraft.slice(1) : '';
+
+  const handleCompact = useCallback(() => {
+    if (!activeConversationId) return;
+    // 压缩结果/失败以消息卡片形式出现在会话列表里（compactConversation 内部处理）
+    useConversationStore
+      .getState()
+      .compactConversation(activeConversationId)
+      .catch((err) => {
+        console.error('Failed to compact conversation:', err);
+      });
+  }, [activeConversationId]);
+
+  const handleInsertSkill = useCallback(
+    (prompt: string) => {
+      setInputDraft(prompt);
+      requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.style.height = 'auto';
+          inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
+          inputRef.current.focus();
+        }
+      });
+    },
+    [setInputDraft],
+  );
+
+  // 菜单打开时系统返回键 = 关闭（清空命令输入）
+  useEffect(() => {
+    if (!commandMenuOpen) return;
+    return registerBackHandler(() => setInputDraft(''));
+  }, [commandMenuOpen, setInputDraft]);
+
   const sendEnabled =
     !!ids && canSendAgentPrompt(activeSession, isRunning, inputDraft);
   const hostLabel =
@@ -666,7 +709,24 @@ export default function MobileAgentHost({
           </div>
         </div>
       ) : (
-        <div className="flex-shrink-0 border-t border-zinc-800 p-3">
+        <div className="relative flex-shrink-0 border-t border-zinc-800 p-3">
+          {/* `/` 命令面板：锚定输入框上方，触摸点选执行；遮罩点击/返回键关闭 */}
+          {commandMenuOpen && (
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setInputDraft('')}
+              aria-hidden
+            />
+          )}
+          <AgentCommandMenu
+            open={commandMenuOpen}
+            query={commandMenuQuery}
+            currentMode={mode}
+            onSelectMode={setMode}
+            onInsertSkill={handleInsertSkill}
+            onCompact={handleCompact}
+            onClose={() => setInputDraft('')}
+          />
           <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
             <div className="relative flex-shrink-0 self-center pl-1">
               <button
