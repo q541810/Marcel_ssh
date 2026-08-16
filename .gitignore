@@ -48,4 +48,7 @@ sandbox-test/
 # 本地 scratch（visualize 卡片等临时产物，不入仓库）
 viz/
 
+# 本地调试产物（repro 脚本、review diff 等，不入仓库）
+scratch/
+
 .workbuddy/
