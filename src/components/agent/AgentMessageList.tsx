@@ -9,7 +9,11 @@ import {
 import type { AgentMessage } from '@/lib/types';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
-import ExplorationGroup, { isExplorationTool } from './ExplorationGroup';
+import ExplorationGroup, {
+  isExplorationTool,
+  isPlanToolMessage,
+  type ToolGroupKind,
+} from './ExplorationGroup';
 
 interface Props {
   messages: AgentMessage[];
@@ -28,11 +32,15 @@ interface Props {
   alwaysShowActions?: boolean;
 }
 
+type RenderItem = AgentMessage | { kind: ToolGroupKind; tools: AgentMessage[] };
+
+/** 探索类工具连续出现至少 4 条才折叠（高频、占空间大）。 */
+const EXPLORATION_MIN_COUNT = 4;
+/** plan 工具连续出现至少 2 条就折叠（单行文本，两条即值得收拢）。 */
+const PLAN_MIN_COUNT = 2;
+
 function buildRenderItems(messages: AgentMessage[]) {
-  const result: (
-    | AgentMessage
-    | { kind: 'exploration'; tools: AgentMessage[] }
-  )[] = [];
+  const result: RenderItem[] = [];
   const visibleMessages = messages.filter((msg) => {
     if (msg.role !== 'assistant') return true;
     return msg.isLoading || msg.content || msg.reasoningContent || msg.toolCall;
@@ -40,19 +48,27 @@ function buildRenderItems(messages: AgentMessage[]) {
   const n = visibleMessages.length;
   let i = 0;
   while (i < n) {
-    if (isExplorationTool(visibleMessages[i])) {
+    const msg = visibleMessages[i];
+    const kind = isExplorationTool(msg)
+      ? ('exploration' as const)
+      : isPlanToolMessage(msg)
+        ? ('plan' as const)
+        : null;
+    if (kind) {
+      const isSameKind = kind === 'exploration' ? isExplorationTool : isPlanToolMessage;
+      const minCount = kind === 'exploration' ? EXPLORATION_MIN_COUNT : PLAN_MIN_COUNT;
       let j = i;
-      while (j < n && isExplorationTool(visibleMessages[j])) j++;
-      if (j - i >= 4) {
+      while (j < n && isSameKind(visibleMessages[j])) j++;
+      if (j - i >= minCount) {
         result.push({
-          kind: 'exploration',
+          kind,
           tools: visibleMessages.slice(i, j),
         });
         i = j;
         continue;
       }
     }
-    result.push(visibleMessages[i]);
+    result.push(msg);
     i++;
   }
   return result;
@@ -152,9 +168,10 @@ export default function AgentMessageList({
   return (
     <>
       {renderItems.map((item) =>
-        'kind' in item && item.kind === 'exploration' ? (
+        'kind' in item ? (
           <ExplorationGroup
-            key={`exploration-${item.tools[0].id}`}
+            key={`${item.kind}-${item.tools[0].id}`}
+            kind={item.kind}
             messages={item.tools}
             autoExpand={isThinking}
             forceExpand={item.tools.some(

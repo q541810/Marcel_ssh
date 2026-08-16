@@ -85,13 +85,13 @@ function asStrArray(v: unknown): string[] | undefined {
   return undefined;
 }
 
-const PLAN_TOOL_LABELS: Record<string, string> = {
+export const PLAN_TOOL_LABELS: Record<string, string> = {
   create_plan: '创建plan',
   update_plan_item: '更新plan步骤',
   edit_plan: '编辑plan',
 };
 
-function isPlanTool(toolName: string): boolean {
+export function isPlanTool(toolName: string): boolean {
   return toolName in PLAN_TOOL_LABELS;
 }
 

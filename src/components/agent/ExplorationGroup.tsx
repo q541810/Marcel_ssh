@@ -1,17 +1,10 @@
 import { memo, useState, useEffect } from 'react';
 import type { AgentMessage } from '@/lib/types';
-import ToolCallCard from './ToolCallCard';
+import ToolCallCard, { isPlanTool } from './ToolCallCard';
 
-interface Props {
-  messages: AgentMessage[];
-  autoExpand?: boolean;
-  /** 搜索命中组内消息时强制展开，便于定位 */
-  forceExpand?: boolean;
-  matchedIds?: Set<string>;
-  flashId?: string | null;
-}
+export type ToolGroupKind = 'exploration' | 'plan';
 
-const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory', 'system_info'];
+export const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory', 'system_info'];
 
 export function isExplorationTool(msg: AgentMessage): boolean {
   if (msg.role === 'tool' && msg.toolResult) {
@@ -20,7 +13,55 @@ export function isExplorationTool(msg: AgentMessage): boolean {
   return false;
 }
 
+/** plan 工具（create_plan / update_plan_item / edit_plan）的结果消息。 */
+export function isPlanToolMessage(msg: AgentMessage): boolean {
+  return msg.role === 'tool' && !!msg.toolResult && isPlanTool(msg.toolResult.toolName);
+}
+
+interface Props {
+  kind?: ToolGroupKind;
+  messages: AgentMessage[];
+  autoExpand?: boolean;
+  /** 搜索命中组内消息时强制展开，便于定位 */
+  forceExpand?: boolean;
+  matchedIds?: Set<string>;
+  flashId?: string | null;
+}
+
+function GroupLabel({ kind, count }: { kind: ToolGroupKind; count: number }) {
+  const countEl = (
+    <span
+      key={count}
+      className="inline-block min-w-[1ch] text-right text-zinc-500 animate-exploration-count"
+    >
+      {count}
+    </span>
+  );
+  if (kind === 'plan') {
+    return (
+      <>
+        <svg className="w-3.5 h-3.5 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+        </svg>
+        <span className="text-zinc-300">计划</span>
+        <span className="text-zinc-500"> </span>
+        {countEl}
+        <span className="text-zinc-500"> 次</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="text-zinc-300">已探索</span>
+      <span className="text-zinc-500"> </span>
+      {countEl}
+      <span className="text-zinc-500"> 次读取</span>
+    </>
+  );
+}
+
 function ExplorationGroup({
+  kind = 'exploration',
   messages,
   autoExpand,
   forceExpand = false,
@@ -55,16 +96,8 @@ function ExplorationGroup({
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
-          <span className="text-sm">
-            <span className="text-zinc-300">已探索</span>
-            <span className="text-zinc-500"> </span>
-            <span
-              key={messages.length}
-              className="inline-block min-w-[1ch] text-right text-zinc-500 animate-exploration-count"
-            >
-              {messages.length}
-            </span>
-            <span className="text-zinc-500"> 次读取</span>
+          <span className="flex items-center gap-1 text-sm">
+            <GroupLabel kind={kind} count={messages.length} />
           </span>
         </button>
         {expanded && (
