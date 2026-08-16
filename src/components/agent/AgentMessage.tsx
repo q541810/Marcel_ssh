@@ -348,7 +348,7 @@ function AgentMessage({
   // ─── Assistant message ───
   return (
     <div className="flex justify-start my-1">
-      <div className="max-w-[90%]">
+      <div className="min-w-0 max-w-[90%]">
         {/* Thinking / Reasoning foldable */}
         {hasReasoning && (
           <div className="mb-0.5">

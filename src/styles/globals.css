@@ -573,6 +573,17 @@ button,
   margin-bottom: 0.5rem;
 }
 
+/* Wide tables in Agent messages: keep native table layout, but scroll
+   horizontally inside the bubble instead of blowing out its width.
+   (typography only guards <pre>; <table> has no overflow handling.) */
+.prose.prose-sm :where(table):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  display: block;
+  overflow-x: auto;
+  max-width: 100%;
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
 /* Drawer animations */
 @keyframes slideInRight {
   from {
