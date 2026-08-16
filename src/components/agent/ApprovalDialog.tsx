@@ -4,6 +4,7 @@ import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import FileChangeView from './FileChangeView';
+import { cleanExecuteCommandArgs } from './argumentFormat';
 
 interface Props {
   toolCall: ToolCallInfo;
@@ -42,7 +43,9 @@ export default function ApprovalDialog({
   if (!open) return null;
 
   const isEditFile = toolCall.name === 'edit_file';
+  const isExecuteCommand = toolCall.name === 'execute_command';
   const path = typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
+  const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -109,10 +112,27 @@ export default function ApprovalDialog({
                 />
               </div>
             </div>
+          ) : isExecuteCommand && cleanedCmd?.main ? (
+            <div className="space-y-2">
+              <span className="text-sm text-zinc-400">参数：</span>
+              <div className="mt-1 rounded-lg bg-zinc-950 border border-zinc-700 overflow-hidden">
+                <div className="flex items-start gap-2 px-3 py-2">
+                  <span className="text-emerald-400 font-mono text-xs select-none leading-relaxed">$</span>
+                  <code className="flex-1 min-w-0 font-mono text-xs text-zinc-200 whitespace-pre-wrap break-words leading-relaxed">
+                    {cleanedCmd.main}
+                  </code>
+                </div>
+                {Object.keys(cleanedCmd.extras).length > 0 && (
+                  <pre className="px-3 py-2 border-t border-zinc-700/60 font-mono text-[11px] text-zinc-400 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                    {JSON.stringify(cleanedCmd.extras, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
           ) : (
             <div>
               <span className="text-sm text-zinc-400">参数：</span>
-              <pre className="mt-1 p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40">
+              <pre className="mt-1 p-2 rounded-lg bg-zinc-900 text-xs text-zinc-300 overflow-auto max-h-40 whitespace-pre-wrap break-words">
                 {JSON.stringify(toolCall.arguments, null, 2)}
               </pre>
             </div>

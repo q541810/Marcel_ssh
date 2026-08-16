@@ -2,6 +2,7 @@ import type { ToolCallInfo } from '@/lib/types';
 import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import FileChangeView from '@/components/agent/FileChangeView';
 import MobileSheet from './ui/MobileSheet';
+import { cleanExecuteCommandArgs } from '@/components/agent/argumentFormat';
 
 interface MobileApprovalSheetProps {
   toolCall: ToolCallInfo;
@@ -29,8 +30,10 @@ export default function MobileApprovalSheet({
   onReject,
 }: MobileApprovalSheetProps) {
   const isEditFile = toolCall.name === 'edit_file';
+  const isExecuteCommand = toolCall.name === 'execute_command';
   const path =
     typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
+  const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;
   const riskTone = RISK_TONE[toolCall.riskLevel] ?? RISK_TONE.Moderate;
 
   return (
@@ -105,10 +108,27 @@ export default function MobileApprovalSheet({
               </div>
             </div>
           </div>
+        ) : isExecuteCommand && cleanedCmd?.main ? (
+          <div>
+            <div className="mb-1 text-xs text-zinc-500">参数</div>
+            <div className="overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950">
+              <div className="flex items-start gap-2 px-3 py-2">
+                <span className="select-none font-mono text-xs leading-relaxed text-emerald-400">$</span>
+                <code className="min-w-0 flex-1 break-words whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-200">
+                  {cleanedCmd.main}
+                </code>
+              </div>
+              {Object.keys(cleanedCmd.extras).length > 0 && (
+                <pre className="max-h-40 overflow-y-auto border-t border-zinc-700/60 px-3 py-2 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-zinc-400">
+                  {JSON.stringify(cleanedCmd.extras, null, 2)}
+                </pre>
+              )}
+            </div>
+          </div>
         ) : (
           <div>
             <div className="mb-1 text-xs text-zinc-500">参数</div>
-            <pre className="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 font-mono text-xs leading-relaxed text-zinc-300">
+            <pre className="max-h-48 overflow-auto rounded-lg bg-zinc-950 p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-300">
               {JSON.stringify(toolCall.arguments, null, 2)}
             </pre>
           </div>
