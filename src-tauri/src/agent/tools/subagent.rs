@@ -379,6 +379,22 @@ impl AgentTool for TaskTool {
             .map(|t| t.status.clone())
             .unwrap_or(AgentStatus::Failed);
 
+        // 更新子任务终态（后端 agent_tasks；此前停留 Planning，busy 守卫
+        // （手动压缩等）会对子对话误报"会话正在运行任务"）。停止路径已置
+        // Cancelled 则保留；Ok(Some)=Completed，其余=Failed。
+        {
+            let completed = matches!(&result, Ok(Some(_)));
+            if let Some(t) = state.agent_tasks.write().get_mut(&sub_task_id) {
+                if t.status != AgentStatus::Cancelled {
+                    t.status = if completed {
+                        AgentStatus::Completed
+                    } else {
+                        AgentStatus::Failed
+                    };
+                }
+            }
+        }
+
         match result {
             Ok(Some(text)) => {
                 let output = truncate_chars(&text, MAX_TASK_OUTPUT_CHARS);

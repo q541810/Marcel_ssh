@@ -241,7 +241,7 @@ fn spawn_agent_task(
     let mode_log = mode.clone();
 
     tokio::spawn(async move {
-        run_agent_loop(
+        let result = run_agent_loop(
             task_id_owned,
             provider,
             messages,
@@ -251,6 +251,26 @@ fn spawn_agent_task(
             loop_ctx,
         )
         .await;
+
+        // 任务结束：更新后端 agent_tasks 终态。此前主任务结束从不置终态，
+        // 状态永远停在 Planning/Executing → busy 守卫（手动压缩等）误报
+        // "会话正在运行任务"。停止路径已置 Cancelled 则保留；自然结束=Completed，
+        // 其余（LLM 失败 / 达最大轮数）= Failed。
+        if let Some(task) = state_for_cleanup
+            .agent_tasks
+            .write()
+            .get_mut(&task_id_for_cleanup)
+        {
+            if task.status == AgentStatus::Cancelled {
+                // 用户主动停止：保持 Cancelled（is_task_cancelled 语义不变）
+            } else {
+                task.status = if result.is_some() {
+                    AgentStatus::Completed
+                } else {
+                    AgentStatus::Failed
+                };
+            }
+        }
 
         state_for_cleanup
             .cancel_senders
