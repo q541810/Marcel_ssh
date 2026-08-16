@@ -126,3 +126,110 @@ export function applyCtrlToggle(
   }
   return { write: char, next: { ctrlActive: false } };
 }
+
+/**
+ * Mobile input batching.
+ *
+ * On Android every `invoke('ssh_send_input')` is a full WebView→Java→Rust
+ * roundtrip; sending one per keystroke saturates the main thread under fast
+ * typing and makes the WebView drop IME commits (swallowed characters).
+ * `createInputBatcher` accumulates printable text and flushes it in one IPC
+ * call per tick, while control characters (ESC sequences, Ctrl+C/D, Enter,
+ * Backspace…) flush immediately so interactive keys never wait for a tick.
+ * Order is preserved: a pending buffer is always flushed before an immediate
+ * payload.
+ */
+
+/** Any C0 control char (0x00–0x1F) or DEL (0x7F) must go out immediately. */
+export function containsControlChar(payload: string): boolean {
+  for (let i = 0; i < payload.length; i++) {
+    const code = payload.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+export interface InputBatcherOptions {
+  /** Called with the accumulated payload (once per flush). */
+  flush: (payload: string) => void;
+  /** Periodic flush interval in ms. Defaults to one frame (16). */
+  flushIntervalMs?: number;
+  /** Buffer length (UTF-16 units) above which a flush happens immediately. Defaults to 64. */
+  maxBufferLength?: number;
+  /** Whether `data` must be sent immediately instead of buffered. Defaults to `containsControlChar`. */
+  isImmediate?: (payload: string) => boolean;
+  setTimeoutFn?: typeof setTimeout;
+  clearTimeoutFn?: typeof clearTimeout;
+}
+
+export interface InputBatcher {
+  /** Append input; flushes immediately for control payloads / buffer overflow. */
+  push(data: string): void;
+  /** Send whatever is buffered right now. No-op when empty. */
+  flush(): void;
+  /** Cancel the pending timer and drop the buffered remainder. */
+  dispose(): void;
+}
+
+const DEFAULT_FLUSH_INTERVAL_MS = 16;
+const DEFAULT_MAX_BUFFER_LENGTH = 64;
+
+export function createInputBatcher(
+  options: InputBatcherOptions,
+): InputBatcher {
+  const flushIntervalMs =
+    options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
+  const maxBufferLength =
+    options.maxBufferLength ?? DEFAULT_MAX_BUFFER_LENGTH;
+  const isImmediate = options.isImmediate ?? containsControlChar;
+  const setT = options.setTimeoutFn ?? setTimeout;
+  const clearT = options.clearTimeoutFn ?? clearTimeout;
+
+  let buffer = '';
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function flush(): void {
+    if (timer !== null) {
+      clearT(timer);
+      timer = null;
+    }
+    if (buffer.length === 0) return;
+    const payload = buffer;
+    buffer = '';
+    options.flush(payload);
+  }
+
+  function scheduleFlush(): void {
+    if (timer !== null) return;
+    timer = setT(() => {
+      timer = null;
+      flush();
+    }, flushIntervalMs);
+  }
+
+  return {
+    push(data) {
+      if (data.length === 0) return;
+      if (isImmediate(data)) {
+        // Send buffered text first so the byte order matches key order.
+        flush();
+        options.flush(data);
+        return;
+      }
+      buffer += data;
+      if (buffer.length >= maxBufferLength) {
+        flush();
+      } else {
+        scheduleFlush();
+      }
+    },
+    flush,
+    dispose() {
+      if (timer !== null) {
+        clearT(timer);
+        timer = null;
+      }
+      buffer = '';
+    },
+  };
+}

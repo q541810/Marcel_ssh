@@ -25,17 +25,20 @@ import MobilePasteConfirmSheet from './ui/MobilePasteConfirmSheet';
 import { registerBackHandler } from './backHandler';
 import {
   applyCtrlToggle,
+  createInputBatcher,
   formatDisconnectBanner,
   needsPasteConfirmation,
   resolveAuxKeyInput,
   resolveDisconnectBannerKind,
   type AuxKeyId,
+  type InputBatcher,
   type TerminalInputState,
 } from './terminalInput';
 import { resolveTerminalPanelMode } from './sessionUi';
 import { resolveTerminalAppearance } from './mobileSettingsModel';
 import { attachXtermMomentumScroll } from './terminalMomentum';
 import { attachTouchSelection } from './terminalSelection';
+import { attachTapLocate } from './terminalTapLocate';
 
 interface MobileTerminalHostProps {
   /** When false, host stays mounted but hidden (tab keep-alive). */
@@ -72,6 +75,7 @@ export default function MobileTerminalHost({
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const inputStateRef = useRef(inputState);
+  const inputBatcherRef = useRef<InputBatcher | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const boundSessionIdRef = useRef<string | null>(null);
@@ -166,13 +170,34 @@ export default function MobileTerminalHost({
       },
     });
 
-    term.onData((data) => {
-      const sessionId = activeSessionIdRef.current;
-      const session = sessionId
-        ? useSessionStore.getState().sessions[sessionId]
-        : null;
-      if (!session || session.status !== 'connected') return;
+    // Fast typing on Android: one invoke per keystroke is a full
+    // WebView→Java→Rust roundtrip that saturates the main thread and makes
+    // the WebView drop IME commits (swallowed characters). Batch printable
+    // text into one IPC call per tick; control chars flush immediately.
+    const inputBatcher = createInputBatcher({
+      flush: (payload) => {
+        const sessionId = activeSessionIdRef.current;
+        const session = sessionId
+          ? useSessionStore.getState().sessions[sessionId]
+          : null;
+        if (!sessionId || session?.status !== 'connected') return;
+        void tauri.sshSendInput(sessionId, payload).catch((err) => {
+          setIoError(getErrorMessage(err));
+        });
+      },
+    });
+    inputBatcherRef.current = inputBatcher;
 
+    // Tap the terminal to move the cursor within the current screen row
+    // (arrow-key sequences to the remote shell). Cross-row taps are ignored:
+    // ↑/↓ would hit shell history / program bindings.
+    const tapLocate = attachTapLocate({
+      container: el,
+      getTerminal: () => termRef.current,
+      onLocate: (seq) => inputBatcher.push(seq),
+    });
+
+    term.onData((data) => {
       let payload = data;
       let next = inputStateRef.current;
       if (data.length === 1) {
@@ -182,12 +207,14 @@ export default function MobileTerminalHost({
       } else if (inputStateRef.current.ctrlActive) {
         next = { ctrlActive: false };
       }
+      const prevCtrl = inputStateRef.current.ctrlActive;
       inputStateRef.current = next;
-      setInputState(next);
-
-      void tauri.sshSendInput(sessionId!, payload).catch((err) => {
-        setIoError(getErrorMessage(err));
-      });
+      if (next.ctrlActive !== prevCtrl) {
+        // ctrlActive only drives the aux-bar Ctrl highlight; skipping the
+        // setState when it did not change avoids a re-render per keystroke.
+        setInputState(next);
+      }
+      inputBatcher.push(payload);
     });
 
     const selectionDisposable = term.onSelectionChange(() => {
@@ -214,6 +241,9 @@ export default function MobileTerminalHost({
     return () => {
       touchSelection.dispose();
       momentum.dispose();
+      tapLocate.dispose();
+      inputBatcher.dispose();
+      inputBatcherRef.current = null;
       ro.disconnect();
       selectionDisposable.dispose();
       if (unlistenRef.current) {
@@ -277,6 +307,12 @@ export default function MobileTerminalHost({
 
     const live = activeSession.status === 'connected';
     term.options.disableStdin = !live;
+
+    if (!live) {
+      // Drop buffered keystrokes on disconnect: the flush callback discards
+      // them when not connected, so they can't leak into a reconnected session.
+      inputBatcherRef.current?.flush();
+    }
 
     if (boundSessionIdRef.current === activeSessionId) {
       if (live && visible && !showList) {

@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   applyCtrlToggle,
+  containsControlChar,
+  createInputBatcher,
   formatDisconnectBanner,
   needsPasteConfirmation,
   resolveAuxKeyInput,
@@ -155,5 +157,122 @@ describe('applyCtrlToggle', () => {
     const result = applyCtrlToggle({ ctrlActive: true }, '\u007f');
     expect(result.write).toBe('\u007f');
     expect(result.next.ctrlActive).toBe(false);
+  });
+});
+
+describe('containsControlChar', () => {
+  it('detects C0 control chars and DEL', () => {
+    expect(containsControlChar('\x1b')).toBe(true);
+    expect(containsControlChar('\x03')).toBe(true);
+    expect(containsControlChar('\x1b[A')).toBe(true);
+    expect(containsControlChar('\r')).toBe(true);
+    expect(containsControlChar('\u007f')).toBe(true);
+  });
+
+  it('passes through printable text including CJK', () => {
+    expect(containsControlChar('ls -la')).toBe(false);
+    expect(containsControlChar('中文输入')).toBe(false);
+    expect(containsControlChar('')).toBe(false);
+  });
+});
+
+describe('createInputBatcher', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const collect = () => {
+    const sent: string[] = [];
+    const batcher = createInputBatcher({ flush: (p) => sent.push(p) });
+    return { batcher, sent };
+  };
+
+  it('accumulates printable text and flushes once per tick', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('a');
+    batcher.push('b');
+    batcher.push('cd');
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(16);
+    expect(sent).toEqual(['abcd']);
+  });
+
+  it('coalesces a burst of keys into a single flush', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('a');
+    vi.advanceTimersByTime(8);
+    batcher.push('b');
+    vi.advanceTimersByTime(4);
+    expect(sent).toEqual([]);
+    batcher.push('c');
+    vi.advanceTimersByTime(4); // t=16: the one pending timer fires for the whole burst
+    expect(sent).toEqual(['abc']);
+  });
+
+  it('flushes buffered text before an immediate control payload, keeping order', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('ab');
+    batcher.push('\x1b[A'); // arrow sequence must not wait for the tick
+    expect(sent).toEqual(['ab', '\x1b[A']);
+  });
+
+  it('flushes immediately on buffer overflow', () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const batcher = createInputBatcher({
+      flush: (p) => sent.push(p),
+      maxBufferLength: 4,
+    });
+    batcher.push('abc');
+    expect(sent).toEqual([]);
+    batcher.push('d');
+    expect(sent).toEqual(['abcd']);
+  });
+
+  it('manual flush sends the remainder once', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('ab');
+    batcher.flush();
+    batcher.flush(); // empty — no-op
+    expect(sent).toEqual(['ab']);
+    vi.advanceTimersByTime(50);
+    expect(sent).toEqual(['ab']);
+  });
+
+  it('dispose drops the buffered remainder and cancels the timer', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('ab');
+    batcher.dispose();
+    vi.advanceTimersByTime(50);
+    expect(sent).toEqual([]);
+  });
+
+  it('ignores empty pushes', () => {
+    vi.useFakeTimers();
+    const { batcher, sent } = collect();
+    batcher.push('');
+    batcher.push('x');
+    vi.advanceTimersByTime(16);
+    expect(sent).toEqual(['x']);
+  });
+
+  it('custom isImmediate predicate controls the fast path', () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+    const batcher = createInputBatcher({
+      flush: (p) => sent.push(p),
+      isImmediate: (p) => p === '!',
+    });
+    batcher.push('a');
+    batcher.push('!');
+    expect(sent).toEqual(['a', '!']);
+    batcher.push('\x1b[A'); // not "immediate" under the custom predicate
+    vi.advanceTimersByTime(16);
+    expect(sent).toEqual(['a', '!', '\x1b[A']);
   });
 });
