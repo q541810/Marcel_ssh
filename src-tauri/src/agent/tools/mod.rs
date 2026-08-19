@@ -147,6 +147,10 @@ pub struct ToolContext {
     /// Used by `ask_user` tool to await user answers.
     pub pending_questions:
         Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
+    /// 命令执行统一管理器。生产路径由 agent_loop 注入；所有 exec* 辅助
+    /// 方法优先经它执行（登记记录 + 断连级联取消）。仅测试场景为 None
+    /// （回退到 SshManager 兼容 shim，行为一致但不登记）。
+    pub command_exec: Option<crate::command_exec::CommandExecutionManager>,
 }
 
 impl ToolContext {
@@ -162,6 +166,7 @@ impl ToolContext {
             policy: None,
             local_handlers: Arc::new(HashMap::new()),
             pending_questions: Arc::new(PlRwLock::new(HashMap::new())),
+            command_exec: None,
         }
     }
 
@@ -215,8 +220,58 @@ impl ToolContext {
         self
     }
 
+    /// Attach the unified command execution manager (builder-style).
+    /// agent_loop 在生产路径注入；未注入时 exec* 回退到 SshManager
+    /// 兼容 shim（仅测试场景）。
+    pub fn with_command_exec(mut self, mgr: crate::command_exec::CommandExecutionManager) -> Self {
+        self.command_exec = Some(mgr);
+        self
+    }
+
+    /// 把管理器结果映射回旧 `(output, was_timeout)` 形状。
+    /// 超时是 Ok（与旧 exec_timed / exec_streamed 语义一致，由调用方
+    /// 处理 was_timeout）；断连级联取消与执行失败是 Err。
+    async fn submit_shaped(
+        &self,
+        ticket: crate::command_exec::CommandTicket,
+    ) -> Result<(String, bool), AppError> {
+        use crate::command_exec::SubmitOutcome;
+        let mgr = self.command_exec.as_ref().ok_or_else(|| {
+            // 不可能到达：无 manager 时调用方走 ssh 回退分支
+            AppError::Agent("command_exec manager not configured".into())
+        })?;
+        match mgr.submit(&self.app_handle, ticket).await {
+            SubmitOutcome::Completed { output } => Ok((output, false)),
+            SubmitOutcome::TimedOut { output } => Ok((output, true)),
+            SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+            SubmitOutcome::Failed { error } => Err(error),
+        }
+    }
+
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.
+    /// 120s 超时；超时返回 Err（与旧 `SshManager::exec_command` 一致）。
     pub async fn exec(&self, command: &str) -> Result<String, AppError> {
+        if let Some(mgr) = &self.command_exec {
+            let ticket = crate::command_exec::CommandTicket::new(
+                &self.session_id,
+                command,
+                crate::command_exec::CommandSource::Agent,
+            )
+            .timeout(Duration::from_secs(120));
+            match mgr.submit(&self.app_handle, ticket).await {
+                crate::command_exec::SubmitOutcome::Completed { output } => return Ok(output),
+                crate::command_exec::SubmitOutcome::TimedOut { .. } => {
+                    return Err(AppError::Ssh(format!(
+                        "命令在 120 秒后超时: {}",
+                        crate::command_exec::executor::timeout_preview(command)
+                    )))
+                }
+                crate::command_exec::SubmitOutcome::Cancelled { .. } => {
+                    return Err(AppError::Ssh("命令已取消（会话断开）".into()))
+                }
+                crate::command_exec::SubmitOutcome::Failed { error } => return Err(error),
+            }
+        }
         self.ssh.exec_command(&self.session_id, command).await
     }
 
@@ -226,6 +281,15 @@ impl ToolContext {
         command: &str,
         timeout: Duration,
     ) -> Result<(String, bool), AppError> {
+        if self.command_exec.is_some() {
+            let ticket = crate::command_exec::CommandTicket::new(
+                &self.session_id,
+                command,
+                crate::command_exec::CommandSource::Agent,
+            )
+            .timeout(timeout);
+            return self.submit_shaped(ticket).await;
+        }
         self.ssh
             .exec_command_timed(&self.session_id, command, timeout)
             .await
@@ -240,6 +304,16 @@ impl ToolContext {
         event_name: &str,
         tool_call_id: &str,
     ) -> Result<(String, bool), AppError> {
+        if self.command_exec.is_some() {
+            let ticket = crate::command_exec::CommandTicket::new(
+                &self.session_id,
+                command,
+                crate::command_exec::CommandSource::Agent,
+            )
+            .timeout(timeout)
+            .streaming(event_name, tool_call_id);
+            return self.submit_shaped(ticket).await;
+        }
         self.ssh
             .exec_command_streamed(
                 &self.session_id,
@@ -250,6 +324,39 @@ impl ToolContext {
                 tool_call_id,
             )
             .await
+    }
+
+    /// 以完整 ticket 提交执行（execute_command 等需要区分「实际命令」与
+    /// 「展示命令」的调用方使用；sudo 重写后的命令只进 `command`，
+    /// 原始命令进 `display_command`，密码绝不入记录）。
+    /// 返回形状与 [`Self::exec_timed`] 一致。
+    pub async fn exec_ticket(
+        &self,
+        ticket: crate::command_exec::CommandTicket,
+    ) -> Result<(String, bool), AppError> {
+        if self.command_exec.is_some() {
+            return self.submit_shaped(ticket).await;
+        }
+        // 测试回退：ticket 的 streaming / display 差异在此路径不可用
+        match ticket.streaming {
+            Some(ref s) => {
+                self.ssh
+                    .exec_command_streamed(
+                        &self.session_id,
+                        &ticket.command,
+                        ticket.timeout,
+                        &self.app_handle,
+                        &s.event_name,
+                        &s.stream_id,
+                    )
+                    .await
+            }
+            None => {
+                self.ssh
+                    .exec_command_timed(&self.session_id, &ticket.command, ticket.timeout)
+                    .await
+            }
+        }
     }
 }
 

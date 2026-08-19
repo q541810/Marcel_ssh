@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use russh::client::{self};
 use russh::keys::PrivateKeyWithHashAlg;
-use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
@@ -70,6 +69,10 @@ pub struct SshManager {
     /// driver from deleting a newer connection.
     generations: Arc<RwLock<HashMap<String, u64>>>,
     known_hosts: Arc<KnownHostsStore>,
+    /// 断连观察者：会话真正断开（driver cleanup 的 dominated 分支）时回调，
+    /// 参数为 session_id。command_exec 管理器用它实现级联取消。
+    disconnect_observers:
+        Arc<RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
 }
 
 impl SshManager {
@@ -80,6 +83,7 @@ impl SshManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             generations: Arc::new(RwLock::new(HashMap::new())),
             known_hosts,
+            disconnect_observers: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -319,6 +323,7 @@ impl SshManager {
         let sid = session_id.clone();
         let app_clone = app.clone();
         let manager_connections = self.connections.clone();
+        let manager_observers = self.disconnect_observers.clone();
         tokio::spawn(async move {
             let reason = session::drive_session(
                 sid.clone(),
@@ -339,6 +344,12 @@ impl SshManager {
                     SshStatus::Disconnected { reason },
                 );
                 log::info!("SSH session {} cleaned up", sid);
+                // 通知断连观察者（如 command_exec 管理器的级联取消）。
+                // stale driver 不会走到这里，不会误触发。
+                let observers = manager_observers.read().await.clone();
+                for cb in observers {
+                    cb(&sid);
+                }
             } else {
                 log::info!(
                     "SSH session {} stale driver exited (gen {} vs current), skipping cleanup",
@@ -568,22 +579,44 @@ impl SshManager {
         })
     }
 
+    /// Get the live connection handle for a session (shared Arc).
+    /// Used by the command_exec executor to open dedicated exec channels.
+    pub async fn get_connection(&self, session_id: &str) -> Option<Arc<SshConnection>> {
+        self.connections.read().await.get(session_id).cloned()
+    }
+
+    /// Whether `session_id` currently has a connection of the given
+    /// generation. Used by the executor to distinguish "channel ended
+    /// normally" from "the connection itself died"（reconnect 会换代，
+    /// 旧代连接的通道以 None 结束时据此判定断连）.
+    pub async fn is_generation_active(&self, session_id: &str, generation: u64) -> bool {
+        self.connections
+            .read()
+            .await
+            .get(session_id)
+            .map_or(false, |c| c.generation == generation)
+    }
+
+    /// 注册断连观察者：会话真正断开（driver cleanup 的 dominated 分支，
+    /// 含主动 disconnect 与远端断开）时以 session_id 回调。观察者内不应
+    /// 阻塞（需要异步工作时自行 spawn）。
+    pub async fn register_disconnect_observer(&self, cb: Arc<dyn Fn(&str) + Send + Sync>) {
+        self.disconnect_observers.write().await.push(cb);
+    }
+
     /// Execute a command on a separate exec channel (not the interactive PTY).
     /// Opens a new channel, runs the command, waits for output, and closes.
     /// This is used by Agent tool calls.
     ///
-    /// Delegates to [`exec_command_timed`] with a 120-second default timeout
-    /// to prevent infinite blocking when remote commands never exit.
+    /// 兼容 shim：内部委托 [`crate::command_exec::executor::run_raw`]
+    /// （不登记执行记录）。新代码请走
+    /// [`crate::command_exec::CommandExecutionManager`]。
     pub async fn exec_command(&self, session_id: &str, command: &str) -> Result<String, AppError> {
         let (output, was_timeout) = self
             .exec_command_timed(session_id, command, Duration::from_secs(120))
             .await?;
         if was_timeout {
-            let preview = if command.len() > 80 {
-                &command[..80]
-            } else {
-                command
-            };
+            let preview = crate::command_exec::executor::timeout_preview(command);
             return Err(AppError::Ssh(format!("命令在 120 秒后超时: {}", preview)));
         }
         Ok(output)
@@ -591,6 +624,8 @@ impl SshManager {
 
     /// Execute a command with a timeout and stream output to the frontend.
     /// Emits `toolOutput` events on the given event channel per data chunk.
+    ///
+    /// 兼容 shim：内部委托 [`crate::command_exec::executor::run_raw`]。
     pub async fn exec_command_streamed(
         &self,
         session_id: &str,
@@ -600,164 +635,27 @@ impl SshManager {
         event_name: &str,
         tool_call_id: &str,
     ) -> Result<(String, bool), AppError> {
-        let conn = {
-            let guard = self.connections.read().await;
-            guard.get(session_id).cloned()
-        };
-        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
-
-        let deadline = tokio::time::sleep(timeout);
-        tokio::pin!(deadline);
-
-        let mut channel = conn
-            .handle
-            .lock()
-            .await
-            .channel_open_session()
-            .await
-            .map_err(|e| AppError::Ssh(format!("打开 exec 通道失败: {}", e)))?;
-
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
-
-        let mut output = String::new();
-
-        loop {
-            tokio::select! {
-                msg = channel.wait() => {
-                    match msg {
-                        Some(ChannelMsg::Data { data }) => {
-                            let chunk = String::from_utf8_lossy(&data).to_string();
-                            output.push_str(&chunk);
-                            emit_event(
-                                app,
-                                &event_name,
-                                &serde_json::json!({
-                                    "type": "toolOutput",
-                                    "toolCallId": tool_call_id,
-                                    "chunk": chunk,
-                                }),
-                            );
-                        }
-                        Some(ChannelMsg::ExtendedData { data, .. }) => {
-                            let chunk = String::from_utf8_lossy(&data).to_string();
-                            output.push_str(&chunk);
-                            emit_event(
-                                app,
-                                &event_name,
-                                &serde_json::json!({
-                                    "type": "toolOutput",
-                                    "toolCallId": tool_call_id,
-                                    "chunk": chunk,
-                                }),
-                            );
-                        }
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
-                            break;
-                        }
-                        Some(ChannelMsg::ExitStatus { .. }) => {}
-                        Some(_) => {}
-                        None => break,
-                    }
-                }
-                _ = &mut deadline => {
-                    let close_timeout = tokio::time::sleep(Duration::from_secs(2));
-                    tokio::pin!(close_timeout);
-                    tokio::select! {
-                        _ = async {
-                            let _ = channel.eof().await;
-                            let _ = channel.close().await;
-                            loop {
-                                match channel.wait().await {
-                                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                                    Some(_) => {}
-                                }
-                            }
-                        } => {}
-                        _ = &mut close_timeout => {}
-                    }
-                    return Ok((output, true));
-                }
-            }
-        }
-        Ok((output, false))
+        crate::command_exec::executor::run_raw(
+            self,
+            session_id,
+            command,
+            timeout,
+            Some((app, event_name, tool_call_id)),
+        )
+        .await
     }
 
     /// Execute a command with a timeout. Returns (output, was_timeout).
     /// If the timeout fires, the channel is closed and partial output is returned.
+    ///
+    /// 兼容 shim：内部委托 [`crate::command_exec::executor::run_raw`]。
     pub async fn exec_command_timed(
         &self,
         session_id: &str,
         command: &str,
         timeout: Duration,
     ) -> Result<(String, bool), AppError> {
-        let conn = {
-            let guard = self.connections.read().await;
-            guard.get(session_id).cloned()
-        };
-        let conn = conn.ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
-
-        let deadline = tokio::time::sleep(timeout);
-        tokio::pin!(deadline);
-
-        let mut channel = conn
-            .handle
-            .lock()
-            .await
-            .channel_open_session()
-            .await
-            .map_err(|e| AppError::Ssh(format!("打开 exec 通道失败: {}", e)))?;
-
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| AppError::Ssh(format!("执行命令失败: {}", e)))?;
-
-        let mut output = String::new();
-
-        loop {
-            tokio::select! {
-                msg = channel.wait() => {
-                    match msg {
-                        Some(ChannelMsg::Data { data }) => {
-                            output.push_str(&String::from_utf8_lossy(&data));
-                        }
-                        Some(ChannelMsg::ExtendedData { data, .. }) => {
-                            output.push_str(&String::from_utf8_lossy(&data));
-                        }
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
-                            break;
-                        }
-                        Some(ChannelMsg::ExitStatus { .. }) => {}
-                        Some(_) => {}
-                        None => break,
-                    }
-                }
-                _ = &mut deadline => {
-                    // Best-effort channel shutdown. This stops waiting for the
-                    // exec channel, but does not guarantee the remote process is killed.
-                    let close_timeout = tokio::time::sleep(Duration::from_secs(2));
-                    tokio::pin!(close_timeout);
-                    tokio::select! {
-                        _ = async {
-                            let _ = channel.eof().await;
-                            let _ = channel.close().await;
-                            loop {
-                                match channel.wait().await {
-                                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                                    Some(_) => {}
-                                }
-                            }
-                        } => {}
-                        _ = &mut close_timeout => {}
-                    }
-                    return Ok((output, true));
-                }
-            }
-        }
-        Ok((output, false))
+        crate::command_exec::executor::run_raw(self, session_id, command, timeout, None).await
     }
 
     /// Open an SFTP session on a dedicated subsystem channel.

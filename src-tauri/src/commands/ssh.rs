@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 
-use crate::commands::sftp::TransferCancelGuard;
+use crate::command_exec::{CancelReason, CommandSource, CommandTicket, SubmitOutcome};
 use crate::config::connections::SavedConnection;
 use crate::config::keychain;
 use crate::emit_event;
@@ -10,7 +10,6 @@ use crate::ssh::connection::ConnectionConfig;
 use crate::AppState;
 use serde_json::json;
 use std::time::Duration;
-use tokio::sync::watch;
 
 /// Keychain account for jump host password: `jump:{connection_id}`
 fn jump_password_account(connection_id: &str) -> String {
@@ -175,13 +174,26 @@ pub async fn ssh_list_sessions(state: State<'_, AppState>) -> Result<Vec<String>
 ///     拥有完整的交互式 shell。如果 WebView 被攻破，`ssh_send_input` 同样危险。
 ///   - 在此加沙箱会导致用户自定义的黑名单（如屏蔽 `kill`）悄悄破坏 ProcessPanel 功能。
 ///   - 面向 LLM 的真正沙箱入口：`agent/tools/execute_cmd.rs` → `Sandbox::check_command()`。
+///
+/// 经 command_exec 统一管理器执行（120s 超时，行为与旧实现一致）。
 #[tauri::command]
 pub async fn ssh_exec(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     command: String,
 ) -> Result<String, AppError> {
-    state.ssh_manager.exec_command(&session_id, &command).await
+    let ticket = CommandTicket::new(&session_id, &command, CommandSource::User);
+    match state.command_exec.submit(&app, ticket).await {
+        SubmitOutcome::Completed { output } => Ok(output),
+        SubmitOutcome::TimedOut { .. } => Err(AppError::Ssh(format!(
+            "命令在 120 秒后超时: {}",
+            crate::command_exec::executor::timeout_preview(&command)
+        ))),
+        // ssh_exec 的 ticket 无 task_id，只有断连级联会取消
+        SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+        SubmitOutcome::Failed { error } => Err(error),
+    }
 }
 
 /// 执行长时间运行的 SSH 命令，支持取消和流式输出。
@@ -196,6 +208,9 @@ pub async fn ssh_exec(
 ///
 /// 返回值：命令完整输出（合并 stdout+stderr）。命令本身非零退出不算 Err——
 /// 调用方需通过输出内容（如 OK/FAILED 标记）判断业务成功与否。
+///
+/// 执行与取消注册由 command_exec 统一管理器闭环；本函数只负责把
+/// 管理器的结果映射回旧的事件协议（前端零变化）。
 #[tauri::command]
 pub async fn ssh_exec_long(
     app: AppHandle,
@@ -205,63 +220,49 @@ pub async fn ssh_exec_long(
     task_id: String,
     timeout_secs: Option<u64>,
 ) -> Result<String, AppError> {
-    // 注册取消信号
-    let (cancel_tx, mut cancel_rx) = watch::channel(false);
-    state
-        .long_exec_cancel_senders
-        .write()
-        .insert(task_id.clone(), cancel_tx);
-    let _guard = TransferCancelGuard::new(
-        task_id.clone(),
-        state.long_exec_cancel_senders.clone(),
-    );
+    let ticket = CommandTicket::new(&session_id, &command, CommandSource::User)
+        .timeout(Duration::from_secs(timeout_secs.unwrap_or(1800))) // 默认 30 分钟
+        .cancellable(task_id.clone(), "命令已取消")
+        .streaming("ssh-long-output", task_id.clone());
 
-    let timeout = Duration::from_secs(timeout_secs.unwrap_or(1800)); // 默认 30 分钟
-    let event_name = "ssh-long-output";
-
-    let exec_fut = state
-        .ssh_manager
-        .exec_command_streamed(&session_id, &command, timeout, &app, event_name, &task_id);
-
-    let result = tokio::select! {
-        biased;
-        _ = cancel_rx.changed() => {
-            // 用户取消
-            emit_event(
-                &app,
-                "ssh-long-cancelled",
-                &json!({ "taskId": &task_id }),
-            );
-            return Err(AppError::Ssh("命令已取消".into()));
+    match state.command_exec.submit(&app, ticket).await {
+        SubmitOutcome::Completed { output } => {
+            emit_event(&app, "ssh-long-done", &json!({ "taskId": &task_id }));
+            Ok(output)
         }
-        res = exec_fut => res,
-    };
-
-    match result {
-        Ok((output, was_timeout)) => {
-            if was_timeout {
-                emit_event(
-                    &app,
-                    "ssh-long-error",
-                    &json!({ "taskId": &task_id, "message": "命令超时" }),
-                );
-                Err(AppError::Ssh("命令在超时后未完成".into()))
-            } else {
-                emit_event(
-                    &app,
-                    "ssh-long-done",
-                    &json!({ "taskId": &task_id }),
-                );
-                Ok(output)
-            }
-        }
-        Err(e) => {
+        SubmitOutcome::TimedOut { .. } => {
             emit_event(
                 &app,
                 "ssh-long-error",
-                &json!({ "taskId": &task_id, "message": e.to_string() }),
+                &json!({ "taskId": &task_id, "message": "命令超时" }),
             );
-            Err(e)
+            Err(AppError::Ssh("命令在超时后未完成".into()))
+        }
+        SubmitOutcome::Cancelled { reason } => match reason {
+            CancelReason::User => {
+                emit_event(
+                    &app,
+                    "ssh-long-cancelled",
+                    &json!({ "taskId": &task_id }),
+                );
+                Err(AppError::Ssh("命令已取消".into()))
+            }
+            CancelReason::Disconnected => {
+                emit_event(
+                    &app,
+                    "ssh-long-error",
+                    &json!({ "taskId": &task_id, "message": "SSH 连接已断开" }),
+                );
+                Err(AppError::Ssh("SSH 连接已断开，命令已中止".into()))
+            }
+        },
+        SubmitOutcome::Failed { error } => {
+            emit_event(
+                &app,
+                "ssh-long-error",
+                &json!({ "taskId": &task_id, "message": error.to_string() }),
+            );
+            Err(error)
         }
     }
 }
@@ -272,9 +273,8 @@ pub async fn ssh_exec_long_cancel(
     state: State<'_, AppState>,
     task_id: String,
 ) -> Result<(), AppError> {
-    if let Some(sender) = state.long_exec_cancel_senders.write().remove(&task_id) {
-        let _ = sender.send(true);
-    }
+    // 未命中（任务不存在或已结束）也返回 Ok，与旧行为一致
+    let _ = state.command_exec.cancel(&task_id).await;
     Ok(())
 }
 

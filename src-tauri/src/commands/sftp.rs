@@ -10,6 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // notify 的 watch 方法来自 Watcher trait，需在作用域内才能调用 watcher.watch(...)。
 use notify::Watcher;
 
+use crate::command_exec::{CancelReason, CommandSource, CommandTicket, SubmitOutcome};
 use crate::emit_event;
 use crate::error::AppError;
 use crate::util::{is_content_uri, shell_escape, validate_local_path, validate_sftp_remote_path};
@@ -317,6 +318,7 @@ pub async fn sftp_remove(
 
 #[tauri::command]
 pub async fn sftp_remove_via_shell(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     path: String,
@@ -328,8 +330,8 @@ pub async fn sftp_remove_via_shell(
     }
     let command = format!("rm -rf -- {}", shell_escape(&path));
     state
-        .ssh_manager
-        .exec_command(&session_id, &command)
+        .command_exec
+        .exec_simple(&app, &session_id, &command, CommandSource::SystemTask)
         .await?;
     Ok(())
 }
@@ -354,6 +356,7 @@ pub async fn sftp_rename(
 
 #[tauri::command]
 pub async fn sftp_extract_archive(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
@@ -378,8 +381,8 @@ pub async fn sftp_extract_archive(
         _ => crate::ssh::sftp_extract::build_tar_check_cmd(),
     };
     let check_output = state
-        .ssh_manager
-        .exec_command(&session_id, check_cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, check_cmd, CommandSource::SystemTask)
         .await?;
     if !crate::ssh::sftp_extract::has_tool(&check_output) {
         let tool = match kind {
@@ -394,8 +397,8 @@ pub async fn sftp_extract_archive(
 
     let cmd = crate::ssh::sftp_extract::build_extract_to_dir_cmd(&remote_path, &target_dir, kind);
     let output = state
-        .ssh_manager
-        .exec_command(&session_id, &cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, &cmd, CommandSource::SystemTask)
         .await?;
 
     if !output.trim().contains("OK") {
@@ -503,8 +506,8 @@ pub async fn sftp_compress_archive(
         _ => crate::ssh::sftp_extract::build_tar_check_cmd(),
     };
     let check_output = state
-        .ssh_manager
-        .exec_command(&session_id, check_cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, check_cmd, CommandSource::SystemTask)
         .await?;
     if !crate::ssh::sftp_extract::has_tool(&check_output) {
         let tool = match kind {
@@ -523,8 +526,8 @@ pub async fn sftp_compress_archive(
         let target_esc = shell_escape(&target_path);
         let check_cmd = format!("test -e {} && echo EXISTS || echo MISSING", target_esc);
         let check_output = state
-            .ssh_manager
-            .exec_command(&session_id, &check_cmd)
+            .command_exec
+            .exec_simple(&app, &session_id, &check_cmd, CommandSource::SystemTask)
             .await?;
         if check_output.trim().contains("EXISTS") {
             return Err(AppError::Ssh(format!(
@@ -542,50 +545,15 @@ pub async fn sftp_compress_archive(
     )
     .map_err(|e| AppError::Ssh(e.to_string()))?;
 
-    // 用 ssh_exec_long 内核执行（30 分钟超时 + 取消 + 流式输出）
-    // 直接调 exec_command_streamed，事件用 task_id 路由
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .long_exec_cancel_senders
-        .write()
-        .insert(task_id.clone(), cancel_tx);
-    let _guard = TransferCancelGuard::new(task_id.clone(), state.long_exec_cancel_senders.clone());
+    // 经 command_exec 统一管理器执行（30 分钟超时 + 取消注册 + 流式输出，
+    // 事件用 task_id 路由）；本函数只映射回旧的 ssh-long-* 事件协议。
+    let ticket = CommandTicket::new(&session_id, &cmd, CommandSource::SystemTask)
+        .timeout(std::time::Duration::from_secs(1800))
+        .cancellable(task_id.clone(), "压缩已取消")
+        .streaming("ssh-long-output", task_id.clone());
 
-    let timeout = std::time::Duration::from_secs(1800);
-    let event_name = "ssh-long-output";
-
-    let exec_fut = state.ssh_manager.exec_command_streamed(
-        &session_id,
-        &cmd,
-        timeout,
-        &app,
-        event_name,
-        &task_id,
-    );
-
-    let result = tokio::select! {
-        biased;
-        _ = cancel_rx.changed() => {
-            emit_event(
-                &app,
-                "ssh-long-cancelled",
-                &json!({ "taskId": &task_id }),
-            );
-            return Err(AppError::Ssh("压缩已取消".into()));
-        }
-        res = exec_fut => res,
-    };
-
-    match result {
-        Ok((output, was_timeout)) => {
-            if was_timeout {
-                emit_event(
-                    &app,
-                    "ssh-long-error",
-                    &json!({ "taskId": &task_id, "message": "压缩超时（30 分钟）" }),
-                );
-                return Err(AppError::Ssh("压缩超时，文件夹可能过大".into()));
-            }
+    match state.command_exec.submit(&app, ticket).await {
+        SubmitOutcome::Completed { output } => {
             // 检查 OK/FAILED 标记
             if output.lines().any(|line| line.trim() == "OK") {
                 emit_event(
@@ -596,10 +564,11 @@ pub async fn sftp_compress_archive(
                 Ok(())
             } else {
                 let trimmed = output.trim();
-                let preview = if trimmed.len() > 500 {
-                    format!("{}...", &trimmed[..500])
+                let preview: String = trimmed.chars().take(500).collect();
+                let preview = if preview.len() < trimmed.len() {
+                    format!("{}...", preview)
                 } else {
-                    trimmed.to_string()
+                    preview
                 };
                 emit_event(
                     &app,
@@ -609,19 +578,46 @@ pub async fn sftp_compress_archive(
                 Err(AppError::Ssh(format!("压缩失败: {}", preview)))
             }
         }
-        Err(e) => {
+        SubmitOutcome::TimedOut { .. } => {
             emit_event(
                 &app,
                 "ssh-long-error",
-                &json!({ "taskId": &task_id, "message": e.to_string() }),
+                &json!({ "taskId": &task_id, "message": "压缩超时（30 分钟）" }),
             );
-            Err(e)
+            Err(AppError::Ssh("压缩超时，文件夹可能过大".into()))
+        }
+        SubmitOutcome::Cancelled { reason } => match reason {
+            CancelReason::User => {
+                emit_event(
+                    &app,
+                    "ssh-long-cancelled",
+                    &json!({ "taskId": &task_id }),
+                );
+                Err(AppError::Ssh("压缩已取消".into()))
+            }
+            CancelReason::Disconnected => {
+                emit_event(
+                    &app,
+                    "ssh-long-error",
+                    &json!({ "taskId": &task_id, "message": "SSH 连接已断开" }),
+                );
+                Err(AppError::Ssh("SSH 连接已断开，压缩已中止".into()))
+            }
+        },
+        SubmitOutcome::Failed { error } => {
+            emit_event(
+                &app,
+                "ssh-long-error",
+                &json!({ "taskId": &task_id, "message": error.to_string() }),
+            );
+            Err(error)
         }
     }
 }
 
 #[tauri::command]
 pub async fn sftp_upload_folder(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     remote_path: String,
@@ -660,8 +656,8 @@ pub async fn sftp_upload_folder(
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_path, &remote_path);
     let output = state
-        .ssh_manager
-        .exec_command(&session_id, &exec_cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, &exec_cmd, CommandSource::SystemTask)
         .await?;
 
     if output.trim().contains("OK") {
@@ -1035,20 +1031,6 @@ pub(crate) struct TransferCancelGuard {
     senders: std::sync::Arc<
         parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
     >,
-}
-
-impl TransferCancelGuard {
-    pub(crate) fn new(
-        transfer_id: String,
-        senders: std::sync::Arc<
-            parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
-        >,
-    ) -> Self {
-        Self {
-            transfer_id,
-            senders,
-        }
-    }
 }
 
 impl Drop for TransferCancelGuard {
@@ -1632,8 +1614,8 @@ pub async fn sftp_upload_folder_stream(
 
     let check_cmd = crate::ssh::sftp_extract::build_unzip_check_cmd();
     let check_output = state
-        .ssh_manager
-        .exec_command(&session_id, check_cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, check_cmd, CommandSource::SystemTask)
         .await?;
     if !crate::ssh::sftp_extract::has_unzip(&check_output) {
         return Err(AppError::Ssh(
@@ -1821,8 +1803,8 @@ pub async fn sftp_upload_folder_stream(
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_remote, &remote_path);
     let output = state
-        .ssh_manager
-        .exec_command(&session_id, &exec_cmd)
+        .command_exec
+        .exec_simple(&app, &session_id, &exec_cmd, CommandSource::SystemTask)
         .await?;
 
     if !output.trim().contains("OK") {

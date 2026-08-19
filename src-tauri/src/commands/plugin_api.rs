@@ -161,12 +161,29 @@ async fn execute_command<R: Runtime>(
             if sid.is_empty() || command.is_empty() {
                 return Err("sessionId and command required".into());
             }
-            let output = state
-                .ssh_manager
-                .exec_command(sid, command)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::Value::String(output))
+            // 经 command_exec 统一管理器执行（登记记录 + 断连级联取消）。
+            // 插件路径无流式输出（旧实现也不 emit 事件），故无需 AppHandle。
+            // 默认 120s 超时与旧 `SshManager::exec_command` 一致。
+            let ticket = crate::command_exec::CommandTicket::new(
+                sid,
+                command,
+                crate::command_exec::CommandSource::Plugin,
+            );
+            let outcome = state.command_exec.submit_opt(None, ticket).await;
+            match outcome {
+                crate::command_exec::SubmitOutcome::Completed { output } => {
+                    Ok(serde_json::Value::String(output))
+                }
+                crate::command_exec::SubmitOutcome::TimedOut { .. } => Err(format!(
+                    "命令在 120 秒后超时: {}",
+                    crate::command_exec::executor::timeout_preview(command)
+                )),
+                // 插件 ticket 无 task_id，仅断连级联会走到这里
+                crate::command_exec::SubmitOutcome::Cancelled { .. } => {
+                    Err("SSH 连接已断开".into())
+                }
+                crate::command_exec::SubmitOutcome::Failed { error } => Err(error.to_string()),
+            }
         }
 
         // ── Plugin-scoped commands (shared inner functions) ──

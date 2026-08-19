@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod command_exec;
 pub mod commands;
 pub mod config;
 pub mod error;
@@ -78,9 +79,10 @@ pub struct AppState {
     /// Cancellation signals for plugin installs: install_id -> watch sender.
     pub plugin_install_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Cancellation signals for long-running SSH commands (compress, etc.): task_id -> watch sender.
-    pub long_exec_cancel_senders:
-        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// 命令执行统一管理器：所有 SSH 命令执行（用户直发 / 系统长任务 /
+    /// Agent 工具 / 插件）的唯一入口，集中管理执行记录、取消注册表
+    /// （取代旧的 long_exec_cancel_senders）与断连级联取消。
+    pub command_exec: crate::command_exec::CommandExecutionManager,
     /// Watcher state for "open with system" files, keyed by task_id.
     /// Value = (session_id, local_path, cancel sender). local_path 用于「重复打开」时
     /// 复用已下载的本地副本（再次唤起系统应用，不重新下载、不重复监视）；
@@ -342,6 +344,12 @@ impl AppState {
         let skill_store_arc = std::sync::Arc::new(TokioRwLock::new(skill_store));
         let mcp_store_arc = std::sync::Arc::new(TokioRwLock::new(mcp_store));
 
+        // SSH 连接管理器 + 命令执行统一管理器（后者注册断连观察者，
+        // 必须在 SshManager 构造后立即创建并共享同一句柄）。
+        let ssh_manager = SshManager::with_known_hosts(known_hosts);
+        let command_exec =
+            crate::command_exec::CommandExecutionManager::new(ssh_manager.clone()).await;
+
         let (sync_engine, sync_scheduler) = {
             let profile = crate::sync::profile::SyncProfile::default();
             let engine = std::sync::Arc::new(
@@ -382,7 +390,7 @@ impl AppState {
                 Err(e) => {
                     log::warn!("同步客户端初始化失败: {}", e);
                     return Self {
-                        ssh_manager: SshManager::with_known_hosts(known_hosts),
+                        ssh_manager: ssh_manager.clone(),
                         agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         connection_store: connection_store_arc,
@@ -399,7 +407,7 @@ impl AppState {
                         upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        command_exec: command_exec.clone(),
                         sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
@@ -418,7 +426,7 @@ impl AppState {
         };
 
         Self {
-            ssh_manager: SshManager::with_known_hosts(known_hosts),
+            ssh_manager,
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             connection_store: connection_store_arc,
@@ -435,7 +443,7 @@ impl AppState {
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            long_exec_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            command_exec,
             sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
