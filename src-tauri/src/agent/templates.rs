@@ -49,6 +49,7 @@ impl TemplateManager {
         has_http_get: bool,
         plan_mode: bool,
         has_task: bool,
+        extra_sections: &[String],
     ) -> Result<String, AppError> {
         let reg = Self::build_agent_registry();
         let plugin_joined = vars.plugin_sections.join("\n\n");
@@ -68,6 +69,11 @@ impl TemplateManager {
         let mut parts: Vec<String> = Vec::new();
 
         parts.push(render("角色"));
+        // 角色追加约束段（如子代理的只读调研约束）——与基础段一样作为组件
+        // 统一拼装，紧跟在「角色」之后，而不是在外部字符串拼接。
+        for extra in extra_sections {
+            parts.push(extra.clone());
+        }
         if has_web_search {
             parts.push(render("联网搜索"));
         }
@@ -122,7 +128,7 @@ mod tests {
         task: bool,
     ) -> String {
         TemplateManager
-            .render_agent_prompt(vars, skills, ws, hg, plan, task)
+            .render_agent_prompt(vars, skills, ws, hg, plan, task, &[])
             .unwrap()
     }
 
@@ -252,6 +258,21 @@ mod tests {
         let user_pos = prompt.find("USER_MARKER").unwrap();
         let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
         assert!(user_pos < plugin_pos);
+    }
+
+    #[test]
+    fn prompt_extra_sections_are_composed_into_output() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+        let extras = vec!["EXTRA_MARKER_A".to_string(), "EXTRA_MARKER_B".to_string()];
+        let prompt = TemplateManager
+            .render_agent_prompt(&vars, false, false, false, false, false, &extras)
+            .unwrap();
+        assert!(prompt.contains("EXTRA_MARKER_A"));
+        assert!(prompt.contains("EXTRA_MARKER_B"));
     }
 
     #[test]

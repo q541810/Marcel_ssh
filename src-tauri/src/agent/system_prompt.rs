@@ -12,6 +12,7 @@ pub(crate) fn build_system_prompt(
     plugin_sections: &[String],
     plan_mode: bool,
     has_task: bool,
+    extra_sections: &[String],
 ) -> Result<String, AppError> {
     let vars = AgentPromptVars {
         session_id: session_id.to_string(),
@@ -25,6 +26,7 @@ pub(crate) fn build_system_prompt(
         has_http_get,
         plan_mode,
         has_task,
+        extra_sections,
     )
 }
 
@@ -51,6 +53,7 @@ mod tests {
             plugins,
             plan,
             task,
+            &[],
         )
         .unwrap()
     }

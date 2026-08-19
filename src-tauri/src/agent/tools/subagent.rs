@@ -9,22 +9,21 @@
 //!
 //! 子agent不可再派发子agent（嵌套防御：plan 模式工具集本身不注册 task 工具，
 //! 这里再做一次 parent_task_id 检查兜底）。
+//!
+//! 子 agent 的组装与生命周期统一由 [`crate::agent::manager::AgentManager`]
+//! 负责——本工具只声明「要跑什么」（AgentSpec），不再复制组装逻辑。
 
 use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::json;
 use tauri::Manager;
-use tokio::sync::watch;
 
-use crate::agent::agent_loop::{run_agent_loop, LoopContext};
+use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
-use crate::agent::templates::TemplateManager;
-use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
-use crate::commands::agent_lifecycle::build_agent_messages;
+use crate::agent::task::{AgentMode, AgentStatus};
+use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::emit_event;
 use crate::error::AppError;
-use crate::llm::openai::OpenAiProvider;
 use crate::AppState;
 
 /// 子agent结果回传给主 agent 的最大字符数（完整过程保留在子对话中）。
@@ -166,58 +165,23 @@ impl AgentTool for TaskTool {
         let state: AppState = state.inner().clone();
 
         // ── 嵌套防御：子agent不能再派发子agent ──
-        let parent_task_id = ctx.task_id.clone();
-        if let Some(tid) = &parent_task_id {
-            if state
+        // parent_task_id = 当前任务 id（也是新子 agent 的父任务 id）。
+        // 当前任务本身有 parent_task_id（即它已是子 agent）则禁止。
+        let parent_task_id = ctx.task_id.clone().unwrap_or_default();
+        if !parent_task_id.is_empty()
+            && state
                 .agent_tasks
                 .read()
-                .get(tid)
+                .get(&parent_task_id)
                 .and_then(|t| t.parent_task_id.clone())
                 .is_some()
-            {
-                log::warn!("task tool blocked: {} is itself a subagent", tid);
-                return Ok(ToolOutput::fail(
-                    "task: 子agent不能再派发子agent",
-                    "当前任务本身是子agent，不允许再派发子agent。",
-                ));
-            }
-        }
-
-        // ── 读取子agent需要的设置 ──
-        let (llm_config, agent_settings, experimental_settings, enabled_skills) = {
-            let settings = state.settings.read().await;
-            let skills = state.skill_store.read().await;
-            (
-                settings.llm_config.clone(),
-                settings.agent_mode_settings.clone(),
-                settings.experimental_settings.clone(),
-                skills
-                    .list()
-                    .iter()
-                    .filter(|s| s.enabled)
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            )
-        };
-        let Some(llm_config) = llm_config else {
+        {
+            log::warn!("task tool blocked: {} is itself a subagent", parent_task_id);
             return Ok(ToolOutput::fail(
-                "task: 尚未配置 LLM",
-                "尚未配置 LLM，无法派发子agent。",
+                "task: 子agent不能再派发子agent",
+                "当前任务本身是子agent，不允许再派发子agent。",
             ));
-        };
-        let mut sub_llm_config = llm_config.clone();
-        if let Some(m) = model_override {
-            sub_llm_config.model = m;
         }
-        let provider = match OpenAiProvider::new(sub_llm_config) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    "task: 子agent模型初始化失败".to_string(),
-                    format!("模型初始化失败: {}", e),
-                ));
-            }
-        };
 
         // ── 创建子agent conversation（独立对话线程，parent 指向主对话）──
         let session_id = ctx.session_id.clone();
@@ -228,16 +192,11 @@ impl AgentTool for TaskTool {
             ));
         };
         let sub_title = format!("{}（子agent）", description);
-        // 主对话 id：供前端隐藏子对话 / 返回主对话 / 级联删除。
-        let parent_conversation_id = parent_task_id
-            .as_ref()
-            .and_then(|tid| {
-                state
-                    .agent_tasks
-                    .read()
-                    .get(tid)
-                    .map(|t| t.conversation_id.clone())
-            })
+        let parent_conversation_id = state
+            .agent_tasks
+            .read()
+            .get(&parent_task_id)
+            .map(|t| t.conversation_id.clone())
             .unwrap_or_default();
         let sub_conv = match state.conversation_db.create_sub_conversation(
             &connection_id,
@@ -254,27 +213,8 @@ impl AgentTool for TaskTool {
         };
         let sub_conversation_id = sub_conv.id;
 
-        // ── 注册子agent（强制 Plan 模式）──
+        // ── 生成子任务 id 并告知前端（先注册子对话 + 挂载子流 listener）──
         let sub_task_id = uuid::Uuid::new_v4().to_string();
-        {
-            let mut tasks = state.agent_tasks.write();
-            tasks.insert(
-                sub_task_id.clone(),
-                AgentTask {
-                    id: sub_task_id.clone(),
-                    session_id: session_id.clone(),
-                    conversation_id: sub_conversation_id.clone(),
-                    prompt: prompt.clone(),
-                    mode: AgentMode::Plan,
-                    status: AgentStatus::Planning,
-                    has_plan: false,
-                    created_at: chrono::Utc::now(),
-                    parent_task_id,
-                },
-            );
-        }
-
-        // ── 告知前端：子agent已启动（注册子对话 + 挂载子流 listener）──
         if let Some(event_name) = ctx.event_name.clone() {
             emit_event(
                 &ctx.app_handle,
@@ -294,82 +234,29 @@ impl AgentTool for TaskTool {
             );
         }
 
-        // ── 构建子agent上下文（plan 模式工具集 + 只读指令）──
-        let registry = ToolRegistry::build_for_plan_mode(&enabled_skills, &experimental_settings);
-        // 与 agent_lifecycle::build_definitions 一致：registry 定义转 LLM provider 定义。
-        let tools: Vec<crate::llm::provider::ToolDefinition> = registry
-            .definitions()
-            .into_iter()
-            .map(|d| crate::llm::provider::ToolDefinition {
-                name: d.name,
-                description: d.description,
-                parameters: d.parameters,
-            })
-            .collect();
-        let sub_system_prompt = if agent_settings.system_prompt.trim().is_empty() {
-            SUBAGENT_INSTRUCTION.to_string()
-        } else {
-            format!(
-                "{}\n\n{}",
-                agent_settings.system_prompt.trim(),
-                SUBAGENT_INSTRUCTION
-            )
+        // ── 组装 + spawn（子代理 = Plan 模式 + 只读约束段）──
+        let spec = AgentSpec {
+            task_id: sub_task_id.clone(),
+            mode: AgentMode::Plan,
+            role: AgentRole::Sub { parent_task_id },
+            session_id,
+            conversation_id: sub_conversation_id.clone(),
+            prompt,
+            history: Vec::new(),
+            model_override,
+            prompt_extra: vec![SUBAGENT_INSTRUCTION.to_string()],
         };
-        let messages = match build_agent_messages(
-            &TemplateManager,
-            &session_id,
-            &tools,
-            &[],
-            &prompt,
-            &sub_system_prompt,
-            &[],
-            true,
-        ) {
-            Ok(m) => m,
+        let manager = AgentManager::new(state.clone());
+        let handle = match manager.spawn(&ctx.app_handle, spec).await {
+            Ok(h) => h,
             Err(e) => {
-                state.agent_tasks.write().remove(&sub_task_id);
                 return Ok(ToolOutput::fail(
-                    "task: 构建子agent上下文失败",
-                    format!("构建子agent上下文失败: {}", e),
+                    "task: 子agent启动失败",
+                    format!("子agent启动失败: {}", e),
                 ));
             }
         };
-
-        // ── spawn 子 agent loop 并同步等待 ──
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        state
-            .cancel_senders
-            .write()
-            .insert(sub_task_id.clone(), cancel_tx);
-
-        let loop_ctx = LoopContext {
-            ssh: ctx.ssh.clone(),
-            session_id: session_id.clone(),
-            app: ctx.app_handle.clone(),
-            state: state.clone(),
-            registry: std::sync::Arc::new(registry),
-            conversation_id: sub_conversation_id.clone(),
-            conv_db: state.conversation_db.clone(),
-            cancel_rx,
-            config_dir: ctx.config_dir.clone(),
-            is_subtask: true,
-        };
-
-        let sub_task_id_for_spawn = sub_task_id.clone();
-        let join_handle = tokio::spawn(async move {
-            run_agent_loop(
-                sub_task_id_for_spawn,
-                provider,
-                messages,
-                tools,
-                AgentMode::Plan,
-                agent_settings,
-                loop_ctx,
-            )
-            .await
-        });
-        let result = join_handle.await;
-        state.cancel_senders.write().remove(&sub_task_id);
+        let result = handle.join().await;
 
         // ── 汇总结果 ──
         let status = state
@@ -379,41 +266,22 @@ impl AgentTool for TaskTool {
             .map(|t| t.status.clone())
             .unwrap_or(AgentStatus::Failed);
 
-        // 更新子任务终态（后端 agent_tasks；此前停留 Planning，busy 守卫
-        // （手动压缩等）会对子对话误报"会话正在运行任务"）。停止路径已置
-        // Cancelled 则保留；Ok(Some)=Completed，其余=Failed。
-        {
-            let completed = matches!(&result, Ok(Some(_)));
-            if let Some(t) = state.agent_tasks.write().get_mut(&sub_task_id) {
-                if t.status != AgentStatus::Cancelled {
-                    t.status = if completed {
-                        AgentStatus::Completed
-                    } else {
-                        AgentStatus::Failed
-                    };
-                }
-            }
-        }
-
         match result {
-            Ok(Some(text)) => {
+            Some(text) => {
                 let output = truncate_chars(&text, MAX_TASK_OUTPUT_CHARS);
                 log::info!(
                     "Subtask {} completed: {} chars returned to parent",
                     sub_task_id,
                     text.chars().count()
                 );
-                Ok(
-                    ToolOutput::ok(format!("子agent完成：{}", description), output).with_metadata(
-                        json!({
-                            "subTaskId": sub_task_id,
-                            "subConversationId": sub_conversation_id,
-                            "status": "completed",
-                        }),
-                    ),
-                )
+                Ok(ToolOutput::ok(format!("子agent完成：{}", description), output)
+                    .with_metadata(json!({
+                        "subTaskId": sub_task_id,
+                        "subConversationId": sub_conversation_id,
+                        "status": "completed",
+                    })))
             }
-            Ok(None) => {
+            None => {
                 if status == AgentStatus::Cancelled {
                     log::info!("Subtask {} cancelled", sub_task_id);
                     Ok(ToolOutput::fail(
@@ -437,18 +305,6 @@ impl AgentTool for TaskTool {
                         "status": "failed",
                     })))
                 }
-            }
-            Err(e) => {
-                log::error!("Subtask {} panicked: {}", sub_task_id, e);
-                Ok(ToolOutput::fail(
-                    format!("子agent异常：{}", description),
-                    format!("子agent运行异常: {}", e),
-                )
-                .with_metadata(json!({
-                    "subTaskId": sub_task_id,
-                    "subConversationId": sub_conversation_id,
-                    "status": "failed",
-                })))
             }
         }
     }
