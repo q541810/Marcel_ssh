@@ -46,26 +46,26 @@ describe('starPrompt', () => {
     dismissStarPrompt();
     expect(maybeShowStarPromptOnInstall()).toBe(false);
     // launch 计数达标也不弹
+    for (let i = 0; i < 8; i++) {
+      expect(maybeShowStarPromptOnLaunch()).toBe(false);
+    }
+  });
+
+  it('启动计数每 7 次触发一次，未达标不弹', () => {
     for (let i = 0; i < 6; i++) {
       expect(maybeShowStarPromptOnLaunch()).toBe(false);
     }
-  });
-
-  it('启动计数每 5 次触发一次，未达标不弹', () => {
-    for (let i = 0; i < 4; i++) {
-      expect(maybeShowStarPromptOnLaunch()).toBe(false);
-    }
-    // 第 5 次：达标且首次弹（无冷却）
+    // 第 7 次：达标且首次弹（无冷却）
     expect(maybeShowStarPromptOnLaunch()).toBe(true);
   });
 
-  it('触发后计数归零：冷却期外再攒 5 次又可弹', () => {
-    for (let i = 0; i < 4; i++) {
+  it('触发后计数归零：冷却期外再攒 7 次又可弹', () => {
+    for (let i = 0; i < 6; i++) {
       expect(maybeShowStarPromptOnLaunch()).toBe(false);
     }
-    expect(maybeShowStarPromptOnLaunch()).toBe(true); // 第 5 次弹
+    expect(maybeShowStarPromptOnLaunch()).toBe(true); // 第 7 次弹
     storage.set('marcel.starPrompt.lastShown', String(daysAgo(8)));
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 6; i++) {
       expect(maybeShowStarPromptOnLaunch()).toBe(false);
     }
     expect(maybeShowStarPromptOnLaunch()).toBe(true);

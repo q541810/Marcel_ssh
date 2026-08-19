@@ -5,8 +5,8 @@ const IGNORED_KEY = 'marcel.starPrompt.ignored';
 const LAST_SHOWN_KEY = 'marcel.starPrompt.lastShown';
 const LAUNCH_COUNT_KEY = 'marcel.starPrompt.launchCount';
 
-/** 启动计数达到该次数后尝试弹一次（配合每周限频）。统一 5 次（桌面/移动端一致）。 */
-const LAUNCH_THRESHOLD = 5;
+/** 启动计数达到该次数后尝试弹一次（配合每周限频）。统一 7 次（桌面/移动端一致）。 */
+const LAUNCH_THRESHOLD = 7;
 /** 两次弹窗的最小间隔（毫秒）：一周。 */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
