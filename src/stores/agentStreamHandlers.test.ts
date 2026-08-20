@@ -1,8 +1,9 @@
-import { beforeEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import {
   handleToolCallStart,
   handleToolCallDelta,
   handleToolResult,
+  handleTextDelta,
   handleDone,
   handleError,
   handleRetrying,
@@ -81,8 +82,20 @@ function makeToolResult(overrides: Partial<ToolResultPayload> = {}): ToolResultP
 }
 
 describe('agentStreamHandlers', () => {
+  let rafCalls: (() => void)[];
+
   beforeEach(() => {
     cleanupStreamState(taskId);
+    rafCalls = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      rafCalls.push(cb);
+      return rafCalls.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   describe('getStreamState / setStreamState / cleanupStreamState', () => {
@@ -90,14 +103,13 @@ describe('agentStreamHandlers', () => {
       const state = getStreamState('unknown');
       expect(state.assistantMessageId).toBeNull();
       expect(state.messageIndex).toBe(-1);
-      expect(state.loadingCleared).toBe(false);
+      expect(state.toolResultCount).toBe(0);
     });
 
     it('persists and retrieves state', () => {
       setStreamState(taskId, {
         assistantMessageId: 'msg-1',
         messageIndex: 3,
-        loadingCleared: true,
         toolResultCount: 2,
         pendingToolCalls: new Map(),
         pendingToolArgs: new Map(),
@@ -160,6 +172,24 @@ describe('agentStreamHandlers', () => {
       expect(msgs[0].reasoningContent).toBeUndefined();
       expect(msgs[0].isThinking).toBe(false);
     });
+
+    it('removes the waiting skeleton once the model decides to call a tool', () => {
+      const handler = mockHandler({
+        [convId]: [
+          { id: 'loading-1', role: 'assistant', content: '', timestamp: '', isLoading: true },
+        ],
+      });
+
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-1',
+        name: 'execute_command',
+      });
+
+      const msgs = handler._messages[convId];
+      expect(msgs.find((m) => m.isLoading)).toBeUndefined();
+      expect(msgs.some((m) => m.role === 'tool')).toBe(true);
+    });
   });
 
   describe('handleToolResult', () => {
@@ -216,6 +246,73 @@ describe('agentStreamHandlers', () => {
       const toolMsg = msgs.find((m) => m.role === 'tool');
       expect(toolMsg?.toolResult?.toolCallId).toBe('no-match');
     });
+
+    it('re-inserts a loading skeleton after the tool result (waiting for next round)', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-reinsert',
+        name: 'read_file',
+      });
+      handleToolResult(handler, taskId, convId, 'loading-1', makeToolResult({
+        toolCallId: 'tc-reinsert',
+        toolName: 'read_file',
+        summary: 'read done',
+      }));
+
+      const msgs = handler._messages[convId];
+      expect(msgs.some((m) => m.role === 'tool')).toBe(true);
+      const skeleton = msgs.find((m) => m.role === 'assistant' && m.isLoading);
+      expect(skeleton).toBeDefined();
+      // 骨架在消息流末尾：UI 上位于工具卡之后
+      expect(msgs[msgs.length - 1]).toBe(skeleton);
+    });
+
+    it('keeps a single skeleton across parallel tool results', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-a',
+        name: 'read_file',
+      });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-b',
+        name: 'read_file',
+      });
+      handleToolResult(handler, taskId, convId, 'loading-1', makeToolResult({ toolCallId: 'tc-a' }));
+      handleToolResult(handler, taskId, convId, 'loading-1', makeToolResult({ toolCallId: 'tc-b' }));
+
+      const skeletons = handler._messages[convId].filter(
+        (m) => m.role === 'assistant' && m.isLoading,
+      );
+      expect(skeletons).toHaveLength(1);
+    });
+
+    it('consumes the re-inserted skeleton when next-round text arrives', () => {
+      const handler = mockHandler({ [convId]: [] });
+
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-flush',
+        name: 'read_file',
+      });
+      handleToolResult(handler, taskId, convId, 'loading-1', makeToolResult({
+        toolCallId: 'tc-flush',
+        toolName: 'read_file',
+      }));
+      expect(handler._messages[convId].some((m) => m.isLoading)).toBe(true);
+
+      handleTextDelta(handler, taskId, convId, 'loading-1', { type: 'textDelta', text: '结果' });
+      rafCalls.forEach((cb) => cb());
+
+      const msgs = handler._messages[convId];
+      const assistant = msgs.find((m) => m.role === 'assistant');
+      expect(assistant?.content).toBe('结果');
+      expect(msgs.some((m) => m.isLoading)).toBe(false);
+    });
   });
 
   describe('handleDone', () => {
@@ -241,6 +338,32 @@ describe('agentStreamHandlers', () => {
       const msgs = handler._messages[convId];
       expect(msgs.find((m) => m.id === 'loading-done')).toBeUndefined();
       expect(msgs.find((m) => m.id === 'keep-me')).toBeDefined();
+    });
+
+    it('removes per-round skeletons (rebuilt after tool results) on done', () => {
+      const handler = mockHandler({
+        [convId]: [
+          {
+            id: 'tool-1',
+            role: 'tool',
+            content: '',
+            timestamp: '',
+            toolResult: {
+              toolName: 'read_file',
+              summary: '',
+              result: 'ok',
+              success: true,
+              blocked: false,
+            },
+          },
+          { id: 'skeleton-2', role: 'assistant', content: '', timestamp: '', isLoading: true },
+        ],
+      });
+
+      handleDone(handler, taskId, convId, 'loading-done');
+
+      const msgs = handler._messages[convId];
+      expect(msgs.find((m) => m.id === 'skeleton-2')).toBeUndefined();
     });
   });
 
@@ -277,6 +400,21 @@ describe('agentStreamHandlers', () => {
         message: 'final error',
       });
       expect(handler._messages[convId].some((m) => m.isRetrying)).toBe(false);
+    });
+
+    it('removes per-round skeletons on error', () => {
+      const handler = mockHandler({
+        [convId]: [
+          { id: 'skeleton-3', role: 'assistant', content: '', timestamp: '', isLoading: true },
+        ],
+      });
+
+      handleError(handler, taskId, convId, 'loading-err', {
+        type: 'error',
+        message: 'boom',
+      });
+
+      expect(handler._messages[convId].find((m) => m.isLoading)).toBeUndefined();
     });
   });
 

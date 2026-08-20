@@ -33,6 +33,29 @@ function insertToolMessageAfterAssistant(newMsgs: AgentMessage[], toolMessage: A
   return newMsgs;
 }
 
+/**
+ * 查找当前最新的 loading 骨架（等待模型首字的占位消息）。
+ * 骨架在任务启动时创建，也会在每轮工具结果后重建，因此不依赖固定 id，
+ * 统一按 `role==='assistant' && isLoading` 动态定位。
+ */
+function findLoadingSkeleton(msgs: AgentMessage[]): AgentMessage | undefined {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant' && msgs[i].isLoading) return msgs[i];
+  }
+  return undefined;
+}
+
+/** 构造一条等待模型首字的 loading 骨架消息。 */
+function makeLoadingSkeleton(): AgentMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    content: '',
+    timestamp: new Date().toISOString(),
+    isLoading: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tool call start handler — creates an in-progress tool message immediately
 // ---------------------------------------------------------------------------
@@ -77,7 +100,11 @@ export function handleToolCallStart(
   }
 
   handler.updateMessages(conversationId, (convMsgs) => {
-    convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
+    // 模型已决定调用工具（首决策已出）：移除等待首字的 loading 骨架，
+    // 避免"转圈 + 工具卡"并存造成"还在思考却已在执行"的困惑。
+    convMsgs = convMsgs
+      .filter((m) => !(m.role === 'system' && m.isRetrying))
+      .filter((m) => !(m.role === 'assistant' && m.isLoading));
     const newMsgs = [...convMsgs];
 
     for (let i = newMsgs.length - 1; i >= 0; i--) {
@@ -178,7 +205,6 @@ export function handleToolOutput(
 interface TaskStreamState {
   assistantMessageId: string | null;
   messageIndex: number;
-  loadingCleared: boolean;
   toolResultCount: number;
   pendingToolCalls: Map<string, string>; // toolCallId → message.id
   pendingToolArgs: Map<string, string>; // toolCallId → accumulated arguments string
@@ -204,7 +230,6 @@ export function getStreamState(taskId: string): TaskStreamState {
   return taskStreamState.get(taskId) ?? {
     assistantMessageId: null,
     messageIndex: -1,
-    loadingCleared: false,
     toolResultCount: 0,
     pendingToolCalls: new Map(),
     pendingToolArgs: new Map(),
@@ -243,13 +268,14 @@ export function handleToolResult(
     const newMsgs = [...convMsgs];
     const streamState = getStreamState(taskId);
 
-    if (!streamState.loadingCleared) {
-      const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
-      if (loadingIdx !== -1) {
-        newMsgs.splice(loadingIdx, 1);
-        streamState.loadingCleared = true;
-      }
-    }
+    // 工具结果落定：本轮 LLM 调用已结束。删掉残留的 loading 骨架并插入
+    // 一条新的（等待下一轮 LLM 首字），让"思考中"转圈在工具之后重新出现。
+    // 同一轮并行 tool calls 时逐条重建，恒保持单骨架。
+    const reinsertSkeleton = () => {
+      const skeleton = findLoadingSkeleton(newMsgs);
+      if (skeleton) newMsgs.splice(newMsgs.indexOf(skeleton), 1);
+      newMsgs.push(makeLoadingSkeleton());
+    };
 
     streamState.toolResultCount++;
 
@@ -288,6 +314,7 @@ export function handleToolResult(
         streamState.messageIndex = -1;
         streamState.toolResultCount = 0;
         setStreamState(taskId, streamState);
+        reinsertSkeleton();
         return newMsgs;
       }
     }
@@ -319,6 +346,8 @@ export function handleToolResult(
     streamState.toolResultCount = 0;
 
     setStreamState(taskId, streamState);
+
+    reinsertSkeleton();
 
     return newMsgs;
   });
@@ -357,18 +386,20 @@ function flushPendingDeltas(
     convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
     const newMsgs = [...convMsgs];
     const targetId = state.assistantMessageId;
-    let idx = targetId
+    const idx = targetId
       ? newMsgs.findIndex((m) => m.id === targetId)
       : -1;
 
     if (idx === -1) {
-      // 第一次 flush：清掉 loading 占位符并建一条 assistant 消息
-      if (!state.loadingCleared) {
-        const loadingIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
-        if (loadingIdx !== -1) {
-          newMsgs.splice(loadingIdx, 1);
-          state.loadingCleared = true;
-        }
+      // 骨架（等待首字的 loading 占位）在首个 delta 到达时被消费：按 isLoading
+      // 动态查找并移除。骨架会随每轮工具结果重建，不能依赖一次性标志或固定 id，
+      // 固定 loadingAssistantId 仅作为启动骨架的 id 兜底。
+      let removeIdx = newMsgs.findIndex((m) => m.role === 'assistant' && m.isLoading);
+      if (removeIdx === -1) {
+        removeIdx = newMsgs.findIndex((m) => m.id === loadingAssistantId);
+      }
+      if (removeIdx !== -1) {
+        newMsgs.splice(removeIdx, 1);
       }
       const newMsg: AgentMessage = {
         id: crypto.randomUUID(),
@@ -458,8 +489,9 @@ export function handleDone(
 
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs.filter((m) => {
-      // Remove the loading placeholder
-      if (m.id === loadingAssistantId) return false;
+      // Remove loading skeletons: task-start placeholder + per-round rebuilds
+      // (工具后的骨架同样在此清理，防止终态后残留转圈)
+      if (m.role === 'assistant' && m.isLoading) return false;
       // Remove empty assistant messages without content, tool calls, or reasoning
       if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.toolCalls?.length && !m.reasoningContent) return false;
       // Remove tool messages that are still executing (tool call never completed)
@@ -503,7 +535,7 @@ export function handleError(
 
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs
-      .filter((m) => m.id !== loadingAssistantId)
+      .filter((m) => m.id !== loadingAssistantId && !(m.role === 'assistant' && m.isLoading))
       .filter((m) => !(m.role === 'tool' && m.isExecuting))
       .filter((m) => !(m.role === 'system' && m.isRetrying))
       .map((m) =>
