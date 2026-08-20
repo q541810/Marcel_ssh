@@ -29,7 +29,8 @@
   "injections": [...],            // 可选。内容脚本注入（需 ui.inject 权限）。
   "configView": "config.html",    // 可选。配置视图入口文件。
   "systemPromptSection": "system-prompt.md", // 可选。Agent system prompt 静态段文件路径。
-  "minAppVersion": "1.7.0"        // 可选。最低兼容的应用版本（见下文）。
+  "minAppVersion": "1.7.0",       // 可选。最低兼容的应用版本（见下文）。
+  "preservePaths": ["config.json", "memories/"] // 可选。更新时保留的个人数据路径（见下文）。
 }
 ```
 
@@ -47,6 +48,7 @@
 | `configView`          | string         | 否   | 配置视图入口文件路径（相对于插件根目录）                                                                   |
 | `systemPromptSection` | string         | 否   | Agent system prompt 静态段文件路径（相对插件根目录），详见 [systemPromptSection 章节](#systempromptsection) |
 | `minAppVersion`       | string         | 否   | 最低兼容的应用版本号（点号分隔的数字，如 `"1.7.0"`，缺段按 0 比较）                                               |
+| `preservePaths`       | string[]       | 否   | 更新时保留的个人数据路径（相对插件根，文件或 `trailing/` 目录，`config.json` 隐式保留）                                      |
 
 ---
 
@@ -68,6 +70,26 @@
 - **宽松比较**：版本按点号分隔的数字逐段比较，缺失段按 0 计，`"1.7"` 与 `"1.7.0"` 互相满足。
 - **非法版本号**：`minAppVersion` 不是合法数字版本时（如 `"abc"`、`"1.x"`），插件按不兼容处理并写 warn 日志（宁可不跑，不静默缺功能）。
 - **前端展示**：设置页插件卡片用 `@tauri-apps/api/app` 的 `getVersion()` 比对（`src/lib/semver.ts`，与后端 `registry.rs` 判定逻辑保持一致）。
+
+---
+
+## preservePaths（更新保留路径）
+
+插件运行时产生的个人数据（如 `config.json`、`memories/*.jsonl`、`data/`）落在 `plugins/<id>/` 内。更新时新包会原子覆盖插件目录，为避免丢数据，插件可在 `plugin.json` 声明需要保留的路径。
+
+```jsonc
+{
+  "preservePaths": ["config.json", "memories/", "data/"]
+  // 文件直写文件名，目录以 trailing `/` 结尾；`config.json` 即使未声明也会隐式保留
+}
+```
+
+**规则**
+- 相对插件根，拒绝对路径、`..` 穿越、空串、超长（>200 字符）、超量（>20 条）、`plugin.json` / `.marcel-shipped.json` 等内部文件。
+- 未声明时默认 `[]`，仅 `config.json` 隐式保留；旧插件首次更新无清单时，新包没有的本地文件全视为数据保留（宁多留不丢）。
+- 校验失败则整个插件在 `scan` 阶段被跳过并 `warn`，不崩溃。
+- 更新时两类保留：①旧清单上没有的用户新建文件自动保留 ② `preservePaths` 命中的文件即使在清单上也保留（覆盖云端模板）。
+- 市场提交审核：未声明 `preservePaths`（即使 `[]`）或声明非法，Bot 直接打回。
 
 ---
 

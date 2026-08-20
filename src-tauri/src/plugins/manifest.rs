@@ -37,6 +37,13 @@ pub struct PluginManifest {
     /// the required version.
     #[serde(default)]
     pub min_app_version: Option<String>,
+    /// Relative paths that must be preserved across updates (and optionally
+    /// uninstall). Each entry is a file or directory (trailing `/`) relative
+    /// to the plugin root, e.g. `config.json`, `memories/`, `data/`.
+    /// The field is validated via `validate_preserve_paths`; unknown / empty
+    /// entries are rejected and the whole plugin is skipped during scan.
+    #[serde(default)]
+    pub preserve_paths: Vec<String>,
 }
 
 /// A content-script injection entry. The plugin's JS runs inside the main
@@ -179,6 +186,42 @@ impl PluginAgentToolDef {
                 "agent tool `{}` has kind=local but no handler",
                 self.name
             ));
+        }
+        Ok(())
+    }
+}
+
+impl PluginManifest {
+    /// Validate `preservePaths`. Returns `Err` if any entry is illegal.
+    /// The caller (`scan.rs`) should drop the whole plugin on error (fail-closed).
+    pub fn validate_preserve_paths(&self) -> Result<(), String> {
+        const MAX_ENTRIES: usize = 20;
+        const MAX_LEN: usize = 200;
+        if self.preserve_paths.len() > MAX_ENTRIES {
+            return Err(format!(
+                "preservePaths exceeds {} entries (got {})",
+                MAX_ENTRIES,
+                self.preserve_paths.len()
+            ));
+        }
+        for raw in &self.preserve_paths {
+            if raw.is_empty() {
+                return Err("preservePaths contains empty entry".into());
+            }
+            if raw.len() > MAX_LEN {
+                return Err(format!("preservePaths entry too long (>{} chars): {}", MAX_LEN, raw));
+            }
+            if !crate::plugins::fs::is_safe_relative_path(raw) {
+                return Err(format!("preservePaths illegal path: {}", raw));
+            }
+            let norm = raw.replace('\\', "/");
+            let norm_trim = norm.trim_end_matches('/');
+            if norm_trim == "plugin.json" {
+                return Err("preservePaths must not include plugin.json".into());
+            }
+            if norm_trim == ".marcel-shipped.json" {
+                return Err("preservePaths must not include .marcel-shipped.json".into());
+            }
         }
         Ok(())
     }
@@ -341,5 +384,48 @@ mod tests {
         }"#;
         let def = serde_json::from_str::<PluginViewDef>(raw).unwrap();
         assert_eq!(def.mount, ViewMount::Sidebar);
+    }
+
+    #[test]
+    fn preserve_paths_defaults_empty() {
+        let raw = r#"{"id":"p","version":"1.0.0","name":"P"}"#;
+        let m: PluginManifest = serde_json::from_str(raw).unwrap();
+        assert!(m.preserve_paths.is_empty());
+        assert!(m.validate_preserve_paths().is_ok());
+    }
+
+    #[test]
+    fn preserve_paths_valid() {
+        let raw = r#"{"id":"p","version":"1.0.0","name":"P","preservePaths":["config.json","memories/","data/file.txt"]}"#;
+        let m: PluginManifest = serde_json::from_str(raw).unwrap();
+        assert!(m.validate_preserve_paths().is_ok());
+    }
+
+    #[test]
+    fn preserve_paths_rejects_traversal() {
+        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        m.preserve_paths = vec!["../evil".into()];
+        assert!(m.validate_preserve_paths().is_err());
+    }
+
+    #[test]
+    fn preserve_paths_rejects_absolute() {
+        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        m.preserve_paths = vec!["/abs/path".into()];
+        assert!(m.validate_preserve_paths().is_err());
+    }
+
+    #[test]
+    fn preserve_paths_rejects_plugin_json() {
+        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        m.preserve_paths = vec!["plugin.json".into()];
+        assert!(m.validate_preserve_paths().is_err());
+    }
+
+    #[test]
+    fn preserve_paths_rejects_too_many() {
+        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        m.preserve_paths = (0..21).map(|i| format!("file{}.txt", i)).collect();
+        assert!(m.validate_preserve_paths().is_err());
     }
 }

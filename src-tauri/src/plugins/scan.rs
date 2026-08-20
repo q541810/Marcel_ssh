@@ -68,6 +68,11 @@ pub fn scan_plugins_filtered(config_dir: &Path, disabled: &[String]) -> Vec<Plug
             }
         }
 
+        if let Err(reason) = m.validate_preserve_paths() {
+            log::warn!("插件 {} preservePaths 非法，已跳过: {}", m.id, reason);
+            continue;
+        }
+
         result.push(m);
     }
 

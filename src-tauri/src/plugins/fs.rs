@@ -32,6 +32,14 @@ pub fn resolve_read_path(
     plugin_id: &str,
     path: &str,
 ) -> Result<PathBuf, AppError> {
+    // Block internal bookkeeping files before any FS access
+    if !is_safe_relative_path(path) {
+        return Err(AppError::Other("path traversal rejected".into()));
+    }
+    let norm = path.replace('\\', "/");
+    if norm.trim_end_matches('/') == "plugin.json" {
+        return Err(AppError::Other("plugin.json access rejected".into()));
+    }
     let plugin_dir = config_dir.join("plugins").join(plugin_id);
     let base_dir = plugin_dir
         .canonicalize()
@@ -56,6 +64,13 @@ pub fn resolve_write_path(
     plugin_id: &str,
     path: &str,
 ) -> Result<PathBuf, AppError> {
+    if !is_safe_relative_path(path) {
+        return Err(AppError::Other("path traversal rejected".into()));
+    }
+    let norm = path.replace('\\', "/");
+    if norm.trim_end_matches('/') == "plugin.json" {
+        return Err(AppError::Other("plugin.json write rejected".into()));
+    }
     let plugin_dir = config_dir.join("plugins").join(plugin_id);
     let base_dir = plugin_dir
         .canonicalize()
@@ -88,6 +103,58 @@ pub fn resolve_write_path(
     };
 
     Ok(file_path)
+}
+
+/// Check whether `path` is a safe relative path for `preservePaths` / zip entries.
+/// Rejects absolute paths, Windows drive letters, `..` traversal, `//` double
+/// slashes, empty segments, and the internal `.marcel-shipped.json` file.
+/// Allows a single trailing `/` for directory preserves (e.g. `data/`).
+pub fn is_safe_relative_path(path: &str) -> bool {
+    if path.is_empty() || path.len() > 200 {
+        return false;
+    }
+    if path.trim().is_empty() {
+        return false;
+    }
+    if path.contains('\0') {
+        return false;
+    }
+    // Internal bookkeeping file must never be preserved / extracted.
+    if path == ".marcel-shipped.json" || path.starts_with(".marcel-shipped") {
+        return false;
+    }
+    let norm = path.replace('\\', "/");
+    if norm.starts_with('/') {
+        return false;
+    }
+    if norm.len() >= 2 && norm.as_bytes()[1] == b':' {
+        return false;
+    }
+    if norm.contains("//") {
+        return false;
+    }
+    // Reject "." / "./" etc.
+    if norm == "." || norm == "./" {
+        return false;
+    }
+    for seg in norm.split('/') {
+        if seg.is_empty() {
+            // Allow single trailing slash -> last segment empty
+            continue;
+        }
+        if seg == "." || seg == ".." {
+            return false;
+        }
+        if seg == ".marcel-shipped.json" {
+            return false;
+        }
+    }
+    // After filtering empty trailing, must have at least one real segment
+    let has_real = norm.split('/').any(|s| !s.is_empty() && s != ".");
+    if !has_real {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -197,5 +264,24 @@ mod tests {
         let base = tmp.path().join("plugin");
         fs::create_dir_all(&base).unwrap();
         assert!(!is_within_base(&base, &base.join("does-not-exist.txt")));
+    }
+
+    #[test]
+    fn is_safe_relative_allows_valid() {
+        assert!(is_safe_relative_path("config.json"));
+        assert!(is_safe_relative_path("memories/"));
+        assert!(is_safe_relative_path("data/file.txt"));
+        assert!(is_safe_relative_path("a/b/c.txt"));
+    }
+
+    #[test]
+    fn is_safe_relative_rejects_traversal_and_absolute() {
+        assert!(!is_safe_relative_path("../evil"));
+        assert!(!is_safe_relative_path("/abs/path"));
+        assert!(!is_safe_relative_path("a/../b"));
+        assert!(!is_safe_relative_path("C:/evil"));
+        assert!(!is_safe_relative_path(""));
+        assert!(!is_safe_relative_path("a//b"));
+        assert!(!is_safe_relative_path(".marcel-shipped.json"));
     }
 }
