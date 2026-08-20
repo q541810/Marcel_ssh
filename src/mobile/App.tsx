@@ -14,6 +14,8 @@ import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { panelVisibilityClass } from './sessionUi';
 import { DEFAULT_MOBILE_TAB, type MobileTabId } from './tabs';
+import type { MobileSettingsCategoryId } from './mobileSettingsModel';
+import { isMobileSettingsCategoryId } from './mobileSettingsModel';
 
 export default function MobileApp() {
   const [activeTab, setActiveTab] = useState<MobileTabId>(DEFAULT_MOBILE_TAB);
@@ -24,6 +26,8 @@ export default function MobileApp() {
   // Dismissed-this-session guard so finishing onboarding hides it immediately
   // even before the settings write lands.
   const [onboardingDone, setOnboardingDone] = useState(false);
+  const [pendingSettingsCategory, setPendingSettingsCategory] =
+    useState<MobileSettingsCategoryId | null>(null);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const hasCompletedOnboarding = useSettingsStore(
     (s) => s.settings.hasCompletedOnboarding,
@@ -76,6 +80,21 @@ export default function MobileApp() {
     if (activeTab === DEFAULT_MOBILE_TAB) return;
     return registerBackHandler(() => setActiveTab(DEFAULT_MOBILE_TAB));
   }, [activeTab]);
+
+  // 连接列表的后台保活卡片 → 跳转到设置/通知与后台
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ category?: string }>).detail;
+      const cat = detail?.category;
+      if (cat && isMobileSettingsCategoryId(cat)) {
+        setPendingSettingsCategory(cat);
+        setActiveTab('settings');
+      }
+    };
+    window.addEventListener('mobile:open-settings', handler as EventListener);
+    return () =>
+      window.removeEventListener('mobile:open-settings', handler as EventListener);
+  }, []);
 
   // 切前台时触发刷新信号。Rust 侧 RunEvent::Resumed 也会 emit mobile://lifecycle，
   // 但 visibilitychange 更贴近 WebView 实际恢复时机（JS 引擎解冻）。
@@ -150,7 +169,11 @@ export default function MobileApp() {
         <div
           className={`absolute inset-0 ${panelVisibilityClass(activeTab === 'settings')}`}
         >
-          <MobileSettings visible={activeTab === 'settings'} />
+          <MobileSettings
+            visible={activeTab === 'settings'}
+            initialCategory={pendingSettingsCategory}
+            onCategoryConsumed={() => setPendingSettingsCategory(null)}
+          />
         </div>
 
       </main>

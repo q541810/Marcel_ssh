@@ -24,10 +24,15 @@ import { registerBackHandler } from './backHandler';
 interface MobileSettingsProps {
   /** Tab keep-alive: false while another tab is active. */
   visible?: boolean;
+  /** 外部触发的初始分类（如保活卡片跳转）。消费后由 onCategoryConsumed 清理。 */
+  initialCategory?: MobileSettingsCategoryId | null;
+  onCategoryConsumed?: () => void;
 }
 
 export default function MobileSettings({
   visible = true,
+  initialCategory = null,
+  onCategoryConsumed,
 }: MobileSettingsProps) {
   const loaded = useSettingsStore((s) => s.loaded);
   const storeSettings = useSettingsStore((s) => s.settings);
@@ -48,13 +53,22 @@ export default function MobileSettings({
     setDraft(storeSettings);
   }, [loaded, storeSettings]);
 
+  // 外部跳转（如连接列表保活卡片）→ 直接进入对应分类
+  useEffect(() => {
+    if (!visible || !initialCategory) return;
+    setActiveCategory(initialCategory);
+    onCategoryConsumed?.();
+  }, [visible, initialCategory, onCategoryConsumed]);
+
   // Tab keep-alive retains state; re-entering settings must land on the home
   // list (not the last sub-category). Clear preview if a theme trial was open.
+  // pending 跳转期间不重置，避免把刚设置的分类又清掉
   useEffect(() => {
     if (visible) return;
+    if (initialCategory) return;
     storeClearPreview();
     setActiveCategory(null);
-  }, [visible, storeClearPreview]);
+  }, [visible, storeClearPreview, initialCategory]);
 
   // Android back gesture pops the sub-category page (mirrors the header's
   // "返回设置" button, including the preview cleanup).

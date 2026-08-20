@@ -10,10 +10,17 @@ import {
 } from 'lucide-react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { isAndroidBridgeAvailable } from './mobileBridge';
+import {
+  dismissKeepAliveTipPermanently,
+  isKeepAliveTipDismissed,
+} from '@/lib/keepAliveTip';
+import MobileKeepAliveTipCard from './MobileKeepAliveTipCard';
 import {
   asHostKeyMismatch,
   getErrorMessage,
@@ -63,6 +70,45 @@ export default function MobileConnectionList({
   const [deleteTarget, setDeleteTarget] = useState<SavedConnection | null>(
     null,
   );
+  // 后台保活提示：仅在连接列表页（未连上）显示
+  const keepAliveEnabled = useSettingsStore(
+    (s) => s.settings.mobileBackgroundSettings.keepAliveEnabled,
+  );
+  const settingsLoaded = useSettingsStore((s) => s.loaded);
+  const [keepAliveDismissedSession, setKeepAliveDismissedSession] =
+    useState(false);
+  const [keepAliveDismissedForever, setKeepAliveDismissedForever] = useState(
+    () => isKeepAliveTipDismissed(),
+  );
+
+  // 开启保活后重置"忽略"状态：若用户又关闭保活，应再次提示（除非点了不再显示）
+  useEffect(() => {
+    if (keepAliveEnabled) setKeepAliveDismissedSession(false);
+  }, [keepAliveEnabled]);
+
+  const showKeepAliveTip =
+    settingsLoaded &&
+    !keepAliveEnabled &&
+    !keepAliveDismissedSession &&
+    !keepAliveDismissedForever &&
+    isAndroidBridgeAvailable();
+
+  const handleKeepAliveJump = () => {
+    window.dispatchEvent(
+      new CustomEvent('mobile:open-settings', {
+        detail: { category: 'notification-background' },
+      }),
+    );
+  };
+
+  const handleKeepAliveIgnore = () => {
+    setKeepAliveDismissedSession(true);
+  };
+
+  const handleKeepAliveNeverShow = () => {
+    dismissKeepAliveTipPermanently();
+    setKeepAliveDismissedForever(true);
+  };
 
   useEffect(() => {
     void fetchConnections();
@@ -451,6 +497,14 @@ export default function MobileConnectionList({
           })}
         </ul>
       </div>
+
+      {showKeepAliveTip && (
+        <MobileKeepAliveTipCard
+          onJump={handleKeepAliveJump}
+          onIgnore={handleKeepAliveIgnore}
+          onNeverShow={handleKeepAliveNeverShow}
+        />
+      )}
 
       {/* Create / edit connection sheet */}
       <MobileConnectionForm
