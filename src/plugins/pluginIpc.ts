@@ -97,6 +97,16 @@ export async function initPluginIpc(): Promise<void> {
       }
 
       // Plugin-scoped commands: inject pluginId as first argument
+      // net.request is special: Rust expects { request: {url,method,headers,body} }, not flat
+      if (req.cmd === 'net.request') {
+        try {
+          const result = await invoke('plugin_http_request', { request: req.args });
+          respond(true, result);
+        } catch (err) {
+          respond(false, String(err));
+        }
+        return;
+      }
       const scopedCommand = getPluginScopedCommand(req.cmd);
       if (scopedCommand) {
         const result = await invoke(scopedCommand, {
