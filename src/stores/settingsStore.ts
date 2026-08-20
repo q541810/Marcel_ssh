@@ -27,6 +27,8 @@ const DEFAULT_LLM_CONFIG: LlmConfig = {
   maxRetries: 1,
   retryDelaySecs: 5,
   retryHttpStatuses: '408, 429, 500-599',
+  firstByteTimeoutSecs: 60,
+  retryOnTimeout: true,
   vision: false,
   extraBody: null,
 };
@@ -136,7 +138,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...fromDisk,
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
-        llmConfig: fromDisk.llmConfig ?? DEFAULT_LLM_CONFIG,
+        llmConfig: fromDisk.llmConfig
+          ? { ...DEFAULT_LLM_CONFIG, ...fromDisk.llmConfig }
+          : DEFAULT_LLM_CONFIG,
         experimentalSettings: {
           ...DEFAULT_EXPERIMENTAL_SETTINGS,
           ...(fromDisk.experimentalSettings ?? {}),

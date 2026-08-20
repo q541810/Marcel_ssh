@@ -77,6 +77,8 @@ export function ModelServiceSection() {
     maxRetries: 1,
     retryDelaySecs: 5,
     retryHttpStatuses: '408, 429, 500-599',
+    firstByteTimeoutSecs: 60,
+    retryOnTimeout: true,
     vision: false,
     extraBody: null,
   };

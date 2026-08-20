@@ -92,6 +92,8 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "llmConfig.maxRetries",
         "llmConfig.retryDelaySecs",
         "llmConfig.retryHttpStatuses",
+        "llmConfig.firstByteTimeoutSecs",
+        "llmConfig.retryOnTimeout",
         "llmConfig.extraBody",
         "agentModeSettings.contextWindow",
         // AgentPolicy

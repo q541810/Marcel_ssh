@@ -3,6 +3,7 @@ import type { LlmConfig } from '@/lib/types';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { ValidatedInput } from './ValidatedInput';
+import Toggle from '@/components/ui/Toggle';
 
 export function validateRetryHttpStatuses(value: string): string | null {
   const trimmed = value.trim();
@@ -42,6 +43,8 @@ export function ModelRetrySection() {
         maxRetries: 1,
         retryDelaySecs: 5,
         retryHttpStatuses: '408, 429, 500-599',
+        firstByteTimeoutSecs: 60,
+        retryOnTimeout: true,
       },
     [settings.llmConfig]
   );
@@ -96,7 +99,7 @@ export function ModelRetrySection() {
           className="w-24"
         />
       </SettingItem>
-      <SettingItem id="llm-retry-statuses" label="重试条件" description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试；网络/超时错误始终重试。" sectionId="settings-llm-retry" keywords={['retry', '重试条件', '状态码']}>
+      <SettingItem id="llm-retry-statuses" label="重试条件" description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试。" sectionId="settings-llm-retry" keywords={['retry', '重试条件', '状态码']}>
         <ValidatedInput
           type="text"
           value={llmConfig.retryHttpStatuses}
@@ -107,6 +110,31 @@ export function ModelRetrySection() {
           placeholder="408, 429, 500-599"
           className="w-full"
         />
+      </SettingItem>
+      <SettingItem id="llm-first-byte-timeout" label="首字超时 (秒)" description="从请求发出到收到首个字符的最长等待，超时视为失败并按重试策略处理" sectionId="settings-llm-retry" keywords={['timeout', '首字超时', '首包', '超时']}>
+        <ValidatedInput
+          type="number"
+          value={llmConfig.firstByteTimeoutSecs ?? 60}
+          onChange={(v) => updateLlm({ firstByteTimeoutSecs: v })}
+          validate={(s) => {
+            const v = Number(s);
+            if (!Number.isInteger(v) || v < 20 || v > 250) return '须为 20-250 的整数';
+            return null;
+          }}
+          validatorId="firstByteTimeoutSecs"
+          validatorFn={(draft) => {
+            const v = draft.llmConfig?.firstByteTimeoutSecs;
+            if (v === undefined) return null;
+            if (!Number.isInteger(v) || v < 20 || v > 250) return `首字超时须为 20-250 的整数（当前值：${v}）`;
+            return null;
+          }}
+          min={20} max={250} step={5}
+          suffix="秒"
+          className="w-24"
+        />
+      </SettingItem>
+      <SettingItem id="llm-retry-on-timeout" label="超时自动重试" description="首字超时后是否自动重试（默认开启，复用上方重试次数与间隔）" sectionId="settings-llm-retry" keywords={['timeout', '重试', '超时重试']}>
+        <Toggle checked={llmConfig.retryOnTimeout ?? true} onChange={(v) => updateLlm({ retryOnTimeout: v })} />
       </SettingItem>
     </Card>
   );

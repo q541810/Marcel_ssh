@@ -218,6 +218,12 @@ pub struct LlmConfig {
     /// Examples: "408, 429, 500-599"
     #[serde(default = "default_retry_http_statuses")]
     pub retry_http_statuses: String,
+    /// 首字超时（秒）：从请求发出到收到首个 SSE 字节的空闲超时，20-250，默认 60。
+    #[serde(default = "default_first_byte_timeout")]
+    pub first_byte_timeout_secs: u64,
+    /// 超时后是否自动重试（默认开启），复用 max_retries 预算。
+    #[serde(default = "default_retry_on_timeout")]
+    pub retry_on_timeout: bool,
     /// Whether the configured model accepts image inputs (multimodal / vision).
     #[serde(default)]
     pub vision: bool,
@@ -253,6 +259,14 @@ fn default_retry_http_statuses() -> String {
     "408, 429, 500-599".into()
 }
 
+fn default_first_byte_timeout() -> u64 {
+    60
+}
+
+fn default_retry_on_timeout() -> bool {
+    true
+}
+
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
@@ -268,6 +282,8 @@ impl Default for LlmConfig {
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
             vision: false,
             extra_body: None,
         }
@@ -344,6 +360,8 @@ mod tests {
             max_retries: 3,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
             vision: false,
             extra_body: None,
         };
@@ -463,6 +481,14 @@ mod tests {
     }
 
     #[test]
+    fn test_llm_config_first_byte_timeout_default_when_missing() {
+        let json = r#"{"providerType":"openai","model":"gpt-4"}"#;
+        let cfg: LlmConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.first_byte_timeout_secs, 60);
+        assert!(cfg.retry_on_timeout);
+    }
+
+    #[test]
     fn test_llm_config_extra_body_serialized_when_some() {
         let config = LlmConfig {
             provider_type: ProviderType::OpenAI,
@@ -473,6 +499,8 @@ mod tests {
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
             vision: false,
             extra_body: Some(serde_json::json!({ "thinking": { "type": "enabled" } })),
         };
@@ -499,6 +527,8 @@ mod tests {
             max_retries: 1,
             retry_delay_secs: 5.0,
             retry_http_statuses: "408, 429, 500-599".into(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
             vision: false,
             extra_body: None,
         };

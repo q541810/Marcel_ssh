@@ -20,6 +20,8 @@ const DEFAULT_LLM: LlmConfig = {
   maxRetries: 1,
   retryDelaySecs: 5,
   retryHttpStatuses: '408, 429, 500-599',
+  firstByteTimeoutSecs: 60,
+  retryOnTimeout: true,
   vision: false,
 };
 
@@ -213,7 +215,7 @@ export function MobileModelSection() {
 
       <MobileSettingRow
         label="重试条件"
-        description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试；网络/超时错误始终重试。"
+        description="逗号分隔的 HTTP 状态码或范围（如 408, 429, 500-599）。匹配到对应状态码时触发重试。"
       >
         <input
           type="text"
@@ -241,6 +243,37 @@ export function MobileModelSection() {
           <p className="mt-1 text-xs text-red-400">{statusesError}</p>
         )}
       </MobileSettingRow>
+
+      <MobileSettingRow
+        label="首字超时"
+        description="请求发出后等待首个字符的最长时间"
+        trailing={
+          <span className="w-14 text-right font-mono text-sm text-indigo-300">
+            {llmConfig.firstByteTimeoutSecs ?? 60}s
+          </span>
+        }
+      >
+        <input
+          type="range"
+          min={20}
+          max={250}
+          step={5}
+          value={llmConfig.firstByteTimeoutSecs ?? 60}
+          onChange={(e) => updateLlm({ firstByteTimeoutSecs: Number(e.target.value) })}
+          className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
+        />
+      </MobileSettingRow>
+
+      <MobileSettingRow
+        label="超时自动重试"
+        description="首字超时后自动重试（默认开启）"
+        trailing={
+          <Toggle
+            checked={llmConfig.retryOnTimeout ?? true}
+            onChange={(checked) => updateLlm({ retryOnTimeout: checked })}
+          />
+        }
+      />
 
       {/* Model picker sheet */}
       <MobileSheet

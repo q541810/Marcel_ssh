@@ -85,6 +85,7 @@ impl OpenAiProvider {
         let max_retries = self.config.max_retries;
         let retry_conditions = parse_retry_conditions(&self.config.retry_http_statuses);
         let delay = Duration::from_secs_f32(self.config.retry_delay_secs);
+        let retry_on_timeout = self.config.retry_on_timeout;
 
         let mut attempt: u32 = 0;
         loop {
@@ -99,7 +100,7 @@ impl OpenAiProvider {
                 Ok(msg) => return Ok(msg),
                 Err(e) => {
                     let max_attempts = max_retries + 1;
-                    if attempt >= max_attempts || !is_retryable(&e, &retry_conditions) {
+                    if attempt >= max_attempts || !is_retryable(&e, &retry_conditions, retry_on_timeout) {
                         return Err(e);
                     }
                     let err_msg = format!("{}", e);
@@ -145,9 +146,40 @@ impl OpenAiProvider {
         let mut buffer = String::new();
         let mut consecutive_parse_errors: u32 = 0;
         let mut stream = response.bytes_stream();
+        let first_byte_timeout = Duration::from_secs(self.config.first_byte_timeout_secs.clamp(20, 250));
+        let mut first_byte = true;
+        let mut saw_done = false;
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| AppError::Llm(format!("读取流式响应失败: {}", e)))?;
+        loop {
+            let next = tokio::time::timeout(first_byte_timeout, stream.next()).await;
+            let chunk_opt = match next {
+                Ok(v) => v,
+                Err(_) => {
+                    let msg = if first_byte {
+                        format!(
+                            "首字超时（{}s 内未收到模型响应）",
+                            self.config.first_byte_timeout_secs
+                        )
+                    } else {
+                        format!(
+                            "读取流式响应超时（{}s 内无数据）",
+                            self.config.first_byte_timeout_secs
+                        )
+                    };
+                    return Err(AppError::Llm(msg));
+                }
+            };
+            let chunk = match chunk_opt {
+                Some(Ok(c)) => c,
+                Some(Err(e)) => {
+                    return Err(AppError::Llm(format!(
+                        "读取流式响应失败: {}",
+                        format_reqwest_error(&e)
+                    )))
+                }
+                None => break,
+            };
+            first_byte = false;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
 
@@ -161,6 +193,7 @@ impl OpenAiProvider {
                 };
 
                 if payload == "[DONE]" {
+                    saw_done = true;
                     break;
                 }
                 if payload.is_empty() {
@@ -208,6 +241,9 @@ impl OpenAiProvider {
                         }
                     }
                 }
+            }
+            if saw_done {
+                break;
             }
         }
 
@@ -429,10 +465,10 @@ fn status_matches_conditions(status: u16, conditions: &[RetryCondition]) -> bool
 }
 
 /// Determine whether an LLM error is retryable based on the configured conditions.
-/// - Network/timeout errors: always retryable.
+/// - Network/timeout errors: retryable when retry_on_timeout is enabled.
 /// - HTTP errors: retryable if the status code matches the configured conditions.
 /// - Other errors (parse failures, etc.): not retryable.
-fn is_retryable(err: &AppError, conditions: &[RetryCondition]) -> bool {
+fn is_retryable(err: &AppError, conditions: &[RetryCondition], retry_on_timeout: bool) -> bool {
     match err {
         AppError::Llm(msg) => {
             // Extract HTTP status from error messages like "LLM 返回错误 429: ..."
@@ -440,8 +476,11 @@ fn is_retryable(err: &AppError, conditions: &[RetryCondition]) -> bool {
             if let Some(status) = extract_http_status(msg) {
                 status_matches_conditions(status, conditions)
             } else {
-                // Connection/timeout errors contain keywords like "超时" or "连接失败"
-                msg.contains("超时") || msg.contains("连接失败") || msg.contains("网络不可达")
+                // 超时类错误由 retry_on_timeout 开关门控（默认开启）
+                if msg.contains("超时") {
+                    return retry_on_timeout;
+                }
+                msg.contains("连接失败") || msg.contains("网络不可达")
             }
         }
         _ => false,
@@ -540,28 +579,31 @@ mod retry_tests {
     fn is_retryable_http_status_match() {
         let conditions = parse_retry_conditions("429, 500-599");
         let err = AppError::Llm("LLM 返回错误 429: rate limited".into());
-        assert!(is_retryable(&err, &conditions));
+        assert!(is_retryable(&err, &conditions, true));
     }
 
     #[test]
     fn is_retryable_http_status_no_match() {
         let conditions = parse_retry_conditions("429, 500-599");
         let err = AppError::Llm("LLM 返回错误 401: unauthorized".into());
-        assert!(!is_retryable(&err, &conditions));
+        assert!(!is_retryable(&err, &conditions, true));
     }
 
     #[test]
     fn is_retryable_timeout_always() {
         let conditions = parse_retry_conditions("");
         let err = AppError::Llm("LLM 请求失败: [超时]".into());
-        assert!(is_retryable(&err, &conditions));
+        assert!(is_retryable(&err, &conditions, true));
+        assert!(!is_retryable(&err, &conditions, false));
     }
 
     #[test]
     fn is_retryable_connection_failed() {
         let conditions = parse_retry_conditions("");
         let err = AppError::Llm("LLM 请求失败: [连接失败]".into());
-        assert!(is_retryable(&err, &conditions));
+        assert!(is_retryable(&err, &conditions, true));
+        // 连接失败不受 retry_on_timeout 门控
+        assert!(is_retryable(&err, &conditions, false));
     }
 
     #[test]
@@ -1245,6 +1287,8 @@ mod build_request_body_tests {
             max_retries: 0,
             retry_delay_secs: 0.0,
             retry_http_statuses: String::new(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
             vision: false,
             extra_body: None,
         }

@@ -76,6 +76,9 @@ pub async fn config_save_settings(
         {
             return Err(AppError::Config("重试间隔须为 1-60 的有限数字".into()));
         }
+        if llm.first_byte_timeout_secs < 20 || llm.first_byte_timeout_secs > 250 {
+            return Err(AppError::Config("首字超时须为 20-250 的整数".into()));
+        }
     }
 
     // Only update keychain if the frontend explicitly provides a real API key.
@@ -216,6 +219,8 @@ pub async fn llm_list_models(
         max_retries: 0,
         retry_delay_secs: 0.0,
         retry_http_statuses: String::new(),
+        first_byte_timeout_secs: 60,
+        retry_on_timeout: true,
         vision: false,
         extra_body: None,
     };

@@ -477,6 +477,10 @@ export interface LlmConfig {
   maxRetries: number;
   retryDelaySecs: number;
   retryHttpStatuses: string;
+  /** 首字超时秒数，20-250，默认 60 */
+  firstByteTimeoutSecs: number;
+  /** 超时后是否自动重试，默认 true，复用 maxRetries 预算 */
+  retryOnTimeout: boolean;
   /** Whether the model accepts image inputs (multimodal / vision). Default false. */
   vision?: boolean;
   /**
