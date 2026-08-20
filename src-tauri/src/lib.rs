@@ -775,6 +775,7 @@ pub fn run() {
             commands::plugin::get_plugin_dir,
             commands::plugin::open_plugin_dir,
             commands::plugin_install::plugin_install,
+            commands::plugin_install::plugin_update,
             commands::plugin_install::plugin_uninstall,
             commands::plugin_install::plugin_install_cancel,
             commands::plugin_fs::plugin_fs_read,

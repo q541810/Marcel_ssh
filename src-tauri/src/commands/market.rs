@@ -134,7 +134,12 @@ fn client_direct() -> reqwest::Client {
 }
 
 async fn try_fetch_text(client: &reqwest::Client, url: &str) -> Result<String, reqwest::Error> {
-    let resp = client.get(url).send().await?;
+    let resp = client
+        .get(url)
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
+        .send()
+        .await?;
     let resp = resp.error_for_status()?;
     resp.text().await
 }
@@ -166,6 +171,8 @@ async fn fetch_bytes_once(
 
     let resp = client
         .get(url)
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .send()
         .await
         .map_err(|e| AppError::Network(format!("请求失败: {}", e)))?;
@@ -357,6 +364,8 @@ async fn fetch_bytes_with_progress(
     let client = client_with_proxy();
     let mut resp = match client
         .get(url)
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
         .send()
         .await
         .map_err(|e| AppError::Network(format!("请求失败: {}", e)))
@@ -364,6 +373,8 @@ async fn fetch_bytes_with_progress(
         Ok(r) => r,
         Err(proxy_err) => match client_direct()
             .get(url)
+            .header("Cache-Control", "no-cache")
+            .header("Pragma", "no-cache")
             .send()
             .await
             .map_err(|e| AppError::Network(format!("请求失败: {}", e)))
@@ -436,12 +447,46 @@ pub async fn download_first_with_progress(
 
 // ─── Commands ──────────────────────────────────────────────────────────────
 
+fn bust_url(url: &str, ts: i64) -> String {
+    if url.contains('?') {
+        format!("{}&t={}", url, ts)
+    } else {
+        format!("{}?t={}", url, ts)
+    }
+}
+
 /// Fetch the market index. `index_url` carries the user-configured mirror
 /// (empty = built-in defaults). Order: custom mirror → jsDelivr → GitHub raw.
+/// 为穿透 jsDelivr 12h 边缘缓存（`?t=` 对 cdn.jsdelivr.net 无效），改为并发拉取全部候选源并取 `generatedAt` 最新的那份；
+/// 单源失败不影响其它源，全部失败才报错。每次请求仍带 `no-cache` 头与时间戳。
 #[tauri::command]
 pub async fn market_list(index_url: Option<String>) -> Result<MarketIndex, AppError> {
     let urls = index_urls(index_url.as_deref());
-    let text = fetch_first(&urls)
+    let ts = chrono::Utc::now().timestamp_millis();
+    let busted: Vec<String> = urls.into_iter().map(|u| bust_url(&u, ts)).collect();
+    // 并发拉取，取最新的 index
+    let futures = busted.iter().map(|u| async {
+        let text = fetch_text(u).await.ok()?;
+        let idx = parse_market_index(&text).ok()?;
+        Some((idx, text))
+    });
+    let results = futures::future::join_all(futures).await;
+    let mut best: Option<(MarketIndex, String)> = None;
+    for opt in results.into_iter().flatten() {
+        let (idx, _) = &opt;
+        let is_newer = match &best {
+            None => true,
+            Some((best_idx, _)) => idx.generated_at > best_idx.generated_at,
+        };
+        if is_newer {
+            best = Some(opt);
+        }
+    }
+    if let Some((idx, _)) = best {
+        return Ok(idx);
+    }
+    // 降级：串行 fetch_first（保留原错误聚合）
+    let text = fetch_first(&busted)
         .await
         .map_err(|e| AppError::Network(format!("拉取市场索引失败: {}", e)))?;
     parse_market_index(&text)

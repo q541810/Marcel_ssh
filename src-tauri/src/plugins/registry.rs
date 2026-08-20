@@ -135,9 +135,10 @@ impl PluginRegistry {
             }
 
             // State: disabled by user > incompatible app version > enabled.
-            // An incompatible plugin is not loaded (tools/injections inactive),
-            // and it is NOT written into `disabled_plugins` — once the app is
-            // upgraded it recovers automatically on the next reload.
+            // An incompatible plugin is directly treated as Disabled (closed)
+            // — it never loads (tools/injections inactive) and stays visible in
+            // the settings UI with the required version shown. After the app is
+            // upgraded the user can manually re-enable it.
             let state = if disabled.contains(id) {
                 PluginState::Disabled
             } else if min_app_version_satisfied(m, app_version) {
@@ -148,12 +149,12 @@ impl PluginRegistry {
                     .as_ref()
                     .map_or_else(|| "版本不兼容".to_string(), |min| format!("需要应用 v{}", min));
                 log::warn!(
-                    "插件 {} 不兼容当前应用版本 {}: {}",
+                    "插件 {} 不兼容当前应用版本 {}: {}，已直接禁用",
                     m.id,
                     app_version,
                     reason
                 );
-                PluginState::Incompatible(reason)
+                PluginState::Disabled
             };
 
             // Refresh section cache: only if the plugin declares one AND the
@@ -294,6 +295,30 @@ fn min_app_version_satisfied(m: &PluginManifest, app_version: &str) -> bool {
         }
     }
     true
+}
+
+/// Compare two dot-separated numeric versions.
+/// Returns -1 if a < b, 0 if equal, 1 if a > b, None if malformed.
+pub fn compare_versions(a: &str, b: &str) -> Option<i32> {
+    let a_parts = parse_version_parts(a)?;
+    let b_parts = parse_version_parts(b)?;
+    let len = a_parts.len().max(b_parts.len());
+    for i in 0..len {
+        let av = a_parts.get(i).copied().unwrap_or(0);
+        let bv = b_parts.get(i).copied().unwrap_or(0);
+        if av < bv {
+            return Some(-1);
+        }
+        if av > bv {
+            return Some(1);
+        }
+    }
+    Some(0)
+}
+
+/// Whether `market` is newer than `local`.
+pub fn is_newer_version(market: &str, local: &str) -> bool {
+    matches!(compare_versions(market, local), Some(1))
 }
 
 /// Convenience: build a fresh shared registry (empty; call `reload` to populate).
@@ -459,10 +484,8 @@ mod tests {
         reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
             .await;
         let entry = reg.get("a").unwrap();
-        assert_eq!(
-            entry.state,
-            PluginState::Incompatible("需要应用 v2.0.0".to_string())
-        );
+        // 不兼容直接视为 Disabled（关闭），复用关闭路径
+        assert_eq!(entry.state, PluginState::Disabled);
         // Not enabled anywhere: tools/injections must not activate.
         assert!(!reg.is_enabled("a"));
         assert!(reg.enabled_manifests().is_empty());
@@ -518,12 +541,42 @@ mod tests {
         reg.reload(tmp.path(), &settings_with_disabled(&["a"]), "1.0.0")
             .await;
         assert_eq!(reg.get("a").unwrap().state, PluginState::Disabled);
-        // User enables it again, but the app is still too old -> Incompatible.
+        // User enables it again, but the app is still too old -> still Disabled (direct close).
         reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
             .await;
-        assert_eq!(
-            reg.get("a").unwrap().state,
-            PluginState::Incompatible("需要应用 v2.0.0".to_string())
-        );
+        assert_eq!(reg.get("a").unwrap().state, PluginState::Disabled);
+    }
+
+    #[test]
+    fn compare_versions_equal() {
+        assert_eq!(compare_versions("1.0.0", "1.0.0"), Some(0));
+        assert_eq!(compare_versions("1.7", "1.7.0"), Some(0));
+    }
+
+    #[test]
+    fn compare_versions_newer() {
+        assert_eq!(compare_versions("1.0.1", "1.0.0"), Some(1));
+        assert_eq!(compare_versions("1.10.0", "1.9.9"), Some(1));
+        assert_eq!(compare_versions("2.0", "1.99.99"), Some(1));
+    }
+
+    #[test]
+    fn compare_versions_older() {
+        assert_eq!(compare_versions("1.0.0", "1.0.1"), Some(-1));
+        assert_eq!(compare_versions("1.9.9", "1.10.0"), Some(-1));
+    }
+
+    #[test]
+    fn compare_versions_malformed() {
+        assert_eq!(compare_versions("abc", "1.0.0"), None);
+        assert_eq!(compare_versions("1.x", "1.0.0"), None);
+    }
+
+    #[test]
+    fn is_newer_version_checks() {
+        assert!(is_newer_version("1.0.1", "1.0.0"));
+        assert!(!is_newer_version("1.0.0", "1.0.0"));
+        assert!(!is_newer_version("1.0.0", "1.0.1"));
+        assert!(!is_newer_version("abc", "1.0.0"));
     }
 }
