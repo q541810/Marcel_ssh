@@ -131,6 +131,8 @@ interface PluginState {
   refreshKey: number;
 
   fetchPlugins: () => Promise<void>;
+  /** 更新单个 manifest 的版本（用于插件更新后回填，避免全量 fetch 触发闪烁）。 */
+  patchManifest: (id: string, patch: Partial<PluginManifest>) => void;
   /** Reconcile active content-script injections with current manifests +
     *  settings. Deactivates injections for disabled/unauthorized plugins,
     *  activates for newly-enabled ones. Called after fetchPlugins and on
@@ -256,6 +258,13 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     } catch (err) {
       set({ error: getErrorMessage(err), loading: false });
     }
+  },
+
+  patchManifest: (id, patch) => {
+    const cur = get().manifests;
+    const next = cur.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    // 仅更新 manifests 数据，不触发 applyPluginDiff / webview 重建（重启后生效）
+    set({ manifests: next });
   },
 
   syncInjections: async () => {

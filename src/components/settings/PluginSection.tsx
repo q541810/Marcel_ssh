@@ -215,6 +215,8 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
         setOverlayStatus({ kind: 'done' });
         setUpdateDone(true);
         setUpdating(false);
+        // 回填新版本号（不触发全量 fetch，避免其它插件闪烁）
+        if (updateInfo) usePluginStore.getState().patchManifest(manifest.id, { version: updateInfo.marketVersion } as Partial<PluginManifest>);
       }),
       listen<{ installId: string }>('plugin-install-cancelled', (e) => {
         if (e.payload.installId !== id) return;
@@ -228,6 +230,7 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
       setOverlayStatus({ kind: 'done' });
       setUpdateDone(true);
       setUpdating(false);
+      usePluginStore.getState().patchManifest(manifest.id, { version: updateInfo.marketVersion } as Partial<PluginManifest>);
     } catch (e) {
       const parsed = parseAppError(e);
       if (parsed.kind === 'Cancelled' || parsed.message.includes('取消')) {
