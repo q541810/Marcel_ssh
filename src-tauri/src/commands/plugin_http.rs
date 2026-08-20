@@ -36,9 +36,27 @@ pub struct PluginHttpResponse {
 
 #[tauri::command]
 pub async fn plugin_http_request(
-    request: PluginHttpRequest,
+    request: Option<PluginHttpRequest>,
+    url: Option<String>,
+    method: Option<String>,
+    headers: Option<HashMap<String, String>>,
+    body: Option<String>,
+    pluginId: Option<String>,
 ) -> Result<PluginHttpResponse, AppError> {
-    plugin_http_request_inner(&request).await
+    let _ = pluginId; // 兼容前端通用透传的 pluginId，不参与鉴权（鉴权已在 pluginIpc 层完成）
+    let req = if let Some(r) = request {
+        r
+    } else if let Some(u) = url {
+        PluginHttpRequest {
+            url: u,
+            method: method.unwrap_or_else(default_method),
+            headers: headers.unwrap_or_default(),
+            body,
+        }
+    } else {
+        return Err(AppError::Other("missing required key request or url".into()));
+    };
+    plugin_http_request_inner(&req).await
 }
 
 pub(crate) async fn plugin_http_request_inner(
