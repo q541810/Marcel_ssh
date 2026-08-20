@@ -1,11 +1,17 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { usePluginStore } from '@/stores/pluginStore';
+import { usePluginStore, __setCachedAppVersionForTest, __resetCachedAppVersionForTest } from '@/stores/pluginStore';
 import { useViewStore } from '@/stores/viewStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PluginManifest } from '@/lib/types';
 
 vi.mock('@/lib/tauri', () => ({
   pluginList: vi.fn(),
+  saveSettings: vi.fn().mockResolvedValue(undefined),
+  getSettings: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: vi.fn().mockResolvedValue('1.0.0'),
 }));
 
 import * as tauri from '@/lib/tauri';
@@ -59,11 +65,14 @@ const testManifestWithIcons: PluginManifest = {
 describe('pluginStore', () => {
   beforeEach(() => {
     vi.mocked(tauri.pluginList).mockReset();
+    __resetCachedAppVersionForTest();
+    __setCachedAppVersionForTest('1.0.0');
     useViewStore.setState({ providers: [] });
     usePluginStore.setState({ manifests: [], loading: false, error: null });
     useSettingsStore.setState({
       settings: { ...useSettingsStore.getState().settings, disabledPlugins: [] },
-    });
+      loaded: true,
+    } as any);
   });
 
   it('fetchPlugins registers enabled plugins as view providers', async () => {
@@ -172,5 +181,51 @@ describe('pluginStore', () => {
     expect(img?.icon).toEqual({ kind: 'img', src: 'plugin://icon-test/icon.png' });
     expect(unk?.icon).toEqual({ kind: 'react', node: expect.anything() });
     expect(none?.icon).toEqual({ kind: 'react', node: expect.anything() });
+  });
+
+  it('fetchPlugins treats incompatible plugin as disabled (no view, no injection) and persists', async () => {
+    __setCachedAppVersionForTest('1.0.0');
+    const incompatibleManifest: PluginManifest = {
+      id: 'need-new',
+      version: '1.0.0',
+      name: 'NeedNew',
+      publisher: 'test',
+      description: '',
+      capabilities: ['ui.inject'],
+      views: [{ id: 'v1', mount: 'sidebar', title: 'NeedNew', order: 10, entry: 'index.html' }],
+      agentTools: [],
+      injections: [{ id: 'main', matches: ['*'], styles: [], scripts: ['a.js'], runAt: 'idle', order: 100 }],
+      minAppVersion: '1.0.1',
+    };
+    vi.mocked(tauri.pluginList).mockResolvedValue([incompatibleManifest]);
+    await usePluginStore.getState().fetchPlugins();
+
+    // 视图不应注册，保证首装不兼容永不加载
+    expect(useViewStore.getState().providers.map((p) => p.id)).not.toContain('need-new.v1');
+    // 仍保留在 manifests 供设置页展示横幅
+    expect(usePluginStore.getState().manifests.map((m) => m.id)).toContain('need-new');
+    // 已自动写入 disabledPlugins，兼容后需手动开启
+    expect(useSettingsStore.getState().settings.disabledPlugins).toContain('need-new');
+  });
+
+  it('fetchPlugins does not treat compatible plugin as disabled', async () => {
+    __setCachedAppVersionForTest('1.0.1');
+    const compatibleManifest: PluginManifest = {
+      id: 'need-new',
+      version: '1.0.0',
+      name: 'NeedNew',
+      publisher: 'test',
+      description: '',
+      capabilities: [],
+      views: [{ id: 'v1', mount: 'sidebar', title: 'NeedNew', order: 10, entry: 'index.html' }],
+      agentTools: [],
+      injections: [],
+      minAppVersion: '1.0.1',
+    };
+    vi.mocked(tauri.pluginList).mockResolvedValue([compatibleManifest]);
+    await usePluginStore.getState().fetchPlugins();
+
+    expect(useViewStore.getState().providers.map((p) => p.id)).toContain('need-new.v1');
+    expect(useSettingsStore.getState().settings.disabledPlugins).not.toContain('need-new');
   });
 });

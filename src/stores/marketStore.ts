@@ -55,10 +55,11 @@ export const useMarketStore = create<MarketState>((set, get) => ({
     set((s) => ({ installedOverrides: { ...s.installedOverrides, [id]: false } })),
 
   fetch: async () => {
+    if (get().loading) return;
     set({ loading: true, error: null });
     try {
       const index = await marketList(get().sourceUrl || undefined);
-      set({ plugins: index.plugins ?? [], loading: false });
+      set({ plugins: index.plugins ?? [], loading: false, error: null });
     } catch (e) {
       set({ loading: false, error: getErrorMessage(e) });
     }

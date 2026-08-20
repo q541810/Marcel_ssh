@@ -1,21 +1,25 @@
-import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2, ArrowUpCircle } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { getPluginDir, openPluginDir, pluginUninstall } from '@/lib/tauri';
+import { listen } from '@tauri-apps/api/event';
+import { getPluginDir, openPluginDir, pluginUninstall, pluginUpdate, pluginInstallCancel } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useMarketStore } from '@/stores/marketStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import type { PluginManifest } from '@/lib/types';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel } from '@/lib/pluginCapabilities';
-import { getErrorMessage } from '@/lib/errors';
+import { getErrorMessage, parseAppError } from '@/lib/errors';
 import { useAppVersion } from '@/hooks/useAppVersion';
 import { getInjectionStatuses, onStatusChange, retryInjection, type InjectionStatus } from '@/plugins/injection';
 import Toggle from '@/components/ui/Toggle';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
+import InstallOverlay, { type InstallOverlayStatus, type InstallOverlayProgress } from '@/components/market/InstallOverlay';
 import { useSettingsActions } from './SettingsActionsContext';
 import { Card, SettingItem } from './helpers';
 import PluginConfigModal from './PluginConfigModal';
+import { usePluginUpdates } from '@/hooks/usePluginUpdates';
 
 const MOUNT_LABELS: Record<string, string> = {
   sidebar: '左侧面板',
@@ -131,7 +135,13 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
     } else {
       newMap[pluginId] = next;
     }
+    // 立即落盘（与 PluginWebviewSlot 的“禁用此插件”一致），避免“有未保存的更改”横幅
+    const prevMap = authorizedMap;
     update({ authorizedCapabilities: newMap });
+    void useSettingsStore.getState().update({ authorizedCapabilities: newMap }).catch((e) => {
+      console.error('保存权限失败:', e);
+      update({ authorizedCapabilities: prevMap as Record<string, string[]> });
+    });
   };
 
   return (
@@ -157,17 +167,101 @@ function CapabilityManager({ pluginId, declared }: { pluginId: string; declared:
   );
 }
 
-function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: PluginManifest; appVersion: string; injectionStatus?: InjectionStatus }) {
+function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onRestartHint }: { manifest: PluginManifest; appVersion: string; injectionStatus?: InjectionStatus; updateInfo?: { marketVersion: string; repoUrl: string }; onRestartHint?: (kind: 'enable' | 'disable', name: string) => void }) {
   const { settings, update } = useSettingsActions();
   const disabledSet = new Set(settings.disabledPlugins ?? []);
   const isDisabled = disabledSet.has(manifest.id);
   const [showCapabilities, setShowCapabilities] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
   const [showRestartHint, setShowRestartHint] = useState(false);
+  const [restartHintKind, setRestartHintKind] = useState<'enable' | 'disable'>('disable');
   const [showUninstall, setShowUninstall] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const [uninstallDone, setUninstallDone] = useState(false);
   const [uninstallError, setUninstallError] = useState<string | null>(null);
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [updateDone, setUpdateDone] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [overlayOpen, setOverlayOpen] = useState(false);
+  const [overlayStatus, setOverlayStatus] = useState<InstallOverlayStatus>({ kind: 'running' });
+  const [overlayProgress, setOverlayProgress] = useState<InstallOverlayProgress | null>(null);
+  const [installId, setInstallId] = useState<string | null>(null);
+
+  const hasUpdate = !!updateInfo && !updateDone && !uninstallDone;
+  const sourceUrl = useMarketStore((s) => s.sourceUrl);
+
+  const handleUpdate = useCallback(async () => {
+    if (!updateInfo) return;
+    setShowUpdateConfirm(false);
+    setUpdateError(null);
+    const id = crypto.randomUUID();
+    setInstallId(id);
+    setOverlayStatus({ kind: 'running' });
+    setOverlayProgress(null);
+    setOverlayOpen(true);
+    setUpdating(true);
+
+    const [unlistenProgress, unlistenDone, unlistenCancelled] = await Promise.all([
+      listen<{ installId: string; phase: string; received: number; total: number }>(
+        'plugin-install-progress',
+        (e) => {
+          if (e.payload.installId !== id) return;
+          setOverlayProgress({ received: e.payload.received, total: e.payload.total });
+        },
+      ),
+      listen<{ installId: string }>('plugin-install-done', (e) => {
+        if (e.payload.installId !== id) return;
+        setOverlayStatus({ kind: 'done' });
+        setUpdateDone(true);
+        setUpdating(false);
+      }),
+      listen<{ installId: string }>('plugin-install-cancelled', (e) => {
+        if (e.payload.installId !== id) return;
+        setOverlayStatus({ kind: 'cancelled' });
+        setUpdating(false);
+      }),
+    ]);
+
+    try {
+      await pluginUpdate(updateInfo.repoUrl, id, sourceUrl || undefined);
+      setOverlayStatus({ kind: 'done' });
+      setUpdateDone(true);
+      setUpdating(false);
+    } catch (e) {
+      const parsed = parseAppError(e);
+      if (parsed.kind === 'Cancelled' || parsed.message.includes('取消')) {
+        setOverlayStatus({ kind: 'cancelled' });
+      } else {
+        const msg = getErrorMessage(e);
+        setOverlayStatus({ kind: 'error', message: msg });
+        setUpdateError(msg);
+      }
+      setUpdating(false);
+    } finally {
+      unlistenProgress();
+      unlistenDone();
+      unlistenCancelled();
+    }
+  }, [updateInfo, sourceUrl]);
+
+  const handleCancelUpdate = useCallback(async () => {
+    if (!installId) return;
+    setOverlayStatus({ kind: 'cancelling' });
+    try {
+      await pluginInstallCancel(installId);
+    } catch {
+      setOverlayStatus({ kind: 'cancelled' });
+      setUpdating(false);
+    }
+  }, [installId]);
+
+  const handleOverlayClose = useCallback(() => {
+    setOverlayOpen(false);
+    if (overlayStatus.kind === 'done') {
+      setUpdateDone(true);
+    }
+  }, [overlayStatus.kind]);
 
   const handleUninstall = async () => {
     setUninstalling(true);
@@ -196,15 +290,24 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
 
   const togglePlugin = () => {
     const current = settings.disabledPlugins ?? [];
-    const next = isDisabled
+    const enabling = isDisabled;
+    const next = enabling
       ? current.filter((id) => id !== manifest.id)
       : [...current, manifest.id];
+    // 乐观更新 draft 保 UI 即时
     update({ disabledPlugins: next });
+    // 立即落盘（与 PluginWebviewSlot 的“禁用此插件”一致），避免“有未保存的更改”
+    void useSettingsStore.getState().update({ disabledPlugins: next }).catch((e) => {
+      console.error('保存插件开关失败:', e);
+      update({ disabledPlugins: current });
+    });
 
-    // 禁用插件后提示：插件创建的独立窗口在禁用后不会自动关闭，
-    // 重启是最简单可靠的清理方式。不检查插件是否有窗口——
-    // 禁用是低频操作，多一次确认不影响体验。
-    if (!isDisabled) {
+    // 启用/禁用均提示重启：禁用后独立窗口不会自动关闭，启用后新视图/注入需重启才完全生效
+    const kind = enabling ? 'enable' as const : 'disable' as const;
+    if (onRestartHint) {
+      onRestartHint(kind, manifest.name);
+    } else {
+      setRestartHintKind(kind);
       setShowRestartHint(true);
     }
   };
@@ -225,7 +328,13 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-zinc-100 truncate">{manifest.name}</span>
-                <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
+                {hasUpdate ? (
+                  <span className="text-[11px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 px-1.5 py-0.5 rounded flex items-center gap-1 flex-shrink-0">
+                    v{manifest.version} <span className="text-emerald-500">→</span> v{updateInfo.marketVersion}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded flex-shrink-0">v{manifest.version}</span>
+                )}
               </div>
               {manifest.publisher && (
                 <div className="text-xs text-zinc-500 mt-0.5">{manifest.publisher}</div>
@@ -233,10 +342,23 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {hasUpdate && (
+              <Button
+                variant="primary"
+                size="sm"
+                loading={updating}
+                disabled={incompatible || uninstallDone || updating}
+                onClick={() => setShowUpdateConfirm(true)}
+                title={`更新至 v${updateInfo.marketVersion}（保留个人数据）`}
+              >
+                <ArrowUpCircle className="w-3.5 h-3.5" />
+                更新
+              </Button>
+            )}
             <Button
               variant="danger"
               size="sm"
-              disabled={uninstallDone}
+              disabled={uninstallDone || updating}
               onClick={() => setShowUninstall(true)}
               title="卸载插件（删除目录及其数据）"
             >
@@ -261,7 +383,7 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
             <Toggle
               checked={!isDisabled && !incompatible}
               onChange={togglePlugin}
-              disabled={incompatible || uninstallDone}
+              disabled={incompatible || uninstallDone || updating}
             />
           </div>
         </div>
@@ -272,6 +394,20 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
           <p className="text-xs text-emerald-400 leading-relaxed">
             已卸载，重启应用后完全移除
           </p>
+        </div>
+      )}
+
+      {/* 更新完成提示 */}
+      {updateDone && (
+        <div className="px-5 py-3 border-b border-zinc-800 bg-emerald-500/5">
+          <p className="text-xs text-emerald-400 leading-relaxed">
+            已更新至 v{updateInfo?.marketVersion}，重启应用后生效
+          </p>
+        </div>
+      )}
+      {updateError && !updateDone && (
+        <div className="px-5 py-3 border-b border-zinc-800 bg-red-500/5">
+          <p className="text-xs text-red-400 leading-relaxed break-all">{updateError}</p>
         </div>
       )}
 
@@ -393,7 +529,11 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
       size="sm"
     >
       <div className="px-4 py-3 text-sm text-zinc-300">
-        <p>某些插件禁用后窗口不会完全关闭，重启应用可以解决。</p>
+        <p>
+          {restartHintKind === 'enable'
+            ? '某些插件启用后视图或功能不会立即生效，重启应用可以解决。'
+            : '某些插件禁用后窗口不会完全关闭，重启应用可以解决。'}
+        </p>
       </div>
       <div className="flex justify-end px-4 py-3 border-t border-zinc-700">
         <Button
@@ -439,6 +579,40 @@ function PluginCard({ manifest, appVersion, injectionStatus }: { manifest: Plugi
         </Button>
       </div>
     </Modal>
+
+    <Modal
+      open={showUpdateConfirm}
+      onClose={() => setShowUpdateConfirm(false)}
+      title="更新插件"
+      size="sm"
+    >
+      <div className="px-4 py-3 text-sm text-zinc-300 leading-relaxed">
+        <p>
+          确定将「{manifest.name}」从 v{manifest.version} 更新至 v{updateInfo?.marketVersion}？
+        </p>
+        <p className="mt-2 text-xs text-zinc-400">
+          将用新版本覆盖插件文件，个人数据（如记忆、配置）会保留，旧版多余文件会被清理。重启后生效。
+        </p>
+      </div>
+      <div className="flex justify-end gap-2 px-4 py-3 border-t border-zinc-700">
+        <Button variant="secondary" size="sm" onClick={() => setShowUpdateConfirm(false)}>
+          取消
+        </Button>
+        <Button variant="primary" size="sm" onClick={handleUpdate}>
+          更新
+        </Button>
+      </div>
+    </Modal>
+
+    <InstallOverlay
+      open={overlayOpen}
+      kind="update"
+      pluginName={manifest.name}
+      status={overlayStatus}
+      progress={overlayProgress}
+      onCancel={handleCancelUpdate}
+      onClose={handleOverlayClose}
+    />
     </>
   );
 }
@@ -448,8 +622,13 @@ export function PluginSection() {
   const loading = usePluginStore((s) => s.loading);
   const error = usePluginStore((s) => s.error);
   const fetchPlugins = usePluginStore((s) => s.fetchPlugins);
+  const marketPlugins = useMarketStore((s) => s.plugins);
+  const marketLoading = useMarketStore((s) => s.loading);
+  const marketError = useMarketStore((s) => s.error);
+  const fetchMarket = useMarketStore((s) => s.fetch);
   const [pluginDir, setPluginDir] = useState('');
   const [copied, setCopied] = useState(false);
+  const [globalRestartHint, setGlobalRestartHint] = useState<{ kind: 'enable' | 'disable'; name: string } | null>(null);
   const appVersion = useAppVersion();
 
   const injectionStatuses = useInjectionStatuses();
@@ -459,11 +638,21 @@ export function PluginSection() {
     getPluginDir().then(setPluginDir);
   }, []);
 
+  // 后台自动检查更新（不阻塞启动，失败静默；仅在首次进入且未检查失败时自动拉一次）
+  useEffect(() => {
+    if (marketPlugins.length === 0 && !marketLoading && !marketError) {
+      void fetchMarket();
+    }
+  }, [marketPlugins.length, marketLoading, marketError, fetchMarket]);
+
   const handleCopy = async () => {
     await writeText(pluginDir);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const updateMap = usePluginUpdates(manifests, marketPlugins);
+  const updateCount = updateMap.size;
 
   return (
     <div className="space-y-6">
@@ -518,6 +707,36 @@ export function PluginSection() {
         </div>
       )}
 
+      {/* Update summary + manual check */}
+      {!loading && !error && manifests.length > 0 && (
+        <div className="flex items-center justify-between px-1">
+          <div className="text-xs text-zinc-500">
+            {marketLoading ? (
+              <span className="inline-flex items-center gap-1.5">
+                <RotateCw className="w-3 h-3 animate-spin" />
+                正在检查更新…
+              </span>
+            ) : updateCount > 0 ? (
+              <span className="text-emerald-400">发现 {updateCount} 个可更新插件</span>
+            ) : marketError ? (
+              <span className="text-amber-400">检查更新失败</span>
+            ) : (
+              <span>已是最新</span>
+            )}
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={marketLoading}
+            onClick={() => void fetchMarket()}
+            title="检查插件更新"
+          >
+            <RotateCw className="w-3.5 h-3.5" />
+            检查更新
+          </Button>
+        </div>
+      )}
+
       {/* Plugin cards */}
       {!loading && !error && manifests.length === 0 && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-6 py-12 text-center">
@@ -527,14 +746,39 @@ export function PluginSection() {
         </div>
       )}
 
-      {!loading && !error && manifests.map((m) => (
-        <PluginCard
-          key={m.id}
-          manifest={m}
-          appVersion={appVersion}
-          injectionStatus={statusByPlugin.get(m.id)}
-        />
-      ))}
+      {!loading && !error && manifests.map((m) => {
+        const info = updateMap.get(m.id);
+        return (
+          <PluginCard
+            key={m.id}
+            manifest={m}
+            appVersion={appVersion}
+            injectionStatus={statusByPlugin.get(m.id)}
+            updateInfo={info ? { marketVersion: info.marketVersion, repoUrl: info.marketPlugin.repoUrl } : undefined}
+            onRestartHint={(kind, name) => setGlobalRestartHint({ kind, name })}
+          />
+        );
+      })}
+
+      <Modal
+        open={!!globalRestartHint}
+        onClose={() => setGlobalRestartHint(null)}
+        title="重启提示"
+        size="sm"
+      >
+        <div className="px-4 py-3 text-sm text-zinc-300">
+          <p>
+            {globalRestartHint?.kind === 'enable'
+              ? `插件「${globalRestartHint?.name}」已启用，某些视图或功能不会立即生效，重启应用可以解决。`
+              : `插件「${globalRestartHint?.name}」已禁用，某些窗口不会完全关闭，重启应用可以解决。`}
+          </p>
+        </div>
+        <div className="flex justify-end px-4 py-3 border-t border-zinc-700">
+          <Button variant="primary" size="sm" onClick={() => setGlobalRestartHint(null)}>
+            知道了
+          </Button>
+        </div>
+      </Modal>
 
     </div>
   );

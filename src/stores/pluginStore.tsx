@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { Plug } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
 import type { PluginManifest, PluginViewDef, ReloadDiff, ViewProvider } from '@/lib/types';
 import { useViewStore } from '@/stores/viewStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { satisfiesMinVersion } from '@/lib/semver';
 import {
   destroyAll as destroyAllWebviews,
   destroyByPlugin as destroyWebviewByPlugin,
@@ -62,6 +64,51 @@ function getDisabledPlugins(): Set<string> {
   return new Set(useSettingsStore.getState().settings.disabledPlugins ?? []);
 }
 
+/**
+ * 计算因版本不兼容而应视为禁用的插件集合。
+ * 必须在任何视图注册/注入激活之前执行，保证首装不兼容插件永不加载。
+ * 复用 disabled 语义：不兼容 == 关闭，用户升级后需手动开启。
+ */
+function getIncompatibleIds(manifests: PluginManifest[], appVersion: string): Set<string> {
+  const out = new Set<string>();
+  if (!appVersion) return out;
+  for (const m of manifests) {
+    const min = m.minAppVersion;
+    if (min && !satisfiesMinVersion(appVersion, min)) {
+      out.add(m.id);
+    }
+  }
+  return out;
+}
+
+function getEffectiveDisabled(manifests: PluginManifest[], appVersion: string): Set<string> {
+  const disabled = getDisabledPlugins();
+  const incompatible = getIncompatibleIds(manifests, appVersion);
+  for (const id of incompatible) disabled.add(id);
+  return disabled;
+}
+
+let cachedAppVersion: string | null = null;
+async function resolveAppVersion(): Promise<string> {
+  if (cachedAppVersion !== null) return cachedAppVersion;
+  try {
+    const v = await getVersion();
+    cachedAppVersion = v;
+    return v;
+  } catch {
+    cachedAppVersion = '';
+    return '';
+  }
+}
+
+// test-only helpers
+export function __setCachedAppVersionForTest(v: string | null): void {
+  cachedAppVersion = v;
+}
+export function __resetCachedAppVersionForTest(): void {
+  cachedAppVersion = null;
+}
+
 /** Whether a plugin is allowed to inject content scripts. Requires:
  *  - declares `ui.inject` capability
  *  - has at least one injection def
@@ -89,11 +136,11 @@ interface PluginState {
     *  activates for newly-enabled ones. Called after fetchPlugins and on
     *  settings changes (disabledPlugins / disableAllInjections /
     *  authorizedCapabilities). */
-  syncInjections: () => void;
+  syncInjections: () => void | Promise<void>;
   /** Re-run already-active injections after React remounts a region and destroys
     *  plugin-owned DOM nodes. Unlike syncInjections, this is only for remount
     *  recovery and intentionally re-executes existing runtimes. */
-  rehydrateInjections: () => void;
+  rehydrateInjections: () => void | Promise<void>;
 }
 
 /**
@@ -176,15 +223,32 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const manifests = await tauri.pluginList();
-      const disabled = getDisabledPlugins();
+      const appVersion = await resolveAppVersion();
+      const effectiveDisabled = getEffectiveDisabled(manifests, appVersion);
       const oldManifests = get().manifests;
 
       // Diff: only destroy/recreate webviews + injections + view providers
       // for plugins whose manifest changed or were removed/disabled. This
       // avoids the flicker / state-loss of the previous nuke-and-rebuild.
-      applyPluginDiff(oldManifests, manifests, disabled);
+      // 关键时序：版本不兼容在注册前已并入 effectiveDisabled，保证首装不兼容永不加载。
+      applyPluginDiff(oldManifests, manifests, effectiveDisabled);
 
       set({ manifests, loading: false, refreshKey: Date.now() });
+
+      // 持久化：不兼容插件直接写入 disabledPlugins，复用关闭语义，兼容后需用户手动开启
+      if (appVersion) {
+        const disabledNow = getDisabledPlugins();
+        const incompatible = getIncompatibleIds(manifests, appVersion);
+        const toPersist: string[] = [];
+        for (const id of incompatible) {
+          if (!disabledNow.has(id)) toPersist.push(id);
+        }
+        if (toPersist.length > 0) {
+          const nextDisabled = Array.from(effectiveDisabled);
+          // fire-and-forget，避免与当前 reload 锁死
+          useSettingsStore.getState().update({ disabledPlugins: nextDisabled }).catch(console.error);
+        }
+      }
 
       // Activate injections for eligible plugins (fire-and-forget; resource
       // fetches happen asynchronously).
@@ -194,13 +258,15 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     }
   },
 
-  syncInjections: () => {
+  syncInjections: async () => {
     const manifests = get().manifests;
-    const disabled = getDisabledPlugins();
+    // 保证版本检查在任何注入激活前完成；首装时序关键路径
+    const appVersion = cachedAppVersion !== null ? cachedAppVersion : await resolveAppVersion();
+    const effectiveDisabled = getEffectiveDisabled(manifests, appVersion);
     const desired = new Set<string>();
 
     for (const m of manifests) {
-      if (disabled.has(m.id)) continue;
+      if (effectiveDisabled.has(m.id)) continue;
       if (!isInjectionsAuthorized(m)) continue;
       desired.add(m.id);
     }
@@ -228,12 +294,14 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     }
   },
 
-  rehydrateInjections: () => {
+  rehydrateInjections: async () => {
     const manifests = get().manifests;
+    const appVersion = cachedAppVersion !== null ? cachedAppVersion : await resolveAppVersion();
+    const effectiveDisabled = getEffectiveDisabled(manifests, appVersion);
     const activePluginIds = new Set(getAllRuntimes().map((rt) => rt.pluginId));
     for (const m of manifests) {
       if (!activePluginIds.has(m.id)) continue;
-      if (getDisabledPlugins().has(m.id)) continue;
+      if (effectiveDisabled.has(m.id)) continue;
       if (!isInjectionsAuthorized(m)) continue;
       rehydratePluginInjections(m).catch((err) => {
         console.error(`[pluginStore] rehydration failed for ${m.id}:`, err);

@@ -17,7 +17,7 @@ export type InstallOverlayStatus =
   /** 失败。 */
   | { kind: 'error'; message: string };
 
-export type InstallOverlayKind = 'install' | 'uninstall';
+export type InstallOverlayKind = 'install' | 'uninstall' | 'update';
 
 /** 进行中进度（received/total；total 为 0 时显示不确定进度条）。 */
 export interface InstallOverlayProgress {
@@ -83,7 +83,12 @@ export default function InstallOverlay({
   switch (status.kind) {
     case 'running':
     case 'cancelling':
-      title = kind === 'install' ? '正在安装插件' : '正在卸载插件';
+      title =
+        kind === 'install'
+          ? '正在安装插件'
+          : kind === 'update'
+            ? '正在更新插件'
+            : '正在卸载插件';
       if (status.kind === 'cancelling') {
         icon = (
           <span className={`${iconClass} block text-zinc-400`}>
@@ -101,8 +106,12 @@ export default function InstallOverlay({
         body = (
           <div className="space-y-3">
             <p className="text-sm text-zinc-400">
-              {kind === 'install' ? '下载并解压插件源码' : '正在删除插件目录及其数据'}
-              {kind === 'install' && progress && (
+              {kind === 'install'
+                ? '下载并解压插件源码'
+                : kind === 'update'
+                  ? '下载并更新插件（保留个人数据）'
+                  : '正在删除插件目录及其数据'}
+              {(kind === 'install' || kind === 'update') && progress && (
                 <span className="block text-xs text-zinc-500 mt-1">
                   {progress.total > 0
                     ? `${progress.received} / ${progress.total}`
@@ -134,12 +143,14 @@ export default function InstallOverlay({
       break;
     case 'done':
       icon = <Check className={`${iconClass} text-emerald-400`} />;
-      title = kind === 'install' ? '安装完成' : '卸载完成';
+      title = kind === 'install' ? '安装完成' : kind === 'update' ? '更新完成' : '卸载完成';
       body = (
         <p className="text-sm text-zinc-300 leading-relaxed">
           {kind === 'install'
             ? '插件已安装到本地，重启应用后插件生效。'
-            : '插件目录已删除，重启应用后完全移除。'}
+            : kind === 'update'
+              ? '插件已更新，重启应用后生效。'
+              : '插件目录已删除，重启应用后完全移除。'}
         </p>
       );
       footer = (
@@ -150,7 +161,7 @@ export default function InstallOverlay({
       break;
     case 'cancelled':
       icon = <X className={`${iconClass} text-zinc-400`} />;
-      title = kind === 'install' ? '已取消安装' : '已取消卸载';
+      title = kind === 'install' ? '已取消安装' : kind === 'update' ? '已取消更新' : '已取消卸载';
       body = <p className="text-sm text-zinc-400">未留下任何残留文件。</p>;
       footer = (
         <Button variant="primary" size="sm" onClick={onClose}>
@@ -160,7 +171,7 @@ export default function InstallOverlay({
       break;
     case 'error':
       icon = <AlertTriangle className={`${iconClass} text-red-400`} />;
-      title = kind === 'install' ? '安装失败' : '卸载失败';
+      title = kind === 'install' ? '安装失败' : kind === 'update' ? '更新失败' : '卸载失败';
       body = (
         <p className="text-xs text-red-400 leading-relaxed break-all max-h-28 overflow-y-auto">
           {status.message}

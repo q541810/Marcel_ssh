@@ -103,6 +103,8 @@ export interface PluginManifest {
    * refuses to load it and the settings UI shows the required version.
    */
   minAppVersion?: string;
+  /** Relative paths preserved across updates (e.g. config.json, memories/). */
+  preservePaths?: string[];
 }
 
 export interface PluginHttpRequest {

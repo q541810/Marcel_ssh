@@ -961,6 +961,19 @@ export async function pluginInstallCancel(installId: string): Promise<void> {
   return invoke('plugin_install_cancel', { installId });
 }
 
+/** Update an installed plugin (mirror-first, preserve user data). */
+export async function pluginUpdate(
+  repoUrl: string,
+  installId: string,
+  mirror?: string,
+): Promise<PluginInstallResult> {
+  return invoke<PluginInstallResult>('plugin_update', {
+    repoUrl,
+    installId,
+    mirror: mirror ?? null,
+  });
+}
+
 /** Remove an installed plugin (directory + settings residue). */
 export async function pluginUninstall(pluginId: string): Promise<void> {
   return invoke('plugin_uninstall', { pluginId });

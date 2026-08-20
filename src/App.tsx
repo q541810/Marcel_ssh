@@ -22,6 +22,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { usePluginStore } from '@/stores/pluginStore';
+import { useMarketStore } from '@/stores/marketStore';
 import { useSyncStore } from '@/stores/syncStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
@@ -351,6 +352,8 @@ export default function App() {
     checkUpdate().then(res => {
       if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
     }).catch(() => {});
+    // 插件市场后台检查更新（不阻塞启动）
+    void useMarketStore.getState().fetch().catch(() => {});
   }, [loadSettings, fetchSkills]);
 
   // 设置加载完成、或 disabledPlugins 变化时再拉插件并对齐 viewStore。
