@@ -29,18 +29,23 @@ pub async fn config_save_connection(
     let id = connection.id.clone();
 
     let mut store = state.connection_store.write().await;
-    store.remove(&id);
-    store.add(connection);
+    let mut candidate = store.clone();
+    candidate.remove(&id);
+    candidate.add(connection);
 
-    // Persist
+    // 先持久化候选快照，成功后再提交内存。
     let path = ConnectionStore::default_file(&state.config_dir);
-    tokio::task::block_in_place(|| store.save_to_path(&path))?;
+    tokio::task::block_in_place(|| candidate.save_to_path(&path))?;
+    *store = candidate;
 
     // 触发跨设备同步：connections 变更
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
             let store_snapshot = store.clone();
-            let _ = engine.record_local_change(&format!("connections.{}", id), &serde_json::to_string(&store_snapshot).unwrap_or_default());
+            let _ = engine.record_local_change(
+                &format!("connections.{}", id),
+                &serde_json::to_string(&store_snapshot).unwrap_or_default(),
+            );
             scheduler.schedule_push();
         }
     }
@@ -56,11 +61,13 @@ pub async fn config_delete_connection(
     id: String,
 ) -> Result<(), AppError> {
     let mut store = state.connection_store.write().await;
-    if !store.remove(&id) {
+    let mut candidate = store.clone();
+    if !candidate.remove(&id) {
         return Err(AppError::Config(format!("未找到连接: {}", id)));
     }
     let path = ConnectionStore::default_file(&state.config_dir);
-    tokio::task::block_in_place(|| store.save_to_path(&path))?;
+    tokio::task::block_in_place(|| candidate.save_to_path(&path))?;
+    *store = candidate;
 
     // 触发跨设备同步：connections 删除
     if let Some(ref scheduler) = state.sync_scheduler {

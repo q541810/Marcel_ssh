@@ -27,7 +27,6 @@ pub struct SettingsResponse {
     pub warning: Option<String>,
 }
 
-
 /// Check if the given API key looks like a masked placeholder.
 /// Front-end displays "sk-******" when a key exists in the keychain but
 /// is not sent to the frontend (for security).
@@ -92,34 +91,22 @@ pub async fn config_save_settings(
         }
     }
 
-    let snapshot = {
-        let mut current = state.settings.write().await;
+    let mut snapshot = settings;
+    {
+        let current = state.settings.read().await;
         // Preserve the in-memory API key when the frontend sends an empty or masked value.
-        // The key is not serialized (skip_serializing), so the frontend always sees ""
-        // or "sk-******". Overwriting the entire settings object would lose the real key
-        // from memory, causing it to be gone on the next restart.
-        if let Some(ref new_llm) = settings.llm_config {
+        if let Some(ref mut new_llm) = snapshot.llm_config {
             if new_llm.api_key.is_empty() || is_masked_key(&new_llm.api_key) {
                 if let Some(ref old_llm) = current.llm_config {
-                    let mut final_settings = settings;
-                    if let Some(ref mut llm) = final_settings.llm_config {
-                        llm.api_key = old_llm.api_key.clone();
-                    }
-                    *current = final_settings;
-                } else {
-                    *current = settings;
+                    new_llm.api_key = old_llm.api_key.clone();
                 }
-            } else {
-                *current = settings;
             }
-        } else {
-            *current = settings;
         }
-        current.clone()
-    };
-    // Write lock released — perform disk I/O without blocking readers.
+    }
+    // 先持久化候选快照，成功后才提交内存；写盘失败保持旧状态。
     let path = AppSettings::default_file(&state.config_dir);
     tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
+    *state.settings.write().await = snapshot.clone();
 
     // 触发跨设备同步：settings 字段级 diff，对变更字段逐个 record_local_change
     if let Some(ref scheduler) = state.sync_scheduler {

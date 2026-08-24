@@ -23,10 +23,12 @@ pub async fn quick_command_add(
     command: QuickCommandInput,
 ) -> Result<QuickCommand, AppError> {
     let mut store = state.quick_command_store.write().await;
+    let mut candidate = store.clone();
     let id = Uuid::new_v4().to_string();
-    let created = store.add(id.clone(), command)?;
+    let created = candidate.add(id.clone(), command)?;
     let path = QuickCommandStore::default_file(&state.config_dir);
-    store.save_to_path(&path)?;
+    candidate.save_to_path(&path)?;
+    *store = candidate;
 
     // 触发跨设备同步：quickCommands 变更
     if let Some(ref scheduler) = state.sync_scheduler {
@@ -50,15 +52,17 @@ pub async fn quick_command_update(
 ) -> Result<(), AppError> {
     let updated = {
         let mut store = state.quick_command_store.write().await;
-        store.update(&id, patch)?;
-        let updated = store
+        let mut candidate = store.clone();
+        candidate.update(&id, patch)?;
+        let updated = candidate
             .commands
             .iter()
             .find(|c| c.id == id)
             .cloned()
             .ok_or_else(|| AppError::Config(format!("未找到快捷指令: {}", id)))?;
         let path = QuickCommandStore::default_file(&state.config_dir);
-        store.save_to_path(&path)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
         updated
     };
 
@@ -79,11 +83,13 @@ pub async fn quick_command_update(
 #[tauri::command]
 pub async fn quick_command_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let mut store = state.quick_command_store.write().await;
-    if !store.remove(&id) {
+    let mut candidate = store.clone();
+    if !candidate.remove(&id) {
         return Err(AppError::Config(format!("未找到快捷指令: {}", id)));
     }
     let path = QuickCommandStore::default_file(&state.config_dir);
-    store.save_to_path(&path)?;
+    candidate.save_to_path(&path)?;
+    *store = candidate;
     drop(store);
 
     // 触发跨设备同步：quickCommands 删除

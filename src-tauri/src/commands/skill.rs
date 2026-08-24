@@ -56,12 +56,16 @@ pub async fn skill_add(
     if prompt.trim().is_empty() {
         return Err(AppError::Config("Skill 提示词不能为空".into()));
     }
-    let skill = Skill::new(name, description, prompt);
-    let cloned = skill.clone();
     let path = SkillStore::default_file(&state.config_dir);
     let mut store = state.skill_store.write().await;
-    store.add(skill);
-    store.save_to_path(&path)?;
+    let mut candidate = store.clone();
+    let mut skill = Skill::new(name, description, prompt);
+    // 新 skill 追加到用户排序列表末尾
+    skill.position = candidate.next_position();
+    let cloned = skill.clone();
+    candidate.add(skill);
+    candidate.save_to_path(&path)?;
+    *store = candidate;
     drop(store);
 
     // 触发跨设备同步：skills 变更
@@ -86,6 +90,11 @@ pub async fn skill_update(
     description: Option<String>,
     prompt: Option<String>,
 ) -> Result<(), AppError> {
+    if crate::skills::builtin::is_builtin_skill_id(&id) {
+        return Err(AppError::Config(
+            "内置 Skill 不可编辑，只能启用或禁用".into(),
+        ));
+    }
     if let Some(ref n) = name {
         if n.trim().is_empty() {
             return Err(AppError::Config("skill name cannot be empty".into()));
@@ -99,14 +108,16 @@ pub async fn skill_update(
     let path = SkillStore::default_file(&state.config_dir);
     let updated = {
         let mut store = state.skill_store.write().await;
-        if !store.update(&id, name, description, prompt) {
+        let mut candidate = store.clone();
+        if !candidate.update(&id, name, description, prompt) {
             return Err(AppError::Config(format!("skill not found: {}", id)));
         }
-        let updated = store
+        let updated = candidate
             .get(&id)
             .cloned()
             .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
-        store.save_to_path(&path)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
         updated
     };
 
@@ -129,14 +140,16 @@ pub async fn skill_toggle(state: State<'_, AppState>, id: String) -> Result<(), 
     let path = SkillStore::default_file(&state.config_dir);
     let updated = {
         let mut store = state.skill_store.write().await;
-        if !store.toggle(&id) {
+        let mut candidate = store.clone();
+        if !candidate.toggle(&id) {
             return Err(AppError::Config(format!("skill not found: {}", id)));
         }
-        let updated = store
+        let updated = candidate
             .get(&id)
             .cloned()
             .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
-        store.save_to_path(&path)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
         updated
     };
 
@@ -156,12 +169,19 @@ pub async fn skill_toggle(state: State<'_, AppState>, id: String) -> Result<(), 
 
 #[tauri::command]
 pub async fn skill_delete(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    if crate::skills::builtin::is_builtin_skill_id(&id) {
+        return Err(AppError::Config(
+            "内置 Skill 不可删除，可在列表中禁用".into(),
+        ));
+    }
     let path = SkillStore::default_file(&state.config_dir);
     let mut store = state.skill_store.write().await;
-    if !store.delete(&id) {
+    let mut candidate = store.clone();
+    if !candidate.delete(&id) {
         return Err(AppError::Config(format!("skill not found: {}", id)));
     }
-    store.save_to_path(&path)?;
+    candidate.save_to_path(&path)?;
+    *store = candidate;
     drop(store);
 
     // 触发跨设备同步：skills 删除
@@ -169,6 +189,46 @@ pub async fn skill_delete(state: State<'_, AppState>, id: String) -> Result<(), 
         if let Some(ref engine) = state.sync_engine {
             let _ = engine.record_local_delete(&format!("skills.{}", id));
             scheduler.schedule_push();
+        }
+    }
+
+    Ok(())
+}
+
+/// 用户 skill 手动排序（拖拽 / 上移下移）。ids 为完整的用户 skill id 顺序，
+/// 内置 skill 不参与排序（前端置顶展示，后端拒绝）。
+#[tauri::command]
+pub async fn skill_reorder(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), AppError> {
+    if ids
+        .iter()
+        .any(|id| crate::skills::builtin::is_builtin_skill_id(id))
+    {
+        return Err(AppError::Config("内置 Skill 不参与手动排序".into()));
+    }
+    let path = SkillStore::default_file(&state.config_dir);
+    let changed = {
+        let mut store = state.skill_store.write().await;
+        let mut candidate = store.clone();
+        let changed = candidate.apply_user_order(&ids);
+        if !changed.is_empty() {
+            candidate.save_to_path(&path)?;
+            *store = candidate;
+        }
+        changed
+    };
+
+    // 仅推送 position 真正变化的条目（与 last_synced_values 比对去重）
+    if !changed.is_empty() {
+        if let Some(ref scheduler) = state.sync_scheduler {
+            if let Some(ref engine) = state.sync_engine {
+                for skill in &changed {
+                    let _ = engine.record_local_change(
+                        &format!("skills.{}", skill.id),
+                        &serde_json::to_string(skill).unwrap_or_default(),
+                    );
+                }
+                scheduler.schedule_push();
+            }
         }
     }
 

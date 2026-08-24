@@ -33,8 +33,10 @@ pub async fn mcp_add_server(
     let cloned = server.clone();
     let path = McpServerStore::default_file(&state.config_dir);
     let mut store = state.mcp_store.write().await;
-    store.add(server);
-    store.save_to_path(&path)?;
+    let mut candidate = store.clone();
+    candidate.add(server);
+    candidate.save_to_path(&path)?;
+    *store = candidate;
     drop(store);
 
     // 触发跨设备同步：mcpServers 变更
@@ -60,12 +62,14 @@ pub async fn mcp_update_server(
     let path = McpServerStore::default_file(&state.config_dir);
     let updated = {
         let mut store = state.mcp_store.write().await;
-        store.update(&id, input)?;
-        let updated = store
+        let mut candidate = store.clone();
+        candidate.update(&id, input)?;
+        let updated = candidate
             .get(&id)
             .cloned()
             .ok_or_else(|| AppError::Config(format!("MCP server not found: {}", id)))?;
-        store.save_to_path(&path)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
         updated
     };
     state.mcp_manager.clear_cache(&id).await;
@@ -89,8 +93,10 @@ pub async fn mcp_delete_server(state: State<'_, AppState>, id: String) -> Result
     let path = McpServerStore::default_file(&state.config_dir);
     {
         let mut store = state.mcp_store.write().await;
-        store.delete(&id)?;
-        store.save_to_path(&path)?;
+        let mut candidate = store.clone();
+        candidate.delete(&id)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
     }
     state.mcp_manager.clear_cache(&id).await;
 
@@ -110,12 +116,14 @@ pub async fn mcp_toggle_server(state: State<'_, AppState>, id: String) -> Result
     let path = McpServerStore::default_file(&state.config_dir);
     let updated = {
         let mut store = state.mcp_store.write().await;
-        store.toggle(&id)?;
-        let updated = store
+        let mut candidate = store.clone();
+        candidate.toggle(&id)?;
+        let updated = candidate
             .get(&id)
             .cloned()
             .ok_or_else(|| AppError::Config(format!("MCP server not found: {}", id)))?;
-        store.save_to_path(&path)?;
+        candidate.save_to_path(&path)?;
+        *store = candidate;
         updated
     };
     // enabled 不进 tools cache key；Agent 只注册 store 里 enabled 的 server。
