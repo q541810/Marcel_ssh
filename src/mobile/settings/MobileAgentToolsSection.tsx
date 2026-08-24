@@ -19,6 +19,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   webSearchApiProvider: 'brave',
   webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
+  enableHtmlRender: true,
 };
 
 const SEARCH_MODE_OPTIONS: readonly {

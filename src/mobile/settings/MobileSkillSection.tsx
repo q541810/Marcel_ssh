@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FileUp, Plus } from 'lucide-react';
 import type { Skill } from '@/lib/types';
 import { useSkillStore } from '@/stores/skillStore';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { isBuiltinSkill, sortSkillsForDisplay } from '@/lib/builtinSkills';
+import { useLongPressDrag } from '../useLongPressDrag';
 import Toggle from '@/components/ui/Toggle';
 import MobileSheet from '../ui/MobileSheet';
 
@@ -12,6 +14,8 @@ interface FormState {
   name: string;
   description: string;
   prompt: string;
+  /** 内置 skill：只读查看，不可编辑/删除 */
+  readonly?: boolean;
 }
 
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '' };
@@ -29,12 +33,25 @@ export function MobileSkillSection() {
   const updateSkill = useSkillStore((s) => s.updateSkill);
   const toggleSkill = useSkillStore((s) => s.toggleSkill);
   const deleteSkill = useSkillStore((s) => s.deleteSkill);
+  const reorderSkills = useSkillStore((s) => s.reorderSkills);
 
   const [form, setForm] = useState<FormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Skill | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 展示顺序：内置置顶，用户按手动排序
+  const sorted = useMemo(() => sortSkillsForDisplay(skills), [skills]);
+  const userIds = useMemo(
+    () => sorted.filter((s) => !isBuiltinSkill(s)).map((s) => s.id),
+    [sorted],
+  );
+
+  const drag = useLongPressDrag({
+    orderedIds: userIds,
+    onCommit: (ids) => void reorderSkills(ids),
+  });
 
   useEffect(() => {
     void fetchSkills();
@@ -65,7 +82,7 @@ export function MobileSkillSection() {
   };
 
   const handleSubmit = async () => {
-    if (!form) return;
+    if (!form || form.readonly) return;
     if (!form.name.trim() || !form.prompt.trim()) {
       setMessage('名称和提示词不能为空');
       return;
@@ -146,26 +163,51 @@ export function MobileSkillSection() {
         </p>
       )}
 
-      {skills.map((skill) => (
-        <div
-          key={skill.id}
-          className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3"
-        >
+      {sorted.map((skill) => {
+        const builtin = isBuiltinSkill(skill);
+        const isDragged = drag.draggingId === skill.id;
+        return (
+          <div
+            key={skill.id}
+            ref={builtin ? undefined : drag.registerItem(skill.id)}
+            onTouchStart={builtin ? undefined : drag.onTouchStart(skill.id)}
+            onTouchMove={drag.onTouchMovePending}
+            onTouchEnd={drag.onTouchEndPending}
+            style={{ transform: drag.translateFor(skill.id) }}
+            className={
+              'relative flex touch-pan-y items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-3' +
+              (drag.isDragging && !isDragged
+                ? ' transition-transform duration-200 ease-out motion-reduce:transition-none'
+                : '') +
+              (isDragged
+                ? ' z-50 shadow-lg shadow-black/40 ring-1 ring-indigo-400/60'
+                : '')
+            }
+          >
           <button
             type="button"
             onClick={() => {
+              if (drag.shouldSuppressClick()) return;
               setMessage(null);
               setForm({
                 id: skill.id,
                 name: skill.name,
                 description: skill.description,
                 prompt: skill.prompt,
+                readonly: builtin,
               });
             }}
             className="min-w-0 flex-1 text-left"
           >
-            <div className="truncate text-sm font-medium text-zinc-100">
-              {skill.name}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="truncate text-sm font-medium text-zinc-100">
+                {skill.name}
+              </span>
+              {builtin && (
+                <span className="flex-shrink-0 rounded border border-zinc-700 bg-zinc-800 px-1 py-px text-[10px] leading-4 text-zinc-400">
+                  内置
+                </span>
+              )}
             </div>
             {skill.description ? (
               <div className="mt-0.5 line-clamp-2 text-xs text-zinc-500">
@@ -175,51 +217,65 @@ export function MobileSkillSection() {
               <div className="mt-0.5 text-xs italic text-zinc-600">无描述</div>
             )}
           </button>
-          <Toggle
-            checked={skill.enabled}
-            onChange={() => void toggleSkill(skill.id)}
-          />
-        </div>
-      ))}
+          {/* Toggle 区域不参与长按拖拽 */}
+          <div data-nodrag className="flex-shrink-0">
+            <Toggle
+              checked={skill.enabled}
+              onChange={() => void toggleSkill(skill.id)}
+            />
+          </div>
+          </div>
+        );
+      })}
 
       {/* Create / edit sheet */}
       <MobileSheet
         open={form != null}
         onClose={() => setForm(null)}
-        title={form?.id ? '编辑 Skill' : '新建 Skill'}
+        title={form?.readonly ? '查看 Skill（内置）' : form?.id ? '编辑 Skill' : '新建 Skill'}
         footer={
-          <div className="flex gap-2">
-            {form?.id && (
-              <button
-                type="button"
-                onClick={() => {
-                  const target = skills.find((s) => s.id === form.id);
-                  if (target) {
-                    setForm(null);
-                    setDeleteTarget(target);
-                  }
-                }}
-                className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-red-300 active:bg-zinc-700"
-              >
-                删除
-              </button>
-            )}
+          form?.readonly ? (
             <button
               type="button"
               onClick={() => setForm(null)}
-              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-zinc-700"
+              className="w-full rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-zinc-700"
             >
-              取消
+              关闭
             </button>
-            <button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={saving}
-              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
-            >
-              {saving ? '保存中…' : '保存'}
-            </button>
-          </div>
+          ) : (
+            <div className="flex gap-2">
+              {form?.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = skills.find((s) => s.id === form.id);
+                    if (target) {
+                      setForm(null);
+                      setDeleteTarget(target);
+                    }
+                  }}
+                  className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-red-300 active:bg-zinc-700"
+                >
+                  删除
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setForm(null)}
+                className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-zinc-700"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmit()}
+                disabled={saving}
+                className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500 disabled:opacity-40"
+              >
+                {saving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          )
         }
       >
         {form && (
@@ -229,6 +285,11 @@ export function MobileSkillSection() {
                 {message}
               </div>
             )}
+            {form.readonly && (
+              <p className="text-xs text-zinc-500">
+                内置 Skill 由应用维护并随版本自动更新，不可编辑或删除，可在列表中启用/禁用。
+              </p>
+            )}
             <div>
               <label className="mb-1 block text-xs text-zinc-400">名称</label>
               <input
@@ -236,6 +297,7 @@ export function MobileSkillSection() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="例如：docker-debug"
+                readOnly={form.readonly}
                 className={inputClass}
               />
             </div>
@@ -250,6 +312,7 @@ export function MobileSkillSection() {
                   setForm({ ...form, description: e.target.value })
                 }
                 placeholder="排查 Docker 容器问题时使用"
+                readOnly={form.readonly}
                 className={inputClass}
               />
             </div>
@@ -265,6 +328,7 @@ export function MobileSkillSection() {
                 autoCapitalize="off"
                 autoCorrect="off"
                 spellCheck={false}
+                readOnly={form.readonly}
                 className={`${inputClass} resize-none font-mono text-xs leading-relaxed`}
               />
             </div>

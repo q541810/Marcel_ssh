@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import SkillFormFields from './SkillFormFields';
 import { useSkillStore } from '@/stores/skillStore';
+import { getErrorMessage } from '@/lib/errors';
 import type { Skill } from '@/lib/types';
 
 interface Props {
@@ -37,7 +38,7 @@ export default function SkillEditModal({ skill, open, onClose }: Props) {
       await updateSkill(skill.id, name.trim(), description.trim(), prompt.trim());
       handleClose();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : String(err));
+      setSaveError(getErrorMessage(err));
     } finally {
       setSaving(false);
     }

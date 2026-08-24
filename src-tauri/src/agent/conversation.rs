@@ -194,9 +194,7 @@ impl ConversationDb {
         // Migration: add parent_conversation_id for subagent (task tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
-            log::info!(
-                "Migrating conversation database: adding parent_conversation_id column"
-            );
+            log::info!("Migrating conversation database: adding parent_conversation_id column");
             conn.execute(
                 "ALTER TABLE conversations ADD COLUMN parent_conversation_id TEXT",
                 [],
@@ -361,15 +359,7 @@ impl ConversationDb {
 
         let mut stmt = conn.prepare(sql)?;
 
-        type RowTuple = (
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-            String,
-        );
+        type RowTuple = (String, String, String, String, String, String, String);
 
         let rows: Vec<RowTuple> = if let Some(cid) = connection_id {
             stmt.query_map(rusqlite::params![pattern, cid], |row| {
@@ -620,9 +610,8 @@ impl ConversationDb {
             let parent = to_delete[idx].clone();
             let children: Vec<String> = {
                 let conn = self.conn.lock().unwrap();
-                let mut stmt = conn.prepare(
-                    "SELECT id FROM conversations WHERE parent_conversation_id = ?1",
-                )?;
+                let mut stmt =
+                    conn.prepare("SELECT id FROM conversations WHERE parent_conversation_id = ?1")?;
                 let rows: Vec<String> = stmt
                     .query_map([&parent], |row| row.get(0))?
                     .filter_map(|r| r.ok())
@@ -960,8 +949,7 @@ impl ConversationDb {
     /// 列出某对话下 plans 表中的 task_id（用于清理内存）。
     pub fn list_plan_task_ids(&self, conversation_id: &str) -> RusqliteResult<Vec<String>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT task_id FROM plans WHERE conversation_id = ?1")?;
+        let mut stmt = conn.prepare("SELECT task_id FROM plans WHERE conversation_id = ?1")?;
         let rows = stmt
             .query_map([conversation_id], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -1134,12 +1122,17 @@ mod tests {
         let c1 = db
             .create_conversation("conn_1", "Alpha")
             .expect("create c1");
-        let c2 = db
-            .create_conversation("conn_2", "Beta")
-            .expect("create c2");
+        let c2 = db.create_conversation("conn_2", "Beta").expect("create c2");
 
-        db.save_message(&c1.id, "user", "hello world", "2026-01-01T00:00:00Z", None, None)
-            .expect("msg");
+        db.save_message(
+            &c1.id,
+            "user",
+            "hello world",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("msg");
         db.save_message(
             &c1.id,
             "assistant",
@@ -1515,9 +1508,7 @@ mod tests {
     #[test]
     fn test_delete_conversation_clears_snapshots() {
         let db = create_test_db();
-        let conversation = db
-            .create_conversation("conn_1", "Del")
-            .expect("create");
+        let conversation = db.create_conversation("conn_1", "Del").expect("create");
         let plan = r#"{"taskId":"t9","items":[],"currentIndex":0,"nextItemSeq":1,"reflectionReminded":false}"#;
         db.insert_plan_snapshot(&conversation.id, "t9", plan)
             .expect("snap");
@@ -1538,7 +1529,10 @@ mod tests {
             .create_sub_conversation("conn_1", "explore（子agent）", &parent.id)
             .expect("create sub");
 
-        assert_eq!(sub.parent_conversation_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(
+            sub.parent_conversation_id.as_deref(),
+            Some(parent.id.as_str())
+        );
 
         // 列表同时返回两者（DB 层不过滤，过滤在命令层）
         let all = db.list_conversations("conn_1").expect("list");
@@ -1546,9 +1540,15 @@ mod tests {
 
         // get_conversation 读回 parent 字段
         let loaded = db.get_conversation(&sub.id).expect("get").expect("exists");
-        assert_eq!(loaded.parent_conversation_id.as_deref(), Some(parent.id.as_str()));
+        assert_eq!(
+            loaded.parent_conversation_id.as_deref(),
+            Some(parent.id.as_str())
+        );
 
-        let parent_loaded = db.get_conversation(&parent.id).expect("get").expect("exists");
+        let parent_loaded = db
+            .get_conversation(&parent.id)
+            .expect("get")
+            .expect("exists");
         assert!(parent_loaded.parent_conversation_id.is_none());
     }
 
@@ -1565,8 +1565,15 @@ mod tests {
             .create_sub_conversation("conn_1", "Sub2（子agent）", &parent.id)
             .expect("create sub2");
 
-        db.save_message(&sub1.id, "user", "hello", "2026-01-01T00:00:00Z", None, None)
-            .expect("save msg");
+        db.save_message(
+            &sub1.id,
+            "user",
+            "hello",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("save msg");
 
         let deleted = db
             .delete_conversation_cascade(&parent.id)
@@ -1610,10 +1617,24 @@ mod tests {
             .create_sub_conversation("conn_1", "Sub（子agent）", &parent.id)
             .expect("create sub");
 
-        db.save_message(&parent.id, "user", "needle in parent", "2026-01-01T00:00:00Z", None, None)
-            .expect("msg parent");
-        db.save_message(&sub.id, "user", "needle in sub", "2026-01-01T00:00:00Z", None, None)
-            .expect("msg sub");
+        db.save_message(
+            &parent.id,
+            "user",
+            "needle in parent",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("msg parent");
+        db.save_message(
+            &sub.id,
+            "user",
+            "needle in sub",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("msg sub");
 
         let results = db.search_conversations("needle", None).expect("search");
         assert_eq!(results.len(), 1);
@@ -1701,10 +1722,21 @@ mod tests {
     fn test_commit_compaction_keeps_originals_and_positions_card_at_span_end() {
         let db = create_test_db();
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
 
         let rows = db.load_messages(&conv.id).expect("load");
         let span_end = rows[2].clone();
@@ -1726,7 +1758,10 @@ mod tests {
         assert_eq!(after[2].content, "out");
         assert_eq!(after[3].role, "system");
         assert!(after[3].content.starts_with("【上下文已压缩】"));
-        assert_eq!(after[3].created_at.to_rfc3339(), span_end.created_at.to_rfc3339());
+        assert_eq!(
+            after[3].created_at.to_rfc3339(),
+            span_end.created_at.to_rfc3339()
+        );
         assert_eq!(after[3].timestamp, span_end.timestamp);
         assert_eq!(after[4].content, "u2");
     }
@@ -1735,9 +1770,12 @@ mod tests {
     fn test_commit_compaction_removes_old_cards() {
         let db = create_test_db();
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "user", "u3", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None)
+            .expect("m2");
+        db.save_message(&conv.id, "user", "u3", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
 
         // 第一次压缩：压 [u1]，卡片插在 u1 之后（无旧卡可吸收）
         let rows = db.load_messages(&conv.id).expect("load");
@@ -1779,11 +1817,30 @@ mod tests {
     fn test_truncate_before_card_uncompacts() {
         let db = create_test_db();
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
-        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:04Z", None, None).expect("m5");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a2",
+            "2026-01-01T00:00:04Z",
+            None,
+            None,
+        )
+        .expect("m5");
 
         let rows = db.load_messages(&conv.id).expect("load");
         let end = rows[2].clone();
@@ -1813,10 +1870,21 @@ mod tests {
     fn test_truncate_into_span_deletes_card() {
         let db = create_test_db();
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
         let rows = db.load_messages(&conv.id).expect("load");
         let end = rows[2].clone();
         db.commit_compaction(

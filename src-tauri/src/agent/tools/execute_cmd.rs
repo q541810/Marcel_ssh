@@ -146,14 +146,20 @@ impl AgentTool for ExecuteCommandTool {
             .unwrap_or(180);
         let timeout = Duration::from_secs(timeout_secs);
 
-        // Use streaming exec if we have a tool_call_id and event_name, otherwise fall back to timed
-        let exec_result =
-            if let (Some(tool_call_id), Some(event_name)) = (&ctx.tool_call_id, &ctx.event_name) {
-                ctx.exec_streamed(&final_command, timeout, event_name, tool_call_id)
-                    .await
-            } else {
-                ctx.exec_timed(&final_command, timeout).await
-            };
+        let mut ticket = crate::command_exec::CommandTicket::new(
+            &ctx.session_id,
+            &final_command,
+            crate::command_exec::CommandSource::Agent,
+        )
+        .display_as(command)
+        .timeout(timeout);
+        if let Some(task_id) = &ctx.task_id {
+            ticket = ticket.cancellable(task_id, "Agent 命令已取消");
+        }
+        if let (Some(tool_call_id), Some(event_name)) = (&ctx.tool_call_id, &ctx.event_name) {
+            ticket = ticket.streaming(event_name, tool_call_id);
+        }
+        let exec_result = ctx.exec_ticket(ticket).await;
 
         // Zeroize password and rewritten command immediately after execution
         if let Some(ref mut p) = sudo_password {
@@ -340,6 +346,24 @@ mod tests {
     fn rewrite_sudo_handles_tab_separator() {
         let result = rewrite_sudo("sudo\tls -l", "pw");
         assert!(result.contains("-- ls -l"), "got: {}", result);
+    }
+
+    #[test]
+    fn agent_ticket_separates_sensitive_command_from_display_and_binds_task() {
+        let original = "sudo ls";
+        let rewritten = rewrite_sudo(original, "secret-password");
+        let ticket = crate::command_exec::CommandTicket::new(
+            "session-1",
+            rewritten,
+            crate::command_exec::CommandSource::Agent,
+        )
+        .display_as(original)
+        .cancellable("agent-task-1", "Agent 命令已取消");
+
+        assert!(ticket.command.contains("secret-password"));
+        assert_eq!(ticket.display_command, original);
+        assert!(!ticket.display_command.contains("secret-password"));
+        assert_eq!(ticket.task_id.as_deref(), Some("agent-task-1"));
     }
 
     #[test]

@@ -39,10 +39,7 @@ pub fn validate_config_code(code: &str) -> Result<(), AppError> {
 
     for c in code.chars() {
         if !CHARSET.contains(&(c as u8)) {
-            return Err(AppError::Config(format!(
-                "配置码包含非法字符：{}",
-                c
-            )));
+            return Err(AppError::Config(format!("配置码包含非法字符：{}", c)));
         }
     }
 
@@ -81,7 +78,8 @@ mod tests {
         assert!(validate_config_code("obcdefghjkmnpqrstuvwxyz23456789ab").is_err()); // o
         assert!(validate_config_code("Obcdefghjkmnpqrstuvwxyz23456789ab").is_err()); // O
         assert!(validate_config_code("Ibcdefghjkmnpqrstuvwxyz23456789ab").is_err()); // I
-        assert!(validate_config_code("Lbcdefghjkmnpqrstuvwxyz23456789ab").is_err()); // L（大写也不在字符集）
+        assert!(validate_config_code("Lbcdefghjkmnpqrstuvwxyz23456789ab").is_err());
+        // L（大写也不在字符集）
     }
 
     #[test]

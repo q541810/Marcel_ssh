@@ -1,4 +1,5 @@
 import { AGENT_MODES } from '@/lib/constants';
+import { isBuiltinSkill, sortSkillsForDisplay } from '@/lib/builtinSkills';
 import type { AgentMode, Skill } from '@/lib/types';
 
 /**
@@ -55,7 +56,9 @@ export function buildAgentCommandEntries(opts: {
       keywords: ['compact', '压缩', 'context', '上下文'],
     });
   }
-  const skillEntries: MenuEntry[] = skills
+  // 内置教学 skill 供 AI 调用，不进 `/` 插入面板；用户 skill 按手动排序展示
+  const skillEntries: MenuEntry[] = sortSkillsForDisplay(skills)
+    .filter((s) => !isBuiltinSkill(s))
     .filter(
       (s) =>
         !q ||

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tauri::{AppHandle, State, Manager};
+use tauri::{AppHandle, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 // notify 的 watch 方法来自 Watcher trait，需在作用域内才能调用 watcher.watch(...)。
 use notify::Watcher;
@@ -49,9 +49,7 @@ fn sanitize_sysopen_component(value: &str, fallback: &str) -> String {
     let sanitized = value
         .chars()
         .map(|c| {
-            if c.is_control()
-                || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-            {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
                 '_'
             } else {
                 c
@@ -98,7 +96,10 @@ fn sysopen_local_filename(
         .saturating_sub(extension_suffix.len() + safe_connection_name.len() + 1);
     let stem = truncate_utf8(&stem, stem_budget);
 
-    Ok(format!("{}-{}{}", stem, safe_connection_name, extension_suffix))
+    Ok(format!(
+        "{}-{}{}",
+        stem, safe_connection_name, extension_suffix
+    ))
 }
 
 #[derive(Debug, Serialize)]
@@ -365,13 +366,12 @@ pub async fn sftp_extract_archive(
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let target_dir = validate_sftp_remote_path(&target_dir)?;
 
-    let filename = remote_path
-        .rsplit('/')
-        .next()
-        .unwrap_or(&remote_path);
+    let filename = remote_path.rsplit('/').next().unwrap_or(&remote_path);
 
     let kind = crate::ssh::sftp_extract::get_archive_type(filename).ok_or_else(|| {
-        AppError::Ssh("不支持的压缩格式，仅支持 .zip、.tar、.tar.gz、.tgz、.tar.bz2、.tar.xz".into())
+        AppError::Ssh(
+            "不支持的压缩格式，仅支持 .zip、.tar、.tar.gz、.tgz、.tar.bz2、.tar.xz".into(),
+        )
     })?;
 
     let check_cmd = match kind {
@@ -482,8 +482,7 @@ pub async fn sftp_compress_archive(
     if target_normalized.starts_with(&format!("{}/", remote_dir_normalized)) {
         return Err(AppError::Ssh(format!(
             "目标路径「{}」位于源目录「{}」内，会导致递归压缩，请改用其他路径",
-            target_path,
-            remote_dir
+            target_path, remote_dir
         )));
     }
 
@@ -538,12 +537,9 @@ pub async fn sftp_compress_archive(
     }
 
     // 构造压缩命令
-    let cmd = crate::ssh::sftp_extract::build_compress_to_archive_cmd(
-        &remote_dir,
-        &target_path,
-        kind,
-    )
-    .map_err(|e| AppError::Ssh(e.to_string()))?;
+    let cmd =
+        crate::ssh::sftp_extract::build_compress_to_archive_cmd(&remote_dir, &target_path, kind)
+            .map_err(|e| AppError::Ssh(e.to_string()))?;
 
     // 经 command_exec 统一管理器执行（30 分钟超时 + 取消注册 + 流式输出，
     // 事件用 task_id 路由）；本函数只映射回旧的 ssh-long-* 事件协议。
@@ -556,11 +552,7 @@ pub async fn sftp_compress_archive(
         SubmitOutcome::Completed { output } => {
             // 检查 OK/FAILED 标记
             if output.lines().any(|line| line.trim() == "OK") {
-                emit_event(
-                    &app,
-                    "ssh-long-done",
-                    &json!({ "taskId": &task_id }),
-                );
+                emit_event(&app, "ssh-long-done", &json!({ "taskId": &task_id }));
                 Ok(())
             } else {
                 let trimmed = output.trim();
@@ -588,11 +580,7 @@ pub async fn sftp_compress_archive(
         }
         SubmitOutcome::Cancelled { reason } => match reason {
             CancelReason::User => {
-                emit_event(
-                    &app,
-                    "ssh-long-cancelled",
-                    &json!({ "taskId": &task_id }),
-                );
+                emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("压缩已取消".into()))
             }
             CancelReason::Disconnected => {
@@ -837,7 +825,9 @@ async fn stream_remote_to_local_file(
 /// content:// 目标的失败清理：SAF 文档无法从应用侧删除，退化为截断到 0，
 /// 避免留下半截内容被误当作完整文件。
 async fn truncate_content_target(app: &AppHandle, uri: &str) {
-    if let Ok(file) = open_content_uri_file(app, uri.to_string(), ContentOpenMode::WriteTruncate).await {
+    if let Ok(file) =
+        open_content_uri_file(app, uri.to_string(), ContentOpenMode::WriteTruncate).await
+    {
         let _ = file.sync_all().await;
     }
 }
@@ -925,7 +915,11 @@ pub async fn sftp_download_stream(
         }
 
         let _ = local.sync_all().await;
-        emit_event(&app, "sftp-download-done", json!({ "downloadId": &download_id }));
+        emit_event(
+            &app,
+            "sftp-download-done",
+            json!({ "downloadId": &download_id }),
+        );
         return Ok(());
     }
 
@@ -998,7 +992,11 @@ pub async fn sftp_download_stream(
         let _ = tokio::fs::remove_file(&backup_local_path).await;
     }
 
-    emit_event(&app, "sftp-download-done", json!({ "downloadId": &download_id }));
+    emit_event(
+        &app,
+        "sftp-download-done",
+        json!({ "downloadId": &download_id }),
+    );
 
     Ok(())
 }
@@ -1092,11 +1090,10 @@ pub async fn sftp_local_file_name(path: String) -> Result<String, AppError> {
         #[cfg(target_os = "android")]
         {
             let uri = path.clone();
-            let queried = tokio::task::spawn_blocking(move || {
-                crate::util::query_content_display_name(&uri)
-            })
-            .await
-            .map_err(|e| AppError::Ssh(format!("查询文件名任务失败: {}", e)))?;
+            let queried =
+                tokio::task::spawn_blocking(move || crate::util::query_content_display_name(&uri))
+                    .await
+                    .map_err(|e| AppError::Ssh(format!("查询文件名任务失败: {}", e)))?;
             if let Some(name) = queried {
                 return Ok(name);
             }
@@ -1154,7 +1151,9 @@ async fn commit_remote_temp_file(
         }
         if !allow_replace {
             let _ = sftp.remove_file(temp_path).await;
-            return Err(AppError::Ssh("远程文件已存在，请先删除或重命名再上传".into()));
+            return Err(AppError::Ssh(
+                "远程文件已存在，请先删除或重命名再上传".into(),
+            ));
         }
     }
 
@@ -1213,11 +1212,7 @@ pub async fn sftp_upload_stream(
         let file = open_content_uri_file(&app, local_path.clone(), ContentOpenMode::Read)
             .await
             .map_err(|e| AppError::Ssh(format!("打开本地文件失败: {}", e)))?;
-        let size = file
-            .metadata()
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let size = file.metadata().await.map(|m| m.len()).unwrap_or(0);
         (file, size, size > 0)
     } else {
         let local_meta = tokio::fs::metadata(&local_path)
@@ -1465,16 +1460,8 @@ mod tests {
 
     #[test]
     fn detects_file_and_dir_name_collisions() {
-        let local = vec![
-            "a.txt".to_string(),
-            "lib".to_string(),
-            "c.png".to_string(),
-        ];
-        let remote = vec![
-            "lib".to_string(),
-            "c.png".to_string(),
-            "other".to_string(),
-        ];
+        let local = vec!["a.txt".to_string(), "lib".to_string(), "c.png".to_string()];
+        let remote = vec!["lib".to_string(), "c.png".to_string(), "other".to_string()];
         let collisions = find_name_collisions(&local, &remote);
         assert_eq!(collisions, vec!["c.png".to_string(), "lib".to_string()]);
     }
@@ -1494,16 +1481,8 @@ mod tests {
     #[test]
     fn handles_empty_inputs() {
         assert!(find_name_collisions(&[], &[]).is_empty());
-        assert!(find_name_collisions(
-            &["a.txt".to_string()],
-            &[]
-        )
-        .is_empty());
-        assert!(find_name_collisions(
-            &[],
-            &["a.txt".to_string()]
-        )
-        .is_empty());
+        assert!(find_name_collisions(&["a.txt".to_string()], &[]).is_empty());
+        assert!(find_name_collisions(&[], &["a.txt".to_string()]).is_empty());
     }
 }
 
@@ -2089,7 +2068,11 @@ pub async fn sftp_preview_image(
         .map_err(|e| AppError::Ssh(format!("保存预览文件失败: {}", e)))?;
 
     let local_path_str = local_path.to_string_lossy().to_string();
-    log::info!("[sftp_preview_image] preview_id={} local_path={}", preview_id, local_path_str);
+    log::info!(
+        "[sftp_preview_image] preview_id={} local_path={}",
+        preview_id,
+        local_path_str
+    );
 
     emit_event(
         &app,
@@ -2160,7 +2143,6 @@ pub async fn sftp_preview_cleanup(
     Ok(())
 }
 
-
 // ────────────────────────────────────────────────────────────────────────────
 // 「用系统方式打开」(sysopen) —— 完全重写
 //
@@ -2219,7 +2201,10 @@ async fn sysopen_sync_back(
     let mtime = local_meta.modified().ok();
 
     emit_sysopen_state(
-        app, task_id, download_id, upload_id,
+        app,
+        task_id,
+        download_id,
+        upload_id,
         SysopenPhase::Syncing { written: 0, total },
     );
 
@@ -2252,7 +2237,10 @@ async fn sysopen_sync_back(
             .map_err(|e| AppError::Ssh(format!("写入远程文件失败: {}", e)))?;
         written += n as u64;
         emit_sysopen_state(
-            app, task_id, download_id, upload_id,
+            app,
+            task_id,
+            download_id,
+            upload_id,
             SysopenPhase::Syncing { written, total },
         );
     }
@@ -2333,18 +2321,48 @@ async fn run_sysopen_task(
     let sftp = match state.ssh_manager.open_sftp(&session_id).await {
         Ok(s) => s,
         Err(e) => {
-            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-                SysopenPhase::Failed { message: format!("打开 SFTP 通道失败: {}", e) });
-            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+            emit_sysopen_state(
+                &app,
+                &task_id,
+                &download_id,
+                &upload_id,
+                SysopenPhase::Failed {
+                    message: format!("打开 SFTP 通道失败: {}", e),
+                },
+            );
+            sysopen_teardown(
+                &state,
+                &task_id,
+                &session_id,
+                &remote_path,
+                &local_path,
+                None,
+            )
+            .await;
             return;
         }
     };
     let mut remote = match sftp.open_with_flags(&remote_path, OpenFlags::READ).await {
         Ok(f) => f,
         Err(e) => {
-            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-                SysopenPhase::Failed { message: format!("打开远程文件失败: {}", e) });
-            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+            emit_sysopen_state(
+                &app,
+                &task_id,
+                &download_id,
+                &upload_id,
+                SysopenPhase::Failed {
+                    message: format!("打开远程文件失败: {}", e),
+                },
+            );
+            sysopen_teardown(
+                &state,
+                &task_id,
+                &session_id,
+                &remote_path,
+                &local_path,
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -2352,9 +2370,24 @@ async fn run_sysopen_task(
     let mut local = match tokio::fs::File::create(&temp_part).await {
         Ok(f) => f,
         Err(e) => {
-            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-                SysopenPhase::Failed { message: format!("创建本地临时文件失败: {}", e) });
-            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+            emit_sysopen_state(
+                &app,
+                &task_id,
+                &download_id,
+                &upload_id,
+                SysopenPhase::Failed {
+                    message: format!("创建本地临时文件失败: {}", e),
+                },
+            );
+            sysopen_teardown(
+                &state,
+                &task_id,
+                &session_id,
+                &remote_path,
+                &local_path,
+                None,
+            )
+            .await;
             return;
         }
     };
@@ -2401,26 +2434,76 @@ async fn run_sysopen_task(
 
     if cancelled {
         let _ = tokio::fs::remove_file(&temp_part).await;
-        emit_sysopen_state(&app, &task_id, &download_id, &upload_id, SysopenPhase::Cancelled);
-        sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+        emit_sysopen_state(
+            &app,
+            &task_id,
+            &download_id,
+            &upload_id,
+            SysopenPhase::Cancelled,
+        );
+        sysopen_teardown(
+            &state,
+            &task_id,
+            &session_id,
+            &remote_path,
+            &local_path,
+            None,
+        )
+        .await;
         return;
     }
     if written != total {
         let _ = tokio::fs::remove_file(&temp_part).await;
-        emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-            SysopenPhase::Failed { message: format!("下载不完整：预期 {} 字节，实际 {} 字节", total, written) });
-        sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+        emit_sysopen_state(
+            &app,
+            &task_id,
+            &download_id,
+            &upload_id,
+            SysopenPhase::Failed {
+                message: format!("下载不完整：预期 {} 字节，实际 {} 字节", total, written),
+            },
+        );
+        sysopen_teardown(
+            &state,
+            &task_id,
+            &session_id,
+            &remote_path,
+            &local_path,
+            None,
+        )
+        .await;
         return;
     }
     if let Err(e) = tokio::fs::rename(&temp_part, &local_path).await {
-        emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-            SysopenPhase::Failed { message: format!("保存临时文件失败: {}", e) });
-        sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+        emit_sysopen_state(
+            &app,
+            &task_id,
+            &download_id,
+            &upload_id,
+            SysopenPhase::Failed {
+                message: format!("保存临时文件失败: {}", e),
+            },
+        );
+        sysopen_teardown(
+            &state,
+            &task_id,
+            &session_id,
+            &remote_path,
+            &local_path,
+            None,
+        )
+        .await;
         return;
     }
 
     // ── 阶段 2：用系统默认应用打开（tauri-plugin-opener） ──
-    emit_sysopen_state(&app, &task_id, &download_id, &upload_id, SysopenPhase::Opened);
+    emit_sysopen_state(
+        &app,
+        &task_id,
+        &download_id,
+        &upload_id,
+        SysopenPhase::Opened,
+    );
     {
         use tauri_plugin_opener::OpenerExt;
         if let Err(e) = app
@@ -2428,15 +2511,36 @@ async fn run_sysopen_task(
             .open_path(local_path.to_string_lossy().to_string(), None::<&str>)
         {
             // 打开失败：文件已下载但无法用系统应用打开。停止任务并告知用户。
-            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-                SysopenPhase::Failed { message: format!("用系统默认应用打开失败: {}", e) });
-            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+            emit_sysopen_state(
+                &app,
+                &task_id,
+                &download_id,
+                &upload_id,
+                SysopenPhase::Failed {
+                    message: format!("用系统默认应用打开失败: {}", e),
+                },
+            );
+            sysopen_teardown(
+                &state,
+                &task_id,
+                &session_id,
+                &remote_path,
+                &local_path,
+                None,
+            )
+            .await;
             return;
         }
     }
 
     // ── 阶段 3：notify 监视本地文件变化 ──
-    emit_sysopen_state(&app, &task_id, &download_id, &upload_id, SysopenPhase::Monitoring);
+    emit_sysopen_state(
+        &app,
+        &task_id,
+        &download_id,
+        &upload_id,
+        SysopenPhase::Monitoring,
+    );
 
     let initial_sig = tokio::fs::metadata(&local_path)
         .await
@@ -2453,16 +2557,46 @@ async fn run_sysopen_task(
     }) {
         Ok(w) => w,
         Err(e) => {
-            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-                SysopenPhase::Failed { message: format!("启动文件监视失败: {}", e) });
-            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+            emit_sysopen_state(
+                &app,
+                &task_id,
+                &download_id,
+                &upload_id,
+                SysopenPhase::Failed {
+                    message: format!("启动文件监视失败: {}", e),
+                },
+            );
+            sysopen_teardown(
+                &state,
+                &task_id,
+                &session_id,
+                &remote_path,
+                &local_path,
+                None,
+            )
+            .await;
             return;
         }
     };
     if let Err(e) = watcher.watch(&local_path, notify::RecursiveMode::NonRecursive) {
-        emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
-            SysopenPhase::Failed { message: format!("监视文件失败: {}", e) });
-        sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+        emit_sysopen_state(
+            &app,
+            &task_id,
+            &download_id,
+            &upload_id,
+            SysopenPhase::Failed {
+                message: format!("监视文件失败: {}", e),
+            },
+        );
+        sysopen_teardown(
+            &state,
+            &task_id,
+            &session_id,
+            &remote_path,
+            &local_path,
+            None,
+        )
+        .await;
         return;
     }
 
@@ -2538,7 +2672,15 @@ async fn run_sysopen_task(
     }
 
     emit_sysopen_state(&app, &task_id, &download_id, &upload_id, final_phase);
-    sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, Some(watcher)).await;
+    sysopen_teardown(
+        &state,
+        &task_id,
+        &session_id,
+        &remote_path,
+        &local_path,
+        Some(watcher),
+    )
+    .await;
 }
 
 #[tauri::command]
@@ -2647,9 +2789,7 @@ pub async fn sftp_open_with_system(
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Ssh(format!("获取 app_data_dir 失败: {}", e)))?;
-    let session_temp_root = app_data
-        .join(SYSOPEN_TEMP_DIR_PREFIX)
-        .join(&session_id);
+    let session_temp_root = app_data.join(SYSOPEN_TEMP_DIR_PREFIX).join(&session_id);
     let task_temp_root = session_temp_root.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&task_temp_root)
         .map_err(|e| AppError::Ssh(format!("创建临时目录失败: {}", e)))?;
@@ -2671,10 +2811,10 @@ pub async fn sftp_open_with_system(
 
     // 先注册取消信号 + 活跃路径表，确保 spawn 后立即可被取消/去重
     let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .sysopen_watchers
-        .write()
-        .insert(task_id.clone(), (session_id.clone(), local_path.clone(), cancel_tx));
+    state.sysopen_watchers.write().insert(
+        task_id.clone(),
+        (session_id.clone(), local_path.clone(), cancel_tx),
+    );
     state
         .sysopen_active_paths
         .write()
@@ -2770,7 +2910,6 @@ pub(crate) async fn cleanup_session_sysopen(
     }
 }
 
-
 #[cfg(test)]
 mod preview_tests {
     use super::*;
@@ -2803,10 +2942,7 @@ mod preview_tests {
             sysopen_local_filename("Makefile", "prod").unwrap(),
             "Makefile-prod"
         );
-        assert_eq!(
-            sysopen_local_filename(".env", "prod").unwrap(),
-            ".env-prod"
-        );
+        assert_eq!(sysopen_local_filename(".env", "prod").unwrap(), ".env-prod");
     }
 
     #[test]

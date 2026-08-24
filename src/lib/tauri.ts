@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionConfig,
   SavedConnection,
@@ -37,20 +37,23 @@ import type {
   SyncPendingConflict,
   SyncConflictAction,
   SyncResolveResult,
-} from './types';
+} from "./types";
 
 // SSH commands
 
 export async function sshConnect(config: ConnectionConfig): Promise<string> {
-  return invoke<string>('ssh_connect', { config });
+  return invoke<string>("ssh_connect", { config });
 }
 
 export async function sshDisconnect(sessionId: string): Promise<void> {
-  return invoke('ssh_disconnect', { sessionId });
+  return invoke("ssh_disconnect", { sessionId });
 }
 
-export async function sshSendInput(sessionId: string, data: string): Promise<void> {
-  return invoke('ssh_send_input', { sessionId, data });
+export async function sshSendInput(
+  sessionId: string,
+  data: string,
+): Promise<void> {
+  return invoke("ssh_send_input", { sessionId, data });
 }
 
 export async function sshResize(
@@ -58,35 +61,41 @@ export async function sshResize(
   cols: number,
   rows: number,
 ): Promise<void> {
-  return invoke('ssh_resize', { sessionId, cols, rows });
+  return invoke("ssh_resize", { sessionId, cols, rows });
 }
 
 export async function sshListSessions(): Promise<string[]> {
-  return invoke<string[]>('ssh_list_sessions');
+  return invoke<string[]>("ssh_list_sessions");
 }
 
-export async function sshExec(sessionId: string, command: string): Promise<string> {
-  return invoke<string>('ssh_exec', { sessionId, command });
+export async function sshExec(
+  sessionId: string,
+  command: string,
+): Promise<string> {
+  return invoke<string>("ssh_exec", { sessionId, command });
 }
 
 export async function sshListProcesses(sessionId: string): Promise<string> {
-  return invoke<string>('ssh_exec', {
+  return invoke<string>("ssh_exec", {
     sessionId,
-    command: 'ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers 2>/dev/null || ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers',
+    command:
+      "ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers 2>/dev/null || ps -eo pid,user,pcpu,pmem,etime,comm,args --no-headers",
   });
 }
 
 export async function sshListNetwork(sessionId: string): Promise<string> {
-  return invoke<string>('ssh_exec', {
+  return invoke<string>("ssh_exec", {
     sessionId,
-    command: '(ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null); echo "---CONNECTIONS---"; (ss -Htnp 2>/dev/null || ss -tnp 2>/dev/null)',
+    command:
+      '(ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null); echo "---CONNECTIONS---"; (ss -Htnp 2>/dev/null || ss -tnp 2>/dev/null)',
   });
 }
 
 export async function sshListInterfaces(sessionId: string): Promise<string> {
-  return invoke<string>('ssh_exec', {
+  return invoke<string>("ssh_exec", {
     sessionId,
-    command: 'ip -j addr 2>/dev/null || ip addr 2>/dev/null || ifconfig 2>/dev/null',
+    command:
+      "ip -j addr 2>/dev/null || ip addr 2>/dev/null || ifconfig 2>/dev/null",
   });
 }
 
@@ -100,14 +109,26 @@ export async function agentStartTask(
   history: {
     role: string;
     content: string;
-    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+    }>;
     toolCallId?: string;
     reasoningContent?: string;
     imagePaths?: string[];
     dbId?: string;
   }[],
+  taskId?: string,
 ): Promise<string> {
-  return invoke<string>('agent_start_task', { sessionId, prompt, mode, conversationId, history });
+  return invoke<string>("agent_start_task", {
+    sessionId,
+    prompt,
+    mode,
+    conversationId,
+    history,
+    taskId,
+  });
 }
 
 /** Save compressed images for a user message; returns relative paths under images/. */
@@ -116,7 +137,7 @@ export async function agentSaveMessageImages(
   messageId: string,
   imagesBase64: string[],
 ): Promise<string[]> {
-  return invoke<string[]>('agent_save_message_images', {
+  return invoke<string[]>("agent_save_message_images", {
     conversationId,
     messageId,
     imagesBase64,
@@ -130,7 +151,7 @@ export async function agentSaveUserMessage(
   timestamp: string,
   imagePaths?: string[],
 ): Promise<void> {
-  return invoke('agent_save_user_message', {
+  return invoke("agent_save_user_message", {
     conversationId,
     content,
     timestamp,
@@ -139,22 +160,28 @@ export async function agentSaveUserMessage(
 }
 
 /** Resolve absolute path for asset protocol display. */
-export async function agentResolveImagePath(relativePath: string): Promise<string> {
-  return invoke<string>('agent_resolve_image_path', { relativePath });
+export async function agentResolveImagePath(
+  relativePath: string,
+): Promise<string> {
+  return invoke<string>("agent_resolve_image_path", { relativePath });
 }
 
 /** Read a persisted message image as data URL (rollback restore). */
-export async function agentReadMessageImage(relativePath: string): Promise<string> {
-  return invoke<string>('agent_read_message_image', { relativePath });
+export async function agentReadMessageImage(
+  relativePath: string,
+): Promise<string> {
+  return invoke<string>("agent_read_message_image", { relativePath });
 }
 
 /** Delete a single persisted message image (idempotent). */
-export async function agentDeleteMessageImage(relativePath: string): Promise<void> {
-  return invoke('agent_delete_message_image', { relativePath });
+export async function agentDeleteMessageImage(
+  relativePath: string,
+): Promise<void> {
+  return invoke("agent_delete_message_image", { relativePath });
 }
 
 export async function agentStopTask(taskId: string): Promise<void> {
-  return invoke('agent_stop_task', { taskId });
+  return invoke("agent_stop_task", { taskId });
 }
 
 /** 手动压缩上下文的结果。 */
@@ -179,7 +206,11 @@ export async function agentCompactConversation(
   history: {
     role: string;
     content: string;
-    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+    toolCalls?: Array<{
+      id: string;
+      name: string;
+      arguments: Record<string, unknown>;
+    }>;
     toolCallId?: string;
     reasoningContent?: string;
     imagePaths?: string[];
@@ -187,7 +218,7 @@ export async function agentCompactConversation(
   }[],
   taskId: string,
 ): Promise<AgentCompactResult> {
-  return invoke<AgentCompactResult>('agent_compact_conversation', {
+  return invoke<AgentCompactResult>("agent_compact_conversation", {
     conversationId,
     taskId,
     history,
@@ -198,14 +229,14 @@ export async function agentApproveOperation(
   taskId: string,
   operationId: string,
 ): Promise<void> {
-  return invoke('agent_approve_operation', { taskId, operationId });
+  return invoke("agent_approve_operation", { taskId, operationId });
 }
 
 export async function agentRejectOperation(
   taskId: string,
   operationId: string,
 ): Promise<void> {
-  return invoke('agent_reject_operation', { taskId, operationId });
+  return invoke("agent_reject_operation", { taskId, operationId });
 }
 
 export async function agentAnswerQuestion(
@@ -213,7 +244,7 @@ export async function agentAnswerQuestion(
   questionId: string,
   answers: { selected: string[]; custom: string }[],
 ): Promise<void> {
-  return invoke('agent_answer_question', { taskId, questionId, answers });
+  return invoke("agent_answer_question", { taskId, questionId, answers });
 }
 
 // Conversation management commands
@@ -222,81 +253,106 @@ export async function agentCreateConversation(
   sessionId: string,
   title?: string,
 ): Promise<string> {
-  return invoke<string>('agent_create_conversation', { sessionId, title });
+  return invoke<string>("agent_create_conversation", { sessionId, title });
 }
 
-export async function agentListConversations(sessionId: string): Promise<AgentConversation[]> {
-  return invoke<AgentConversation[]>('agent_list_conversations', { sessionId });
+export async function agentRenameConversation(
+  conversationId: string,
+  title: string,
+): Promise<void> {
+  return invoke("agent_rename_conversation", { conversationId, title });
 }
 
-export async function agentGetConversation(conversationId: string): Promise<AgentConversation> {
-  return invoke<AgentConversation>('agent_get_conversation', { conversationId });
+export async function agentListConversations(
+  sessionId: string,
+): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>("agent_list_conversations", { sessionId });
 }
 
-export async function agentListConversationsByConnection(connectionId: string): Promise<AgentConversation[]> {
-  return invoke<AgentConversation[]>('agent_list_conversations_by_connection', { connectionId });
+export async function agentGetConversation(
+  conversationId: string,
+): Promise<AgentConversation> {
+  return invoke<AgentConversation>("agent_get_conversation", {
+    conversationId,
+  });
+}
+
+export async function agentListConversationsByConnection(
+  connectionId: string,
+): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>("agent_list_conversations_by_connection", {
+    connectionId,
+  });
 }
 
 export async function agentSearchConversations(
   keyword: string,
   connectionId?: string,
 ): Promise<ConversationSearchResult[]> {
-  return invoke<ConversationSearchResult[]>('agent_search_conversations', {
+  return invoke<ConversationSearchResult[]>("agent_search_conversations", {
     keyword,
     connectionId: connectionId ?? null,
   });
 }
 
-export async function agentLoadConversation(conversationId: string): Promise<StoredMessage[]> {
-  return invoke<StoredMessage[]>('agent_load_conversation', { conversationId });
+export async function agentLoadConversation(
+  conversationId: string,
+): Promise<StoredMessage[]> {
+  return invoke<StoredMessage[]>("agent_load_conversation", { conversationId });
 }
 
 export async function agentLoadPlansByConversation(
   conversationId: string,
 ): Promise<{ taskId: string; plan: AgentTaskPlan; updatedAt: string }[]> {
   return invoke<{ taskId: string; plan: AgentTaskPlan; updatedAt: string }[]>(
-    'agent_load_plans_by_conversation',
+    "agent_load_plans_by_conversation",
     { conversationId },
   );
 }
 
-export async function agentDeleteConversation(conversationId: string): Promise<void> {
-  return invoke('agent_delete_conversation', { conversationId });
+export async function agentDeleteConversation(
+  conversationId: string,
+): Promise<void> {
+  return invoke("agent_delete_conversation", { conversationId });
 }
 
 export async function agentTruncateConversation(
   conversationId: string,
   fromTimestamp: string,
 ): Promise<TruncateConversationResult> {
-  return invoke<TruncateConversationResult>('agent_truncate_conversation', {
+  return invoke<TruncateConversationResult>("agent_truncate_conversation", {
     conversationId,
     fromTimestamp,
   });
 }
 
-export async function agentDeleteConversationsBySession(sessionId: string): Promise<void> {
-  return invoke('agent_delete_conversations_by_session', { sessionId });
+export async function agentDeleteConversationsBySession(
+  sessionId: string,
+): Promise<void> {
+  return invoke("agent_delete_conversations_by_session", { sessionId });
 }
 
 export async function agentCheckCommand(
   command: string,
-  mode: 'plan' | 'agent' | 'auto',
+  mode: "plan" | "agent" | "auto",
 ): Promise<CommandCheckResult> {
-  return invoke<CommandCheckResult>('agent_check_command', { command, mode });
+  return invoke<CommandCheckResult>("agent_check_command", { command, mode });
 }
 
 // Config commands
 
 export async function getConnections(): Promise<SavedConnection[]> {
-  return invoke<SavedConnection[]>('config_get_connections');
+  return invoke<SavedConnection[]>("config_get_connections");
 }
 
-export async function saveConnection(connection: SavedConnection): Promise<string> {
-  return invoke<string>('config_save_connection', { connection });
+export async function saveConnection(
+  connection: SavedConnection,
+): Promise<string> {
+  return invoke<string>("config_save_connection", { connection });
 }
 
 export async function deleteConnection(id: string): Promise<void> {
-  return invoke('config_delete_connection', { id });
+  return invoke("config_delete_connection", { id });
 }
 
 export async function getSettings(): Promise<{
@@ -305,17 +361,18 @@ export async function getSettings(): Promise<{
   hasWebSearchApiKey?: boolean;
   warning?: string;
 }> {
-  return invoke('config_get_settings');
+  return invoke("config_get_settings");
 }
-
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
-  return invoke('config_save_settings', { settings });
+  return invoke("config_save_settings", { settings });
 }
 
-export async function validateCustomProtectedPaths(paths: string[]): Promise<string | null> {
+export async function validateCustomProtectedPaths(
+  paths: string[],
+): Promise<string | null> {
   try {
-    await invoke('config_validate_custom_protected_paths', { paths });
+    await invoke("config_validate_custom_protected_paths", { paths });
     return null;
   } catch (e) {
     return String(e);
@@ -328,29 +385,35 @@ export async function savePassword(
   connectionId: string,
   password: string,
 ): Promise<void> {
-  return invoke('config_save_password', { connectionId, password });
+  return invoke("config_save_password", { connectionId, password });
 }
 
 export async function hasPassword(connectionId: string): Promise<boolean> {
-  return invoke<boolean>('config_has_password', { connectionId });
+  return invoke<boolean>("config_has_password", { connectionId });
 }
 
 export async function connectWithSavedPassword(
   connectionId: string,
   trustNewHostKey = false,
 ): Promise<string> {
-  return invoke<string>('ssh_connect_with_saved_password', { connectionId, trustNewHostKey });
+  return invoke<string>("ssh_connect_with_saved_password", {
+    connectionId,
+    trustNewHostKey,
+  });
 }
 
 export async function connectWithSavedPassphrase(
   connectionId: string,
   trustNewHostKey = false,
 ): Promise<string> {
-  return invoke<string>('ssh_connect_with_saved_passphrase', { connectionId, trustNewHostKey });
+  return invoke<string>("ssh_connect_with_saved_passphrase", {
+    connectionId,
+    trustNewHostKey,
+  });
 }
 
 export async function deletePassword(connectionId: string): Promise<void> {
-  return invoke('config_delete_password', { connectionId });
+  return invoke("config_delete_password", { connectionId });
 }
 
 export async function sshReconnect(
@@ -358,22 +421,22 @@ export async function sshReconnect(
   connectionId: string,
   trustNewHostKey = false,
 ): Promise<void> {
-  return invoke('ssh_reconnect', { sessionId, connectionId, trustNewHostKey });
+  return invoke("ssh_reconnect", { sessionId, connectionId, trustNewHostKey });
 }
 
 export async function savePassphrase(
   connectionId: string,
   passphrase: string,
 ): Promise<void> {
-  return invoke('config_save_passphrase', { connectionId, passphrase });
+  return invoke("config_save_passphrase", { connectionId, passphrase });
 }
 
 export async function hasPassphrase(connectionId: string): Promise<boolean> {
-  return invoke<boolean>('config_has_passphrase', { connectionId });
+  return invoke<boolean>("config_has_passphrase", { connectionId });
 }
 
 export async function deletePassphrase(connectionId: string): Promise<void> {
-  return invoke('config_delete_passphrase', { connectionId });
+  return invoke("config_delete_passphrase", { connectionId });
 }
 
 // Jump host keychain
@@ -382,94 +445,109 @@ export async function saveJumpPassword(
   connectionId: string,
   password: string,
 ): Promise<void> {
-  return invoke('config_save_jump_password', { connectionId, password });
+  return invoke("config_save_jump_password", { connectionId, password });
 }
 
 export async function hasJumpPassword(connectionId: string): Promise<boolean> {
-  return invoke<boolean>('config_has_jump_password', { connectionId });
+  return invoke<boolean>("config_has_jump_password", { connectionId });
 }
 
 export async function deleteJumpPassword(connectionId: string): Promise<void> {
-  return invoke('config_delete_jump_password', { connectionId });
+  return invoke("config_delete_jump_password", { connectionId });
 }
 
 export async function saveJumpPassphrase(
   connectionId: string,
   passphrase: string,
 ): Promise<void> {
-  return invoke('config_save_jump_passphrase', { connectionId, passphrase });
+  return invoke("config_save_jump_passphrase", { connectionId, passphrase });
 }
 
-export async function hasJumpPassphrase(connectionId: string): Promise<boolean> {
-  return invoke<boolean>('config_has_jump_passphrase', { connectionId });
+export async function hasJumpPassphrase(
+  connectionId: string,
+): Promise<boolean> {
+  return invoke<boolean>("config_has_jump_passphrase", { connectionId });
 }
 
-export async function deleteJumpPassphrase(connectionId: string): Promise<void> {
-  return invoke('config_delete_jump_passphrase', { connectionId });
+export async function deleteJumpPassphrase(
+  connectionId: string,
+): Promise<void> {
+  return invoke("config_delete_jump_passphrase", { connectionId });
 }
 
 // Quick command commands
 
-export async function quickCommandList(sessionKey?: string | null): Promise<QuickCommand[]> {
-  return invoke<QuickCommand[]>('quick_command_list', { sessionKey: sessionKey ?? null });
+export async function quickCommandList(
+  sessionKey?: string | null,
+): Promise<QuickCommand[]> {
+  return invoke<QuickCommand[]>("quick_command_list", {
+    sessionKey: sessionKey ?? null,
+  });
 }
 
-export async function quickCommandAdd(command: QuickCommandInput): Promise<QuickCommand> {
-  return invoke<QuickCommand>('quick_command_add', { command });
+export async function quickCommandAdd(
+  command: QuickCommandInput,
+): Promise<QuickCommand> {
+  return invoke<QuickCommand>("quick_command_add", { command });
 }
 
-export async function quickCommandUpdate(id: string, patch: QuickCommandPatch): Promise<void> {
-  return invoke('quick_command_update', { id, patch });
+export async function quickCommandUpdate(
+  id: string,
+  patch: QuickCommandPatch,
+): Promise<void> {
+  return invoke("quick_command_update", { id, patch });
 }
 
 export async function quickCommandDelete(id: string): Promise<void> {
-  return invoke('quick_command_delete', { id });
+  return invoke("quick_command_delete", { id });
 }
 
 // MCP commands
 
 export async function mcpListServers(): Promise<McpServerListResponse> {
-  return invoke<McpServerListResponse>('mcp_list_servers');
+  return invoke<McpServerListResponse>("mcp_list_servers");
 }
 
 export async function mcpAddServer(input: McpServerInput): Promise<McpServer> {
-  return invoke<McpServer>('mcp_add_server', { input });
+  return invoke<McpServer>("mcp_add_server", { input });
 }
 
-export async function mcpUpdateServer(id: string, input: McpServerInput): Promise<void> {
-  return invoke('mcp_update_server', { id, input });
+export async function mcpUpdateServer(
+  id: string,
+  input: McpServerInput,
+): Promise<void> {
+  return invoke("mcp_update_server", { id, input });
 }
 
 export async function mcpDeleteServer(id: string): Promise<void> {
-  return invoke('mcp_delete_server', { id });
+  return invoke("mcp_delete_server", { id });
 }
 
 export async function mcpToggleServer(id: string): Promise<void> {
-  return invoke('mcp_toggle_server', { id });
+  return invoke("mcp_toggle_server", { id });
 }
 
 export async function mcpRefreshTools(id: string): Promise<McpTool[]> {
-  return invoke<McpTool[]>('mcp_refresh_tools', { id });
+  return invoke<McpTool[]>("mcp_refresh_tools", { id });
 }
 
 // LLM API Key management
 
 export async function saveLlmApiKey(apiKey: string): Promise<void> {
-  return invoke('config_save_llm_api_key', { apiKey });
+  return invoke("config_save_llm_api_key", { apiKey });
 }
 
 export async function deleteLlmApiKey(): Promise<void> {
-  return invoke('config_delete_llm_api_key');
+  return invoke("config_delete_llm_api_key");
 }
 
 export async function saveWebSearchApiKey(apiKey: string): Promise<void> {
-  return invoke('config_save_web_search_api_key', { apiKey });
+  return invoke("config_save_web_search_api_key", { apiKey });
 }
 
 export async function deleteWebSearchApiKey(): Promise<void> {
-  return invoke('config_delete_web_search_api_key');
+  return invoke("config_delete_web_search_api_key");
 }
-
 
 // LLM model discovery
 
@@ -482,7 +560,7 @@ export async function llmListModels(
   baseUrl?: string | null,
   apiKey?: string | null,
 ): Promise<ModelInfo[]> {
-  return invoke<ModelInfo[]>('llm_list_models', {
+  return invoke<ModelInfo[]>("llm_list_models", {
     baseUrl: baseUrl ?? null,
     apiKey: apiKey ?? null,
   });
@@ -491,7 +569,7 @@ export async function llmListModels(
 // Skill commands
 
 export async function skillList(): Promise<Skill[]> {
-  return invoke<Skill[]>('skill_list');
+  return invoke<Skill[]>("skill_list");
 }
 
 export async function skillAdd(
@@ -499,7 +577,7 @@ export async function skillAdd(
   description: string,
   prompt: string,
 ): Promise<Skill> {
-  return invoke<Skill>('skill_add', { name, description, prompt });
+  return invoke<Skill>("skill_add", { name, description, prompt });
 }
 
 export async function skillUpdate(
@@ -508,94 +586,170 @@ export async function skillUpdate(
   description?: string,
   prompt?: string,
 ): Promise<void> {
-  return invoke('skill_update', { id, name, description, prompt });
+  return invoke("skill_update", { id, name, description, prompt });
 }
 
 export async function skillToggle(id: string): Promise<void> {
-  return invoke('skill_toggle', { id });
+  return invoke("skill_toggle", { id });
 }
 
 export async function skillDelete(id: string): Promise<void> {
-  return invoke('skill_delete', { id });
+  return invoke("skill_delete", { id });
 }
 
-export async function importSkillFile(fileData: string, fileName: string): Promise<ParsedSkill> {
-  return invoke<ParsedSkill>('import_skill_file', { fileData, fileName });
+/** 用户 skill 手动排序：ids 为完整的用户 skill id 顺序 */
+export async function skillReorder(ids: string[]): Promise<void> {
+  return invoke("skill_reorder", { ids });
+}
+
+export async function importSkillFile(
+  fileData: string,
+  fileName: string,
+): Promise<ParsedSkill> {
+  return invoke<ParsedSkill>("import_skill_file", { fileData, fileName });
 }
 
 // App lifecycle
 
 /** 移动端同步前后台；桌面端 no-op。前台时不发 Agent 系统通知。 */
-export async function mobileSetAppForeground(inForeground: boolean): Promise<void> {
-  return invoke('mobile_set_app_foreground', { inForeground });
+export async function mobileSetAppForeground(
+  inForeground: boolean,
+): Promise<void> {
+  return invoke("mobile_set_app_foreground", { inForeground });
 }
 
 export async function appReady(): Promise<void> {
-  return invoke('app_ready');
+  return invoke("app_ready");
 }
 
 // Update check
 
 export async function checkUpdate(): Promise<UpdateCheckResult> {
-  return invoke<UpdateCheckResult>('check_update');
+  return invoke<UpdateCheckResult>("check_update");
 }
 
 // SFTP commands
 
-export async function sftpListDir(sessionId: string, path: string): Promise<SftpFileEntry[]> {
-  return invoke<SftpFileEntry[]>('sftp_list_dir', { sessionId, path });
+export async function sftpListDir(
+  sessionId: string,
+  path: string,
+): Promise<SftpFileEntry[]> {
+  return invoke<SftpFileEntry[]>("sftp_list_dir", { sessionId, path });
 }
 
-export async function sftpUpload(sessionId: string, remotePath: string, data: number[]): Promise<void> {
-  return invoke('sftp_upload', { sessionId, remotePath, data });
+export async function sftpUpload(
+  sessionId: string,
+  remotePath: string,
+  data: number[],
+): Promise<void> {
+  return invoke("sftp_upload", { sessionId, remotePath, data });
 }
 
-export async function sftpDownload(sessionId: string, remotePath: string): Promise<number[]> {
-  return invoke<number[]>('sftp_download', { sessionId, remotePath });
+export async function sftpDownload(
+  sessionId: string,
+  remotePath: string,
+): Promise<number[]> {
+  return invoke<number[]>("sftp_download", { sessionId, remotePath });
 }
 
-export async function sftpMkdir(sessionId: string, path: string): Promise<void> {
-  return invoke('sftp_mkdir', { sessionId, path });
+export async function sftpMkdir(
+  sessionId: string,
+  path: string,
+): Promise<void> {
+  return invoke("sftp_mkdir", { sessionId, path });
 }
 
-export async function sftpRemove(sessionId: string, path: string, isDir: boolean): Promise<void> {
-  return invoke('sftp_remove', { sessionId, path, isDir });
+export async function sftpRemove(
+  sessionId: string,
+  path: string,
+  isDir: boolean,
+): Promise<void> {
+  return invoke("sftp_remove", { sessionId, path, isDir });
 }
 
-export async function sftpRemoveViaShell(sessionId: string, path: string, isDir: boolean): Promise<void> {
-  return invoke('sftp_remove_via_shell', { sessionId, path, isDir });
+export async function sftpRemoveViaShell(
+  sessionId: string,
+  path: string,
+  isDir: boolean,
+): Promise<void> {
+  return invoke("sftp_remove_via_shell", { sessionId, path, isDir });
 }
 
-export async function sftpRename(sessionId: string, oldPath: string, newPath: string): Promise<void> {
-  return invoke('sftp_rename', { sessionId, oldPath, newPath });
+export async function sftpRename(
+  sessionId: string,
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  return invoke("sftp_rename", { sessionId, oldPath, newPath });
 }
 
-export async function sftpUploadFolder(sessionId: string, remotePath: string, archiveData: number[]): Promise<string> {
-  return invoke<string>('sftp_upload_folder', { sessionId, remotePath, archiveData });
+export async function sftpUploadFolder(
+  sessionId: string,
+  remotePath: string,
+  archiveData: number[],
+): Promise<string> {
+  return invoke<string>("sftp_upload_folder", {
+    sessionId,
+    remotePath,
+    archiveData,
+  });
 }
 
-export async function sftpReadFile(sessionId: string, path: string): Promise<{ content: string; mtime: number }> {
-  return invoke<{ content: string; mtime: number }>('sftp_read_file', { sessionId, path });
+export async function sftpReadFile(
+  sessionId: string,
+  path: string,
+): Promise<{ content: string; mtime: number }> {
+  return invoke<{ content: string; mtime: number }>("sftp_read_file", {
+    sessionId,
+    path,
+  });
 }
 
-export async function sftpGetMtime(sessionId: string, path: string): Promise<number> {
-  return invoke<number>('sftp_get_mtime', { sessionId, path });
+export async function sftpGetMtime(
+  sessionId: string,
+  path: string,
+): Promise<number> {
+  return invoke<number>("sftp_get_mtime", { sessionId, path });
 }
 
-export async function sftpWriteFile(sessionId: string, path: string, content: string): Promise<void> {
-  return invoke('sftp_write_file', { sessionId, path, content });
+export async function sftpWriteFile(
+  sessionId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  return invoke("sftp_write_file", { sessionId, path, content });
 }
 
-export async function sftpDownloadStream(sessionId: string, remotePath: string, localPath: string, downloadId: string): Promise<void> {
-  return invoke('sftp_download_stream', { sessionId, remotePath, localPath, downloadId });
+export async function sftpDownloadStream(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  downloadId: string,
+): Promise<void> {
+  return invoke("sftp_download_stream", {
+    sessionId,
+    remotePath,
+    localPath,
+    downloadId,
+  });
 }
 
-export async function sftpUploadStream(sessionId: string, remotePath: string, localPath: string, uploadId: string): Promise<void> {
-  return invoke('sftp_upload_stream', { sessionId, remotePath, localPath, uploadId });
+export async function sftpUploadStream(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  uploadId: string,
+): Promise<void> {
+  return invoke("sftp_upload_stream", {
+    sessionId,
+    remotePath,
+    localPath,
+    uploadId,
+  });
 }
 
 export async function sftpCancelUpload(uploadId: string): Promise<void> {
-  return invoke('sftp_cancel_upload', { uploadId });
+  return invoke("sftp_cancel_upload", { uploadId });
 }
 
 /**
@@ -604,16 +758,16 @@ export async function sftpCancelUpload(uploadId: string): Promise<void> {
  * 后端经 ContentResolver 查询 DISPLAY_NAME；普通路径取 basename。
  */
 export async function sftpLocalFileName(path: string): Promise<string> {
-  return invoke<string>('sftp_local_file_name', { path });
+  return invoke<string>("sftp_local_file_name", { path });
 }
 
 /** Android SAF 返回的 content:// URI（文件选择器/保存对话框产物）。 */
 export function isContentUri(path: string): boolean {
-  return path.startsWith('content://');
+  return path.startsWith("content://");
 }
 
 export async function sftpCancelDownload(downloadId: string): Promise<void> {
-  return invoke('sftp_cancel_download', { downloadId });
+  return invoke("sftp_cancel_download", { downloadId });
 }
 
 // ──────────── 图片预览（下载到临时目录后由 WebView 通过 asset 协议加载） ────────────
@@ -629,7 +783,7 @@ export async function sftpPreviewImage(
   remotePath: string,
   previewId: string,
 ): Promise<SftpPreviewImageResult> {
-  return invoke<SftpPreviewImageResult>('sftp_preview_image', {
+  return invoke<SftpPreviewImageResult>("sftp_preview_image", {
     sessionId,
     remotePath,
     previewId,
@@ -639,13 +793,13 @@ export async function sftpPreviewImage(
 /** sysopen 任务阶段，与后端 SysopenPhase 对应（serde tag=kind, rename camelCase）。
  *  前端据此更新传输中心「下载」与「监视回传」两张卡片的状态与文案。 */
 export type SysopenPhase =
-  | { kind: 'downloading'; written: number; total: number }
-  | { kind: 'opened' }
-  | { kind: 'monitoring' }
-  | { kind: 'syncing'; written: number; total: number }
-  | { kind: 'synced' }
-  | { kind: 'cancelled' }
-  | { kind: 'failed'; message: string };
+  | { kind: "downloading"; written: number; total: number }
+  | { kind: "opened" }
+  | { kind: "monitoring" }
+  | { kind: "syncing"; written: number; total: number }
+  | { kind: "synced" }
+  | { kind: "cancelled" }
+  | { kind: "failed"; message: string };
 
 export interface SysopenStateEvent {
   taskId: string;
@@ -670,7 +824,7 @@ export async function sftpOpenWithSystem(
   downloadId: string,
   uploadId: string,
 ): Promise<SysopenResult> {
-  return invoke<SysopenResult>('sftp_open_with_system', {
+  return invoke<SysopenResult>("sftp_open_with_system", {
     sessionId,
     remotePath,
     taskId,
@@ -681,14 +835,14 @@ export async function sftpOpenWithSystem(
 
 /** 取消 sysopen 任务（下载阶段与监视阶段均可中止）。 */
 export async function sftpCancelSysopen(taskId: string): Promise<void> {
-  return invoke('sftp_cancel_sysopen', { taskId });
+  return invoke("sftp_cancel_sysopen", { taskId });
 }
 
 // ──────────── 跨设备同步（sync_* commands） ────────────
 
 /** 获取同步配置摘要（状态 + profile + 配置信息） */
 export async function syncGetSummary(): Promise<SyncSummary> {
-  return invoke<SyncSummary>('sync_get_summary');
+  return invoke<SyncSummary>("sync_get_summary");
 }
 
 /** 第一台设备配对：生成配置码 + 注册账户。
@@ -701,7 +855,7 @@ export async function syncPairFirst(
   serverUrl: string,
   password: string,
 ): Promise<SyncPairResult> {
-  return invoke<SyncPairResult>('sync_pair_first', { serverUrl, password });
+  return invoke<SyncPairResult>("sync_pair_first", { serverUrl, password });
 }
 
 /** 后续设备加入：配置码 + 账户密码。
@@ -713,7 +867,7 @@ export async function syncPairJoin(
   configCode: string,
   password: string,
 ): Promise<SyncPairResult> {
-  return invoke<SyncPairResult>('sync_pair_join', {
+  return invoke<SyncPairResult>("sync_pair_join", {
     serverUrl,
     configCode,
     password,
@@ -722,49 +876,53 @@ export async function syncPairJoin(
 
 /** 更新 sync_profile */
 export async function syncUpdateProfile(profile: SyncProfile): Promise<void> {
-  return invoke<void>('sync_update_profile', { profile });
+  return invoke<void>("sync_update_profile", { profile });
 }
 
 /** 手动触发 push */
 export async function syncPushNow(): Promise<void> {
-  return invoke<void>('sync_push_now');
+  return invoke<void>("sync_push_now");
 }
 
 /** 手动触发 pull */
 export async function syncPullNow(): Promise<void> {
-  return invoke<void>('sync_pull_now');
+  return invoke<void>("sync_pull_now");
 }
 
 /** 列出已配对设备 */
 export async function syncListDevices(): Promise<SyncDeviceInfo[]> {
-  return invoke<SyncDeviceInfo[]>('sync_list_devices');
+  return invoke<SyncDeviceInfo[]>("sync_list_devices");
 }
 
 /** 查询账户配额使用情况（未配置同步返回 null；旧服务端无此端点会报错，调用方静默降级） */
 export async function syncGetQuota(): Promise<SyncQuota | null> {
-  return invoke<SyncQuota | null>('sync_get_quota');
+  return invoke<SyncQuota | null>("sync_get_quota");
 }
 
 /** 删除（撤销）某设备的 API Key */
 export async function syncRemoveDevice(deviceId: string): Promise<void> {
-  return invoke<void>('sync_remove_device', { deviceId });
+  return invoke<void>("sync_remove_device", { deviceId });
 }
 
 /** 账户重置：删除账户及所有数据（需配置码验证） */
-export async function syncResetAccount(configCode: string): Promise<SyncResetResult> {
-  return invoke<SyncResetResult>('sync_reset_account', { configCode });
+export async function syncResetAccount(
+  configCode: string,
+): Promise<SyncResetResult> {
+  return invoke<SyncResetResult>("sync_reset_account", { configCode });
 }
 
 /** 关闭同步（清除本机凭证，不删服务端数据） */
 export async function syncDisable(): Promise<void> {
-  return invoke<void>('sync_disable');
+  return invoke<void>("sync_disable");
 }
 
 // ──────────── 冲突解决 commands ────────────
 
 /** 获取所有待解决的冲突列表 */
-export async function syncGetPendingConflicts(): Promise<SyncPendingConflict[]> {
-  return invoke<SyncPendingConflict[]>('sync_get_pending_conflicts');
+export async function syncGetPendingConflicts(): Promise<
+  SyncPendingConflict[]
+> {
+  return invoke<SyncPendingConflict[]>("sync_get_pending_conflicts");
 }
 
 /** 解决单个冲突
@@ -778,7 +936,7 @@ export async function syncResolveConflict(
   key: string,
   action: SyncConflictAction,
 ): Promise<SyncResolveResult> {
-  return invoke<SyncResolveResult>('sync_resolve_conflict', { key, action });
+  return invoke<SyncResolveResult>("sync_resolve_conflict", { key, action });
 }
 
 /** 批量解决所有冲突
@@ -789,22 +947,22 @@ export async function syncResolveConflict(
 export async function syncResolveAllConflicts(
   actions: Record<string, SyncConflictAction>,
 ): Promise<SyncResolveResult[]> {
-  return invoke<SyncResolveResult[]>('sync_resolve_all_conflicts', { actions });
+  return invoke<SyncResolveResult[]>("sync_resolve_all_conflicts", { actions });
 }
 
 /** 添加永久跳过项（用户在设置 UI 主动排除某 key） */
 export async function syncAddExcludedKey(key: string): Promise<void> {
-  return invoke<void>('sync_add_excluded_key', { key });
+  return invoke<void>("sync_add_excluded_key", { key });
 }
 
 /** 移除永久跳过项（用户在设置 UI 重新启用某 key） */
 export async function syncRemoveExcludedKey(key: string): Promise<void> {
-  return invoke<void>('sync_remove_excluded_key', { key });
+  return invoke<void>("sync_remove_excluded_key", { key });
 }
 
 /** 获取当前所有永久跳过项 */
 export async function syncGetExcludedKeys(): Promise<string[]> {
-  return invoke<string[]>('sync_get_excluded_keys');
+  return invoke<string[]>("sync_get_excluded_keys");
 }
 
 /**
@@ -813,23 +971,41 @@ export async function syncGetExcludedKeys(): Promise<string[]> {
  * - 不传：扫描整个 marcel-previews 根（应用启动时调用）
  */
 export async function sftpPreviewCleanup(localPath?: string): Promise<void> {
-  return invoke('sftp_preview_cleanup', { localPath: localPath ?? null });
+  return invoke("sftp_preview_cleanup", { localPath: localPath ?? null });
 }
 
-export async function sftpUploadFolderStream(sessionId: string, localPath: string, remotePath: string, uploadId: string, flat: boolean): Promise<void> {
-  return invoke('sftp_upload_folder_stream', { sessionId, localPath, remotePath, uploadId, flat });
+export async function sftpUploadFolderStream(
+  sessionId: string,
+  localPath: string,
+  remotePath: string,
+  uploadId: string,
+  flat: boolean,
+): Promise<void> {
+  return invoke("sftp_upload_folder_stream", {
+    sessionId,
+    localPath,
+    remotePath,
+    uploadId,
+    flat,
+  });
 }
 
-export async function sftpPrepareDragUpload(filePaths: string[]): Promise<string> {
-  return invoke<string>('sftp_prepare_drag_upload', { filePaths });
+export async function sftpPrepareDragUpload(
+  filePaths: string[],
+): Promise<string> {
+  return invoke<string>("sftp_prepare_drag_upload", { filePaths });
 }
 
 export async function sftpCleanupTempDir(tempDir: string): Promise<void> {
-  return invoke('sftp_cleanup_temp_dir', { tempDir });
+  return invoke("sftp_cleanup_temp_dir", { tempDir });
 }
 
-export async function sftpExtractArchive(sessionId: string, remotePath: string, targetDir: string): Promise<void> {
-  return invoke('sftp_extract_archive', { sessionId, remotePath, targetDir });
+export async function sftpExtractArchive(
+  sessionId: string,
+  remotePath: string,
+  targetDir: string,
+): Promise<void> {
+  return invoke("sftp_extract_archive", { sessionId, remotePath, targetDir });
 }
 
 /**
@@ -839,12 +1015,12 @@ export async function sftpExtractArchive(sessionId: string, remotePath: string, 
 export async function sftpCompressArchive(
   sessionId: string,
   remoteDir: string,
-  format: 'tar.gz' | 'zip',
+  format: "tar.gz" | "zip",
   targetPath: string,
   overwrite: boolean,
   taskId: string,
 ): Promise<void> {
-  return invoke('sftp_compress_archive', {
+  return invoke("sftp_compress_archive", {
     sessionId,
     remoteDir,
     format,
@@ -856,7 +1032,7 @@ export async function sftpCompressArchive(
 
 /** 取消正在运行的 ssh_exec_long / sftp_compress_archive 任务。 */
 export async function sshExecLongCancel(taskId: string): Promise<void> {
-  return invoke('ssh_exec_long_cancel', { taskId });
+  return invoke("ssh_exec_long_cancel", { taskId });
 }
 
 // Plugin webview commands
@@ -870,7 +1046,9 @@ export async function pluginWebviewCreate(
   width: number,
   height: number,
 ): Promise<void> {
-  return invoke('plugin_webview_create', { params: { label, pluginId, entry, x, y, width, height } });
+  return invoke("plugin_webview_create", {
+    params: { label, pluginId, entry, x, y, width, height },
+  });
 }
 
 export async function pluginWebviewSetBounds(
@@ -880,64 +1058,83 @@ export async function pluginWebviewSetBounds(
   width: number,
   height: number,
 ): Promise<void> {
-  return invoke('plugin_webview_set_bounds', { label, x, y, width, height });
+  return invoke("plugin_webview_set_bounds", { label, x, y, width, height });
 }
 
 export async function pluginWebviewClose(label: string): Promise<void> {
-  return invoke('plugin_webview_close', { label });
+  return invoke("plugin_webview_close", { label });
 }
 
 export async function pluginList(): Promise<PluginManifest[]> {
-  return invoke<PluginManifest[]>('plugin_list');
+  return invoke<PluginManifest[]>("plugin_list");
 }
 
 /** Fetch the command→capability map from the Rust single source of truth.
  *  Used by `pluginIpc.ts` to build `COMMAND_TO_CAPABILITY` at init time. */
 export async function pluginCapabilityMap(): Promise<Record<string, string>> {
-  return invoke<Record<string, string>>('plugin_capability_map');
+  return invoke<Record<string, string>>("plugin_capability_map");
 }
 
 /** Trigger a registry reload on the backend. Returns the diff so the caller
  *  can react to per-plugin changes (destroy/recreate only changed webviews +
  *  injections). The backend also emits `plugin-registry-changed` separately. */
 export async function pluginReload(): Promise<ReloadDiff> {
-  return invoke<ReloadDiff>('plugin_reload');
+  return invoke<ReloadDiff>("plugin_reload");
 }
 
 export async function getPluginDir(): Promise<string> {
-  return invoke<string>('get_plugin_dir');
+  return invoke<string>("get_plugin_dir");
 }
 
 export async function openPluginDir(): Promise<void> {
-  return invoke('open_plugin_dir');
+  return invoke("open_plugin_dir");
 }
 
-export async function pluginFsRead(pluginId: string, path: string): Promise<string> {
-  return invoke<string>('plugin_fs_read', { pluginId, path });
+export async function pluginFsRead(
+  pluginId: string,
+  path: string,
+): Promise<string> {
+  return invoke<string>("plugin_fs_read", { pluginId, path });
 }
 
-export async function pluginFsWrite(pluginId: string, path: string, content: string): Promise<void> {
-  return invoke('plugin_fs_write', { pluginId, path, content });
+export async function pluginFsWrite(
+  pluginId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  return invoke("plugin_fs_write", { pluginId, path, content });
 }
 
-export async function pluginHttpRequest(request: PluginHttpRequest): Promise<PluginHttpResponse> {
-  return invoke<PluginHttpResponse>('plugin_http_request', { request });
+export async function pluginHttpRequest(
+  request: PluginHttpRequest,
+): Promise<PluginHttpResponse> {
+  return invoke<PluginHttpResponse>("plugin_http_request", { request });
 }
 
-export async function pluginSendNotification(pluginId: string, title: string, body: string): Promise<void> {
-  return invoke('plugin_send_notification', { pluginId, title, body });
+export async function pluginSendNotification(
+  pluginId: string,
+  title: string,
+  body: string,
+): Promise<void> {
+  return invoke("plugin_send_notification", { pluginId, title, body });
 }
 
 /** Fetch the plugin market index. `indexUrl` carries the user-configured
  *  GitHub mirror (empty = built-in defaults: jsDelivr index + raw fallback). */
 export async function marketList(indexUrl?: string): Promise<MarketIndex> {
-  return invoke<MarketIndex>('market_list', { indexUrl: indexUrl ?? null });
+  return invoke<MarketIndex>("market_list", { indexUrl: indexUrl ?? null });
 }
 
 /** Fetch a plugin's plugin.json + README from its GitHub repo, routed
  *  through the configured mirror (empty = built-in defaults). */
-export async function marketDetail(repoUrl: string, mirror?: string): Promise<MarketDetail> {
-  return invoke<MarketDetail>('market_detail', { repoUrl, mirror: mirror ?? null });
+export async function marketDetail(
+  repoUrl: string,
+  mirror?: string,
+): Promise<MarketDetail> {
+  return invoke<MarketDetail>("market_detail", {
+    repoUrl,
+    mirror: mirror ?? null,
+  });
 }
 
 /** One-click install: download the plugin archive (mirror-first), extract it
@@ -949,7 +1146,7 @@ export async function pluginInstall(
   installId: string,
   mirror?: string,
 ): Promise<PluginInstallResult> {
-  return invoke<PluginInstallResult>('plugin_install', {
+  return invoke<PluginInstallResult>("plugin_install", {
     repoUrl,
     installId,
     mirror: mirror ?? null,
@@ -958,7 +1155,7 @@ export async function pluginInstall(
 
 /** Abort a running plugin install (download or extraction). */
 export async function pluginInstallCancel(installId: string): Promise<void> {
-  return invoke('plugin_install_cancel', { installId });
+  return invoke("plugin_install_cancel", { installId });
 }
 
 /** Update an installed plugin (mirror-first, preserve user data). */
@@ -967,7 +1164,7 @@ export async function pluginUpdate(
   installId: string,
   mirror?: string,
 ): Promise<PluginInstallResult> {
-  return invoke<PluginInstallResult>('plugin_update', {
+  return invoke<PluginInstallResult>("plugin_update", {
     repoUrl,
     installId,
     mirror: mirror ?? null,
@@ -976,5 +1173,5 @@ export async function pluginUpdate(
 
 /** Remove an installed plugin (directory + settings residue). */
 export async function pluginUninstall(pluginId: string): Promise<void> {
-  return invoke('plugin_uninstall', { pluginId });
+  return invoke("plugin_uninstall", { pluginId });
 }

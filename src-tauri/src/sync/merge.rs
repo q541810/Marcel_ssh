@@ -75,11 +75,7 @@ pub enum MergeSource {
 /// - `theirs`：pull 下来的远程值（已解密）
 ///
 /// 返回合并结果。
-pub fn merge_key(
-    base: Option<&str>,
-    ours: Option<&str>,
-    theirs: Option<&str>,
-) -> MergeResult {
+pub fn merge_key(base: Option<&str>, ours: Option<&str>, theirs: Option<&str>) -> MergeResult {
     // 规范化：None 和空字符串等价（避免 None vs "" 误判冲突）
     let base_str = base.filter(|s| !s.is_empty());
     let ours_str = ours.filter(|s| !s.is_empty());

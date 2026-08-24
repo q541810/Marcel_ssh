@@ -1,4 +1,4 @@
-﻿//! Plugin install / uninstall.
+//! Plugin install / uninstall.
 //!
 //! `plugin_install` downloads a plugin's GitHub source archive (mirror-first,
 //! see `commands::market`), extracts it with zip-slip protection into
@@ -54,7 +54,10 @@ fn validate_plugin_id(id: &str) -> Result<(), AppError> {
     if id.is_empty() {
         return Err(AppError::Other("插件 id 为空".into()));
     }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(AppError::Other(format!("插件 id 含非法字符: {}", id)));
     }
     Ok(())
@@ -134,8 +137,9 @@ fn extract_zip_archive_with(
                 return Err(AppError::Other("压缩包解压后超过大小上限".into()));
             }
             if let Some(parent) = out.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| AppError::Other(format!("创建目录失败 {}: {}", parent.display(), e)))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    AppError::Other(format!("创建目录失败 {}: {}", parent.display(), e))
+                })?;
             }
             let mut file = std::fs::File::create(&out)
                 .map_err(|e| AppError::Other(format!("写入文件失败 {}: {}", out.display(), e)))?;
@@ -159,8 +163,7 @@ fn find_plugin_root(extract_dir: &Path) -> Result<PathBuf, AppError> {
     for entry in std::fs::read_dir(extract_dir)
         .map_err(|e| AppError::Other(format!("读取临时目录失败: {}", e)))?
     {
-        let entry = entry
-            .map_err(|e| AppError::Other(format!("读取临时目录条目失败: {}", e)))?;
+        let entry = entry.map_err(|e| AppError::Other(format!("读取临时目录条目失败: {}", e)))?;
         let p = entry.path();
         if p.is_dir() {
             dirs.push(p);
@@ -196,8 +199,8 @@ const SHIPPED_LIST_FILE: &str = ".marcel-shipped.json";
 
 fn write_shipped_list(target: &Path, files: &[String]) -> Result<(), AppError> {
     let path = target.join(SHIPPED_LIST_FILE);
-    let content =
-        serde_json::to_string(files).map_err(|e| AppError::Other(format!("序列化清单失败: {}", e)))?;
+    let content = serde_json::to_string(files)
+        .map_err(|e| AppError::Other(format!("序列化清单失败: {}", e)))?;
     std::fs::write(&path, content).map_err(|e| AppError::Other(format!("写入清单失败: {}", e)))?;
     Ok(())
 }
@@ -251,7 +254,9 @@ fn is_preserve_match(preserve: &str, file_rel: &str) -> bool {
         .trim_end_matches("/**")
         .trim_end_matches("/*")
         .trim_end_matches('/');
-    let is_dir = norm_preserve.ends_with('/') || norm_preserve.contains("**") || norm_preserve.contains("/*");
+    let is_dir = norm_preserve.ends_with('/')
+        || norm_preserve.contains("**")
+        || norm_preserve.contains("/*");
     if is_dir {
         if trimmed.is_empty() {
             return false;
@@ -275,7 +280,10 @@ fn union_preserve_paths(old: &[String], new: &[String]) -> Vec<String> {
     }
     // 硬编码：config.json 永远保留（即使未声明），覆盖云端自带模板被用户改后丢失的问题
     if !out.iter().any(|p| {
-        let t = p.trim_end_matches('/').trim_end_matches("/**").trim_end_matches("/*");
+        let t = p
+            .trim_end_matches('/')
+            .trim_end_matches("/**")
+            .trim_end_matches("/*");
         t == "config.json"
     }) {
         out.push("config.json".to_string());
@@ -378,7 +386,10 @@ fn update_from_archive_with_progress(
         let plugins_dir = config_dir.join("plugins");
         let target = plugins_dir.join(&new_manifest.id);
         if !target.exists() {
-            return Err(AppError::Other(format!("插件 {} 未安装，无法更新", new_manifest.id)));
+            return Err(AppError::Other(format!(
+                "插件 {} 未安装，无法更新",
+                new_manifest.id
+            )));
         }
 
         // 读取旧清单与旧 preservePaths
@@ -402,7 +413,8 @@ fn update_from_archive_with_progress(
             new_shipped.iter().cloned().collect();
 
         // 备份目标到独立临时目录（避免与 tmp_dir/root 同目录导致移动时把备份一起搬走）
-        let backup_dir = std::env::temp_dir().join(format!("marcel-plugin-backup-{}", uuid::Uuid::new_v4()));
+        let backup_dir =
+            std::env::temp_dir().join(format!("marcel-plugin-backup-{}", uuid::Uuid::new_v4()));
         // 确保取消检查穿插在重 IO 前
         if is_cancelled() {
             std::fs::remove_dir_all(&backup_dir).ok();
@@ -419,11 +431,10 @@ fn update_from_archive_with_progress(
         }
 
         // 原子覆盖：删旧 -> 拷新
-        std::fs::remove_dir_all(&target)
-            .map_err(|e| {
-                std::fs::remove_dir_all(&backup_dir).ok();
-                AppError::Other(format!("删除旧插件失败: {}", e))
-            })?;
+        std::fs::remove_dir_all(&target).map_err(|e| {
+            std::fs::remove_dir_all(&backup_dir).ok();
+            AppError::Other(format!("删除旧插件失败: {}", e))
+        })?;
         if is_cancelled() {
             // 已删旧目录，尝试回滚
             let _ = copy_dir_recursive(&backup_dir, &target);
@@ -519,9 +530,7 @@ fn update_from_archive_with_progress(
 /// `commands::sftp::TransferCancelGuard`.
 struct InstallCancelGuard {
     install_id: String,
-    senders: std::sync::Arc<
-        parking_lot::RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>,
-    >,
+    senders: std::sync::Arc<parking_lot::RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
 }
 
 impl Drop for InstallCancelGuard {
@@ -837,7 +846,8 @@ pub async fn plugin_uninstall(
     let app_version = app.package_info().version.to_string();
     {
         let mut reg = state.plugin_registry.write().await;
-        reg.reload(&config_dir, &updated_settings, &app_version).await;
+        reg.reload(&config_dir, &updated_settings, &app_version)
+            .await;
     }
 
     let path = AppSettings::default_file(&config_dir);
@@ -915,10 +925,7 @@ mod tests {
         assert!(tmp.path().join("plug-main/index.html").exists());
 
         // 路径穿越条目必须被拒绝，且不产生越界文件
-        let evil = make_zip(&[
-            ("plug-main/plugin.json", "{}"),
-            ("../escaped.txt", "evil"),
-        ]);
+        let evil = make_zip(&[("plug-main/plugin.json", "{}"), ("../escaped.txt", "evil")]);
         assert!(extract_zip_archive_with(&evil, tmp.path(), |_, _| {}, || false).is_err());
         assert!(!tmp.path().parent().unwrap().join("escaped.txt").exists());
     }
@@ -942,11 +949,20 @@ mod tests {
         let config = TempDir::new().unwrap();
         let tmp = TempDir::new().unwrap();
         let zip = make_zip(&[
-            ("plug-main/plugin.json", r#"{"id":"plug-a","version":"1.0.0","name":"A","capabilities":[],"views":[],"agentTools":[]}"#),
+            (
+                "plug-main/plugin.json",
+                r#"{"id":"plug-a","version":"1.0.0","name":"A","capabilities":[],"views":[],"agentTools":[]}"#,
+            ),
             ("plug-main/index.html", "<html></html>"),
         ]);
-        let (id, name, _ver) =
-            install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap();
+        let (id, name, _ver) = install_from_archive_with_progress(
+            &zip,
+            config.path(),
+            &tmp.path().join("work"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap();
         assert_eq!(id, "plug-a");
         assert_eq!(name, "A");
         assert!(config.path().join("plugins/plug-a/index.html").exists());
@@ -966,7 +982,14 @@ mod tests {
             "plug-main/plugin.json",
             r#"{"id":"plug-a","version":"1.0.0","name":"A","capabilities":[],"views":[],"agentTools":[]}"#,
         )]);
-        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
+        let err = install_from_archive_with_progress(
+            &zip,
+            config.path(),
+            &tmp.path().join("work"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("已安装"));
     }
 
@@ -975,7 +998,14 @@ mod tests {
         let config = TempDir::new().unwrap();
         let tmp = TempDir::new().unwrap();
         let zip = make_zip(&[("plug-main/index.html", "<html></html>")]);
-        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
+        let err = install_from_archive_with_progress(
+            &zip,
+            config.path(),
+            &tmp.path().join("work"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("缺少 plugin.json"));
     }
 
@@ -987,7 +1017,14 @@ mod tests {
             "plug-main/plugin.json",
             r#"{"id":"../evil","version":"1.0.0","name":"E","capabilities":[],"views":[],"agentTools":[]}"#,
         )]);
-        let err = install_from_archive_with_progress(&zip, config.path(), &tmp.path().join("work"), |_, _| {}, || false).unwrap_err();
+        let err = install_from_archive_with_progress(
+            &zip,
+            config.path(),
+            &tmp.path().join("work"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("非法字符"));
         assert!(!config.path().join("plugins").exists());
     }
@@ -1002,9 +1039,14 @@ mod tests {
             ("plug-main/c.js", "z"),
         ]);
         let events = std::cell::RefCell::new(Vec::new());
-        extract_zip_archive_with(&zip, tmp.path(), |cur, total| {
-            events.borrow_mut().push((cur, total));
-        }, || false)
+        extract_zip_archive_with(
+            &zip,
+            tmp.path(),
+            |cur, total| {
+                events.borrow_mut().push((cur, total));
+            },
+            || false,
+        )
         .unwrap();
         let events = events.borrow();
         assert!(!events.is_empty(), "进度回调必须触发");
@@ -1073,35 +1115,75 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         // Install 1.0.0 with config.json shipped
         let zip1 = make_zip(&[
-            ("plug-main/plugin.json", r#"{"id":"plug-a","version":"1.0.0","name":"A","preservePaths":["memories/"]}"#),
+            (
+                "plug-main/plugin.json",
+                r#"{"id":"plug-a","version":"1.0.0","name":"A","preservePaths":["memories/"]}"#,
+            ),
             ("plug-main/index.html", "v1"),
             ("plug-main/config.json", r#"{"default":true}"#),
         ]);
-        install_from_archive_with_progress(&zip1, config.path(), &tmp.path().join("w1"), |_, _| {}, || false).unwrap();
+        install_from_archive_with_progress(
+            &zip1,
+            config.path(),
+            &tmp.path().join("w1"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap();
         // Simulate user data: modify config.json and create memories file
-        fs::write(config.path().join("plugins/plug-a/config.json"), r#"{"user":true}"#).unwrap();
+        fs::write(
+            config.path().join("plugins/plug-a/config.json"),
+            r#"{"user":true}"#,
+        )
+        .unwrap();
         fs::create_dir_all(config.path().join("plugins/plug-a/memories")).unwrap();
-        fs::write(config.path().join("plugins/plug-a/memories/a.jsonl"), "user memory").unwrap();
+        fs::write(
+            config.path().join("plugins/plug-a/memories/a.jsonl"),
+            "user memory",
+        )
+        .unwrap();
         fs::write(config.path().join("plugins/plug-a/old.js"), "stale").unwrap();
 
         // Update to 1.1.0: index.html changed, config.json new default, old.js removed
         let zip2 = make_zip(&[
-            ("plug-main/plugin.json", r#"{"id":"plug-a","version":"1.1.0","name":"A","preservePaths":["memories/"]}"#),
+            (
+                "plug-main/plugin.json",
+                r#"{"id":"plug-a","version":"1.1.0","name":"A","preservePaths":["memories/"]}"#,
+            ),
             ("plug-main/index.html", "v2"),
             ("plug-main/config.json", r#"{"default":false,"newField":1}"#),
         ]);
-        let (id, _, ver) = update_from_archive_with_progress(&zip2, config.path(), &tmp.path().join("w2"), |_, _| {}, || false).unwrap();
+        let (id, _, ver) = update_from_archive_with_progress(
+            &zip2,
+            config.path(),
+            &tmp.path().join("w2"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap();
         assert_eq!(id, "plug-a");
         assert_eq!(ver, "1.1.0");
         // Code updated
-        assert_eq!(fs::read_to_string(config.path().join("plugins/plug-a/index.html")).unwrap(), "v2");
+        assert_eq!(
+            fs::read_to_string(config.path().join("plugins/plug-a/index.html")).unwrap(),
+            "v2"
+        );
         // User config preserved (not overwritten by new default)
-        assert_eq!(fs::read_to_string(config.path().join("plugins/plug-a/config.json")).unwrap(), r#"{"user":true}"#);
+        assert_eq!(
+            fs::read_to_string(config.path().join("plugins/plug-a/config.json")).unwrap(),
+            r#"{"user":true}"#
+        );
         // Memories preserved
-        assert_eq!(fs::read_to_string(config.path().join("plugins/plug-a/memories/a.jsonl")).unwrap(), "user memory");
+        assert_eq!(
+            fs::read_to_string(config.path().join("plugins/plug-a/memories/a.jsonl")).unwrap(),
+            "user memory"
+        );
         // Stale old.js removed (was not in old shipped? Actually old.js was user-created, but we injected manually after install, so it's not in old shipped -> would be preserved. For this test we simulate stale code by adding old.js before update but not in old shipped, so it would be preserved. To test stale removal, we need old.js to be part of shipped. So we skip that assertion here.)
         // At least new shipped list written
-        assert!(config.path().join("plugins/plug-a/.marcel-shipped.json").exists());
+        assert!(config
+            .path()
+            .join("plugins/plug-a/.marcel-shipped.json")
+            .exists());
     }
 
     #[test]
@@ -1111,18 +1193,38 @@ mod tests {
         // Legacy install: manually create plugin without shipped list
         let plug_dir = config.path().join("plugins/plug-a");
         fs::create_dir_all(&plug_dir).unwrap();
-        fs::write(plug_dir.join("plugin.json"), r#"{"id":"plug-a","version":"1.0.0","name":"A"}"#).unwrap();
+        fs::write(
+            plug_dir.join("plugin.json"),
+            r#"{"id":"plug-a","version":"1.0.0","name":"A"}"#,
+        )
+        .unwrap();
         fs::write(plug_dir.join("index.html"), "v1").unwrap();
         fs::write(plug_dir.join("user_data.json"), "keep me").unwrap();
         assert!(!plug_dir.join(".marcel-shipped.json").exists());
 
         let zip2 = make_zip(&[
-            ("plug-main/plugin.json", r#"{"id":"plug-a","version":"1.1.0","name":"A"}"#),
+            (
+                "plug-main/plugin.json",
+                r#"{"id":"plug-a","version":"1.1.0","name":"A"}"#,
+            ),
             ("plug-main/index.html", "v2"),
         ]);
-        update_from_archive_with_progress(&zip2, config.path(), &tmp.path().join("w2"), |_, _| {}, || false).unwrap();
+        update_from_archive_with_progress(
+            &zip2,
+            config.path(),
+            &tmp.path().join("w2"),
+            |_, _| {},
+            || false,
+        )
+        .unwrap();
         // Legacy extra file preserved
-        assert_eq!(fs::read_to_string(plug_dir.join("user_data.json")).unwrap(), "keep me");
-        assert_eq!(fs::read_to_string(plug_dir.join("index.html")).unwrap(), "v2");
+        assert_eq!(
+            fs::read_to_string(plug_dir.join("user_data.json")).unwrap(),
+            "keep me"
+        );
+        assert_eq!(
+            fs::read_to_string(plug_dir.join("index.html")).unwrap(),
+            "v2"
+        );
     }
 }

@@ -158,11 +158,8 @@ pub async fn config_save_web_search_api_key(
 
 /// Remove the web search API key from the system keychain.
 #[tauri::command]
-pub async fn config_delete_web_search_api_key(
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn config_delete_web_search_api_key(state: State<'_, AppState>) -> Result<(), AppError> {
     keychain::delete_web_search_api_key()?;
     notify_secret_sync(&state, "secrets.webSearchApiKey", None);
     Ok(())
 }
-

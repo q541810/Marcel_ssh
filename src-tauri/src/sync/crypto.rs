@@ -108,9 +108,8 @@ pub fn decrypt_sync_key_with_password(
     }
     // 旧账户：仅配置码包装；或密码错误时再试 v1（码对则成功）
     let wrapping_v1 = derive_wrapping_key(config_code);
-    decrypt_sync_key(&wrapping_v1, encrypted_sync_key).map_err(|_| {
-        AppError::Config("配置码或密码错误".into())
-    })
+    decrypt_sync_key(&wrapping_v1, encrypted_sync_key)
+        .map_err(|_| AppError::Config("配置码或密码错误".into()))
 }
 
 /// 用包装密钥加密 Sync Key。

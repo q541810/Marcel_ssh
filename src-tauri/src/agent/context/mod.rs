@@ -82,26 +82,17 @@ pub struct CompactionOutcome {
 #[derive(Debug, Clone)]
 pub enum CompactionEvent {
     /// LLM 摘要调用开始（可能耗时数十秒，前端应显示进行中状态）。
-    SummarizingStart {
-        trigger: &'static str,
-    },
+    SummarizingStart { trigger: &'static str },
     /// 摘要实时文本（累计，随流增量推送；仅通过 `on_event` 实时回调，
     /// 不收集进 `CompactionRun.events`，避免占用内存）。
-    Progress {
-        text: String,
-    },
+    Progress { text: String },
     /// 压缩成功完成。
-    Done {
-        outcome: CompactionOutcome,
-    },
+    Done { outcome: CompactionOutcome },
     /// 压缩被跳过（失败 / 取消 / 无可压区间）。
     /// `attempted`：是否已进入摘要阶段（发过 `SummarizingStart`）。
     /// `false` = 未开始就跳过（无区间/结构异常，前端不留痕）；
     /// `true` = 摘要已跑但失败（前端应低调交代"压缩未完成"）。
-    Skipped {
-        reason: String,
-        attempted: bool,
-    },
+    Skipped { reason: String, attempted: bool },
 }
 
 /// 一次 `compact_if_needed` 的结果：压缩是否发生 + 全过程事件。
@@ -318,8 +309,16 @@ pub async fn compact_if_needed(
                     events,
                 };
             }
-            match compact_region(msgs, provider, &range, cancel_rx, &mut events, on_event, trigger_name)
-                .await
+            match compact_region(
+                msgs,
+                provider,
+                &range,
+                cancel_rx,
+                &mut events,
+                on_event,
+                trigger_name,
+            )
+            .await
             {
                 Ok(outcome) => {
                     record_event(
@@ -556,9 +555,8 @@ async fn compact_region(
     };
 
     // framing + shrink 校验：摘要（含 framing）必须比被压内容小，否则拒绝
-    let framed = format!(
-        "{CHECKPOINT_PREAMBLE}\n\n{SUMMARY_OPEN_TAG}\n{summary_text}\n{SUMMARY_CLOSE_TAG}"
-    );
+    let framed =
+        format!("{CHECKPOINT_PREAMBLE}\n\n{SUMMARY_OPEN_TAG}\n{summary_text}\n{SUMMARY_CLOSE_TAG}");
     let framed_msg = LlmMessage::user(framed);
     let framed_tokens = meter::estimate_message(&framed_msg);
     if framed_tokens >= shadowed_tokens {

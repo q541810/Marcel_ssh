@@ -10,8 +10,8 @@
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 
-use crate::error::AppError;
 use crate::config::keychain;
+use crate::error::AppError;
 
 /// keychain 中的 account 名
 const SYNC_KEY_ACCOUNT: &str = "sync_key";

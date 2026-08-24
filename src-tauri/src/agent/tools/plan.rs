@@ -318,7 +318,9 @@ impl AgentTool for EditPlanTool {
         let ops = params
             .get("ops")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| AppError::Agent("edit_plan: missing or invalid 'ops' parameter".into()))?;
+            .ok_or_else(|| {
+                AppError::Agent("edit_plan: missing or invalid 'ops' parameter".into())
+            })?;
 
         if ops.is_empty() {
             return Ok(ToolOutput::fail(

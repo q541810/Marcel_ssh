@@ -4,6 +4,7 @@ import SkillFormFields from './SkillFormFields';
 import * as tauri from '@/lib/tauri';
 import type { ParsedSkill } from '@/lib/types';
 import { useSkillStore } from '@/stores/skillStore';
+import { getErrorMessage } from '@/lib/errors';
 import { useFileDrop } from '@/hooks/useFileDrop';
 
 interface Props {
@@ -49,7 +50,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
       setDescription(parsed.description);
       setPrompt(parsed.prompt);
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err));
+      setImportError(getErrorMessage(err));
     }
   }, []);
 
@@ -65,7 +66,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
       setDescription(parsed.description);
       setPrompt(parsed.prompt);
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err));
+      setImportError(getErrorMessage(err));
     }
   };
 
@@ -92,7 +93,7 @@ export default function SkillCreateModal({ open, onClose }: Props) {
       await fetchSkills();
       handleClose();
     } catch (err) {
-      setImportError(err instanceof Error ? err.message : String(err));
+      setImportError(getErrorMessage(err));
     } finally {
       setSaving(false);
     }
