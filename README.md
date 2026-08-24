@@ -87,6 +87,8 @@ Android 端做了前台服务保活，切后台 SSH 不断连，Agent 任务照�
 
 Agent 通知做了前后台智能判断：你正在 App 里看，不弹通知打扰你；切后台后，审批、提问、任务完成/失败才弹横幅+振动提醒。通知走原生路径，WebView 被冻了也不影响送达。
 
+同时，很多本不适合移动端使用的功能（如插件系统）在 Android 端已被移除。这些臃肿且使用率低的功能，我们选择舍弃掉，以换取更简洁、更稳定、更流畅的移动端体验。
+
 ****
 
 ### 自动同步
@@ -129,8 +131,6 @@ pnpm tauri android build --apk --target aarch64
 
 ***
 
-
-
 ### 提交插件到插件市场
 
 见[插件市场的github仓库](https://github.com/q541810/marcel-ssh-plugins)
@@ -140,6 +140,12 @@ pnpm tauri android build --apk --target aarch64
 ### 部署自动同步服务端
 
 服务端文档见Marcel SSH\server\DEPLOY.md
+
+****
+
+### 适配其他平台的计划
+
+目前，marcel ssh仅支持windows与安卓，由于缺少真机测试的条件，我们暂时没有任何适配 ios\mac os\鸿蒙 的计划
 
 ****
 

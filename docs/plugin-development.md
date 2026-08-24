@@ -242,6 +242,42 @@ async function listSessions() {
 }
 ```
 
+### 推荐：封装一个 `pluginCall` 辅助函数
+
+上面的样板（生成 id → listen 响应 → emit 请求 → 取消监听）每个调用都要重复，
+容易漏掉 `unlisten` 导致监听器泄漏。建议在插件入口统一封装一次：
+
+```javascript
+let counter = 0;
+
+function pluginCall(cmd, args) {
+  args = args || {};
+  const id = String(++counter);
+  return new Promise((resolve, reject) => {
+    let unlistenFn = null;
+    window.__TAURI__.event.listen(`plugin-response-${id}`, (e) => {
+      if (unlistenFn) { try { unlistenFn(); } catch (_) {} }
+      if (e.payload && e.payload.ok) resolve(e.payload.data);
+      else reject(new Error(e.payload ? e.payload.data : 'unknown error'));
+    }).then(unl => {
+      unlistenFn = unl;
+      return window.__TAURI__.event.emit('plugin-request', {
+        id,
+        pluginId: 'my-plugin',
+        cmd,
+        args
+      });
+    }).catch(reject);
+  });
+}
+
+// 之后所有调用都是一行：
+const sess = await pluginCall('session.active');
+await pluginCall('fs.write', { path: 'data.json', content: '...' });
+```
+
+注意先挂 listener 再 emit 请求，避免响应早于监听注册而被丢失。
+
 ### 错误处理
 
 插件 IPC 代理层会捕获所有错误并通过 `{ ok: false, data: "错误信息" }` 返回。常见错误：
@@ -331,6 +367,47 @@ await emit('plugin-request', {
 await listen('plugin-event-my-plugin', (e) => {
   console.log('事件:', e.payload.event, e.payload.data);
 });
+```
+
+### 文件变更事件：`plugin-fs-changed`
+
+当本插件的文件被 Agent 通过 `kind=local` 工具（如 `fs.write` / `fs.append`）修改后，
+主应用会广播一个全局 Tauri 事件，插件视图可以直接监听，无需轮询：
+
+```javascript
+const { listen } = window.__TAURI__.event;
+
+await listen('plugin-fs-changed', (e) => {
+  const p = e.payload || {};
+  if (p.plugin_id !== 'my-plugin') return;   // 只处理自己的文件变更
+  if (p.path !== 'data.jsonl') return;       // 只关心特定文件
+  // p.op 为 'write' 或 'append'
+  refreshMyView();                            // 重新读取并渲染
+});
+```
+
+- **无需** `events.subscribe`、不需要 `events` capability，任何视图都能监听。
+- payload：`{ plugin_id, path, op }`，`path` 是相对插件目录的路径。
+
+**必须做 debounce**：Agent 可能在短时间内连续写多次（例如一次任务里连续 save 多条记忆），
+每次写入都会触发一次事件。不加防抖会导致视图反复全量刷新、闪烁、白屏：
+
+```javascript
+let refreshTimer = null;
+function scheduleRefresh(delay) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refreshMyView();
+  }, delay == null ? 150 : delay);
+}
+
+// 监听处：
+scheduleRefresh();          // 默认 150ms
+
+// 额外注意：如果用户正在编辑表单，自动刷新会重置输入内容。
+// 编辑中应跳过刷新，等用户操作完成后再刷：
+if (state.editingId) return;
 ```
 
 ---

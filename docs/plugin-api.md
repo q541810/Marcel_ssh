@@ -795,6 +795,11 @@ marcel.events.on('menu://clicked/pet', (data) => {
 
 `path` 相对于插件根目录，自动创建中间目录，不允许 `../`。
 
+**文件变更事件**：通过 `fs.write` / `fs.append`（含 Agent 调用 `kind=local` 工具）修改文件成功后，
+主应用会广播全局事件 `plugin-fs-changed`，payload 为 `{ plugin_id, path, op }`（`op` 为 `'write'` / `'append'`）。
+插件视图可监听该事件刷新界面，无需轮询；监听时务必做 debounce（Agent 可能连续写多次），
+且用户编辑表单期间应跳过刷新以免重置输入。详见插件开发指南「IPC 通信」章节。
+
 ### `net.request` 授权的命令
 
 | 命令            | 参数                                | 返回值                            | 说明      |
