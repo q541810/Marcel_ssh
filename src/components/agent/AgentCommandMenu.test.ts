@@ -9,6 +9,7 @@ function makeSkill(overrides: Partial<Skill> = {}): Skill {
     description: '审查代码质量的技能',
     prompt: '请对代码进行审查',
     enabled: true,
+    position: 0,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
     ...overrides,
@@ -121,5 +122,34 @@ describe('buildAgentCommandEntries', () => {
     const headers = entries.filter((e) => e.kind === 'header').map((e) => e.title);
     expect(headers).toEqual(['SKILL']);
     expect(entries.filter((e) => e.kind === 'command')).toHaveLength(0);
+  });
+
+  it('never shows builtin skills even with empty query', () => {
+    const builtin: Skill = {
+      ...makeSkill(),
+      id: 'builtin.agent-modes',
+      name: 'Agent 模式与审批指导',
+      description: '教学用',
+    };
+    const entries = buildAgentCommandEntries({
+      modeSubmenu: false,
+      query: '',
+      skills: [...skills, builtin],
+      currentModeLabel: 'AGENT',
+    });
+    const skillIds = entries
+      .filter((e) => e.kind === 'skill')
+      .map((e) => (e.kind === 'skill' ? e.skill.id : ''));
+    expect(skillIds).not.toContain('builtin.agent-modes');
+    expect(skillIds).toEqual(['s-1', 's-2']);
+
+    // 即使搜索词命中内置 skill 名称，也不出现
+    const matched = buildAgentCommandEntries({
+      modeSubmenu: false,
+      query: '审批',
+      skills: [...skills, builtin],
+      currentModeLabel: 'AGENT',
+    });
+    expect(matched.some((e) => e.kind === 'skill')).toBe(false);
   });
 });

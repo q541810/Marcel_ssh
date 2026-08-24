@@ -277,6 +277,37 @@ describe('storedMessageToAgentMessage', () => {
       expect(result.toolResult!.toolCallId).toBe('call-1');
     });
 
+    it('restores render_html presentation metadata for replay', () => {
+      const toolResult = {
+        id: 'viz-1',
+        name: 'render_html',
+        arguments: { title: 'CPU 对比', mode: 'wide', fragment: '<section>stream source</section>' },
+        risk_level: 'ReadOnly',
+        summary: '已展示: CPU 对比',
+        success: true,
+        blocked: false,
+        metadata: {
+          kind: 'renderHtml',
+          title: 'CPU 对比',
+          mode: 'wide',
+          fragment: '<section>persisted result</section>',
+          sizeBytes: 36,
+        },
+      };
+      const stored = createStoredMessage({
+        role: 'tool',
+        content: 'Rendered inline',
+        toolCallsJson: JSON.stringify(toolResult),
+      });
+
+      const result = storedMessageToAgentMessage(stored);
+
+      expect(result.toolResult?.toolName).toBe('render_html');
+      expect(result.toolResult?.metadata).toEqual(toolResult.metadata);
+      expect(result.toolResult?.arguments).toEqual(toolResult.arguments);
+      expect(result.isExecuting).toBeUndefined();
+    });
+
     it('should use content as fallback summary', () => {
       const toolResult = {
         id: 'call-1',

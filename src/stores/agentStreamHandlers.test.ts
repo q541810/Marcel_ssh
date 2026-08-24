@@ -534,6 +534,63 @@ describe('agentStreamHandlers', () => {
       });
       expect(handler._messages[convId]).toHaveLength(0);
     });
+
+    it('render_html: 流式期间从不完整 JSON 提取 partial fragment 实时预览', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-html-1',
+        name: 'render_html',
+      });
+
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'tc-html-1',
+        argumentsDelta: '{"title":"CPU 图表","mode":"wide","fragment":"<section><h1>CPU',
+      });
+
+      const args = handler._messages[convId][0].toolResult?.arguments;
+      expect(args).toBeDefined();
+      expect(args?.title).toBe('CPU 图表');
+      expect(args?.mode).toBe('wide');
+      expect(args?.fragment).toBe('<section><h1>CPU');
+      expect(args?.__streaming).toBe(true);
+    });
+
+    it('render_html: JSON 完整后走完整 parse，__streaming 标记消失', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-html-2',
+        name: 'render_html',
+      });
+
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'tc-html-2',
+        argumentsDelta: '{"title":"t","fragment":"<p>done</p>"}',
+      });
+
+      const args = handler._messages[convId][0].toolResult?.arguments;
+      expect(args).toEqual({ title: 't', fragment: '<p>done</p>' });
+      expect(args?.__streaming).toBeUndefined();
+    });
+
+    it('非白名单工具不做 partial 提取（不完整 JSON 仍不回填）', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-wf-1',
+        name: 'write_file',
+      });
+
+      handleToolCallDelta(handler, taskId, convId, {
+        type: 'toolCallDelta',
+        id: 'tc-wf-1',
+        argumentsDelta: '{"path":"/tmp/x","html":"<div>',
+      });
+      expect(handler._messages[convId][0].toolResult?.arguments).toBeUndefined();
+    });
   });
 
   describe('compaction handlers', () => {
