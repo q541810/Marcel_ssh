@@ -167,10 +167,16 @@ mod tests {
         for retain in 0..items.len() {
             if let Some((s, e)) = select_compactable_range(&items, &weights, retain) {
                 assert_eq!(s, 1, "起点恒为第一条非 system");
-                assert!(e < items.len() - 1, "尾部至少保留最后一条消息（最新指令守卫）");
+                assert!(
+                    e < items.len() - 1,
+                    "尾部至少保留最后一条消息（最新指令守卫）"
+                );
                 let tail_tokens: usize = weights[e + 1..].iter().sum();
                 if retain > 0 {
-                    assert!(tail_tokens >= retain, "尾部保留预算不被突破（回退只会增大尾部）");
+                    assert!(
+                        tail_tokens >= retain,
+                        "尾部保留预算不被突破（回退只会增大尾部）"
+                    );
                 }
                 assert!(range_pairing_closed(&items, &cuts, s, e), "区间配对闭合");
             }
@@ -199,14 +205,14 @@ mod tests {
     #[test]
     fn selected_range_never_splits_a_tool_pair() {
         let items = [
-            Item::User,      // 0
-            Item::Asst(1),   // 1 call c1
-            Item::Tool,      // 2 result c1
-            Item::User,      // 3
-            Item::Asst(2),   // 4 calls c2,c3
-            Item::Tool,      // 5 result c2
-            Item::Tool,      // 6 result c3
-            Item::User,      // 7
+            Item::User,    // 0
+            Item::Asst(1), // 1 call c1
+            Item::Tool,    // 2 result c1
+            Item::User,    // 3
+            Item::Asst(2), // 4 calls c2,c3
+            Item::Tool,    // 5 result c2
+            Item::Tool,    // 6 result c3
+            Item::User,    // 7
         ];
         let weights = vec![1usize; items.len()];
         let cuts = cut_balance(&items).unwrap();
@@ -252,7 +258,10 @@ mod tests {
         ];
         let cuts = cut_balance(&items).unwrap();
         assert!(cuts[0], "首切恒平衡");
-        assert!(cuts[items.len()], "尾切恒平衡（合法流）→ 延伸 [start, len-1] 合法");
+        assert!(
+            cuts[items.len()],
+            "尾切恒平衡（合法流）→ 延伸 [start, len-1] 合法"
+        );
         // 延伸区间 = [0, len-1] 覆盖全部消息，配对闭合
         assert!(range_pairing_closed(&items, &cuts, 0, items.len() - 1));
     }
@@ -263,21 +272,33 @@ mod tests {
     fn shrink_keeps_end_when_anchored() {
         let items = [Item::User, Item::User, Item::User];
         let cuts = cut_balance(&items).unwrap();
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 2)));
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 2)));
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, true),
+            Some((0, 2))
+        );
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, false),
+            Some((0, 2))
+        );
     }
 
     #[test]
     fn shrink_rolls_back_to_nearest_anchor() {
         // 末两条无 id → 收缩到第一条有 id 的平衡末条
         let items = [
-            Item::User,          // 0 有 id
+            Item::User,           // 0 有 id
             Item::UserUnanchored, // 1 无 id
             Item::UserUnanchored, // 2 无 id
         ];
         let cuts = cut_balance(&items).unwrap();
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 0)));
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 0)));
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, true),
+            Some((0, 0))
+        );
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, false),
+            Some((0, 0))
+        );
     }
 
     #[test]
@@ -290,9 +311,15 @@ mod tests {
         ];
         let cuts = cut_balance(&items).unwrap();
         // pressure（known_only）：收缩到前端已知的 m0 → 前端必能找到，live 不降级
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, true), Some((0, 0)));
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, true),
+            Some((0, 0))
+        );
         // overflow：只要求 DB 有行 → 末条 m2 可作锚点（超长任务恢复）
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 2, false), Some((0, 2)));
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 2, false),
+            Some((0, 2))
+        );
     }
 
     #[test]
@@ -308,30 +335,33 @@ mod tests {
         // user, assistant(call), tool(result), user(无 id)
         // 收缩必须停在配对完整处：不能停在 assistant 之后（cuts[2] 不平衡）
         let items = [
-            Item::User,      // 0 有 id
-            Item::Asst(1),   // 1 call c1
-            Item::Tool,      // 2 result c1
+            Item::User,           // 0 有 id
+            Item::Asst(1),        // 1 call c1
+            Item::Tool,           // 2 result c1
             Item::UserUnanchored, // 3 无 id
         ];
         let cuts = cut_balance(&items).unwrap();
         assert!(!cuts[2], "assistant(tool_calls) 之后切点不平衡");
         // 从 end=3 收缩：3 无 id → 2 处 cuts[3] 平衡且 Tool 有 id（非 unanchored）→ 停
-        assert_eq!(shrink_to_known_tail(&items, &cuts, 0, 3, true), Some((0, 2)));
+        assert_eq!(
+            shrink_to_known_tail(&items, &cuts, 0, 3, true),
+            Some((0, 2))
+        );
     }
 
     #[test]
     fn shrink_result_stays_pairing_closed_and_balanced() {
         // 任意区间收缩后：两端平衡、配对闭合（与 select 相同的不变量）
         let items = [
-            Item::User,          // 0
-            Item::Asst(1),       // 1
-            Item::Tool,          // 2
-            Item::User,          // 3
-            Item::Asst(2),       // 4
-            Item::Tool,          // 5
-            Item::Tool,          // 6
+            Item::User,           // 0
+            Item::Asst(1),        // 1
+            Item::Tool,           // 2
+            Item::User,           // 3
+            Item::Asst(2),        // 4
+            Item::Tool,           // 5
+            Item::Tool,           // 6
             Item::UserUnanchored, // 7 无 id
-            Item::User,          // 8
+            Item::User,           // 8
         ];
         let cuts = cut_balance(&items).unwrap();
         let (s, e) = shrink_to_known_tail(&items, &cuts, 0, 8, true).unwrap();
@@ -340,6 +370,9 @@ mod tests {
             "收缩后区间 [{s},{e}] 必须配对闭合"
         );
         assert!(cuts[s] && cuts[e + 1], "收缩后两端切点必须平衡");
-        assert!(is_frontend_known(items[e]), "收缩后末条必对前端可见（known_only）");
+        assert!(
+            is_frontend_known(items[e]),
+            "收缩后末条必对前端可见（known_only）"
+        );
     }
 }

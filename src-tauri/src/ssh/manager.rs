@@ -71,8 +71,7 @@ pub struct SshManager {
     known_hosts: Arc<KnownHostsStore>,
     /// 断连观察者：会话真正断开（driver cleanup 的 dominated 分支）时回调，
     /// 参数为 session_id。command_exec 管理器用它实现级联取消。
-    disconnect_observers:
-        Arc<RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
+    disconnect_observers: Arc<RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
 }
 
 impl SshManager {
@@ -172,7 +171,10 @@ impl SshManager {
             username,
             host,
             port,
-            config.jump.as_ref().map(|j| format!("{}@{}:{}", j.username, j.host, j.port)),
+            config
+                .jump
+                .as_ref()
+                .map(|j| format!("{}@{}:{}", j.username, j.host, j.port)),
             session_id
         );
 
@@ -227,18 +229,10 @@ impl SshManager {
         let mut handle = if let Some(ref jh) = jump_handle {
             let jump_guard = jh.lock().await;
             let channel = jump_guard
-                .channel_open_direct_tcpip(
-                    host.as_str(),
-                    port as u32,
-                    "127.0.0.1",
-                    0,
-                )
+                .channel_open_direct_tcpip(host.as_str(), port as u32, "127.0.0.1", 0)
                 .await
                 .map_err(|e| {
-                    AppError::Ssh(format!(
-                        "跳板机隧道到 {}:{} 失败：{}",
-                        host, port, e
-                    ))
+                    AppError::Ssh(format!("跳板机隧道到 {}:{} 失败：{}", host, port, e))
                 })?;
             drop(jump_guard);
 

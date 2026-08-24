@@ -19,17 +19,18 @@ mod android_store {
 
     /// 单例 store，避免每次 Entry::new 都重建 vault 连接。
     fn store() -> Result<&'static Arc<android_native_keyring_store::Store>> {
-        static STORE: OnceLock<Result<Arc<android_native_keyring_store::Store>>> =
-            OnceLock::new();
+        static STORE: OnceLock<Result<Arc<android_native_keyring_store::Store>>> = OnceLock::new();
         STORE
             .get_or_init(android_native_keyring_store::Store::new)
             .as_ref()
             .map_err(|e| {
-                Error::PlatformFailure(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Android 密钥存储初始化失败：{e}"),
+                Error::PlatformFailure(
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Android 密钥存储初始化失败：{e}"),
+                    )
+                    .into(),
                 )
-                .into())
             })
     }
 
@@ -164,4 +165,3 @@ pub fn delete_web_search_api_key() -> Result<(), AppError> {
     store_impl::delete_if_exists(&entry)
         .map_err(|e| AppError::Config(format!("删除搜索 API Key 失败：{}", e)))
 }
-

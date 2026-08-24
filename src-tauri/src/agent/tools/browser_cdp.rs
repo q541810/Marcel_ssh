@@ -111,7 +111,6 @@ pub async fn fetch_html_many(urls: &[String]) -> Vec<Result<BrowserPage, AppErro
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct BrowserPage {
     pub requested_url: String,
@@ -215,11 +214,8 @@ fn pick_free_port() -> Result<u16, AppError> {
 
 fn spawn_browser(binary: &PathBuf) -> Result<BrowserSession, AppError> {
     let port = pick_free_port()?;
-    let user_data_dir = std::env::temp_dir().join(format!(
-        "marcel-browser-{}-{}",
-        std::process::id(),
-        port
-    ));
+    let user_data_dir =
+        std::env::temp_dir().join(format!("marcel-browser-{}-{}", std::process::id(), port));
     std::fs::create_dir_all(&user_data_dir)
         .map_err(|e| AppError::Agent(format!("failed to create browser profile dir: {}", e)))?;
 
@@ -351,7 +347,10 @@ impl CdpPage {
         let key = {
             let mut bytes = [0u8; 16];
             for (i, b) in bytes.iter_mut().enumerate() {
-                *b = ((std::process::id() as u8).wrapping_add(i as u8).wrapping_mul(17)) ^ 0x5A;
+                *b = ((std::process::id() as u8)
+                    .wrapping_add(i as u8)
+                    .wrapping_mul(17))
+                    ^ 0x5A;
             }
             base64::engine::general_purpose::STANDARD.encode(bytes)
         };
@@ -462,10 +461,7 @@ impl CdpPage {
         {
             if let Some(node_id) = doc.pointer("/root/nodeId").and_then(|v| v.as_i64()) {
                 if let Ok(html) = self
-                    .call(
-                        "DOM.getOuterHTML",
-                        serde_json::json!({ "nodeId": node_id }),
-                    )
+                    .call("DOM.getOuterHTML", serde_json::json!({ "nodeId": node_id }))
                     .await
                 {
                     if let Some(s) = html.get("outerHTML").and_then(|v| v.as_str()) {
@@ -585,8 +581,8 @@ impl CdpPage {
                 while self.read_buf.len() < offset + 2 {
                     self.fill_buf().await?;
                 }
-                len = u16::from_be_bytes([self.read_buf[offset], self.read_buf[offset + 1]])
-                    as usize;
+                len =
+                    u16::from_be_bytes([self.read_buf[offset], self.read_buf[offset + 1]]) as usize;
                 offset += 2;
             } else if len == 127 {
                 while self.read_buf.len() < offset + 8 {
@@ -615,8 +611,9 @@ impl CdpPage {
 
             match opcode {
                 0x1 => {
-                    return String::from_utf8(payload)
-                        .map_err(|e| AppError::Agent(format!("invalid UTF-8 in CDP frame: {}", e)));
+                    return String::from_utf8(payload).map_err(|e| {
+                        AppError::Agent(format!("invalid UTF-8 in CDP frame: {}", e))
+                    });
                 }
                 0x8 => return Err(AppError::Agent("CDP websocket closed by peer".into())),
                 0x9 => {
@@ -662,11 +659,7 @@ pub async fn fetch_bing_search_html(
             crate::config::settings::WebSearchEndpoint::Cn => "https://cn.bing.com",
             crate::config::settings::WebSearchEndpoint::Www => "https://www.bing.com",
         };
-        let url = format!(
-            "{}/search?q={}",
-            host,
-            urlencoding::encode(query)
-        );
+        let url = format!("{}/search?q={}", host, urlencoding::encode(query));
         page.navigate(&url).await?;
         page.wait_ready().await?;
         page.wait_for_selector("li.b_algo", Duration::from_secs(18))

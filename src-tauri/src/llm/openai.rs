@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::error::AppError;
-use crate::llm::provider::{LlmConfig, LlmMessage, LlmProvider, LlmRole, TokenUsage, ToolCall, ToolDefinition};
+use crate::llm::provider::{
+    LlmConfig, LlmMessage, LlmProvider, LlmRole, TokenUsage, ToolCall, ToolDefinition,
+};
 use crate::llm::streaming::StreamEvent;
 
 /// OpenAI / OpenAI-compatible LLM provider with streaming support.
@@ -100,7 +102,9 @@ impl OpenAiProvider {
                 Ok(msg) => return Ok(msg),
                 Err(e) => {
                     let max_attempts = max_retries + 1;
-                    if attempt >= max_attempts || !is_retryable(&e, &retry_conditions, retry_on_timeout) {
+                    if attempt >= max_attempts
+                        || !is_retryable(&e, &retry_conditions, retry_on_timeout)
+                    {
                         return Err(e);
                     }
                     let err_msg = format!("{}", e);
@@ -133,7 +137,8 @@ impl OpenAiProvider {
         max_tokens: Option<u32>,
     ) -> Result<LlmMessage, AppError> {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
-        let req_body = build_request_body_with_max_tokens(&self.config, messages, tools, true, max_tokens);
+        let req_body =
+            build_request_body_with_max_tokens(&self.config, messages, tools, true, max_tokens);
 
         let response = self
             .send_llm_request(&url, &req_body, messages.len())
@@ -146,7 +151,8 @@ impl OpenAiProvider {
         let mut buffer = String::new();
         let mut consecutive_parse_errors: u32 = 0;
         let mut stream = response.bytes_stream();
-        let first_byte_timeout = Duration::from_secs(self.config.first_byte_timeout_secs.clamp(20, 250));
+        let first_byte_timeout =
+            Duration::from_secs(self.config.first_byte_timeout_secs.clamp(20, 250));
         let mut first_byte = true;
         let mut saw_done = false;
 
@@ -990,7 +996,9 @@ fn build_request_body_with_max_tokens(
         stream,
         tools,
         stream_options: if stream {
-            Some(StreamOptions { include_usage: true })
+            Some(StreamOptions {
+                include_usage: true,
+            })
         } else {
             None
         },
@@ -1140,12 +1148,8 @@ impl From<ApiUsage> for TokenUsage {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
             total_tokens: u.total_tokens,
-            reasoning_tokens: u
-                .completion_tokens_details
-                .and_then(|d| d.reasoning_tokens),
-            cached_read_tokens: u
-                .prompt_tokens_details
-                .and_then(|d| d.cached_tokens),
+            reasoning_tokens: u.completion_tokens_details.and_then(|d| d.reasoning_tokens),
+            cached_read_tokens: u.prompt_tokens_details.and_then(|d| d.cached_tokens),
         }
     }
 }
@@ -1322,9 +1326,7 @@ mod build_request_body_tests {
         let assistant = &messages[0];
         // DeepSeek 协议字段为 snake_case reasoning_content
         assert_eq!(
-            assistant
-                .get("reasoning_content")
-                .and_then(|v| v.as_str()),
+            assistant.get("reasoning_content").and_then(|v| v.as_str()),
             Some("let me check the directory")
         );
         assert!(assistant.get("tool_calls").is_some());
@@ -1362,7 +1364,10 @@ mod build_request_body_tests {
             .get("temperature")
             .and_then(|v| v.as_f64())
             .expect("temperature");
-        assert!((temp - 0.1f32 as f64).abs() < 1e-6, "temperature drift: {temp}");
+        assert!(
+            (temp - 0.1f32 as f64).abs() < 1e-6,
+            "temperature drift: {temp}"
+        );
         assert!(body.get("extraBody").is_none());
     }
 
@@ -1389,10 +1394,7 @@ mod build_request_body_tests {
         }));
         let body = build_request_body(&cfg, &[LlmMessage::user("hi")], &[], true);
         assert_eq!(body.get("top_p").and_then(|v| v.as_f64()), Some(0.95));
-        assert_eq!(
-            body.get("max_tokens").and_then(|v| v.as_u64()),
-            Some(4096)
-        );
+        assert_eq!(body.get("max_tokens").and_then(|v| v.as_u64()), Some(4096));
         assert_eq!(
             body.get("thinking")
                 .and_then(|v| v.get("type"))

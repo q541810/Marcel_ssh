@@ -17,7 +17,10 @@ pub async fn search(
 }
 
 /// Shared browser HTML → SearchOutcome path (unit-testable without CDP).
-pub fn outcome_from_browser_html(html: &str, max_results: usize) -> Result<SearchOutcome, AppError> {
+pub fn outcome_from_browser_html(
+    html: &str,
+    max_results: usize,
+) -> Result<SearchOutcome, AppError> {
     if looks_like_challenge_page(html) {
         return Err(AppError::Agent(
             "browser search hit a challenge/captcha page; try again later or use search API mode"

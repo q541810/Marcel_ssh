@@ -18,23 +18,46 @@ impl TemplateManager {
     fn build_agent_registry() -> Handlebars<'static> {
         let mut reg = Handlebars::new();
         reg.set_strict_mode(false);
-        let _ = reg.register_template_string("角色", include_str!("../../templates/agent/角色.hbs"));
-        let _ = reg.register_template_string("会话", include_str!("../../templates/agent/会话.hbs"));
-        let _ = reg.register_template_string("联网搜索", include_str!("../../templates/agent/联网搜索.hbs"));
-        let _ = reg.register_template_string("网页访问", include_str!("../../templates/agent/网页访问.hbs"));
-        let _ = reg.register_template_string("技能", include_str!("../../templates/agent/技能.hbs"));
-        let _ = reg.register_template_string("规划模式", include_str!("../../templates/agent/规划模式.hbs"));
-        let _ = reg.register_template_string("子agent", include_str!("../../templates/agent/子agent.hbs"));
-        let _ = reg.register_template_string("用户指令", include_str!("../../templates/agent/用户指令.hbs"));
-        let _ = reg.register_template_string("插件指令", include_str!("../../templates/agent/插件指令.hbs"));
+        let _ =
+            reg.register_template_string("角色", include_str!("../../templates/agent/角色.hbs"));
+        let _ =
+            reg.register_template_string("会话", include_str!("../../templates/agent/会话.hbs"));
+        let _ = reg.register_template_string(
+            "联网搜索",
+            include_str!("../../templates/agent/联网搜索.hbs"),
+        );
+        let _ = reg.register_template_string(
+            "网页访问",
+            include_str!("../../templates/agent/网页访问.hbs"),
+        );
+        let _ =
+            reg.register_template_string("技能", include_str!("../../templates/agent/技能.hbs"));
+        let _ = reg.register_template_string(
+            "规划模式",
+            include_str!("../../templates/agent/规划模式.hbs"),
+        );
+        let _ = reg
+            .register_template_string("子agent", include_str!("../../templates/agent/子agent.hbs"));
+        let _ = reg.register_template_string(
+            "用户指令",
+            include_str!("../../templates/agent/用户指令.hbs"),
+        );
+        let _ = reg.register_template_string(
+            "插件指令",
+            include_str!("../../templates/agent/插件指令.hbs"),
+        );
         reg
     }
 
     fn build_approval_registry() -> Handlebars<'static> {
         let mut reg = Handlebars::new();
         reg.set_strict_mode(false);
-        let _ = reg.register_template_string("审批", include_str!("../../templates/approval/审批.hbs"));
-        let _ = reg.register_template_string("审批规划", include_str!("../../templates/approval/审批规划.hbs"));
+        let _ =
+            reg.register_template_string("审批", include_str!("../../templates/approval/审批.hbs"));
+        let _ = reg.register_template_string(
+            "审批规划",
+            include_str!("../../templates/approval/审批规划.hbs"),
+        );
         reg
     }
 

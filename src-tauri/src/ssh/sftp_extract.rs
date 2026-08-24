@@ -187,89 +187,84 @@ mod tests {
     }
 
     #[test]
-fn build_extract_cmd_produces_valid_zip_command() {
-    let cmd = build_extract_cmd("/tmp/a.zip", "/home/user");
-    assert!(cmd.contains("unzip -q"));
-    assert!(!cmd.contains("unzip -o"));
-    assert!(cmd.contains("CONFLICT"));
-    assert!(cmd.contains("cp -a"));
-}
+    fn build_extract_cmd_produces_valid_zip_command() {
+        let cmd = build_extract_cmd("/tmp/a.zip", "/home/user");
+        assert!(cmd.contains("unzip -q"));
+        assert!(!cmd.contains("unzip -o"));
+        assert!(cmd.contains("CONFLICT"));
+        assert!(cmd.contains("cp -a"));
+    }
 
-#[test]
-fn zip_check_command_works() {
-    let cmd = build_zip_check_cmd();
-    assert!(cmd.contains("command -v zip"));
-    assert!(has_tool("OK\n"));
-    assert!(!has_tool("MISSING_ZIP\n"));
-}
+    #[test]
+    fn zip_check_command_works() {
+        let cmd = build_zip_check_cmd();
+        assert!(cmd.contains("command -v zip"));
+        assert!(has_tool("OK\n"));
+        assert!(!has_tool("MISSING_ZIP\n"));
+    }
 
-#[test]
-fn compress_cmd_tar_gz_splits_parent_and_basename() {
-    let cmd =
-        build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.tar.gz", ArchiveType::TarGz)
+    #[test]
+    fn compress_cmd_tar_gz_splits_parent_and_basename() {
+        let cmd =
+            build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.tar.gz", ArchiveType::TarGz)
+                .unwrap();
+        assert!(cmd.contains("tar -czf"));
+        assert!(cmd.contains("-C '/home/user'"));
+        assert!(cmd.contains("'foo'"));
+        assert!(cmd.contains("'/tmp/foo.tar.gz'"));
+        assert!(cmd.ends_with("&& echo OK || echo FAILED"));
+    }
+
+    #[test]
+    fn compress_cmd_zip_uses_cd_and_zip_rqy() {
+        let cmd = build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.zip", ArchiveType::Zip)
             .unwrap();
-    assert!(cmd.contains("tar -czf"));
-    assert!(cmd.contains("-C '/home/user'"));
-    assert!(cmd.contains("'foo'"));
-    assert!(cmd.contains("'/tmp/foo.tar.gz'"));
-    assert!(cmd.ends_with("&& echo OK || echo FAILED"));
-}
+        assert!(cmd.contains("cd '/home/user'"));
+        assert!(cmd.contains("zip -rqy"));
+        assert!(cmd.contains("'/tmp/foo.zip'"));
+        assert!(cmd.contains("'foo'"));
+    }
 
-#[test]
-fn compress_cmd_zip_uses_cd_and_zip_rqy() {
-    let cmd =
-        build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.zip", ArchiveType::Zip).unwrap();
-    assert!(cmd.contains("cd '/home/user'"));
-    assert!(cmd.contains("zip -rqy"));
-    assert!(cmd.contains("'/tmp/foo.zip'"));
-    assert!(cmd.contains("'foo'"));
-}
+    #[test]
+    fn compress_cmd_normalizes_root_parent() {
+        // /home (top-level dir) → parent should be "/"
+        let cmd =
+            build_compress_to_archive_cmd("/home", "/tmp/home.tar.gz", ArchiveType::TarGz).unwrap();
+        assert!(cmd.contains("-C '/'"));
+        assert!(cmd.contains("'home'"));
+    }
 
-#[test]
-fn compress_cmd_normalizes_root_parent() {
-    // /home (top-level dir) → parent should be "/"
-    let cmd =
-        build_compress_to_archive_cmd("/home", "/tmp/home.tar.gz", ArchiveType::TarGz).unwrap();
-    assert!(cmd.contains("-C '/'"));
-    assert!(cmd.contains("'home'"));
-}
+    #[test]
+    fn compress_cmd_trims_trailing_slash() {
+        let cmd =
+            build_compress_to_archive_cmd("/home/user/foo/", "/tmp/foo.tar.gz", ArchiveType::TarGz)
+                .unwrap();
+        // trailing / must not produce empty basename
+        assert!(cmd.contains("'foo'"));
+        assert!(!cmd.contains("''"));
+    }
 
-#[test]
-fn compress_cmd_trims_trailing_slash() {
-    let cmd = build_compress_to_archive_cmd(
-        "/home/user/foo/",
-        "/tmp/foo.tar.gz",
-        ArchiveType::TarGz,
-    )
-    .unwrap();
-    // trailing / must not produce empty basename
-    assert!(cmd.contains("'foo'"));
-    assert!(!cmd.contains("''"));
-}
+    #[test]
+    fn compress_cmd_rejects_invalid_paths() {
+        // empty after trim → root "/"
+        assert!(build_compress_to_archive_cmd("/", "/x.tar.gz", ArchiveType::TarGz).is_err());
+        // unsupported format
+        assert!(
+            build_compress_to_archive_cmd("/home/user/foo", "/tmp/foo.tar", ArchiveType::Tar)
+                .is_err()
+        );
+    }
 
-#[test]
-fn compress_cmd_rejects_invalid_paths() {
-    // empty after trim → root "/"
-    assert!(build_compress_to_archive_cmd("/", "/x.tar.gz", ArchiveType::TarGz).is_err());
-    // unsupported format
-    assert!(build_compress_to_archive_cmd(
-        "/home/user/foo",
-        "/tmp/foo.tar",
-        ArchiveType::Tar
-    )
-    .is_err());
-}
-
-#[test]
-fn compress_cmd_escapes_special_chars_in_dirname() {
-    // dirname with space and quote must be shell-escaped
-    let cmd = build_compress_to_archive_cmd(
-        "/home/user/my dir",
-        "/tmp/out.tar.gz",
-        ArchiveType::TarGz,
-    )
-    .unwrap();
-    // 'my dir' is the escaped form of "my dir"
-    assert!(cmd.contains("'my dir'"));
-}
+    #[test]
+    fn compress_cmd_escapes_special_chars_in_dirname() {
+        // dirname with space and quote must be shell-escaped
+        let cmd = build_compress_to_archive_cmd(
+            "/home/user/my dir",
+            "/tmp/out.tar.gz",
+            ArchiveType::TarGz,
+        )
+        .unwrap();
+        // 'my dir' is the escaped form of "my dir"
+        assert!(cmd.contains("'my dir'"));
+    }
 }

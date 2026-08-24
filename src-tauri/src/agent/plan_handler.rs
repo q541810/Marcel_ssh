@@ -32,11 +32,11 @@ fn persist_plan(state: &AppState, task_id: &str, plan: &AgentTaskPlan) {
                 return;
             }
             // 成功落盘后写时间点快照，供撤回消息时恢复 plan
-            if let Err(e) = state.conversation_db.insert_plan_snapshot(
-                &conversation_id,
-                task_id,
-                &plan_json,
-            ) {
+            if let Err(e) =
+                state
+                    .conversation_db
+                    .insert_plan_snapshot(&conversation_id, task_id, &plan_json)
+            {
                 log::warn!(
                     "persist_plan: insert_plan_snapshot failed for task {}: {}",
                     task_id,
@@ -148,18 +148,14 @@ pub(crate) fn emit_plan_loaded(app: &AppHandle, task_id: &str, plan: &AgentTaskP
 /// 判断 task 是否正在运行（agent 还在跑）。
 /// 用于决定向前端发送 plan 时是否需要把 in_progress 降级为 pending。
 pub(crate) fn is_task_running_for_load(state: &AppState, task_id: &str) -> bool {
-    state
-        .agent_tasks
-        .read()
-        .get(task_id)
-        .map_or(false, |t| {
-            matches!(
-                t.status,
-                crate::agent::task::AgentStatus::Planning
-                    | crate::agent::task::AgentStatus::Executing
-                    | crate::agent::task::AgentStatus::WaitingApproval
-            )
-        })
+    state.agent_tasks.read().get(task_id).map_or(false, |t| {
+        matches!(
+            t.status,
+            crate::agent::task::AgentStatus::Planning
+                | crate::agent::task::AgentStatus::Executing
+                | crate::agent::task::AgentStatus::WaitingApproval
+        )
+    })
 }
 
 /// 把 plan 的 in_progress item 转为 pending（agent 没跑时的降级）。
@@ -187,11 +183,7 @@ pub(crate) fn normalize_plan_for_frontend(plan: &AgentTaskPlan, is_running: bool
 /// task 终止时调用：如果 plan 有非终态 item，emit 一次降级后的 plan 给前端。
 /// agent_loop 在 emit Done/Error 之前调用，确保前端收到的最终 plan 状态
 /// 是降级后的（in_progress → pending），避免 spinning 图标永久转下去。
-pub(crate) fn emit_final_plan_normalized(
-    app: &AppHandle,
-    state: &AppState,
-    task_id: &str,
-) {
+pub(crate) fn emit_final_plan_normalized(app: &AppHandle, state: &AppState, task_id: &str) {
     let plan = match state.plans.read().get(task_id).cloned() {
         Some(p) => p,
         None => return,
@@ -435,7 +427,9 @@ pub(crate) async fn handle_update_plan_item(
     };
 
     let item_index = plan.items.iter().position(|item| item.id == item_id);
-    let Some(item_index) = item_index else { return None };
+    let Some(item_index) = item_index else {
+        return None;
+    };
     let total = plan.items.len();
 
     let new_status = match status {
@@ -457,7 +451,10 @@ pub(crate) async fn handle_update_plan_item(
     let title = plan.items[item_index].title.clone();
     plan.items[item_index].status = new_status.clone();
     // 非 failed 终态清除旧 error；failed 设置新 error；其他状态保留原 error
-    if matches!(new_status, PlanItemStatus::Completed | PlanItemStatus::Skipped) {
+    if matches!(
+        new_status,
+        PlanItemStatus::Completed | PlanItemStatus::Skipped
+    ) {
         plan.items[item_index].error = None;
     } else if let Some(e) = error {
         plan.items[item_index].error = Some(e.clone());
@@ -478,7 +475,8 @@ pub(crate) async fn handle_update_plan_item(
             original_status
         );
 
-        let reminder = "你尝试将最后一个 plan item 标记为终态的操作已被系统拦截，本次完成声明未生效。\n\
+        let reminder =
+            "你尝试将最后一个 plan item 标记为终态的操作已被系统拦截，本次完成声明未生效。\n\
 \n\
 plan 的全部步骤已进入终态，这将被视为任务收尾。请逐项核对：\n\
 - 针对任务声明的每个目标，提供对应的可验证证据（命令输出、文件内容、\n\
@@ -489,7 +487,7 @@ plan 的全部步骤已进入终态，这将被视为任务收尾。请逐项核
 \n\
 - 验证全部通过：再次调用 update_plan_item 标记终态，届时不会拦截\n\
 - 验证发现遗漏：update_plan_item 改回 in_progress 继续，或 edit_plan 增补步骤"
-            .to_string();
+                .to_string();
         // NLL: plan 的最后一次使用已结束，释放对 plans 的写锁借用
         drop(plans);
         if let Some(p) = state.plans.read().get(task_id) {

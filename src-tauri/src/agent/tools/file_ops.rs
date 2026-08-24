@@ -183,7 +183,9 @@ fn extract_window_around(
     if lines.is_empty() {
         return (1, String::new());
     }
-    let idx = center_line_1.saturating_sub(1).min(lines.len().saturating_sub(1));
+    let idx = center_line_1
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(1));
     let start = idx.saturating_sub(context_lines);
     let end = (idx + span_lines.max(1) + context_lines).min(lines.len());
     (start + 1, lines[start..end].join("\n"))
@@ -359,12 +361,13 @@ pub(crate) async fn preview_edit_for_approval(
         message: e,
     })?;
 
-    let current_bytes = sftp_read(ssh, session_id, &edit.path)
-        .await
-        .map_err(|e| EditPreviewError {
-            summary: format!("edit {}", edit.path),
-            message: e,
-        })?;
+    let current_bytes =
+        sftp_read(ssh, session_id, &edit.path)
+            .await
+            .map_err(|e| EditPreviewError {
+                summary: format!("edit {}", edit.path),
+                message: e,
+            })?;
 
     let current = String::from_utf8(current_bytes).map_err(|_| EditPreviewError {
         summary: format!("edit {}", edit.path),

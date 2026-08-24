@@ -464,7 +464,10 @@ mod tests {
             if i + 1 == users.len() {
                 assert!(u.image_paths.is_some(), "latest user should keep images");
             } else {
-                assert!(u.image_paths.is_none(), "history user {i} should drop images");
+                assert!(
+                    u.image_paths.is_none(),
+                    "history user {i} should drop images"
+                );
                 assert!(u.content.contains(IMAGE_PLACEHOLDER));
             }
         }
@@ -509,7 +512,10 @@ mod tests {
             .get("extraBody")
             .expect("extraBody should serialize when Some");
         assert_eq!(
-            extra.get("thinking").and_then(|v| v.get("type")).and_then(|v| v.as_str()),
+            extra
+                .get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
             Some("enabled")
         );
     }

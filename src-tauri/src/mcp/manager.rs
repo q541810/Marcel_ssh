@@ -165,11 +165,7 @@ mod tests {
         spy.tools_to_return.lock().await.push(make_tool("b"));
         mgr.refresh_tools(&server).await.unwrap();
 
-        assert_eq!(
-            spy.init_calls.lock().await.len(),
-            1,
-            "initialize only once"
-        );
+        assert_eq!(spy.init_calls.lock().await.len(), 1, "initialize only once");
     }
 
     #[tokio::test]

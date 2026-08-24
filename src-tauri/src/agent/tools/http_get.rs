@@ -26,8 +26,6 @@ use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::HttpFetchMode;
 use crate::error::AppError;
 
-
-
 const MAX_OUTPUT_BYTES: usize = 24_000;
 const TIMEOUT_SECS: u64 = 20;
 
@@ -90,8 +88,6 @@ impl AgentTool for HttpGetTool {
          preserving headings, lists, code blocks, tables, links, and basic HTTP metadata. \
          For long pages, use `offset` and `chunk_size` with a single `url` to continue reading."
     }
-
-
 
     fn parameters_schema(&self) -> serde_json::Value {
         json!({
@@ -228,7 +224,6 @@ impl AgentTool for HttpGetTool {
             }
         };
 
-
         // Build combined output
         let mut sections = Vec::new();
         let mut total_source_bytes = 0;
@@ -349,12 +344,9 @@ async fn resolve_fetch_mode(ctx: &ToolContext) -> HttpFetchMode {
     }
 }
 
-
 fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat) -> FetchedPage {
     let source_bytes = page.html.len();
-    let title = page
-        .title
-        .or_else(|| extract_title(&page.html));
+    let title = page.title.or_else(|| extract_title(&page.html));
     let content = {
         let readable_html = extract_readable_html(&page.html);
         match format {
@@ -364,8 +356,8 @@ fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat)
     };
     let content = cleanup_markdown(&content);
     let markdown_bytes = content.len();
-    let redirected =
-        normalize_url_for_compare(&page.requested_url) != normalize_url_for_compare(&page.final_url);
+    let redirected = normalize_url_for_compare(&page.requested_url)
+        != normalize_url_for_compare(&page.final_url);
 
     FetchedPage {
         requested_url: page.requested_url,
@@ -444,7 +436,6 @@ async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage,
         http_error,
     })
 }
-
 
 fn parse_output_format(format: Option<&str>) -> OutputFormat {
     match format
@@ -1175,7 +1166,10 @@ mod tests {
         let chunk = make_chunk(&fetched.content, 0, 4000);
         let meta = page_metadata(&fetched, &chunk);
         assert_eq!(meta["status"], 200);
-        assert!(fetched.content.contains("Rendered") || fetched.title.as_deref() == Some("Browser Page"));
+        assert!(
+            fetched.content.contains("Rendered")
+                || fetched.title.as_deref() == Some("Browser Page")
+        );
     }
 
     #[test]
@@ -1190,10 +1184,7 @@ mod tests {
                 HttpFetchMode::Html => "html",
             };
             assert_eq!(provider, expected);
-            assert_eq!(
-                format!("{:?}", mode).to_ascii_lowercase(),
-                expected
-            );
+            assert_eq!(format!("{:?}", mode).to_ascii_lowercase(), expected);
         }
     }
 
@@ -1239,7 +1230,8 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept");
             let mut buf = [0u8; 2048];
             let _ = stream.read(&mut buf);
-            let body = "<html><body><main><h1>Batch</h1><p>ok page content here</p></main></body></html>";
+            let body =
+                "<html><body><main><h1>Batch</h1><p>ok page content here</p></main></body></html>";
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(),
@@ -1249,7 +1241,8 @@ mod tests {
         });
 
         let url = format!("http://{}/one", addr);
-        let results = futures::future::join_all(vec![fetch_page_http(&url, OutputFormat::Markdown)]).await;
+        let results =
+            futures::future::join_all(vec![fetch_page_http(&url, OutputFormat::Markdown)]).await;
         assert_eq!(results.len(), 1);
         let page = results[0].as_ref().expect("ok");
         assert!(!page.http_error);
@@ -1269,5 +1262,3 @@ mod tests {
         assert!(!fetched.content.is_empty() || fetched.title.is_some());
     }
 }
-
-

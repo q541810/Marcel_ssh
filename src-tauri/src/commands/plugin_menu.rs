@@ -115,7 +115,10 @@ pub async fn plugin_menu_update(
 
 #[cfg(desktop)]
 #[tauri::command]
-pub async fn plugin_menu_update(plugin_id: String, items: Vec<MenuItemDef>) -> Result<(), AppError> {
+pub async fn plugin_menu_update(
+    plugin_id: String,
+    items: Vec<MenuItemDef>,
+) -> Result<(), AppError> {
     // Alias of register: replace the whole item set.
     let mut map = menus_map();
     map.as_mut().unwrap().insert(plugin_id, items);
@@ -179,7 +182,10 @@ pub async fn plugin_menu_popup(
             let plugin_id_h = plugin_id.clone();
             win.on_menu_event(move |_w, event| {
                 let action_id = event.id.as_ref().to_string();
-                eprintln!("[plugin_menu] on_menu_event fired: label={}, action_id={}", label_h, action_id);
+                eprintln!(
+                    "[plugin_menu] on_menu_event fired: label={}, action_id={}",
+                    label_h, action_id
+                );
                 let _ = crate::emit_event(
                     &app_h,
                     &format!("menu://clicked/{}", label_h),
@@ -203,8 +209,14 @@ pub async fn plugin_menu_popup(
                 .map_err(|e| AppError::Other(format!("separator build failed: {}", e)))?;
             menu_entries.push(Box::new(sep));
         }
-        let item = MenuItem::with_id(&app, &def.action_id, &def.label, !def.disabled, None::<&str>)
-            .map_err(|e| AppError::Other(format!("menu item build failed: {}", e)))?;
+        let item = MenuItem::with_id(
+            &app,
+            &def.action_id,
+            &def.label,
+            !def.disabled,
+            None::<&str>,
+        )
+        .map_err(|e| AppError::Other(format!("menu item build failed: {}", e)))?;
         menu_entries.push(Box::new(item));
     }
     let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =

@@ -20,12 +20,9 @@ use std::sync::Mutex;
 use tauri::State;
 
 #[cfg(desktop)]
-use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl,
-    WebviewWindowBuilder,
-};
-#[cfg(desktop)]
 use tauri::utils::config::Color;
+#[cfg(desktop)]
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::error::AppError;
 #[cfg(desktop)]
@@ -89,12 +86,7 @@ pub(crate) fn owns_window(plugin_id: &str, label: &str) -> bool {
 pub(crate) fn close_all_plugin_windows(app: &AppHandle) {
     let labels: Vec<String> = {
         let map = windows_map();
-        map.as_ref()
-            .unwrap()
-            .values()
-            .flatten()
-            .cloned()
-            .collect()
+        map.as_ref().unwrap().values().flatten().cloned().collect()
     };
     for label in labels {
         if let Some(win) = app.get_webview_window(&label) {
@@ -107,7 +99,10 @@ pub(crate) fn close_all_plugin_windows(app: &AppHandle) {
 async fn auth_context(
     state: &State<'_, AppState>,
     plugin_id: &str,
-) -> (crate::config::settings::AppSettings, Option<crate::plugins::manifest::PluginManifest>) {
+) -> (
+    crate::config::settings::AppSettings,
+    Option<crate::plugins::manifest::PluginManifest>,
+) {
     let settings = state.settings.read().await.clone();
     let manifest = {
         let reg = state.plugin_registry.read().await;
@@ -177,17 +172,35 @@ pub async fn plugin_window_create(
     }
     // Sensitive sub-capabilities, only enforced when requested.
     if params.transparent
-        && !authorize(&plugin_id, "window.transparent", manifest.as_ref(), &settings).ok()
+        && !authorize(
+            &plugin_id,
+            "window.transparent",
+            manifest.as_ref(),
+            &settings,
+        )
+        .ok()
     {
         return Err(deny("window.transparent"));
     }
     if params.always_on_top
-        && !authorize(&plugin_id, "window.always_on_top", manifest.as_ref(), &settings).ok()
+        && !authorize(
+            &plugin_id,
+            "window.always_on_top",
+            manifest.as_ref(),
+            &settings,
+        )
+        .ok()
     {
         return Err(deny("window.always_on_top"));
     }
     if params.skip_taskbar
-        && !authorize(&plugin_id, "window.skip_taskbar", manifest.as_ref(), &settings).ok()
+        && !authorize(
+            &plugin_id,
+            "window.skip_taskbar",
+            manifest.as_ref(),
+            &settings,
+        )
+        .ok()
     {
         return Err(deny("window.skip_taskbar"));
     }
@@ -459,7 +472,14 @@ pub async fn plugin_window_set_always_on_top(
     always_on_top: bool,
 ) -> Result<(), AppError> {
     let (settings, manifest) = auth_context(&state, &plugin_id).await;
-    if !authorize(&plugin_id, "window.always_on_top", manifest.as_ref(), &settings).ok() {
+    if !authorize(
+        &plugin_id,
+        "window.always_on_top",
+        manifest.as_ref(),
+        &settings,
+    )
+    .ok()
+    {
         return Err(AppError::Other(format!(
             "capability \"window.always_on_top\" not authorized for plugin \"{}\"",
             plugin_id

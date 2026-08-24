@@ -1,17 +1,16 @@
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
-use crate::config::settings::NotificationSettings;
 #[cfg(mobile)]
 use crate::config::settings::MobileNotificationSettings;
+use crate::config::settings::NotificationSettings;
 #[cfg(desktop)]
 use crate::emit_event;
 
 /// 移动端 App 是否在前台。默认 true（启动即前台），由前端 visibilitychange
 /// 与 RunEvent::Resumed 同步；前台时不发系统通知（用户已在 App 内可见结果）。
 #[cfg(mobile)]
-static APP_IN_FOREGROUND: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
+static APP_IN_FOREGROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// 同步移动端前后台状态（仅影响是否发 Agent 系统通知）。
 #[cfg(mobile)]
@@ -109,10 +108,7 @@ fn send_notification_mobile(app: &AppHandle, kind: NotificationKind, title: &str
 
     // 前台不发系统通知：审批/提问/完成结果已在 Agent UI 内可见。
     if is_app_in_foreground() {
-        log::debug!(
-            "[notification] App 在前台，跳过系统通知: kind={:?}",
-            kind
-        );
+        log::debug!("[notification] App 在前台，跳过系统通知: kind={:?}", kind);
         return;
     }
 
@@ -120,11 +116,7 @@ fn send_notification_mobile(app: &AppHandle, kind: NotificationKind, title: &str
     // 注意：send_notification 被 agent_loop 等异步上下文调用，不能用 blocking_read()，
     // 否则 tokio worker 线程阻塞会 panic（"Cannot block the current thread from within a runtime"）。
     // try_read() 非阻塞，拿不到锁（极少数情况）就跳过本次通知，避免 panic。
-    let mobile_ns = match app
-        .state::<crate::AppState>()
-        .settings
-        .try_read()
-    {
+    let mobile_ns = match app.state::<crate::AppState>().settings.try_read() {
         Ok(guard) => guard.mobile_notification_settings.clone(),
         Err(_) => {
             log::warn!("[notification] 设置锁被占用，跳过本次通知: kind={:?}", kind);
@@ -166,7 +158,10 @@ fn send_notification_mobile(app: &AppHandle, kind: NotificationKind, title: &str
             .auto_cancel()
             .show()
         {
-            Ok(()) => log::info!("[notification] 路径1(plugin) 通知发送成功: id={}", notification_id),
+            Ok(()) => log::info!(
+                "[notification] 路径1(plugin) 通知发送成功: id={}",
+                notification_id
+            ),
             Err(e) => log::error!("[notification] 路径1(plugin) 发送失败: {}", e),
         }
     });
@@ -185,5 +180,8 @@ fn send_notification_mobile(app: &AppHandle, kind: NotificationKind, title: &str
     for (_label, webview) in app.webviews() {
         let _: Result<(), _> = webview.eval(&js);
     }
-    log::info!("[notification] 路径2(bridge) 已派发: id={}", notification_id);
+    log::info!(
+        "[notification] 路径2(bridge) 已派发: id={}",
+        notification_id
+    );
 }

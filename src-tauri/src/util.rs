@@ -198,7 +198,12 @@ pub(crate) fn query_content_display_name(uri: &str) -> Option<String> {
             return Ok(None);
         }
         let s = env
-            .call_method(cursor, "getString", "(I)Ljava/lang/String;", &[JValue::Int(idx)])?
+            .call_method(
+                cursor,
+                "getString",
+                "(I)Ljava/lang/String;",
+                &[JValue::Int(idx)],
+            )?
             .l()?;
         if s.is_null() {
             return Ok(None);

@@ -196,6 +196,12 @@ pub struct ExperimentalSettings {
     /// When enabled, the Agent can open the cloud gaming page in the main UI.
     #[serde(default)]
     pub enable_cloud_page: bool,
+    /// When enabled, the Agent can render interactive HTML visualizations
+    /// directly in the conversation via `render_html` (simulators, charts,
+    /// comparison panels, UI mockups). Rendered locally in a sandboxed
+    /// iframe; never touches the remote server.
+    #[serde(default = "default_true")]
+    pub enable_html_render: bool,
     /// Which backend `web_search` uses. Defaults to browser for quality.
     #[serde(default)]
     pub web_search_mode: WebSearchMode,
@@ -216,6 +222,7 @@ impl Default for ExperimentalSettings {
             enable_web_search: true,
             enable_http_fetch: true,
             enable_cloud_page: false,
+            enable_html_render: true,
             web_search_mode: WebSearchMode::Browser,
             web_search_api_provider: WebSearchApiProvider::Brave,
             web_search_endpoint: WebSearchEndpoint::Cn,
@@ -223,8 +230,6 @@ impl Default for ExperimentalSettings {
         }
     }
 }
-
-
 
 /// Notification preferences.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -680,8 +685,6 @@ mod tests {
         assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Html);
         assert_eq!(parsed.web_search_mode, WebSearchMode::Browser);
     }
-
-
 
     #[test]
     fn command_list_mode_default_is_denylist() {

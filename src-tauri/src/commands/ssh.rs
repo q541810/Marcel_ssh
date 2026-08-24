@@ -240,11 +240,7 @@ pub async fn ssh_exec_long(
         }
         SubmitOutcome::Cancelled { reason } => match reason {
             CancelReason::User => {
-                emit_event(
-                    &app,
-                    "ssh-long-cancelled",
-                    &json!({ "taskId": &task_id }),
-                );
+                emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("命令已取消".into()))
             }
             CancelReason::Disconnected => {

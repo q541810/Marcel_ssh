@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::llm::provider::TokenUsage;
+use serde::{Deserialize, Serialize};
 
 /// Events emitted while streaming an LLM response. Tagged so the frontend
 /// can use a discriminated union for type-safe handling.
@@ -50,8 +50,5 @@ pub enum StreamEvent {
     /// Context compaction was skipped. `attempted` 标记是否已进入摘要阶段：
     /// `false` = 未开始就跳过（无区间/结构异常，前端不留痕）；
     /// `true` = 摘要调用已跑但失败（截断/未遵循指令/校验不过，前端应低调交代）。
-    CompactionSkipped {
-        reason: String,
-        attempted: bool,
-    },
+    CompactionSkipped { reason: String, attempted: bool },
 }

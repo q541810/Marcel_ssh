@@ -120,7 +120,8 @@ mod tests {
 
     #[test]
     fn html_mode_rejects_challenge_page() {
-        let html = r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
+        let html =
+            r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
         let err = outcome_from_html(html, 5).expect_err("challenge");
         assert!(err.to_string().contains("challenge"));
     }

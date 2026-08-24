@@ -165,11 +165,7 @@ async fn resolve_search_config(
                 WebSearchMode::Browser => WebSearchMode::Html,
                 mode => mode,
             };
-            return (
-                mode,
-                exp.web_search_api_provider,
-                exp.web_search_endpoint,
-            );
+            return (mode, exp.web_search_api_provider, exp.web_search_endpoint);
         }
         (
             WebSearchMode::Html,
@@ -215,17 +211,13 @@ async fn run_search(
     }
 }
 
-
 fn format_outcome(query: &str, outcome: SearchOutcome) -> ToolOutput {
     let SearchOutcome { provider, results } = outcome;
 
     if results.is_empty() {
         return ToolOutput::ok(
             format!("web_search '{}' (0 results via {})", query, provider),
-            format!(
-                "## Query: {}\n\nNo results found\n{}",
-                query, SEARCH_TIP
-            ),
+            format!("## Query: {}\n\nNo results found\n{}", query, SEARCH_TIP),
         )
         .with_metadata(json!({
             "provider": provider,
@@ -243,7 +235,10 @@ fn format_outcome(query: &str, outcome: SearchOutcome) -> ToolOutput {
     let total = results.len();
 
     ToolOutput::ok(
-        format!("web_search '{}' ({} results via {})", query, total, provider),
+        format!(
+            "web_search '{}' ({} results via {})",
+            query, total, provider
+        ),
         output,
     )
     .with_metadata(json!({
@@ -443,7 +438,10 @@ mod tests {
             format!("{:?}", WebSearchMode::Html).to_ascii_lowercase(),
             "html"
         );
-        assert_eq!(format!("{:?}", WebSearchMode::Api).to_ascii_lowercase(), "api");
+        assert_eq!(
+            format!("{:?}", WebSearchMode::Api).to_ascii_lowercase(),
+            "api"
+        );
     }
 
     #[test]
@@ -491,11 +489,14 @@ mod tests {
                 },
             );
             assert!(out.success, "{provider}");
-            assert!(out.summary.contains(provider), "{provider}: {}", out.summary);
+            assert!(
+                out.summary.contains(provider),
+                "{provider}: {}",
+                out.summary
+            );
             assert_eq!(out.metadata.as_ref().unwrap()["provider"], provider);
         }
     }
-
 
     #[tokio::test]
     #[ignore = "依赖本机 keychain 为空；本机已存 Key 时会发真实网络请求。空 Key 报错行为由 api.rs 的 api_brave_mode_requires_key / api_tavily_mode_requires_key 确定性覆盖"]
@@ -513,5 +514,3 @@ mod tests {
         assert!(msg.contains("key"), "{msg}");
     }
 }
-
-

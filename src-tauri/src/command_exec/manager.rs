@@ -263,7 +263,11 @@ impl CommandExecutionManager {
         };
 
         if let Some(tid) = &ticket.task_id {
-            self.inner.by_task_id.lock().await.insert(tid.clone(), exec_id);
+            self.inner
+                .by_task_id
+                .lock()
+                .await
+                .insert(tid.clone(), exec_id);
         }
         self.inner
             .running
@@ -321,9 +325,7 @@ impl CommandExecutionManager {
                 timeout_preview(command)
             ))),
             // exec_simple 的 ticket 无 task_id，只有断连级联会走到这里。
-            SubmitOutcome::Cancelled { .. } => {
-                Err(AppError::Ssh("命令已取消（会话断开）".into()))
-            }
+            SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
             SubmitOutcome::Failed { error } => Err(error),
         }
     }
@@ -396,9 +398,7 @@ mod tests {
         ) -> Result<(String, bool), AppError> {
             match &self.behavior {
                 MockBehavior::Hang => std::future::pending().await,
-                MockBehavior::Return(output, was_timeout) => {
-                    Ok((output.to_string(), *was_timeout))
-                }
+                MockBehavior::Return(output, was_timeout) => Ok((output.to_string(), *was_timeout)),
                 MockBehavior::Fail(msg) => Err(AppError::Ssh(msg.to_string())),
             }
         }
@@ -423,8 +423,8 @@ mod tests {
     #[tokio::test]
     async fn submit_completed_records_and_cleans_registry() {
         let mgr = manager(MockBehavior::Return("ok", false));
-        let ticket = CommandTicket::new("s1", "ls", CommandSource::User)
-            .cancellable("t1", "命令已取消");
+        let ticket =
+            CommandTicket::new("s1", "ls", CommandSource::User).cancellable("t1", "命令已取消");
         let outcome = mgr.submit_opt(None, ticket).await;
         match outcome {
             SubmitOutcome::Completed { output } => assert_eq!(output, "ok"),
@@ -469,13 +469,12 @@ mod tests {
         let mgr = manager(MockBehavior::Hang);
         let mgr2 = mgr.clone();
         let handle = tokio::spawn(async move {
-            mgr2
-                .submit_opt(
-                    None,
-                    CommandTicket::new("s1", "long", CommandSource::SystemTask)
-                        .cancellable("task-1", "命令已取消"),
-                )
-                .await
+            mgr2.submit_opt(
+                None,
+                CommandTicket::new("s1", "long", CommandSource::SystemTask)
+                    .cancellable("task-1", "命令已取消"),
+            )
+            .await
         });
 
         // 等待注册可见（用快照轮询，避免用 cancel 探测——那会发送信号）
@@ -517,7 +516,9 @@ mod tests {
         wait_for_records(&mgr, 2).await;
 
         // 级联取消只影响 session-a
-        let n = mgr.cancel_session("session-a", CancelReason::Disconnected).await;
+        let n = mgr
+            .cancel_session("session-a", CancelReason::Disconnected)
+            .await;
         assert_eq!(n, 1);
 
         let out_a = h_a.await.expect("join a");

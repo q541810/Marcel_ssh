@@ -1,4 +1,4 @@
-﻿//! Plugin market: fetches the market index (list), per-plugin details
+//! Plugin market: fetches the market index (list), per-plugin details
 //! (plugin.json + README from the plugin's git repo) and downloads plugin
 //! source archives for installation.
 //!
@@ -163,10 +163,7 @@ async fn fetch_text(url: &str) -> Result<String, AppError> {
 /// `on_progress` (if any) is called with (received, expected-total) as chunks
 /// arrive; total 0 means the server didn't send a Content-Length.
 /// GET a URL as raw bytes with a size cap, using one client.
-async fn fetch_bytes_once(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<Vec<u8>, AppError> {
+async fn fetch_bytes_once(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, AppError> {
     use futures::StreamExt;
 
     let resp = client
@@ -239,9 +236,10 @@ pub fn index_urls(mirror: Option<&str>) -> Vec<String> {
             "{}/https://raw.githubusercontent.com/q541810/marcel-ssh-plugins/HEAD/index.json",
             p
         )),
-        MirrorKind::JsDelivr(d) => {
-            urls.push(format!("{}/gh/q541810/marcel-ssh-plugins@main/index.json", d))
-        }
+        MirrorKind::JsDelivr(d) => urls.push(format!(
+            "{}/gh/q541810/marcel-ssh-plugins@main/index.json",
+            d
+        )),
         MirrorKind::None => {}
     }
     urls.push(DEFAULT_INDEX_SOURCE.to_string());
@@ -507,16 +505,26 @@ pub async fn market_detail(
         });
     };
 
-    let manifest = fetch_first(&raw_file_urls(&owner, &repo, "plugin.json", mirror.as_deref()))
-        .await
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+    let manifest = fetch_first(&raw_file_urls(
+        &owner,
+        &repo,
+        "plugin.json",
+        mirror.as_deref(),
+    ))
+    .await
+    .ok()
+    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
 
     // Cap README size — the frontend renders it as markdown in a modal.
-    let readme = fetch_first(&raw_file_urls(&owner, &repo, "README.md", mirror.as_deref()))
-        .await
-        .ok()
-        .filter(|t| t.len() <= 256 * 1024);
+    let readme = fetch_first(&raw_file_urls(
+        &owner,
+        &repo,
+        "README.md",
+        mirror.as_deref(),
+    ))
+    .await
+    .ok()
+    .filter(|t| t.len() <= 256 * 1024);
 
     Ok(MarketDetail { manifest, readme })
 }
@@ -549,7 +557,10 @@ mod tests {
         assert_eq!(p.id, "marcel-pet");
         assert_eq!(p.min_app_version.as_deref(), Some("0.7.1"));
         assert_eq!(p.icon.as_ref().unwrap().kind, "emoji");
-        assert_eq!(p.repo_url, "https://github.com/q541810/RemielleDan_Pet_Plugin");
+        assert_eq!(
+            p.repo_url,
+            "https://github.com/q541810/RemielleDan_Pet_Plugin"
+        );
     }
 
     #[test]
@@ -631,7 +642,8 @@ mod tests {
 
         // jsDelivr：构造 jsDelivr 索引 + 内置兜底
         let urls = index_urls(Some("https://cdn.jsdelivr.net"));
-        assert!(urls[0].starts_with("https://cdn.jsdelivr.net/gh/q541810/marcel-ssh-plugins@main/index.json"));
+        assert!(urls[0]
+            .starts_with("https://cdn.jsdelivr.net/gh/q541810/marcel-ssh-plugins@main/index.json"));
     }
 
     #[test]
@@ -646,7 +658,9 @@ mod tests {
         // 前缀镜像：1 个前缀 URL + raw 兜底
         let urls = raw_file_urls("o", "r", "plugin.json", Some("https://ghfast.top"));
         assert_eq!(urls.len(), 2);
-        assert!(urls[0].starts_with("https://ghfast.top/https://raw.githubusercontent.com/o/r/HEAD/plugin.json"));
+        assert!(urls[0].starts_with(
+            "https://ghfast.top/https://raw.githubusercontent.com/o/r/HEAD/plugin.json"
+        ));
         assert!(urls[1].contains("raw.githubusercontent.com"));
 
         // jsDelivr：2 个 jsDelivr + raw 兜底
@@ -671,7 +685,8 @@ mod tests {
         // 前缀镜像：2 前缀 + 2 直连
         let urls = zip_urls("o", "r", Some("https://ghfast.top"));
         assert_eq!(urls.len(), 4);
-        assert!(urls[0].starts_with("https://ghfast.top/https://github.com/o/r/archive/refs/heads/main.zip"));
+        assert!(urls[0]
+            .starts_with("https://ghfast.top/https://github.com/o/r/archive/refs/heads/main.zip"));
 
         // jsDelivr / 旧版 index.json：无法服务 zip → 仅直连兜底
         let urls = zip_urls("o", "r", Some("https://cdn.jsdelivr.net"));

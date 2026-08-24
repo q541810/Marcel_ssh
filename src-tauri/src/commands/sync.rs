@@ -164,9 +164,10 @@ pub async fn sync_pair_first(
         sync_profile: serde_json::to_value(&profile)?,
     };
 
-    let response = client.setup_account(setup_request).await.map_err(|e| {
-        AppError::Config(format!("配对失败：{}", e))
-    })?;
+    let response = client
+        .setup_account(setup_request)
+        .await
+        .map_err(|e| AppError::Config(format!("配对失败：{}", e)))?;
     // 服务端生成并哈希存储 API Key，客户端必须使用响应中的明文 key
     let api_key = response.api_key;
 
@@ -243,9 +244,10 @@ pub async fn sync_pair_join(
         platform: Platform::current().as_str().to_string(),
         sync_profile: serde_json::to_value(&profile)?,
     };
-    let join_response = client.join_account(join_request).await.map_err(|e| {
-        AppError::Config(format!("配对失败：{}（请检查配置码是否正确）", e))
-    })?;
+    let join_response = client
+        .join_account(join_request)
+        .await
+        .map_err(|e| AppError::Config(format!("配对失败：{}（请检查配置码是否正确）", e)))?;
     let api_key = join_response.api_key;
 
     // 3. 解密 Sync Key：优先 v2（码+密码），失败再试 v1（旧账户仅码）
@@ -372,10 +374,7 @@ pub async fn sync_update_profile(
             match engine.seed_newly_enabled_categories(&newly_enabled).await {
                 Ok(n) => {
                     if n > 0 {
-                        log::info!(
-                            "[sync] profile 新开分类后播种完成：{} 个 key 进入待推送",
-                            n
-                        );
+                        log::info!("[sync] profile 新开分类后播种完成：{} 个 key 进入待推送", n);
                     }
                 }
                 Err(e) => log::warn!("[sync] profile 新开分类后播种失败：{}", e),
@@ -443,9 +442,7 @@ pub async fn sync_list_devices(
 /// 未配置同步时返回 `None`；网络失败（含旧版服务端无此端点 → 404）时返回错误，
 /// 由前端静默降级（不展示配额行），不阻塞同步页面其余内容。
 #[tauri::command]
-pub async fn sync_get_quota(
-    state: State<'_, AppState>,
-) -> Result<Option<SyncQuotaDto>, AppError> {
+pub async fn sync_get_quota(state: State<'_, AppState>) -> Result<Option<SyncQuotaDto>, AppError> {
     let api_key = match get_api_key(&state).await? {
         Some(k) => k,
         None => return Ok(None),
@@ -514,9 +511,7 @@ pub async fn sync_reset_account(
         None => {
             return Ok(SyncResetResult {
                 success: false,
-                error: Some(
-                    "本机已无 API Key，请先重新加入账户获取凭证后再试".into(),
-                ),
+                error: Some("本机已无 API Key，请先重新加入账户获取凭证后再试".into()),
             })
         }
     };
@@ -755,9 +750,7 @@ pub async fn sync_remove_excluded_key(
 
 /// 获取当前所有永久跳过项。
 #[tauri::command]
-pub async fn sync_get_excluded_keys(
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, AppError> {
+pub async fn sync_get_excluded_keys(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
     Ok(match state.sync_engine.as_ref() {
         Some(engine) => engine.profile().excluded_keys.into_iter().collect(),
         None => vec![],

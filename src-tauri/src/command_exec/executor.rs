@@ -49,9 +49,10 @@ impl ExecTransport for SshExecTransport {
         ticket: &CommandTicket,
         app: Option<&AppHandle>,
     ) -> Result<(String, bool), AppError> {
-        let streaming = ticket.streaming.as_ref().and_then(|s| {
-            app.map(|app| (app, s.event_name.as_str(), s.stream_id.as_str()))
-        });
+        let streaming = ticket
+            .streaming
+            .as_ref()
+            .and_then(|s| app.map(|app| (app, s.event_name.as_str(), s.stream_id.as_str())));
         run_raw(
             &self.ssh,
             &ticket.session_id,

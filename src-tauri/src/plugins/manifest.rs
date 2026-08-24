@@ -209,7 +209,10 @@ impl PluginManifest {
                 return Err("preservePaths contains empty entry".into());
             }
             if raw.len() > MAX_LEN {
-                return Err(format!("preservePaths entry too long (>{} chars): {}", MAX_LEN, raw));
+                return Err(format!(
+                    "preservePaths entry too long (>{} chars): {}",
+                    MAX_LEN, raw
+                ));
             }
             if !crate::plugins::fs::is_safe_relative_path(raw) {
                 return Err(format!("preservePaths illegal path: {}", raw));
@@ -403,28 +406,32 @@ mod tests {
 
     #[test]
     fn preserve_paths_rejects_traversal() {
-        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        let mut m: PluginManifest =
+            serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
         m.preserve_paths = vec!["../evil".into()];
         assert!(m.validate_preserve_paths().is_err());
     }
 
     #[test]
     fn preserve_paths_rejects_absolute() {
-        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        let mut m: PluginManifest =
+            serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
         m.preserve_paths = vec!["/abs/path".into()];
         assert!(m.validate_preserve_paths().is_err());
     }
 
     #[test]
     fn preserve_paths_rejects_plugin_json() {
-        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        let mut m: PluginManifest =
+            serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
         m.preserve_paths = vec!["plugin.json".into()];
         assert!(m.validate_preserve_paths().is_err());
     }
 
     #[test]
     fn preserve_paths_rejects_too_many() {
-        let mut m: PluginManifest = serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        let mut m: PluginManifest =
+            serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
         m.preserve_paths = (0..21).map(|i| format!("file{}.txt", i)).collect();
         assert!(m.validate_preserve_paths().is_err());
     }

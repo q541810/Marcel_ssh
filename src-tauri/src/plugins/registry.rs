@@ -144,10 +144,10 @@ impl PluginRegistry {
             } else if min_app_version_satisfied(m, app_version) {
                 PluginState::Enabled
             } else {
-                let reason = m
-                    .min_app_version
-                    .as_ref()
-                    .map_or_else(|| "版本不兼容".to_string(), |min| format!("需要应用 v{}", min));
+                let reason = m.min_app_version.as_ref().map_or_else(
+                    || "版本不兼容".to_string(),
+                    |min| format!("需要应用 v{}", min),
+                );
                 log::warn!(
                     "插件 {} 不兼容当前应用版本 {}: {}，已直接禁用",
                     m.id,
@@ -266,7 +266,9 @@ pub type SharedPluginRegistry = Arc<RwLock<PluginRegistry>>;
 /// number (`"1.7"` and `"1.7.0"` both parse). Returns `None` on any malformed
 /// segment (e.g. `"abc"`, `"1.x"`).
 fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
-    s.split('.').map(|seg| seg.trim().parse::<u64>().ok()).collect()
+    s.split('.')
+        .map(|seg| seg.trim().parse::<u64>().ok())
+        .collect()
 }
 
 /// Whether the plugin's `minAppVersion` (if declared) is satisfied by the
@@ -358,7 +360,9 @@ mod tests {
         write_plugin(&tmp, "a");
         write_plugin(&tmp, "b");
         let mut reg = PluginRegistry::default();
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert_eq!(diff.all_ids.len(), 2);
         assert!(diff.changed.contains(&"a".to_string()));
         assert!(diff.changed.contains(&"b".to_string()));
@@ -385,10 +389,13 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         // Remove plugin a
         fs::remove_dir_all(tmp.path().join("plugins/a")).unwrap();
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert!(diff.removed.contains(&"a".to_string()));
         assert!(!reg.get("a").is_some());
     }
@@ -401,7 +408,9 @@ mod tests {
         reg.reload(tmp.path(), &settings_with_disabled(&["a"]), "1.0.0")
             .await;
         // Enable plugin a
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert!(diff.changed.contains(&"a".to_string()));
         assert!(reg.is_enabled("a"));
     }
@@ -411,8 +420,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_plugin(&tmp, "a");
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert!(diff.changed.is_empty());
         assert!(diff.removed.is_empty());
     }
@@ -434,7 +446,8 @@ mod tests {
         );
         fs::write(dir.join("section.md"), "hello section").unwrap();
         let mut reg = PluginRegistry::default();
-        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert_eq!(reg.section_for("a"), Some("hello section"));
     }
 
@@ -442,7 +455,9 @@ mod tests {
     async fn reload_on_missing_plugins_dir_returns_empty() {
         let tmp = TempDir::new().unwrap();
         let mut reg = PluginRegistry::default();
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0").await;
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
+            .await;
         assert!(diff.all_ids.is_empty());
         assert!(diff.changed.is_empty());
     }
@@ -525,7 +540,8 @@ mod tests {
         let mut reg = PluginRegistry::default();
         reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
             .await;
-        let diff = reg.reload(tmp.path(), &AppSettings::default(), "1.0.0")
+        let diff = reg
+            .reload(tmp.path(), &AppSettings::default(), "1.0.0")
             .await;
         assert!(
             !diff.changed.contains(&"a".to_string()),

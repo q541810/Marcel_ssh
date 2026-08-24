@@ -109,7 +109,8 @@ mod tests {
 
     #[test]
     fn looks_like_challenge_without_results() {
-        let html = r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
+        let html =
+            r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
         assert!(looks_like_challenge_page(html));
     }
 
@@ -124,4 +125,3 @@ mod tests {
         assert!(!looks_like_challenge_page(html));
     }
 }
-

@@ -54,7 +54,9 @@ pub async fn plugin_http_request(
             body,
         }
     } else {
-        return Err(AppError::Other("missing required key request or url".into()));
+        return Err(AppError::Other(
+            "missing required key request or url".into(),
+        ));
     };
     plugin_http_request_inner(&req).await
 }

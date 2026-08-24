@@ -99,7 +99,6 @@ async fn search_brave(
     })
 }
 
-
 async fn search_tavily(
     api_key: &str,
     query: &str,
@@ -329,19 +328,15 @@ mod tests {
 
     #[test]
     fn map_brave_and_tavily_empty_input() {
-        assert!(map_brave_items(Vec::<(
-            Option<String>,
-            Option<String>,
-            Option<String>
-        )>::new(), 5)
+        assert!(map_brave_items(
+            Vec::<(Option<String>, Option<String>, Option<String>)>::new(),
+            5
+        )
         .is_empty());
-        assert!(map_tavily_items(Vec::<(
-            Option<String>,
-            Option<String>,
-            Option<String>
-        )>::new(), 5)
+        assert!(map_tavily_items(
+            Vec::<(Option<String>, Option<String>, Option<String>)>::new(),
+            5
+        )
         .is_empty());
     }
 }
-
-

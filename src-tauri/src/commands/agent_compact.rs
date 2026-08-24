@@ -136,7 +136,11 @@ pub async fn agent_compact_conversation(
         log::info!(
             "Manual compaction skipped for conversation {}: {}",
             conversation_id,
-            if reason.is_empty() { "no compactable range" } else { &reason }
+            if reason.is_empty() {
+                "no compactable range"
+            } else {
+                &reason
+            }
         );
         return Ok(CompactionCommandResult {
             compacted: false,
@@ -155,11 +159,9 @@ pub async fn agent_compact_conversation(
 
     // 压缩成功：结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
     // 与自动压缩同一路径；前端经 Done 事件原位替换 live store。
-    let persister = ConversationPersister::new(
-        state.conversation_db.clone(),
-        conversation_id.clone(),
-    )
-    .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
+    let persister =
+        ConversationPersister::new(state.conversation_db.clone(), conversation_id.clone())
+            .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
     let persisted = persister.persist_compaction(outcome);
     log::info!(
         "Manual compaction for conversation {}: {} messages, ~{} tokens (persisted={})",

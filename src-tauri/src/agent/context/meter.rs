@@ -97,10 +97,7 @@ mod tests {
     fn multibyte_chars_count_as_single_units() {
         // 中文按字符数计（非字节）："中文" = ceil(2/4) = 1 token
         let m = LlmMessage::user("中文");
-        assert_eq!(
-            estimate_message(&m),
-            1 + BLOCK_OVERHEAD + ROLE_OVERHEAD
-        );
+        assert_eq!(estimate_message(&m), 1 + BLOCK_OVERHEAD + ROLE_OVERHEAD);
     }
 
     #[test]
@@ -146,11 +143,19 @@ mod tests {
             description: "read a file".into(),
             parameters: serde_json::json!({}),
         }];
-        let mut msgs = vec![LlmMessage::system("you are an agent"), LlmMessage::user("abc")];
+        let mut msgs = vec![
+            LlmMessage::system("you are an agent"),
+            LlmMessage::user("abc"),
+        ];
         let total = estimate_total(&msgs, &tools);
-        assert_eq!(total, estimate_header(None, &tools) + estimate_messages(&msgs));
+        assert_eq!(
+            total,
+            estimate_header(None, &tools) + estimate_messages(&msgs)
+        );
         // system 只计一次（作为消息），header 不再加 system
-        assert!(total < estimate_header(Some("you are an agent"), &tools) + estimate_messages(&msgs));
+        assert!(
+            total < estimate_header(Some("you are an agent"), &tools) + estimate_messages(&msgs)
+        );
         msgs.clear();
         assert_eq!(estimate_total(&msgs, &[]), 0);
     }

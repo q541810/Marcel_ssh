@@ -274,12 +274,15 @@ impl AgentTool for TaskTool {
                     sub_task_id,
                     text.chars().count()
                 );
-                Ok(ToolOutput::ok(format!("子agent完成：{}", description), output)
-                    .with_metadata(json!({
-                        "subTaskId": sub_task_id,
-                        "subConversationId": sub_conversation_id,
-                        "status": "completed",
-                    })))
+                Ok(
+                    ToolOutput::ok(format!("子agent完成：{}", description), output).with_metadata(
+                        json!({
+                            "subTaskId": sub_task_id,
+                            "subConversationId": sub_conversation_id,
+                            "status": "completed",
+                        }),
+                    ),
+                )
             }
             None => {
                 if status == AgentStatus::Cancelled {
