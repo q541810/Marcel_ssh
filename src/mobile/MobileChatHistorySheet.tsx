@@ -278,6 +278,8 @@ export default function MobileChatHistorySheet({
     setHighlightMessageId(null);
     pendingNavRef.current = false;
     setSelectedConv(conv);
+    // 用户切入只读查看该对话，同步消除未读小绿点
+    useTaskStore.getState().clearConversationUnreadCompleted(conv.id);
   }, []);
 
   const openSearchResult = useCallback((r: ConversationSearchResult) => {
@@ -292,6 +294,7 @@ export default function MobileChatHistorySheet({
       createdAt: r.updatedAt,
       updatedAt: r.updatedAt,
     });
+    useTaskStore.getState().clearConversationUnreadCompleted(r.conversationId);
   }, []);
 
   const handleBack = useCallback(() => {
