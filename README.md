@@ -117,6 +117,12 @@ Agent 通知做了前后台智能判断：你正在 App 里看，不弹通知打
 
 ***
 
+### 提交插件到插件市场
+
+见[插件市场的github仓库](https://github.com/q541810/marcel-ssh-plugins)
+
+****
+
 ### 自行编译 Android 包
 
 需要 Android SDK + NDK 27 + JDK，然后：
@@ -130,12 +136,6 @@ pnpm tauri android build --apk --target aarch64
 产物在 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`。release 构建会自动用仓库外的正式 keystore 签名；没有配置 `key.properties` 时退化为未签名 APK，可手动用 `apksigner` 签 debug key 自测。
 
 ***
-
-### 提交插件到插件市场
-
-见[插件市场的github仓库](https://github.com/q541810/marcel-ssh-plugins)
-
-****
 
 ### 部署自动同步服务端
 
@@ -175,3 +175,11 @@ GNU General Public License v3.0
 ## 致谢
 
 感谢[heibaiya-dev](https://github.com/heibaiya-dev) 为项目的贡献
+
+感谢wisdom-ssh为本项目带来的灵感
+
+感谢ai使得作者这个弱智可以开始使用面向opencode的编程语言(中文)，而不是面向对象的编程语言
+
+
+
+
