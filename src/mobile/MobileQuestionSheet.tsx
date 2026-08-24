@@ -10,9 +10,9 @@ interface MobileQuestionSheetProps {
   sessionName?: string;
   conversationTitle?: string;
   isCurrentContext?: boolean;
-  onNavigateToContext?: () => void;
+  onNavigateToContext?: (e?: React.MouseEvent) => void;
   queueLength?: number;
-  onMinimize?: () => void;
+  onMinimize?: (e?: React.MouseEvent) => void;
 }
 
 /**
@@ -128,8 +128,8 @@ export default function MobileQuestionSheet({
         </button>
       </div>
 
-      {/* 跨上下文横条 (Context Banner) */}
-      {(!isCurrentContext || sessionName || conversationTitle) && (
+      {/* 上下文横条 (Context Banner) */}
+      {(sessionName || conversationTitle) && (
         <div className="mx-4 mt-1.5 p-2 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <svg className="w-3.5 h-3.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -142,7 +142,7 @@ export default function MobileQuestionSheet({
               )}
             </div>
           </div>
-          {!isCurrentContext && onNavigateToContext && (
+          {onNavigateToContext && (
             <button
               type="button"
               onClick={onNavigateToContext}

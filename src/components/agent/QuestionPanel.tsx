@@ -9,9 +9,9 @@ interface Props {
   sessionName?: string;
   conversationTitle?: string;
   isCurrentContext?: boolean;
-  onNavigateToContext?: () => void;
+  onNavigateToContext?: (e?: React.MouseEvent) => void;
   queueLength?: number;
-  onMinimize?: () => void;
+  onMinimize?: (e?: React.MouseEvent) => void;
 }
 
 export default function QuestionPanel({
@@ -180,8 +180,8 @@ export default function QuestionPanel({
           </div>
         </div>
 
-        {/* 跨上下文横条提示 (Context Banner) */}
-        {(!isCurrentContext || sessionName || conversationTitle) && (
+        {/* 上下文横条提示 (Context Banner) */}
+        {(sessionName || conversationTitle) && (
           <div className="mx-4 mt-3 p-2 rounded-lg bg-zinc-900 border border-zinc-700/70 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <svg className="w-3.5 h-3.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -194,11 +194,11 @@ export default function QuestionPanel({
                 )}
               </div>
             </div>
-            {!isCurrentContext && onNavigateToContext && (
+            {onNavigateToContext && (
               <button
                 type="button"
                 onClick={onNavigateToContext}
-                className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition-colors font-medium flex items-center gap-1"
+                className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition-colors font-medium flex items-center gap-1 active:scale-95"
               >
                 <span>跳转查看</span>
                 <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

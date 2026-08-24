@@ -12,9 +12,9 @@ interface MobileApprovalSheetProps {
   sessionName?: string;
   conversationTitle?: string;
   isCurrentContext?: boolean;
-  onNavigateToContext?: () => void;
+  onNavigateToContext?: (e?: React.MouseEvent) => void;
   queueLength?: number;
-  onMinimize?: () => void;
+  onMinimize?: (e?: React.MouseEvent) => void;
 }
 
 const RISK_TONE: Record<string, string> = {
@@ -104,8 +104,8 @@ export default function MobileApprovalSheet({
       }
     >
       <div className="space-y-3 px-4 pb-3">
-        {/* 跨上下文提示 (Context Banner) */}
-        {(!isCurrentContext || sessionName || conversationTitle) && (
+        {/* 上下文提示 (Context Banner) */}
+        {(sessionName || conversationTitle) && (
           <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <svg className="w-4 h-4 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -118,7 +118,7 @@ export default function MobileApprovalSheet({
                 )}
               </div>
             </div>
-            {!isCurrentContext && onNavigateToContext && (
+            {onNavigateToContext && (
               <button
                 type="button"
                 onClick={onNavigateToContext}
