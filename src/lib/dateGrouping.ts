@@ -30,8 +30,8 @@ export function groupConversationsByDate<T extends { updatedAt?: string; created
 ): TimeGroup<T>[] {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
-  const sevenDaysAgo = startOfToday - 6 * 24 * 60 * 60 * 1000;
-  const thirtyDaysAgo = startOfToday - 29 * 24 * 60 * 60 * 1000;
+  const sevenDaysAgo = startOfToday - 7 * 24 * 60 * 60 * 1000;
+  const thirtyDaysAgo = startOfToday - 30 * 24 * 60 * 60 * 1000;
 
   const groups: Record<TimeGroupKey, T[]> = {
     today: [],

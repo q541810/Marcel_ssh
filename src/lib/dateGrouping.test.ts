@@ -2,15 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { groupConversationsByDate, TIME_GROUP_LABELS } from './dateGrouping';
 
 describe('groupConversationsByDate', () => {
-  const baseNow = new Date('2026-04-10T12:00:00.000Z');
+  // Use local-timezone-aware dates to avoid UTC/local mismatch
+  const baseNow = new Date(2026, 3, 10, 12, 0, 0);
 
   it('groups items correctly into today, yesterday, 7 days, 30 days and earlier', () => {
     const items = [
-      { id: '1', title: 'Today Item', updatedAt: '2026-04-10T08:00:00.000Z' },
-      { id: '2', title: 'Yesterday Item', updatedAt: '2026-04-09T20:00:00.000Z' },
-      { id: '3', title: '5 Days Ago Item', updatedAt: '2026-04-05T10:00:00.000Z' },
-      { id: '4', title: '20 Days Ago Item', updatedAt: '2026-03-25T10:00:00.000Z' },
-      { id: '5', title: '2 Months Ago Item', updatedAt: '2026-02-01T10:00:00.000Z' },
+      { id: '1', title: 'Today Item', updatedAt: new Date(2026, 3, 10, 8, 0, 0).toISOString() },
+      { id: '2', title: 'Yesterday Item', updatedAt: new Date(2026, 3, 9, 10, 0, 0).toISOString() },
+      { id: '3', title: '5 Days Ago Item', updatedAt: new Date(2026, 3, 5, 10, 0, 0).toISOString() },
+      { id: '4', title: '20 Days Ago Item', updatedAt: new Date(2026, 2, 21, 10, 0, 0).toISOString() },
+      { id: '5', title: '2 Months Ago Item', updatedAt: new Date(2026, 1, 1, 10, 0, 0).toISOString() },
     ];
 
     const groups = groupConversationsByDate(items, baseNow);
@@ -39,8 +40,8 @@ describe('groupConversationsByDate', () => {
 
   it('skips empty groups', () => {
     const items = [
-      { id: '1', title: 'Today Item', updatedAt: '2026-04-10T08:00:00.000Z' },
-      { id: '5', title: 'Old Item', updatedAt: '2025-01-01T10:00:00.000Z' },
+      { id: '1', title: 'Today Item', updatedAt: new Date(2026, 3, 10, 8, 0, 0).toISOString() },
+      { id: '5', title: 'Old Item', updatedAt: new Date(2025, 0, 1, 10, 0, 0).toISOString() },
     ];
 
     const groups = groupConversationsByDate(items, baseNow);
