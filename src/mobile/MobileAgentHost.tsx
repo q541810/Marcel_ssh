@@ -1,33 +1,41 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { Trash2 } from 'lucide-react';
-import { useAgent } from '@/hooks/useAgent';
-import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
-import { useConnectionStore } from '@/stores/connectionStore';
-import { useSessionStore } from '@/stores/sessionStore';
-import { useConversationStore, conversationHasRunningTask } from '@/stores/conversationStore';
-import { AGENT_MODES } from '@/lib/constants';
-import type { AgentMessage, AgentMode, QuestionAnswer } from '@/lib/types';
-import AgentMessageList from '@/components/agent/AgentMessageList';
-import PlanList from '@/components/agent/PlanList';
-import AgentCommandMenu from '@/components/agent/AgentCommandMenu';
-import { registerBackHandler } from './backHandler';
-import MobileApprovalSheet from './MobileApprovalSheet';
-import MobileQuestionSheet from './MobileQuestionSheet';
-import MobileChatHistorySheet from './MobileChatHistorySheet';
-import MobileSheet from './ui/MobileSheet';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Pencil, Trash2 } from "lucide-react";
+import { useAgent } from "@/hooks/useAgent";
+import { useTaskStore } from "@/stores/taskStore";
+import { getConversationAgentStatus, getActiveRunningTasks } from "@/stores/agentStatusSelectors";
+import { AgentStatusIndicator } from "@/components/agent/AgentStatusIndicator";
+import MobileActiveAgentsSheet from "./MobileActiveAgentsSheet";
+import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
+import { useConnectionStore } from "@/stores/connectionStore";
+import { useSessionStore } from "@/stores/sessionStore";
+import {
+  useConversationStore,
+  conversationHasRunningTask,
+} from "@/stores/conversationStore";
+import { groupConversationsByDate } from "@/lib/dateGrouping";
+import { AGENT_MODES } from "@/lib/constants";
+import type { AgentMessage, AgentMode, QuestionAnswer } from "@/lib/types";
+import AgentMessageList from "@/components/agent/AgentMessageList";
+import PlanList from "@/components/agent/PlanList";
+import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
+import { registerBackHandler } from "./backHandler";
+import MobileApprovalSheet from "./MobileApprovalSheet";
+import MobileQuestionSheet from "./MobileQuestionSheet";
+import MobileChatHistorySheet from "./MobileChatHistorySheet";
+import MobileSheet from "./ui/MobileSheet";
 import {
   agentEmptyStateReason,
   canSendAgentPrompt,
   resolveAgentIds,
   type AgentEmptyStateReason,
-} from './agentUi';
+} from "./agentUi";
 import {
   isNearBottom,
   shouldAutoScroll,
   shouldShowScrollToBottomFab,
-} from './agentScroll';
-import { resolveSessionDisplayName, sessionStatusLabel } from './sessionUi';
+} from "./agentScroll";
+import { resolveSessionDisplayName, sessionStatusLabel } from "./sessionUi";
 
 const NEAR_BOTTOM_THRESHOLD_PX = 80;
 
@@ -37,28 +45,28 @@ interface MobileAgentHostProps {
 }
 
 const EMPTY_STATE_COPY: Record<
-  Exclude<AgentEmptyStateReason, 'ready'>,
+  Exclude<AgentEmptyStateReason, "ready">,
   { title: string; body: string }
 > = {
-  'no-session': {
-    title: '未选择会话',
-    body: '请先在终端页连接 SSH 服务器。',
+  "no-session": {
+    title: "未选择会话",
+    body: "请先在终端页连接 SSH 服务器。",
   },
   connecting: {
-    title: '正在连接…',
-    body: '连接完成后可使用智能助手。',
+    title: "正在连接…",
+    body: "连接完成后可使用智能助手。",
   },
   disconnected: {
-    title: '连接已断开',
-    body: '请在终端页重新连接后再使用。',
+    title: "连接已断开",
+    body: "请在终端页重新连接后再使用。",
   },
   error: {
-    title: '连接失败',
-    body: '请在终端页检查连接后重试。',
+    title: "连接失败",
+    body: "请在终端页检查连接后重试。",
   },
-  'no-config': {
-    title: '无法使用助手',
-    body: '当前会话未绑定已保存连接，请从连接列表重新连接。',
+  "no-config": {
+    title: "无法使用助手",
+    body: "当前会话未绑定已保存连接，请从连接列表重新连接。",
   },
 };
 
@@ -72,7 +80,7 @@ export default function MobileAgentHost({
   const connections = useConnectionStore((s) => s.connections);
   const ids = resolveAgentIds(activeSession);
   /** Connected + bound saved connection — required for conversation/task IPC. */
-  const canInteract = !!ids && activeSession?.status === 'connected';
+  const canInteract = !!ids && activeSession?.status === "connected";
   const emptyReason = agentEmptyStateReason(activeSession);
 
   const {
@@ -93,6 +101,8 @@ export default function MobileAgentHost({
     activeConversationId,
     newConversation,
     switchConversation,
+    loadConversation,
+    renameConversation,
     deleteConversation,
     syncActiveToConnection,
     rollbackToMessage,
@@ -104,6 +114,7 @@ export default function MobileAgentHost({
   const historyPresence = useAnimatedPresence(historyOpen);
   /** 未连接时的只读历史浏览面板（对齐桌面 AgentPanel 的 ChatHistoryModal 分支） */
   const [historyBrowserOpen, setHistoryBrowserOpen] = useState(false);
+  const [activeAgentsSheetOpen, setActiveAgentsSheetOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [rollbackHint, setRollbackHint] = useState<string | null>(null);
   const [nearBottom, setNearBottom] = useState(true);
@@ -120,6 +131,15 @@ export default function MobileAgentHost({
   const prevVisibleRef = useRef(visible);
   const messageCountAtHideRef = useRef(0);
 
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
+  const [renameTitleInput, setRenameTitleInput] = useState("");
+
+  const tasks = useTaskStore((s) => s.tasks);
+  const unreadCompletedConversations = useTaskStore(
+    (s) => s.unreadCompletedConversations,
+  );
+  const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
+
   const sessionConversations = useMemo(
     () =>
       Object.values(conversations).filter(
@@ -132,10 +152,34 @@ export default function MobileAgentHost({
     [conversations, ids?.configId],
   );
 
+  const groupedSessionConversations = useMemo(
+    () => groupConversationsByDate(sessionConversations),
+    [sessionConversations],
+  );
+
+  const handleStartRename = (convId: string, currentTitle: string) => {
+    setRenameTargetId(convId);
+    setRenameTitleInput(currentTitle);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!renameTargetId) return;
+    const trimmed = renameTitleInput.trim();
+    if (trimmed) {
+      try {
+        await renameConversation(renameTargetId, trimmed);
+      } catch (err) {
+        console.error("Failed to rename conversation:", err);
+      }
+    }
+    setRenameTargetId(null);
+    setRenameTitleInput("");
+  };
+
   const currentModeInfo =
     AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
   const isThinking = useMemo(
-    () => messages.some((m) => m.role === 'assistant' && m.isThinking),
+    () => messages.some((m) => m.role === "assistant" && m.isThinking),
     [messages],
   );
 
@@ -160,12 +204,12 @@ export default function MobileAgentHost({
     );
   }, []);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollContainerRef.current;
     if (el) {
       el.scrollTo({ top: el.scrollHeight, behavior });
     } else {
-      messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
     }
     nearBottomRef.current = true;
     setNearBottom(true);
@@ -184,7 +228,7 @@ export default function MobileAgentHost({
       return;
     const isNew = lastScrolledMessageRef.current !== lastMessage.id;
     lastScrolledMessageRef.current = lastMessage.id;
-    scrollToBottom(isNew ? 'smooth' : 'auto');
+    scrollToBottom(isNew ? "smooth" : "auto");
     userJustSentRef.current = false;
   }, [lastMessage, lastMessageSize, canInteract, scrollToBottom]);
 
@@ -203,7 +247,7 @@ export default function MobileAgentHost({
     if (!nearBottomRef.current && !emptyToMessages) return;
     // rAF: layout may still be settling after un-hide
     requestAnimationFrame(() => {
-      scrollToBottom('auto');
+      scrollToBottom("auto");
     });
   }, [visible, messages.length, scrollToBottom]);
 
@@ -216,7 +260,7 @@ export default function MobileAgentHost({
     if (!el) return;
     const ro = new ResizeObserver(() => {
       if (nearBottomRef.current) {
-        scrollToBottom('auto');
+        scrollToBottom("auto");
       }
     });
     ro.observe(el);
@@ -230,12 +274,12 @@ export default function MobileAgentHost({
     const prompt = inputDraft.trim();
     sendingRef.current = true;
     userJustSentRef.current = true;
-    setInputDraft('');
-    if (inputRef.current) inputRef.current.style.height = 'auto';
+    setInputDraft("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     try {
       await sendPrompt(ids.sessionId, prompt, ids.configId);
     } catch (err) {
-      console.error('Failed to start task:', err);
+      console.error("Failed to start task:", err);
       setInputDraft(prompt);
       userJustSentRef.current = false;
     } finally {
@@ -271,7 +315,7 @@ export default function MobileAgentHost({
     const answers: QuestionAnswer[] = (pendingQuestion.questions ?? []).map(
       () => ({
         selected: [],
-        custom: '',
+        custom: "",
       }),
     );
     await submitAnswer(pendingQuestion.questionId, answers);
@@ -296,7 +340,7 @@ export default function MobileAgentHost({
       await newConversation(ids.sessionId, ids.configId);
       setHistoryOpen(false);
     } catch (err) {
-      console.error('Failed to create conversation:', err);
+      console.error("Failed to create conversation:", err);
     }
   }, [canInteract, ids, newConversation]);
 
@@ -306,7 +350,7 @@ export default function MobileAgentHost({
         await switchConversation(conversationId);
         setHistoryOpen(false);
       } catch (err) {
-        console.error('Failed to switch conversation:', err);
+        console.error("Failed to switch conversation:", err);
       }
     },
     [switchConversation],
@@ -319,13 +363,13 @@ export default function MobileAgentHost({
     try {
       await deleteConversation(id);
     } catch (err) {
-      console.error('Failed to delete conversation:', err);
+      console.error("Failed to delete conversation:", err);
     }
   }, [deleteTargetId, deleteConversation]);
 
   const deleteTargetTitle = deleteTargetId
-    ? (conversations[deleteTargetId]?.title ?? '该会话')
-    : '';
+    ? (conversations[deleteTargetId]?.title ?? "该会话")
+    : "";
 
   const showRollbackHint = useCallback((text: string) => {
     setRollbackHint(text);
@@ -356,14 +400,14 @@ export default function MobileAgentHost({
         showRollbackHint(`已撤回 ${result.removedCount} 条消息`);
         requestAnimationFrame(() => {
           if (inputRef.current) {
-            inputRef.current.style.height = 'auto';
+            inputRef.current.style.height = "auto";
             inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
             inputRef.current.focus();
           }
         });
       } catch (err) {
-        console.error('Failed to rollback message:', err);
-        showRollbackHint('撤回失败');
+        console.error("Failed to rollback message:", err);
+        showRollbackHint("撤回失败");
       }
     },
     [
@@ -379,19 +423,19 @@ export default function MobileAgentHost({
     try {
       await writeText(message.content);
     } catch (err) {
-      console.error('Failed to copy message:', err);
+      console.error("Failed to copy message:", err);
     }
   }, []);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputDraft(e.target.value);
     const el = e.target;
-    el.style.height = 'auto';
+    el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
     }
@@ -401,10 +445,11 @@ export default function MobileAgentHost({
   // 手机端以触摸点选为主；软键盘回车/发送语义不变（handleKeyDown 不拦截）。
   // 任务运行中不唤出（与桌面一致）：手动压缩与运行中任务并发会造成替换竞态。
   const commandMenuOpen =
-    inputDraft.startsWith('/') &&
+    inputDraft.startsWith("/") &&
     !/\s/.test(inputDraft) &&
-    (!activeConversationId || !conversationHasRunningTask(activeConversationId));
-  const commandMenuQuery = commandMenuOpen ? inputDraft.slice(1) : '';
+    (!activeConversationId ||
+      !conversationHasRunningTask(activeConversationId));
+  const commandMenuQuery = commandMenuOpen ? inputDraft.slice(1) : "";
 
   const handleCompact = useCallback(() => {
     if (!activeConversationId) return;
@@ -413,7 +458,7 @@ export default function MobileAgentHost({
       .getState()
       .compactConversation(activeConversationId)
       .catch((err) => {
-        console.error('Failed to compact conversation:', err);
+        console.error("Failed to compact conversation:", err);
       });
   }, [activeConversationId]);
 
@@ -422,7 +467,7 @@ export default function MobileAgentHost({
       setInputDraft(prompt);
       requestAnimationFrame(() => {
         if (inputRef.current) {
-          inputRef.current.style.height = 'auto';
+          inputRef.current.style.height = "auto";
           inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
           inputRef.current.focus();
         }
@@ -434,41 +479,25 @@ export default function MobileAgentHost({
   // 菜单打开时系统返回键 = 关闭（清空命令输入）
   useEffect(() => {
     if (!commandMenuOpen) return;
-    return registerBackHandler(() => setInputDraft(''));
+    return registerBackHandler(() => setInputDraft(""));
   }, [commandMenuOpen, setInputDraft]);
 
   const sendEnabled =
     !!ids && canSendAgentPrompt(activeSession, isRunning, inputDraft);
   const hostLabel =
-    resolveSessionDisplayName(activeSession, connections) || '智能助手';
+    resolveSessionDisplayName(activeSession, connections) || "智能助手";
   const statusText = activeSession
     ? sessionStatusLabel(activeSession.status)
-    : '无会话';
+    : "无会话";
 
   return (
     <div
       className="relative flex h-full min-h-0 flex-col bg-zinc-950"
       data-region="mobile-agent"
     >
-      {pendingApproval && (
-        <MobileApprovalSheet
-          toolCall={{
-            id: pendingApproval.toolCallId,
-            name: pendingApproval.toolName,
-            arguments: pendingApproval.arguments,
-            riskLevel: pendingApproval.riskLevel,
-            reasons: pendingApproval.reasons,
-            metadata: pendingApproval.metadata,
-          }}
-          open={!!pendingApproval}
-          onApprove={() => void handleApprove()}
-          onReject={() => void handleReject()}
-        />
-      )}
-
       <header
         className="flex flex-shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3 py-2"
-        style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
+        style={{ paddingTop: "max(0.5rem, env(safe-area-inset-top, 0px))" }}
       >
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-zinc-100">
@@ -476,19 +505,30 @@ export default function MobileAgentHost({
           </div>
           <div
             className={`text-[11px] ${
-              activeSession?.status === 'connected'
-                ? 'text-emerald-400'
-                : activeSession?.status === 'connecting'
-                  ? 'text-amber-400'
-                  : activeSession?.status === 'error'
-                    ? 'text-red-400'
-                    : 'text-zinc-500'
+              activeSession?.status === "connected"
+                ? "text-emerald-400"
+                : activeSession?.status === "connecting"
+                  ? "text-amber-400"
+                  : activeSession?.status === "error"
+                    ? "text-red-400"
+                    : "text-zinc-500"
             }`}
           >
             {statusText}
-            {isRunning ? ' · 运行中' : ''}
+            {isRunning ? " · 运行中" : ""}
           </div>
         </div>
+        {runningTasks.length > 1 && (
+          <button
+            type="button"
+            onClick={() => setActiveAgentsSheetOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 bg-indigo-500/10 active:scale-95 border border-indigo-500/30 rounded-full text-indigo-300 text-xs font-medium transition-all"
+            title="查看所有运行中的任务"
+          >
+            <AgentStatusIndicator status="running" size="xs" />
+            <span>{runningTasks.length} 个运行中</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void handleNewConversation()}
@@ -530,7 +570,7 @@ export default function MobileAgentHost({
           className="h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-3"
           onScroll={handleScroll}
         >
-          {emptyReason !== 'ready' && (
+          {emptyReason !== "ready" && (
             <div className="mt-10 text-center text-sm text-zinc-500">
               <p className="font-medium text-zinc-400">
                 {EMPTY_STATE_COPY[emptyReason].title}
@@ -538,15 +578,15 @@ export default function MobileAgentHost({
               <p className="mt-1">{EMPTY_STATE_COPY[emptyReason].body}</p>
             </div>
           )}
-          {emptyReason === 'ready' && messages.length === 0 && (
+          {emptyReason === "ready" && messages.length === 0 && (
             <div className="mt-10 text-center text-sm text-zinc-500">
               <p className="font-medium text-zinc-400">
-                {activeConversationId ? '暂无消息' : '暂无会话'}
+                {activeConversationId ? "暂无消息" : "暂无会话"}
               </p>
               <p className="mt-1">
                 {activeConversationId
-                  ? '描述您想做的事，智能助手会协助您。'
-                  : '点击「新对话」开始，或直接输入发送。'}
+                  ? "描述您想做的事，智能助手会协助您。"
+                  : "点击「新对话」开始，或直接输入发送。"}
               </p>
             </div>
           )}
@@ -565,7 +605,7 @@ export default function MobileAgentHost({
         {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
           <button
             type="button"
-            onClick={() => scrollToBottom('smooth')}
+            onClick={() => scrollToBottom("smooth")}
             className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-zinc-600 bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg backdrop-blur-sm active:bg-zinc-700"
           >
             回到底部
@@ -579,18 +619,18 @@ export default function MobileAgentHost({
         <>
           <div
             className={`absolute inset-0 z-20 bg-black/40 ${
-              historyPresence.phase === 'exit'
-                ? 'mobile-backdrop-exit'
-                : 'mobile-backdrop-enter'
+              historyPresence.phase === "exit"
+                ? "mobile-backdrop-exit"
+                : "mobile-backdrop-enter"
             }`}
             onClick={() => setHistoryOpen(false)}
           />
           <div
             onAnimationEnd={historyPresence.onAnimationEnd}
             className={`absolute inset-x-0 bottom-0 z-30 max-h-[55%] overflow-y-auto rounded-t-2xl border-t border-zinc-700 bg-zinc-900 p-3 shadow-2xl ${
-              historyPresence.phase === 'exit'
-                ? 'mobile-sheet-exit'
-                : 'mobile-sheet-enter'
+              historyPresence.phase === "exit"
+                ? "mobile-sheet-exit"
+                : "mobile-sheet-enter"
             }`}
           >
             <div className="mb-2 flex items-center justify-between">
@@ -608,44 +648,111 @@ export default function MobileAgentHost({
                 暂无历史会话
               </p>
             ) : (
-              <ul className="space-y-1">
-                {sessionConversations.map((conv) => {
-                  const active = conv.id === activeConversationId;
-                  return (
-                    <li
-                      key={conv.id}
-                      className={`flex items-center gap-1 rounded-lg ${
-                        active
-                          ? 'bg-indigo-600/20 text-indigo-200'
-                          : 'bg-zinc-800/60 text-zinc-300'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => void handleSelectConversation(conv.id)}
-                        className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm active:opacity-80"
-                      >
-                        <div className="truncate font-medium">{conv.title}</div>
-                        <div className="mt-0.5 text-[11px] text-zinc-500">
-                          {new Date(conv.updatedAt).toLocaleString()}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteTargetId(conv.id)}
-                        className="mr-1.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-zinc-800 active:text-red-400"
-                        aria-label={`删除 ${conv.title}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="space-y-3">
+                {groupedSessionConversations.map((group) => (
+                  <div key={group.key} className="space-y-1">
+                    <div className="px-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                      {group.label}
+                    </div>
+                    <ul className="space-y-1">
+                      {group.items.map((conv) => {
+                        const active = conv.id === activeConversationId;
+                        return (
+                          <li
+                            key={conv.id}
+                            className={`flex items-center gap-1 rounded-lg ${
+                              active
+                                ? "bg-indigo-600/20 text-indigo-200"
+                                : "bg-zinc-800/60 text-zinc-300"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => void handleSelectConversation(conv.id)}
+                              className="min-w-0 flex-1 px-3 py-2 text-left text-sm active:opacity-80 flex items-center justify-between gap-2"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate font-medium leading-snug">{conv.title}</div>
+                                <div className="mt-0.5 text-[11px] text-zinc-500">
+                                  {new Date(conv.updatedAt).toLocaleString()}
+                                </div>
+                              </div>
+                              <AgentStatusIndicator
+                                status={getConversationAgentStatus(
+                                  conv.id,
+                                  tasks,
+                                  unreadCompletedConversations,
+                                )}
+                                size="xs"
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartRename(conv.id, conv.title)}
+                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800 active:text-zinc-200"
+                              aria-label={`重命名 ${conv.title}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTargetId(conv.id)}
+                              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800 active:text-red-400"
+                              aria-label={`删除 ${conv.title}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </>
       )}
+
+      <MobileSheet
+        open={renameTargetId != null}
+        onClose={() => setRenameTargetId(null)}
+        title="重命名会话"
+      >
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          <input
+            type="text"
+            value={renameTitleInput}
+            onChange={(e) => setRenameTitleInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void handleConfirmRename();
+              }
+            }}
+            placeholder="请输入会话名称"
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setRenameTargetId(null)}
+              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-zinc-700"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConfirmRename()}
+              disabled={!renameTitleInput.trim()}
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 active:bg-indigo-500"
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </MobileSheet>
 
       <MobileSheet
         open={deleteTargetId != null}
@@ -678,14 +785,12 @@ export default function MobileAgentHost({
         onClose={() => setHistoryBrowserOpen(false)}
       />
 
-      {pendingQuestion ? (
-        <MobileQuestionSheet
-          questionId={pendingQuestion.questionId}
-          questions={pendingQuestion.questions}
-          onSubmit={handleSubmitQuestion}
-          onCancel={() => void handleCancelQuestion()}
-        />
-      ) : isSubConversation ? (
+      <MobileActiveAgentsSheet
+        open={activeAgentsSheetOpen}
+        onClose={() => setActiveAgentsSheetOpen(false)}
+      />
+
+      {isSubConversation ? (
         <div className="flex-shrink-0 border-t border-zinc-800 p-3">
           <div className="flex items-center gap-3 rounded-xl border border-zinc-700/60 bg-zinc-900/70 px-3 py-3">
             <button
@@ -693,14 +798,24 @@ export default function MobileAgentHost({
               onClick={handleBackToParent}
               className="flex flex-shrink-0 items-center gap-1 rounded-lg bg-indigo-600/20 px-2.5 py-2 text-xs font-medium text-indigo-300 transition-transform duration-100 active:scale-95 active:bg-indigo-600/30"
             >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              <svg
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
+                />
               </svg>
               返回主对话
             </button>
             <div className="min-w-0 flex-1 border-l border-zinc-700/50 pl-3">
               <div className="truncate text-xs text-zinc-400">
-                子agent调研 · {activeConversation?.title ?? '子agent对话'}
+                子agent调研 · {activeConversation?.title ?? "子agent对话"}
               </div>
               <div className="mt-0.5 text-[11px] text-zinc-600">
                 由主 Agent 派发的只读调研，不支持输入
@@ -714,7 +829,7 @@ export default function MobileAgentHost({
           {commandMenuOpen && (
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setInputDraft('')}
+              onClick={() => setInputDraft("")}
               aria-hidden
             />
           )}
@@ -725,7 +840,7 @@ export default function MobileAgentHost({
             onSelectMode={setMode}
             onInsertSkill={handleInsertSkill}
             onCompact={handleCompact}
-            onClose={() => setInputDraft('')}
+            onClose={() => setInputDraft("")}
           />
           <div className="agent-input flex items-end gap-2 rounded-xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
             <div className="relative flex-shrink-0 self-center pl-1">
@@ -748,9 +863,9 @@ export default function MobileAgentHost({
                 <div
                   onAnimationEnd={modePresence.onAnimationEnd}
                   className={`absolute bottom-full left-0 z-30 mb-2 w-56 rounded-xl border border-zinc-700 bg-zinc-800 py-1 shadow-2xl ${
-                    modePresence.phase === 'exit'
-                      ? 'mobile-popover-exit'
-                      : 'mobile-popover-enter'
+                    modePresence.phase === "exit"
+                      ? "mobile-popover-exit"
+                      : "mobile-popover-enter"
                   }`}
                 >
                   {AGENT_MODES.map((m) => {
@@ -765,8 +880,8 @@ export default function MobileAgentHost({
                         }}
                         className={`w-full px-3 py-2 text-left text-sm ${
                           active
-                            ? 'bg-indigo-600/20 text-indigo-200'
-                            : 'text-zinc-200 active:bg-zinc-700'
+                            ? "bg-indigo-600/20 text-indigo-200"
+                            : "text-zinc-200 active:bg-zinc-700"
                         }`}
                       >
                         <div className="font-bold tracking-wider">
@@ -790,10 +905,10 @@ export default function MobileAgentHost({
               onKeyDown={handleKeyDown}
               placeholder={
                 !canInteract
-                  ? '请先连接服务器…'
+                  ? "请先连接服务器…"
                   : !ids
-                    ? '请从连接列表重新连接…'
-                    : '描述您想要做的事情…'
+                    ? "请从连接列表重新连接…"
+                    : "描述您想要做的事情…"
               }
               disabled={!canInteract || !ids}
               className="min-h-[2.5rem] max-h-[7.5rem] min-w-0 flex-1 resize-none bg-transparent px-2 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:outline-none focus-visible:outline-none disabled:opacity-50"
@@ -804,11 +919,11 @@ export default function MobileAgentHost({
               disabled={!isRunning && !sendEnabled}
               className={`m-1.5 flex-shrink-0 self-center rounded-lg px-3 py-2 text-xs font-medium text-white disabled:opacity-40 ${
                 isRunning
-                  ? 'bg-red-600 active:bg-red-500'
-                  : 'bg-indigo-600 active:bg-indigo-500'
+                  ? "bg-red-600 active:bg-red-500"
+                  : "bg-indigo-600 active:bg-indigo-500"
               }`}
             >
-              {isRunning ? '停止' : '发送'}
+              {isRunning ? "停止" : "发送"}
             </button>
           </div>
         </div>

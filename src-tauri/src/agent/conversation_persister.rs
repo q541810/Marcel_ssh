@@ -1,7 +1,7 @@
 use chrono::Utc;
 
-use crate::agent::conversation::ConversationDb;
 use crate::agent::context::CompactionOutcome;
+use crate::agent::conversation::ConversationDb;
 use crate::llm::provider::{LlmMessage, LlmRole};
 use crate::sync::engine::SyncEngine;
 use crate::sync::scheduler::SyncScheduler;
@@ -39,11 +39,18 @@ impl ConversationPersister {
         self
     }
 
-    /// Auto-update conversation title from the last user message.
-    pub fn update_title_from_last_user_msg(&self, messages: &[LlmMessage]) {
+    /// Auto-update conversation title from the first user message if title is still default or empty.
+    pub fn update_title_from_first_user_msg(&self, messages: &[LlmMessage]) {
+        // 先检查当前会话标题，如果不是默认名（如 "新会话" 或空），说明已经被设置过或用户自定义过，不覆盖
+        if let Ok(Some(conv)) = self.conv_db.get_conversation(&self.conversation_id) {
+            let trimmed = conv.title.trim();
+            if !trimmed.is_empty() && trimmed != "新会话" {
+                return;
+            }
+        }
+
         if let Some(msg) = messages
             .iter()
-            .rev()
             .find(|m| m.role == LlmRole::User && (!m.content.is_empty() || m.image_paths.is_some()))
         {
             let title = if msg.content.is_empty() {
@@ -122,8 +129,7 @@ impl ConversationPersister {
     /// 触发跨设备同步：记录本地变更 + 调度 push（防抖 700ms）。
     /// 未配置同步时静默跳过。
     fn trigger_sync(&self) {
-        if let (Some(ref engine), Some(ref scheduler)) = (&self.sync_engine, &self.sync_scheduler)
-        {
+        if let (Some(ref engine), Some(ref scheduler)) = (&self.sync_engine, &self.sync_scheduler) {
             // 会话作为整体版本单元 push（含 conversation 元数据 + 所有 messages）
             let key = format!("conversations.{}", self.conversation_id);
             // record_local_change 的 value 参数用于 diff 比对（避免无变更 bump 版本）。
@@ -225,8 +231,8 @@ impl ConversationPersister {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::conversation::StoredMessage;
     use crate::agent::context::CompactionOutcome;
+    use crate::agent::conversation::StoredMessage;
 
     /// 构造 outcome：`tail_db_id` 指向 DB 中最后保存的（第 `shadowed_messages` 条）
     /// 消息行 id——模拟压缩"被压区间末条"。
@@ -253,10 +259,28 @@ mod tests {
     fn persist_compaction_locates_by_tail_id_and_keeps_originals() {
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "tool", "out", "2026-01-01T00:00:02Z", tool_result_json("X1").as_deref(), None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(
+            &conv.id,
+            "tool",
+            "out",
+            "2026-01-01T00:00:02Z",
+            tool_result_json("X1").as_deref(),
+            None,
+        )
+        .expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
 
         let rows = db.load_messages(&conv.id).expect("load");
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
@@ -280,9 +304,19 @@ mod tests {
         // 全新会话（本会话消息无 db_id）也能落库。
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
 
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
         let outcome = CompactionOutcome {
@@ -299,7 +333,10 @@ mod tests {
         assert_eq!(after[0].content, "u1");
         assert_eq!(after[1].content, "a1");
         assert_eq!(after[2].content, "u2");
-        assert!(after[3].content.starts_with(COMPACTION_CARD_PREFIX), "卡片在队尾");
+        assert!(
+            after[3].content.starts_with(COMPACTION_CARD_PREFIX),
+            "卡片在队尾"
+        );
     }
 
     #[test]
@@ -307,9 +344,19 @@ mod tests {
         // 手动二次压缩：吸收最后一行之前最近一张旧卡（恒单卡）
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
 
         // 第一次手动压缩 → [u1, a1, u2, 卡]
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
@@ -325,7 +372,8 @@ mod tests {
         let first_card_id = mid[3].id.clone();
 
         // 第二次手动压缩（又有新消息）→ [u1, a1, u2, 新卡]（旧卡被吸收）
-        db.save_message(&conv.id, "user", "u3", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "user", "u3", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
         let second = CompactionOutcome {
             shadowed_messages: 4,
             shadowed_tokens: 200,
@@ -362,7 +410,8 @@ mod tests {
     fn persist_compaction_unknown_tail_id_skips() {
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
 
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
         // tail id 指向不存在的行（如被回滚删除）→ 跳过落库，原文保留
@@ -383,10 +432,28 @@ mod tests {
     fn persist_compaction_absorbs_previous_card() {
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None).expect("m3");
-        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a2",
+            "2026-01-01T00:00:03Z",
+            None,
+            None,
+        )
+        .expect("m4");
 
         // 第一次压缩：压 2 条（u1, a1），卡片插在 a1 后
         let rows = db.load_messages(&conv.id).expect("load");
@@ -413,8 +480,10 @@ mod tests {
         // 只要 id 指向存在的行，即使 shadowed_messages 描述与实际行数不一致也照常落库。
         let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
         let conv = db.create_conversation("conn_1", "Test").expect("create");
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:01Z", None, None)
+            .expect("m2");
 
         let rows = db.load_messages(&conv.id).expect("load");
         let persister = ConversationPersister::new(db.clone(), conv.id.clone());
@@ -423,5 +492,27 @@ mod tests {
         let after = db.load_messages(&conv.id).expect("load");
         assert_eq!(after.len(), 3);
         assert!(after[2].content.starts_with(COMPACTION_CARD_PREFIX));
+    }
+
+    #[test]
+    fn update_title_from_first_user_msg_only_updates_when_default() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "新会话").expect("create");
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+
+        let messages = vec![
+            LlmMessage::user("第一句话，应该作为会话名"),
+            LlmMessage::assistant("回复"),
+            LlmMessage::user("第二句话，不应该覆盖会话名"),
+        ];
+
+        persister.update_title_from_first_user_msg(&messages);
+        let loaded = db.get_conversation(&conv.id).unwrap().unwrap();
+        assert_eq!(loaded.title, "第一句话，应该作为会话名");
+
+        // 再次触发（包含更多用户消息），标题保持第一句，不会被最后一句覆盖
+        persister.update_title_from_first_user_msg(&messages);
+        let loaded2 = db.get_conversation(&conv.id).unwrap().unwrap();
+        assert_eq!(loaded2.title, "第一句话，应该作为会话名");
     }
 }

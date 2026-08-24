@@ -12,8 +12,13 @@ import {
   clearIntermediateReasoning,
 } from '@/stores/messageConversion';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useTaskStore } from '@/stores/taskStore';
+import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
+import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
+import { groupConversationsByDate } from '@/lib/dateGrouping';
+import { Pencil } from 'lucide-react';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import MobileSheet from './ui/MobileSheet';
 
@@ -39,6 +44,10 @@ export default function MobileChatHistorySheet({
 }: MobileChatHistorySheetProps) {
   const connections = useConnectionStore((s) => s.connections);
   const connectionsLoading = useConnectionStore((s) => s.loading);
+  const tasks = useTaskStore((s) => s.tasks);
+  const unreadCompletedConversations = useTaskStore(
+    (s) => s.unreadCompletedConversations,
+  );
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const privacyMode = usePrivacyMode();
   const connLabel = (c: SavedConnection) =>
@@ -53,6 +62,45 @@ export default function MobileChatHistorySheet({
   const [messages, setMessages] = useState<AgentMessageType[]>([]);
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
+
+  const [renameConvTarget, setRenameConvTarget] = useState<AgentConversation | null>(null);
+  const [renameInput, setRenameInput] = useState('');
+
+  const handleStartRename = (e: React.MouseEvent, conv: AgentConversation) => {
+    e.stopPropagation();
+    setRenameConvTarget(conv);
+    setRenameInput(conv.title);
+  };
+
+  const handleConfirmRename = async () => {
+    if (!renameConvTarget) return;
+    const trimmed = renameInput.trim();
+    if (trimmed && trimmed !== renameConvTarget.title) {
+      try {
+        await tauri.agentRenameConversation(renameConvTarget.id, trimmed);
+        const now = new Date().toISOString();
+        setConversationsByConn((prev) => {
+          const next = { ...prev };
+          for (const connId of Object.keys(next)) {
+            next[connId] = next[connId].map((c) =>
+              c.id === renameConvTarget.id ? { ...c, title: trimmed, updatedAt: now } : c,
+            );
+          }
+          return next;
+        });
+        setSearchResults((prev) =>
+          prev.map((r) => (r.conversationId === renameConvTarget.id ? { ...r, title: trimmed } : r)),
+        );
+        if (selectedConv?.id === renameConvTarget.id) {
+          setSelectedConv((prev) => (prev ? { ...prev, title: trimmed, updatedAt: now } : null));
+        }
+      } catch (err) {
+        console.error('Failed to rename conversation:', err);
+      }
+    }
+    setRenameConvTarget(null);
+    setRenameInput('');
+  };
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -510,24 +558,51 @@ export default function MobileChatHistorySheet({
                           </p>
                         )}
                         {expanded && convs.length > 0 && (
-                          <ul className="mt-1 space-y-1 pl-2">
-                            {convs.map((conv) => (
-                              <li key={conv.id}>
-                                <button
-                                  type="button"
-                                  onClick={() => openConversation(conv)}
-                                  className="w-full rounded-lg bg-zinc-800/40 px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-zinc-800"
-                                >
-                                  <div className="truncate font-medium">
-                                    {conv.title}
-                                  </div>
-                                  <div className="mt-0.5 text-[11px] text-zinc-500">
-                                    {new Date(conv.updatedAt).toLocaleString()}
-                                  </div>
-                                </button>
-                              </li>
+                          <div className="mt-1 space-y-2 pl-2">
+                            {groupConversationsByDate(convs).map((group) => (
+                              <div key={group.key} className="space-y-1">
+                                <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                                  {group.label}
+                                </div>
+                                <ul className="space-y-1">
+                                  {group.items.map((conv) => (
+                                    <li key={conv.id} className="flex items-center gap-1 rounded-lg bg-zinc-800/40">
+                                      <button
+                                        type="button"
+                                        onClick={() => openConversation(conv)}
+                                        className="min-w-0 flex-1 px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-zinc-800 rounded-lg flex items-center justify-between gap-2"
+                                      >
+                                        <div className="min-w-0 flex-1">
+                                          <div className="truncate font-medium">
+                                            {conv.title}
+                                          </div>
+                                          <div className="mt-0.5 text-[11px] text-zinc-500">
+                                            {new Date(conv.updatedAt).toLocaleString()}
+                                          </div>
+                                        </div>
+                                        <AgentStatusIndicator
+                                          status={getConversationAgentStatus(
+                                            conv.id,
+                                            tasks,
+                                            unreadCompletedConversations,
+                                          )}
+                                          size="xs"
+                                        />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleStartRename(e, conv)}
+                                        className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800 active:text-zinc-200"
+                                        aria-label={`重命名 ${conv.title}`}
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
                             ))}
-                          </ul>
+                          </div>
                         )}
                       </div>
                     );
@@ -537,6 +612,46 @@ export default function MobileChatHistorySheet({
           </div>
         </div>
       )}
+
+      <MobileSheet
+        open={renameConvTarget != null}
+        onClose={() => setRenameConvTarget(null)}
+        title="重命名会话"
+      >
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          <input
+            type="text"
+            value={renameInput}
+            onChange={(e) => setRenameInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleConfirmRename();
+              }
+            }}
+            placeholder="请输入会话名称"
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none"
+            autoFocus
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setRenameConvTarget(null)}
+              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-zinc-700"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleConfirmRename()}
+              disabled={!renameInput.trim()}
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 active:bg-indigo-500"
+            >
+              保存
+            </button>
+          </div>
+        </div>
+      </MobileSheet>
     </MobileSheet>
   );
 }

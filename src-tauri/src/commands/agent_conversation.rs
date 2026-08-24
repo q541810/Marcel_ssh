@@ -108,6 +108,35 @@ pub async fn agent_load_conversation(
     Ok(messages)
 }
 
+/// Rename a conversation.
+#[tauri::command]
+pub async fn agent_rename_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    title: String,
+) -> Result<(), AppError> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Agent("会话名称不能为空".into()));
+    }
+    state
+        .conversation_db
+        .update_conversation_title(&conversation_id, trimmed)
+        .map_err(|e| AppError::Agent(format!("Failed to rename conversation: {}", e)))?;
+    log::info!("Renamed conversation: {} to {}", conversation_id, trimmed);
+
+    // 触发跨设备同步：conversations 变更
+    if let Some(ref scheduler) = state.sync_scheduler {
+        if let Some(ref engine) = state.sync_engine {
+            let marker = chrono::Utc::now().to_rfc3339();
+            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            scheduler.schedule_push();
+        }
+    }
+
+    Ok(())
+}
+
 /// Delete a single conversation and all its subagent conversations (cascade).
 #[tauri::command]
 pub async fn agent_delete_conversation(
@@ -118,7 +147,11 @@ pub async fn agent_delete_conversation(
         .conversation_db
         .delete_conversation_cascade(&conversation_id)
         .map_err(|e| AppError::Agent(format!("Failed to delete conversation: {}", e)))?;
-    log::info!("Deleted conversation: {} (cascade: {})", conversation_id, deleted.len());
+    log::info!(
+        "Deleted conversation: {} (cascade: {})",
+        conversation_id,
+        deleted.len()
+    );
 
     // 触发跨设备同步：主对话 + 全部子对话逐个 delete 事件
     if let Some(ref scheduler) = state.sync_scheduler {
@@ -142,19 +175,16 @@ pub async fn agent_save_message_images(
     images_base64: Vec<String>,
 ) -> Result<Vec<String>, AppError> {
     if conversation_id.is_empty() || message_id.is_empty() {
-        return Err(AppError::Agent("conversation_id / message_id 不能为空".into()));
+        return Err(AppError::Agent(
+            "conversation_id / message_id 不能为空".into(),
+        ));
     }
     if images_base64.len() > 5 {
         return Err(AppError::Agent("单次最多 5 张图片".into()));
     }
     let mut paths = Vec::with_capacity(images_base64.len());
     for (i, data) in images_base64.iter().enumerate() {
-        match crate::agent::image_store::save_image_base64(
-            &conversation_id,
-            &message_id,
-            i,
-            data,
-        ) {
+        match crate::agent::image_store::save_image_base64(&conversation_id, &message_id, i, data) {
             Ok(rel) => paths.push(rel),
             Err(e) => {
                 // 中途失败：回滚已写入的文件，避免半成功孤儿图
@@ -201,7 +231,8 @@ pub async fn agent_save_user_message(
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
             let marker = chrono::Utc::now().to_rfc3339();
-            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            let _ =
+                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
             scheduler.schedule_push();
         }
     }
@@ -212,8 +243,8 @@ pub async fn agent_save_user_message(
 /// Resolve absolute filesystem path for a relative image path (for asset protocol).
 #[tauri::command]
 pub async fn agent_resolve_image_path(relative_path: String) -> Result<String, AppError> {
-    let abs = crate::agent::image_store::absolute_path(&relative_path)
-        .map_err(|e| AppError::Agent(e))?;
+    let abs =
+        crate::agent::image_store::absolute_path(&relative_path).map_err(|e| AppError::Agent(e))?;
     Ok(abs.to_string_lossy().to_string())
 }
 
@@ -359,7 +390,8 @@ pub async fn agent_truncate_conversation(
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
             let marker = chrono::Utc::now().to_rfc3339();
-            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            let _ =
+                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
             scheduler.schedule_push();
         }
     }
@@ -459,10 +491,7 @@ pub async fn agent_delete_conversations_by_session(
     );
 
     // 触发跨设备同步：逐个 conversations 删除
-    if let (Some(ref engine), Some(ref scheduler)) = (
-        &state.sync_engine,
-        &state.sync_scheduler,
-    ) {
+    if let (Some(ref engine), Some(ref scheduler)) = (&state.sync_engine, &state.sync_scheduler) {
         for id in &conv_ids {
             let _ = engine.record_local_delete(&format!("conversations.{}", id));
         }
@@ -498,10 +527,7 @@ pub async fn agent_load_plans_by_conversation(
                 // 旧版 create_plan 生成 "item-0" 格式，新版生成 "1" 格式。
                 // 这里在 load 时统一转成新格式，并 reflow next_item_seq 避免
                 // 后续 edit_plan add 生成冲突 id。
-                let needs_migrate = plan
-                    .items
-                    .iter()
-                    .any(|it| it.id.starts_with("item-"));
+                let needs_migrate = plan.items.iter().any(|it| it.id.starts_with("item-"));
                 if needs_migrate {
                     for it in &mut plan.items {
                         if let Some(num) = it.id.strip_prefix("item-") {

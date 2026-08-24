@@ -11,7 +11,11 @@ import { storedMessageToAgentMessage, clearIntermediateReasoning } from '@/store
 import { useConnectionStore } from '@/stores/connectionStore';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
+import { groupConversationsByDate } from '@/lib/dateGrouping';
 import AgentMessageList from '@/components/agent/AgentMessageList';
+import { useTaskStore } from '@/stores/taskStore';
+import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
+import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 
 interface Props {
   open: boolean;
@@ -27,6 +31,33 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
   const [loadingConvs, setLoadingConvs] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const privacyMode = usePrivacyMode();
+  const tasks = useTaskStore((s) => s.tasks);
+  const unreadCompletedConversations = useTaskStore(
+    (s) => s.unreadCompletedConversations,
+  );
+  const handleRenameInModal = async (e: React.MouseEvent, convId: string, oldTitle: string) => {
+    e.stopPropagation();
+    const newTitle = window.prompt('请输入新的会话名称', oldTitle);
+    if (!newTitle || !newTitle.trim() || newTitle.trim() === oldTitle) return;
+    try {
+      await tauri.agentRenameConversation(convId, newTitle.trim());
+      // 更新本地状态
+      setConversationsByConn((prev) => {
+        const next = { ...prev };
+        for (const connId of Object.keys(next)) {
+          next[connId] = next[connId].map((c) =>
+            c.id === convId ? { ...c, title: newTitle.trim(), updatedAt: new Date().toISOString() } : c,
+          );
+        }
+        return next;
+      });
+      setSearchResults((prev) =>
+        prev.map((r) => (r.conversationId === convId ? { ...r, title: newTitle.trim() } : r)),
+      );
+    } catch (err) {
+      console.error('Failed to rename conversation:', err);
+    }
+  };
 
   const [searchInput, setSearchInput] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -338,27 +369,63 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                         </div>
                       </button>
                       {isSelected && convs.length > 0 && (
-                        <div className="space-y-1 pl-2">
-                          {convs.map((conv) => (
-                            <button
-                              key={conv.id}
-                              type="button"
-                              className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                                selectedConvId === conv.id
-                                  ? 'bg-zinc-700 text-zinc-100'
-                                  : 'text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
-                              }`}
-                              onClick={() => {
-                                setActiveMatchIds([]);
-                                setHighlightMessageId(null);
-                                setSelectedConvId(conv.id === selectedConvId ? null : conv.id);
-                              }}
-                            >
-                              <div className="truncate font-medium">{conv.title}</div>
-                              <div className="text-xs text-zinc-600 mt-0.5">
-                                {new Date(conv.updatedAt).toLocaleString()}
+                        <div className="space-y-2 pl-2 mt-1">
+                          {groupConversationsByDate(convs).map((group) => (
+                            <div key={group.key} className="space-y-1">
+                              <div className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                                {group.label}
                               </div>
-                            </button>
+                              {group.items.map((conv) => (
+                                <div
+                                  key={conv.id}
+                                  className={`group/conv flex items-center justify-between px-2 py-1.5 rounded-lg text-sm transition-colors ${
+                                    selectedConvId === conv.id
+                                      ? 'bg-zinc-700 text-zinc-100 ring-1 ring-zinc-600'
+                                      : 'text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-200'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex-1 text-left min-w-0 flex items-center justify-between gap-2"
+                                    onClick={() => {
+                                      setActiveMatchIds([]);
+                                      setHighlightMessageId(null);
+                                      setSelectedConvId(conv.id === selectedConvId ? null : conv.id);
+                                    }}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="truncate font-medium">{conv.title}</div>
+                                      <div className="text-[11px] text-zinc-500 mt-0.5">
+                                        {new Date(conv.updatedAt).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <AgentStatusIndicator
+                                      status={getConversationAgentStatus(
+                                        conv.id,
+                                        tasks,
+                                        unreadCompletedConversations,
+                                      )}
+                                      size="xs"
+                                    />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleRenameInModal(e, conv.id, conv.title)}
+                                    className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-600 transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                    title="重命名会话"
+                                  >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth={2}
+                                        d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                      />
+                                    </svg>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
                           ))}
                         </div>
                       )}
