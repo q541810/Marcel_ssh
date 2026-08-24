@@ -1032,7 +1032,7 @@
       $('acc-meta').textContent = d.accounts.length + ' 个账户 · 总占用 ' + fmtBytes(totalQuota);
     } catch (e) {
       if (e.message !== 'unauthorized') {
-        $('accounts-tbody').innerHTML = '<tr><td colspan="6" class="empty-state">加载失败: ' + e.message + '</td></tr>';
+        $('accounts-tbody').innerHTML = '<tr><td colspan="6" class="empty-state">加载失败: ' + escapeHtml(e.message) + '</td></tr>';
       }
     }
   }

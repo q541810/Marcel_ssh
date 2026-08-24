@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -286,6 +287,13 @@ async def setup_account(request: AccountSetupRequest):
     6. 调用此接口注册
     """
     try:
+        # 配额检查（托管模式）：新账户 current=0，只需 profile 本身 ≤ 配额。
+        # 不检查会让 setup 成为绕过配额的写入通道（存储 DoS）。
+        if config.account_quota_bytes > 0:
+            profile_size = len(json.dumps(request.sync_profile).encode("utf-8"))
+            if profile_size > config.account_quota_bytes:
+                raise QuotaExceededError(0, profile_size, config.account_quota_bytes)
+
         # 生成设备 API Key
         from auth import generate_api_key
         api_key = generate_api_key()
@@ -309,6 +317,16 @@ async def setup_account(request: AccountSetupRequest):
             account_id=request.config_code_hash,
             device_id=request.device_id,
             api_key=api_key,
+        )
+    except QuotaExceededError as e:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "quota_exceeded",
+                "current": e.current,
+                "push_size": e.push_size,
+                "quota": e.quota,
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -341,6 +359,16 @@ async def join_account(request: AccountJoinRequest):
                 platform=request.platform,
                 sync_profile=request.sync_profile,
             ),
+        )
+    except QuotaExceededError as e:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "quota_exceeded",
+                "current": e.current,
+                "push_size": e.push_size,
+                "quota": e.quota,
+            },
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -430,6 +458,16 @@ async def register_device(
     account_id, _ = auth_ctx
     try:
         return await device_mgr.register_device(account_id, request)
+    except QuotaExceededError as e:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error": "quota_exceeded",
+                "current": e.current,
+                "push_size": e.push_size,
+                "quota": e.quota,
+            },
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

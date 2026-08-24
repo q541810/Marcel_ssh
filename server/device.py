@@ -61,6 +61,17 @@ class DeviceManager:
         if existing:
             raise ValueError("设备 ID 已存在")
 
+        sync_profile_json = json.dumps(request.sync_profile)
+
+        # 配额检查（托管模式）：新设备的 sync_profile 也占账户存储，
+        # 不检查会让 join/register 成为绕过配额的写入通道（存储 DoS）。
+        # device_id 尚未入库，check_sync_profile_quota 查不到旧值 → old_size=0，
+        # delta = 全量 profile 大小，语义正确。
+        if self._sync_engine is not None:
+            await self._sync_engine.check_sync_profile_quota(
+                account_id, request.device_id, sync_profile_json
+            )
+
         api_key = generate_api_key()
         api_key_hash = sha256_hex(api_key)
         now = now_iso()
@@ -73,7 +84,7 @@ class DeviceManager:
                     request.device_id,
                     account_id,
                     request.platform,
-                    json.dumps(request.sync_profile),
+                    sync_profile_json,
                     api_key_hash,
                     now,
                 ),

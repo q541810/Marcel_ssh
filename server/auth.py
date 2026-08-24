@@ -10,6 +10,18 @@
 - API Key 用 secrets.token_urlsafe(32) 生成（256位熵）
 - 所有哈希用 SHA-256，hex digest
 - 配置码 hash 和 API Key hash 都是不可逆的，服务端无法反推原文
+
+威胁模型边界（诚实声明，文档/宣传不得超出）：
+1. 机密性完全依赖配置码原文：不知道配置码就派生不出包装密钥，
+   拿到 encrypted_sync_key 也解不开 Sync Key，密文不可读。
+2. config_code_hash（= account_id）本身是明文存储的 bearer 值：
+   仅凭它即可调 /api/account/join 注册设备换取 API Key，进而推送垃圾密文、
+   删 key、删设备、删整个账户。即：hash 泄露 = 账户完整性/可用性沦陷，
+   但机密性不破。因此任何组件（日志、admin 面板、错误信息）都不得
+   向非必要位置暴露完整 account_id。
+3. 服务端是半可信的：版本号明文由服务端比较（LWW 需要），AES-GCM 保证
+   机密性与单条完整性，但不保证新鲜度——持凭证者或服务端本身可将旧密文
+   配更高版本重放/回滚。客户端接受此边界（E2E 加密的目标是防窃读，非防篡改序）。
 """
 
 from __future__ import annotations

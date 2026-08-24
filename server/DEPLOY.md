@@ -216,6 +216,12 @@ sudo journalctl -u marcel-sync -f
 
 本机 `proxy_pass http://127.0.0.1:8787` 时，TCP 对端为 127.0.0.1，落在默认 `[proxy].trusted_ips` 内，限流会使用 `X-Real-IP`（应为真实客户端）。反代不在本机时，必须把反代 IP 写入 `config.toml` 的 `[proxy].trusted_ips` 数组。
 
+**反代安全要求（限流 / admin IP 白名单依赖客户端 IP 判定）**：
+
+- **推荐**：反代必须设置 `X-Real-IP $remote_addr`（由反代覆写、客户端无法伪造），服务端优先采信它。
+- 若反代只追加 `X-Forwarded-For`（如 Caddy、部分云 LB），服务端会**从右往左**取第一个不在 `trusted_ips` 内的 IP 作为客户端 IP。此时 `[proxy].trusted_ips` 必须覆盖**链路上所有反代跳数的 IP**，否则中间某跳会被误判为客户端。
+- 公网直连（无反代）时绝不要把任何客户端 IP 加入 `trusted_ips`——白名单内的对端发来的转发头会被采信，等于允许伪造 IP。
+
 ```nginx
 server {
     listen 443 ssl http2;

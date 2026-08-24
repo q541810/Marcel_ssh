@@ -61,6 +61,8 @@ path = "/admin_panela"
 
 # 密码的 SHA-256 hex（推荐）。
 # 生成：python -c "import hashlib; print(hashlib.sha256('你的密码'.encode()).hexdigest())"
+# 安全边界：此哈希无盐。config.toml 一旦泄露，弱密码可被字典/彩虹表离线破解，
+# 因此必须使用强随机密码（建议 ≥16 位随机字符），并保持文件 chmod 600。
 password_hash = ""
 
 # 明文密码（兼容；启动时 hash 入内存，不落库不落日志）。
