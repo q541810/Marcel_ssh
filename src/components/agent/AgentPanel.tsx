@@ -21,6 +21,7 @@ import {
   conversationHasRunningTask,
 } from "@/stores/conversationStore";
 import { AGENT_MODES } from "@/lib/constants";
+import { isNearBottom } from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
 import type { AgentMode, AgentMessage, QuestionAnswer } from "@/lib/types";
 import {
@@ -79,6 +80,7 @@ export default function AgentPanel() {
   const [attachHint, setAttachHint] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const lastScrolledMessageRef = useRef<string | null>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -170,10 +172,15 @@ export default function AgentPanel() {
     if (!lastMessage || !canInteract) return;
     const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
     lastScrolledMessageRef.current = lastMessage.id;
-    messagesEndRef.current?.scrollIntoView({
-      behavior: isNewMessage ? "smooth" : "auto",
-      block: "end",
-    });
+    const container = messagesContainerRef.current;
+    if (container && isNearBottom(container.scrollTop, container.clientHeight, container.scrollHeight, 120)) {
+      container.scrollTop = container.scrollHeight;
+    } else {
+      messagesEndRef.current?.scrollIntoView({
+        behavior: isNewMessage ? "smooth" : "auto",
+        block: "end",
+      });
+    }
   }, [lastMessage, lastMessageSize, canInteract]);
 
   useEffect(() => {
@@ -831,7 +838,10 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 space-y-1">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 space-y-1"
+      >
         {!activeSession && (
           <div className="text-center text-zinc-500 text-sm mt-8">
             <p>请先连接 SSH 服务器。</p>

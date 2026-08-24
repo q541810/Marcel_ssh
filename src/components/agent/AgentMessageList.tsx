@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import type { AgentMessage } from "@/lib/types";
+import { isNearBottom } from "@/lib/agentScroll";
 import AgentMessageItem from "./AgentMessage";
 import ToolCallCard from "./ToolCallCard";
 import { getToolView } from "./toolViews";
@@ -109,11 +110,32 @@ export default function AgentMessageList({
 
   // 滚动容器与锚定位置记忆
   const topSentinelRef = useRef<HTMLDivElement>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
+  const contentWrapperRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLElement | null>(null);
   const scrollSnapshotRef = useRef<{
     scrollHeight: number;
     scrollTop: number;
   } | null>(null);
+
+  // 标记是否处于贴底锁定状态（会话初次进入或用户位于底部时为 true）
+  const isPinnedToBottomRef = useRef(true);
+
+  // 辅助获取最近的滚动父容器
+  const getScrollContainer = useCallback(() => {
+    if (scrollContainerRef.current && scrollContainerRef.current.isConnected) {
+      return scrollContainerRef.current;
+    }
+    const target =
+      contentWrapperRef.current ??
+      topSentinelRef.current ??
+      bottomSentinelRef.current;
+    const container =
+      (target?.closest(".overflow-y-auto") as HTMLElement | null) ??
+      target?.parentElement;
+    if (container) scrollContainerRef.current = container;
+    return container;
+  }, []);
 
   // 会话切换时重置分页窗口；同一个会话新增消息时，窗口顺延扩展保证最新消息能可见
   useEffect(() => {
@@ -121,6 +143,9 @@ export default function AgentMessageList({
       lastConversationKeyRef.current = conversationKey;
       prevMessagesLengthRef.current = messages.length;
       setVisibleCount(Math.min(messages.length, PAGE_SIZE));
+      if (!highlightMessageId) {
+        isPinnedToBottomRef.current = true;
+      }
       return;
     }
 
@@ -132,11 +157,12 @@ export default function AgentMessageList({
     } else {
       prevMessagesLengthRef.current = messages.length;
     }
-  }, [conversationKey, messages.length]);
+  }, [conversationKey, messages.length, highlightMessageId]);
 
   // 搜索或高亮定位的消息如果在未加载的更早历史中，自动展开到包含该消息
   useEffect(() => {
     if (!highlightMessageId) return;
+    isPinnedToBottomRef.current = false;
     const targetIdx = messages.findIndex((m) => m.id === highlightMessageId);
     if (targetIdx !== -1) {
       const neededCount = messages.length - targetIdx + 10; // 额外增加缓冲区
@@ -163,14 +189,9 @@ export default function AgentMessageList({
   // 加载上一页消息并执行滚动位置锚定
   const loadMoreEarlierMessages = useCallback(() => {
     if (!hasMore) return;
-    const sentinel = topSentinelRef.current;
-    const container =
-      scrollContainerRef.current ??
-      (sentinel?.closest(".overflow-y-auto") as HTMLElement | null) ??
-      sentinel?.parentElement;
+    const container = getScrollContainer();
 
     if (container) {
-      scrollContainerRef.current = container;
       scrollSnapshotRef.current = {
         scrollHeight: container.scrollHeight,
         scrollTop: container.scrollTop,
@@ -178,12 +199,12 @@ export default function AgentMessageList({
     }
 
     setVisibleCount((prev) => Math.min(messages.length, prev + PAGE_SIZE));
-  }, [hasMore, messages.length]);
+  }, [hasMore, getScrollContainer, messages.length]);
 
   // 在 DOM 增加较早消息后同步补齐滚动高度，保持视口绝对内容平滑不动
   useIsomorphicLayoutEffect(() => {
     const snapshot = scrollSnapshotRef.current;
-    const container = scrollContainerRef.current;
+    const container = getScrollContainer();
     if (!snapshot || !container) return;
 
     const delta = container.scrollHeight - snapshot.scrollHeight;
@@ -191,7 +212,37 @@ export default function AgentMessageList({
       container.scrollTop = snapshot.scrollTop + delta;
     }
     scrollSnapshotRef.current = null;
-  }, [slicedMessages]);
+  }, [slicedMessages, getScrollContainer]);
+
+  // 会话切换/首次渲染时的即时贴底（在 DOM 变更后绘制前同步校准）
+  useIsomorphicLayoutEffect(() => {
+    if (highlightMessageId) return;
+    if (isPinnedToBottomRef.current) {
+      const container = getScrollContainer();
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  }, [conversationKey, slicedMessages, highlightMessageId, getScrollContainer]);
+
+  // 监听容器滚动事件：用户离开底部时解除贴底锁定，滑回底部时重新锁定
+  useEffect(() => {
+    const container = getScrollContainer();
+    if (!container) return;
+
+    const handleScroll = () => {
+      const near = isNearBottom(
+        container.scrollTop,
+        container.clientHeight,
+        container.scrollHeight,
+        120,
+      );
+      isPinnedToBottomRef.current = near;
+    };
+
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [getScrollContainer]);
 
   // 监听顶部哨兵元素进行触顶自动加载
   useEffect(() => {
@@ -199,6 +250,7 @@ export default function AgentMessageList({
     const sentinel = topSentinelRef.current;
     if (!sentinel) return;
 
+    const container = getScrollContainer();
     const observer = new IntersectionObserver(
       (entries) => {
         const first = entries[0];
@@ -207,7 +259,7 @@ export default function AgentMessageList({
         }
       },
       {
-        root: sentinel.closest(".overflow-y-auto") as HTMLElement | null,
+        root: container,
         rootMargin: "160px 0px 0px 0px", // 提前 160px 预加载，保证无缝滚动
         threshold: 0.01,
       },
@@ -215,7 +267,25 @@ export default function AgentMessageList({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, loadMoreEarlierMessages]);
+  }, [hasMore, getScrollContainer, loadMoreEarlierMessages]);
+
+  // 监听内容尺寸变化（例如 iframe 异步测高撑开、图片加载等）：若用户处于贴底锁定区，则自动保持贴底
+  useEffect(() => {
+    const wrapper = contentWrapperRef.current;
+    if (!wrapper || typeof ResizeObserver === "undefined") return;
+
+    const ro = new ResizeObserver(() => {
+      const container = getScrollContainer();
+      if (!container) return;
+
+      if (!highlightMessageId && isPinnedToBottomRef.current) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+
+    ro.observe(wrapper);
+    return () => ro.disconnect();
+  }, [getScrollContainer, highlightMessageId]);
 
   const handleToolExpandChange = useCallback(
     (messageId: string, expanded: boolean) => {
@@ -289,7 +359,10 @@ export default function AgentMessageList({
   };
 
   return (
-    <>
+    <div
+      ref={contentWrapperRef}
+      className="flex flex-col space-y-1 min-w-0 w-full"
+    >
       {hasMore && (
         <div
           ref={topSentinelRef}
@@ -363,7 +436,8 @@ export default function AgentMessageList({
           })()
         ),
       )}
+      <div ref={bottomSentinelRef} className="h-0 w-0 pointer-events-none" />
       {messagesEndRef && <div ref={messagesEndRef} />}
-    </>
+    </div>
   );
 }
