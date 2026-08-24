@@ -174,6 +174,41 @@
   }
   .status-bar.warn { color: #fbbf24; display: block; }
   .status-bar.error { color: var(--red-400); display: block; }
+  .status-bar.ok { color: #4ade80; display: block; }
+
+  /* ── toast（操作结果反馈，替代原生 alert） ── */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 20px;
+    transform: translateX(-50%) translateY(8px);
+    max-width: calc(100% - 24px);
+    padding: 7px 14px;
+    border-radius: var(--radius-lg);
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--zinc-800);
+    border: 1px solid var(--zinc-700);
+    color: var(--zinc-100);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms var(--spring-smooth),
+                transform 180ms var(--spring-smooth);
+    z-index: 200;
+    word-break: break-word;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  .toast.ok { border-color: rgba(34,197,94,0.45); }
+  .toast.error { border-color: rgba(220,38,38,0.5); }
+  .toast.warn { border-color: rgba(251,191,36,0.45); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast { transition: opacity 150ms ease; transform: translateX(-50%); }
+  }
 
   /* ── 列表区 ── */
   .list {
@@ -331,6 +366,15 @@
   .form-input:focus, .form-textarea:focus, .form-select:focus {
     border-color: var(--indigo-500);
   }
+  .form-input.input-error, .form-textarea.input-error {
+    border-color: var(--red-500);
+  }
+  .form-error-tip {
+    font-size: 11px;
+    color: var(--red-400);
+    display: none;
+  }
+  .form-row.has-error .form-error-tip { display: block; }
   .form-input::placeholder, .form-textarea::placeholder { color: var(--zinc-500); }
   .form-textarea {
     min-height: 72px;
@@ -465,6 +509,8 @@
     font-size: 13px;
     color: var(--zinc-500);
     margin-bottom: 8px;
+    line-height: 1.6;
+    white-space: pre-line;
   }
   .empty-action {
     font-size: 12px;
@@ -523,7 +569,7 @@
     <div class="search-wrap">
       <input class="search" id="search" type="text" placeholder="搜索标题 / 内容 / 标签" autocomplete="off">
     </div>
-    <div class="conn-info" id="conn-info"><span class="conn-dot"></span>等待连接…</div>
+    <div class="conn-info" id="conn-info"><span class="conn-dot"></span>未连接</div>
   </div>
 
   <!-- 状态条 -->
@@ -552,6 +598,7 @@
       <div class="form-row">
         <label class="form-label">标题</label>
         <input class="form-input" id="add-title" type="text" placeholder="简短标题，如：nginx 路径">
+        <span class="form-error-tip">标题不能为空</span>
       </div>
       <div class="form-row">
         <label class="form-label">内容</label>
@@ -568,6 +615,9 @@
     </div>
   </div>
 </div>
+
+<!-- 操作结果 toast -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 'use strict';
@@ -705,12 +755,44 @@
     elStatusBar.className = 'status-bar' + (type ? ' ' + type : '');
     elStatusBar.textContent = msg || '';
   }
+  const elToast = document.getElementById('toast');
+  let toastTimer = null;
+  function showToast(msg, type) {
+    elToast.textContent = msg;
+    elToast.className = 'toast show' + (type ? ' ' + type : '');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      toastTimer = null;
+      elToast.className = 'toast';
+    }, 2400);
+  }
   function setConnInfo(text) {
     if (!text) {
-      elConnInfo.innerHTML = '<span class="conn-dot"></span>等待连接…';
+      elConnInfo.innerHTML = '<span class="conn-dot"></span>未连接';
       return;
     }
     elConnInfo.innerHTML = '<span class="conn-dot online"></span>' + escapeHtml(text);
+  }
+  /** 表单校验失败：红框 + 行内提示 + 聚焦，代替原生 alert */
+  function markFormError(rowEl, inputEl, msg) {
+    rowEl.classList.add('has-error');
+    if (inputEl) {
+      inputEl.classList.add('input-error');
+      inputEl.focus();
+      inputEl.addEventListener('input', function clear() {
+        rowEl.classList.remove('has-error');
+        inputEl.classList.remove('input-error');
+        inputEl.removeEventListener('input', clear);
+      }, { once: true });
+    }
+    if (msg) {
+      const tip = rowEl.querySelector('.form-error-tip');
+      if (tip) tip.textContent = msg;
+    }
+  }
+  function clearFormError(scopeEl) {
+    scopeEl.querySelectorAll('.form-row.has-error').forEach(function (row) { row.classList.remove('has-error'); });
+    scopeEl.querySelectorAll('.input-error').forEach(function (el) { el.classList.remove('input-error'); });
   }
   function filterMemories(list, term) {
     if (!term) return list;
@@ -771,7 +853,8 @@
       '<option value="pitfall"' + (m.type === 'pitfall' ? ' selected' : '') + '>注意事项</option>' +
       '</select></div>' +
       '<div class="form-row"><label class="form-label">标题</label>' +
-      '<input class="form-input" data-field="title" type="text" value="' + escapeHtml(m.title || '') + '"></div>' +
+      '<input class="form-input" data-field="title" type="text" value="' + escapeHtml(m.title || '') + '">' +
+      '<span class="form-error-tip">标题不能为空</span></div>' +
       '<div class="form-row"><label class="form-label">内容</label>' +
       '<textarea class="form-textarea" data-field="content">' + escapeHtml(m.content || '') + '</textarea></div>' +
       '<div class="form-row"><label class="form-label">标签（逗号分隔）</label>' +
@@ -785,7 +868,13 @@
     if (state.loading) { renderLoading('加载中…'); return; }
     const filtered = filterMemories(state.memories, state.searchTerm);
     if (filtered.length === 0) {
-      renderEmpty(state.memories.length === 0 ? '暂无记忆' : '没有匹配的记忆');
+      if (state.memories.length === 0) {
+        renderEmpty(state.viewMode === 'all'
+          ? '所有连接都还没有记录记忆\n可让 Agent 用 memory_save 记录，或点右上角 + 手动添加'
+          : '当前连接还没有记录记忆\n可让 Agent 用 memory_save 记录，或点右上角 + 手动添加');
+      } else {
+        renderEmpty('没有匹配的记忆');
+      }
       return;
     }
     const groups = {};
@@ -900,10 +989,14 @@
 
   function saveEdit(cardEl, m) {
     const newType = cardEl.querySelector('[data-field=type]').value;
-    const newTitle = cardEl.querySelector('[data-field=title]').value.trim();
+    const titleInput = cardEl.querySelector('[data-field=title]');
+    const newTitle = titleInput.value.trim();
     const newContent = cardEl.querySelector('[data-field=content]').value;
     const newTags = parseTags(cardEl.querySelector('[data-field=tags]').value);
-    if (!newTitle) { alert('标题不能为空'); return; }
+    if (!newTitle) {
+      markFormError(titleInput.closest('.form-row'), titleInput, '标题不能为空');
+      return;
+    }
     m.type = newType; m.title = newTitle; m.content = newContent; m.tags = newTags;
     m.updatedAt = Math.floor(Date.now() / 1000);
     const hostPort = m._hostPort || state.currentHostPort;
@@ -920,8 +1013,9 @@
       return writeMemoriesFile(hostPort, serializeJsonl(next));
     }).then(function () {
       // 重新读取并渲染，保证列表与文件一致（含 Agent 并发写入的条目）
+      showToast('已更新', 'ok');
       refresh();
-    }, function (err) { alert('保存失败：' + (err && err.message ? err.message : err)); });
+    }, function (err) { showToast('保存失败：' + (err && err.message ? err.message : err), 'error'); });
   }
   function deleteMemory(m) {
     const hostPort = m._hostPort || state.currentHostPort;
@@ -933,11 +1027,12 @@
       return writeMemoriesFile(hostPort, serializeJsonl(remaining));
     }).then(function () {
       state.confirmingId = null;
+      showToast('已删除', 'ok');
       refresh();
-    }, function (err) { alert('删除失败：' + (err && err.message ? err.message : err)); });
+    }, function (err) { showToast('删除失败：' + (err && err.message ? err.message : err), 'error'); });
   }
   function addMemory(type, title, content, tags) {
-    if (!state.currentHostPort) { alert('没有当前连接，无法新增'); return; }
+    if (!state.currentHostPort) { showToast('没有当前连接，无法新增', 'warn'); return; }
     const now = Math.floor(Date.now() / 1000);
     const m = { id: genId(), type: type, title: title, content: content, tags: tags, createdAt: now, updatedAt: now };
     let existing = '';
@@ -945,12 +1040,13 @@
       const newLine = JSON.stringify(m);
       const newContent = existing.trimEnd().length > 0 ? existing.trimEnd() + '\n' + newLine : newLine;
       return writeMemoriesFile(state.currentHostPort, newContent);
-    }).then(function () { hideAddModal(); return refreshCurrentView(); }, function (err) { alert('新增失败：' + (err && err.message ? err.message : err)); });
+    }).then(function () { hideAddModal(); showToast('已保存', 'ok'); return refreshCurrentView(); }, function (err) { showToast('新增失败：' + (err && err.message ? err.message : err), 'error'); });
   }
 
   const addModal = document.getElementById('add-modal');
   function showAddModal() {
-    if (!state.currentHostPort) { alert('没有当前连接，无法新增'); return; }
+    if (!state.currentHostPort) { showToast('没有当前连接，无法新增', 'warn'); return; }
+    clearFormError(addModal);
     document.getElementById('add-type').value = 'server_info';
     document.getElementById('add-title').value = '';
     document.getElementById('add-content').value = '';
@@ -984,11 +1080,15 @@
   document.getElementById('add-cancel').addEventListener('click', hideAddModal);
   document.getElementById('add-close').addEventListener('click', hideAddModal);
   document.getElementById('add-save').addEventListener('click', function () {
+    const titleInput = document.getElementById('add-title');
     const type = document.getElementById('add-type').value;
-    const title = document.getElementById('add-title').value.trim();
+    const title = titleInput.value.trim();
     const content = document.getElementById('add-content').value;
     const tags = parseTags(document.getElementById('add-tags').value);
-    if (!title) { alert('标题不能为空'); return; }
+    if (!title) {
+      markFormError(titleInput.closest('.form-row'), titleInput, '标题不能为空');
+      return;
+    }
     addMemory(type, title, content, tags);
   });
   addModal.addEventListener('click', function (e) { if (e.target === addModal) hideAddModal(); });
