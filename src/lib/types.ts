@@ -543,6 +543,8 @@ export interface ExperimentalSettings {
   webSearchEndpoint?: WebSearchEndpoint;
   /** http_get backend; independent of webSearchMode; default browser */
   httpFetchMode?: HttpFetchMode;
+  /** Allow Agent to render interactive HTML visualizations directly in chat */
+  enableHtmlRender?: boolean;
 }
 
 
@@ -725,13 +727,13 @@ export interface ApprovalRequestPayload {
   reasons?: string[];
   /** Preview metadata (e.g. edit_file file_content / line_position). */
   metadata?: Record<string, unknown>;
-  /**
-   * Originating task id — injected by the frontend listener (the backend event
-   * carries no task id; the listener knows it from the channel it subscribed
-   * to). Used to route approve/reject back to the correct task (subagents
-   * run on their own channel while the active task may still be the parent).
-   */
+  /** Originating task id */
   taskId?: string;
+  sessionId?: string;
+  conversationId?: string;
+  sessionName?: string;
+  conversationTitle?: string;
+  queueLength?: number;
 }
 
 export interface ModelApprovalStartPayload {
@@ -764,12 +766,39 @@ export interface QuestionRequestPayload {
   type: 'questionRequest';
   questionId: string;
   questions: QuestionItem[];
-  /**
-   * Originating task id — injected by the frontend listener (see
-   * ApprovalRequestPayload.taskId). Used to route answers back to the
-   * correct task.
-   */
+  /** Originating task id */
   taskId?: string;
+  sessionId?: string;
+  conversationId?: string;
+  sessionName?: string;
+  conversationTitle?: string;
+  queueLength?: number;
+}
+
+export type InteractionKind = 'approval' | 'question';
+
+export interface ActiveInteractionPayload {
+  type: 'interactionActive';
+  interactionId: string;
+  kind: InteractionKind;
+  taskId: string;
+  sessionId: string;
+  conversationId: string;
+  sessionName: string;
+  conversationTitle: string;
+  queueLength: number;
+  approval?: {
+    toolCallId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    riskLevel: RiskLevel;
+    reasons?: string[];
+    metadata?: Record<string, unknown>;
+  };
+  question?: {
+    questionId: string;
+    questions: QuestionItem[];
+  };
 }
 
 export interface QuestionAnswer {
@@ -910,6 +939,8 @@ export interface Skill {
   description: string;
   prompt: string;
   enabled: boolean;
+  /** 手动排序位置（仅用户 skill；内置 skill 置顶展示，不参与排序） */
+  position: number;
   createdAt: string;
   updatedAt: string;
 }

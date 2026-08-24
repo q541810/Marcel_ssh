@@ -18,6 +18,8 @@ import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import SyncConflictModal from '@/components/settings/SyncConflictModal';
 import StarPromptModal from '@/components/star/StarPromptModal';
+import GlobalInteractionOverlay from '@/components/agent/GlobalInteractionOverlay';
+import { initInteractionListener } from '@/stores/interactionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
@@ -119,6 +121,7 @@ export default function App() {
 
   useEffect(() => {
     attachTransferListeners();
+    void initInteractionListener();
     return () => detachTransferListeners();
   }, []);
 
@@ -533,6 +536,7 @@ export default function App() {
       <HostKeyWarningToast />
       <SyncConflictModal />
       <StarPromptModal />
+      <GlobalInteractionOverlay />
 
       {/* Shared overlay container for content-script plugins. Fixed, full
           screen, no pointer events by default; plugins opt-in via

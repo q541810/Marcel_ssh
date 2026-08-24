@@ -38,6 +38,8 @@ pub mod open_cloud_page;
 pub mod plan;
 pub mod plugin_tool;
 pub mod question;
+#[cfg(desktop)]
+pub mod render_html;
 pub mod search;
 pub mod sftp_transfer;
 pub mod skill;
@@ -143,10 +145,6 @@ pub struct ToolContext {
     /// Kernel-registered local handlers, keyed by name (e.g. `"fs.read"`).
     /// Shared via `Arc` so the context can be cloned cheaply per tool call.
     pub local_handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
-    /// Pending question requests: (task_id, question_id) -> oneshot sender.
-    /// Used by `ask_user` tool to await user answers.
-    pub pending_questions:
-        Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
     /// 命令执行统一管理器。生产路径由 agent_loop 注入；所有 exec* 辅助
     /// 方法优先经它执行（登记记录 + 断连级联取消）。仅测试场景为 None
     /// （回退到 SshManager 兼容 shim，行为一致但不登记）。
@@ -165,7 +163,6 @@ impl ToolContext {
             task_id: None,
             policy: None,
             local_handlers: Arc::new(HashMap::new()),
-            pending_questions: Arc::new(PlRwLock::new(HashMap::new())),
             command_exec: None,
         }
     }
@@ -208,15 +205,6 @@ impl ToolContext {
         handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
     ) -> Self {
         self.local_handlers = handlers;
-        self
-    }
-
-    /// Attach the pending questions map so the `ask_user` tool can await answers.
-    pub fn with_pending_questions(
-        mut self,
-        pending: Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
-    ) -> Self {
-        self.pending_questions = pending;
         self
     }
 
@@ -414,6 +402,33 @@ pub struct ToolRegistry {
     local_handlers: HashMap<String, Arc<dyn LocalHandler>>,
 }
 
+/// Whether the `render_html` tool and the `builtin.visualize` skill are
+/// available. Interactive visualization is desktop-only, so the platform is
+/// part of the gate rather than a separate check at each call site.
+pub(crate) fn html_render_enabled(
+    experimental_settings: &crate::config::settings::ExperimentalSettings,
+) -> bool {
+    cfg!(desktop) && experimental_settings.enable_html_render
+}
+
+/// Register `render_html` for every mode builder that offers it.
+///
+/// [`html_render_enabled`] is the only gate: it already accounts for the
+/// platform, so the `cfg(desktop)` below is not a second policy decision.
+/// It exists purely because the tool module itself is desktop-only code and
+/// does not compile for mobile targets.
+#[cfg_attr(mobile, allow(unused_variables))]
+fn register_html_render(
+    registry: &mut ToolRegistry,
+    experimental_settings: &crate::config::settings::ExperimentalSettings,
+) {
+    if !html_render_enabled(experimental_settings) {
+        return;
+    }
+    #[cfg(desktop)]
+    registry.register(Arc::new(render_html::RenderHtmlTool::new()));
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
@@ -517,7 +532,7 @@ impl ToolRegistry {
     ) -> Self {
         use std::sync::Arc;
         let mut registry = Self::new();
-        registry.register(Arc::new(question::QuestionTool));
+        registry.register(Arc::new(question::QuestionTool::new(true)));
         registry.register(Arc::new(connection_info::ConnectionInfoTool::new()));
         registry.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
         registry.register(Arc::new(file_ops::ReadFileTool::new()));
@@ -531,6 +546,7 @@ impl ToolRegistry {
         if experimental_settings.enable_http_fetch {
             registry.register(Arc::new(http_get::HttpGetTool::new()));
         }
+        register_html_render(&mut registry, experimental_settings);
         registry
     }
 
@@ -554,6 +570,7 @@ impl ToolRegistry {
                 crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
             ));
         }
+        register_html_render(&mut registry, experimental_settings);
         Arc::new(registry)
     }
 
@@ -579,6 +596,7 @@ impl ToolRegistry {
                 crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
             ));
         }
+        register_html_render(&mut registry, experimental_settings);
         registry
     }
 
@@ -611,8 +629,12 @@ impl ToolRegistry {
         r.register(Arc::new(plan::CreatePlanTool::new()));
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
         r.register(Arc::new(plan::EditPlanTool::new()));
-        r.register(Arc::new(question::QuestionTool));
+        r.register(Arc::new(question::QuestionTool::new(false)));
         r.register(Arc::new(subagent::TaskTool));
+        register_html_render(
+            &mut r,
+            &crate::config::settings::ExperimentalSettings::default(),
+        );
         r
     }
 
@@ -641,13 +663,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_with_builtins_has_fifteen_tools() {
+    fn registry_with_builtins_has_sixteen_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            15,
-            "expected 15 built-in tools, got {:?}",
+            16,
+            "expected 16 built-in tools, got {:?}",
             names
         );
         for expected in [
@@ -662,6 +684,7 @@ mod tests {
             "system_info",
             "web_search",
             "http_get",
+            "render_html",
             "create_plan",
             "update_plan_item",
             "edit_plan",
@@ -681,6 +704,7 @@ mod tests {
             enable_web_search: false,
             enable_http_fetch: false,
             enable_cloud_page: false,
+            enable_html_render: false,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
@@ -704,6 +728,7 @@ mod tests {
             enable_web_search: true,
             enable_http_fetch: true,
             enable_cloud_page: true,
+            enable_html_render: true,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
@@ -724,6 +749,7 @@ mod tests {
             enable_web_search: true,
             enable_http_fetch: false,
             enable_cloud_page: false,
+            enable_html_render: false,
             web_search_mode: crate::config::settings::WebSearchMode::Html,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
@@ -741,6 +767,7 @@ mod tests {
             enable_web_search: false,
             enable_http_fetch: true,
             enable_cloud_page: false,
+            enable_html_render: false,
             web_search_mode: crate::config::settings::WebSearchMode::Browser,
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,

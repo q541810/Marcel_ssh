@@ -9,6 +9,8 @@ import MobileSettings from './MobileSettings';
 import MobileSyncConflictSheet from './MobileSyncConflictSheet';
 import MobileUpdateToast from './MobileUpdateToast';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
+import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
+import { initInteractionListener } from '@/stores/interactionStore';
 import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
@@ -39,6 +41,7 @@ export default function MobileApp() {
     void bootstrapMobileApp({
       onUpdateAvailable: (version, url) => setUpdateToast({ version, url }),
     }).catch(() => {});
+    void initInteractionListener();
   }, []);
 
   // Android WebView may still pan the document when an input focuses (despite
@@ -195,6 +198,7 @@ export default function MobileApp() {
 
       <MobileSyncConflictSheet />
       <MobileStarPromptSheet />
+      <MobileGlobalInteractionOverlay />
     </div>
   );
 }

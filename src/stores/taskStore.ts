@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 import type {
   AgentTask,
   AgentMessage,
@@ -8,12 +8,16 @@ import type {
   QuestionRequestPayload,
   QuestionAnswer,
   TokenUsage,
-} from '@/lib/types';
-import * as tauri from '@/lib/tauri';
-import { getErrorMessage } from '@/lib/errors';
-import { attachStreamListener, attachPlanListener, cleanupTaskListeners } from './agentStreamManager';
-import { useConversationStore } from './conversationStore';
-import { useSettingsStore } from './settingsStore';
+} from "@/lib/types";
+import * as tauri from "@/lib/tauri";
+import { getErrorMessage } from "@/lib/errors";
+import {
+  attachStreamListener,
+  attachPlanListener,
+  cleanupTaskListeners,
+} from "./agentStreamManager";
+import { useConversationStore } from "./conversationStore";
+import { useSettingsStore } from "./settingsStore";
 
 export interface TaskState {
   tasks: Record<string, AgentTask>;
@@ -25,6 +29,7 @@ export interface TaskState {
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
   taskTokenUsage: TokenUsage | null;
+  unreadCompletedConversations: string[];
 
   startTask: (
     sessionId: string,
@@ -39,13 +44,20 @@ export interface TaskState {
   rejectOperation: (taskId: string, operationId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
   setInputDraft: (text: string) => void;
-  updateTaskStatus: (taskId: string, status: AgentTask['status']) => void;
+  updateTaskStatus: (taskId: string, status: AgentTask["status"]) => void;
   setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
   setPendingQuestion: (question: QuestionRequestPayload | null) => void;
-  answerQuestion: (taskId: string, questionId: string, answers: QuestionAnswer[]) => Promise<void>;
+  answerQuestion: (
+    taskId: string,
+    questionId: string,
+    answers: QuestionAnswer[],
+  ) => Promise<void>;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
   getActivePlan: () => AgentTaskPlan | null;
-  loadPersistedPlans: (conversationId: string, storedPlans: { taskId: string; plan: AgentTaskPlan; updatedAt: string }[]) => void;
+  loadPersistedPlans: (
+    conversationId: string,
+    storedPlans: { taskId: string; plan: AgentTaskPlan; updatedAt: string }[],
+  ) => void;
   clearPlansByConversation: (conversationId: string) => void;
   /** 撤回消息后应用后端返回的 plan（null = 清空该对话 plan） */
   applyPlanAfterTruncate: (
@@ -57,6 +69,8 @@ export interface TaskState {
 
   clearActiveTask: () => void;
   clearActiveTaskIf: (taskId: string) => void;
+  markConversationUnreadCompleted: (conversationId: string) => void;
+  clearConversationUnreadCompleted: (conversationId: string) => void;
 }
 
 const currentAssistantMessageId: Map<string, string> = new Map();
@@ -64,13 +78,14 @@ const currentAssistantMessageId: Map<string, string> = new Map();
 export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: {},
   activeTaskId: null,
-  mode: 'agent',
-  inputDraft: '',
+  mode: "agent",
+  inputDraft: "",
   pendingApproval: null,
   pendingQuestion: null,
   plans: {},
   plansDirty: false,
   taskTokenUsage: null,
+  unreadCompletedConversations: [],
 
   startTask: async (
     sessionId: string,
@@ -81,21 +96,26 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   ) => {
     const { mode } = get();
     const conversationStore = useConversationStore.getState();
-    const vision = useSettingsStore.getState().settings.llmConfig?.vision ?? false;
+    const vision =
+      useSettingsStore.getState().settings.llmConfig?.vision ?? false;
     const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
 
-    const titleSeed = prompt.trim() || (images.length > 0 ? '[image]' : '');
+    const titleSeed = prompt.trim() || (images.length > 0 ? "[image]" : "");
     const conversationId = await conversationStore.ensureConversation(
       sessionId,
-      connectionId ?? '',
-      titleSeed || '新会话',
+      connectionId ?? "",
+      titleSeed || "新会话",
     );
 
     const userMessageId = crypto.randomUUID();
     let imagePaths: string[] | undefined;
     if (images.length > 0) {
       try {
-        imagePaths = await tauri.agentSaveMessageImages(conversationId, userMessageId, images);
+        imagePaths = await tauri.agentSaveMessageImages(
+          conversationId,
+          userMessageId,
+          images,
+        );
         // 新图已落盘：旧撤回路径可删（start 失败也不回滚新图）
         if (replaceImagePaths?.length) {
           await Promise.all(
@@ -113,20 +133,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           ...msgs,
           {
             id: crypto.randomUUID(),
-            role: 'system',
+            role: "system",
             content: `保存图片失败：${getErrorMessage(err)}`,
             timestamp: new Date().toISOString(),
           },
         ]);
         const e = err instanceof Error ? err : new Error(getErrorMessage(err));
-        (e as Error & { stage?: string }).stage = 'save_images';
+        (e as Error & { stage?: string }).stage = "save_images";
         throw e;
       }
     }
 
     const userMessage: AgentMessage = {
       id: userMessageId,
-      role: 'user',
+      role: "user",
       content: prompt,
       timestamp: new Date().toISOString(),
       imagePaths,
@@ -135,20 +155,60 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const loadingAssistantId = crypto.randomUUID();
     const loadingAssistantMessage: AgentMessage = {
       id: loadingAssistantId,
-      role: 'assistant',
-      content: '',
+      role: "assistant",
+      content: "",
       timestamp: new Date().toISOString(),
       isLoading: true,
     };
 
-    conversationStore.appendMessages(conversationId, [userMessage, loadingAssistantMessage]);
+    conversationStore.appendMessages(conversationId, [
+      userMessage,
+      loadingAssistantMessage,
+    ]);
 
-    let taskId: string;
+    // 先生成 taskId 并挂载事件 listener，再启动后端任务，消除 startTask 返回前
+    // 后端已发出首批事件或终态事件的竞态。
+    const taskId = crypto.randomUUID();
+    const task: AgentTask = {
+      id: taskId,
+      sessionId,
+      conversationId,
+      prompt,
+      mode,
+      status: "planning",
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      tasks: { ...state.tasks, [taskId]: task },
+      activeTaskId: taskId,
+      taskTokenUsage: null,
+    }));
+
     try {
+      await Promise.all([
+        attachStreamListener(taskId, conversationId, loadingAssistantId),
+        attachPlanListener(taskId),
+      ]);
       const llmHistory = conversationStore.buildLlmHistory(conversationId);
-
-      taskId = await tauri.agentStartTask(sessionId, prompt, mode, conversationId, llmHistory);
+      await tauri.agentStartTask(
+        sessionId,
+        prompt,
+        mode,
+        conversationId,
+        llmHistory,
+        taskId,
+      );
     } catch (err) {
+      cleanupTaskListeners(taskId);
+      set((state) => {
+        const tasks = { ...state.tasks };
+        delete tasks[taskId];
+        return {
+          tasks,
+          activeTaskId:
+            state.activeTaskId === taskId ? null : state.activeTaskId,
+        };
+      });
       // start 失败时 agent_loop 不会落库 user 消息；补写 DB，避免重载丢消息/孤儿图
       try {
         await tauri.agentSaveUserMessage(
@@ -158,39 +218,24 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           imagePaths,
         );
       } catch (persistErr) {
-        console.warn('Failed to persist user message after start_task error:', persistErr);
+        console.warn(
+          "Failed to persist user message after start_task error:",
+          persistErr,
+        );
       }
       conversationStore.updateConversationMessages(conversationId, (msgs) => [
         ...msgs.filter((m) => m.id !== loadingAssistantId),
         {
           id: crypto.randomUUID(),
-          role: 'system',
+          role: "system",
           content: `启动任务失败：${getErrorMessage(err)}`,
           timestamp: new Date().toISOString(),
         },
       ]);
       const e = err instanceof Error ? err : new Error(getErrorMessage(err));
-      (e as Error & { stage?: string }).stage = 'start_task';
+      (e as Error & { stage?: string }).stage = "start_task";
       throw e;
     }
-
-    const task: AgentTask = {
-      id: taskId,
-      sessionId,
-      conversationId,
-      prompt,
-      mode,
-      status: 'planning',
-      createdAt: new Date().toISOString(),
-    };
-    set((state) => ({
-      tasks: { ...state.tasks, [taskId]: task },
-      activeTaskId: taskId,
-      taskTokenUsage: null,
-    }));
-
-    void attachStreamListener(taskId, conversationId, loadingAssistantId);
-    void attachPlanListener(taskId);
 
     return taskId;
   },
@@ -223,11 +268,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const runningIds: string[] = [];
       for (const id of ids) {
         const t = get().tasks[id];
-        if (!t || !['planning', 'executing', 'waiting_approval'].includes(t.status)) continue;
+        if (
+          !t ||
+          !["planning", "executing", "waiting_approval"].includes(t.status)
+        )
+          continue;
         runningIds.push(id);
         useConversationStore.getState().markAbortedToolFlags(t.conversationId);
         cleanupTaskListeners(id);
-        useConversationStore.getState().clearAllAssistantFlags(t.conversationId);
+        useConversationStore
+          .getState()
+          .clearAllAssistantFlags(t.conversationId);
       }
       set((state) => {
         const tasks = { ...state.tasks };
@@ -236,7 +287,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         for (const id of runningIds) {
           const task = tasks[id];
           if (!task) continue;
-          tasks[id] = { ...task, status: 'cancelled' };
+          tasks[id] = { ...task, status: "cancelled" };
           found = true;
           if (state.activeTaskId === id) nextActive = null;
         }
@@ -262,9 +313,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   setMode: (mode: AgentMode) => {
     set({ mode });
     const settingsStore = useSettingsStore.getState();
-    if (settingsStore.loaded && settingsStore.settings.defaultAgentMode !== mode) {
+    if (
+      settingsStore.loaded &&
+      settingsStore.settings.defaultAgentMode !== mode
+    ) {
       settingsStore.update({ defaultAgentMode: mode }).catch((err) => {
-        console.error('[taskStore] persist defaultAgentMode failed', err);
+        console.error("[taskStore] persist defaultAgentMode failed", err);
       });
     }
   },
@@ -273,7 +327,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set({ inputDraft: text });
   },
 
-  updateTaskStatus: (taskId: string, status: AgentTask['status']) => {
+  updateTaskStatus: (taskId: string, status: AgentTask["status"]) => {
     set((state) => {
       const task = state.tasks[taskId];
       if (!task) return state;
@@ -291,7 +345,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set({ pendingQuestion: question });
   },
 
-  answerQuestion: async (taskId: string, questionId: string, answers: QuestionAnswer[]) => {
+  answerQuestion: async (
+    taskId: string,
+    questionId: string,
+    answers: QuestionAnswer[],
+  ) => {
     set({ pendingQuestion: null });
     await tauri.agentAnswerQuestion(taskId, questionId, answers);
   },
@@ -331,11 +389,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (!newTasks[sp.taskId]) {
           newTasks[sp.taskId] = {
             id: sp.taskId,
-            sessionId: '',
+            sessionId: "",
             conversationId,
-            prompt: '',
-            mode: 'agent',
-            status: 'completed',
+            prompt: "",
+            mode: "agent",
+            status: "completed",
             createdAt: sp.updatedAt,
           };
         }
@@ -376,11 +434,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (!newTasks[planTaskId]) {
           newTasks[planTaskId] = {
             id: planTaskId,
-            sessionId: '',
+            sessionId: "",
             conversationId,
-            prompt: '',
-            mode: 'agent',
-            status: 'completed',
+            prompt: "",
+            mode: "agent",
+            status: "completed",
             createdAt: new Date().toISOString(),
           };
         } else {
@@ -390,7 +448,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           };
         }
       }
-      return { plans: newPlans, tasks: newTasks, plansDirty: !state.plansDirty };
+      return {
+        plans: newPlans,
+        tasks: newTasks,
+        plansDirty: !state.plansDirty,
+      };
     });
   },
 
@@ -398,16 +460,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => {
       const taskUsage = state.taskTokenUsage
         ? {
-            promptTokens: state.taskTokenUsage.promptTokens + usage.promptTokens,
-            completionTokens: state.taskTokenUsage.completionTokens + usage.completionTokens,
+            promptTokens:
+              state.taskTokenUsage.promptTokens + usage.promptTokens,
+            completionTokens:
+              state.taskTokenUsage.completionTokens + usage.completionTokens,
             totalTokens: state.taskTokenUsage.totalTokens + usage.totalTokens,
             reasoningTokens:
-              state.taskTokenUsage.reasoningTokens !== undefined || usage.reasoningTokens !== undefined
-                ? (state.taskTokenUsage.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0)
+              state.taskTokenUsage.reasoningTokens !== undefined ||
+              usage.reasoningTokens !== undefined
+                ? (state.taskTokenUsage.reasoningTokens ?? 0) +
+                  (usage.reasoningTokens ?? 0)
                 : undefined,
             cachedReadTokens:
-              state.taskTokenUsage.cachedReadTokens !== undefined || usage.cachedReadTokens !== undefined
-                ? (state.taskTokenUsage.cachedReadTokens ?? 0) + (usage.cachedReadTokens ?? 0)
+              state.taskTokenUsage.cachedReadTokens !== undefined ||
+              usage.cachedReadTokens !== undefined
+                ? (state.taskTokenUsage.cachedReadTokens ?? 0) +
+                  (usage.cachedReadTokens ?? 0)
                 : undefined,
           }
         : { ...usage };
@@ -423,5 +491,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     set((state) => ({
       activeTaskId: state.activeTaskId === taskId ? null : state.activeTaskId,
     }));
+  },
+
+  markConversationUnreadCompleted: (conversationId: string) => {
+    set((state) => {
+      if (state.unreadCompletedConversations.includes(conversationId)) return state;
+      return {
+        unreadCompletedConversations: [
+          ...state.unreadCompletedConversations,
+          conversationId,
+        ],
+      };
+    });
+  },
+
+  clearConversationUnreadCompleted: (conversationId: string) => {
+    set((state) => {
+      if (!state.unreadCompletedConversations.includes(conversationId)) return state;
+      return {
+        unreadCompletedConversations: state.unreadCompletedConversations.filter(
+          (id) => id !== conversationId,
+        ),
+      };
+    });
   },
 }));

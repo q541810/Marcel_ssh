@@ -12,14 +12,14 @@ use crate::notification::{send_notification, NotificationKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct QuestionOption {
+pub struct QuestionOption {
     pub label: String,
     pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct QuestionItem {
+pub struct QuestionItem {
     pub question: String,
     pub header: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -37,7 +37,60 @@ pub(crate) struct QuestionRequestEvent {
     pub questions: Vec<QuestionItem>,
 }
 
-pub struct QuestionTool;
+const MODE_SWITCH_OVERRIDE_PARAM: &str = "is_mode_switch_request";
+const MODE_SWITCH_KEYWORDS: [&str; 3] = ["auto", "agent", "模式"];
+
+pub struct QuestionTool {
+    reject_plan_mode_switch_questions: bool,
+}
+
+impl QuestionTool {
+    pub fn new(reject_plan_mode_switch_questions: bool) -> Self {
+        Self {
+            reject_plan_mode_switch_questions,
+        }
+    }
+}
+
+fn contains_mode_switch_keyword(text: &str) -> bool {
+    let lowercase = text.to_lowercase();
+    MODE_SWITCH_KEYWORDS.iter().any(|keyword| {
+        if keyword.is_ascii() {
+            lowercase
+                .split(|character: char| !character.is_alphanumeric() && character != '_')
+                .any(|word| word == *keyword)
+        } else {
+            lowercase.contains(keyword)
+        }
+    })
+}
+
+fn questions_contain_mode_switch_keyword(questions: &[QuestionItem]) -> bool {
+    questions.iter().any(|question| {
+        contains_mode_switch_keyword(&question.question)
+            || contains_mode_switch_keyword(&question.header)
+            || question.options.as_ref().is_some_and(|options| {
+                options.iter().any(|option| {
+                    contains_mode_switch_keyword(&option.label)
+                        || contains_mode_switch_keyword(&option.description)
+                })
+            })
+    })
+}
+
+fn should_reject_mode_switch_question(
+    params: &serde_json::Value,
+    questions: &[QuestionItem],
+    reject_in_plan_mode: bool,
+) -> bool {
+    let explicitly_not_mode_switch = params
+        .get(MODE_SWITCH_OVERRIDE_PARAM)
+        .and_then(|value| value.as_bool())
+        == Some(false);
+    reject_in_plan_mode
+        && !explicitly_not_mode_switch
+        && questions_contain_mode_switch_keyword(questions)
+}
 
 #[async_trait]
 impl AgentTool for QuestionTool {
@@ -119,6 +172,19 @@ impl AgentTool for QuestionTool {
             return Ok(ToolOutput::fail("ask_user: questions 不能为空", ""));
         }
 
+        if should_reject_mode_switch_question(
+            &params,
+            &questions,
+            self.reject_plan_mode_switch_questions,
+        ) {
+            return Ok(ToolOutput::fail(
+                "ask_user: Plan 模式下不能要求用户切换模式",
+                r#"用户无法在 agent loop 运行时切换模式。不要询问或要求用户切换到 Agent/Auto/其他模式；请继续在当前 Plan 模式下工作。
+如果这些词只是问题内容，并非询问或要求用户切换模式，请重试并加入隐藏参数（必须使用布尔值 false，不要用于真正的模式切换请求）：
+{"questions":[{"question":"你的完整问题","header":"简短标签","options":[{"label":"选项文本","description":"选项说明"}],"multiple":false}],"is_mode_switch_request":false}"#,
+            ));
+        }
+
         let question_id = ctx
             .tool_call_id
             .clone()
@@ -128,45 +194,36 @@ impl AgentTool for QuestionTool {
             .clone()
             .unwrap_or_else(|| "agent://stream/unknown".to_string());
 
-        // Send notification
-        {
-            let state = ctx.app_handle.state::<crate::AppState>();
-            let ns = state.settings.read().await.notification_settings.clone();
-            let title = format!("Agent 向您提问 ({} 题)", questions.len());
-            let first_q = &questions[0];
-            let body = format!("{}: {}", first_q.header, first_q.question);
-            send_notification(
-                &ctx.app_handle,
-                NotificationKind::AgentQuestion,
-                &ns,
-                &title,
-                &body,
-            );
-        }
-
-        emit_event(
-            &ctx.app_handle,
-            &event_name,
-            QuestionRequestEvent {
-                event_type: "questionRequest".to_string(),
-                question_id: question_id.clone(),
-                questions: questions.clone(),
-            },
-        );
-
-        let (tx, rx) = oneshot::channel::<Vec<serde_json::Value>>();
-        {
-            let task_id = event_name
+        let task_id = ctx.task_id.clone().unwrap_or_else(|| {
+            event_name
                 .strip_prefix("agent://stream/")
-                .unwrap_or(&event_name);
-            let pending = &ctx.pending_questions;
-            let key = (task_id.to_string(), question_id.clone());
-            pending.write().insert(key, tx);
-        }
+                .unwrap_or(&event_name)
+                .to_string()
+        });
 
-        let answers = match rx.await {
-            Ok(a) => a,
-            Err(_) => {
+        let state = ctx.app_handle.state::<crate::AppState>();
+        let conversation_id = state
+            .agent_tasks
+            .read()
+            .get(&task_id)
+            .map(|t| t.conversation_id.clone())
+            .unwrap_or_default();
+
+        let answers = state
+            .agent_interaction
+            .request_question(
+                &ctx.app_handle,
+                task_id,
+                ctx.session_id.clone(),
+                conversation_id,
+                question_id,
+                questions.clone(),
+            )
+            .await;
+
+        let answers = match answers {
+            Some(a) => a,
+            None => {
                 // Channel dropped = cancelled, return empty answers
                 return Ok(ToolOutput::fail("ask_user: 用户取消", ""));
             }
@@ -235,5 +292,81 @@ impl AgentTool for QuestionTool {
         };
 
         Ok(ToolOutput::ok(summary, output))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn question(question: &str) -> QuestionItem {
+        QuestionItem {
+            question: question.to_string(),
+            header: "确认".to_string(),
+            options: None,
+            multiple: false,
+        }
+    }
+
+    #[test]
+    fn hidden_override_is_not_advertised_in_schema() {
+        let schema = QuestionTool::new(true).parameters_schema();
+
+        assert!(schema["properties"]
+            .get(MODE_SWITCH_OVERRIDE_PARAM)
+            .is_none());
+        assert_eq!(schema["required"], json!(["questions"]));
+    }
+
+    #[test]
+    fn detects_mode_keywords_case_insensitively_without_substring_false_positives() {
+        for text in ["切换到 auto", "Use AGENT mode", "选择运行模式"] {
+            assert!(contains_mode_switch_keyword(text), "should match: {text}");
+        }
+        for text in ["automation", "agentic workflow"] {
+            assert!(
+                !contains_mode_switch_keyword(text),
+                "should not match: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn scans_question_headers_and_options() {
+        let mut item = question("请选择下一步");
+        item.options = Some(vec![QuestionOption {
+            label: "Agent".to_string(),
+            description: "切换后继续".to_string(),
+        }]);
+
+        assert!(questions_contain_mode_switch_keyword(&[item]));
+    }
+
+    #[test]
+    fn hidden_false_override_bypasses_only_plan_keyword_guard() {
+        let questions = [question("Agent 模式有什么区别？")];
+
+        assert!(should_reject_mode_switch_question(
+            &json!({"questions": [], (MODE_SWITCH_OVERRIDE_PARAM): true}),
+            &questions,
+            true,
+        ));
+        assert!(!should_reject_mode_switch_question(
+            &json!({"questions": [], (MODE_SWITCH_OVERRIDE_PARAM): false}),
+            &questions,
+            true,
+        ));
+        assert!(!should_reject_mode_switch_question(
+            &json!({"questions": []}),
+            &questions,
+            false,
+        ));
+    }
+
+    #[test]
+    fn unrelated_questions_are_not_rejected() {
+        assert!(!questions_contain_mode_switch_keyword(&[question(
+            "你希望使用哪种部署策略？"
+        )]));
     }
 }

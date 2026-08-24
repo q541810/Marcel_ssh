@@ -1,6 +1,9 @@
 import type { MouseEvent } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useTaskStore } from '@/stores/taskStore';
+import { getSessionAgentStatus } from '@/stores/agentStatusSelectors';
+import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
 import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
@@ -12,6 +15,10 @@ export default function TabBar() {
   const disconnect = useSessionStore((s) => s.disconnect);
   const reconnect = useSessionStore((s) => s.reconnect);
   const connections = useConnectionStore((s) => s.connections);
+  const tasks = useTaskStore((s) => s.tasks);
+  const unreadCompletedConversations = useTaskStore(
+    (s) => s.unreadCompletedConversations,
+  );
   const { onDisconnected } = useSessionLifecycle();
   const mismatch = useHostKeyMismatch();
 
@@ -108,6 +115,17 @@ export default function TabBar() {
 
                 {/* Label */}
                 <span className="truncate flex-1">{label}</span>
+
+                {/* Agent Activity Status (OpenCode style Spinner / Amber dot / Emerald dot) */}
+                <AgentStatusIndicator
+                  status={getSessionAgentStatus(
+                    session.id,
+                    tasks,
+                    unreadCompletedConversations,
+                  )}
+                  size="xs"
+                  showTooltip
+                />
 
                 {/* Reconnect on disconnected/error */}
                 {showReconnectHint && (

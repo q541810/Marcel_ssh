@@ -88,10 +88,7 @@ pub(crate) fn forward_compaction_event(
                 },
             );
         }
-        crate::agent::context::CompactionEvent::Skipped {
-            reason,
-            attempted,
-        } => {
+        crate::agent::context::CompactionEvent::Skipped { reason, attempted } => {
             emit_event(
                 app,
                 event_name,
@@ -166,7 +163,7 @@ pub(crate) async fn run_agent_loop(
         }
     }
 
-    persister.update_title_from_last_user_msg(&messages);
+    persister.update_title_from_first_user_msg(&messages);
     persister.save_last_user_msg(&mut messages);
 
     let max_rounds = agent_settings.max_tool_rounds.max(10);
@@ -314,9 +311,9 @@ pub(crate) async fn run_agent_loop(
                         .events
                         .iter()
                         .filter_map(|ev| match ev {
-                            crate::agent::context::CompactionEvent::Skipped {
-                                reason, ..
-                            } => Some(reason.clone()),
+                            crate::agent::context::CompactionEvent::Skipped { reason, .. } => {
+                                Some(reason.clone())
+                            }
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -477,7 +474,6 @@ pub(crate) async fn run_agent_loop(
                     .with_event_name(&event_name)
                     .with_config_dir(config_dir.clone())
                     .with_local_handlers(registry.local_handlers_arc())
-                    .with_pending_questions(state.pending_questions.clone())
                     .with_command_exec(state.command_exec.clone())
             };
             if is_task_cancelled(&state, &task_id) {
@@ -561,12 +557,9 @@ pub(crate) async fn run_agent_loop(
                     db_id: None,
                     db_id_known: false,
                 };
-                if let Some(db_id) = persister.save_msg(
-                    "tool",
-                    &tool_msg.content,
-                    tool_result_json.as_deref(),
-                    None,
-                ) {
+                if let Some(db_id) =
+                    persister.save_msg("tool", &tool_msg.content, tool_result_json.as_deref(), None)
+                {
                     tool_msg.db_id = Some(db_id);
                 }
                 messages.push(tool_msg);

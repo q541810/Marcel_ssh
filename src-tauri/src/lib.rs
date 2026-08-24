@@ -5,8 +5,8 @@ pub mod config;
 pub mod error;
 pub mod llm;
 pub mod mcp;
-pub mod plugins;
 pub mod notification;
+pub mod plugins;
 pub mod skills;
 pub mod ssh;
 pub mod sync;
@@ -37,10 +37,13 @@ use crate::ssh::known_hosts::KnownHostsStore;
 /// 插件系统通过监听 plugin://events 接收所有应用事件
 pub fn emit_event<S: serde::Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
     let _ = app.emit(event, &payload);
-    let _ = app.emit("plugin://events", serde_json::json!({
-        "event": event,
-        "data": payload,
-    }));
+    let _ = app.emit(
+        "plugin://events",
+        serde_json::json!({
+            "event": event,
+            "data": payload,
+        }),
+    );
 }
 
 /// Shared application state managed by Tauri.
@@ -62,17 +65,14 @@ pub struct AppState {
     pub mcp_manager: std::sync::Arc<McpManager>,
     /// Application config directory. Used for persisting connections, settings, etc.
     pub config_dir: PathBuf,
-    /// Pending approval requests: (task_id, operation_id) -> oneshot sender for approval response
-    pub pending_approvals:
-        std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<bool>>>>,
-    /// Pending question answers: (task_id, question_id) -> oneshot sender for user answer
-    pub pending_questions:
-        std::sync::Arc<PlRwLock<HashMap<(String, String), oneshot::Sender<Vec<serde_json::Value>>>>>,
+    /// Agent 阻塞式交互（审批 / 提问）统一队列管理器
+    pub agent_interaction: crate::agent::interaction::AgentInteractionManager,
     /// Cancellation signals for running agent tasks: task_id -> watch sender.
     /// Setting the value to `true` signals the agent loop to abort the current LLM call.
     pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Cancellation signals for SFTP uploads: upload_id -> watch sender.
-    pub upload_cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    pub upload_cancel_senders:
+        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Cancellation signals for SFTP downloads: download_id -> watch sender.
     pub download_cancel_senders:
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
@@ -87,13 +87,13 @@ pub struct AppState {
     /// Value = (session_id, local_path, cancel sender). local_path 用于「重复打开」时
     /// 复用已下载的本地副本（再次唤起系统应用，不重新下载、不重复监视）；
     /// cancel sender 设为 true 中止下载 + 监视。
-    pub sysopen_watchers:
-        std::sync::Arc<PlRwLock<HashMap<String, (String, std::path::PathBuf, tokio::sync::watch::Sender<bool>)>>>,
+    pub sysopen_watchers: std::sync::Arc<
+        PlRwLock<HashMap<String, (String, std::path::PathBuf, tokio::sync::watch::Sender<bool>)>>,
+    >,
     /// Active "open with system" dedup table: (session_id, remote_path) -> task_id.
     /// Prevents the same remote file being opened twice concurrently (which would
     /// have the two local copies clobber each other and race on sync-back).
-    pub sysopen_active_paths:
-        std::sync::Arc<PlRwLock<HashMap<(String, String), String>>>,
+    pub sysopen_active_paths: std::sync::Arc<PlRwLock<HashMap<(String, String), String>>>,
     /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
     /// the frontend via `config_get_settings` so it can show a notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
@@ -209,10 +209,7 @@ impl AppState {
                         store
                     }
                     Err(e2) => {
-                        log::error!(
-                            "known_hosts fallback 也失败: {}; 使用纯内存 store",
-                            e2
-                        );
+                        log::error!("known_hosts fallback 也失败: {}; 使用纯内存 store", e2);
                         KnownHostsStore::in_memory()
                     }
                 }
@@ -307,6 +304,21 @@ impl AppState {
             }
         };
 
+        // 内置教学 skill：注入缺失项 / 覆盖旧版内容（enabled 状态保留）。
+        // 内容以二进制内嵌版本为准，保证应用升级后用户吃到最新教学内容。
+        let (skill_store, builtin_skill_changes) = {
+            let mut store = skill_store;
+            let changed = crate::skills::builtin::ensure_builtin_skills(&mut store);
+            if !changed.is_empty() {
+                let path = SkillStore::default_file(&config_dir);
+                if let Err(e) = store.save_to_path(&path) {
+                    log::warn!("内置 skill 注入后持久化失败: {}", e);
+                }
+                log::info!("内置 skill 已注入/更新 {} 项", changed.len());
+            }
+            (store, changed)
+        };
+
         let quick_command_store = match qc_res {
             Ok(Ok(store)) => store,
             Ok(Err(e)) => {
@@ -343,6 +355,7 @@ impl AppState {
         let conversation_db_arc = std::sync::Arc::new(conversation_db);
         let skill_store_arc = std::sync::Arc::new(TokioRwLock::new(skill_store));
         let mcp_store_arc = std::sync::Arc::new(TokioRwLock::new(mcp_store));
+        let mcp_manager = std::sync::Arc::new(McpManager::new());
 
         // SSH 连接管理器 + 命令执行统一管理器（后者注册断连观察者，
         // 必须在 SshManager 构造后立即创建并共享同一句柄）。
@@ -352,9 +365,10 @@ impl AppState {
 
         let (sync_engine, sync_scheduler) = {
             let profile = crate::sync::profile::SyncProfile::default();
-            let engine = std::sync::Arc::new(
-                crate::sync::engine::SyncEngine::new(config_dir.clone(), profile),
-            );
+            let engine = std::sync::Arc::new(crate::sync::engine::SyncEngine::new(
+                config_dir.clone(),
+                profile,
+            ));
 
             // Load local version table (best-effort)
             if let Err(e) = engine.load().await {
@@ -370,6 +384,7 @@ impl AppState {
                 quick_command_store_arc.clone(),
                 skill_store_arc.clone(),
                 mcp_store_arc.clone(),
+                mcp_manager.clone(),
                 conversation_db_arc.clone(),
             ));
             engine.set_accessor(accessor);
@@ -399,14 +414,15 @@ impl AppState {
                         conversation_db: conversation_db_arc,
                         skill_store: skill_store_arc,
                         mcp_store: mcp_store_arc,
-                        mcp_manager: std::sync::Arc::new(McpManager::new()),
+                        mcp_manager: mcp_manager.clone(),
                         config_dir,
-                        pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        pending_questions: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        agent_interaction: crate::agent::interaction::AgentInteractionManager::new(),
                         cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+                        plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(
+                            HashMap::new(),
+                        )),
                         command_exec: command_exec.clone(),
                         sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -418,12 +434,29 @@ impl AppState {
                 }
             };
 
-            let scheduler = std::sync::Arc::new(
-                crate::sync::scheduler::SyncScheduler::new(engine.clone(), client),
-            );
+            let scheduler = std::sync::Arc::new(crate::sync::scheduler::SyncScheduler::new(
+                engine.clone(),
+                client,
+            ));
 
             (Some(engine), Some(scheduler))
         };
+
+        // 内置 skill 注入/更新产生的变更纳入同步（与 commands/skill.rs 写路径一致）。
+        // record_local_change 内部与 last_synced_values 比对，内容未变不会 bump。
+        if !builtin_skill_changes.is_empty() {
+            if let Some(ref engine) = sync_engine {
+                for skill in &builtin_skill_changes {
+                    let _ = engine.record_local_change(
+                        &format!("skills.{}", skill.id),
+                        &serde_json::to_string(skill).unwrap_or_default(),
+                    );
+                }
+                if let Some(ref scheduler) = sync_scheduler {
+                    scheduler.schedule_push();
+                }
+            }
+        }
 
         Self {
             ssh_manager,
@@ -435,10 +468,9 @@ impl AppState {
             conversation_db: conversation_db_arc,
             skill_store: skill_store_arc,
             mcp_store: mcp_store_arc,
-            mcp_manager: std::sync::Arc::new(McpManager::new()),
+            mcp_manager: mcp_manager.clone(),
             config_dir,
-            pending_approvals: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            pending_questions: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            agent_interaction: crate::agent::interaction::AgentInteractionManager::new(),
             cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -464,7 +496,9 @@ impl AppState {
 const MAX_TIMESTAMPED_SETTINGS_BACKUPS: usize = 5;
 
 fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<std::path::PathBuf> {
-    let parent = settings_file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let parent = settings_file
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
 
     // Overwrite the most recent "last failure" backup (single file, always fresh).
     let bak_path = settings_file.with_extension("json.bak");
@@ -500,7 +534,10 @@ fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<st
             .collect();
         if stamped.len() > MAX_TIMESTAMPED_SETTINGS_BACKUPS {
             stamped.sort_by_key(|(_, t)| *t);
-            for (path, _) in stamped.iter().take(stamped.len() - MAX_TIMESTAMPED_SETTINGS_BACKUPS) {
+            for (path, _) in stamped
+                .iter()
+                .take(stamped.len() - MAX_TIMESTAMPED_SETTINGS_BACKUPS)
+            {
                 let _ = std::fs::remove_file(path);
             }
         }
@@ -538,9 +575,7 @@ pub fn run() {
             #[cfg(desktop)]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
-                    crate::commands::plugin_window::close_all_plugin_windows(
-                        &window.app_handle(),
-                    );
+                    crate::commands::plugin_window::close_all_plugin_windows(&window.app_handle());
                 }
             }
         })
@@ -627,9 +662,8 @@ pub fn run() {
                 let app_handle = app.handle();
                 if let Some(scheduler) = state.sync_scheduler.clone() {
                     scheduler.set_app_handle(app_handle.clone());
-                    if let Some(api_key) = crate::sync::keychain::get_device_api_key()
-                        .ok()
-                        .flatten()
+                    if let Some(api_key) =
+                        crate::sync::keychain::get_device_api_key().ok().flatten()
                     {
                         scheduler.set_api_key(Some(api_key));
                         let scheduler_clone = scheduler.clone();
@@ -669,6 +703,7 @@ pub fn run() {
             commands::agent_compact::agent_compact_conversation,
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
+            commands::agent_conversation::agent_rename_conversation,
             commands::agent_conversation::agent_get_conversation,
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
@@ -712,12 +747,12 @@ pub fn run() {
             commands::keychain::config_delete_llm_api_key,
             commands::keychain::config_save_web_search_api_key,
             commands::keychain::config_delete_web_search_api_key,
-
             commands::skill::skill_list,
             commands::skill::skill_add,
             commands::skill::skill_update,
             commands::skill::skill_toggle,
             commands::skill::skill_delete,
+            commands::skill::skill_reorder,
             commands::skill::import_skill_file,
             commands::mcp::mcp_list_servers,
             commands::mcp::mcp_add_server,

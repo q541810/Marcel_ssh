@@ -6,9 +6,26 @@ interface Props {
   questions: QuestionItem[];
   onSubmit: (questionId: string, answers: QuestionAnswer[]) => void;
   onCancel: () => void;
+  sessionName?: string;
+  conversationTitle?: string;
+  isCurrentContext?: boolean;
+  onNavigateToContext?: () => void;
+  queueLength?: number;
+  onMinimize?: () => void;
 }
 
-export default function QuestionPanel({ questionId, questions, onSubmit, onCancel }: Props) {
+export default function QuestionPanel({
+  questionId,
+  questions,
+  onSubmit,
+  onCancel,
+  sessionName,
+  conversationTitle,
+  isCurrentContext = true,
+  onNavigateToContext,
+  queueLength = 1,
+  onMinimize,
+}: Props) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
     questions.map(() => ({ selected: [], custom: '' })),
@@ -123,11 +140,29 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
                 可多选
               </span>
             )}
+            {queueLength > 1 && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 font-medium">
+                队列 1/{queueLength}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <span className="text-xs text-zinc-500">
               {currentIndex + 1}/{total}
             </span>
+            {onMinimize && (
+              <button
+                type="button"
+                onClick={onMinimize}
+                className="p-1 rounded text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                title="最小化为浮动药丸"
+                aria-label="最小化"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={handleCancel}
               className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
@@ -144,6 +179,35 @@ export default function QuestionPanel({ questionId, questions, onSubmit, onCance
             </button>
           </div>
         </div>
+
+        {/* 跨上下文横条提示 (Context Banner) */}
+        {(!isCurrentContext || sessionName || conversationTitle) && (
+          <div className="mx-4 mt-3 p-2 rounded-lg bg-zinc-900 border border-zinc-700/70 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <svg className="w-3.5 h-3.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="text-xs text-zinc-300 truncate">
+                <span className="font-semibold text-zinc-200">{sessionName || 'SSH 会话'}</span>
+                {conversationTitle && (
+                  <span className="text-zinc-400"> · {conversationTitle}</span>
+                )}
+              </div>
+            </div>
+            {!isCurrentContext && onNavigateToContext && (
+              <button
+                type="button"
+                onClick={onNavigateToContext}
+                className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition-colors font-medium flex items-center gap-1"
+              >
+                <span>跳转查看</span>
+                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Body */}
         <div className="px-4 py-3 space-y-3 max-h-[40vh] overflow-y-auto">

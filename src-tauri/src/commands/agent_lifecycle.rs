@@ -16,9 +16,10 @@ pub async fn agent_start_task(
     mode: AgentMode,
     history: Vec<LlmMessage>,
     conversation_id: String,
+    task_id: Option<String>,
 ) -> Result<String, AppError> {
-    // 组装与 spawn 统一走 AgentManager；这里只声明「要跑什么」。
-    let task_id = Uuid::new_v4().to_string();
+    // 前端可预生成 task_id 并先挂好事件 listener；旧调用方不传时仍由后端生成。
+    let task_id = task_id.unwrap_or_else(|| Uuid::new_v4().to_string());
     let spec = AgentSpec {
         task_id: task_id.clone(),
         mode,
@@ -33,18 +34,6 @@ pub async fn agent_start_task(
     let manager = AgentManager::new(state.inner().clone());
     let handle = manager.spawn(&app, spec).await?;
     Ok(handle.task_id)
-}
-
-fn send_approval(state: &AppState, task_id: &str, operation_id: &str, approved: bool) {
-    let label = if approved { "approved" } else { "rejected" };
-    log::info!("Operation {}: task={}, op={}", label, task_id, operation_id);
-    let sender = state
-        .pending_approvals
-        .write()
-        .remove(&(task_id.to_string(), operation_id.to_string()));
-    if let Some(tx) = sender {
-        let _ = tx.send(approved);
-    }
 }
 
 /// 收集 task_id 及其全部后代子任务（task 工具派发的子agent）。
@@ -69,7 +58,11 @@ fn collect_descendant_tasks(
 }
 
 #[tauri::command]
-pub async fn agent_stop_task(state: State<'_, AppState>, task_id: String) -> Result<(), AppError> {
+pub async fn agent_stop_task(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    task_id: String,
+) -> Result<(), AppError> {
     // 级联取消：停掉该任务及其全部子agent。子任务与主任务一样要置
     // Cancelled——子agent loop 的退出检查（is_task_cancelled）只看 status，
     // 不置状态的话取消场景会被 subagent 工具误报为「执行失败」。
@@ -92,23 +85,17 @@ pub async fn agent_stop_task(state: State<'_, AppState>, task_id: String) -> Res
         }
     }
 
-    // 解除挂起：ask_user / 审批等待的是 oneshot channel，只有 sender 被 drop
-    // 才会返回（question.rs / approval.rs 的 rx.await）。不清理的话，取消后
-    // 任务会永久卡在工具执行中（前端弹窗已被清空，用户无法再回答）。
-    let cancel_set: std::collections::HashSet<&String> = tasks_to_cancel.iter().collect();
-    state
-        .pending_questions
-        .write()
-        .retain(|(tid, _), _| !cancel_set.contains(tid));
-    state
-        .pending_approvals
-        .write()
-        .retain(|(tid, _), _| !cancel_set.contains(tid));
+    // 解除挂起交互：经 AgentInteractionManager 取消并在队列中淘汰，通知前端更新
+    for tid in &tasks_to_cancel {
+        state.agent_interaction.cancel_task_interactions(&app, tid);
+    }
 
     for tid in &tasks_to_cancel {
         if let Some(cancel_tx) = state.cancel_senders.write().remove(tid) {
             let _ = cancel_tx.send(true);
         }
+        // execute_command 以 Agent task_id 注册到统一命令 manager。
+        let _ = state.command_exec.cancel(tid).await;
     }
     if tasks_to_cancel.len() > 1 {
         log::info!(
@@ -122,53 +109,41 @@ pub async fn agent_stop_task(state: State<'_, AppState>, task_id: String) -> Res
 
 #[tauri::command]
 pub async fn agent_approve_operation(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     operation_id: String,
 ) -> Result<(), AppError> {
-    send_approval(&state, &task_id, &operation_id, true);
+    state
+        .agent_interaction
+        .respond_approval(&app, &task_id, &operation_id, true);
     Ok(())
 }
 
 #[tauri::command]
 pub async fn agent_reject_operation(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     operation_id: String,
 ) -> Result<(), AppError> {
-    send_approval(&state, &task_id, &operation_id, false);
+    state
+        .agent_interaction
+        .respond_approval(&app, &task_id, &operation_id, false);
     Ok(())
-}
-
-fn send_question_answer(
-    state: &AppState,
-    task_id: &str,
-    question_id: &str,
-    answers: Vec<serde_json::Value>,
-) {
-    log::info!(
-        "Question answered: task={}, question={}, answers={}",
-        task_id,
-        question_id,
-        answers.len()
-    );
-    let sender = state
-        .pending_questions
-        .write()
-        .remove(&(task_id.to_string(), question_id.to_string()));
-    if let Some(tx) = sender {
-        let _ = tx.send(answers);
-    }
 }
 
 #[tauri::command]
 pub async fn agent_answer_question(
+    app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     question_id: String,
     answers: Vec<serde_json::Value>,
 ) -> Result<(), AppError> {
-    send_question_answer(&state, &task_id, &question_id, answers);
+    state
+        .agent_interaction
+        .respond_question(&app, &task_id, &question_id, answers);
     Ok(())
 }
 
@@ -223,10 +198,8 @@ mod tests {
 
     #[test]
     fn collect_descendant_tasks_missing_task_returns_only_self() {
-        let tasks = std::collections::HashMap::from([(
-            "other".to_string(),
-            make_task("other", None),
-        )]);
+        let tasks =
+            std::collections::HashMap::from([("other".to_string(), make_task("other", None))]);
         let got = collect_descendant_tasks(&tasks, "ghost");
         assert_eq!(got, vec!["ghost".to_string()]);
     }

@@ -12,6 +12,12 @@ interface Props {
   onReject: () => void;
   open: boolean;
   onClose: () => void;
+  sessionName?: string;
+  conversationTitle?: string;
+  isCurrentContext?: boolean;
+  onNavigateToContext?: () => void;
+  queueLength?: number;
+  onMinimize?: () => void;
 }
 
 export default function ApprovalDialog({
@@ -20,6 +26,12 @@ export default function ApprovalDialog({
   onReject,
   open,
   onClose,
+  sessionName,
+  conversationTitle,
+  isCurrentContext = true,
+  onNavigateToContext,
+  queueLength = 1,
+  onMinimize,
 }: Props) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -60,16 +72,67 @@ export default function ApprovalDialog({
         }`}
       >
         <div className="flex items-center justify-between p-4 border-b border-zinc-700">
-          <h3 className="text-lg font-semibold text-zinc-100">
-            需要操作批准
-          </h3>
-          <button
-            onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-200"
-          >
-            &times;
-          </button>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              需要操作批准
+            </h3>
+            {queueLength > 1 && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 font-medium">
+                待处理 1/{queueLength}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {onMinimize && (
+              <button
+                type="button"
+                onClick={onMinimize}
+                className="p-1 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+                title="最小化为浮动药丸"
+                aria-label="最小化"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="text-zinc-400 hover:text-zinc-200 text-lg leading-none p-1"
+            >
+              &times;
+            </button>
+          </div>
         </div>
+
+        {/* 跨上下文横条提示 (Context Banner) */}
+        {(!isCurrentContext || sessionName || conversationTitle) && (
+          <div className="mx-4 mt-3 p-2.5 rounded-xl bg-zinc-900/90 border border-zinc-700/80 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <svg className="w-4 h-4 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="text-xs text-zinc-300 truncate">
+                <span className="font-semibold text-zinc-200">{sessionName || 'SSH 会话'}</span>
+                {conversationTitle && (
+                  <span className="text-zinc-400"> · {conversationTitle}</span>
+                )}
+              </div>
+            </div>
+            {!isCurrentContext && onNavigateToContext && (
+              <button
+                type="button"
+                onClick={onNavigateToContext}
+                className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 transition-colors font-medium flex items-center gap-1"
+              >
+                <span>跳转查看</span>
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="p-4 space-y-4">
           <div className="flex items-center gap-2">

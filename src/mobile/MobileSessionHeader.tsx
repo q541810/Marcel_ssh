@@ -1,6 +1,9 @@
 import { RefreshCw, X } from 'lucide-react';
 import type { Session } from '@/lib/types';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useTaskStore } from '@/stores/taskStore';
+import { getSessionAgentStatus } from '@/stores/agentStatusSelectors';
+import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import {
   canReconnectSession,
   resolveSessionDisplayName,
@@ -19,6 +22,10 @@ export default function MobileSessionHeader({
   onReconnect,
 }: MobileSessionHeaderProps) {
   const connections = useConnectionStore((s) => s.connections);
+  const tasks = useTaskStore((s) => s.tasks);
+  const unreadCompletedConversations = useTaskStore(
+    (s) => s.unreadCompletedConversations,
+  );
   if (!session) return null;
 
   const displayName = resolveSessionDisplayName(session, connections);
@@ -38,8 +45,18 @@ export default function MobileSessionHeader({
       style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))' }}
     >
       <div className="min-w-0 flex-1 text-left">
-        <div className="truncate text-sm font-medium text-zinc-100">
-          {displayName}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="truncate text-sm font-medium text-zinc-100">
+            {displayName}
+          </span>
+          <AgentStatusIndicator
+            status={getSessionAgentStatus(
+              session.id,
+              tasks,
+              unreadCompletedConversations,
+            )}
+            size="xs"
+          />
         </div>
         <div className={`truncate text-[11px] ${statusColor}`}>
           {sessionStatusLabel(session.status)}

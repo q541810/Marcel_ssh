@@ -28,6 +28,7 @@ export interface ConversationState {
   newConversation: (sessionId: string, connectionId: string) => Promise<string>;
   switchConversation: (conversationId: string) => Promise<void>;
   loadConversation: (conversationId: string) => Promise<void>;
+  renameConversation: (conversationId: string, title: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   rollbackToMessage: (
     conversationId: string,
@@ -304,6 +305,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       ),
     }));
     await get().loadConnectionConversations(connectionId);
+    useTaskStore.getState().clearConversationUnreadCompleted(id);
     return id;
   },
 
@@ -338,6 +340,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
     // 恢复该对话的运行中任务（主 agent / 子 agent），保证停止按钮与 isRunning 状态正确
     restoreRunningTaskForConversation(conversationId);
+    // 切入对话后，自动清除该对话的未读完成小绿点标记
+    useTaskStore.getState().clearConversationUnreadCompleted(conversationId);
   },
 
   loadConversation: async (conversationId: string) => {
@@ -366,6 +370,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       useTaskStore.getState().loadPersistedPlans(conversationId, storedPlans ?? []);
     }
     restoreRunningTaskForConversation(conversationId);
+    useTaskStore.getState().clearConversationUnreadCompleted(conversationId);
+  },
+
+  renameConversation: async (conversationId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    await tauri.agentRenameConversation(conversationId, trimmed);
+    const now = new Date().toISOString();
+    set((state) => {
+      const conv = state.conversations[conversationId];
+      if (!conv) return state;
+      const updated = { ...conv, title: trimmed, updatedAt: now };
+      return {
+        conversations: reorderByUpdatedAt({
+          ...state.conversations,
+          [conversationId]: updated,
+        }),
+      };
+    });
   },
 
   deleteConversation: async (conversationId: string) => {
@@ -726,12 +749,23 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   appendMessages: (conversationId: string, messages: AgentMessage[]) => {
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [conversationId]: [...(state.messages[conversationId] || []), ...messages],
-      },
-    }));
+    const now = new Date().toISOString();
+    set((state) => {
+      const conv = state.conversations[conversationId];
+      const nextConvs = conv
+        ? reorderByUpdatedAt({
+            ...state.conversations,
+            [conversationId]: { ...conv, updatedAt: now },
+          })
+        : state.conversations;
+      return {
+        conversations: nextConvs,
+        messages: {
+          ...state.messages,
+          [conversationId]: [...(state.messages[conversationId] || []), ...messages],
+        },
+      };
+    });
   },
 
   updateConversationMessages: (conversationId: string, updater: (messages: AgentMessage[]) => AgentMessage[]) => {

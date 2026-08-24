@@ -1,5 +1,4 @@
 use serde::Serialize;
-use tauri::Emitter;
 
 use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
@@ -119,6 +118,7 @@ pub(crate) struct ToolDispatcher {
     mode: AgentMode,
     agent_settings: AgentModeSettings,
     task_id: String,
+    state: AppState,
     approval: ApprovalManager,
     registry: std::sync::Arc<ToolRegistry>,
     /// LLM-backed command approver. `None` when the feature is disabled by
@@ -188,7 +188,8 @@ impl ToolDispatcher {
             mode,
             agent_settings,
             task_id,
-            approval: ApprovalManager::new(app, state.pending_approvals.clone()),
+            approval: ApprovalManager::new(app, state.agent_interaction.clone()),
+            state,
             registry,
             approver,
             read_files: parking_lot::RwLock::new(std::collections::HashSet::new()),
@@ -438,11 +439,20 @@ impl ToolDispatcher {
                 }
             }
 
+            set_task_status(
+                &self.state,
+                &self.task_id,
+                crate::agent::task::AgentStatus::WaitingApproval,
+            );
             let approved = self
                 .approval
                 .request_approval(
-                    event_name,
                     self.task_id.clone(),
+                    ctx.session_id.clone(),
+                    ctx.task_id
+                        .as_deref()
+                        .and_then(|tid| self.state.agent_tasks.read().get(tid).map(|t| t.conversation_id.clone()))
+                        .unwrap_or_default(),
                     tc.id.clone(),
                     &tc.name,
                     tc.arguments.clone(),
@@ -451,6 +461,11 @@ impl ToolDispatcher {
                     approval_metadata,
                 )
                 .await;
+            set_task_status(
+                &self.state,
+                &self.task_id,
+                crate::agent::task::AgentStatus::Executing,
+            );
             if !approved {
                 let summary = if tc.name == "execute_command" {
                     let cmd = tc
@@ -466,6 +481,11 @@ impl ToolDispatcher {
             }
         }
 
+        set_task_status(
+            &self.state,
+            &self.task_id,
+            crate::agent::task::AgentStatus::Executing,
+        );
         match tool.execute(tc.arguments.clone(), ctx).await {
             Ok(out) => {
                 // read_file / write_file / edit_file 成功即记账：模型刚读过，
@@ -492,6 +512,14 @@ impl ToolDispatcher {
                 metadata: None,
                 risk_level: effective_risk,
             },
+        }
+    }
+}
+
+fn set_task_status(state: &AppState, task_id: &str, status: crate::agent::task::AgentStatus) {
+    if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
+        if task.status != crate::agent::task::AgentStatus::Cancelled {
+            task.status = status;
         }
     }
 }

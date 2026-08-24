@@ -7,6 +7,12 @@ interface MobileQuestionSheetProps {
   questions: QuestionItem[];
   onSubmit: (questionId: string, answers: QuestionAnswer[]) => void;
   onCancel: () => void;
+  sessionName?: string;
+  conversationTitle?: string;
+  isCurrentContext?: boolean;
+  onNavigateToContext?: () => void;
+  queueLength?: number;
+  onMinimize?: () => void;
 }
 
 /**
@@ -19,6 +25,12 @@ export default function MobileQuestionSheet({
   questions,
   onSubmit,
   onCancel,
+  sessionName,
+  conversationTitle,
+  isCurrentContext = true,
+  onNavigateToContext,
+  queueLength = 1,
+  onMinimize,
 }: MobileQuestionSheetProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
@@ -85,10 +97,27 @@ export default function MobileQuestionSheet({
             可多选
           </span>
         )}
+        {queueLength > 1 && (
+          <span className="flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-full bg-indigo-900/60 border border-indigo-700/50 text-indigo-300 font-medium">
+            1/{queueLength}
+          </span>
+        )}
         {total > 1 && (
           <span className="flex-shrink-0 text-xs text-zinc-500">
             {currentIndex + 1}/{total}
           </span>
+        )}
+        {onMinimize && (
+          <button
+            type="button"
+            onClick={onMinimize}
+            className="flex-shrink-0 rounded-lg p-1 text-zinc-400 active:bg-zinc-800"
+            title="收起为浮动条"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
         )}
         <button
           type="button"
@@ -98,6 +127,32 @@ export default function MobileQuestionSheet({
           跳过
         </button>
       </div>
+
+      {/* 跨上下文横条 (Context Banner) */}
+      {(!isCurrentContext || sessionName || conversationTitle) && (
+        <div className="mx-4 mt-1.5 p-2 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <svg className="w-3.5 h-3.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="text-xs text-zinc-300 truncate">
+              <span className="font-semibold text-zinc-200">{sessionName || 'SSH 会话'}</span>
+              {conversationTitle && (
+                <span className="text-zinc-400"> · {conversationTitle}</span>
+              )}
+            </div>
+          </div>
+          {!isCurrentContext && onNavigateToContext && (
+            <button
+              type="button"
+              onClick={onNavigateToContext}
+              className="shrink-0 text-[11px] px-2 py-0.5 rounded-lg bg-indigo-600/30 active:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 font-medium"
+            >
+              跳转
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Body */}
       <div className="max-h-[45dvh] space-y-2.5 overflow-y-auto overscroll-contain px-4 py-2">

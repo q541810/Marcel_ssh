@@ -27,6 +27,7 @@ export function useAgent() {
     newConversation: s.newConversation,
     switchConversation: s.switchConversation,
     loadConversation: s.loadConversation,
+    renameConversation: s.renameConversation,
     deleteConversation: s.deleteConversation,
     rollbackToMessage: s.rollbackToMessage,
     loadConnectionConversations: s.loadConnectionConversations,
@@ -135,6 +136,13 @@ export function useAgent() {
     [store.loadConversation],
   );
 
+  const renameConversation = useCallback(
+    async (conversationId: string, title: string) => {
+      return store.renameConversation(conversationId, title);
+    },
+    [store.renameConversation],
+  );
+
   const deleteConversation = useCallback(
     async (conversationId: string) => {
       return store.deleteConversation(conversationId);
@@ -184,6 +192,7 @@ export function useAgent() {
     newConversation,
     switchConversation,
     loadConversation,
+    renameConversation,
     deleteConversation,
     rollbackToMessage,
     loadConnectionConversations,
