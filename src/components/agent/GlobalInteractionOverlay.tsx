@@ -5,6 +5,7 @@ import { useConversationStore } from '@/stores/conversationStore';
 import ApprovalDialog from '@/components/agent/ApprovalDialog';
 import QuestionPanel from '@/components/agent/QuestionPanel';
 import { InteractionFloatingCapsule } from './InteractionFloatingCapsule';
+import { flyToInteractionCapsule } from '@/stores/capsuleFlyAnimation';
 
 export default function GlobalInteractionOverlay() {
   const current = useInteractionStore((s) => s.currentInteraction);
@@ -31,7 +32,7 @@ export default function GlobalInteractionOverlay() {
     activeSessionId === current.sessionId &&
     activeConversationId === current.conversationId;
 
-  const handleNavigate = useCallback(() => {
+  const handleNavigate = useCallback((e?: React.MouseEvent) => {
     if (!current) return;
     if (current.sessionId && activeSessionId !== current.sessionId) {
       setActiveSession(current.sessionId);
@@ -39,7 +40,9 @@ export default function GlobalInteractionOverlay() {
     if (current.conversationId && activeConversationId !== current.conversationId) {
       void switchConversation(current.conversationId);
     }
-    // 点击跳转后自动最小化弹窗，避免遮挡聊天内容
+    // 触发飞入动画并自动最小化弹窗
+    const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
+    flyToInteractionCapsule(origin);
     setMinimized(true);
   }, [current, activeSessionId, activeConversationId, setActiveSession, switchConversation]);
 
@@ -107,7 +110,11 @@ export default function GlobalInteractionOverlay() {
         isCurrentContext={isCurrentContext}
         onNavigateToContext={handleNavigate}
         queueLength={current.queueLength}
-        onMinimize={() => setMinimized(true)}
+        onMinimize={(e) => {
+          const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
+          flyToInteractionCapsule(origin);
+          setMinimized(true);
+        }}
       />
     );
   }
@@ -134,7 +141,11 @@ export default function GlobalInteractionOverlay() {
           isCurrentContext={isCurrentContext}
           onNavigateToContext={handleNavigate}
           queueLength={current.queueLength}
-          onMinimize={() => setMinimized(true)}
+          onMinimize={(e) => {
+            const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
+            flyToInteractionCapsule(origin);
+            setMinimized(true);
+          }}
         />
       </div>
     );
