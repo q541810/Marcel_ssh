@@ -22,6 +22,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   webSearchApiProvider: 'brave',
   webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
+  enableHtmlRender: true,
 };
 
 export function ToolCapabilitiesSection() {
@@ -214,6 +215,18 @@ export function ToolCapabilitiesSection() {
         <Toggle
           checked={experimental.enableCloudPage}
           onChange={(checked) => updateExperimental({ enableCloudPage: checked })}
+        />
+      </SettingItem>
+      <SettingItem
+        id="exp-htmlrender"
+        label="交互可视化"
+        description="允许 Agent 将模拟器、图表、对比面板等交互内容直接展示在对话中"
+        sectionId="settings-experimental"
+        keywords={['html', 'card', 'render', '交互', '卡片', 'Agent 工具']}
+      >
+        <Toggle
+          checked={experimental.enableHtmlRender ?? true}
+          onChange={(checked) => updateExperimental({ enableHtmlRender: checked })}
         />
       </SettingItem>
       <SettingItem

@@ -8,6 +8,9 @@ import type {
   QuestionRequestPayload,
 } from '@/lib/types';
 import { applyCompactionSplice } from './messageConversion';
+import { extractPartialStringField } from '@/lib/partialJson';
+import { useConversationStore } from './conversationStore';
+import { useTaskStore } from './taskStore';
 
 // ---------------------------------------------------------------------------
 // StreamHandler interface
@@ -27,11 +30,6 @@ export interface StreamHandler {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function insertToolMessageAfterAssistant(newMsgs: AgentMessage[], toolMessage: AgentMessage): AgentMessage[] {
-  newMsgs.push(toolMessage);
-  return newMsgs;
-}
 
 /**
  * 查找当前最新的 loading 骨架（等待模型首字的占位消息）。
@@ -145,13 +143,46 @@ export function handleToolCallDelta(
   streamState.pendingToolArgs.set(ev.id, accumulated);
   setStreamState(taskId, streamState);
 
-  let parsed: Record<string, unknown>;
+  let parsed: Record<string, unknown> | null = null;
   try {
     parsed = JSON.parse(accumulated);
   } catch {
-    return;
+    parsed = null;
   }
 
+  // 长字符串参数（render_html 的 fragment）在整个流式期间 JSON 都不完整，
+  // 完整 parse 要到最后一刻才成功——卡片会一直空白，用户会以为死掉。
+  // 对这类工具走 partial 提取：把已生成的字段前缀实时喂给预览卡片。
+  // 节流 ~120ms：delta 高速到达时避免每个 delta 都触发全量消息列表渲染
+  //（最终完整参数由 parse 成功分支 / toolResult 兜底，不怕丢尾巴）。
+  if (parsed === null) {
+    const preview = PARTIAL_PREVIEW_TOOLS.get(
+      getPendingToolName(handler, conversationId, pendingMsgId) ?? '',
+    );
+    if (!preview) return;
+
+    const now = Date.now();
+    const last = partialFlushAt.get(ev.id) ?? 0;
+    // Keep the message list responsive under providers that emit many tiny
+    // argument deltas. The first delta is immediate; later updates are
+    // leading-edge throttled and the settled tool result supplies the tail.
+    if (now - last < 150) return;
+    const primary = extractPartialStringField(accumulated, preview.primary);
+    if (primary === null) return;
+    partialFlushAt.set(ev.id, now);
+    const draft: Record<string, unknown> = {};
+    for (const field of preview.companions) {
+      const value = extractPartialStringField(accumulated, field);
+      if (value !== null) draft[field] = value;
+    }
+    draft[preview.primary] = primary;
+    draft.__streaming = true;
+    parsed = draft;
+  } else {
+    partialFlushAt.delete(ev.id);
+  }
+
+  const finalArgs = parsed;
   handler.updateMessages(conversationId, (convMsgs) => {
     const idx = convMsgs.findIndex((m) => m.id === pendingMsgId);
     if (idx === -1) return convMsgs;
@@ -160,10 +191,37 @@ export function handleToolCallDelta(
     const newMsgs = [...convMsgs];
     newMsgs[idx] = {
       ...msg,
-      toolResult: { ...msg.toolResult, arguments: parsed },
+      toolResult: { ...msg.toolResult, arguments: finalArgs },
     };
     return newMsgs;
   });
+}
+
+/**
+ * 支持流式部分参数预览的工具 → 要提取的字段。
+ *
+ * `primary` 是驱动预览的长字符串字段：提取不到就不发预览。
+ * `companions` 是顺带提取的短字段（标题、模式等），缺失时直接省略。
+ * 字段名跟着工具登记在这里，提取逻辑本身不认识任何具体工具。
+ */
+const PARTIAL_PREVIEW_TOOLS: Map<string, { primary: string; companions: string[] }> = new Map([
+  ['render_html', { primary: 'fragment', companions: ['title', 'mode'] }],
+]);
+
+/** toolCallId → 上次 partial 提取刷新的时间戳（节流用）。 */
+const partialFlushAt: Map<string, number> = new Map();
+
+/** 从消息列表反查 pending 工具消息的 toolName。 */
+function getPendingToolName(
+  handler: StreamHandler,
+  conversationId: string,
+  messageId: string,
+): string | undefined {
+  const msgs = handler.getMessages(conversationId);
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].id === messageId) return msgs[i].toolResult?.toolName;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,6 +304,12 @@ export function cleanupStreamState(taskId: string) {
   if (state?.flushRafId != null) {
     cancelAnimationFrame(state.flushRafId);
   }
+  // 清掉本任务未落定 tool call 的 partial 节流时间戳，避免 Map 泄漏
+  if (state) {
+    for (const toolCallId of state.pendingToolCalls.keys()) {
+      partialFlushAt.delete(toolCallId);
+    }
+  }
   taskStreamState.delete(taskId);
 }
 
@@ -310,6 +374,7 @@ export function handleToolResult(
           },
         };
         streamState.pendingToolCalls.delete(tr.toolCallId);
+        partialFlushAt.delete(tr.toolCallId);
         streamState.assistantMessageId = null;
         streamState.messageIndex = -1;
         streamState.toolResultCount = 0;
@@ -486,6 +551,12 @@ export function handleDone(
   flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
 
   handler.updateTaskStatus(taskId, 'completed');
+
+  // 若完成的不是用户当前正在看的对话，将该对话标记为未读完成（展示小绿点）
+  const activeConvId = useConversationStore.getState().activeConversationId;
+  if (activeConvId !== conversationId) {
+    useTaskStore.getState().markConversationUnreadCompleted(conversationId);
+  }
 
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs.filter((m) => {

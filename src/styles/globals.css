@@ -17,6 +17,15 @@
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
+
+  /* Theme bridge for sandboxed in-conversation visualizations. */
+  --marcel-viz-background: #18181b;
+  --marcel-viz-surface: rgb(255 255 255 / 6%);
+  --marcel-viz-text: #f4f4f5;
+  --marcel-viz-muted: #a1a1aa;
+  --marcel-viz-border: #52525b;
+  --marcel-viz-accent: #818cf8;
+  --marcel-viz-accentText: #ffffff;
 }
 
 /* Spring keyframes for toggle/button animations */

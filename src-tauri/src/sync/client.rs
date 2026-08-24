@@ -224,7 +224,13 @@ impl SyncClient {
         request: AccountSetupRequest,
     ) -> Result<AccountSetupResponse, AppError> {
         let url = self.url("/api/account/setup");
-        let resp = self.http.post(&url).json(&request).send().await.map_err(map_network_err)?;
+        let resp = self
+            .http
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_network_err)?;
         handle_response(resp, "setup").await
     }
 
@@ -234,7 +240,13 @@ impl SyncClient {
         request: AccountJoinRequest,
     ) -> Result<AccountJoinResponse, AppError> {
         let url = self.url("/api/account/join");
-        let resp = self.http.post(&url).json(&request).send().await.map_err(map_network_err)?;
+        let resp = self
+            .http
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_network_err)?;
         handle_response(resp, "join").await
     }
 
@@ -252,7 +264,8 @@ impl SyncClient {
         let request = AccountDeleteRequest {
             config_code_hash: config_code_hash.to_string(),
         };
-        let resp = self.http
+        let resp = self
+            .http
             .request(reqwest::Method::DELETE, &url)
             .headers(auth_header(api_key))
             .json(&request)
@@ -269,7 +282,8 @@ impl SyncClient {
         request: DeviceRegisterRequest,
     ) -> Result<DeviceRegisterResponse, AppError> {
         let url = self.url("/api/device/register");
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .headers(auth_header(api_key))
             .json(&request)
@@ -286,7 +300,8 @@ impl SyncClient {
         request: SyncProfileUpdateRequest,
     ) -> Result<(), AppError> {
         let url = self.url("/api/device/sync_profile");
-        let resp = self.http
+        let resp = self
+            .http
             .put(&url)
             .headers(auth_header(api_key))
             .json(&request)
@@ -297,12 +312,10 @@ impl SyncClient {
     }
 
     /// 列出账户下所有设备
-    pub async fn list_devices(
-        &self,
-        api_key: &str,
-    ) -> Result<Vec<DeviceInfoResponse>, AppError> {
+    pub async fn list_devices(&self, api_key: &str) -> Result<Vec<DeviceInfoResponse>, AppError> {
         let url = self.url("/api/devices");
-        let resp = self.http
+        let resp = self
+            .http
             .get(&url)
             .headers(auth_header(api_key))
             .send()
@@ -331,7 +344,8 @@ impl SyncClient {
         request: PushRequest,
     ) -> Result<PushResponse, AppError> {
         let url = self.url("/api/sync/push");
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .headers(auth_header(api_key))
             .json(&request)
@@ -346,12 +360,10 @@ impl SyncClient {
     }
 
     /// 查询账户配额使用情况（托管模式返回实际用量；自部署 quota=0 表示无限制）
-    pub async fn get_account_quota(
-        &self,
-        api_key: &str,
-    ) -> Result<AccountQuotaResponse, AppError> {
+    pub async fn get_account_quota(&self, api_key: &str) -> Result<AccountQuotaResponse, AppError> {
         let url = self.url("/api/account/quota");
-        let resp = self.http
+        let resp = self
+            .http
             .get(&url)
             .headers(auth_header(api_key))
             .send()
@@ -367,7 +379,8 @@ impl SyncClient {
         request: PullRequest,
     ) -> Result<PullResponse, AppError> {
         let url = self.url("/api/sync/pull");
-        let resp = self.http
+        let resp = self
+            .http
             .post(&url)
             .headers(auth_header(api_key))
             .json(&request)
@@ -381,7 +394,8 @@ impl SyncClient {
     /// 全量快照拉取（新设备首次同步；当前未被调用，防御性保留长超时）
     pub async fn snapshot(&self, api_key: &str) -> Result<SnapshotResponse, AppError> {
         let url = self.url("/api/sync/snapshot");
-        let resp = self.http
+        let resp = self
+            .http
             .get(&url)
             .headers(auth_header(api_key))
             .timeout(LONG_TIMEOUT)
@@ -405,27 +419,21 @@ fn map_network_err(e: reqwest::Error) -> AppError {
 
 /// 处理响应：成功解析 JSON（移出异步工作线程，避免大响应阻塞事件循环），
 /// 失败提取错误信息。`label` 用于日志（如 "pull"），便于定位响应字节数。
-async fn handle_response<T>(
-    resp: reqwest::Response,
-    label: &str,
-) -> Result<T, AppError>
+async fn handle_response<T>(resp: reqwest::Response, label: &str) -> Result<T, AppError>
 where
     T: serde::de::DeserializeOwned + Send + 'static,
 {
     let status = resp.status();
     if status.is_success() {
-        let bytes = resp.bytes().await.map_err(|e| {
-            AppError::Network(format!("读取响应失败 ({}): {}", label, e))
-        })?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AppError::Network(format!("读取响应失败 ({}): {}", label, e)))?;
         log::debug!("[sync] {} 响应 {} 字节", label, bytes.len());
         tokio::task::spawn_blocking(move || serde_json::from_slice::<T>(&bytes))
             .await
-            .map_err(|e| {
-                AppError::Network(format!("解析任务失败 ({}): {}", label, e))
-            })?
-            .map_err(|e| {
-                AppError::Network(format!("解析响应失败 ({}): {}", label, e))
-            })
+            .map_err(|e| AppError::Network(format!("解析任务失败 ({}): {}", label, e)))?
+            .map_err(|e| AppError::Network(format!("解析响应失败 ({}): {}", label, e)))
     } else {
         let text = resp.text().await.unwrap_or_default();
         Err(AppError::Network(format!(
@@ -547,7 +555,8 @@ mod tests {
     #[test]
     fn test_parse_quota_exceeded_old_server_falls_back() {
         // 旧版服务端：detail 是字符串，解析失败应回退原始文本
-        let body = r#"{"detail":"配额超限：当前 1048576 字节 + 推送 204800 字节 > 配额 5242880 字节"}"#;
+        let body =
+            r#"{"detail":"配额超限：当前 1048576 字节 + 推送 204800 字节 > 配额 5242880 字节"}"#;
         let err = parse_quota_exceeded_text(body);
         assert!(err.to_string().contains("配额超限"));
         assert!(err.to_string().contains("413"));

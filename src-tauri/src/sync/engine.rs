@@ -145,7 +145,8 @@ impl LocalVersionTable {
         self.last_sync_versions.insert(key.to_string(), version);
         match encrypted_value {
             Some(v) => {
-                self.last_synced_values.insert(key.to_string(), v.to_string());
+                self.last_synced_values
+                    .insert(key.to_string(), v.to_string());
             }
             None => {
                 self.last_synced_values.remove(&key.to_string());
@@ -155,16 +156,12 @@ impl LocalVersionTable {
 
     /// push 被服务端接受后：只推进 last_sync_versions + last_synced_values，
     /// 不覆盖 `versions`（本地可能在 push 飞行中又 bump 了更高版本）。
-    pub fn record_push_accepted(
-        &mut self,
-        key: &str,
-        version: i64,
-        encrypted_value: Option<&str>,
-    ) {
+    pub fn record_push_accepted(&mut self, key: &str, version: i64, encrypted_value: Option<&str>) {
         self.last_sync_versions.insert(key.to_string(), version);
         match encrypted_value {
             Some(v) => {
-                self.last_synced_values.insert(key.to_string(), v.to_string());
+                self.last_synced_values
+                    .insert(key.to_string(), v.to_string());
             }
             None => {
                 self.last_synced_values.remove(key);
@@ -315,10 +312,7 @@ impl SyncEngine {
                             }
                         }
                         Err(e) => {
-                            log::warn!(
-                                "[sync] 解析 sync_profile.json 失败：{}，保留 default",
-                                e
-                            );
+                            log::warn!("[sync] 解析 sync_profile.json 失败：{}，保留 default", e);
                         }
                     }
                 }
@@ -326,10 +320,7 @@ impl SyncEngine {
                     log::warn!("[sync] sync_profile.json 为空，保留 default");
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[sync] 读取 sync_profile.json 失败：{}，保留 default",
-                        e
-                    );
+                    log::warn!("[sync] 读取 sync_profile.json 失败：{}，保留 default", e);
                 }
             }
         }
@@ -341,10 +332,7 @@ impl SyncEngine {
                 Ok(data) if !data.trim().is_empty() => {
                     match serde_json::from_str::<Vec<PendingConflict>>(&data) {
                         Ok(loaded) => {
-                            log::info!(
-                                "[sync] 已加载 {} 项未解决冲突（推迟功能）",
-                                loaded.len()
-                            );
+                            log::info!("[sync] 已加载 {} 项未解决冲突（推迟功能）", loaded.len());
                             *self.pending_conflicts.write() = loaded;
                         }
                         Err(e) => {
@@ -608,9 +596,7 @@ impl SyncEngine {
             local.last_sync_versions.clone()
         };
 
-        let request = PullRequest {
-            last_sync_versions,
-        };
+        let request = PullRequest { last_sync_versions };
         let response = client.pull(api_key, request).await?;
 
         // 解密并应用
@@ -714,9 +700,7 @@ impl SyncEngine {
         local
             .versions
             .iter()
-            .filter(|(key, &v)| {
-                v > local.last_sync_versions.get(*key).copied().unwrap_or(0)
-            })
+            .filter(|(key, &v)| v > local.last_sync_versions.get(*key).copied().unwrap_or(0))
             .count()
     }
 
@@ -849,9 +833,7 @@ impl SyncEngine {
             ConflictAction::UseCustom(value) => {
                 // apply custom value
                 let accessor = self.require_accessor()?;
-                accessor
-                    .apply_value(&conflict.key, Some(&value))
-                    .await?;
+                accessor.apply_value(&conflict.key, Some(&value)).await?;
 
                 // 越过否决的远程版 + 抬高 version，触发 push
                 {
@@ -886,7 +868,9 @@ impl SyncEngine {
 
                 // 执行 fork：把远程 theirs 写入新会话（本地原会话不动）
                 let accessor = self.require_accessor()?;
-                accessor.fork_conversation(conv_id, &forked_id, theirs_json).await?;
+                accessor
+                    .fork_conversation(conv_id, &forked_id, theirs_json)
+                    .await?;
 
                 // 原会话按 UseOurs 推进（越过否决的远程版，push 本地值）
                 {
@@ -1029,9 +1013,8 @@ impl SyncEngine {
         api_key: &str,
     ) -> Result<PushResponse, AppError> {
         let accessor = self.accessor.read().clone();
-        let accessor = accessor.ok_or_else(|| {
-            AppError::Config("SyncStoreAccessor 未注入，无法执行 push".into())
-        })?;
+        let accessor = accessor
+            .ok_or_else(|| AppError::Config("SyncStoreAccessor 未注入，无法执行 push".into()))?;
 
         // 第一步：在 guard 内收集 pending key + version，然后 drop guard
         // （guard 不是 Send，不能跨 await）
@@ -1040,9 +1023,7 @@ impl SyncEngine {
             local
                 .versions
                 .iter()
-                .filter(|(key, &v)| {
-                    v > local.last_sync_versions.get(*key).copied().unwrap_or(0)
-                })
+                .filter(|(key, &v)| v > local.last_sync_versions.get(*key).copied().unwrap_or(0))
                 .map(|(k, &v)| (k.clone(), v))
                 .collect()
         };
@@ -1130,9 +1111,8 @@ impl SyncEngine {
         progress: Option<&(dyn Fn(usize, usize) + Sync)>,
     ) -> Result<PullResponse, AppError> {
         let accessor = self.accessor.read().clone();
-        let accessor = accessor.ok_or_else(|| {
-            AppError::Config("SyncStoreAccessor 未注入，无法执行 pull".into())
-        })?;
+        let accessor = accessor
+            .ok_or_else(|| AppError::Config("SyncStoreAccessor 未注入，无法执行 pull".into()))?;
 
         // 构建 last_sync_versions
         let last_sync_versions = {
@@ -1140,9 +1120,7 @@ impl SyncEngine {
             local.last_sync_versions.clone()
         };
 
-        let request = PullRequest {
-            last_sync_versions,
-        };
+        let request = PullRequest { last_sync_versions };
         let response = client.pull(api_key, request).await?;
 
         // 解密 sync_key
@@ -1222,11 +1200,7 @@ impl SyncEngine {
                         item.key,
                         source
                     );
-                    let apply_value = if value.is_empty() {
-                        None
-                    } else {
-                        Some(value)
-                    };
+                    let apply_value = if value.is_empty() { None } else { Some(value) };
                     // 目标值与本地当前值相同：无需写盘（值没变），只推进版本表
                     if value_unchanged(ours_plaintext.as_deref(), apply_value.as_deref()) {
                         synced_keys.push((
@@ -1284,10 +1258,7 @@ impl SyncEngine {
             for op in apply_ops {
                 let current_version = self.local_versions.read().get_version(&op.key);
                 if current_version != op.version_at_merge {
-                    log::info!(
-                        "[sync] pull 跳过 key={}（版本已变，用户并发修改）",
-                        op.key
-                    );
+                    log::info!("[sync] pull 跳过 key={}（版本已变，用户并发修改）", op.key);
                     skipped += 1;
                     continue;
                 }

@@ -123,33 +123,12 @@ impl AgentManager {
     ) -> Result<AgentTaskHandle, AppError> {
         let task_id = spec.task_id.clone();
 
-        // ── 1. 注册任务 ──
-        self.state.agent_tasks.write().insert(
-            task_id.clone(),
-            AgentTask {
-                id: task_id.clone(),
-                session_id: spec.session_id.clone(),
-                conversation_id: spec.conversation_id.clone(),
-                prompt: spec.prompt.clone(),
-                mode: spec.mode.clone(),
-                status: AgentStatus::Planning,
-                has_plan: false,
-                created_at: chrono::Utc::now(),
-                parent_task_id: spec.role.parent_task_id().map(String::from),
-            },
-        );
-
-        // ── 2. 主任务：恢复最近一次 plan 挂到新 task ──
-        if spec.role == AgentRole::Main {
-            self.restore_latest_plan(&task_id, &spec.conversation_id);
-        }
-
-        // ── 3. 读取设置 ──
+        // ── 1. 读取设置 ──
         let (
             llm_config,
             agent_settings,
             experimental_settings,
-            enabled_skills,
+            mut enabled_skills,
             enabled_mcp_servers,
         ) = {
             let settings = self.state.settings.read().await;
@@ -176,6 +155,9 @@ impl AgentManager {
 
         let llm_config =
             llm_config.ok_or_else(|| AppError::Llm("尚未配置 LLM，请前往设置填写".into()))?;
+        if !crate::agent::tools::html_render_enabled(&experimental_settings) {
+            enabled_skills.retain(|skill| skill.id != "builtin.visualize");
+        }
         if llm_config.provider_type != ProviderType::OpenAI {
             return Err(AppError::Llm("当前仅支持 OpenAI 兼容 Provider".into()));
         }
@@ -218,6 +200,26 @@ impl AgentManager {
             matches!(spec.mode, AgentMode::Plan),
             &spec.prompt_extra,
         )?;
+
+        // 所有可能失败的组装步骤完成后再提交运行态。spawn 返回 Err 时，
+        // 不会留下前端拿不到 task_id、后端却永久视为 running 的幽灵任务。
+        self.state.agent_tasks.write().insert(
+            task_id.clone(),
+            AgentTask {
+                id: task_id.clone(),
+                session_id: spec.session_id.clone(),
+                conversation_id: spec.conversation_id.clone(),
+                prompt: spec.prompt.clone(),
+                mode: spec.mode.clone(),
+                status: AgentStatus::Planning,
+                has_plan: false,
+                created_at: chrono::Utc::now(),
+                parent_task_id: spec.role.parent_task_id().map(String::from),
+            },
+        );
+        if spec.role == AgentRole::Main {
+            self.restore_latest_plan(&task_id, &spec.conversation_id);
+        }
 
         // ── 6. spawn + 生命周期 ──
         let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -264,6 +266,7 @@ impl AgentManager {
                 }
             };
             finalize_task(&state_cleanup, &task_id_owned, &result);
+            prune_terminal_tasks(&state_cleanup, 200);
             result
         });
 
@@ -484,4 +487,36 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
         }
     }
     state.cancel_senders.write().remove(task_id);
+}
+
+fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
+    let mut tasks = state.agent_tasks.write();
+    let mut terminal: Vec<(String, chrono::DateTime<chrono::Utc>)> = tasks
+        .iter()
+        .filter(|(_, task)| {
+            matches!(
+                task.status,
+                AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Cancelled
+            )
+        })
+        .map(|(id, task)| (id.clone(), task.created_at))
+        .collect();
+    if terminal.len() <= max_terminal {
+        return;
+    }
+    terminal.sort_by_key(|(_, created_at)| *created_at);
+    let remove_count = terminal.len() - max_terminal;
+    let remove_ids: Vec<String> = terminal
+        .into_iter()
+        .take(remove_count)
+        .map(|(task_id, _)| task_id)
+        .collect();
+    for task_id in &remove_ids {
+        tasks.remove(task_id);
+    }
+    drop(tasks);
+    let mut plans = state.plans.write();
+    for task_id in &remove_ids {
+        plans.remove(task_id);
+    }
 }

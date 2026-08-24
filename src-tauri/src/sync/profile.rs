@@ -86,13 +86,18 @@ impl SyncKey {
             // 二级分类：解析 settings 子字段
             let sub = key.strip_prefix("settings.").unwrap_or("");
             match sub {
-                "terminalColors" | "fontSize" | "fontFamily" => Some(SyncCategory::TerminalSettings),
-                "llmConfig.baseUrl" | "llmConfig.model" | "llmConfig.vision"
-                | "llmConfig.maxRetries" | "llmConfig.retryDelaySecs"
-                | "llmConfig.retryHttpStatuses" | "llmConfig.firstByteTimeoutSecs"
-                | "llmConfig.retryOnTimeout" | "agentModeSettings.contextWindow" => {
-                    Some(SyncCategory::ModelService)
+                "terminalColors" | "fontSize" | "fontFamily" => {
+                    Some(SyncCategory::TerminalSettings)
                 }
+                "llmConfig.baseUrl"
+                | "llmConfig.model"
+                | "llmConfig.vision"
+                | "llmConfig.maxRetries"
+                | "llmConfig.retryDelaySecs"
+                | "llmConfig.retryHttpStatuses"
+                | "llmConfig.firstByteTimeoutSecs"
+                | "llmConfig.retryOnTimeout"
+                | "agentModeSettings.contextWindow" => Some(SyncCategory::ModelService),
                 "commandTimeoutSecs"
                 | "agentModeSettings.confirmEachCommand"
                 | "agentModeSettings.confirmEditFile"
@@ -133,8 +138,8 @@ impl SyncKey {
             return false;
         }
         if key.starts_with("settings.experimentalSettings") {
-            // 手机端放开 Agent 工具能力的 4 个字段（移动端设置 UI 可配置且
-            // 后端已支持 Api 搜索），其余实验性字段仍桌面专属
+            // 手机端仅放开本机具备且设置 UI 可配置的 Agent 工具字段；
+            // HTML 可视化为桌面专属，避免手机端默认值回写覆盖桌面配置。
             match key.as_str() {
                 "settings.experimentalSettings.enableWebSearch"
                 | "settings.experimentalSettings.enableHttpFetch"
@@ -377,9 +382,7 @@ impl SyncProfile {
             return false;
         }
         match key.category() {
-            Some(cat) => {
-                cat.is_available_on_platform(platform) && self.is_category_enabled(&cat)
-            }
+            Some(cat) => cat.is_available_on_platform(platform) && self.is_category_enabled(&cat),
             None => true,
         }
     }
@@ -495,6 +498,9 @@ mod tests {
         assert!(!key.is_available_on_platform(Platform::Mobile));
         let key = SyncKey::new("settings.experimentalSettings.httpFetchMode");
         assert!(!key.is_available_on_platform(Platform::Mobile));
+        let key = SyncKey::new("settings.experimentalSettings.enableHtmlRender");
+        assert!(!key.is_available_on_platform(Platform::Mobile));
+        assert!(key.is_available_on_platform(Platform::Desktop));
 
         let key = SyncKey::new("settings.folderUploadCompressionLevel");
         assert!(!key.is_available_on_platform(Platform::Mobile));
@@ -595,9 +601,9 @@ mod tests {
         profile.add_excluded_key("connections.abc");
 
         let keys = vec![
-            SyncKey::new("connections.abc"),     // 被排除
-            SyncKey::new("connections.def"),     // 正常
-            SyncKey::new("settings.fontSize"),   // 正常
+            SyncKey::new("connections.abc"),   // 被排除
+            SyncKey::new("connections.def"),   // 正常
+            SyncKey::new("settings.fontSize"), // 正常
         ];
 
         let filtered = profile.filter_keys(&keys, Platform::Desktop);
