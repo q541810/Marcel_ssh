@@ -518,7 +518,9 @@ export default function MobileAgentHost({
             {isRunning ? " · 运行中" : ""}
           </div>
         </div>
-        {runningTasks.length > 1 && (
+        {(runningTasks.length > 1 ||
+          (runningTasks.length === 1 &&
+            runningTasks[0].conversationId !== activeConversationId)) && (
           <button
             type="button"
             onClick={() => setActiveAgentsSheetOpen(true)}

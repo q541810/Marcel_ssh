@@ -770,8 +770,10 @@ export default function AgentPanel() {
           </div>
         </div>
 
-          {/* Running indicator capsule: Visible only when concurrent tasks > 1 */}
-          {runningTasks.length > 1 && (
+          {/* Running indicator capsule: Visible when concurrent tasks > 1 OR running task is in another conversation */}
+          {(runningTasks.length > 1 ||
+            (runningTasks.length === 1 &&
+              runningTasks[0].conversationId !== activeConversationId)) && (
             <button
               type="button"
               onClick={() => setTasksDrawerOpen(true)}
