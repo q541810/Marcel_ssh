@@ -20,6 +20,7 @@ import {
   useConversationStore,
   conversationHasRunningTask,
 } from "@/stores/conversationStore";
+import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { AGENT_MODES } from "@/lib/constants";
 import { isNearBottom } from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
@@ -157,11 +158,11 @@ export default function AgentPanel() {
     fetchConnections();
   }, [fetchConnections]);
 
-  // SSH tab 切换时，把 Agent 聊天同步到对应 connection 的对话
+  // SSH tab 切换时，把 Agent 聊天精准同步到对应 session 的对话
   useEffect(() => {
-    if (!activeConfigId) return;
-    void syncActiveToConnection(activeConfigId);
-  }, [activeConfigId, syncActiveToConnection]);
+    if (!activeConfigId || !activeSessionId) return;
+    void syncActiveToConnection(activeConfigId, activeSessionId);
+  }, [activeConfigId, activeSessionId, syncActiveToConnection]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize =
@@ -586,7 +587,10 @@ export default function AgentPanel() {
 
   const handleSelectConversation = async (conversationId: string) => {
     try {
-      await switchConversation(conversationId);
+      await sessionConversationBindingManager.selectOrJumpToConversation(
+        conversationId,
+        activeSessionId,
+      );
       setHistoryDrawerOpen(false);
     } catch (err) {
       console.error("Failed to switch conversation:", err);

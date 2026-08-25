@@ -171,9 +171,10 @@ export default function TabBar() {
                   onClick={(e) => {
                     e.stopPropagation();
                     const configId = session.configId;
-                    disconnect(session.id).then(() => {
+                    const sid = session.id;
+                    disconnect(sid).then(() => {
                       if (configId) {
-                        onDisconnected(configId);
+                        onDisconnected(configId, sid);
                       }
                     });
                   }}

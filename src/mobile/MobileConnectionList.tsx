@@ -124,7 +124,7 @@ export default function MobileConnectionList({
       } catch {
         /* best-effort; continue so new connect can proceed */
       }
-      if (configId) onDisconnected(configId);
+      if (configId) onDisconnected(configId, id);
     }
   };
 

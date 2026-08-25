@@ -1,4 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({
+  terminalInstanceManager: {
+    prepareReconnect: vi.fn(),
+    onReconnected: vi.fn(),
+    showDisconnectBanner: vi.fn(),
+    setStdinEnabled: vi.fn(),
+  },
+}));
+
+vi.mock('@/stores/sftpTransferManager', () => ({
+  attachTransferListeners: vi.fn(),
+  detachTransferListeners: vi.fn(),
+}));
+
 import {
   resolveBootstrapMode,
   runMobileBootstrap,

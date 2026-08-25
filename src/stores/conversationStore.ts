@@ -20,14 +20,18 @@ export interface ConversationState {
   conversations: Record<string, AgentConversation>;
   messages: Record<string, AgentMessage[]>;
   activeConversationId: string | null;
-  /** 每个 connection 上次选中的对话，切 SSH 会话时恢复 */
+  /** 每个 connection 上次选中的对话，兼容跨机器恢复 */
   activeConversationByConnection: Record<string, string>;
+  /** 每个 SSH session 独占绑定的活跃对话，切 SSH Tab 时精准恢复 */
+  activeConversationBySession: Record<string, string>;
 
   addMessage: (message: AgentMessage) => void;
   clearMessages: () => void;
   newConversation: (sessionId: string, connectionId: string) => Promise<string>;
-  switchConversation: (conversationId: string) => Promise<void>;
-  loadConversation: (conversationId: string) => Promise<void>;
+  switchConversation: (conversationId: string, sessionId?: string) => Promise<void>;
+  loadConversation: (conversationId: string, sessionId?: string) => Promise<void>;
+  bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => void;
+  unbindSessionConversation: (sessionId: string) => void;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   rollbackToMessage: (
@@ -36,8 +40,10 @@ export interface ConversationState {
   ) => Promise<{ prompt: string; removedCount: number; imagePaths: string[] }>;
   clearConnectionConversations: (connectionId: string) => void;
   loadConnectionConversations: (connectionId: string) => Promise<void>;
-  /** 将 UI 上的 active 对话切换到指定 connection（SSH tab 切换时调用） */
-  syncActiveToConnection: (connectionId: string) => Promise<void>;
+  /** 将 UI 上的 active 对话切换到指定 SSH session / connection */
+  syncActiveToSession: (sessionId: string, connectionId: string) => Promise<void>;
+  /** 将 UI 上的 active 对话切换到指定 connection（保留向后兼容） */
+  syncActiveToConnection: (connectionId: string, sessionId?: string) => Promise<void>;
   getCurrentMessages: () => AgentMessage[];
 
   ensureConversation: (sessionId: string, connectionId: string, fallbackTitle: string) => Promise<string>;
@@ -262,6 +268,30 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   messages: {},
   activeConversationId: null,
   activeConversationByConnection: {},
+  activeConversationBySession: {},
+
+  bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => {
+    set((state) => {
+      const bySession = { ...state.activeConversationBySession, [sessionId]: conversationId };
+      const connId = connectionId || state.conversations[conversationId]?.connectionId;
+      const byConn = connId
+        ? rememberActiveForConnection(state.activeConversationByConnection, connId, conversationId)
+        : state.activeConversationByConnection;
+      return {
+        activeConversationBySession: bySession,
+        activeConversationByConnection: byConn,
+      };
+    });
+  },
+
+  unbindSessionConversation: (sessionId: string) => {
+    set((state) => {
+      if (!state.activeConversationBySession[sessionId]) return state;
+      const bySession = { ...state.activeConversationBySession };
+      delete bySession[sessionId];
+      return { activeConversationBySession: bySession };
+    });
+  },
 
   addMessage: (message: AgentMessage) => {
     const convId = get().activeConversationId;
@@ -298,6 +328,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       },
       messages: { ...state.messages, [id]: [] },
       activeConversationId: id,
+      activeConversationBySession: {
+        ...state.activeConversationBySession,
+        [sessionId]: id,
+      },
       activeConversationByConnection: rememberActiveForConnection(
         state.activeConversationByConnection,
         connectionId,
@@ -309,7 +343,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return id;
   },
 
-  switchConversation: async (conversationId: string) => {
+  switchConversation: async (conversationId: string, sessionId?: string) => {
     // map 缺失时（如重启后从 task 卡片跳转子对话）补拉元数据，
     // 保证输入区能识别子对话并渲染"返回主对话"条。
     const known = get().conversations[conversationId];
@@ -326,10 +360,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
+      const bySession = sessionId
+        ? { ...state.activeConversationBySession, [sessionId]: conversationId }
+        : state.activeConversationBySession;
       return {
         conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
         activeConversationId: conversationId,
+        activeConversationBySession: bySession,
         activeConversationByConnection: connectionId
           ? rememberActiveForConnection(state.activeConversationByConnection, connectionId, conversationId)
           : state.activeConversationByConnection,
@@ -344,7 +382,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     useTaskStore.getState().clearConversationUnreadCompleted(conversationId);
   },
 
-  loadConversation: async (conversationId: string) => {
+  loadConversation: async (conversationId: string, sessionId?: string) => {
     const known = get().conversations[conversationId];
     const running = conversationHasRunningTask(conversationId);
     const [stored, storedPlans, meta] = await Promise.all([
@@ -357,10 +395,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
+      const bySession = sessionId
+        ? { ...state.activeConversationBySession, [sessionId]: conversationId }
+        : state.activeConversationBySession;
       return {
         conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
         activeConversationId: conversationId,
+        activeConversationBySession: bySession,
         activeConversationByConnection: connectionId
           ? rememberActiveForConnection(state.activeConversationByConnection, connectionId, conversationId)
           : state.activeConversationByConnection,
@@ -405,6 +447,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const conversations = { ...state.conversations };
       const messages = { ...state.messages };
       const byConnection = { ...state.activeConversationByConnection };
+      const bySession = { ...state.activeConversationBySession };
+
+      for (const [sid, cid] of Object.entries(bySession)) {
+        if (ids.includes(cid)) {
+          delete bySession[sid];
+        }
+      }
+
       for (const id of ids) {
         const removed = conversations[id];
         delete conversations[id];
@@ -427,6 +477,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         conversations,
         messages,
         activeConversationId: nextActive,
+        activeConversationBySession: bySession,
         activeConversationByConnection: byConnection,
       };
     });
@@ -581,7 +632,107 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  syncActiveToConnection: async (connectionId: string) => {
+  syncActiveToSession: async (sessionId: string, connectionId: string) => {
+    const myGeneration = ++syncActiveGeneration;
+    const stillTarget = () => syncActiveGeneration === myGeneration;
+
+    const restoreActiveTaskForConversation = (conversationId: string) => {
+      if (!stillTarget()) return;
+      restoreRunningTaskForConversation(conversationId);
+    };
+
+    const applyActive = (conversationId: string, msgs?: AgentMessage[]) => {
+      if (!stillTarget()) return false;
+      set((s) => ({
+        ...(msgs
+          ? { messages: { ...s.messages, [conversationId]: msgs } }
+          : {}),
+        activeConversationId: conversationId,
+        activeConversationBySession: {
+          ...s.activeConversationBySession,
+          [sessionId]: conversationId,
+        },
+        activeConversationByConnection: rememberActiveForConnection(
+          s.activeConversationByConnection,
+          connectionId,
+          conversationId,
+        ),
+      }));
+      return stillTarget();
+    };
+
+    const state = get();
+    const boundConvId = state.activeConversationBySession[sessionId];
+
+    if (boundConvId && state.conversations[boundConvId]) {
+      // 本 session 已有绑定的对话
+      if (state.activeConversationId === boundConvId) {
+        restoreActiveTaskForConversation(boundConvId);
+        return;
+      }
+      const cached = state.messages[boundConvId];
+      if (cached?.length) {
+        if (!applyActive(boundConvId)) return;
+        restoreActiveTaskForConversation(boundConvId);
+        return;
+      }
+      const [stored, storedPlans] = await Promise.all([
+        tauri.agentLoadConversation(boundConvId),
+        tauri.agentLoadPlansByConversation(boundConvId),
+      ]);
+      if (!stillTarget()) return;
+      const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
+      if (!applyActive(boundConvId, msgs)) return;
+      useTaskStore.getState().loadPersistedPlans(boundConvId, storedPlans);
+      restoreActiveTaskForConversation(boundConvId);
+      return;
+    }
+
+    // 若无明确 session 绑定，加载 connection 对话并回退到未被占用的 preferred 或新建
+    await get().loadConnectionConversations(connectionId);
+    if (!stillTarget()) return;
+
+    const afterLoad = get();
+    const preferred = pickPreferredConversationId(
+      afterLoad.conversations,
+      connectionId,
+      afterLoad.activeConversationByConnection[connectionId],
+    );
+
+    if (!preferred) {
+      if (afterLoad.activeConversationId && stillTarget()) {
+        const stillOther =
+          afterLoad.conversations[afterLoad.activeConversationId]?.connectionId !== connectionId;
+        if (stillOther) {
+          set({ activeConversationId: null });
+          useTaskStore.getState().clearActiveTask();
+        }
+      }
+      return;
+    }
+
+    const cached = afterLoad.messages[preferred];
+    if (cached?.length) {
+      if (!applyActive(preferred)) return;
+      restoreActiveTaskForConversation(preferred);
+      return;
+    }
+
+    const [stored, storedPlans] = await Promise.all([
+      tauri.agentLoadConversation(preferred),
+      tauri.agentLoadPlansByConversation(preferred),
+    ]);
+    if (!stillTarget()) return;
+    const msgs: AgentMessage[] = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
+    if (!applyActive(preferred, msgs)) return;
+    useTaskStore.getState().loadPersistedPlans(preferred, storedPlans);
+    restoreActiveTaskForConversation(preferred);
+  },
+
+  syncActiveToConnection: async (connectionId: string, sessionId?: string) => {
+    if (sessionId) {
+      return get().syncActiveToSession(sessionId, connectionId);
+    }
     const myGeneration = ++syncActiveGeneration;
     const stillTarget = () => syncActiveGeneration === myGeneration;
 
@@ -682,19 +833,26 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     let conversationId: string;
 
     if (!activeMatches) {
-      // 优先复用本 connection 已有对话（记忆 / 最近），避免跨主机写错历史
-      const preferred = connectionId
-        ? pickPreferredConversationId(
-            conversations,
-            connectionId,
-            get().activeConversationByConnection[connectionId],
-          )
-        : null;
+      // 优先检查本 session 已有记忆
+      const boundId = get().activeConversationBySession[sessionId];
+      const preferred = (boundId && conversations[boundId] && !conversations[boundId].parentConversationId)
+        ? boundId
+        : (connectionId
+            ? pickPreferredConversationId(
+                conversations,
+                connectionId,
+                get().activeConversationByConnection[connectionId],
+              )
+            : null);
 
       if (preferred) {
         conversationId = preferred;
         set((state) => ({
           activeConversationId: preferred,
+          activeConversationBySession: {
+            ...state.activeConversationBySession,
+            [sessionId]: preferred,
+          },
           activeConversationByConnection: connectionId
             ? rememberActiveForConnection(state.activeConversationByConnection, connectionId, preferred)
             : state.activeConversationByConnection,
@@ -726,6 +884,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           }),
           messages: { ...state.messages, [newId]: [] },
           activeConversationId: newId,
+          activeConversationBySession: {
+            ...state.activeConversationBySession,
+            [sessionId]: newId,
+          },
           activeConversationByConnection: connectionId
             ? rememberActiveForConnection(state.activeConversationByConnection, connectionId, newId)
             : state.activeConversationByConnection,
@@ -733,6 +895,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       }
     } else {
       conversationId = activeConversationId!;
+      set((state) => ({
+        activeConversationBySession: {
+          ...state.activeConversationBySession,
+          [sessionId]: conversationId,
+        },
+      }));
       const conv = get().conversations[conversationId];
       if (conv && conv.title === '新会话') {
         const newTitle = fallbackTitle.slice(0, 30);

@@ -495,7 +495,7 @@ export default function MobileTerminalHost({
     (sessionId: string) => {
       const configId = useSessionStore.getState().sessions[sessionId]?.configId;
       void disconnect(sessionId).then(() => {
-        if (configId) onDisconnected(configId);
+        if (configId) onDisconnected(configId, sessionId);
       });
       setForceList(false);
     },

@@ -13,6 +13,7 @@ import {
   useConversationStore,
   conversationHasRunningTask,
 } from "@/stores/conversationStore";
+import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
 import { AGENT_MODES } from "@/lib/constants";
 import type { AgentMessage, AgentMode, QuestionAnswer } from "@/lib/types";
@@ -184,9 +185,9 @@ export default function MobileAgentHost({
   );
 
   useEffect(() => {
-    if (!ids?.configId) return;
-    void syncActiveToConnection(ids.configId);
-  }, [ids?.configId, syncActiveToConnection]);
+    if (!ids?.configId || !ids?.sessionId) return;
+    void syncActiveToConnection(ids.configId, ids.sessionId);
+  }, [ids?.configId, ids?.sessionId, syncActiveToConnection]);
 
   const lastMessage = messages[messages.length - 1];
   const lastMessageSize =
@@ -347,13 +348,16 @@ export default function MobileAgentHost({
   const handleSelectConversation = useCallback(
     async (conversationId: string) => {
       try {
-        await switchConversation(conversationId);
+        await sessionConversationBindingManager.selectOrJumpToConversation(
+          conversationId,
+          ids?.sessionId ?? null,
+        );
         setHistoryOpen(false);
       } catch (err) {
         console.error("Failed to switch conversation:", err);
       }
     },
-    [switchConversation],
+    [ids?.sessionId],
   );
 
   const handleDeleteConversation = useCallback(async () => {

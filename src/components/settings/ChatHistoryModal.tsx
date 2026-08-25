@@ -35,6 +35,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
   const unreadCompletedConversations = useTaskStore(
     (s) => s.unreadCompletedConversations,
   );
+
   const handleRenameInModal = async (e: React.MouseEvent, convId: string, oldTitle: string) => {
     e.stopPropagation();
     const newTitle = window.prompt('请输入新的会话名称', oldTitle);

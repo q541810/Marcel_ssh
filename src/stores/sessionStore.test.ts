@@ -1,4 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({
+  terminalInstanceManager: {
+    prepareReconnect: vi.fn(),
+    onReconnected: vi.fn(),
+    showDisconnectBanner: vi.fn(),
+    setStdinEnabled: vi.fn(),
+  },
+}));
+
 import { useSessionStore } from '@/stores/sessionStore';
 import type { ConnectionConfig } from '@/lib/types';
 

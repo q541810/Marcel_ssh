@@ -32,6 +32,7 @@ export function useAgent() {
     rollbackToMessage: s.rollbackToMessage,
     loadConnectionConversations: s.loadConnectionConversations,
     syncActiveToConnection: s.syncActiveToConnection,
+    syncActiveToSession: s.syncActiveToSession,
   }));
 
   const activeTask = store.activeTaskId ? (store.tasks[store.activeTaskId] ?? null) : null;
@@ -165,10 +166,17 @@ export function useAgent() {
   );
 
   const syncActiveToConnection = useCallback(
-    async (connectionId: string) => {
-      return store.syncActiveToConnection(connectionId);
+    async (connectionId: string, sessionId?: string) => {
+      return store.syncActiveToConnection(connectionId, sessionId);
     },
     [store.syncActiveToConnection],
+  );
+
+  const syncActiveToSession = useCallback(
+    async (sessionId: string, connectionId: string) => {
+      return store.syncActiveToSession(sessionId, connectionId);
+    },
+    [store.syncActiveToSession],
   );
 
   return {
@@ -197,5 +205,6 @@ export function useAgent() {
     rollbackToMessage,
     loadConnectionConversations,
     syncActiveToConnection,
+    syncActiveToSession,
   };
 }
