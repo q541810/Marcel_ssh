@@ -24,7 +24,7 @@ use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
-    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
+    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent::TaskTool, ToolRegistry,
 };
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
@@ -171,6 +171,7 @@ impl AgentManager {
         let plugin_registry_guard = self.state.plugin_registry.read().await;
         let registry = self
             .build_registry(
+                &spec.role,
                 &spec.mode,
                 &enabled_skills,
                 &enabled_mcp_servers,
@@ -277,6 +278,7 @@ impl AgentManager {
     /// 按模式派生工具集（含插件/MCP 注册）。
     async fn build_registry(
         &self,
+        role: &AgentRole,
         mode: &AgentMode,
         enabled_skills: &[crate::skills::store::Skill],
         enabled_mcp_servers: &[McpServerConfig],
@@ -284,7 +286,8 @@ impl AgentManager {
         plugin_registry: &PluginRegistry,
     ) -> Arc<ToolRegistry> {
         match mode {
-            AgentMode::Plan => Arc::new(ToolRegistry::build_for_plan_mode(
+            AgentMode::Plan => Arc::new(build_plan_registry(
+                role,
                 enabled_skills,
                 experimental_settings,
             )),
@@ -364,6 +367,26 @@ impl AgentManager {
 }
 
 // ── 私有组装辅助 ──
+
+/// 按角色构建 Plan 模式工具集。
+///
+/// 顶层 Plan agent（`AgentRole::Main`）额外注册 `task` 子agent 工具，
+/// 以便派发只读调研子agent；子agent（`AgentRole::Sub`）是 Plan 只读模式，
+/// 不注册 `task`，从而保证「子agent 没有子agent」。运行时 `parent_task_id`
+/// 二次防御（`tools/subagent.rs`）仍保留作纵深防御。
+///
+/// 抽成自由函数便于单测，避免为 `build_registry` 私有方法构造整个 `AppState`。
+fn build_plan_registry(
+    role: &AgentRole,
+    enabled_skills: &[crate::skills::store::Skill],
+    experimental_settings: &ExperimentalSettings,
+) -> ToolRegistry {
+    let mut registry = ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
+    if !role.is_subtask() {
+        registry.register(Arc::new(TaskTool));
+    }
+    registry
+}
 
 fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<ToolDefinition> {
     match mode {
@@ -518,5 +541,46 @@ fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
     let mut plans = state.plans.write();
     for task_id in &remove_ids {
         plans.remove(task_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::settings::ExperimentalSettings;
+
+    fn exp() -> ExperimentalSettings {
+        ExperimentalSettings::default()
+    }
+
+    #[test]
+    fn plan_main_agent_gets_task_tool() {
+        let registry = build_plan_registry(&AgentRole::Main, &[], &exp());
+        assert!(
+            registry.get("task").is_some(),
+            "顶层 Plan agent 应注册 task 子agent 工具"
+        );
+    }
+
+    #[test]
+    fn plan_sub_agent_does_not_get_task_tool() {
+        let registry = build_plan_registry(&AgentRole::Sub {
+            parent_task_id: "parent-1".to_string(),
+        }, &[], &exp());
+        assert!(
+            registry.get("task").is_none(),
+            "子agent（Plan 只读）不应注册 task 工具，保证子agent 不派发子agent"
+        );
+    }
+
+    #[test]
+    fn plan_registry_keeps_read_only_tools() {
+        let registry = build_plan_registry(&AgentRole::Main, &[], &exp());
+        assert!(registry.get("read_file").is_some());
+        assert!(registry.get("search_files").is_some());
+        assert!(registry.get("execute_command").is_some());
+        // Plan 模式仍不含写/改工具
+        assert!(registry.get("write_file").is_none());
+        assert!(registry.get("edit_file").is_none());
     }
 }
