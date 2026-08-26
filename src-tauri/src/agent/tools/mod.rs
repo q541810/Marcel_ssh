@@ -631,10 +631,6 @@ impl ToolRegistry {
         r.register(Arc::new(plan::EditPlanTool::new()));
         r.register(Arc::new(question::QuestionTool::new(false)));
         r.register(Arc::new(subagent::TaskTool));
-        register_html_render(
-            &mut r,
-            &crate::config::settings::ExperimentalSettings::default(),
-        );
         r
     }
 
@@ -642,6 +638,10 @@ impl ToolRegistry {
         let mut r = Self::with_core_tools();
         r.register(Arc::new(web_search::WebSearchTool::new()));
         r.register(Arc::new(http_get::HttpGetTool::new()));
+        register_html_render(
+            &mut r,
+            &crate::config::settings::ExperimentalSettings::default(),
+        );
         r
     }
 }
@@ -716,6 +716,7 @@ mod tests {
         assert!(!names.iter().any(|n| n == "web_search"));
         assert!(!names.iter().any(|n| n == "http_get"));
         assert!(!names.iter().any(|n| n == "open_cloud_page"));
+        assert!(!names.iter().any(|n| n == "render_html"));
 
         let r = ToolRegistry::build_mut_for_mode(&[], &disabled);
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
@@ -723,6 +724,7 @@ mod tests {
         assert!(!names.iter().any(|n| n == "web_search"));
         assert!(!names.iter().any(|n| n == "http_get"));
         assert!(!names.iter().any(|n| n == "open_cloud_page"));
+        assert!(!names.iter().any(|n| n == "render_html"));
 
         let enabled = crate::config::settings::ExperimentalSettings {
             enable_web_search: true,
@@ -741,6 +743,7 @@ mod tests {
         assert!(names.iter().any(|n| n == "web_search"));
         assert!(names.iter().any(|n| n == "http_get"));
         assert!(names.iter().any(|n| n == "open_cloud_page"));
+        assert!(names.iter().any(|n| n == "render_html"));
     }
 
     #[test]
