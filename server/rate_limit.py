@@ -183,10 +183,15 @@ def get_client_ip(request: Any) -> str:
 
     xff = headers.get("x-forwarded-for")
     if xff:
-        # 最左 = 原始客户端（在「只信本机反代」前提下由 Nginx 写入）
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
+        # 从右往左取第一个不在 trusted_ips 内的 IP 作为真实客户端 IP
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        for ip in reversed(parts):
+            ip_n = _normalize_ip(ip)
+            if ip_n not in trusted and ip not in trusted:
+                return ip
+        # 全链均在 trusted_ips（极少见），回退最左端
+        if parts:
+            return parts[0]
 
     return peer
 
