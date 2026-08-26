@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import type { ToolCallInfo } from '@/lib/types';
 import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import Badge from '@/components/ui/Badge';
@@ -33,10 +33,20 @@ export default function ApprovalDialog({
   queueLength = 1,
   onMinimize,
 }: Props) {
+  // 队首切换按键冷却（300ms）：防止连击 Enter 误批下一条刚切换的高危操作
+  const mountedAtRef = useRef<number>(Date.now());
+  useEffect(() => {
+    mountedAtRef.current = Date.now();
+  }, [toolCall.id]);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (!open) return;
       if (e.key === 'Enter') {
+        if (Date.now() - mountedAtRef.current < 300) {
+          e.preventDefault();
+          return;
+        }
         e.preventDefault();
         onApprove();
       } else if (e.key === 'Escape') {
