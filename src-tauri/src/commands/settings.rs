@@ -91,22 +91,25 @@ pub async fn config_save_settings(
         }
     }
 
-    let mut snapshot = settings;
-    {
-        let current = state.settings.read().await;
-        // Preserve the in-memory API key when the frontend sends an empty or masked value.
-        if let Some(ref mut new_llm) = snapshot.llm_config {
-            if new_llm.api_key.is_empty() || is_masked_key(&new_llm.api_key) {
-                if let Some(ref old_llm) = current.llm_config {
-                    new_llm.api_key = old_llm.api_key.clone();
-                }
+    // 先取写锁保护整个 candidate 构造、落盘与提交过程，防止并发保存分叉与丢失更新
+    let mut store = state.settings.write().await;
+    let mut candidate = settings;
+
+    // Preserve the in-memory API key when the frontend sends an empty or masked value.
+    if let Some(ref mut new_llm) = candidate.llm_config {
+        if new_llm.api_key.is_empty() || is_masked_key(&new_llm.api_key) {
+            if let Some(ref old_llm) = store.llm_config {
+                new_llm.api_key = old_llm.api_key.clone();
             }
         }
     }
+
     // 先持久化候选快照，成功后才提交内存；写盘失败保持旧状态。
     let path = AppSettings::default_file(&state.config_dir);
-    tokio::task::block_in_place(|| snapshot.save_to_path(&path))?;
-    *state.settings.write().await = snapshot.clone();
+    tokio::task::block_in_place(|| candidate.save_to_path(&path))?;
+    *store = candidate.clone();
+    let snapshot = candidate;
+    drop(store);
 
     // 触发跨设备同步：settings 字段级 diff，对变更字段逐个 record_local_change
     if let Some(ref scheduler) = state.sync_scheduler {
