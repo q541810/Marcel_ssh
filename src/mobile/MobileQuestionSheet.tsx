@@ -1,6 +1,7 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import type { QuestionItem, QuestionAnswer } from '@/lib/types';
+import { registerBackHandler } from './backHandler';
 
 interface MobileQuestionSheetProps {
   questionId: string;
@@ -32,6 +33,13 @@ export default function MobileQuestionSheet({
   queueLength = 1,
   onMinimize,
 }: MobileQuestionSheetProps) {
+  // 注册 Android 侧滑返回：按下返回键时最小化为浮动胶囊，防止误退会话或关闭应用
+  useEffect(() => {
+    return registerBackHandler(() => {
+      onMinimize?.();
+    });
+  }, [onMinimize]);
+
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
     questions.map(() => ({ selected: [], custom: '' })),
@@ -85,7 +93,10 @@ export default function MobileQuestionSheet({
     <div
       className="mobile-panel-enter flex-shrink-0 border-t border-indigo-700/40 bg-zinc-900"
       data-region="mobile-question"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+      style={{
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        marginBottom: 'var(--ime-bottom, 0px)',
+      }}
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 pb-1 pt-3">
