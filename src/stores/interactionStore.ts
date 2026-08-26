@@ -19,13 +19,20 @@ export const useInteractionStore = create<InteractionState>((set, get) => ({
     const prev = get().currentInteraction;
     set({ currentInteraction: interaction });
 
-    // 联动 taskStore 状态指示器：点亮/恢复 waiting_approval
+    const taskStore = useTaskStore.getState();
+
+    // 联动 taskStore 状态指示器：
     if (interaction?.taskId) {
-      useTaskStore.getState().updateTaskStatus(interaction.taskId, 'waiting_approval');
-    } else if (prev?.taskId) {
-      const prevTask = useTaskStore.getState().tasks[prev.taskId];
-      if (prevTask && prevTask.status === 'waiting_approval') {
-        useTaskStore.getState().updateTaskStatus(prev.taskId, 'executing');
+      // 1. 点亮当前活动交互所属 task 为 waiting_approval
+      taskStore.updateTaskStatus(interaction.taskId, 'waiting_approval');
+    }
+
+    // 2. 当没有活动交互或交互切换时：若内存中仍有其他 task 残留 waiting_approval，
+    // 但此时并没有对应的活动交互在等待它，将其恢复为 executing（避免孤儿橙点）
+    const activeTaskId = interaction?.taskId;
+    for (const [id, task] of Object.entries(taskStore.tasks)) {
+      if (task.status === 'waiting_approval' && id !== activeTaskId) {
+        taskStore.updateTaskStatus(id, 'executing');
       }
     }
   },

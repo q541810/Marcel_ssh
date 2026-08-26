@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useInteractionStore } from './interactionStore';
+import { useTaskStore } from '@/stores/taskStore';
 import * as tauri from '@/lib/tauri';
 import type { ActiveInteractionPayload } from '@/lib/types';
 
@@ -39,6 +40,26 @@ describe('interactionStore', () => {
 
     useInteractionStore.getState().setCurrentInteraction(null);
     expect(useInteractionStore.getState().currentInteraction).toBeNull();
+  });
+
+  it('heals orphan waiting_approval tasks when current interaction clears', () => {
+    useTaskStore.setState({
+      tasks: {
+        'task-orphan': {
+          id: 'task-orphan',
+          sessionId: 's1',
+          conversationId: 'c1',
+          prompt: '',
+          mode: 'agent',
+          status: 'waiting_approval',
+          createdAt: '',
+        },
+      },
+    });
+
+    // setCurrentInteraction(null) triggers healing of non-matching waiting_approval tasks
+    useInteractionStore.getState().setCurrentInteraction(null);
+    expect(useTaskStore.getState().tasks['task-orphan'].status).toBe('executing');
   });
 
   it('delegates approve to tauri.agentApproveOperation', async () => {
