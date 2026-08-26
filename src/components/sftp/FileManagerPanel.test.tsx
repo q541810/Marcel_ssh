@@ -2,6 +2,15 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { useTransferStore } from '@/stores/transferStore';
 
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({
+  terminalInstanceManager: {
+    showDisconnectBanner: vi.fn(),
+    onReconnected: vi.fn(),
+    setStdinEnabled: vi.fn(),
+    dispose: vi.fn(),
+  },
+}));
+
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
   save: vi.fn(),
