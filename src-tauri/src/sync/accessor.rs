@@ -371,12 +371,24 @@ impl SyncStoreAccessor {
                         Some(id) => id,
                         None => return false,
                     };
+                    let is_builtin = crate::skills::builtin::is_builtin_skill_id(id);
                     match value {
                         Some(json) => {
                             match serde_json::from_str::<crate::skills::store::Skill>(json) {
                                 Ok(skill) => {
-                                    s.delete(id);
-                                    s.add(skill);
+                                    if is_builtin {
+                                        // 内置 skill：内容以本机版本为准，仅同步 enabled 状态
+                                        match s.skills.iter_mut().find(|existing| existing.id == id) {
+                                            Some(existing) => {
+                                                existing.enabled = skill.enabled;
+                                                existing.updated_at = skill.updated_at;
+                                            }
+                                            None => s.add(skill),
+                                        }
+                                    } else {
+                                        s.delete(id);
+                                        s.add(skill);
+                                    }
                                     true
                                 }
                                 Err(e) => {
@@ -386,8 +398,13 @@ impl SyncStoreAccessor {
                             }
                         }
                         None => {
-                            s.delete(id);
-                            true
+                            if is_builtin {
+                                // 内置 skill 不可被远端删除指令删除
+                                true
+                            } else {
+                                s.delete(id);
+                                true
+                            }
                         }
                     }
                 },
