@@ -1,5 +1,6 @@
 import type { AgentTask } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
+import { useConversationStore } from '@/stores/conversationStore';
 
 /**
  * 计算单个 Agent Task 的视觉状态
@@ -12,15 +13,24 @@ export function getTaskVisualStatus(task?: AgentTask | null): AgentVisualStatus 
 }
 
 /**
- * 计算指定对话（Conversation）的综合 Agent 状态
+ * 计算指定对话（Conversation）的综合 Agent 状态（含其挂载的所有子对话/子Agent任务）
  */
 export function getConversationAgentStatus(
   conversationId: string,
   tasks: Record<string, AgentTask>,
   unreadCompletedConvIds: string[] = [],
 ): AgentVisualStatus {
+  // 查找属于该主对话的所有子对话 ID（以及主对话本身）
+  const allConversations = useConversationStore.getState().conversations;
+  const targetConvIds = new Set<string>([conversationId]);
+  for (const conv of Object.values(allConversations)) {
+    if (conv.parentConversationId === conversationId) {
+      targetConvIds.add(conv.id);
+    }
+  }
+
   const convTasks = Object.values(tasks).filter(
-    (t) => t.conversationId === conversationId && !!t.sessionId,
+    (t) => targetConvIds.has(t.conversationId) && !!t.sessionId,
   );
 
   // 1. 如果有等待审批的任务，优先级最高（需要人工介入）
@@ -33,8 +43,8 @@ export function getConversationAgentStatus(
     return 'running';
   }
 
-  // 3. 如果在该对话标记为未读完成列表中
-  if (unreadCompletedConvIds.includes(conversationId)) {
+  // 3. 如果在该对话（或其子对话）标记为未读完成列表中
+  if (unreadCompletedConvIds.some((id) => targetConvIds.has(id))) {
     return 'unread_completed';
   }
 

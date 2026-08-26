@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { AgentTask } from '@/lib/types';
+import { useConversationStore } from '@/stores/conversationStore';
 import {
   getTaskVisualStatus,
   getConversationAgentStatus,
@@ -59,6 +60,21 @@ describe('agentStatusSelectors', () => {
       };
       expect(getConversationAgentStatus('conv-1', tasks, ['conv-1'])).toBe('unread_completed');
       expect(getConversationAgentStatus('conv-2', tasks, ['conv-1'])).toBe('idle');
+    });
+
+    it('cascades subagent task status to parent conversation status', () => {
+      useConversationStore.setState({
+        conversations: {
+          'main-conv': { id: 'main-conv', connectionId: 'c1', title: 'Main', createdAt: '', updatedAt: '' },
+          'sub-conv': { id: 'sub-conv', connectionId: 'c1', title: 'Sub', createdAt: '', updatedAt: '', parentConversationId: 'main-conv' },
+        },
+      });
+
+      const tasks: Record<string, AgentTask> = {
+        'sub-task-1': mockTask({ id: 'sub-task-1', conversationId: 'sub-conv', status: 'waiting_approval' }),
+      };
+
+      expect(getConversationAgentStatus('main-conv', tasks)).toBe('waiting_approval');
     });
   });
 
