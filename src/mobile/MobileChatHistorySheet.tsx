@@ -13,11 +13,13 @@ import {
 } from '@/stores/messageConversion';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useTaskStore } from '@/stores/taskStore';
+import { useConversationStore } from '@/stores/conversationStore';
 import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
 import { groupConversationsByDate } from '@/lib/dateGrouping';
+import { getErrorMessage } from '@/lib/errors';
 import { Pencil } from 'lucide-react';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import MobileSheet from './ui/MobileSheet';
@@ -77,7 +79,7 @@ export default function MobileChatHistorySheet({
     const trimmed = renameInput.trim();
     if (trimmed && trimmed !== renameConvTarget.title) {
       try {
-        await tauri.agentRenameConversation(renameConvTarget.id, trimmed);
+        await useConversationStore.getState().renameConversation(renameConvTarget.id, trimmed);
         const now = new Date().toISOString();
         setConversationsByConn((prev) => {
           const next = { ...prev };
@@ -95,7 +97,7 @@ export default function MobileChatHistorySheet({
           setSelectedConv((prev) => (prev ? { ...prev, title: trimmed, updatedAt: now } : null));
         }
       } catch (err) {
-        console.error('Failed to rename conversation:', err);
+        console.error('Failed to rename conversation:', getErrorMessage(err));
       }
     }
     setRenameConvTarget(null);

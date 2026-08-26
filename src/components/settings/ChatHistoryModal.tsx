@@ -14,8 +14,10 @@ import { formatNameWithAddress } from '@/lib/privacy';
 import { groupConversationsByDate } from '@/lib/dateGrouping';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import { useTaskStore } from '@/stores/taskStore';
+import { useConversationStore } from '@/stores/conversationStore';
 import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
+import { getErrorMessage } from '@/lib/errors';
 
 interface Props {
   open: boolean;
@@ -41,7 +43,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
     const newTitle = window.prompt('请输入新的会话名称', oldTitle);
     if (!newTitle || !newTitle.trim() || newTitle.trim() === oldTitle) return;
     try {
-      await tauri.agentRenameConversation(convId, newTitle.trim());
+      await useConversationStore.getState().renameConversation(convId, newTitle.trim());
       // 更新本地状态
       setConversationsByConn((prev) => {
         const next = { ...prev };
@@ -56,7 +58,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
         prev.map((r) => (r.conversationId === convId ? { ...r, title: newTitle.trim() } : r)),
       );
     } catch (err) {
-      console.error('Failed to rename conversation:', err);
+      console.error('Failed to rename conversation:', getErrorMessage(err));
     }
   };
 
