@@ -677,6 +677,19 @@ pub fn run() {
                 if let Some(ref engine) = state.sync_engine {
                     engine.set_accessor_app_handle(app_handle.clone());
                 }
+
+                // 断连级联取消交互队列：注册 SshManager 断连观察者，无论主动 disconnect
+                // 还是远端超时/断网断连，都同步取消属于该 session 的 pending 交互。
+                let interaction_mgr = state.agent_interaction.clone();
+                let app_handle_for_disconnect = app_handle.clone();
+                let ssh_mgr = state.ssh_manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    ssh_mgr
+                        .register_disconnect_observer(std::sync::Arc::new(move |session_id| {
+                            interaction_mgr.cancel_session_interactions(&app_handle_for_disconnect, session_id);
+                        }))
+                        .await;
+                });
             }
 
             Ok(())

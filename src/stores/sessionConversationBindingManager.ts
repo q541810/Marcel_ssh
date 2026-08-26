@@ -179,6 +179,27 @@ class SessionConversationBindingManager {
         convStore.clearConnectionConversations(connectionId);
       }
     }
+
+    // 会话断开时，清理属于该 sessionId 的孤儿 running / waiting_approval tasks，
+    // 并自动收敛 interaction 状态，防止断连后残留橙点/转圈
+    const taskStore = useTaskStore.getState();
+    const tasks = taskStore.tasks;
+    let hasChanged = false;
+    const updatedTasks = { ...tasks };
+    for (const [tid, task] of Object.entries(tasks)) {
+      if (task.sessionId === sessionId && (task.status === 'planning' || task.status === 'executing' || task.status === 'waiting_approval')) {
+        updatedTasks[tid] = { ...task, status: 'cancelled' };
+        hasChanged = true;
+      }
+    }
+    if (hasChanged) {
+      useTaskStore.setState({
+        tasks: updatedTasks,
+        activeTaskId: taskStore.activeTaskId && updatedTasks[taskStore.activeTaskId]?.status === 'cancelled' ? null : taskStore.activeTaskId,
+        pendingApproval: null,
+        pendingQuestion: null,
+      });
+    }
   }
 }
 

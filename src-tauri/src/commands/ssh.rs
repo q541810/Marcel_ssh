@@ -133,6 +133,7 @@ pub async fn ssh_disconnect(
     session_id: String,
 ) -> Result<(), AppError> {
     crate::commands::sftp::cleanup_session_sysopen(&app, &state, &session_id).await;
+    state.agent_interaction.cancel_session_interactions(&app, &session_id);
     state.ssh_manager.disconnect(&session_id).await
 }
 
