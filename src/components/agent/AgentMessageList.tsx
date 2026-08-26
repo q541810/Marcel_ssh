@@ -103,8 +103,8 @@ export default function AgentMessageList({
     Math.min(messages.length, PAGE_SIZE),
   );
 
-  // 会话切换探测标识
-  const conversationKey = `${messages[0]?.id ?? ""}-${messages[messages.length - 1]?.id ?? ""}`;
+  // 会话切换探测标识（按首条消息 id 判定会话切换，避免新增尾部消息时重置分页与视口）
+  const conversationKey = messages[0]?.id ?? "";
   const lastConversationKeyRef = useRef(conversationKey);
   const prevMessagesLengthRef = useRef(messages.length);
 
