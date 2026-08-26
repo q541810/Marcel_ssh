@@ -12,13 +12,11 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
-use tokio::time::timeout;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::tools::question::QuestionItem;
@@ -179,7 +177,7 @@ impl AgentInteractionManager {
         }
     }
 
-    /// 请求审批并等待用户确认（超时 60s）
+    /// 请求审批并等待用户确认（无超时限制，永久阻塞直到用户响应或取消）
     pub async fn request_approval(
         &self,
         app: &AppHandle,
@@ -193,7 +191,7 @@ impl AgentInteractionManager {
         model_reasons: Option<&[String]>,
         metadata: Option<serde_json::Value>,
     ) -> bool {
-        let interaction_id = format!("approval:{}", tool_call_id);
+        let interaction_id = format!("approval:{}:{}", task_id, tool_call_id);
         let (session_name, conversation_title) =
             Self::resolve_context_names(app, &session_id, &conversation_id).await;
 
@@ -254,14 +252,14 @@ impl AgentInteractionManager {
             self.notify_active_head(app);
         }
 
-        // 等待响应或超时
-        let approved = match timeout(Duration::from_secs(60), rx).await {
-            Ok(Ok(v)) => v,
-            Ok(Err(_)) | Err(_) => false,
+        // 无限制等待用户响应或通道关闭（取消/断连）
+        let approved = match rx.await {
+            Ok(v) => v,
+            Err(_) => false,
         };
 
         // 出队并激活下一个
-        self.remove_and_advance(app, &interaction_id);
+        self.remove_and_advance(app, &task_id, &interaction_id);
         approved
     }
 
@@ -275,7 +273,7 @@ impl AgentInteractionManager {
         question_id: String,
         questions: Vec<QuestionItem>,
     ) -> Option<Vec<serde_json::Value>> {
-        let interaction_id = format!("question:{}", question_id);
+        let interaction_id = format!("question:{}:{}", task_id, question_id);
         let (session_name, conversation_title) =
             Self::resolve_context_names(app, &session_id, &conversation_id).await;
 
@@ -329,19 +327,19 @@ impl AgentInteractionManager {
             Err(_) => None,
         };
 
-        self.remove_and_advance(app, &interaction_id);
+        self.remove_and_advance(app, &task_id, &interaction_id);
         answers
     }
 
     /// 用户响应审批
     pub fn respond_approval(
         &self,
-        app: &AppHandle,
+        _app: &AppHandle,
         task_id: &str,
         tool_call_id: &str,
         approved: bool,
     ) -> bool {
-        let interaction_id = format!("approval:{}", tool_call_id);
+        let interaction_id = format!("approval:{}:{}", task_id, tool_call_id);
         let sender = {
             let mut inner = self.inner.write();
             if let Some(item) = inner
@@ -370,12 +368,12 @@ impl AgentInteractionManager {
     /// 用户响应提问
     pub fn respond_question(
         &self,
-        app: &AppHandle,
+        _app: &AppHandle,
         task_id: &str,
         question_id: &str,
         answers: Vec<serde_json::Value>,
     ) -> bool {
-        let interaction_id = format!("question:{}", question_id);
+        let interaction_id = format!("question:{}:{}", task_id, question_id);
         let sender = {
             let mut inner = self.inner.write();
             if let Some(item) = inner
@@ -402,12 +400,12 @@ impl AgentInteractionManager {
     }
 
     /// 移除某个 interaction 并推动队列
-    fn remove_and_advance(&self, app: &AppHandle, interaction_id: &str) {
+    fn remove_and_advance(&self, app: &AppHandle, task_id: &str, interaction_id: &str) {
         let mut inner = self.inner.write();
         if let Some(idx) = inner
             .queue
             .iter()
-            .position(|i| i.interaction_id == interaction_id)
+            .position(|i| i.interaction_id == interaction_id && i.task_id == task_id)
         {
             inner.queue.remove(idx);
             inner.by_id.remove(interaction_id);
