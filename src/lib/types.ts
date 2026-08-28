@@ -833,6 +833,13 @@ export interface StoredMessage {
   imagePathsJson?: string | null;
 }
 
+/** 活跃消息段加载结果契约 */
+export interface ActiveMessagesResult {
+  messages: StoredMessage[];
+  hasEarlier: boolean;
+  checkpointId?: string | null;
+}
+
 /** 聊天历史全文搜索的单条会话聚合结果 */
 export interface ConversationSearchResult {
   conversationId: string;

@@ -19,6 +19,8 @@ import { getStreamState, setStreamState } from './agentStreamHandlers';
 export interface ConversationState {
   conversations: Record<string, AgentConversation>;
   messages: Record<string, AgentMessage[]>;
+  /** 记录当前会话在活跃切片之前是否还有更早的历史消息可供加载 */
+  hasEarlierMessages: Record<string, boolean>;
   activeConversationId: string | null;
   /** 每个 connection 上次选中的对话，兼容跨机器恢复 */
   activeConversationByConnection: Record<string, string>;
@@ -30,6 +32,8 @@ export interface ConversationState {
   newConversation: (sessionId: string, connectionId: string) => Promise<string>;
   switchConversation: (conversationId: string, sessionId?: string) => Promise<void>;
   loadConversation: (conversationId: string, sessionId?: string) => Promise<void>;
+  /** 加载当前会话更早的归档历史消息并向前拼接入当前消息流 */
+  loadEarlierHistory: (conversationId: string) => Promise<void>;
   bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => void;
   unbindSessionConversation: (sessionId: string) => void;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
@@ -266,6 +270,7 @@ function reorderByUpdatedAt(convs: Record<string, AgentConversation>): Record<st
 export const useConversationStore = create<ConversationState>((set, get) => ({
   conversations: {},
   messages: {},
+  hasEarlierMessages: {},
   activeConversationId: null,
   activeConversationByConnection: {},
   activeConversationBySession: {},
@@ -350,14 +355,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // 运行中的对话（主 agent / 子 agent 在跑）：跳过 DB 重载，保留内存消息
     // （运行中的 tool 卡片等流式状态尚未落库，重载会导致卡片消失）。
     const running = conversationHasRunningTask(conversationId);
-    const [stored, storedPlans, meta] = await Promise.all([
-      running ? Promise.resolve(null) : tauri.agentLoadConversation(conversationId),
+    const [activeRes, storedPlans, meta] = await Promise.all([
+      running ? Promise.resolve(null) : tauri.agentLoadActiveMessages(conversationId),
       running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
       known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
     const msgs: AgentMessage[] = running
       ? (get().messages[conversationId] ?? [])
-      : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
+      : clearIntermediateReasoning((activeRes?.messages ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
       const bySession = sessionId
@@ -366,6 +371,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return {
         conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
+        hasEarlierMessages: {
+          ...state.hasEarlierMessages,
+          [conversationId]: activeRes?.hasEarlier ?? false,
+        },
         activeConversationId: conversationId,
         activeConversationBySession: bySession,
         activeConversationByConnection: connectionId
@@ -385,14 +394,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   loadConversation: async (conversationId: string, sessionId?: string) => {
     const known = get().conversations[conversationId];
     const running = conversationHasRunningTask(conversationId);
-    const [stored, storedPlans, meta] = await Promise.all([
-      running ? Promise.resolve(null) : tauri.agentLoadConversation(conversationId),
+    const [activeRes, storedPlans, meta] = await Promise.all([
+      running ? Promise.resolve(null) : tauri.agentLoadActiveMessages(conversationId),
       running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
       known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
     const msgs: AgentMessage[] = running
       ? (get().messages[conversationId] ?? [])
-      : clearIntermediateReasoning((stored ?? []).map(storedMessageToAgentMessage));
+      : clearIntermediateReasoning((activeRes?.messages ?? []).map(storedMessageToAgentMessage));
     set((state) => {
       const connectionId = state.conversations[conversationId]?.connectionId;
       const bySession = sessionId
@@ -401,6 +410,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       return {
         conversations: meta ? { ...state.conversations, [meta.id]: meta } : state.conversations,
         messages: { ...state.messages, [conversationId]: msgs },
+        hasEarlierMessages: {
+          ...state.hasEarlierMessages,
+          [conversationId]: activeRes?.hasEarlier ?? false,
+        },
         activeConversationId: conversationId,
         activeConversationBySession: bySession,
         activeConversationByConnection: connectionId
@@ -413,6 +426,38 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
     restoreRunningTaskForConversation(conversationId);
     useTaskStore.getState().clearConversationUnreadCompleted(conversationId);
+  },
+
+  loadEarlierHistory: async (conversationId: string) => {
+    const current = get().messages[conversationId] || [];
+    if (current.length === 0) return;
+    const oldestMessageId = current[0].id;
+
+    try {
+      const earlierStored = await tauri.agentLoadEarlierMessages(conversationId, oldestMessageId);
+      if (earlierStored.length === 0) {
+        set((state) => ({
+          hasEarlierMessages: { ...state.hasEarlierMessages, [conversationId]: false },
+        }));
+        return;
+      }
+      const earlierMsgs = clearIntermediateReasoning(earlierStored.map(storedMessageToAgentMessage));
+      set((state) => {
+        const existing = state.messages[conversationId] || [];
+        return {
+          messages: {
+            ...state.messages,
+            [conversationId]: [...earlierMsgs, ...existing],
+          },
+          hasEarlierMessages: {
+            ...state.hasEarlierMessages,
+            [conversationId]: false, // 已经完全补齐更早历史
+          },
+        };
+      });
+    } catch (err) {
+      console.error('[conversationStore] loadEarlierHistory failed:', err);
+    }
   },
 
   renameConversation: async (conversationId: string, title: string) => {
@@ -488,8 +533,16 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {
-    const msgs = get().messages[conversationId] || [];
-    const index = msgs.findIndex((m) => m.id === messageId);
+    let msgs = get().messages[conversationId] || [];
+    let index = msgs.findIndex((m) => m.id === messageId);
+    if (index < 0) {
+      // 目标不在当前活跃切片中：若有更早历史，先补齐历史再寻找
+      if (get().hasEarlierMessages[conversationId]) {
+        await get().loadEarlierHistory(conversationId);
+        msgs = get().messages[conversationId] || [];
+        index = msgs.findIndex((m) => m.id === messageId);
+      }
+    }
     if (index < 0) {
       throw new Error('消息不存在');
     }

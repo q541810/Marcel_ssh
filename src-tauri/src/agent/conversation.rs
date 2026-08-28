@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::Utc;
-use rusqlite::{Connection, Result as RusqliteResult};
+use rusqlite::{Connection, OptionalExtension, Result as RusqliteResult};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -36,7 +36,7 @@ pub struct Conversation {
     pub parent_conversation_id: Option<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredMessage {
     pub id: String,
@@ -52,6 +52,18 @@ pub struct StoredMessage {
     pub reasoning_content: Option<String>,
     /// JSON array of relative image paths under `images/` (user messages).
     pub image_paths_json: Option<String>,
+}
+
+/// 活跃消息段加载结果（用于首次加载会话时从最新 Compaction Checkpoint 开始切片）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveMessagesResult {
+    /// 活跃消息列表（包含最新的 Checkpoint 卡片及之后的消息，若无卡片则为全量）
+    pub messages: Vec<StoredMessage>,
+    /// 在该活跃切片之前是否还有更早的归档历史消息
+    pub has_earlier: bool,
+    /// 截断锚点的 Checkpoint 消息 ID（若无压缩卡片则为 None）
+    pub checkpoint_id: Option<String>,
 }
 
 /// 会话完整快照（元数据 + 全部消息），用于跨设备同步。
@@ -428,33 +440,163 @@ impl ConversationDb {
 
     pub fn load_messages(&self, conversation_id: &str) -> RusqliteResult<Vec<StoredMessage>> {
         let conn = self.conn.lock().unwrap();
+        Self::query_stored_messages(&conn, conversation_id, None)
+    }
+
+    /// 从最新的 Compaction Checkpoint（若存在）开始加载活跃消息段。
+    /// - 若存在压缩卡片：返回该卡片及之后的所有消息，且 `has_earlier = true`（卡片前有更早消息）；
+    /// - 若不存在压缩卡片：返回全量消息，`has_earlier = false`。
+    pub fn load_active_messages(&self, conversation_id: &str) -> RusqliteResult<ActiveMessagesResult> {
+        let conn = self.conn.lock().unwrap();
+
+        // 1. 查询最新的 Compaction Checkpoint 消息 (role = 'system' 且以 '【上下文已压缩】' 开头)
+        let mut check_stmt = conn.prepare(
+            "SELECT id, created_at, rowid FROM messages 
+             WHERE conversation_id = ?1 
+               AND role = 'system' 
+               AND content LIKE '【上下文已压缩】%'
+             ORDER BY created_at DESC, rowid DESC 
+             LIMIT 1",
+        )?;
+
+        let checkpoint = check_stmt
+            .query_row([conversation_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .optional()?;
+
+        match checkpoint {
+            Some((cp_id, cp_created_at, cp_rowid)) => {
+                // 检查卡片前是否还有更早消息
+                let mut count_stmt = conn.prepare(
+                    "SELECT COUNT(*) FROM messages 
+                     WHERE conversation_id = ?1 
+                       AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))",
+                )?;
+                let earlier_count: i64 = count_stmt.query_row(
+                    rusqlite::params![conversation_id, cp_created_at, cp_rowid],
+                    |r| r.get(0),
+                )?;
+
+                // 查询从 Checkpoint 开始（含 Checkpoint 本身）到末尾的所有活跃消息
+                let mut msg_stmt = conn.prepare(
+                    "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
+                     FROM messages
+                     WHERE conversation_id = ?1 
+                       AND (created_at > ?2 OR (created_at = ?2 AND rowid >= ?3))
+                     ORDER BY created_at ASC, rowid ASC",
+                )?;
+                let messages = msg_stmt
+                    .query_map(rusqlite::params![conversation_id, cp_created_at, cp_rowid], Self::map_stored_message)?
+                    .collect::<RusqliteResult<Vec<_>>>()?;
+
+                Ok(ActiveMessagesResult {
+                    messages,
+                    has_earlier: earlier_count > 0,
+                    checkpoint_id: Some(cp_id),
+                })
+            }
+            None => {
+                // 没有压缩卡片，直接加载全量
+                let messages = Self::query_stored_messages(&conn, conversation_id, None)?;
+                Ok(ActiveMessagesResult {
+                    messages,
+                    has_earlier: false,
+                    checkpoint_id: None,
+                })
+            }
+        }
+    }
+
+    /// 加载指定消息之前的更早归档历史消息（按需翻页加载）。
+    pub fn load_earlier_messages(
+        &self,
+        conversation_id: &str,
+        before_message_id: &str,
+    ) -> RusqliteResult<Vec<StoredMessage>> {
+        let conn = self.conn.lock().unwrap();
+
+        // 获取 before_message 的 created_at 与 rowid 作为切分点
+        let point: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT created_at, rowid FROM messages WHERE conversation_id = ?1 AND id = ?2",
+                [conversation_id, before_message_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+
+        let Some((created_at, rowid)) = point else {
+            return Ok(vec![]);
+        };
+
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
              FROM messages
-             WHERE conversation_id = ?1
+             WHERE conversation_id = ?1 
+               AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
              ORDER BY created_at ASC, rowid ASC",
         )?;
 
         let messages = stmt
-            .query_map([conversation_id], |row| {
-                Ok(StoredMessage {
-                    id: row.get(0)?,
-                    conversation_id: row.get(1)?,
-                    role: row.get(2)?,
-                    content: row.get(3)?,
-                    timestamp: row.get(4)?,
-                    created_at: row
-                        .get::<_, String>(5)?
-                        .parse()
-                        .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
-                    tool_calls_json: row.get(6).ok(),
-                    reasoning_content: row.get(7).ok(),
-                    image_paths_json: row.get(8).ok(),
-                })
-            })?
+            .query_map(rusqlite::params![conversation_id, created_at, rowid], Self::map_stored_message)?
             .collect::<RusqliteResult<Vec<_>>>()?;
 
         Ok(messages)
+    }
+
+    fn map_stored_message(row: &rusqlite::Row<'_>) -> RusqliteResult<StoredMessage> {
+        Ok(StoredMessage {
+            id: row.get(0)?,
+            conversation_id: row.get(1)?,
+            role: row.get(2)?,
+            content: row.get(3)?,
+            timestamp: row.get(4)?,
+            created_at: row
+                .get::<_, String>(5)?
+                .parse()
+                .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+            tool_calls_json: row.get(6).ok(),
+            reasoning_content: row.get(7).ok(),
+            image_paths_json: row.get(8).ok(),
+        })
+    }
+
+    fn query_stored_messages(
+        conn: &Connection,
+        conversation_id: &str,
+        limit: Option<usize>,
+    ) -> RusqliteResult<Vec<StoredMessage>> {
+        let sql = match limit {
+            Some(_) => {
+                "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
+                 FROM messages
+                 WHERE conversation_id = ?1
+                 ORDER BY created_at ASC, rowid ASC
+                 LIMIT ?2"
+            }
+            None => {
+                "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
+                 FROM messages
+                 WHERE conversation_id = ?1
+                 ORDER BY created_at ASC, rowid ASC"
+            }
+        };
+
+        let mut stmt = conn.prepare(sql)?;
+        let mut rows = match limit {
+            Some(lim) => stmt.query(rusqlite::params![conversation_id, lim as i64])?,
+            None => stmt.query(rusqlite::params![conversation_id])?,
+        };
+
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(Self::map_stored_message(row)?);
+        }
+        Ok(out)
     }
 
     pub fn save_message(
@@ -1903,5 +2045,54 @@ mod tests {
         let after = db.load_messages(&conv.id).expect("load");
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].content, "u1");
+    }
+
+    #[test]
+    fn test_load_active_and_earlier_messages_with_compaction() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+
+        // 1. 无压缩卡片时：load_active_messages 返回全量且 has_earlier 为 false
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
+        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+
+        let active1 = db.load_active_messages(&conv.id).expect("active1");
+        assert_eq!(active1.messages.len(), 2);
+        assert!(!active1.has_earlier);
+        assert_eq!(active1.checkpoint_id, None);
+
+        // 2. 增加消息并执行一次压缩
+        db.save_message(&conv.id, "tool", "t1", "2026-01-01T00:00:02Z", None, None).expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        let rows = db.load_messages(&conv.id).expect("load");
+        let span_end = rows[2].clone(); // t1 作为压缩末尾
+
+        db.commit_compaction(
+            &conv.id,
+            &[],
+            "【上下文已压缩】已整理 3 条历史消息（约 100 tokens）\n\nsummary",
+            &span_end.created_at.to_rfc3339(),
+            &span_end.timestamp,
+        ).expect("commit");
+
+        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:04Z", None, None).expect("m5");
+
+        // 此时物理消息顺序：[u1, a1, t1, <card>, u2, a2]
+        let active2 = db.load_active_messages(&conv.id).expect("active2");
+        assert_eq!(active2.messages.len(), 3); // <card>, u2, a2
+        assert!(active2.has_earlier);
+        assert!(active2.messages[0].content.starts_with("【上下文已压缩】"));
+        assert_eq!(active2.messages[1].content, "u2");
+        assert_eq!(active2.messages[2].content, "a2");
+
+        let cp_id = active2.checkpoint_id.expect("checkpoint_id exists");
+        assert_eq!(cp_id, active2.messages[0].id);
+
+        // 3. 测试 load_earlier_messages 从卡片开始向前拉取归档历史
+        let earlier = db.load_earlier_messages(&conv.id, &cp_id).expect("earlier");
+        assert_eq!(earlier.len(), 3); // u1, a1, t1
+        assert_eq!(earlier[0].content, "u1");
+        assert_eq!(earlier[1].content, "a1");
+        assert_eq!(earlier[2].content, "t1");
     }
 }

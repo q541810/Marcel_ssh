@@ -7,6 +7,8 @@ import type { AgentMessage, AgentTask } from '@/lib/types';
 const {
   agentListConversationsByConnection,
   agentLoadConversation,
+  agentLoadActiveMessages,
+  agentLoadEarlierMessages,
   agentTruncateConversation,
   agentLoadPlansByConversation,
   agentCreateConversation,
@@ -17,6 +19,8 @@ const {
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
+  agentLoadActiveMessages: vi.fn(),
+  agentLoadEarlierMessages: vi.fn(),
   agentTruncateConversation: vi.fn(),
   agentLoadPlansByConversation: vi.fn(),
   agentCreateConversation: vi.fn(),
@@ -29,6 +33,8 @@ const {
 vi.mock('@/lib/tauri', () => ({
   agentListConversationsByConnection,
   agentLoadConversation,
+  agentLoadActiveMessages,
+  agentLoadEarlierMessages,
   agentTruncateConversation,
   agentLoadPlansByConversation,
   agentCreateConversation,
@@ -48,9 +54,15 @@ describe('conversationStore', () => {
     vi.clearAllMocks();
     listen.mockResolvedValue(() => {});
     agentLoadPlansByConversation.mockResolvedValue([]);
+    agentLoadActiveMessages.mockImplementation(async (convId: string) => {
+      const stored = await agentLoadConversation(convId);
+      return { messages: stored ?? [], hasEarlier: false, checkpointId: null };
+    });
+    agentLoadEarlierMessages.mockResolvedValue([]);
     useConversationStore.setState({
       conversations: {},
       messages: {},
+      hasEarlierMessages: {},
       activeConversationId: null,
       activeConversationByConnection: {},
     });

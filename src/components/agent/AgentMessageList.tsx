@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { AgentMessage } from "@/lib/types";
 import { isNearBottom } from "@/lib/agentScroll";
+import { useConversationStore } from "@/stores/conversationStore";
 import AgentMessageItem from "./AgentMessage";
 import ToolCallCard from "./ToolCallCard";
 import { getToolView } from "./toolViews";
@@ -186,11 +187,15 @@ export default function AgentMessageList({
   );
   const [flashId, setFlashId] = useState<string | null>(null);
 
+  const activeConversationId = useConversationStore((s) => s.activeConversationId);
+  const hasEarlierMessages = useConversationStore((s) =>
+    activeConversationId ? (s.hasEarlierMessages[activeConversationId] ?? false) : false,
+  );
+  const loadEarlierHistory = useConversationStore((s) => s.loadEarlierHistory);
+
   // 加载上一页消息并执行滚动位置锚定
   const loadMoreEarlierMessages = useCallback(() => {
-    if (!hasMore) return;
     const container = getScrollContainer();
-
     if (container) {
       scrollSnapshotRef.current = {
         scrollHeight: container.scrollHeight,
@@ -198,8 +203,15 @@ export default function AgentMessageList({
       };
     }
 
-    setVisibleCount((prev) => Math.min(messages.length, prev + PAGE_SIZE));
-  }, [hasMore, getScrollContainer, messages.length]);
+    if (hasMore) {
+      setVisibleCount((prev) => Math.min(messages.length, prev + PAGE_SIZE));
+    } else if (hasEarlierMessages && activeConversationId) {
+      // 内存消息已全部展示，若后端 Checkpoint 前还有更早归档历史，按需拉取补齐
+      void loadEarlierHistory(activeConversationId).then(() => {
+        setVisibleCount((prev) => prev + PAGE_SIZE);
+      });
+    }
+  }, [hasMore, hasEarlierMessages, activeConversationId, getScrollContainer, messages.length, loadEarlierHistory]);
 
   // 在 DOM 增加较早消息后同步补齐滚动高度，保持视口绝对内容平滑不动
   useIsomorphicLayoutEffect(() => {
@@ -244,9 +256,11 @@ export default function AgentMessageList({
     return () => container.removeEventListener("scroll", handleScroll);
   }, [getScrollContainer]);
 
+  const canLoadEarlier = hasMore || hasEarlierMessages;
+
   // 监听顶部哨兵元素进行触顶自动加载
   useEffect(() => {
-    if (!hasMore) return;
+    if (!canLoadEarlier) return;
     const sentinel = topSentinelRef.current;
     if (!sentinel) return;
 
@@ -267,7 +281,7 @@ export default function AgentMessageList({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, getScrollContainer, loadMoreEarlierMessages]);
+  }, [canLoadEarlier, getScrollContainer, loadMoreEarlierMessages]);
 
   // 监听内容尺寸变化（例如 iframe 异步测高撑开、图片加载等）：若用户处于贴底锁定区，则自动保持贴底
   useEffect(() => {
@@ -363,7 +377,7 @@ export default function AgentMessageList({
       ref={contentWrapperRef}
       className="flex flex-col space-y-1 min-w-0 w-full"
     >
-      {hasMore && (
+      {canLoadEarlier && (
         <div
           ref={topSentinelRef}
           className="flex items-center justify-center py-2 text-xs text-zinc-500"

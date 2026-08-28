@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ActiveMessagesResult,
   AppBootstrapData,
   ConnectionConfig,
   SavedConnection,
@@ -300,6 +301,22 @@ export async function agentLoadConversation(
   conversationId: string,
 ): Promise<StoredMessage[]> {
   return invoke<StoredMessage[]>("agent_load_conversation", { conversationId });
+}
+
+export async function agentLoadActiveMessages(
+  conversationId: string,
+): Promise<ActiveMessagesResult> {
+  return invoke<ActiveMessagesResult>("agent_load_active_messages", { conversationId });
+}
+
+export async function agentLoadEarlierMessages(
+  conversationId: string,
+  beforeMessageId: string,
+): Promise<StoredMessage[]> {
+  return invoke<StoredMessage[]>("agent_load_earlier_messages", {
+    conversationId,
+    beforeMessageId,
+  });
 }
 
 export async function agentLoadPlansByConversation(

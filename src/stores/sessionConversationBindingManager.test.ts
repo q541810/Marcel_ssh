@@ -12,6 +12,8 @@ vi.mock('@/components/terminal/TerminalInstanceManager', () => ({
 vi.mock('@/lib/tauri', () => ({
   agentListConversationsByConnection: vi.fn(),
   agentLoadConversation: vi.fn(),
+  agentLoadActiveMessages: vi.fn().mockResolvedValue({ messages: [], hasEarlier: false, checkpointId: null }),
+  agentLoadEarlierMessages: vi.fn().mockResolvedValue([]),
   agentLoadPlansByConversation: vi.fn(),
   agentGetConversation: vi.fn(),
   agentCreateConversation: vi.fn(),

@@ -108,6 +108,33 @@ pub async fn agent_load_conversation(
     Ok(messages)
 }
 
+/// 从最新 Compaction Checkpoint 开始加载活跃消息段。
+#[tauri::command]
+pub async fn agent_load_active_messages(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<crate::agent::conversation::ActiveMessagesResult, AppError> {
+    let result = state
+        .conversation_db
+        .load_active_messages(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to load active messages: {}", e)))?;
+    Ok(result)
+}
+
+/// 加载指定消息之前的更早归档历史消息（按需翻页加载）。
+#[tauri::command]
+pub async fn agent_load_earlier_messages(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    before_message_id: String,
+) -> Result<Vec<crate::agent::conversation::StoredMessage>, AppError> {
+    let messages = state
+        .conversation_db
+        .load_earlier_messages(&conversation_id, &before_message_id)
+        .map_err(|e| AppError::Agent(format!("Failed to load earlier messages: {}", e)))?;
+    Ok(messages)
+}
+
 /// Rename a conversation.
 #[tauri::command]
 pub async fn agent_rename_conversation(

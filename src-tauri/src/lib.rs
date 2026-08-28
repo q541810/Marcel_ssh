@@ -724,6 +724,8 @@ pub fn run() {
             commands::agent_conversation::agent_get_conversation,
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
+            commands::agent_conversation::agent_load_active_messages,
+            commands::agent_conversation::agent_load_earlier_messages,
             commands::agent_conversation::agent_delete_conversation,
             commands::agent_conversation::agent_save_message_images,
             commands::agent_conversation::agent_save_user_message,
