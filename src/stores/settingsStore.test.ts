@@ -99,4 +99,22 @@ describe('settingsStore', () => {
     });
     expect(useSettingsStore.getState().settings.disabledPlugins).toEqual(['a', 'b']);
   });
+
+  it('hydrates from bootstrap snapshot correctly', () => {
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        fontSize: 18,
+      },
+      hasApiKey: true,
+      hasWebSearchApiKey: false,
+      warning: 'test-warning',
+    });
+
+    const state = useSettingsStore.getState();
+    expect(state.loaded).toBe(true);
+    expect(state.hasApiKey).toBe(true);
+    expect(state.settings.fontSize).toBe(18);
+    expect(state.warning).toBe('test-warning');
+  });
 });

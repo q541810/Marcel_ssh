@@ -5,6 +5,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { useSyncStore } from '@/stores/syncStore';
 import { attachTransferListeners } from '@/stores/sftpTransferManager';
+import { hydrateBootstrapData } from '@/lib/bootstrap';
 import {
   isAndroidBridgeAvailable,
   isNotificationPermissionGranted,
@@ -53,6 +54,7 @@ export async function runMobileBootstrap(
   } catch {
     /* browser preview has no tauri */
   }
+  // 聚合启动快照：一次性 Hydrate 设置、连接、Skills 与同步摘要
   await deps.loadSettings();
   const mode = resolveBootstrapMode(deps.getDefaultAgentMode());
   if (mode) {
@@ -72,13 +74,8 @@ export async function runMobileBootstrap(
     /* best-effort */
   }
   await deps.attachTransferListeners();
-  // 跨设备同步：加载摘要 + 监听事件（state-changed / data-applied / conflicts-detected）。
+  // 跨设备同步监听事件（state-changed / data-applied / conflicts-detected）。
   // 移动端 App 整个生命周期持有监听器，不需要 stopListening。
-  try {
-    await useSyncStore.getState().load();
-  } catch {
-    /* best-effort：sync 失败不影响其他功能 */
-  }
   try {
     await useSyncStore.getState().startListening();
   } catch {
@@ -109,7 +106,7 @@ export async function bootstrapMobileApp(
   try {
     await runMobileBootstrap({
       appReady: () => appReady(),
-      loadSettings: () => useSettingsStore.getState().load(),
+      loadSettings: () => hydrateBootstrapData(),
       getDefaultAgentMode: () =>
         useSettingsStore.getState().settings.defaultAgentMode,
       setMode: (mode) => useTaskStore.getState().setMode(mode),

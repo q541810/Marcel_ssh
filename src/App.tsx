@@ -43,6 +43,7 @@ import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
 import { initPluginIpc } from '@/plugins/pluginIpc';
 import { ensurePluginRegistryListener } from '@/stores/pluginStore';
 import { initRegionBridge, notifyNavChange } from '@/plugins/injection';
+import { hydrateBootstrapData } from '@/lib/bootstrap';
 
 const lazyCache = new Map<string, LazyExoticComponent<ComponentType>>();
 
@@ -323,13 +324,10 @@ export default function App() {
     }
   }, []);
 
-  // 启动跨设备同步：加载摘要 + 监听同步事件（state-changed / data-applied / conflicts-detected）。
-  // syncStore 不依赖 settings，可独立启动。
+  // 启动跨设备同步：监听同步事件（state-changed / data-applied / conflicts-detected）。
+  // 摘要数据已在 hydrateBootstrapData 中一次性填充，此处直接启动监听器。
   useEffect(() => {
     const syncStore = useSyncStore.getState();
-    syncStore.load().catch((err) => {
-      console.error('Failed to load sync state:', err);
-    });
     syncStore.startListening().catch((err) => {
       console.error('Failed to start sync listeners:', err);
     });
@@ -339,13 +337,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    // 必须先 loadSettings 再 fetchPlugins：视图注册依赖 disabledPlugins，
-    // 并行启动时 settings 仍是默认 []，会把已禁用插件注册进 NavRail。
-    loadSettings().catch(err => {
-      console.error('Failed to load settings:', err);
-    });
-    fetchSkills().catch(err => {
-      console.error('Failed to load skills:', err);
+    // 聚合启动快照：一次 IPC 注入 settings + connections + skills + syncSummary
+    hydrateBootstrapData().catch(err => {
+      console.error('Failed to hydrate bootstrap data:', err);
     });
     initPluginIpc().catch(err => {
       console.error('Failed to init plugin IPC:', err);
@@ -357,7 +351,7 @@ export default function App() {
     }).catch(() => {});
     // 插件市场后台检查更新（不阻塞启动）
     void useMarketStore.getState().fetch().catch(() => {});
-  }, [loadSettings, fetchSkills]);
+  }, []);
 
   // 设置加载完成、或 disabledPlugins 变化时再拉插件并对齐 viewStore。
   // 覆盖：启动竞态、设置页保存禁用、错误页「禁用」等路径。

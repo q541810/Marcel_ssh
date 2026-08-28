@@ -1101,3 +1101,15 @@ export interface SyncConflictsEvent {
   /** 冲突数量 */
   count: number;
 }
+
+/** 启动快照数据包契约（与后端 app_get_bootstrap 对齐） */
+export interface AppBootstrapData {
+  settings: AppSettings;
+  hasApiKey: boolean;
+  hasWebSearchApiKey: boolean;
+  settingsWarning?: string | null;
+  connections: SavedConnection[];
+  skills: Skill[];
+  syncSummary: SyncSummary;
+}
+

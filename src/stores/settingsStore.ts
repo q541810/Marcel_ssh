@@ -107,6 +107,13 @@ interface SettingsState {
 
   /** Load settings from disk on app startup. Idempotent unless forced. */
   load: (force?: boolean) => Promise<void>;
+  /** 从启动快照同步 Hydrate 设置 */
+  hydrateFromBootstrap: (data: {
+    settings: AppSettings;
+    hasApiKey: boolean;
+    hasWebSearchApiKey: boolean;
+    warning?: string | null;
+  }) => void;
   /** Persist a full settings object and update local state. */
   save: (settings: AppSettings) => Promise<void>;
   /** Patch a subset of fields, persist, and update local state. */
@@ -128,6 +135,41 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   hasWebSearchApiKey: false,
   warning: null,
   preview: null,
+
+  hydrateFromBootstrap: (data) => {
+    const fromDisk = data.settings;
+    const merged: AppSettings = {
+      ...DEFAULT_SETTINGS,
+      ...fromDisk,
+      terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
+      agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
+      llmConfig: fromDisk.llmConfig
+        ? { ...DEFAULT_LLM_CONFIG, ...fromDisk.llmConfig }
+        : DEFAULT_LLM_CONFIG,
+      experimentalSettings: {
+        ...DEFAULT_EXPERIMENTAL_SETTINGS,
+        ...(fromDisk.experimentalSettings ?? {}),
+      },
+      fileManagerPaths: fromDisk.fileManagerPaths ?? {},
+      workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
+      mobileNotificationSettings: {
+        ...DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
+        ...(fromDisk.mobileNotificationSettings ?? {}),
+      },
+      mobileBackgroundSettings: {
+        ...DEFAULT_MOBILE_BACKGROUND_SETTINGS,
+        ...(fromDisk.mobileBackgroundSettings ?? {}),
+      },
+    };
+    set({
+      settings: merged,
+      loaded: true,
+      hasApiKey: data.hasApiKey,
+      hasWebSearchApiKey: data.hasWebSearchApiKey ?? false,
+      warning: data.warning ?? null,
+    });
+    setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);
+  },
 
   load: async (force = false) => {
     if (get().loaded && !force) return;

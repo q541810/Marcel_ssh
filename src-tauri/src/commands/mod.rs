@@ -2,6 +2,7 @@ pub mod agent_compact;
 pub mod agent_conversation;
 pub mod agent_lifecycle;
 pub mod agent_policy;
+pub mod app_bootstrap;
 pub mod connections;
 pub mod keychain;
 pub mod market;

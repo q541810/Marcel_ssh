@@ -22,7 +22,7 @@ use crate::AppState;
 
 // ── 响应结构（与前端 types.ts 对齐，camelCase） ────────────────
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncSummary {
     pub configured: bool,

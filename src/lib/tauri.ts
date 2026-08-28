@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppBootstrapData,
   ConnectionConfig,
   SavedConnection,
   AppSettings,
@@ -616,6 +617,11 @@ export async function mobileSetAppForeground(
   inForeground: boolean,
 ): Promise<void> {
   return invoke("mobile_set_app_foreground", { inForeground });
+}
+
+/** 获取聚合启动快照数据包 */
+export async function getBootstrapData(): Promise<AppBootstrapData> {
+  return invoke<AppBootstrapData>("app_get_bootstrap");
 }
 
 export async function appReady(): Promise<void> {

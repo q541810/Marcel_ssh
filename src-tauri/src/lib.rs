@@ -699,6 +699,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_ready,
+            commands::app_bootstrap::app_get_bootstrap,
             commands::mobile_set_app_foreground,
             commands::ssh::ssh_connect,
             commands::ssh::ssh_connect_with_saved_password,
