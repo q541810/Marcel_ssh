@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import type {
   AgentConversation,
@@ -6,20 +6,18 @@ import type {
   ConversationSearchResult,
   SavedConnection,
 } from '@/lib/types';
-import * as tauri from '@/lib/tauri';
-import {
-  storedMessageToAgentMessage,
-  clearIntermediateReasoning,
-} from '@/stores/messageConversion';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useTaskStore } from '@/stores/taskStore';
-import { useConversationStore } from '@/stores/conversationStore';
 import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
 import { groupConversationsByDate } from '@/lib/dateGrouping';
-import { getErrorMessage } from '@/lib/errors';
+import {
+  useConversationHistoryStore,
+  groupSearchResultsByConnection,
+  formatMatchCountLabel,
+} from '@/stores/conversationHistoryManager';
 import { Pencil } from 'lucide-react';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import MobileSheet from './ui/MobileSheet';
@@ -29,16 +27,11 @@ interface MobileChatHistorySheetProps {
   onClose: () => void;
 }
 
-const matchCountLabel = (n: number) =>
-  n > 200 ? '共 200+ 条匹配' : `共 ${n} 条匹配`;
-
 /**
  * 移动端聊天历史浏览面板（只读）。
  *
- * 与桌面 ChatHistoryModal 对齐：按连接维度加载所有历史会话
- * （agentListConversationsByConnection），支持全文搜索
- * （agentSearchConversations）与匹配项上一条/下一条定位。
- * 全部状态为组件本地状态，不触碰 conversationStore 的 activeConversation。
+ * 与桌面 ChatHistoryModal 对齐：通过 conversationHistoryManager 统一管理历史数据、
+ * 搜索、高亮导航与重命名。
  */
 export default function MobileChatHistorySheet({
   open,
@@ -46,290 +39,109 @@ export default function MobileChatHistorySheet({
 }: MobileChatHistorySheetProps) {
   const connections = useConnectionStore((s) => s.connections);
   const connectionsLoading = useConnectionStore((s) => s.loading);
+  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const tasks = useTaskStore((s) => s.tasks);
   const unreadCompletedConversations = useTaskStore(
     (s) => s.unreadCompletedConversations,
   );
-  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const privacyMode = usePrivacyMode();
-  const connLabel = (c: SavedConnection) =>
-    formatNameWithAddress(c.name, c.host, c.port, privacyMode);
+  const connLabel = useCallback(
+    (c: SavedConnection) => formatNameWithAddress(c.name, c.host, c.port, privacyMode),
+    [privacyMode],
+  );
+
   const [expandedConnId, setExpandedConnId] = useState<string | null>(null);
-  const [conversationsByConn, setConversationsByConn] = useState<
-    Record<string, AgentConversation[]>
-  >({});
-  const [selectedConv, setSelectedConv] = useState<AgentConversation | null>(
-    null,
-  );
-  const [messages, setMessages] = useState<AgentMessageType[]>([]);
-  const [loadingConvs, setLoadingConvs] = useState(false);
-  const [loadingMsgs, setLoadingMsgs] = useState(false);
 
-  const [renameConvTarget, setRenameConvTarget] = useState<AgentConversation | null>(null);
-  const [renameInput, setRenameInput] = useState('');
+  // 从 manager 中订阅状态
+  const conversationsByConn = useConversationHistoryStore((s) => s.conversationsByConn);
+  const loadingConvs = useConversationHistoryStore((s) => s.loadingConvs);
+  const selectedConv = useConversationHistoryStore((s) => s.selectedConv);
+  const selectedConvId = useConversationHistoryStore((s) => s.selectedConvId);
+  const messages = useConversationHistoryStore((s) => s.messages);
+  const loadingMsgs = useConversationHistoryStore((s) => s.loadingMsgs);
 
-  const handleStartRename = (e: React.MouseEvent, conv: AgentConversation) => {
-    e.stopPropagation();
-    setRenameConvTarget(conv);
-    setRenameInput(conv.title);
-  };
+  const searchInput = useConversationHistoryStore((s) => s.searchInput);
+  const debouncedQuery = useConversationHistoryStore((s) => s.debouncedQuery);
+  const searchResults = useConversationHistoryStore((s) => s.searchResults);
+  const loadingSearch = useConversationHistoryStore((s) => s.loadingSearch);
 
-  const handleConfirmRename = async () => {
-    if (!renameConvTarget) return;
-    const trimmed = renameInput.trim();
-    if (trimmed && trimmed !== renameConvTarget.title) {
-      try {
-        await useConversationStore.getState().renameConversation(renameConvTarget.id, trimmed);
-        const now = new Date().toISOString();
-        setConversationsByConn((prev) => {
-          const next = { ...prev };
-          for (const connId of Object.keys(next)) {
-            next[connId] = next[connId].map((c) =>
-              c.id === renameConvTarget.id ? { ...c, title: trimmed, updatedAt: now } : c,
-            );
-          }
-          return next;
-        });
-        setSearchResults((prev) =>
-          prev.map((r) => (r.conversationId === renameConvTarget.id ? { ...r, title: trimmed } : r)),
-        );
-        if (selectedConv?.id === renameConvTarget.id) {
-          setSelectedConv((prev) => (prev ? { ...prev, title: trimmed, updatedAt: now } : null));
-        }
-      } catch (err) {
-        console.error('Failed to rename conversation:', getErrorMessage(err));
-      }
-    }
-    setRenameConvTarget(null);
-    setRenameInput('');
-  };
+  const activeMatchIds = useConversationHistoryStore((s) => s.activeMatchIds);
+  const matchIndex = useConversationHistoryStore((s) => s.matchIndex);
+  const highlightMessageId = useConversationHistoryStore((s) => s.highlightMessageId);
 
-  const [searchInput, setSearchInput] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<
-    ConversationSearchResult[]
-  >([]);
-  const [loadingSearch, setLoadingSearch] = useState(false);
-  const [activeMatchIds, setActiveMatchIds] = useState<string[]>([]);
-  const [matchIndex, setMatchIndex] = useState(0);
-  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(
-    null,
-  );
-  const searchSeqRef = useRef(0);
-  const pendingNavRef = useRef(false);
+  const renameTarget = useConversationHistoryStore((s) => s.renameTarget);
+  const renameInput = useConversationHistoryStore((s) => s.renameInput);
+
+  // manager actions
+  const loadAllConnections = useConversationHistoryStore((s) => s.loadAllConnections);
+  const selectConversation = useConversationHistoryStore((s) => s.selectConversation);
+  const openSearchResult = useConversationHistoryStore((s) => s.openSearchResult);
+  const clearSelectedConversation = useConversationHistoryStore((s) => s.clearSelectedConversation);
+  const setSearchInput = useConversationHistoryStore((s) => s.setSearchInput);
+  const clearSearch = useConversationHistoryStore((s) => s.clearSearch);
+  const goMatch = useConversationHistoryStore((s) => s.goMatch);
+  const startRename = useConversationHistoryStore((s) => s.startRename);
+  const setRenameInput = useConversationHistoryStore((s) => s.setRenameInput);
+  const cancelRename = useConversationHistoryStore((s) => s.cancelRename);
+  const confirmRename = useConversationHistoryStore((s) => s.confirmRename);
+  const reset = useConversationHistoryStore((s) => s.reset);
 
   const isSearching = debouncedQuery.trim().length > 0;
 
-  // 关闭时重置全部状态（与桌面 ChatHistoryModal 一致）
+  // 打开/关闭时重置与加载状态
   useEffect(() => {
     if (!open) {
       setExpandedConnId(null);
-      setSelectedConv(null);
-      setMessages([]);
-      setConversationsByConn({});
-      setSearchInput('');
-      setDebouncedQuery('');
-      setSearchResults([]);
-      setLoadingSearch(false);
-      setActiveMatchIds([]);
-      setMatchIndex(0);
-      setHighlightMessageId(null);
-      pendingNavRef.current = false;
+      reset();
+    } else {
+      void fetchConnections();
     }
-  }, [open]);
-
-  // 搜索防抖 300ms
-  useEffect(() => {
-    if (!open) return;
-    const t = window.setTimeout(() => setDebouncedQuery(searchInput), 300);
-    return () => window.clearTimeout(t);
-  }, [searchInput, open]);
-
-  // 移动端连接列表可能尚未加载（仅终端页会触发 fetch），打开面板时补一次
-  useEffect(() => {
-    if (!open) return;
-    void fetchConnections();
-  }, [open, fetchConnections]);
+  }, [open, fetchConnections, reset]);
 
   // 按连接维度加载所有历史会话
   useEffect(() => {
     if (!open) return;
-    if (connections.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      setLoadingConvs(true);
-      const byConn: Record<string, AgentConversation[]> = {};
-      for (const conn of connections) {
-        try {
-          byConn[conn.id] = await tauri.agentListConversationsByConnection(
-            conn.id,
-          );
-        } catch {
-          byConn[conn.id] = [];
-        }
-      }
-      if (cancelled) return;
-      setConversationsByConn(byConn);
-      setLoadingConvs(false);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, connections]);
-
-  // 全文搜索（seq 防止过期结果覆盖新结果）
-  useEffect(() => {
-    if (!open) return;
-    const q = debouncedQuery.trim();
-    if (!q) {
-      setSearchResults([]);
-      setLoadingSearch(false);
-      setActiveMatchIds([]);
-      setMatchIndex(0);
-      setHighlightMessageId(null);
-      return;
+    if (connections.length > 0) {
+      void loadAllConnections(connections);
     }
-    const seq = ++searchSeqRef.current;
-    setLoadingSearch(true);
-    (async () => {
-      try {
-        const results = await tauri.agentSearchConversations(q);
-        if (seq !== searchSeqRef.current) return;
-        setSearchResults(results);
-      } catch {
-        if (seq !== searchSeqRef.current) return;
-        setSearchResults([]);
-      } finally {
-        if (seq === searchSeqRef.current) setLoadingSearch(false);
-      }
-    })();
-  }, [debouncedQuery, open]);
+  }, [open, connections, loadAllConnections]);
 
-  // 加载选中会话的消息（只读）
-  const selectedConvId = selectedConv?.id ?? null;
-  useEffect(() => {
-    if (!selectedConvId) {
-      setMessages([]);
-      return;
-    }
-    let cancelled = false;
-    setLoadingMsgs(true);
-    (async () => {
-      try {
-        const stored = await tauri.agentLoadConversation(selectedConvId);
-        if (cancelled) return;
-        setMessages(
-          clearIntermediateReasoning(stored.map(storedMessageToAgentMessage)),
-        );
-      } catch {
-        if (!cancelled) setMessages([]);
-      } finally {
-        if (!cancelled) setLoadingMsgs(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedConvId]);
+  const handleStartRename = (e: React.MouseEvent, conv: AgentConversation) => {
+    e.stopPropagation();
+    startRename(conv);
+  };
 
-  // 消息加载完成后定位到第 1 条匹配
-  useEffect(() => {
-    if (loadingMsgs) return;
-    if (!pendingNavRef.current) return;
-    if (activeMatchIds.length === 0) {
-      pendingNavRef.current = false;
-      return;
-    }
-    pendingNavRef.current = false;
-    setMatchIndex(0);
-    setHighlightMessageId(activeMatchIds[0]);
-  }, [loadingMsgs, messages, activeMatchIds]);
+  const handleConfirmRename = async () => {
+    await confirmRename();
+  };
 
   const connNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of connections) m.set(c.id, connLabel(c));
     return m;
-  }, [connections]);
+  }, [connections, connLabel]);
 
   const groupedSearch = useMemo(() => {
-    const groups: {
-      connectionId: string;
-      label: string;
-      items: ConversationSearchResult[];
-    }[] = [];
-    const index = new Map<string, number>();
-    for (const r of searchResults) {
-      let i = index.get(r.connectionId);
-      if (i === undefined) {
-        i = groups.length;
-        index.set(r.connectionId, i);
-        groups.push({
-          connectionId: r.connectionId,
-          label: connNameById.get(r.connectionId) || r.connectionId,
-          items: [],
-        });
-      }
-      groups[i].items.push(r);
-    }
-    return groups;
+    return groupSearchResultsByConnection(searchResults, connNameById);
   }, [searchResults, connNameById]);
 
-  const openConversation = useCallback((conv: AgentConversation) => {
-    setActiveMatchIds([]);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = false;
-    setSelectedConv(conv);
-    // 用户切入只读查看该对话，同步消除未读小绿点
-    useTaskStore.getState().clearConversationUnreadCompleted(conv.id);
-  }, []);
-
-  const openSearchResult = useCallback((r: ConversationSearchResult) => {
-    setActiveMatchIds(r.matchedMessageIds);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = true;
-    setSelectedConv({
-      id: r.conversationId,
-      connectionId: r.connectionId,
-      title: r.title,
-      createdAt: r.updatedAt,
-      updatedAt: r.updatedAt,
-    });
-    useTaskStore.getState().clearConversationUnreadCompleted(r.conversationId);
-  }, []);
-
-  const handleBack = useCallback(() => {
-    setSelectedConv(null);
-    setMessages([]);
-    setActiveMatchIds([]);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = false;
-  }, []);
-
-  const goMatch = useCallback(
-    (delta: number) => {
-      if (activeMatchIds.length === 0) return;
-      setMatchIndex((prev) => {
-        const next = prev + delta;
-        if (next < 0 || next >= activeMatchIds.length) return prev;
-        setHighlightMessageId(activeMatchIds[next]);
-        return next;
-      });
+  const openConversation = useCallback(
+    (conv: AgentConversation) => {
+      void selectConversation(conv);
     },
-    [activeMatchIds],
+    [selectConversation],
   );
 
-  const clearSearch = useCallback(() => {
-    setSearchInput('');
-    setDebouncedQuery('');
-    setSearchResults([]);
-    setActiveMatchIds([]);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = false;
-  }, []);
+  const handleOpenSearchResult = useCallback(
+    (r: ConversationSearchResult) => {
+      void openSearchResult(r);
+    },
+    [openSearchResult],
+  );
+
+  const handleBack = useCallback(() => {
+    clearSelectedConversation();
+  }, [clearSelectedConversation]);
 
   const handleCopyMessage = useCallback(async (m: AgentMessageType) => {
     try {
@@ -498,7 +310,7 @@ export default function MobileChatHistorySheet({
                           <li key={r.conversationId}>
                             <button
                               type="button"
-                              onClick={() => openSearchResult(r)}
+                              onClick={() => handleOpenSearchResult(r)}
                               className="w-full rounded-lg bg-zinc-800/60 px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-zinc-800"
                             >
                               <div className="truncate font-medium">
@@ -508,7 +320,7 @@ export default function MobileChatHistorySheet({
                                 {r.matchedSnippet}
                               </div>
                               <div className="mt-0.5 text-xs text-indigo-400/80">
-                                {matchCountLabel(r.matchCount)}
+                                {formatMatchCountLabel(r.matchCount)}
                               </div>
                             </button>
                           </li>
@@ -619,8 +431,8 @@ export default function MobileChatHistorySheet({
       )}
 
       <MobileSheet
-        open={renameConvTarget != null}
-        onClose={() => setRenameConvTarget(null)}
+        open={renameTarget != null}
+        onClose={cancelRename}
         title="重命名会话"
       >
         <div className="flex flex-col gap-3 px-4 pb-4">
@@ -641,7 +453,7 @@ export default function MobileChatHistorySheet({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setRenameConvTarget(null)}
+              onClick={cancelRename}
               className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-zinc-700"
             >
               取消

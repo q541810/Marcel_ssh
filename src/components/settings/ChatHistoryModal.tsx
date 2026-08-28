@@ -1,23 +1,19 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useEffect, useMemo, useCallback } from 'react';
 import Modal from '@/components/ui/Modal';
-import type {
-  SavedConnection,
-  AgentConversation,
-  AgentMessage as AgentMessageType,
-  ConversationSearchResult,
-} from '@/lib/types';
-import * as tauri from '@/lib/tauri';
-import { storedMessageToAgentMessage, clearIntermediateReasoning } from '@/stores/messageConversion';
+import type { SavedConnection } from '@/lib/types';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
 import { groupConversationsByDate } from '@/lib/dateGrouping';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import { useTaskStore } from '@/stores/taskStore';
-import { useConversationStore } from '@/stores/conversationStore';
+import {
+  useConversationHistoryStore,
+  groupSearchResultsByConnection,
+  formatMatchCountLabel,
+} from '@/stores/conversationHistoryManager';
 import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
-import { getErrorMessage } from '@/lib/errors';
 
 interface Props {
   open: boolean;
@@ -26,236 +22,75 @@ interface Props {
 
 export default function ChatHistoryModal({ open, onClose }: Props) {
   const connections = useConnectionStore((s) => s.connections);
-  const [selectedConnId, setSelectedConnId] = useState<string | null>(null);
-  const [conversationsByConn, setConversationsByConn] = useState<Record<string, AgentConversation[]>>({});
-  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<AgentMessageType[]>([]);
-  const [loadingConvs, setLoadingConvs] = useState(false);
-  const [loadingMsgs, setLoadingMsgs] = useState(false);
   const privacyMode = usePrivacyMode();
   const tasks = useTaskStore((s) => s.tasks);
   const unreadCompletedConversations = useTaskStore(
     (s) => s.unreadCompletedConversations,
   );
 
+  // 从 manager 中订阅状态
+  const conversationsByConn = useConversationHistoryStore((s) => s.conversationsByConn);
+  const loadingConvs = useConversationHistoryStore((s) => s.loadingConvs);
+  const selectedConnId = useConversationHistoryStore((s) => s.selectedConnId);
+  const selectedConvId = useConversationHistoryStore((s) => s.selectedConvId);
+  const selectedConv = useConversationHistoryStore((s) => s.selectedConv);
+  const messages = useConversationHistoryStore((s) => s.messages);
+  const loadingMsgs = useConversationHistoryStore((s) => s.loadingMsgs);
+
+  const searchInput = useConversationHistoryStore((s) => s.searchInput);
+  const debouncedQuery = useConversationHistoryStore((s) => s.debouncedQuery);
+  const searchResults = useConversationHistoryStore((s) => s.searchResults);
+  const loadingSearch = useConversationHistoryStore((s) => s.loadingSearch);
+
+  const activeMatchIds = useConversationHistoryStore((s) => s.activeMatchIds);
+  const matchIndex = useConversationHistoryStore((s) => s.matchIndex);
+  const highlightMessageId = useConversationHistoryStore((s) => s.highlightMessageId);
+
+  // manager actions
+  const loadAllConnections = useConversationHistoryStore((s) => s.loadAllConnections);
+  const setSelectedConnId = useConversationHistoryStore((s) => s.setSelectedConnId);
+  const selectConversation = useConversationHistoryStore((s) => s.selectConversation);
+  const openSearchResult = useConversationHistoryStore((s) => s.openSearchResult);
+  const setSearchInput = useConversationHistoryStore((s) => s.setSearchInput);
+  const clearSearch = useConversationHistoryStore((s) => s.clearSearch);
+  const goMatch = useConversationHistoryStore((s) => s.goMatch);
+  const confirmRename = useConversationHistoryStore((s) => s.confirmRename);
+  const reset = useConversationHistoryStore((s) => s.reset);
+
+  const isSearching = debouncedQuery.trim().length > 0;
+
+  // 打开/关闭时状态管理
+  useEffect(() => {
+    if (!open) {
+      reset();
+    } else if (connections.length > 0) {
+      void loadAllConnections(connections);
+    }
+  }, [open, connections, loadAllConnections, reset]);
+
   const handleRenameInModal = async (e: React.MouseEvent, convId: string, oldTitle: string) => {
     e.stopPropagation();
     const newTitle = window.prompt('请输入新的会话名称', oldTitle);
     if (!newTitle || !newTitle.trim() || newTitle.trim() === oldTitle) return;
-    try {
-      await useConversationStore.getState().renameConversation(convId, newTitle.trim());
-      // 更新本地状态
-      setConversationsByConn((prev) => {
-        const next = { ...prev };
-        for (const connId of Object.keys(next)) {
-          next[connId] = next[connId].map((c) =>
-            c.id === convId ? { ...c, title: newTitle.trim(), updatedAt: new Date().toISOString() } : c,
-          );
-        }
-        return next;
-      });
-      setSearchResults((prev) =>
-        prev.map((r) => (r.conversationId === convId ? { ...r, title: newTitle.trim() } : r)),
-      );
-    } catch (err) {
-      console.error('Failed to rename conversation:', getErrorMessage(err));
-    }
+    await confirmRename(convId, newTitle.trim());
   };
 
-  const [searchInput, setSearchInput] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<ConversationSearchResult[]>([]);
-  const [loadingSearch, setLoadingSearch] = useState(false);
-  const [activeMatchIds, setActiveMatchIds] = useState<string[]>([]);
-  const [matchIndex, setMatchIndex] = useState(0);
-  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
-  const searchSeqRef = useRef(0);
-  const pendingNavRef = useRef(false);
-
-  const isSearching = debouncedQuery.trim().length > 0;
-
-  useEffect(() => {
-    if (!open) {
-      setSelectedConnId(null);
-      setSelectedConvId(null);
-      setMessages([]);
-      setConversationsByConn({});
-      setSearchInput('');
-      setDebouncedQuery('');
-      setSearchResults([]);
-      setLoadingSearch(false);
-      setActiveMatchIds([]);
-      setMatchIndex(0);
-      setHighlightMessageId(null);
-      pendingNavRef.current = false;
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const t = window.setTimeout(() => setDebouncedQuery(searchInput), 300);
-    return () => window.clearTimeout(t);
-  }, [searchInput, open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const loadAll = async () => {
-      setLoadingConvs(true);
-      const byConn: Record<string, AgentConversation[]> = {};
-      for (const conn of connections) {
-        try {
-          const convs = await tauri.agentListConversationsByConnection(conn.id);
-          byConn[conn.id] = convs;
-        } catch {
-          byConn[conn.id] = [];
-        }
-      }
-      setConversationsByConn(byConn);
-      setLoadingConvs(false);
-    };
-    if (connections.length > 0) loadAll();
-  }, [open, connections]);
-
-  useEffect(() => {
-    if (!open) return;
-    const q = debouncedQuery.trim();
-    if (!q) {
-      setSearchResults([]);
-      setLoadingSearch(false);
-      setActiveMatchIds([]);
-      setMatchIndex(0);
-      setHighlightMessageId(null);
-      return;
-    }
-    const seq = ++searchSeqRef.current;
-    setLoadingSearch(true);
-    (async () => {
-      try {
-        const results = await tauri.agentSearchConversations(q);
-        if (seq !== searchSeqRef.current) return;
-        setSearchResults(results);
-      } catch {
-        if (seq !== searchSeqRef.current) return;
-        setSearchResults([]);
-      } finally {
-        if (seq === searchSeqRef.current) setLoadingSearch(false);
-      }
-    })();
-  }, [debouncedQuery, open]);
-
-  useEffect(() => {
-    if (!selectedConvId) {
-      setMessages([]);
-      return;
-    }
-    const load = async () => {
-      setLoadingMsgs(true);
-      try {
-        const stored = await tauri.agentLoadConversation(selectedConvId);
-        const msgs = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
-        setMessages(msgs);
-      } catch {
-        setMessages([]);
-      }
-      setLoadingMsgs(false);
-    };
-    load();
-  }, [selectedConvId]);
-
-  // 消息加载完成后定位到第 1 条匹配
-  useEffect(() => {
-    if (loadingMsgs) return;
-    if (!pendingNavRef.current) return;
-    if (activeMatchIds.length === 0) {
-      pendingNavRef.current = false;
-      return;
-    }
-    pendingNavRef.current = false;
-    setMatchIndex(0);
-    setHighlightMessageId(activeMatchIds[0]);
-  }, [loadingMsgs, messages, activeMatchIds]);
-
-  const connLabel = (c: SavedConnection) => formatNameWithAddress(c.name, c.host, c.port, privacyMode);
+  const connLabel = useCallback(
+    (c: SavedConnection) => formatNameWithAddress(c.name, c.host, c.port, privacyMode),
+    [privacyMode],
+  );
 
   const connNameById = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of connections) m.set(c.id, connLabel(c));
     return m;
-  }, [connections]);
+  }, [connections, connLabel]);
 
   const selectedConn = connections.find((c) => c.id === selectedConnId);
-  const selectedConv = useMemo(() => {
-    if (!selectedConvId) return undefined;
-    if (selectedConnId) {
-      const fromTree = (conversationsByConn[selectedConnId] || []).find((c) => c.id === selectedConvId);
-      if (fromTree) return fromTree;
-    }
-    const fromSearch = searchResults.find((r) => r.conversationId === selectedConvId);
-    if (fromSearch) {
-      return {
-        id: fromSearch.conversationId,
-        connectionId: fromSearch.connectionId,
-        title: fromSearch.title,
-        createdAt: fromSearch.updatedAt,
-        updatedAt: fromSearch.updatedAt,
-      } satisfies AgentConversation;
-    }
-    return undefined;
-  }, [selectedConvId, selectedConnId, conversationsByConn, searchResults]);
 
   const groupedSearch = useMemo(() => {
-    const groups: { connectionId: string; label: string; items: ConversationSearchResult[] }[] = [];
-    const index = new Map<string, number>();
-    for (const r of searchResults) {
-      let i = index.get(r.connectionId);
-      if (i === undefined) {
-        i = groups.length;
-        index.set(r.connectionId, i);
-        groups.push({
-          connectionId: r.connectionId,
-          label: connNameById.get(r.connectionId) || r.connectionId,
-          items: [],
-        });
-      }
-      groups[i].items.push(r);
-    }
-    return groups;
+    return groupSearchResultsByConnection(searchResults, connNameById);
   }, [searchResults, connNameById]);
-
-  const openSearchResult = useCallback((r: ConversationSearchResult) => {
-    setSelectedConnId(r.connectionId);
-    setActiveMatchIds(r.matchedMessageIds);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = true;
-    setSelectedConvId(r.conversationId);
-  }, []);
-
-  const goMatch = useCallback(
-    (delta: number) => {
-      if (activeMatchIds.length === 0) return;
-      setMatchIndex((prev) => {
-        const next = prev + delta;
-        if (next < 0 || next >= activeMatchIds.length) return prev;
-        setHighlightMessageId(activeMatchIds[next]);
-        return next;
-      });
-    },
-    [activeMatchIds],
-  );
-
-  const matchCountLabel = (n: number) =>
-    n > 200 ? '共 200+ 条匹配' : `共 ${n} 条匹配`;
-
-  const clearSearch = () => {
-    setSearchInput('');
-    setDebouncedQuery('');
-    setSearchResults([]);
-    setActiveMatchIds([]);
-    setMatchIndex(0);
-    setHighlightMessageId(null);
-    pendingNavRef.current = false;
-  };
 
   return (
     <Modal open={open} onClose={onClose} title="聊天历史记录" size="xl">
@@ -324,14 +159,14 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                               ? 'bg-zinc-700 text-zinc-100'
                               : 'text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
                           }`}
-                          onClick={() => openSearchResult(r)}
+                          onClick={() => void openSearchResult(r)}
                         >
                           <div className="truncate font-medium">{r.title}</div>
                           <div className="text-xs text-zinc-500 mt-0.5 line-clamp-2 break-words">
                             {r.matchedSnippet}
                           </div>
                           <div className="text-xs text-indigo-400/80 mt-0.5">
-                            {matchCountLabel(r.matchCount)}
+                            {formatMatchCountLabel(r.matchCount)}
                           </div>
                         </button>
                       ))}
@@ -360,10 +195,6 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                         }`}
                         onClick={() => {
                           setSelectedConnId(isSelected ? null : conn.id);
-                          setSelectedConvId(null);
-                          setMessages([]);
-                          setActiveMatchIds([]);
-                          setHighlightMessageId(null);
                         }}
                       >
                         <div className="flex items-center justify-between">
@@ -391,9 +222,10 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                     type="button"
                                     className="flex-1 text-left min-w-0 flex items-center justify-between gap-2"
                                     onClick={() => {
-                                      setActiveMatchIds([]);
-                                      setHighlightMessageId(null);
-                                      setSelectedConvId(conv.id === selectedConvId ? null : conv.id);
+                                      void selectConversation(
+                                        conv.id === selectedConvId ? null : conv,
+                                        conn.id,
+                                      );
                                     }}
                                   >
                                     <div className="min-w-0 flex-1">
