@@ -267,22 +267,8 @@ impl AppState {
 
         // ── Phase 3: settings-dependent work (sequential) ──────────────────
 
-        // Load LLM API key from the system keychain (if available).
-        // This is separate from settings.json to avoid storing sensitive data on disk.
-        if let Some(ref mut llm_config) = settings.llm_config {
-            match crate::config::keychain::get_llm_api_key() {
-                Ok(Some(key)) => {
-                    llm_config.api_key = key;
-                    log::info!("已从密钥链加载 LLM API Key");
-                }
-                Ok(None) => {
-                    log::info!("未在密钥链中找到 LLM API Key，用户需在设置中输入");
-                }
-                Err(e) => {
-                    log::warn!("读取密钥链失败：{}", e);
-                }
-            }
-        }
+        // LLM API Key: 移出启动关键路径（不在此处同步阻塞读取系统密钥链）。
+        // 改由 tauri setup 中的后台异步任务进行预热，且 Agent 执行前具备兜底加载。
 
         log::info!(
             "Loaded {} saved connections from {}",
@@ -652,6 +638,23 @@ pub fn run() {
                 }
                 while let Some(_) = set.join_next().await {}
             });
+
+            // Background: 异步预热系统密钥链中的 LLM API Key，不阻塞启动关键路径。
+            {
+                let settings_arc = app.state::<AppState>().settings.clone();
+                tauri::async_runtime::spawn(async move {
+                    let key_res = tokio::task::spawn_blocking(crate::config::keychain::get_llm_api_key).await;
+                    if let Ok(Ok(Some(key))) = key_res {
+                        let mut settings = settings_arc.write().await;
+                        if let Some(ref mut llm) = settings.llm_config {
+                            if llm.api_key.is_empty() {
+                                llm.api_key = key;
+                                log::info!("已从密钥链后台异步预热 LLM API Key");
+                            }
+                        }
+                    }
+                });
+            }
 
             // Background: start sync scheduler if sync was configured previously.
             // Engine + client + scheduler were initialized in AppState::new;

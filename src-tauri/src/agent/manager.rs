@@ -162,6 +162,16 @@ impl AgentManager {
             return Err(AppError::Llm("当前仅支持 OpenAI 兼容 Provider".into()));
         }
         let mut provider_cfg = llm_config.clone();
+        // 兜底补齐：若异步预热尚未完成且内存 api_key 为空，按需尝试读取 Keychain
+        if provider_cfg.api_key.is_empty() {
+            if let Ok(Some(key)) = crate::config::keychain::get_llm_api_key() {
+                provider_cfg.api_key = key.clone();
+                let mut settings = self.state.settings.write().await;
+                if let Some(ref mut llm) = settings.llm_config {
+                    llm.api_key = key;
+                }
+            }
+        }
         if let Some(model) = spec.model_override {
             provider_cfg.model = model;
         }
