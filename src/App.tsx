@@ -102,6 +102,7 @@ export default function App() {
     () => providers.find((p) => p.id === activeId),
     [providers, activeId],
   );
+  const isSolo = activeId === 'builtin.solo';
   const isExclusive = activeProvider?.exclusive ?? false;
   // sidebar: 跟随当前激活的 NavRail 项，插件可用（需设置 navGroup 才能出现在导航栏）
   const sidebarProvider =
@@ -413,6 +414,8 @@ export default function App() {
       <AppHeader
         onToggleSidebar={handleToggleSidebar}
         onToggleAgentPanel={handleToggleAgentPanel}
+        onEnterSolo={() => handleNavChange(isSolo ? 'builtin.sessions' : 'builtin.solo')}
+        isSolo={isSolo}
         className="fixed top-0 left-0 right-0 z-[99999]"
       />
 

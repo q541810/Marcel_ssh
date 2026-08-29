@@ -2,14 +2,23 @@ import { APP_NAME } from '@/lib/constants';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import WindowControls from '@/components/layout/WindowControls';
 import { SyncStatusIndicator } from '@/components/settings/SyncStatusIndicator';
+import { ArrowLeft, Sparkles } from 'lucide-react';
 
 interface Props {
   onToggleSidebar: () => void;
   onToggleAgentPanel: () => void;
+  onEnterSolo: () => void;
+  isSolo?: boolean;
   className?: string;
 }
 
-export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, className }: Props) {
+export default function AppHeader({
+  onToggleSidebar,
+  onToggleAgentPanel,
+  onEnterSolo,
+  isSolo = false,
+  className,
+}: Props) {
   return (
     <header className={`flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8 ${className ?? ''}`}>
       <div
@@ -41,6 +50,18 @@ export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, classNa
         </h1>
         <SyncStatusIndicator compact />
         <div className="flex-1" data-tauri-drag-region />
+        <button
+          onClick={onEnterSolo}
+          className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold tracking-wide transition-colors ${
+            isSolo
+              ? 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
+              : 'bg-indigo-500/15 text-indigo-300 hover:bg-indigo-500/25 hover:text-indigo-200'
+          }`}
+          title={isSolo ? '返回工作台' : '进入 SOLO 模式'}
+        >
+          {isSolo ? <ArrowLeft className="h-3.5 w-3.5" /> : <Sparkles className="h-3.5 w-3.5" />}
+          <span>{isSolo ? '返回工作台' : 'SOLO'}</span>
+        </button>
         <button
           onClick={onToggleAgentPanel}
           className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"

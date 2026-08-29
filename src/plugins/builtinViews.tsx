@@ -1,4 +1,4 @@
-import { Terminal, Wand, Plug, Settings } from 'lucide-react';
+import { Terminal, Wand, Plug, Settings, Sparkles } from 'lucide-react';
 import type { ViewProvider } from '@/lib/types';
 import { useViewStore } from '@/stores/viewStore';
 
@@ -68,6 +68,18 @@ export function registerBuiltinViews(): void {
       exclusive: true,
       component: async () => ({
         default: (await import('@/components/settings/Settings')).default,
+      }),
+    },
+    {
+      id: 'builtin.solo',
+      pluginId: BUILTIN_PLUGIN_ID,
+      mount: 'center',
+      title: 'SOLO',
+      icon: { kind: 'react', node: <Sparkles className="w-5 h-5" /> },
+      order: 15,
+      exclusive: true,
+      component: async () => ({
+        default: (await import('@/components/solo/SoloPage')).default,
       }),
     },
     {
