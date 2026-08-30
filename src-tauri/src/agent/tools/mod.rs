@@ -369,6 +369,13 @@ pub trait AgentTool: Send + Sync {
         false
     }
 
+    /// Whether this tool is safe to execute concurrently with adjacent concurrent-safe tools.
+    /// Default is `false` (strictly sequential execution to preserve causal dependencies).
+    /// Pure, read-only isolated subagents (`TaskTool`) override this to `true`.
+    fn is_concurrent_safe(&self) -> bool {
+        false
+    }
+
     /// Execute the tool with the given parameters and SSH context.
     async fn execute(
         &self,

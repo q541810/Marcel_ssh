@@ -91,9 +91,10 @@ impl AgentTool for TaskTool {
          Plan mode (read-only research tools only), explores independently in its \
          own conversation, and returns a research report. Use this to offload \
          parallel-able research (codebase exploration, log analysis, config \
-         auditing) instead of doing it inline. Provide a complete self-contained \
-         prompt with all necessary context — the subagent does NOT see your \
-         conversation history. The subagent never writes or modifies anything.\n\
+         auditing) instead of doing it inline. You can invoke multiple task tools \
+         concurrently in one turn to explore different areas in parallel. Provide a \
+         complete self-contained prompt with all necessary context — the subagent \
+         does NOT see your conversation history. The subagent never writes or modifies anything.\n\
          \n\
          When NOT to use the task tool:\n\
          - Reading a single file or doing a small-scope search → use read_file / \
@@ -131,6 +132,10 @@ impl AgentTool for TaskTool {
 
     fn risk_level(&self) -> RiskLevel {
         RiskLevel::ReadOnly
+    }
+
+    fn is_concurrent_safe(&self) -> bool {
+        true
     }
 
     async fn execute(
