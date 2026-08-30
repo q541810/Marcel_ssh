@@ -440,16 +440,16 @@ export function MobileAgentPolicySection() {
         description="单次任务最多执行的工具调用轮数，超限自动停止"
         trailing={
           <span className="w-14 text-right font-mono text-sm text-indigo-300">
-            {agent.maxToolRounds ?? 80}
+            {agent.maxToolRounds ?? 500}
           </span>
         }
       >
         <input
           type="range"
           min={10}
-          max={300}
+          max={1000}
           step={10}
-          value={agent.maxToolRounds ?? 80}
+          value={agent.maxToolRounds ?? 500}
           onChange={(e) =>
             updateAgent({ maxToolRounds: Number(e.target.value) })
           }

@@ -594,23 +594,23 @@ export function AgentPolicySection() {
         >
           <ValidatedInput
             type="number"
-            value={agent.maxToolRounds ?? 80}
+            value={agent.maxToolRounds ?? 500}
             onChange={(v) => updateAgent({ maxToolRounds: v })}
             validate={(s) => {
               const v = Number(s);
-              if (!Number.isInteger(v) || v < 10 || v > 300)
-                return '须为 10-300 的整数';
+              if (!Number.isInteger(v) || v < 10 || v > 2000)
+                return '须为 10-2000 的整数';
               return null;
             }}
             validatorId="maxToolRounds"
             validatorFn={(draft) => {
               const v = draft.agentModeSettings.maxToolRounds;
-              if (!Number.isInteger(v) || v < 10 || v > 300)
-                return `最大执行轮数须为 10-300 的整数（当前值：${v}）`;
+              if (!Number.isInteger(v) || v < 10 || v > 2000)
+                return `最大执行轮数须为 10-2000 的整数（当前值：${v}）`;
               return null;
             }}
             min={10}
-            max={300}
+            max={2000}
             step={1}
             suffix="轮"
             className="w-24"

@@ -120,7 +120,7 @@ pub struct AgentModeSettings {
 }
 
 fn default_max_tool_rounds() -> usize {
-    80
+    500
 }
 
 impl Default for AgentModeSettings {
@@ -139,7 +139,7 @@ impl Default for AgentModeSettings {
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
-            max_tool_rounds: 80,
+            max_tool_rounds: 500,
             context_window: 0,
             confirm_edit_file: true,
         }
