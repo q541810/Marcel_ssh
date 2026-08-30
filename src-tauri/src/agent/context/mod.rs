@@ -30,7 +30,7 @@ pub mod summarizer;
 
 use tokio::sync::watch;
 
-use crate::llm::openai::OpenAiProvider;
+use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmMessage, ToolDefinition};
 
 use meter::estimate_total;
@@ -210,7 +210,7 @@ fn shrink_to_known_tail(
 /// 之后无失败路径）。
 pub async fn compact_if_needed(
     msgs: &mut Vec<LlmMessage>,
-    provider: &OpenAiProvider,
+    manager: &LlmManager,
     tools: &[ToolDefinition],
     context_window: u64,
     trigger: CompactionTrigger,
@@ -311,7 +311,7 @@ pub async fn compact_if_needed(
             }
             match compact_region(
                 msgs,
-                provider,
+                manager,
                 &range,
                 cancel_rx,
                 &mut events,
@@ -434,7 +434,7 @@ pub async fn compact_if_needed(
                 }
                 match compact_region(
                     msgs,
-                    provider,
+                    manager,
                     &range,
                     cancel_rx,
                     &mut events,
@@ -511,7 +511,7 @@ pub async fn compact_if_needed(
 /// 任何失败在 splice 之前返回 `Err`，messages 保持不变；splice 之后无失败路径。
 async fn compact_region(
     msgs: &mut Vec<LlmMessage>,
-    provider: &OpenAiProvider,
+    manager: &LlmManager,
     range: &region::RangeSelection,
     cancel_rx: &mut watch::Receiver<bool>,
     events: &mut Vec<CompactionEvent>,
@@ -547,7 +547,7 @@ async fn compact_region(
     };
 
     let summary_text = tokio::select! {
-        r = summarizer::summarize_with_llm(provider, &input, Some(&progress)) => r.map_err(|e| e)?,
+        r = summarizer::summarize_with_llm(manager, &input, Some(&progress)) => r.map_err(|e| e)?,
         _ = cancel_rx.changed() => {
             log::info!("compaction cancelled by user; messages unchanged");
             return Err("已取消".into());

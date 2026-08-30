@@ -5,7 +5,9 @@ use crate::config::keychain;
 use crate::config::persist::JsonPersistable;
 use crate::config::settings::AppSettings;
 use crate::error::AppError;
-use crate::llm::openai::{validate_retry_conditions, ModelInfo, OpenAiProvider};
+use crate::llm::error::validate_retry_conditions;
+use crate::llm::manager::LlmManager;
+use crate::llm::openai::ModelInfo;
 use crate::llm::provider::{LlmConfig, ProviderType};
 use crate::AppState;
 
@@ -215,8 +217,8 @@ pub async fn llm_list_models(
         extra_body: None,
     };
 
-    let provider = OpenAiProvider::new(config)?;
-    provider.list_models().await
+    let llm_manager = LlmManager::new(config)?;
+    llm_manager.list_models().await
 }
 
 #[cfg(test)]

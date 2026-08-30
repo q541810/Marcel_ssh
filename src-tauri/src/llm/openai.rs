@@ -1,19 +1,18 @@
-use std::error::Error as StdError;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use futures::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::error::AppError;
+use crate::llm::error::{format_reqwest_error, LlmError, RequestPhase};
 use crate::llm::provider::{
-    LlmConfig, LlmMessage, LlmProvider, LlmRole, TokenUsage, ToolCall, ToolDefinition,
+    LlmConfig, LlmMessage, LlmRole, TokenUsage, ToolCall, ToolDefinition,
+    VISION_RECENT_USER_TURNS, IMAGE_PLACEHOLDER,
 };
 use crate::llm::streaming::StreamEvent;
 
-/// OpenAI / OpenAI-compatible LLM provider with streaming support.
+/// OpenAI / OpenAI-compatible LLM provider with streaming support (Single-request transport layer).
 pub struct OpenAiProvider {
     config: LlmConfig,
     client: reqwest::Client,
@@ -29,12 +28,12 @@ pub struct TextSink<'a> {
 }
 
 impl OpenAiProvider {
-    pub fn new(config: LlmConfig) -> Result<Self, AppError> {
+    pub fn new(config: LlmConfig) -> Result<Self, LlmError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(180))
             .pool_idle_timeout(Duration::from_secs(60))
             .build()
-            .map_err(|e| AppError::Llm(format!("HTTP 客户端初始化失败: {}", e)))?;
+            .map_err(|e| LlmError::Config(format!("HTTP 客户端初始化失败: {}", e)))?;
 
         Ok(Self { config, client })
     }
@@ -50,99 +49,34 @@ impl OpenAiProvider {
             .unwrap_or("https://api.openai.com/v1")
     }
 
-    fn build_headers(&self) -> Result<HeaderMap, AppError> {
+    fn build_headers(&self) -> Result<HeaderMap, LlmError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let auth = format!("Bearer {}", self.config.api_key);
         let auth_header = HeaderValue::from_str(&auth)
-            .map_err(|e| AppError::Llm(format!("API key 含非法字符: {}", e)))?;
+            .map_err(|e| LlmError::Config(format!("API key 含非法字符: {}", e)))?;
         headers.insert(AUTHORIZATION, auth_header);
         Ok(headers)
     }
 
-    /// Stream a chat completion with automatic retry on transient errors.
-    /// Decoded SSE events are pushed to `event_tx`.
-    /// Returns the assembled final assistant message after the stream completes.
-    pub async fn chat_stream(
-        &self,
-        messages: &[LlmMessage],
-        tools: &[ToolDefinition],
-        event_tx: mpsc::UnboundedSender<StreamEvent>,
-    ) -> Result<LlmMessage, AppError> {
-        self.chat_stream_with_sink(messages, tools, &event_tx, None, None)
-            .await
-    }
-
-    /// `chat_stream` 的变体：额外把内容增量实时推给 `sink`（压缩摘要进度展示用）。
-    /// 重试会先调 `sink.reset()` 再重新发起请求，保证进度文本不会跨轮次残留。
-    /// `max_tokens`：摘要等内嵌调用的输出上限；`None` = provider 默认。
-    pub async fn chat_stream_with_sink(
+    /// 执行单次流式聊天补全请求（无内部重试循环，阶段错误结构化返回）。
+    /// 返回 `(Result<LlmMessage, LlmError>, RequestPhase)`，表明请求结束时的阶段。
+    pub async fn execute_stream(
         &self,
         messages: &[LlmMessage],
         tools: &[ToolDefinition],
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
         sink: Option<TextSink<'_>>,
         max_tokens: Option<u32>,
-    ) -> Result<LlmMessage, AppError> {
-        let max_retries = self.config.max_retries;
-        let retry_conditions = parse_retry_conditions(&self.config.retry_http_statuses);
-        let delay = Duration::from_secs_f32(self.config.retry_delay_secs);
-        let retry_on_timeout = self.config.retry_on_timeout;
-
-        let mut attempt: u32 = 0;
-        loop {
-            attempt += 1;
-            if let Some(s) = sink {
-                (s.reset)();
-            }
-            match self
-                .chat_stream_inner(messages, tools, event_tx, sink, max_tokens)
-                .await
-            {
-                Ok(msg) => return Ok(msg),
-                Err(e) => {
-                    let max_attempts = max_retries + 1;
-                    if attempt >= max_attempts
-                        || !is_retryable(&e, &retry_conditions, retry_on_timeout)
-                    {
-                        return Err(e);
-                    }
-                    let err_msg = format!("{}", e);
-                    log::warn!(
-                        "LLM 请求失败 (尝试 {}/{}): {}，{}s 后重试",
-                        attempt,
-                        max_attempts,
-                        err_msg,
-                        delay.as_secs_f32(),
-                    );
-                    let _ = event_tx.send(StreamEvent::Retrying {
-                        attempt,
-                        max_attempts,
-                        delay_secs: delay.as_secs_f32(),
-                        last_error: err_msg,
-                    });
-                    tokio::time::sleep(delay).await;
-                }
-            }
-        }
-    }
-
-    /// Inner implementation: single HTTP request + SSE parsing, no retry.
-    async fn chat_stream_inner(
-        &self,
-        messages: &[LlmMessage],
-        tools: &[ToolDefinition],
-        event_tx: &mpsc::UnboundedSender<StreamEvent>,
-        sink: Option<TextSink<'_>>,
-        max_tokens: Option<u32>,
-    ) -> Result<LlmMessage, AppError> {
+    ) -> (Result<LlmMessage, LlmError>, RequestPhase) {
         let url = format!("{}/chat/completions", self.base_url().trim_end_matches('/'));
         let req_body =
             build_request_body_with_max_tokens(&self.config, messages, tools, true, max_tokens);
 
-        let response = self
-            .send_llm_request(&url, &req_body, messages.len())
-            .await?;
+        let response = match self.send_llm_request(&url, &req_body, messages.len()).await {
+            Ok(resp) => resp,
+            Err(err) => return (Err(err), RequestPhase::Probing),
+        };
 
         let mut accumulated_text = String::new();
         let mut accumulated_reasoning = String::new();
@@ -153,7 +87,7 @@ impl OpenAiProvider {
         let mut stream = response.bytes_stream();
         let first_byte_timeout =
             Duration::from_secs(self.config.first_byte_timeout_secs.clamp(20, 250));
-        let mut first_byte = true;
+        let mut phase = RequestPhase::Probing;
         let mut saw_done = false;
 
         loop {
@@ -161,7 +95,7 @@ impl OpenAiProvider {
             let chunk_opt = match next {
                 Ok(v) => v,
                 Err(_) => {
-                    let msg = if first_byte {
+                    let detail = if phase == RequestPhase::Probing {
                         format!(
                             "首字超时（{}s 内未收到模型响应）",
                             self.config.first_byte_timeout_secs
@@ -172,20 +106,26 @@ impl OpenAiProvider {
                             self.config.first_byte_timeout_secs
                         )
                     };
-                    return Err(AppError::Llm(msg));
+                    return (Err(LlmError::Timeout { detail }), phase);
                 }
             };
+
             let chunk = match chunk_opt {
                 Some(Ok(c)) => c,
                 Some(Err(e)) => {
-                    return Err(AppError::Llm(format!(
-                        "读取流式响应失败: {}",
-                        format_reqwest_error(&e)
-                    )))
+                    return (
+                        Err(LlmError::Network(format!(
+                            "读取流式响应失败: {}",
+                            format_reqwest_error(&e)
+                        ))),
+                        phase,
+                    );
                 }
                 None => break,
             };
-            first_byte = false;
+
+            // 收到首个流数据分块后，正式转入 Streaming 阶段
+            phase = RequestPhase::Streaming;
             let text = String::from_utf8_lossy(&chunk);
             buffer.push_str(&text);
 
@@ -234,16 +174,14 @@ impl OpenAiProvider {
                         consecutive_parse_errors += 1;
                         log::warn!("无法解析 SSE 数据: {} | 原文: {}", e, payload);
                         if consecutive_parse_errors >= 3 {
-                            let _ = event_tx.send(StreamEvent::Error {
-                                message: format!(
-                                    "LLM 流式响应连续解析失败 ({} 次)，请重试",
-                                    consecutive_parse_errors
-                                ),
-                            });
-                            return Err(AppError::Llm(format!(
+                            let msg = format!(
                                 "LLM 流式响应连续解析失败 ({} 次): 最近错误: {}",
                                 consecutive_parse_errors, e
-                            )));
+                            );
+                            let _ = event_tx.send(StreamEvent::Error {
+                                message: msg.clone(),
+                            });
+                            return (Err(LlmError::ParseError(msg)), phase);
                         }
                     }
                 }
@@ -253,12 +191,15 @@ impl OpenAiProvider {
             }
         }
 
-        Ok(assemble_final_message(
-            accumulated_text,
-            accumulated_reasoning,
-            tool_calls,
-            finish_reason,
-        ))
+        (
+            Ok(assemble_final_message(
+                accumulated_text,
+                accumulated_reasoning,
+                tool_calls,
+                finish_reason,
+            )),
+            phase,
+        )
     }
 
     async fn send_llm_request(
@@ -266,7 +207,7 @@ impl OpenAiProvider {
         url: &str,
         req_body: &serde_json::Value,
         messages_len: usize,
-    ) -> Result<reqwest::Response, AppError> {
+    ) -> Result<reqwest::Response, LlmError> {
         log::info!(
             "LLM 请求: {} model={} messages={}",
             url,
@@ -284,22 +225,23 @@ impl OpenAiProvider {
             .map_err(|e| {
                 let detail = format_reqwest_error(&e);
                 log::error!("LLM 请求发送失败: {}", detail);
-                AppError::Llm(format!("LLM 请求失败: {}", detail))
+                LlmError::Network(detail)
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = read_error_body(response).await;
-            return Err(AppError::Llm(format!("LLM 返回错误 {}: {}", status, body)));
+            return Err(LlmError::HttpStatus {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         Ok(response)
     }
 
     /// Fetch the list of available models from the provider's `/models` endpoint.
-    /// Used by the settings UI to let users pick a model id from what the
-    /// provider actually serves. No retry — the user clicks the button on demand.
-    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, AppError> {
+    pub async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         let url = format!("{}/models", self.base_url().trim_end_matches('/'));
         log::info!("LLM 列出模型请求: {}", url);
 
@@ -312,22 +254,22 @@ impl OpenAiProvider {
             .map_err(|e| {
                 let detail = format_reqwest_error(&e);
                 log::error!("LLM 列出模型请求失败: {}", detail);
-                AppError::Llm(format!("获取模型列表失败: {}", detail))
+                LlmError::Network(detail)
             })?;
 
         let status = response.status();
         if !status.is_success() {
             let body = read_error_body(response).await;
-            return Err(AppError::Llm(format!(
-                "获取模型列表失败 (HTTP {}): {}",
-                status, body
-            )));
+            return Err(LlmError::HttpStatus {
+                status: status.as_u16(),
+                body,
+            });
         }
 
         let resp: ModelsResponse = response
             .json()
             .await
-            .map_err(|e| AppError::Llm(format!("解析模型列表响应失败: {}", e)))?;
+            .map_err(|e| LlmError::ParseError(format!("解析模型列表响应失败: {}", e)))?;
 
         let models: Vec<ModelInfo> = resp
             .data
@@ -344,157 +286,6 @@ impl OpenAiProvider {
     }
 }
 
-#[async_trait]
-impl LlmProvider for OpenAiProvider {
-    /// Non-streaming entrypoint: same code path as streaming but discards the deltas.
-    async fn send_message(
-        &self,
-        messages: &[LlmMessage],
-        tools: &[ToolDefinition],
-    ) -> Result<LlmMessage, AppError> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        // Drain the receiver in a background task to avoid blocking
-        tokio::spawn(async move { while rx.recv().await.is_some() {} });
-        self.chat_stream(messages, tools, tx).await
-    }
-}
-
-/// Walk a reqwest::Error's source chain and return a single string that
-/// includes the underlying cause (TLS handshake failure, DNS failure, refused
-/// connection, etc.). reqwest by itself often shows only the high-level
-/// "error sending request for url" without the actual reason.
-fn format_reqwest_error(err: &reqwest::Error) -> String {
-    let mut parts: Vec<String> = vec![err.to_string()];
-    let mut src: Option<&dyn StdError> = err.source();
-    while let Some(e) = src {
-        parts.push(format!("由: {}", e));
-        src = e.source();
-    }
-    // Annotate common causes for clearer UX
-    let category = if err.is_timeout() {
-        Some("超时（网络不可达或服务器无响应）")
-    } else if err.is_connect() {
-        Some("连接失败（服务器拒绝/不存在/端口不通）")
-    } else if err.is_request() {
-        Some("请求构造失败")
-    } else {
-        None
-    };
-    if let Some(c) = category {
-        parts.insert(0, format!("[{}]", c));
-    }
-    parts.join(" | ")
-}
-
-/// A single entry in the retry conditions list: either a single status code or a range.
-#[derive(Debug, Clone)]
-enum RetryCondition {
-    Code(u16),
-    Range(u16, u16),
-}
-
-/// Parse a comma-separated list of HTTP status codes/ranges.
-/// Examples: "429" → [Code(429)], "500-599" → [Range(500,599)], "408, 429, 500-599" → mixed.
-/// Whitespace is ignored. Invalid entries are skipped with a warning. Reversed ranges (e.g. "599-500") are auto-corrected.
-fn parse_retry_conditions(input: &str) -> Vec<RetryCondition> {
-    let mut conditions = Vec::new();
-    for entry in input.split(',') {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        if let Some((lo, hi)) = entry.split_once('-') {
-            match (lo.trim().parse::<u16>(), hi.trim().parse::<u16>()) {
-                (Ok(lo), Ok(hi)) => {
-                    let (lo, hi) = if lo <= hi { (lo, hi) } else { (hi, lo) };
-                    conditions.push(RetryCondition::Range(lo, hi));
-                }
-                _ => log::warn!("忽略无效的重试范围配置: \"{}\"", entry),
-            }
-        } else if let Ok(code) = entry.parse::<u16>() {
-            conditions.push(RetryCondition::Code(code));
-        } else {
-            log::warn!("忽略无效的重试状态码配置: \"{}\"", entry);
-        }
-    }
-    conditions
-}
-
-/// Validate the retry conditions string. Returns an error message on invalid format.
-pub(crate) fn validate_retry_conditions(input: &str) -> Result<(), String> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Ok(());
-    }
-    for entry in trimmed.split(',') {
-        let entry = entry.trim();
-        if entry.is_empty() {
-            continue;
-        }
-        if entry.contains('-') {
-            let parts: Vec<&str> = entry.splitn(2, '-').collect();
-            if parts.len() != 2 {
-                return Err(format!("无效范围: \"{}\"（使用格式 lo-hi）", entry));
-            }
-            let lo: u16 = parts[0]
-                .trim()
-                .parse()
-                .map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
-            let hi: u16 = parts[1]
-                .trim()
-                .parse()
-                .map_err(|_| format!("无法解析范围: \"{}\"", entry))?;
-            if lo < 100 || lo > 599 || hi < 100 || hi > 599 {
-                return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
-            }
-            if hi < lo {
-                return Err(format!("范围需从小到大: \"{}\"", entry));
-            }
-        } else {
-            let code: u16 = entry
-                .parse()
-                .map_err(|_| format!("无效状态码: \"{}\"", entry))?;
-            if code < 100 || code > 599 {
-                return Err(format!("状态码超出范围 (100-599): \"{}\"", entry));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Check if a given HTTP status code matches any retry condition.
-fn status_matches_conditions(status: u16, conditions: &[RetryCondition]) -> bool {
-    conditions.iter().any(|c| match c {
-        RetryCondition::Code(c) => status == *c,
-        RetryCondition::Range(lo, hi) => status >= *lo && status <= *hi,
-    })
-}
-
-/// Determine whether an LLM error is retryable based on the configured conditions.
-/// - Network/timeout errors: retryable when retry_on_timeout is enabled.
-/// - HTTP errors: retryable if the status code matches the configured conditions.
-/// - Other errors (parse failures, etc.): not retryable.
-fn is_retryable(err: &AppError, conditions: &[RetryCondition], retry_on_timeout: bool) -> bool {
-    match err {
-        AppError::Llm(msg) => {
-            // Extract HTTP status from error messages like "LLM 返回错误 429: ..."
-            // or "LLM HTTP 429: ..."
-            if let Some(status) = extract_http_status(msg) {
-                status_matches_conditions(status, conditions)
-            } else {
-                // 超时类错误由 retry_on_timeout 开关门控（默认开启）
-                if msg.contains("超时") {
-                    return retry_on_timeout;
-                }
-                msg.contains("连接失败") || msg.contains("网络不可达")
-            }
-        }
-        _ => false,
-    }
-}
-
-/// Try to extract an HTTP status code from an error message.
-/// Looks for patterns like "429" or "500" following "error" or "HTTP".
 /// 读取错误响应体，最多取前 128KB，并保留读取失败的原始错误信息。
 async fn read_error_body(response: reqwest::Response) -> String {
     let max_bytes = 128 * 1024;
@@ -514,179 +305,6 @@ async fn read_error_body(response: reqwest::Response) -> String {
     }
 }
 
-fn extract_http_status(msg: &str) -> Option<u16> {
-    // Pattern: "LLM 返回错误 429:" or "LLM HTTP 429:"
-    for prefix in &["错误 ", "HTTP ", "错误"] {
-        if let Some(pos) = msg.find(prefix) {
-            let after = &msg[pos + prefix.len()..];
-            let code_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(code) = code_str.parse::<u16>() {
-                if (100..=599).contains(&code) {
-                    return Some(code);
-                }
-            }
-        }
-    }
-    None
-}
-
-#[cfg(test)]
-mod retry_tests {
-    use super::*;
-
-    #[test]
-    fn parse_single_code() {
-        let conditions = parse_retry_conditions("429");
-        assert!(status_matches_conditions(429, &conditions));
-        assert!(!status_matches_conditions(430, &conditions));
-    }
-
-    #[test]
-    fn parse_range() {
-        let conditions = parse_retry_conditions("500-599");
-        assert!(status_matches_conditions(500, &conditions));
-        assert!(status_matches_conditions(550, &conditions));
-        assert!(status_matches_conditions(599, &conditions));
-        assert!(!status_matches_conditions(499, &conditions));
-        assert!(!status_matches_conditions(600, &conditions));
-    }
-
-    #[test]
-    fn parse_mixed() {
-        let conditions = parse_retry_conditions("408, 429, 500-599");
-        assert!(status_matches_conditions(408, &conditions));
-        assert!(status_matches_conditions(429, &conditions));
-        assert!(status_matches_conditions(502, &conditions));
-        assert!(!status_matches_conditions(400, &conditions));
-        assert!(!status_matches_conditions(401, &conditions));
-    }
-
-    #[test]
-    fn parse_empty_string() {
-        let conditions = parse_retry_conditions("");
-        assert!(conditions.is_empty());
-    }
-
-    #[test]
-    fn parse_whitespace_only() {
-        let conditions = parse_retry_conditions("  ,  ,  ");
-        assert!(conditions.is_empty());
-    }
-
-    #[test]
-    fn parse_invalid_entries_ignored() {
-        let conditions = parse_retry_conditions("429, abc, 500-599");
-        assert_eq!(conditions.len(), 2);
-        assert!(status_matches_conditions(429, &conditions));
-        assert!(status_matches_conditions(500, &conditions));
-    }
-
-    #[test]
-    fn is_retryable_http_status_match() {
-        let conditions = parse_retry_conditions("429, 500-599");
-        let err = AppError::Llm("LLM 返回错误 429: rate limited".into());
-        assert!(is_retryable(&err, &conditions, true));
-    }
-
-    #[test]
-    fn is_retryable_http_status_no_match() {
-        let conditions = parse_retry_conditions("429, 500-599");
-        let err = AppError::Llm("LLM 返回错误 401: unauthorized".into());
-        assert!(!is_retryable(&err, &conditions, true));
-    }
-
-    #[test]
-    fn is_retryable_timeout_always() {
-        let conditions = parse_retry_conditions("");
-        let err = AppError::Llm("LLM 请求失败: [超时]".into());
-        assert!(is_retryable(&err, &conditions, true));
-        assert!(!is_retryable(&err, &conditions, false));
-    }
-
-    #[test]
-    fn is_retryable_connection_failed() {
-        let conditions = parse_retry_conditions("");
-        let err = AppError::Llm("LLM 请求失败: [连接失败]".into());
-        assert!(is_retryable(&err, &conditions, true));
-        // 连接失败不受 retry_on_timeout 门控
-        assert!(is_retryable(&err, &conditions, false));
-    }
-
-    #[test]
-    fn extract_status_from_various_formats() {
-        assert_eq!(
-            extract_http_status("LLM 返回错误 429: rate limit"),
-            Some(429)
-        );
-        assert_eq!(extract_http_status("LLM HTTP 502: bad gateway"), Some(502));
-        assert_eq!(extract_http_status("some error without status"), None);
-    }
-
-    // ── validate_retry_conditions tests ──
-
-    #[test]
-    fn validate_empty_ok() {
-        assert!(validate_retry_conditions("").is_ok());
-        assert!(validate_retry_conditions("   ").is_ok());
-    }
-
-    #[test]
-    fn validate_single_code() {
-        assert!(validate_retry_conditions("429").is_ok());
-        assert!(validate_retry_conditions("500").is_ok());
-    }
-
-    #[test]
-    fn validate_range() {
-        assert!(validate_retry_conditions("500-599").is_ok());
-    }
-
-    #[test]
-    fn validate_mixed() {
-        assert!(validate_retry_conditions("408, 429, 500-599").is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_non_numeric() {
-        assert!(validate_retry_conditions("abc").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_code_below_100() {
-        assert!(validate_retry_conditions("99").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_code_above_599() {
-        assert!(validate_retry_conditions("600").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_hi_less_than_lo() {
-        assert!(validate_retry_conditions("500-400").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_range_hi_above_599() {
-        assert!(validate_retry_conditions("500-600").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_range_lo_below_100() {
-        assert!(validate_retry_conditions("99-500").is_err());
-    }
-
-    #[test]
-    fn validate_rejects_malformed_range() {
-        assert!(validate_retry_conditions("500--599").is_err());
-    }
-
-    #[test]
-    fn validate_mixed_valid_and_invalid_rejects() {
-        assert!(validate_retry_conditions("429, abc").is_err());
-    }
-}
-
 fn process_chunk(
     chunk: &ChatChunk,
     accumulated_text: &mut String,
@@ -696,7 +314,6 @@ fn process_chunk(
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
 ) {
     for choice in &chunk.choices {
-        // finish_reason 只在流末尾的 chunk 上携带（stop/length/tool_calls/content_filter）
         if let Some(fr) = choice.finish_reason.as_deref() {
             if !fr.is_empty() {
                 *finish_reason = Some(fr.to_string());
@@ -731,94 +348,97 @@ fn process_chunk(
 }
 
 fn assemble_final_message(
-    accumulated_text: String,
-    accumulated_reasoning: String,
+    content: String,
+    reasoning: String,
     tool_calls: Vec<PartialToolCall>,
     finish_reason: Option<String>,
 ) -> LlmMessage {
-    let final_tool_calls: Option<Vec<ToolCall>> = if tool_calls.is_empty() {
-        None
-    } else {
-        Some(
-            tool_calls
-                .into_iter()
-                .filter(|tc| !tc.id.is_empty())
-                .map(|tc| {
-                    let arguments = serde_json::from_str(&tc.arguments_buf)
-                        .unwrap_or_else(|_| serde_json::Value::String(tc.arguments_buf.clone()));
-                    ToolCall {
-                        id: tc.id,
-                        name: tc.name,
-                        arguments,
-                    }
-                })
-                .collect(),
-        )
-    };
+    let finalized_tools: Vec<ToolCall> = tool_calls
+        .into_iter()
+        .filter_map(|tc| tc.into_tool_call())
+        .collect();
 
-    LlmMessage {
-        role: LlmRole::Assistant,
-        content: accumulated_text,
-        tool_calls: final_tool_calls,
-        tool_call_id: None,
-        reasoning_content: if accumulated_reasoning.is_empty() {
-            None
-        } else {
-            Some(accumulated_reasoning)
-        },
-        image_paths: None,
-        finish_reason,
-        db_id: None,
-        db_id_known: false,
+    let mut msg = LlmMessage::assistant(content);
+    if !reasoning.is_empty() {
+        msg.reasoning_content = Some(reasoning);
     }
+    if !finalized_tools.is_empty() {
+        msg.tool_calls = Some(finalized_tools);
+    }
+    msg.finish_reason = finish_reason;
+    msg
 }
 
 #[derive(Default)]
 struct PartialToolCall {
     id: String,
     name: String,
-    arguments_buf: String,
-    start_emitted: bool,
+    arguments: String,
+    announced: bool,
 }
 
 impl PartialToolCall {
     fn apply_delta(
         &mut self,
-        delta_tc: &DeltaToolCall,
+        delta: &DeltaToolCall,
         event_tx: &mpsc::UnboundedSender<StreamEvent>,
     ) {
-        if let Some(ref id) = delta_tc.id {
+        // id / name 均取首次到达值（first-write-wins），防异常 provider 重发覆盖。
+        if let Some(ref id) = delta.id {
             if self.id.is_empty() {
                 self.id = id.clone();
             }
         }
-        if let Some(ref func) = delta_tc.function {
+        if let Some(ref func) = delta.function {
             if let Some(ref name) = func.name {
                 if self.name.is_empty() {
                     self.name = name.clone();
-                    self.maybe_emit_start(event_tx);
                 }
             }
-            if let Some(ref args_delta) = func.arguments {
-                self.arguments_buf.push_str(args_delta);
-                let _ = event_tx.send(StreamEvent::ToolCallDelta {
-                    id: self.id.clone(),
-                    arguments_delta: args_delta.clone(),
-                });
+        }
+        // start 必须先于本 delta 的 ToolCallDelta 发出（前端靠 start 按 id 注册路由）。
+        // 广播要求 id 与 name 均已到达：主流 provider 首个 delta 同时携带两者；
+        // name 先到、id 后到的异常分片在 id 到达的那次 delta 上补广播。
+        self.maybe_emit_start(event_tx);
+        if let Some(ref func) = delta.function {
+            if let Some(ref args) = func.arguments {
+                self.arguments.push_str(args);
+                if !self.id.is_empty() {
+                    let _ = event_tx.send(StreamEvent::ToolCallDelta {
+                        id: self.id.clone(),
+                        arguments_delta: args.clone(),
+                    });
+                }
             }
         }
     }
 
     fn maybe_emit_start(&mut self, event_tx: &mpsc::UnboundedSender<StreamEvent>) {
-        if !self.id.is_empty() && !self.name.is_empty() && !self.start_emitted {
+        if !self.announced && !self.id.is_empty() && !self.name.is_empty() {
+            self.announced = true;
             let _ = event_tx.send(StreamEvent::ToolCallStart {
                 id: self.id.clone(),
                 name: self.name.clone(),
             });
-            self.start_emitted = true;
         }
     }
+
+    fn into_tool_call(self) -> Option<ToolCall> {
+        // 空 id 的调用没有可靠的回执路由（tool result 以 id 关联），丢弃；
+        // 空 name 保留，交给 dispatcher 以 unknown-tool 错误反馈给模型。
+        if self.id.is_empty() {
+            return None;
+        }
+        let arguments = serde_json::from_str(&self.arguments)
+            .unwrap_or_else(|_| serde_json::Value::String(self.arguments.clone()));
+        Some(ToolCall {
+            id: self.id,
+            name: self.name,
+            arguments,
+        })
+    }
 }
+
 /* ---- Typed request structs — built once, then `to_value` + extra_body merge ---- */
 
 #[derive(Serialize)]
@@ -920,8 +540,6 @@ fn build_request_body_with_max_tokens(
     stream: bool,
     max_tokens: Option<u32>,
 ) -> serde_json::Value {
-    use crate::llm::provider::VISION_RECENT_USER_TURNS;
-
     let user_indices: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -1041,8 +659,6 @@ fn value_type_name(v: &serde_json::Value) -> &'static str {
 
 /// `send_images`: true only for recent user turns when vision is enabled.
 fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
-    use crate::llm::provider::IMAGE_PLACEHOLDER;
-
     let paths = m.image_paths.as_ref().filter(|p| !p.is_empty());
     let Some(paths) = paths else {
         return RequestContent::Text(m.content.clone());
@@ -1050,16 +666,7 @@ fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
 
     if !send_images || m.role != LlmRole::User {
         let mut text = m.content.clone();
-        let block = std::iter::repeat(IMAGE_PLACEHOLDER)
-            .take(paths.len())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if text.is_empty() {
-            text = block;
-        } else if !text.contains(IMAGE_PLACEHOLDER) {
-            text.push('\n');
-            text.push_str(&block);
-        }
+        append_image_placeholders(&mut text, paths.len());
         return RequestContent::Text(text);
     }
 
@@ -1092,16 +699,7 @@ fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
     if loaded == 0 {
         // Missing files: degrade to placeholder text
         let mut text = m.content.clone();
-        let block = std::iter::repeat(IMAGE_PLACEHOLDER)
-            .take(paths.len())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if text.is_empty() {
-            text = block;
-        } else if !text.contains(IMAGE_PLACEHOLDER) {
-            text.push('\n');
-            text.push_str(&block);
-        }
+        append_image_placeholders(&mut text, paths.len());
         return RequestContent::Text(text);
     }
 
@@ -1112,28 +710,41 @@ fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
     }
 }
 
+fn append_image_placeholders(content: &mut String, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let block = std::iter::repeat(IMAGE_PLACEHOLDER)
+        .take(count)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if content.is_empty() {
+        *content = block;
+    } else if !content.contains(IMAGE_PLACEHOLDER) {
+        content.push('\n');
+        content.push_str(&block);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatChunk {
-    choices: Vec<ChatChoice>,
+    choices: Vec<ChunkChoice>,
     #[serde(default)]
-    usage: Option<ApiUsage>,
+    usage: Option<ChunkUsage>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ApiUsage {
+struct ChunkUsage {
+    #[serde(default)]
     prompt_tokens: u32,
+    #[serde(default)]
     completion_tokens: u32,
+    #[serde(default)]
     total_tokens: u32,
     #[serde(default)]
-    completion_tokens_details: Option<CompletionTokensDetails>,
-    #[serde(default)]
     prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CompletionTokensDetails {
     #[serde(default)]
-    reasoning_tokens: Option<u32>,
+    completion_tokens_details: Option<CompletionTokensDetails>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1142,9 +753,15 @@ struct PromptTokensDetails {
     cached_tokens: Option<u32>,
 }
 
-impl From<ApiUsage> for TokenUsage {
-    fn from(u: ApiUsage) -> Self {
-        TokenUsage {
+#[derive(Debug, Deserialize)]
+struct CompletionTokensDetails {
+    #[serde(default)]
+    reasoning_tokens: Option<u32>,
+}
+
+impl From<ChunkUsage> for TokenUsage {
+    fn from(u: ChunkUsage) -> Self {
+        Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
             total_tokens: u.total_tokens,
@@ -1155,37 +772,28 @@ impl From<ApiUsage> for TokenUsage {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatChoice {
-    delta: Option<ChatDelta>,
-    #[serde(default)]
+struct ChunkChoice {
+    delta: Option<ChunkDelta>,
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ChatDelta {
-    #[serde(default)]
+struct ChunkDelta {
     content: Option<String>,
-    #[serde(default)]
-    tool_calls: Option<Vec<DeltaToolCall>>,
-    #[serde(default)]
     reasoning_content: Option<String>,
+    tool_calls: Option<Vec<DeltaToolCall>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DeltaToolCall {
-    #[serde(default)]
     index: Option<u32>,
-    #[serde(default)]
     id: Option<String>,
-    #[serde(default)]
     function: Option<DeltaFunction>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DeltaFunction {
-    #[serde(default)]
     name: Option<String>,
-    #[serde(default)]
     arguments: Option<String>,
 }
 
@@ -1214,72 +822,9 @@ struct ModelEntry {
 }
 
 #[cfg(test)]
-mod models_tests {
-    use super::*;
-
-    #[test]
-    fn deserialize_openai_models_response() {
-        let payload = r#"{
-            "data": [
-                {"id": "gpt-4", "object": "model", "created": 1687882411, "owned_by": "openai"},
-                {"id": "claude-opus-4-7", "object": "model", "owned_by": "anthropic"}
-            ]
-        }"#;
-        let resp: ModelsResponse = serde_json::from_str(payload).expect("parse");
-        assert_eq!(resp.data.len(), 2);
-        assert_eq!(resp.data[0].id, "gpt-4");
-        assert_eq!(resp.data[0].owned_by.as_deref(), Some("openai"));
-        assert_eq!(resp.data[0].created, Some(1687882411));
-        // created is optional
-        assert_eq!(resp.data[1].created, None);
-    }
-
-    #[test]
-    fn deserialize_empty_models_response() {
-        let payload = r#"{"data": []}"#;
-        let resp: ModelsResponse = serde_json::from_str(payload).expect("parse");
-        assert!(resp.data.is_empty());
-    }
-
-    #[test]
-    fn model_info_serializes_camel_case() {
-        let info = ModelInfo {
-            id: "gpt-4".into(),
-            owned_by: Some("openai".into()),
-            created: Some(1687882411),
-        };
-        let json = serde_json::to_value(&info).expect("serialize");
-        assert_eq!(json.get("id").and_then(|v| v.as_str()), Some("gpt-4"));
-        assert_eq!(json.get("ownedBy").and_then(|v| v.as_str()), Some("openai"));
-        assert_eq!(
-            json.get("created").and_then(|v| v.as_i64()),
-            Some(1687882411)
-        );
-        // snake_case must NOT appear
-        assert!(json.get("owned_by").is_none());
-    }
-
-    #[test]
-    fn model_info_skips_none_fields() {
-        let info = ModelInfo {
-            id: "foo".into(),
-            owned_by: None,
-            created: None,
-        };
-        let json = serde_json::to_string(&info).expect("serialize");
-        assert!(json.contains("\"id\":\"foo\""));
-        assert!(!json.contains("ownedBy"));
-        assert!(!json.contains("created"));
-    }
-}
-
-#[cfg(test)]
 mod build_request_body_tests {
     use super::*;
-    use crate::llm::provider::LlmConfig;
-    use crate::llm::provider::LlmMessage;
-    use crate::llm::provider::LlmRole;
-    use crate::llm::provider::ProviderType;
+    use crate::llm::provider::{LlmConfig, LlmMessage, ProviderType};
 
     fn base_config() -> LlmConfig {
         LlmConfig {
@@ -1303,21 +848,13 @@ mod build_request_body_tests {
         // DeepSeek thinking 模式：带 tool_calls 的 assistant 必须回传
         // reasoning_content（build_request_body 不得再置 None）
         let cfg = base_config();
-        let msg = LlmMessage {
-            role: LlmRole::Assistant,
-            content: "".to_string(),
-            tool_calls: Some(vec![crate::llm::provider::ToolCall {
-                id: "call-1".into(),
-                name: "execute_command".into(),
-                arguments: serde_json::json!({ "command": "ls" }),
-            }]),
-            tool_call_id: None,
-            reasoning_content: Some("let me check the directory".to_string()),
-            image_paths: None,
-            finish_reason: None,
-            db_id: None,
-            db_id_known: false,
-        };
+        let mut msg = LlmMessage::assistant("");
+        msg.tool_calls = Some(vec![ToolCall {
+            id: "call-1".into(),
+            name: "execute_command".into(),
+            arguments: serde_json::json!({ "command": "ls" }),
+        }]);
+        msg.reasoning_content = Some("let me check the directory".to_string());
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body
             .get("messages")
@@ -1335,17 +872,7 @@ mod build_request_body_tests {
     #[test]
     fn no_reasoning_assistant_omits_field() {
         let cfg = base_config();
-        let msg = LlmMessage {
-            role: LlmRole::Assistant,
-            content: "plain reply".to_string(),
-            tool_calls: None,
-            tool_call_id: None,
-            reasoning_content: None,
-            image_paths: None,
-            finish_reason: None,
-            db_id: None,
-            db_id_known: false,
-        };
+        let msg = LlmMessage::assistant("plain reply");
         let body = build_request_body(&cfg, &[msg], &[], true);
         let messages = body
             .get("messages")
@@ -1441,5 +968,266 @@ mod build_request_body_tests {
             Some("should-not-win"),
             "extra_body 故意覆盖类型化字段是设计行为（force override）"
         );
+    }
+}
+
+#[cfg(test)]
+mod vision_request_tests {
+    use super::*;
+    use crate::llm::provider::{LlmConfig, LlmMessage, ProviderType};
+
+    fn config_with_vision(vision: bool) -> LlmConfig {
+        LlmConfig {
+            provider_type: ProviderType::OpenAI,
+            api_key: String::new(),
+            model: "gpt-4".to_string(),
+            base_url: None,
+            temperature: 0.1,
+            max_retries: 0,
+            retry_delay_secs: 0.0,
+            retry_http_statuses: String::new(),
+            first_byte_timeout_secs: 60,
+            retry_on_timeout: true,
+            vision,
+            extra_body: None,
+        }
+    }
+
+    fn user_with_images(content: &str, paths: &[&str]) -> LlmMessage {
+        let mut m = LlmMessage::user(content);
+        m.image_paths = Some(paths.iter().map(|p| p.to_string()).collect());
+        m
+    }
+
+    fn messages_of(body: &serde_json::Value) -> &Vec<serde_json::Value> {
+        body.get("messages").and_then(|v| v.as_array()).expect("messages")
+    }
+
+    /// 在测试专用临时目录初始化 image_store 根并写入一张真实小图，
+    /// 返回相对路径。`IMAGES_ROOT` 是 OnceLock（进程内首个 init 胜出），
+    /// 但保存与读取都走同一个根，因此无论谁先 init 结果一致。
+    fn save_real_image(conversation: &str, message: &str, index: usize) -> String {
+        let dir = std::env::temp_dir().join(format!("marcel_openai_vision_test_{}", std::process::id()));
+        crate::agent::image_store::init(&dir);
+        // 最小 GIF 头（6 字节），guess_mime 按扩展名兜底为 webp 也能解析
+        let bytes: &[u8] = b"GIF89a";
+        crate::agent::image_store::save_image_bytes(conversation, message, index, bytes)
+            .expect("save test image")
+    }
+
+    #[test]
+    fn vision_off_degrades_all_images_to_placeholders() {
+        let cfg = config_with_vision(false);
+        let msgs = vec![user_with_images("look", &["c/a.webp"])];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let ms = messages_of(&body);
+        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
+        assert!(content.contains("[image]"), "vision off must append placeholder: {content}");
+        assert!(content.contains("look"));
+    }
+
+    #[test]
+    fn vision_on_latest_user_keeps_images_older_get_placeholder() {
+        let cfg = config_with_vision(true);
+        // 两个带图 user 轮：只有最后一轮保留真图（VISION_RECENT_USER_TURNS = 1），
+        // 且按"所有 user 消息"计数而非"带图候选"——中间插入不带图的 user 轮
+        // 不应改变窗口归属。
+        let rel = save_real_image("c", "m2", 0);
+        let msgs = vec![
+            user_with_images("first", &["c/missing.webp"]),
+            LlmMessage::assistant("ok"),
+            LlmMessage::user("middle, no image"),
+            user_with_images("second", &[&rel]),
+        ];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let ms = messages_of(&body);
+
+        // 旧图轮：降级为文本 + 占位符
+        let old = ms[0].get("content").and_then(|v| v.as_str()).expect("old turn text");
+        assert!(old.contains("[image]"), "older image turn must degrade: {old}");
+        assert!(old.contains("first"));
+
+        // 最新带图轮：multimodal parts（text + image_url）
+        let latest = &ms[3];
+        let parts = latest.get("content").and_then(|v| v.as_array()).expect("latest turn must be multimodal parts");
+        let has_image = parts.iter().any(|p| {
+            p.get("type").and_then(|v| v.as_str()) == Some("image_url")
+                && p.get("image_url").is_some()
+        });
+        assert!(has_image, "latest image turn must carry image_url part: {parts:?}");
+    }
+
+    #[test]
+    fn vision_on_missing_files_degrade_to_placeholder() {
+        let cfg = config_with_vision(true);
+        let msgs = vec![user_with_images("look", &["c/gone.webp"])];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let ms = messages_of(&body);
+        // 文件已被清理（撤回/删会话）时必须降级为占位符，而不是静默只发文本
+        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
+        assert!(content.contains("[image]"), "missing files must degrade: {content}");
+    }
+
+    #[test]
+    fn vision_on_partial_load_failure_sends_only_loaded_images() {
+        let cfg = config_with_vision(true);
+        let rel = save_real_image("c", "m_partial", 0);
+        let msgs = vec![user_with_images("look", &[&rel, "c/missing.webp"])];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let ms = messages_of(&body);
+        let parts = ms[0].get("content").and_then(|v| v.as_array()).expect("parts");
+        let images: Vec<&serde_json::Value> = parts
+            .iter()
+            .filter(|p| p.get("type").and_then(|v| v.as_str()) == Some("image_url"))
+            .collect();
+        assert_eq!(images.len(), 1, "only the successfully loaded image is sent");
+        let text = parts.iter().any(|p| p.get("type").and_then(|v| v.as_str()) == Some("text"));
+        assert!(text, "text part must be preserved");
+    }
+
+    #[test]
+    fn non_user_message_never_sends_real_images() {
+        // 防御：image_paths 只应出现在 user 消息上；即使异常数据把它挂在
+        // assistant 消息上，也只允许占位符降级，绝不能发真图。
+        let cfg = config_with_vision(true);
+        let rel = save_real_image("c", "m_asst", 0);
+        let mut asst = LlmMessage::assistant("with image");
+        asst.image_paths = Some(vec![rel]);
+        let body = build_request_body(&cfg, &[asst], &[], true);
+        let ms = messages_of(&body);
+        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
+        assert!(content.contains("[image]"), "assistant images must degrade: {content}");
+    }
+}
+
+#[cfg(test)]
+mod partial_tool_call_tests {
+    use super::*;
+    use crate::llm::streaming::StreamEvent;
+
+    fn delta(id: Option<&str>, name: Option<&str>, args: Option<&str>) -> DeltaToolCall {
+        DeltaToolCall {
+            index: Some(0),
+            id: id.map(|s| s.to_string()),
+            function: (name.is_some() || args.is_some()).then(|| DeltaFunction {
+                name: name.map(|s| s.to_string()),
+                arguments: args.map(|s| s.to_string()),
+            }),
+        }
+    }
+
+    /// 依次 apply 一组 delta，收完事件后返回 (events, 最终 into_tool_call)。
+    fn run(deltas: &[DeltaToolCall]) -> (Vec<StreamEvent>, Option<ToolCall>) {
+        let mut tc = PartialToolCall::default();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for d in deltas {
+            tc.apply_delta(d, &tx);
+        }
+        drop(tx);
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        let call = tc.into_tool_call();
+        (events, call)
+    }
+
+    fn start_of(events: &[StreamEvent]) -> Option<(&str, &str)> {
+        events.iter().find_map(|ev| match ev {
+            StreamEvent::ToolCallStart { id, name } => Some((id.as_str(), name.as_str())),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn start_precedes_delta_when_id_and_name_arrive_together() {
+        let (events, call) = run(&[delta(Some("c1"), Some("read_file"), Some("{\"p\""))]);
+        // start 必须是第一个工具事件，且先于 arguments delta（前端靠 start 注册 id 路由）
+        assert_eq!(start_of(&events), Some(("c1", "read_file")));
+        assert!(matches!(events.first(), Some(StreamEvent::ToolCallStart { .. })));
+        assert!(events.len() == 2 && matches!(events[1], StreamEvent::ToolCallDelta { .. }));
+        let call = call.expect("call");
+        assert_eq!(call.id, "c1");
+        // `{"p"` 是截断的非法 JSON → 回退为原始字符串
+        assert_eq!(call.arguments, serde_json::Value::String("{\"p\"".into()));
+    }
+
+    #[test]
+    fn start_emitted_when_id_arrives_after_name() {
+        // 异常分片：name 先到（无 id），id 在后续 delta 到达——必须在 id 到达时补广播
+        let (events, call) = run(&[
+            delta(None, Some("read_file"), None),
+            delta(Some("c1"), None, None),
+            delta(None, None, Some("{}")),
+        ]);
+        assert_eq!(start_of(&events), Some(("c1", "read_file")));
+        // delta 事件只允许在 start 之后出现
+        let start_pos = events
+            .iter()
+            .position(|ev| matches!(ev, StreamEvent::ToolCallStart { .. }))
+            .expect("start");
+        assert!(events[start_pos + 1..]
+            .iter()
+            .all(|ev| matches!(ev, StreamEvent::ToolCallDelta { .. })));
+        let call = call.expect("call");
+        assert_eq!(call.name, "read_file");
+        assert_eq!(call.arguments, serde_json::json!({}));
+    }
+
+    #[test]
+    fn silent_when_id_never_arrives() {
+        // 空 id 的调用不广播任何事件，最终被丢弃（无可靠回执路由）
+        let (events, call) = run(&[delta(None, Some("read_file"), Some("{}"))]);
+        assert!(events.is_empty(), "no events without id: {events:?}");
+        assert!(call.is_none());
+    }
+
+    #[test]
+    fn first_write_wins_for_id_and_name() {
+        let (events, call) = run(&[
+            delta(Some("c1"), Some("tool_a"), None),
+            delta(Some("c2"), Some("tool_b"), Some("{}")),
+        ]);
+        // 只广播一次 start，且用的是首次到达的 id/name
+        assert_eq!(start_of(&events), Some(("c1", "tool_a")));
+        assert_eq!(events.len(), 2); // start + 一个 delta
+        let call = call.expect("call");
+        assert_eq!(call.id, "c1");
+        assert_eq!(call.name, "tool_a");
+    }
+
+    #[test]
+    fn into_tool_call_keeps_empty_name_for_unknown_tool_feedback() {
+        let mut tc = PartialToolCall::default();
+        tc.apply_delta(&delta(Some("c1"), None, Some("{}")), &mpsc::unbounded_channel().0);
+        let call = tc.into_tool_call().expect("empty name must be kept");
+        assert_eq!(call.name, "");
+    }
+
+    #[test]
+    fn into_tool_call_invalid_json_falls_back_to_string() {
+        let (events, call) = run(&[delta(Some("c1"), Some("execute_command"), Some("ls -la"))]);
+        assert_eq!(start_of(&events), Some(("c1", "execute_command")));
+        let call = call.expect("call");
+        // 旧语义：解析失败回退为原始字符串（而非 {"_raw": ...} 包装），
+        // 工具层按缺参报错给模型自纠
+        assert_eq!(call.arguments, serde_json::Value::String("ls -la".into()));
+    }
+
+    #[test]
+    fn into_tool_call_valid_json_parses_object() {
+        let (_, call) = run(&[delta(Some("c1"), Some("read_file"), Some(r#"{"path":"/a"}"#))]);
+        let call = call.expect("call");
+        assert_eq!(call.arguments, serde_json::json!({ "path": "/a" }));
+    }
+
+    #[test]
+    fn partial_args_accumulate_across_deltas() {
+        let (_, call) = run(&[
+            delta(Some("c1"), Some("write_file"), Some(r#"{"path":"x","#)),
+            delta(None, None, Some(r#""content":"hi"}"#)),
+        ]);
+        let call = call.expect("call");
+        assert_eq!(call.arguments, serde_json::json!({ "path": "x", "content": "hi" }));
     }
 }

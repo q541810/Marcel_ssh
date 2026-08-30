@@ -5,7 +5,7 @@ use crate::agent::agent_loop::forward_compaction_event;
 use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::task::AgentStatus;
 use crate::error::AppError;
-use crate::llm::openai::OpenAiProvider;
+use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmMessage, ProviderType};
 use crate::AppState;
 
@@ -83,7 +83,7 @@ pub async fn agent_compact_conversation(
             }
         }
     }
-    let provider = OpenAiProvider::new(llm_config)?;
+    let llm_manager = LlmManager::new(llm_config)?;
 
     let mut messages: Vec<LlmMessage> = history;
     if messages.is_empty() {
@@ -116,7 +116,7 @@ pub async fn agent_compact_conversation(
     let (_cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
     let run = crate::agent::context::compact_if_needed(
         &mut messages,
-        &provider,
+        &llm_manager,
         &[],
         0, // context_window 仅 pressure 触发使用，Manual 跳过阈值
         crate::agent::context::CompactionTrigger::Manual,

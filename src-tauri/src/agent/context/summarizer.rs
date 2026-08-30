@@ -4,8 +4,9 @@
 
 use std::sync::Mutex;
 
-use crate::llm::openai::{OpenAiProvider, TextSink};
-use crate::llm::provider::{LlmMessage, LlmProvider};
+use crate::llm::manager::LlmManager;
+use crate::llm::openai::TextSink;
+use crate::llm::provider::LlmMessage;
 
 /// 摘要输出 framing 标签。
 pub const SUMMARY_OPEN_TAG: &str = "<compacted-summary>";
@@ -99,7 +100,7 @@ pub fn has_required_sections(text: &str) -> bool {
 /// 失败（provider 错误 / 空输出 / max_tokens 截断）返回 `Err`；
 /// 调用方保证失败时**不**修改 messages。
 pub async fn summarize_with_llm(
-    provider: &OpenAiProvider,
+    manager: &LlmManager,
     input: &SummarizationInput<'_>,
     progress: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<String, String> {
@@ -135,13 +136,20 @@ pub async fn summarize_with_llm(
             tokio::spawn(async move { while rx.recv().await.is_some() {} });
             // 不传工具 schema（见 SummarizationInput 注释）：模型无从调用工具。
             // 显式 max_tokens（对齐 DSH 8192）：截断靠 finish_reason 拒绝。
-            provider
-                .chat_stream_with_sink(&messages, &[], &tx, Some(sink), Some(SUMMARY_MAX_TOKENS))
+            manager
+                .stream_chat_with_sink(
+                    &messages,
+                    &[],
+                    &tx,
+                    Some(sink),
+                    Some(SUMMARY_MAX_TOKENS),
+                    None,
+                )
                 .await
                 .map_err(|e| format!("摘要生成失败：{}", e))?
         }
-        None => provider
-            .send_message(&messages, &[])
+        None => manager
+            .send_message(&messages, &[], None)
             .await
             .map_err(|e| format!("摘要生成失败：{}", e))?,
     };

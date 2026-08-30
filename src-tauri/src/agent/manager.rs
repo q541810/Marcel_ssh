@@ -28,7 +28,7 @@ use crate::agent::tools::{
 };
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
-use crate::llm::openai::OpenAiProvider;
+use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
 use crate::mcp::store::McpServerConfig;
 use crate::plugins::context::{apply_to_string, SessionContext};
@@ -175,7 +175,7 @@ impl AgentManager {
         if let Some(model) = spec.model_override {
             provider_cfg.model = model;
         }
-        let provider = OpenAiProvider::new(provider_cfg)?;
+        let llm_manager = LlmManager::new(provider_cfg)?;
 
         // ── 4. 派生工具集 / 插件段 ──
         let plugin_registry_guard = self.state.plugin_registry.read().await;
@@ -260,7 +260,7 @@ impl AgentManager {
             // 取消清理都保证执行（此前主任务丢弃 JoinHandle，panic 时泄漏）。
             let result = std::panic::AssertUnwindSafe(run_agent_loop(
                 task_id_owned.clone(),
-                provider,
+                llm_manager,
                 messages,
                 tools,
                 mode_owned,

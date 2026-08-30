@@ -7,7 +7,7 @@ use crate::agent::task::AgentMode;
 use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
 use crate::emit_event;
-use crate::llm::openai::OpenAiProvider;
+use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmMessage, ToolCall};
 use crate::AppState;
 
@@ -139,7 +139,7 @@ impl ToolDispatcher {
         app: tauri::AppHandle,
         state: AppState,
         registry: std::sync::Arc<ToolRegistry>,
-        provider: std::sync::Arc<OpenAiProvider>,
+        llm_manager: std::sync::Arc<LlmManager>,
     ) -> Self {
         let enable = agent_settings.enable_model_command_approval;
         let approver: Option<std::sync::Arc<dyn CommandApprover>> = if enable {
@@ -148,36 +148,36 @@ impl ToolDispatcher {
             // and would otherwise skew the approval decision. The approval call
             // uses the user's typed config (provider, base_url, api_key, model,
             // temperature) but not the free-form extras.
-            let approval_provider = if !agent_settings.model_approval_model.is_empty() {
-                let mut cfg = provider.config().clone();
+            let approval_manager = if !agent_settings.model_approval_model.is_empty() {
+                let mut cfg = llm_manager.config().clone();
                 cfg.model = agent_settings.model_approval_model.clone();
                 cfg.extra_body = None;
-                match OpenAiProvider::new(cfg) {
-                    Ok(p) => {
+                match LlmManager::new(cfg) {
+                    Ok(m) => {
                         log::info!(
                             "模型审批使用独立模型: {}",
                             agent_settings.model_approval_model
                         );
-                        std::sync::Arc::new(p)
+                        std::sync::Arc::new(m)
                     }
                     Err(e) => {
                         log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
-                        provider.clone()
+                        llm_manager.clone()
                     }
                 }
             } else {
-                let mut cfg = provider.config().clone();
+                let mut cfg = llm_manager.config().clone();
                 cfg.extra_body = None;
-                match OpenAiProvider::new(cfg) {
-                    Ok(p) => std::sync::Arc::new(p),
+                match LlmManager::new(cfg) {
+                    Ok(m) => std::sync::Arc::new(m),
                     Err(e) => {
-                        log::warn!("模型审批 provider 创建失败，回退主 provider: {}", e);
-                        provider.clone()
+                        log::warn!("模型审批 manager 创建失败，回退主 manager: {}", e);
+                        llm_manager.clone()
                     }
                 }
             };
             Some(std::sync::Arc::new(ModelApprover::new(
-                approval_provider,
+                approval_manager,
                 agent_settings.model_approval_prompt.clone(),
                 matches!(mode, AgentMode::Plan),
             )))
@@ -610,7 +610,7 @@ mod tests {
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
-            max_tool_rounds: 80,
+            max_tool_rounds: 500,
             context_window: 0,
             confirm_edit_file: false,
         }

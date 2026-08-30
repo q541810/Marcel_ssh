@@ -13,7 +13,7 @@
 //! - `Block` — block the command outright. Reasons describe the problem points.
 //!
 //! The model can only judge; it cannot rewrite the command text. Reuses the
-//! agent's normal model + retry path (`OpenAiProvider::send_message`); if the
+//! agent's normal model + retry path (`LlmManager::send_message`); if the
 //! call still fails after retries, the error is surfaced as a blocked tool
 //! result by the dispatcher.
 
@@ -24,8 +24,8 @@ use serde::Deserialize;
 
 use crate::agent::templates::TemplateManager;
 use crate::error::AppError;
-use crate::llm::openai::OpenAiProvider;
-use crate::llm::provider::{LlmMessage, LlmProvider, LlmRole, ToolDefinition};
+use crate::llm::manager::LlmManager;
+use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 
 /// Model's decision on whether a command may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,19 +50,19 @@ pub(crate) trait CommandApprover: Send + Sync {
 
 /// LLM-backed command approver. Reuses the agent's normal model + retry path.
 pub(crate) struct ModelApprover {
-    provider: Arc<OpenAiProvider>,
+    manager: Arc<LlmManager>,
     custom_prompt: String,
     plan_mode: bool,
 }
 
 impl ModelApprover {
     pub(crate) fn new(
-        provider: Arc<OpenAiProvider>,
+        manager: Arc<LlmManager>,
         custom_prompt: String,
         plan_mode: bool,
     ) -> Self {
         Self {
-            provider,
+            manager,
             custom_prompt,
             plan_mode,
         }
@@ -107,7 +107,7 @@ impl CommandApprover for ModelApprover {
         ];
         let tools: Vec<ToolDefinition> = vec![];
 
-        let resp = self.provider.send_message(&messages, &tools).await?;
+        let resp = self.manager.send_message(&messages, &tools, None).await?;
         parse_decision(&resp.content)
     }
 }
