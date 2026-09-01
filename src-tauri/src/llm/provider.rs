@@ -122,50 +122,16 @@ impl LlmMessage {
     }
 }
 
-/// How many recent user turns may still carry real images in the API payload.
-/// `1` = only the current user turn keeps real images; older history is `[image]` text.
-pub const VISION_RECENT_USER_TURNS: usize = 1;
-
 /// Placeholder injected into text when an image is not sent as multimodal content.
 pub const IMAGE_PLACEHOLDER: &str = "[image]";
 
 /// Apply vision policy before sending to the provider:
 /// - Vision OFF: never send images; append `[image]` placeholders.
-/// - Vision ON: only the latest `VISION_RECENT_USER_TURNS` user messages keep images;
-///   older ones are degraded to `[image]` text.
+/// - Vision ON: every image-bearing user message keeps its images.
+///   Context compaction still works: the summarizer request runs through the same
+///   body builder, so images inside a compacted region are visible to the summary
+///   model before the region is replaced by a checkpoint.
 pub fn apply_vision_policy(messages: &mut [LlmMessage], vision: bool) {
-    let user_indices: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| m.role == LlmRole::User)
-        .map(|(i, _)| i)
-        .collect();
-
-    let keep_from = if vision && user_indices.len() > VISION_RECENT_USER_TURNS {
-        user_indices.len() - VISION_RECENT_USER_TURNS
-    } else {
-        0
-    };
-
-    for (rank, &idx) in user_indices.iter().enumerate() {
-        let keep_images = vision && rank >= keep_from;
-        let msg = &mut messages[idx];
-        let has_images = msg
-            .image_paths
-            .as_ref()
-            .map(|p| !p.is_empty())
-            .unwrap_or(false);
-        if !has_images {
-            continue;
-        }
-        if keep_images {
-            continue;
-        }
-        let count = msg.image_paths.as_ref().map(|p| p.len()).unwrap_or(0);
-        msg.image_paths = None;
-        append_image_placeholders(&mut msg.content, count);
-    }
-
     if !vision {
         for msg in messages.iter_mut() {
             if let Some(paths) = msg.image_paths.take() {
@@ -443,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_vision_policy_keeps_only_latest_user_when_on() {
+    fn apply_vision_policy_keeps_all_user_images_when_on() {
         let mut msgs: Vec<LlmMessage> = (0..7)
             .map(|i| {
                 let mut m = LlmMessage::user(format!("u{i}"));
@@ -460,16 +426,11 @@ mod tests {
         apply_vision_policy(&mut full, true);
         let users: Vec<_> = full.iter().filter(|m| m.role == LlmRole::User).collect();
         assert_eq!(users.len(), 7);
-        for (i, u) in users.iter().enumerate() {
-            if i + 1 == users.len() {
-                assert!(u.image_paths.is_some(), "latest user should keep images");
-            } else {
-                assert!(
-                    u.image_paths.is_none(),
-                    "history user {i} should drop images"
-                );
-                assert!(u.content.contains(IMAGE_PLACEHOLDER));
-            }
+        for u in &users {
+            assert!(
+                u.image_paths.is_some(),
+                "every image-bearing user keeps images when vision is on"
+            );
         }
     }
 

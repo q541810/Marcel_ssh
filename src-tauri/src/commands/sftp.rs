@@ -579,7 +579,7 @@ pub async fn sftp_compress_archive(
             Err(AppError::Ssh("压缩超时，文件夹可能过大".into()))
         }
         SubmitOutcome::Cancelled { reason } => match reason {
-            CancelReason::User => {
+            CancelReason::User | CancelReason::Agent | CancelReason::Task => {
                 emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("压缩已取消".into()))
             }
@@ -1039,7 +1039,7 @@ impl Drop for TransferCancelGuard {
 
 /// content:// URI 的打开模式（Android SAF）。
 #[derive(Clone, Copy)]
-enum ContentOpenMode {
+pub(crate) enum ContentOpenMode {
     /// 只读（上传源）。
     Read,
     /// 写入并截断（下载目标；SAF ACTION_CREATE_DOCUMENT 创建的文档直接覆写）。
@@ -1049,7 +1049,7 @@ enum ContentOpenMode {
 /// 通过 tauri-plugin-fs 的 `FsExt::fs().open()` 打开 content:// URI。
 /// Android 上底层走 ContentResolver.openAssetFileDescriptor 拿真实 fd，
 /// 返回 std::fs::File；这里用 spawn_blocking 包 JNI 往返，再转 tokio File。
-async fn open_content_uri_file(
+pub(crate) async fn open_content_uri_file(
     app: &AppHandle,
     uri: String,
     mode: ContentOpenMode,

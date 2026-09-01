@@ -34,6 +34,12 @@ pub struct Conversation {
     /// 用于：会话列表隐藏子对话、子对话内"返回主对话"、删除主对话级联删除。
     #[serde(default)]
     pub parent_conversation_id: Option<String>,
+    /// 会话级模型选择：`llmRegistry` 中的模型条目 id。
+    /// `None` = 跟随全局默认模型（未显式选择过 / 旧数据）。
+    /// 启动任务时经 `agent_start_task` 的 `model_id` 传入，作为
+    /// `AgentSpec.model_override` 解析；子 agent 继承父任务模型。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,7 +128,8 @@ impl ConversationDb {
                 title TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                parent_conversation_id TEXT
+                parent_conversation_id TEXT,
+                model_id TEXT
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -220,6 +227,15 @@ impl ConversationDb {
         )
         .map_err(|e| ConversationError::SchemaError { source: e })?;
 
+        // Migration: add model_id for conversation-level model selection.
+        // 旧库 ALTER 加列；新库建表已带列。缺省 NULL = 跟随全局默认模型（兼容旧数据）。
+        if !column_exists(&conn, "conversations", "model_id") {
+            log::info!("Migrating conversation database: adding model_id column");
+            conn.execute("ALTER TABLE conversations ADD COLUMN model_id TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: model_id column added");
+        }
+
         // Migration: plan_snapshots for older DBs that already had plans table only
         conn.execute_batch(
             "
@@ -276,8 +292,8 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             (
                 &id,
                 connection_id,
@@ -285,6 +301,7 @@ impl ConversationDb {
                 &now_str,
                 &now_str,
                 parent_conversation_id,
+                Option::<&str>::None, // 新会话默认跟随全局模型（会话级选择由 set_conversation_model_id 设置）
             ),
         )?;
 
@@ -295,13 +312,14 @@ impl ConversationDb {
             created_at: now,
             updated_at: now,
             parent_conversation_id: parent_conversation_id.map(String::from),
+            model_id: None,
         })
     }
 
     pub fn list_conversations(&self, connection_id: &str) -> RusqliteResult<Vec<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id
              FROM conversations
              WHERE connection_id = ?1
              ORDER BY updated_at DESC",
@@ -322,6 +340,7 @@ impl ConversationDb {
                         .parse()
                         .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                     parent_conversation_id: row.get(5).ok(),
+                    model_id: row.get(6).ok(),
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -446,7 +465,10 @@ impl ConversationDb {
     /// 从最新的 Compaction Checkpoint（若存在）开始加载活跃消息段。
     /// - 若存在压缩卡片：返回该卡片及之后的所有消息，且 `has_earlier = true`（卡片前有更早消息）；
     /// - 若不存在压缩卡片：返回全量消息，`has_earlier = false`。
-    pub fn load_active_messages(&self, conversation_id: &str) -> RusqliteResult<ActiveMessagesResult> {
+    pub fn load_active_messages(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<ActiveMessagesResult> {
         let conn = self.conn.lock().unwrap();
 
         // 1. 查询最新的 Compaction Checkpoint 消息 (role = 'system' 且以 '【上下文已压缩】' 开头)
@@ -491,7 +513,10 @@ impl ConversationDb {
                      ORDER BY created_at ASC, rowid ASC",
                 )?;
                 let messages = msg_stmt
-                    .query_map(rusqlite::params![conversation_id, cp_created_at, cp_rowid], Self::map_stored_message)?
+                    .query_map(
+                        rusqlite::params![conversation_id, cp_created_at, cp_rowid],
+                        Self::map_stored_message,
+                    )?
                     .collect::<RusqliteResult<Vec<_>>>()?;
 
                 Ok(ActiveMessagesResult {
@@ -542,7 +567,10 @@ impl ConversationDb {
         )?;
 
         let messages = stmt
-            .query_map(rusqlite::params![conversation_id, created_at, rowid], Self::map_stored_message)?
+            .query_map(
+                rusqlite::params![conversation_id, created_at, rowid],
+                Self::map_stored_message,
+            )?
             .collect::<RusqliteResult<Vec<_>>>()?;
 
         Ok(messages)
@@ -879,7 +907,7 @@ impl ConversationDb {
     pub fn get_conversation(&self, conversation_id: &str) -> RusqliteResult<Option<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id
              FROM conversations
              WHERE id = ?1",
         )?;
@@ -897,6 +925,7 @@ impl ConversationDb {
                     .parse()
                     .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                 parent_conversation_id: row.get(5).ok(),
+                model_id: row.get(6).ok(),
             })
         })?;
         match rows.next() {
@@ -904,6 +933,22 @@ impl ConversationDb {
             Some(Err(e)) => Err(e),
             None => Ok(None),
         }
+    }
+
+    /// 设置会话级模型选择（`llmRegistry` 模型条目 id）。
+    /// `model_id` 为空串/None = 清除选择，回落全局默认模型。
+    /// 返回是否真的有会话被更新。
+    pub fn set_conversation_model_id(
+        &self,
+        conversation_id: &str,
+        model_id: Option<&str>,
+    ) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE conversations SET model_id = ?1 WHERE id = ?2",
+            (model_id, conversation_id),
+        )?;
+        Ok(rows > 0)
     }
 
     /// 读取会话完整快照（元数据 + 全部消息），用于跨设备同步 push。
@@ -927,14 +972,15 @@ impl ConversationDb {
     pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 title = excluded.title,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                parent_conversation_id = excluded.parent_conversation_id",
+                parent_conversation_id = excluded.parent_conversation_id,
+                model_id = excluded.model_id",
             (
                 &conv.id,
                 &conv.connection_id,
@@ -942,6 +988,7 @@ impl ConversationDb {
                 conv.created_at.to_rfc3339(),
                 conv.updated_at.to_rfc3339(),
                 &conv.parent_conversation_id,
+                &conv.model_id,
             ),
         )?;
         Ok(())
@@ -1480,6 +1527,9 @@ mod tests {
         use crate::agent::image_store;
         use tempfile::tempdir;
 
+        // image_store 的 IMAGES_ROOT 是进程级全局（OnceLock），必须与其它
+        // image 测试串行，否则 tempdir drop 竞态导致随机失败。
+        let _guard = image_store::test_lock();
         let dir = tempdir().unwrap();
         image_store::init(dir.path());
         let db = create_test_db();
@@ -1846,13 +1896,24 @@ mod tests {
         assert_eq!(convs.len(), 1);
         assert_eq!(convs[0].id, "conv-old");
         assert!(convs[0].parent_conversation_id.is_none());
+        // 旧库迁移后 model_id 列可用且缺省为 None（跟随全局默认）
+        assert!(convs[0].model_id.is_none());
 
-        // 新列真实可写可读（子对话创建 + 查询）
+        // 新列真实可写可读（子对话创建 + 查询 + 会话级模型设置）
         let sub = db
             .create_sub_conversation("conn-1", "Sub（子agent）", "conv-old")
             .expect("create sub");
         let loaded = db.get_conversation(&sub.id).expect("get").expect("exists");
         assert_eq!(loaded.parent_conversation_id.as_deref(), Some("conv-old"));
+        assert!(loaded.model_id.is_none());
+        db.set_conversation_model_id("conv-old", Some("model-abc"))
+            .expect("set model");
+        let updated = db.get_conversation("conv-old").expect("get").expect("exists");
+        assert_eq!(updated.model_id.as_deref(), Some("model-abc"));
+        // 清空选择（回落全局默认）
+        db.set_conversation_model_id("conv-old", None).expect("clear model");
+        let cleared = db.get_conversation("conv-old").expect("get").expect("exists");
+        assert!(cleared.model_id.is_none());
 
         // 历史消息保留
         let msgs = db.load_messages("conv-old").expect("load");
@@ -2053,8 +2114,17 @@ mod tests {
         let conv = db.create_conversation("conn_1", "Test").expect("create");
 
         // 1. 无压缩卡片时：load_active_messages 返回全量且 has_earlier 为 false
-        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None).expect("m1");
-        db.save_message(&conv.id, "assistant", "a1", "2026-01-01T00:00:01Z", None, None).expect("m2");
+        db.save_message(&conv.id, "user", "u1", "2026-01-01T00:00:00Z", None, None)
+            .expect("m1");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a1",
+            "2026-01-01T00:00:01Z",
+            None,
+            None,
+        )
+        .expect("m2");
 
         let active1 = db.load_active_messages(&conv.id).expect("active1");
         assert_eq!(active1.messages.len(), 2);
@@ -2062,8 +2132,10 @@ mod tests {
         assert_eq!(active1.checkpoint_id, None);
 
         // 2. 增加消息并执行一次压缩
-        db.save_message(&conv.id, "tool", "t1", "2026-01-01T00:00:02Z", None, None).expect("m3");
-        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None).expect("m4");
+        db.save_message(&conv.id, "tool", "t1", "2026-01-01T00:00:02Z", None, None)
+            .expect("m3");
+        db.save_message(&conv.id, "user", "u2", "2026-01-01T00:00:03Z", None, None)
+            .expect("m4");
         let rows = db.load_messages(&conv.id).expect("load");
         let span_end = rows[2].clone(); // t1 作为压缩末尾
 
@@ -2073,9 +2145,18 @@ mod tests {
             "【上下文已压缩】已整理 3 条历史消息（约 100 tokens）\n\nsummary",
             &span_end.created_at.to_rfc3339(),
             &span_end.timestamp,
-        ).expect("commit");
+        )
+        .expect("commit");
 
-        db.save_message(&conv.id, "assistant", "a2", "2026-01-01T00:00:04Z", None, None).expect("m5");
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "a2",
+            "2026-01-01T00:00:04Z",
+            None,
+            None,
+        )
+        .expect("m5");
 
         // 此时物理消息顺序：[u1, a1, t1, <card>, u2, a2]
         let active2 = db.load_active_messages(&conv.id).expect("active2");

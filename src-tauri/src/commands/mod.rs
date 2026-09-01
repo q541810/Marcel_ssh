@@ -1,9 +1,11 @@
+pub mod agent_attachment;
 pub mod agent_compact;
 pub mod agent_conversation;
 pub mod agent_lifecycle;
 pub mod agent_policy;
 pub mod app_bootstrap;
 pub mod connections;
+pub mod job;
 pub mod keychain;
 pub mod market;
 pub mod mcp;

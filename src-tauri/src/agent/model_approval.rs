@@ -3,7 +3,7 @@
 //! Pure-function module: an independent approval judge inserted after the
 //! sandbox risk assessment and before the human-approval trigger. Even when
 //! the sandbox says no human approval is needed, this step still runs for
-//! `execute_command` (when enabled).
+//! `bash` (when enabled).
 //!
 //! Power boundary:
 //! - `Approve` — allow the command. Cannot override a sandbox human-approval
@@ -56,11 +56,7 @@ pub(crate) struct ModelApprover {
 }
 
 impl ModelApprover {
-    pub(crate) fn new(
-        manager: Arc<LlmManager>,
-        custom_prompt: String,
-        plan_mode: bool,
-    ) -> Self {
+    pub(crate) fn new(manager: Arc<LlmManager>, custom_prompt: String, plan_mode: bool) -> Self {
         Self {
             manager,
             custom_prompt,

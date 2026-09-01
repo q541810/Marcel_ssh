@@ -168,6 +168,18 @@ pub fn new_message_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// 测试专用：所有触碰 [`IMAGES_ROOT`] 全局状态的测试必须串行执行。
+///
+/// `IMAGES_ROOT` 是进程级 `OnceLock`（首个 `init` 获胜），而各测试用
+/// `tempdir()` 作为 init 目录——并行时先结束的测试 drop 自己的 tempdir
+/// 会整树删除仍在运行的测试正在读写的目录（Windows 上表现为
+/// `os error 3` 找不到路径 / 残留目录），产生随机失败。
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +187,7 @@ mod tests {
 
     #[test]
     fn save_and_read_roundtrip() {
+        let _guard = test_lock();
         let dir = tempdir().unwrap();
         init(dir.path());
         let rel = save_image_bytes("conv1", "msg1", 0, b"fake-webp-bytes").unwrap();
@@ -187,6 +200,7 @@ mod tests {
 
     #[test]
     fn rejects_path_traversal() {
+        let _guard = test_lock();
         let dir = tempdir().unwrap();
         init(dir.path());
         assert!(resolve_relative("../secret").is_err());
@@ -196,6 +210,7 @@ mod tests {
 
     #[test]
     fn delete_image_is_idempotent() {
+        let _guard = test_lock();
         let dir = tempdir().unwrap();
         init(dir.path());
         let rel = save_image_bytes("conv1", "msg1", 0, b"fake-webp-bytes").unwrap();

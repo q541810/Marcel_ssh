@@ -156,11 +156,45 @@ pub async fn agent_rename_conversation(
     if let Some(ref scheduler) = state.sync_scheduler {
         if let Some(ref engine) = state.sync_engine {
             let marker = chrono::Utc::now().to_rfc3339();
-            let _ = engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
+            let _ =
+                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
             scheduler.schedule_push();
         }
     }
 
+    Ok(())
+}
+
+/// 设置会话级模型选择（`llmRegistry` 模型条目 id）。
+/// `model_id` 为空串/None = 清除选择，回落全局默认模型。
+/// 触发跨设备同步（conversations 整体快照自动携带 modelId）。
+#[tauri::command]
+pub async fn agent_set_conversation_model(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    model_id: Option<String>,
+) -> Result<(), AppError> {
+    let model_id = model_id.filter(|s| !s.trim().is_empty()).map(String::from);
+    let updated = state
+        .conversation_db
+        .set_conversation_model_id(&conversation_id, model_id.as_deref())
+        .map_err(|e| AppError::Agent(format!("Failed to set conversation model: {}", e)))?;
+    if updated {
+        log::info!(
+            "Set conversation {} model to {:?}",
+            conversation_id,
+            model_id
+        );
+        // 触发跨设备同步：conversations 变更（快照 JSON 自动带 modelId）
+        if let Some(ref scheduler) = state.sync_scheduler {
+            if let Some(ref engine) = state.sync_engine {
+                let marker = chrono::Utc::now().to_rfc3339();
+                let _ = engine
+                    .record_local_change(&format!("conversations.{}", conversation_id), &marker);
+                scheduler.schedule_push();
+            }
+        }
+    }
     Ok(())
 }
 

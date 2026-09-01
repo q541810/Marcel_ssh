@@ -8,7 +8,7 @@ use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
 use crate::emit_event;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::{LlmMessage, ToolCall};
+use crate::llm::provider::{LlmConfig, LlmMessage, ToolCall};
 use crate::AppState;
 
 /// Event containing a tool call result, sent to the frontend.
@@ -122,7 +122,7 @@ pub(crate) struct ToolDispatcher {
     approval: ApprovalManager,
     registry: std::sync::Arc<ToolRegistry>,
     /// LLM-backed command approver. `None` when the feature is disabled by
-    /// settings or the tool is not `execute_command`. Inserted after the
+    /// settings or the tool is not `bash`. Inserted after the
     /// sandbox risk assessment and before the human-approval trigger.
     approver: Option<std::sync::Arc<dyn CommandApprover>>,
     /// 本任务内已观察过的路径（`read_file` / `write_file` / `edit_file` 成功
@@ -140,39 +140,34 @@ impl ToolDispatcher {
         state: AppState,
         registry: std::sync::Arc<ToolRegistry>,
         llm_manager: std::sync::Arc<LlmManager>,
+        approval_cfg: Option<LlmConfig>,
     ) -> Self {
         let enable = agent_settings.enable_model_command_approval;
         let approver: Option<std::sync::Arc<dyn CommandApprover>> = if enable {
-            // Always strip extra_body for the approval provider: the user-configured
-            // free-form params (thinking, top_p, etc.) target the main chat model
-            // and would otherwise skew the approval decision. The approval call
-            // uses the user's typed config (provider, base_url, api_key, model,
-            // temperature) but not the free-form extras.
-            let approval_manager = if !agent_settings.model_approval_model.is_empty() {
-                let mut cfg = llm_manager.config().clone();
-                cfg.model = agent_settings.model_approval_model.clone();
-                cfg.extra_body = None;
-                match LlmManager::new(cfg) {
+            // 审批专用配置由 AgentManager 按「命令审核槽位」解析（空/失效自动回落
+            // 主模型）。extra_body 已在解析后剥离：自由参数（thinking、top_p 等）
+            // 针对主对话模型调参，不应影响审批决策。
+            let approval_manager = match approval_cfg {
+                Some(cfg) => match LlmManager::new(cfg) {
                     Ok(m) => {
-                        log::info!(
-                            "模型审批使用独立模型: {}",
-                            agent_settings.model_approval_model
-                        );
+                        log::info!("模型审批使用独立模型: {}", m.config().model);
                         std::sync::Arc::new(m)
                     }
                     Err(e) => {
                         log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
                         llm_manager.clone()
                     }
-                }
-            } else {
-                let mut cfg = llm_manager.config().clone();
-                cfg.extra_body = None;
-                match LlmManager::new(cfg) {
-                    Ok(m) => std::sync::Arc::new(m),
-                    Err(e) => {
-                        log::warn!("模型审批 manager 创建失败，回退主 manager: {}", e);
-                        llm_manager.clone()
+                },
+                None => {
+                    // 无独立配置：用主模型（剥离 extra_body）。
+                    let mut cfg = llm_manager.config().clone();
+                    cfg.extra_body = None;
+                    match LlmManager::new(cfg) {
+                        Ok(m) => std::sync::Arc::new(m),
+                        Err(e) => {
+                            log::warn!("模型审批 manager 创建失败，回退主 manager: {}", e);
+                            llm_manager.clone()
+                        }
                     }
                 }
             };
@@ -208,7 +203,7 @@ impl ToolDispatcher {
         };
 
         let effective_risk = match tc.name.as_str() {
-            "execute_command" => tc
+            "bash" => tc
                 .arguments
                 .get("command")
                 .and_then(|v| v.as_str())
@@ -271,7 +266,7 @@ impl ToolDispatcher {
         // 1. Compute sandbox/mode-level need for human confirmation.
         let sandbox_needs_confirm: Option<bool> = match &self.mode {
             AgentMode::Plan | AgentMode::Agent => {
-                if tc.name == "execute_command" {
+                if tc.name == "bash" {
                     let cmd = tc
                         .arguments
                         .get("command")
@@ -314,7 +309,7 @@ impl ToolDispatcher {
         let mut final_needs_confirm = sandbox_needs_confirm;
         let mut model_reasons: Option<Vec<String>> = None;
 
-        if tc.name == "execute_command" {
+        if tc.name == "bash" {
             if let Some(ref approver) = self.approver {
                 let cmd = tc
                     .arguments
@@ -451,7 +446,13 @@ impl ToolDispatcher {
                     ctx.session_id.clone(),
                     ctx.task_id
                         .as_deref()
-                        .and_then(|tid| self.state.agent_tasks.read().get(tid).map(|t| t.conversation_id.clone()))
+                        .and_then(|tid| {
+                            self.state
+                                .agent_tasks
+                                .read()
+                                .get(tid)
+                                .map(|t| t.conversation_id.clone())
+                        })
                         .unwrap_or_default(),
                     tc.id.clone(),
                     &tc.name,
@@ -467,7 +468,7 @@ impl ToolDispatcher {
                 crate::agent::task::AgentStatus::Executing,
             );
             if !approved {
-                let summary = if tc.name == "execute_command" {
+                let summary = if tc.name == "bash" {
                     let cmd = tc
                         .arguments
                         .get("command")

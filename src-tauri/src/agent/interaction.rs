@@ -308,14 +308,11 @@ impl AgentInteractionManager {
             let ns = state.settings.read().await.notification_settings.clone();
             let title = format!("Agent 向您提问 ({} 题)", questions.len());
             let first_q = &questions[0];
-            let body = format!("[{}] {}: {}", session_name, first_q.header, first_q.question);
-            send_notification(
-                app,
-                NotificationKind::AgentQuestion,
-                &ns,
-                &title,
-                &body,
+            let body = format!(
+                "[{}] {}: {}",
+                session_name, first_q.header, first_q.question
             );
+            send_notification(app, NotificationKind::AgentQuestion, &ns, &title, &body);
         }
 
         if is_head {

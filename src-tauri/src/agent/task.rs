@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub enum AgentMode {
     /// Plan mode — AI may invoke a limited set of read-oriented tools
     /// (read_file, list_directory, search_files, system_info, connection_info,
-    /// execute_command, ask_user, web_search, http_get, skills) to research
+    /// bash, ask_user, web_search, http_get, skills) to research
     /// and plan. No write/edit/create tools. Plugin and MCP tools are not
     /// registered. Command execution is gated by allow/deny lists.
     Plan,
@@ -81,4 +81,9 @@ pub struct AgentTask {
     /// 主任务为 None。用于级联取消与嵌套防御。
     #[serde(default)]
     pub parent_task_id: Option<String>,
+    /// 本任务实际使用的模型（llmRegistry 模型条目 id）。
+    /// 主任务来自会话级选择/全局默认解析；子 agent 继承父任务的该值，
+    /// 保证「父用 A 模型 → 派发的子 agent 默认也用 A」。
+    #[serde(default)]
+    pub model_id: Option<String>,
 }

@@ -629,14 +629,22 @@ impl SshManager {
         event_name: &str,
         tool_call_id: &str,
     ) -> Result<(String, bool), AppError> {
-        crate::command_exec::executor::run_raw(
+        let outcome = crate::command_exec::executor::run_raw(
             self,
             session_id,
             command,
             timeout,
             Some((app, event_name, tool_call_id)),
+            None,
+            None,
         )
-        .await
+        .await?;
+        Ok(match outcome {
+            crate::command_exec::executor::ExecOutcome::Completed { output } => (output, false),
+            crate::command_exec::executor::ExecOutcome::TimedOut { output } => (output, true),
+            // 兼容 shim 不接取消信号，Cancelled 不可达。
+            crate::command_exec::executor::ExecOutcome::Cancelled { .. } => (String::new(), false),
+        })
     }
 
     /// Execute a command with a timeout. Returns (output, was_timeout).
@@ -649,7 +657,15 @@ impl SshManager {
         command: &str,
         timeout: Duration,
     ) -> Result<(String, bool), AppError> {
-        crate::command_exec::executor::run_raw(self, session_id, command, timeout, None).await
+        let outcome = crate::command_exec::executor::run_raw(
+            self, session_id, command, timeout, None, None, None,
+        )
+        .await?;
+        Ok(match outcome {
+            crate::command_exec::executor::ExecOutcome::Completed { output } => (output, false),
+            crate::command_exec::executor::ExecOutcome::TimedOut { output } => (output, true),
+            crate::command_exec::executor::ExecOutcome::Cancelled { .. } => (String::new(), false),
+        })
     }
 
     /// Open an SFTP session on a dedicated subsystem channel.

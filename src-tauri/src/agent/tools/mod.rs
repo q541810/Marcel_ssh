@@ -27,11 +27,12 @@ use crate::ssh::connection::SshManager;
 
 #[cfg(test)]
 pub mod base64;
+pub mod bash;
 pub mod browser_cdp;
 pub mod connection_info;
-pub mod execute_cmd;
 pub mod file_ops;
 pub mod http_get;
+pub mod job_ops;
 pub mod local_handlers;
 pub mod mcp;
 pub mod open_cloud_page;
@@ -139,15 +140,15 @@ pub struct ToolContext {
     /// `task` 工具用它做子agent嵌套检查与子agent注册。
     pub task_id: Option<String>,
     /// Optional security policy. When set, tools that run a sandbox
-    /// (e.g. `execute_command`) should honour it instead of falling back
+    /// (e.g. `bash`) should honour it instead of falling back
     /// to [`crate::agent::sandbox::Sandbox::default`].
     pub policy: Option<Arc<crate::agent::sandbox::SecurityPolicy>>,
     /// Kernel-registered local handlers, keyed by name (e.g. `"fs.read"`).
     /// Shared via `Arc` so the context can be cloned cheaply per tool call.
     pub local_handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
     /// 命令执行统一管理器。生产路径由 agent_loop 注入；所有 exec* 辅助
-    /// 方法优先经它执行（登记记录 + 断连级联取消）。仅测试场景为 None
-    /// （回退到 SshManager 兼容 shim，行为一致但不登记）。
+    /// 方法优先经它执行（登记记录 + 断连级联取消 + 后台作业）。仅测试
+    /// 场景为 None（回退到 SshManager 兼容 shim，行为一致但不登记）。
     pub command_exec: Option<crate::command_exec::CommandExecutionManager>,
 }
 
@@ -231,9 +232,35 @@ impl ToolContext {
         match mgr.submit(&self.app_handle, ticket).await {
             SubmitOutcome::Completed { output } => Ok((output, false)),
             SubmitOutcome::TimedOut { output } => Ok((output, true)),
-            SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+            SubmitOutcome::Cancelled { reason } => Err(match reason {
+                crate::command_exec::CancelReason::User => AppError::Ssh("命令已取消".into()),
+                // Agent/Task 变体只出现在后台作业与任务级联路径；
+                // 前台命令穷尽匹配时按取消语义降级为同一文案。
+                crate::command_exec::CancelReason::Agent
+                | crate::command_exec::CancelReason::Task => AppError::Ssh("命令已取消".into()),
+                crate::command_exec::CancelReason::Disconnected => {
+                    AppError::Ssh("命令已取消（会话断开）".into())
+                }
+            }),
             SubmitOutcome::Failed { error } => Err(error),
         }
+    }
+
+    /// 以后台作业模式提交 ticket（`bash` 的
+    /// `run_in_background` 语义）：立即返回 [`crate::command_exec::JobInfo`]，
+    /// 输出沉淀进作业缓冲，经 `job_output` / `job_kill` / `job_list` 消费。
+    /// 执行记录、取消注册、断连级联与前台执行共用。
+    pub async fn submit_background(
+        &self,
+        ticket: crate::command_exec::CommandTicket,
+        description: Option<String>,
+    ) -> Result<crate::command_exec::JobInfo, AppError> {
+        let mgr = self
+            .command_exec
+            .as_ref()
+            .ok_or_else(|| AppError::Agent("command_exec manager not configured".into()))?;
+        mgr.submit_background(Some(&self.app_handle), ticket, description)
+            .await
     }
 
     /// Run a command on a dedicated SSH exec channel and return combined stdout+stderr.
@@ -314,7 +341,7 @@ impl ToolContext {
             .await
     }
 
-    /// 以完整 ticket 提交执行（execute_command 等需要区分「实际命令」与
+    /// 以完整 ticket 提交执行（`bash` 等需要区分「实际命令」与
     /// 「展示命令」的调用方使用；sudo 重写后的命令只进 `command`，
     /// 原始命令进 `display_command`，密码绝不入记录）。
     /// 返回形状与 [`Self::exec_timed`] 一致。
@@ -361,7 +388,7 @@ pub trait AgentTool: Send + Sync {
     fn parameters_schema(&self) -> serde_json::Value;
 
     /// Baseline risk level. May be elevated by the caller (e.g. for
-    /// `execute_command`, the actual risk is computed from the command text).
+    /// `bash`, the actual risk is computed from the command text).
     fn risk_level(&self) -> RiskLevel;
 
     /// External tools may request approval even when their coarse risk appears low.
@@ -541,11 +568,14 @@ impl ToolRegistry {
         let mut registry = Self::new();
         registry.register(Arc::new(question::QuestionTool::new(true)));
         registry.register(Arc::new(connection_info::ConnectionInfoTool::new()));
-        registry.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
+        registry.register(Arc::new(bash::BashTool::new()));
         registry.register(Arc::new(file_ops::ReadFileTool::new()));
         registry.register(Arc::new(file_ops::ListDirectoryTool::new()));
         registry.register(Arc::new(search::SearchFilesTool::new()));
         registry.register(Arc::new(system::SystemInfoTool::new()));
+        registry.register(Arc::new(job_ops::JobOutputTool::new()));
+        registry.register(Arc::new(job_ops::JobKillTool::new()));
+        registry.register(Arc::new(job_ops::JobListTool::new()));
         registry.register_skills(enabled_skills);
         if experimental_settings.enable_web_search {
             registry.register(Arc::new(web_search::WebSearchTool::new()));
@@ -612,7 +642,7 @@ impl ToolRegistry {
     /// Built-ins:
     /// - `ask_user`                   (question)
     /// - `connection_info`            (connection_info)
-    /// - `execute_command`           (execute_cmd)
+    /// - `bash`           (bash)
     /// - `read_file`, `write_file`,
     ///   `edit_file`, `list_directory` (file_ops)
     /// - `search_files`               (search)
@@ -626,7 +656,7 @@ impl ToolRegistry {
     pub fn with_core_tools() -> Self {
         let mut r = Self::new();
         r.register(Arc::new(connection_info::ConnectionInfoTool::new()));
-        r.register(Arc::new(execute_cmd::ExecuteCommandTool::new()));
+        r.register(Arc::new(bash::BashTool::new()));
         r.register(Arc::new(file_ops::ReadFileTool::new()));
         r.register(Arc::new(file_ops::WriteFileTool::new()));
         r.register(Arc::new(file_ops::EditFileTool::new()));
@@ -638,6 +668,9 @@ impl ToolRegistry {
         r.register(Arc::new(plan::EditPlanTool::new()));
         r.register(Arc::new(question::QuestionTool::new(false)));
         r.register(Arc::new(subagent::TaskTool));
+        r.register(Arc::new(job_ops::JobOutputTool::new()));
+        r.register(Arc::new(job_ops::JobKillTool::new()));
+        r.register(Arc::new(job_ops::JobListTool::new()));
         r
     }
 
@@ -670,19 +703,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_with_builtins_has_sixteen_tools() {
+    fn registry_with_builtins_has_all_tools() {
         let r = ToolRegistry::with_builtins();
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            16,
-            "expected 16 built-in tools, got {:?}",
+            19,
+            "expected 19 built-in tools, got {:?}",
             names
         );
         for expected in [
             "ask_user",
             "connection_info",
-            "execute_command",
+            "bash",
             "read_file",
             "write_file",
             "edit_file",
@@ -696,6 +729,9 @@ mod tests {
             "update_plan_item",
             "edit_plan",
             "task",
+            "job_output",
+            "job_kill",
+            "job_list",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
@@ -831,7 +867,7 @@ mod tests {
         #[async_trait]
         impl AgentTool for DummyTool {
             fn name(&self) -> &str {
-                "execute_command"
+                "bash"
             }
             fn description(&self) -> &str {
                 "dummy"
@@ -851,9 +887,9 @@ mod tests {
             }
         }
         let mut r = ToolRegistry::with_builtins();
-        let old_desc = r.get("execute_command").unwrap().description().to_string();
+        let old_desc = r.get("bash").unwrap().description().to_string();
         r.register(Arc::new(DummyTool));
-        assert_eq!(r.get("execute_command").unwrap().description(), "dummy");
+        assert_eq!(r.get("bash").unwrap().description(), "dummy");
         assert_ne!(old_desc, "dummy");
     }
 

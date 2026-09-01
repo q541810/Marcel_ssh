@@ -521,7 +521,7 @@ impl AgentTool for UploadFileTool {
             return Ok(ToolOutput::fail(
                 format!("upload {}", local_path_buf.display()),
                 format!(
-                    "file too large: {} bytes (limit {} bytes). Use rsync/scp via execute_command.",
+                    "file too large: {} bytes (limit {} bytes). Use rsync/scp via bash.",
                     size, MAX_TRANSFER_BYTES
                 ),
             ));
@@ -689,7 +689,7 @@ impl AgentTool for DownloadFileTool {
             return Ok(ToolOutput::fail(
                 format!("download {}", remote_path),
                 format!(
-                    "remote file too large: {} bytes (limit {} bytes). Use rsync/scp via execute_command.",
+                    "remote file too large: {} bytes (limit {} bytes). Use rsync/scp via bash.",
                     size, MAX_TRANSFER_BYTES
                 ),
             ));

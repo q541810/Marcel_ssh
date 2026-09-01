@@ -133,7 +133,9 @@ pub async fn ssh_disconnect(
     session_id: String,
 ) -> Result<(), AppError> {
     crate::commands::sftp::cleanup_session_sysopen(&app, &state, &session_id).await;
-    state.agent_interaction.cancel_session_interactions(&app, &session_id);
+    state
+        .agent_interaction
+        .cancel_session_interactions(&app, &session_id);
     state.ssh_manager.disconnect(&session_id).await
 }
 
@@ -170,7 +172,7 @@ pub async fn ssh_list_sessions(state: State<'_, AppState>) -> Result<Vec<String>
 /// 在远程 SSH 会话上执行命令并返回输出。
 ///
 /// 这是**用户主动触发**的命令（由 ProcessPanel 调用，用于进程管理），无需沙箱检查，原因：
-///   - 沙箱是为面向 LLM 的 Agent 命令（`execute_command` tool）设计的，LLM 输出不可信。
+///   - 沙箱是为面向 LLM 的 Agent 命令（`bash` tool）设计的，LLM 输出不可信。
 ///   - `ssh_exec` 由用户通过终端 UI 组件调用——该用户本身已通过 `ssh_send_input`
 ///     拥有完整的交互式 shell。如果 WebView 被攻破，`ssh_send_input` 同样危险。
 ///   - 在此加沙箱会导致用户自定义的黑名单（如屏蔽 `kill`）悄悄破坏 ProcessPanel 功能。
@@ -240,7 +242,7 @@ pub async fn ssh_exec_long(
             Err(AppError::Ssh("命令在超时后未完成".into()))
         }
         SubmitOutcome::Cancelled { reason } => match reason {
-            CancelReason::User => {
+            CancelReason::User | CancelReason::Agent | CancelReason::Task => {
                 emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("命令已取消".into()))
             }

@@ -1,4 +1,4 @@
-//! `execute_command` — run an arbitrary shell command on the remote server.
+//! `bash` — run an arbitrary shell command on the remote server.
 //!
 //! Security:
 //! - The [`Sandbox`] is consulted before execution and rejects destructive
@@ -23,32 +23,35 @@ use crate::error::AppError;
 /// Maximum bytes of combined stdout+stderr returned to the LLM.
 const MAX_OUTPUT_BYTES: usize = 8_000;
 
-pub struct ExecuteCommandTool;
+pub struct BashTool;
 
-impl ExecuteCommandTool {
+impl BashTool {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for ExecuteCommandTool {
+impl Default for BashTool {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl AgentTool for ExecuteCommandTool {
+impl AgentTool for BashTool {
     fn name(&self) -> &str {
-        "execute_command"
+        "bash"
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command on the remote server. Returns combined \
-         stdout+stderr. Long output is truncated. The command is statically \
-         analyzed by a security sandbox before execution; some patterns \
-         (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) are \
-         always rejected. Timeout is configured by the user (default 120s)."
+        "Execute a shell command on the remote server via the user's login shell \
+         (usually bash). Returns combined stdout+stderr. Long output is truncated. \
+         The command is statically analyzed by a security sandbox before execution; \
+         some patterns (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) \
+         are always rejected. Timeout is configured by the user (default 120s).\n\
+         Set `run_in_background: true` for long-running commands (compilations, \
+         large downloads, servers/daemons, ongoing tasks) to receive a `job_id` \
+         immediately and manage it via `job_output`, `job_kill`, and `job_list`."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -58,6 +61,18 @@ impl AgentTool for ExecuteCommandTool {
                 "command": {
                     "type": "string",
                     "description": "Shell command line to execute (run via the user's login shell)."
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). Defaults to false."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in UI). Example: 'Build release binary' or 'Run database migration'."
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Optional timeout in milliseconds for foreground execution. Ignored when run_in_background is true."
                 }
             },
             "required": ["command"]
@@ -81,8 +96,20 @@ impl AgentTool for ExecuteCommandTool {
             .trim();
 
         if command.is_empty() {
-            return Ok(ToolOutput::fail("execute_command", "Error: empty command"));
+            return Ok(ToolOutput::fail("bash", "Error: empty command"));
         }
+
+        let run_in_background = params
+            .get("run_in_background")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
 
         // Static safety check. Higher-level policy (allow/deny lists, user
         // approval) is applied by `commands/agent.rs`.
@@ -109,16 +136,13 @@ impl AgentTool for ExecuteCommandTool {
             match lookup_password(ctx).await {
                 Some(password) => {
                     let rewritten = rewrite_sudo(command, &password);
-                    log::info!(
-                        "execute_command: sudo auto-fill enabled for cmd='{}'",
-                        command
-                    );
+                    log::info!("bash: sudo auto-fill enabled for cmd='{}'", command);
                     sudo_password = Some(password);
                     rewritten
                 }
                 None => {
                     log::debug!(
-                        "execute_command: no password found for sudo auto-fill (session={})",
+                        "bash: no password found for sudo auto-fill (session={})",
                         ctx.session_id
                     );
                     command.to_string()
@@ -129,9 +153,10 @@ impl AgentTool for ExecuteCommandTool {
         };
 
         log::info!(
-            "execute_command: risk={:?} cmd={} final={}",
+            "bash: risk={:?} cmd={} bg={} final={}",
             risk,
             command,
+            run_in_background,
             if final_command != command {
                 "(auto-fill)"
             } else {
@@ -139,11 +164,48 @@ impl AgentTool for ExecuteCommandTool {
             }
         );
 
-        let timeout_secs = ctx
-            .policy
-            .as_ref()
-            .map(|p| p.command_timeout_secs)
-            .unwrap_or(180);
+        if run_in_background {
+            // 后台作业走统一命令执行体系：立即返回 job_id，输出沉淀进
+            // 作业缓冲（环形 + 溢出文件），经 job_output / job_kill /
+            // job_list 消费。取消注册 / 断连级联 / 执行记录与前台共用。
+            let mut ticket = crate::command_exec::CommandTicket::new(
+                &ctx.session_id,
+                &final_command,
+                crate::command_exec::CommandSource::Agent,
+            )
+            .display_as(command);
+            if let Some(task_id) = &ctx.task_id {
+                ticket = ticket.cancellable(task_id, "Agent 命令已取消");
+            }
+            let job_info = ctx.submit_background(ticket, description.clone()).await?;
+
+            // Zeroize password and rewritten command immediately
+            if let Some(ref mut p) = sudo_password {
+                p.zeroize();
+            }
+            let mut cmd = final_command;
+            cmd.zeroize();
+
+            let summary = format!("$ {} (Job ID: {})", command, job_info.job_id);
+            let output = format!(
+                "Command started in background.\nJob ID: {}\nStatus: {}\nUse `job_output(job_id=\"{}\", wait=true)` to check output or wait for completion, and `job_kill(job_id=\"{}\")` to stop.",
+                job_info.job_id, job_info.status, job_info.job_id, job_info.job_id
+            );
+
+            return Ok(ToolOutput::ok(summary, output).with_metadata(json!({
+                "job_id": job_info.job_id,
+                "status": job_info.status.to_string(),
+                "description": job_info.description,
+                "run_in_background": true,
+            })));
+        }
+
+        let timeout_secs = timeout_ms.map(|ms| (ms / 1000).max(1)).unwrap_or_else(|| {
+            ctx.policy
+                .as_ref()
+                .map(|p| p.command_timeout_secs)
+                .unwrap_or(180)
+        });
         let timeout = Duration::from_secs(timeout_secs);
 
         let mut ticket = crate::command_exec::CommandTicket::new(
@@ -173,7 +235,7 @@ impl AgentTool for ExecuteCommandTool {
                 let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
                 if was_timeout {
                     truncated.push_str(&format!(
-                        "\n\n[命令执行因超过{} 秒触发超时，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
+                        "\n\n[命令超时（{} 秒）：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]",
                         timeout_secs
                     ));
                 }
@@ -240,7 +302,7 @@ fn is_sudo_command(command: &str) -> bool {
 async fn lookup_password(ctx: &ToolContext) -> Option<String> {
     let connection_id = ctx.ssh.get_connection_id(&ctx.session_id).await;
     log::info!(
-        "execute_command: session={} connection_id={:?}",
+        "bash: session={} connection_id={:?}",
         ctx.session_id,
         connection_id
     );
@@ -250,23 +312,19 @@ async fn lookup_password(ctx: &ToolContext) -> Option<String> {
             let result = keychain::get_password(id);
             match &result {
                 Ok(Some(_)) => {
-                    log::info!("execute_command: password available for connection={}", id);
+                    log::info!("bash: password available for connection={}", id);
                 }
                 Ok(None) => {
-                    log::info!("execute_command: no password stored for connection={}", id);
+                    log::info!("bash: no password stored for connection={}", id);
                 }
                 Err(e) => {
-                    log::warn!(
-                        "execute_command: keychain error for connection={}: {}",
-                        id,
-                        e
-                    );
+                    log::warn!("bash: keychain error for connection={}: {}", id, e);
                 }
             }
             result.ok().flatten()
         }
         None => {
-            log::debug!("execute_command: no connection_id for session, cannot look up password");
+            log::debug!("bash: no connection_id for session, cannot look up password");
             None
         }
     }

@@ -6,7 +6,7 @@ use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::task::AgentStatus;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::{LlmMessage, ProviderType};
+use crate::llm::provider::LlmMessage;
 use crate::AppState;
 
 /// 手动压缩命令的结果。
@@ -65,25 +65,10 @@ pub async fn agent_compact_conversation(
         ));
     }
 
-    // LLM 配置：摘要需要一次 LLM 调用
-    let llm_config = state.settings.read().await.llm_config.clone();
-    let Some(mut llm_config) = llm_config else {
-        return Err(AppError::Llm("尚未配置 LLM，请前往设置填写".into()));
-    };
-    if llm_config.provider_type != ProviderType::OpenAI {
-        return Err(AppError::Llm("当前仅支持 OpenAI 兼容 Provider".into()));
-    }
-    // 兜底补齐：若异步预热尚未完成且内存 api_key 为空，按需尝试读取 Keychain
-    if llm_config.api_key.is_empty() {
-        if let Ok(Some(key)) = crate::config::keychain::get_llm_api_key() {
-            llm_config.api_key = key.clone();
-            let mut settings = state.settings.write().await;
-            if let Some(ref mut llm) = settings.llm_config {
-                llm.api_key = key;
-            }
-        }
-    }
-    let llm_manager = LlmManager::new(llm_config)?;
+    // LLM 配置：摘要走「上下文压缩模型」槽位（空/失效自动回落主模型）。
+    let llm_registry = state.settings.read().await.llm_registry.clone();
+    let resolved = llm_registry.resolve_slot(&llm_registry.slots.summarizer_model_id)?;
+    let llm_manager = LlmManager::new(resolved.config)?;
 
     let mut messages: Vec<LlmMessage> = history;
     if messages.is_empty() {

@@ -17,9 +17,13 @@ pub async fn agent_start_task(
     history: Vec<LlmMessage>,
     conversation_id: String,
     task_id: Option<String>,
+    model_id: Option<String>,
 ) -> Result<String, AppError> {
     // 前端可预生成 task_id 并先挂好事件 listener；旧调用方不传时仍由后端生成。
     let task_id = task_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    // 会话级模型选择（llmRegistry 模型条目 id）；None = 跟随全局默认模型。
+    // manager.spawn 的 resolve_override 会按 id 解析，找不到时回落默认。
+    let model_override = model_id.filter(|s| !s.trim().is_empty());
     let spec = AgentSpec {
         task_id: task_id.clone(),
         mode,
@@ -28,7 +32,7 @@ pub async fn agent_start_task(
         conversation_id,
         prompt,
         history,
-        model_override: None,
+        model_override,
         prompt_extra: Vec::new(),
     };
     let manager = AgentManager::new(state.inner().clone());
@@ -94,8 +98,13 @@ pub async fn agent_stop_task(
         if let Some(cancel_tx) = state.cancel_senders.write().remove(tid) {
             let _ = cancel_tx.send(true);
         }
-        // execute_command 以 Agent task_id 注册到统一命令 manager。
-        let _ = state.command_exec.cancel(tid).await;
+        // bash 以 Agent task_id 注册到统一命令 manager；任务停止属级联
+        // 取消 → Task，与界面直接取消（User）、Agent job_kill（Agent）
+        // 区分，job_output 的终止来源文案据此渲染。
+        let _ = state
+            .command_exec
+            .cancel_with_reason(tid, crate::command_exec::CancelReason::Task)
+            .await;
     }
     if tasks_to_cancel.len() > 1 {
         log::info!(
@@ -162,6 +171,7 @@ mod tests {
             has_plan: false,
             created_at: chrono::Utc::now(),
             parent_task_id: parent.map(String::from),
+            model_id: None,
         }
     }
 

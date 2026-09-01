@@ -34,10 +34,11 @@ const SUBAGENT_INSTRUCTION: &str = "\
 你是被主 Agent 派发的调研子agent（subagent）。你的唯一目标：只读调研并回答主 Agent 交给你的调研问题。
 
 硬性约束：
-- 你处于 Plan 模式：只能使用只读调研工具（read_file / list_directory / search_files / system_info / connection_info / execute_command / web_search / http_get / ask_user / 技能）
+- 你处于 Plan 模式：只能使用只读调研工具（read_file / list_directory / search_files / system_info / connection_info / bash / web_search / http_get / ask_user / 技能）
 - 不得执行任何修改操作：不写文件、不编辑文件、不删除文件、不安装软件、不修改配置
-- execute_command 仅用于信息收集（查看状态、读取输出、运行只读查询），禁止用于修改系统
+- bash 仅用于信息收集（查看状态、读取输出、运行只读查询），禁止用于修改系统
 - 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
+- 若用 bash(run_in_background: true) 派发了后台作业，必须在结束调研前处理完毕：用 job_output(wait=true) 等待其完成，或不再需要时用 job_kill 终止——不得留下仍在运行的作业
 
 完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论、对主 Agent 行动的建议。不要复述调研过程细节。";
 
@@ -168,6 +169,24 @@ impl AgentTool for TaskTool {
 
         let state = ctx.app_handle.state::<AppState>();
         let state: AppState = state.inner().clone();
+
+        // ── 子 agent 模型继承：LLM 未显式指定 model 参数时，继承父任务的模型 ──
+        // 保证「父任务用 A 模型 → 派发的子 agent 默认也用 A」（会话级模型切换的
+        // 直觉语义）。父任务 model_id 为 None（极端情况）时回落全局默认。
+        let model_override = match model_override {
+            Some(m) => Some(m),
+            None => {
+                if let Some(pid) = ctx.task_id.clone() {
+                    state
+                        .agent_tasks
+                        .read()
+                        .get(&pid)
+                        .and_then(|t| t.model_id.clone())
+                } else {
+                    None
+                }
+            }
+        };
 
         // ── 嵌套防御：子agent不能再派发子agent ──
         // parent_task_id = 当前任务 id（也是新子 agent 的父任务 id）。

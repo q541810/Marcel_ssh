@@ -15,7 +15,7 @@ use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::{LlmMessage, LlmRole, ToolCall, ToolDefinition};
+use crate::llm::provider::{LlmConfig, LlmMessage, LlmRole, ToolCall, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
 use crate::notification::{send_notification, NotificationKind};
 use crate::ssh::connection::SshManager;
@@ -140,6 +140,7 @@ pub(crate) async fn run_agent_loop(
     tools: Vec<ToolDefinition>,
     mode: AgentMode,
     agent_settings: AgentModeSettings,
+    approval_cfg: Option<LlmConfig>,
     ctx: LoopContext,
 ) -> Option<String> {
     let event_name = format!("agent://stream/{}", task_id);
@@ -174,6 +175,8 @@ pub(crate) async fn run_agent_loop(
     let max_rounds = agent_settings.max_tool_rounds.max(10);
     // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
     let mut overflow_retries = 0usize;
+    // 子 agent 作业未完成提醒计数（有界，最多 2 次）
+    let mut job_nudges: u32 = 0;
 
     // Wrap the manager in Arc so the dispatcher's command approver can share
     // it without cloning the underlying HTTP client / config.
@@ -188,6 +191,7 @@ pub(crate) async fn run_agent_loop(
         state.clone(),
         registry.clone(),
         llm_manager.clone(),
+        approval_cfg,
     );
 
     for round in 0..max_rounds {
@@ -416,6 +420,30 @@ pub(crate) async fn run_agent_loop(
                 );
                 continue;
             }
+            // 子 agent 收尾守卫：名下仍有运行中的后台作业时，不允许带着
+            // "孤儿作业" 结束——注入一条提醒让模型 job_output 收集或
+            // job_kill 终止（有界，最多 2 次防止死循环）。
+            if is_subtask && job_nudges < 2 {
+                let running = state.command_exec.running_jobs_for_task(&task_id).await;
+                if !running.is_empty() {
+                    job_nudges += 1;
+                    let list = running
+                        .iter()
+                        .map(|j| format!("- {}（{}）", j.job_id, j.description))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let nudge = format!(
+                        "你派发的后台作业尚未结束，不能直接完成调研：\n{}\n\
+                         请先用 job_output(wait=true) 收集其输出直到作业结束；\
+                         若作业对调研结论不再必要，用 job_kill 终止。\
+                         处理完后再输出最终结论。",
+                        list
+                    );
+                    // 循环瞬态消息，不落库（与对话内容无关，仅用于本轮调度）
+                    messages.push(LlmMessage::user(nudge));
+                    continue;
+                }
+            }
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
             if !is_subtask {
@@ -500,18 +528,7 @@ pub(crate) async fn run_agent_loop(
                     futures.push(async move {
                         let _permit = sem.acquire().await.ok();
                         execute_single_tool(
-                            idx,
-                            tc,
-                            disp,
-                            s_ssh,
-                            sid,
-                            tid,
-                            evn,
-                            a,
-                            st,
-                            cdir,
-                            reg,
-                            msgs,
+                            idx, tc, disp, s_ssh, sid, tid, evn, a, st, cdir, reg, msgs,
                         )
                         .await
                     });
@@ -676,10 +693,11 @@ async fn execute_single_tool(
 ) -> SingleToolExecution {
     let tool_ctx = {
         let settings = state.settings.read().await;
-        let policy = std::sync::Arc::new(crate::agent::sandbox::SecurityPolicy::from_user_settings(
-            &settings.custom_protected_paths,
-            settings.command_timeout_secs,
-        ));
+        let policy =
+            std::sync::Arc::new(crate::agent::sandbox::SecurityPolicy::from_user_settings(
+                &settings.custom_protected_paths,
+                settings.command_timeout_secs,
+            ));
         ToolContext::new(ssh.clone(), session_id.to_string(), app.clone())
             .with_policy(policy)
             .with_task_id(task_id)
@@ -739,14 +757,14 @@ async fn execute_single_tool(
             tc.name
         );
         exec.was_aborted = true;
-        if tc.name == "execute_command" {
+        if tc.name == "bash" {
             if !exec.output.is_empty() {
                 exec.output.push_str(
-                    "\n\n[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
+                    "\n\n[用户中断：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]",
                 );
             } else {
                 exec.output = String::from(
-                    "[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]",
+                    "[用户中断：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]",
                 );
             }
         } else if !exec.output.is_empty() {
@@ -875,7 +893,7 @@ mod tests {
             concurrent: true,
         }));
         registry.register(Arc::new(DummyTool {
-            name: "execute_command".into(),
+            name: "bash".into(),
             concurrent: false,
         }));
         registry.register(Arc::new(DummyTool {
@@ -896,7 +914,7 @@ mod tests {
             },
             ToolCall {
                 id: "c3".into(),
-                name: "execute_command".into(),
+                name: "bash".into(),
                 arguments: json!({"command": "ls"}),
             },
             ToolCall {
@@ -1014,7 +1032,7 @@ mod tests {
     fn persisted_tool_result_defaults_missing_timeout_to_false() {
         let raw = r#"{
             "id": "call-1",
-            "name": "execute_command",
+            "name": "bash",
             "arguments": {"command": "ls"},
             "risk_level": "LowRisk",
             "summary": "$ ls",
@@ -1032,7 +1050,7 @@ mod tests {
     fn persisted_tool_result_reads_was_aborted() {
         let raw = r#"{
             "id": "call-2",
-            "name": "execute_command",
+            "name": "bash",
             "arguments": {"command": "ls"},
             "risk_level": "Moderate",
             "summary": "$ ls (aborted)",
@@ -1052,7 +1070,7 @@ mod tests {
         let calls = vec![
             PersistedAssistantToolCall {
                 id: "call-a".into(),
-                name: "execute_command".into(),
+                name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}),
             },
             PersistedAssistantToolCall {

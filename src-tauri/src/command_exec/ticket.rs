@@ -15,24 +15,41 @@
 
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// 取消原因。决定 [`super::manager::SubmitOutcome::Cancelled`] 的语义与
+/// 调用方映射的错误/状态文案。变体必须穷尽「谁发起了终止」：
+/// 界面用户、Agent 自己、任务级联、断连——后台作业的终止来源文案
+/// 依赖这一区分，不能把不同来源混进同一个变体。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelReason {
+    /// 用户在界面主动取消（命令取消按钮、作业「终止」按钮）。
+    User,
+    /// Agent 通过 `job_kill` 工具终止自己派发的后台作业。
+    Agent,
+    /// Agent 任务被停止（`agent_stop_task`）时的级联取消。
+    Task,
+    /// 会话断开，由断连观察者级联取消。
+    Disconnected,
+}
 
 /// 命令来源。用于执行记录归属、统一事件与未来的优先级/嘈杂度策略。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandSource {
     /// 用户侧直接执行（ProcessPanel / NetworkPanel / 插件经授权的 `ssh.exec`）。
     User,
     /// 系统内部长任务（压缩 / 解压 / 快速删除等由产品功能构造的命令）。
     SystemTask,
-    /// Agent `execute_command` 工具（已过沙箱与审批）。
+    /// Agent `bash` 工具（原 `bash`，已过沙箱与审批）。
     Agent,
     /// 插件系统后端路由的命令执行。
     Plugin,
 }
 
 /// 执行生命周期状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStatus {
     Running,
@@ -40,6 +57,7 @@ pub enum ExecutionStatus {
     TimedOut,
     Cancelled,
     Failed,
+    Killed,
 }
 
 /// 流式输出目标：每个数据 chunk 以 `{type:"toolOutput", toolCallId, chunk}`
@@ -138,9 +156,9 @@ pub struct ExecutionSnapshot {
 }
 
 /// 快照中展示命令的最大长度（字符）。
-pub(crate) const DISPLAY_COMMAND_MAX_CHARS: usize = 120;
+pub const DISPLAY_COMMAND_MAX_CHARS: usize = 120;
 
-pub(crate) fn truncate_display(display: &str) -> String {
+pub fn truncate_display(display: &str) -> String {
     if display.chars().count() <= DISPLAY_COMMAND_MAX_CHARS {
         display.to_string()
     } else {

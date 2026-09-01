@@ -265,10 +265,10 @@ pub type SharedPluginRegistry = Arc<RwLock<PluginRegistry>>;
 /// Lenient dot-separated numeric version parser: every segment must be a plain
 /// number (`"1.7"` and `"1.7.0"` both parse). Returns `None` on any malformed
 /// segment (e.g. `"abc"`, `"1.x"`).
+///
+/// 委托给 `util::parse_version_parts`（同步版本闸门共用同一实现，避免两套语义漂移）。
 fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
-    s.split('.')
-        .map(|seg| seg.trim().parse::<u64>().ok())
-        .collect()
+    crate::util::parse_version_parts(s)
 }
 
 /// Whether the plugin's `minAppVersion` (if declared) is satisfied by the
@@ -301,21 +301,10 @@ fn min_app_version_satisfied(m: &PluginManifest, app_version: &str) -> bool {
 
 /// Compare two dot-separated numeric versions.
 /// Returns -1 if a < b, 0 if equal, 1 if a > b, None if malformed.
+///
+/// 委托给 `util::compare_versions`（同步版本闸门共用同一实现）。
 pub fn compare_versions(a: &str, b: &str) -> Option<i32> {
-    let a_parts = parse_version_parts(a)?;
-    let b_parts = parse_version_parts(b)?;
-    let len = a_parts.len().max(b_parts.len());
-    for i in 0..len {
-        let av = a_parts.get(i).copied().unwrap_or(0);
-        let bv = b_parts.get(i).copied().unwrap_or(0);
-        if av < bv {
-            return Some(-1);
-        }
-        if av > bv {
-            return Some(1);
-        }
-    }
-    Some(0)
+    crate::util::compare_versions(a, b)
 }
 
 /// Whether `market` is newer than `local`.

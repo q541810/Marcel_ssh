@@ -81,7 +81,8 @@ pub struct AppState {
         std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// 命令执行统一管理器：所有 SSH 命令执行（用户直发 / 系统长任务 /
     /// Agent 工具 / 插件）的唯一入口，集中管理执行记录、取消注册表
-    /// （取代旧的 long_exec_cancel_senders）与断连级联取消。
+    /// （取代旧的 long_exec_cancel_senders）、断连级联取消与后台作业
+    /// （环形缓冲 + 溢出文件 + 非忙等读取）。
     pub command_exec: crate::command_exec::CommandExecutionManager,
     /// Watcher state for "open with system" files, keyed by task_id.
     /// Value = (session_id, local_path, cancel sender). local_path 用于「重复打开」时
@@ -256,12 +257,11 @@ impl AppState {
             }
         };
 
-        // Backwards-compat: existing settings files written before LLM support
-        // had `llmConfig: null`. Backfill with a working default so users get a
-        // ready-to-use configuration on upgrade.
-        if settings.llm_config.is_none() {
-            settings.llm_config = Some(crate::llm::provider::LlmConfig::default());
-            log::info!("settings.json 缺少 llmConfig，已填入默认值");
+        // Backwards-compat: 旧版单渠道单模型配置（llmConfig）在加载时自动迁移为
+        // 多渠道多模型注册表（默认渠道 + 单模型 + 槽位绑定），API Key 从旧
+        // keychain 条目搬入渠道条目。迁移幂等，无旧配置时不做任何改动。
+        if crate::llm::registry::migrate_legacy_settings(&mut settings) {
+            log::info!("旧版 LLM 单配置已迁移为多渠道多模型注册表");
             let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
         }
 
@@ -344,10 +344,14 @@ impl AppState {
         let mcp_manager = std::sync::Arc::new(McpManager::new());
 
         // SSH 连接管理器 + 命令执行统一管理器（后者注册断连观察者，
-        // 必须在 SshManager 构造后立即创建并共享同一句柄）。
+        // 必须在 SshManager 构造后立即创建并共享同一句柄）。后台作业
+        // 的输出溢出文件放在配置目录下，随体系统一管理。
         let ssh_manager = SshManager::with_known_hosts(known_hosts);
-        let command_exec =
-            crate::command_exec::CommandExecutionManager::new(ssh_manager.clone()).await;
+        let command_exec = crate::command_exec::CommandExecutionManager::new(
+            ssh_manager.clone(),
+            config_dir.join("jobs_temp"),
+        )
+        .await;
 
         let (sync_engine, sync_scheduler) = {
             let profile = crate::sync::profile::SyncProfile::default();
@@ -402,7 +406,8 @@ impl AppState {
                         mcp_store: mcp_store_arc,
                         mcp_manager: mcp_manager.clone(),
                         config_dir,
-                        agent_interaction: crate::agent::interaction::AgentInteractionManager::new(),
+                        agent_interaction: crate::agent::interaction::AgentInteractionManager::new(
+                        ),
                         cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
                         download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -639,20 +644,42 @@ pub fn run() {
                 while let Some(_) = set.join_next().await {}
             });
 
-            // Background: 异步预热系统密钥链中的 LLM API Key，不阻塞启动关键路径。
+            // Background: 异步预热系统密钥链中的各渠道 LLM API Key，不阻塞启动
+            // 关键路径。解析时的兜底（registry.build_resolved）仍会在缺失时补读，
+            // 预热只是优化首请求延迟。
             {
                 let settings_arc = app.state::<AppState>().settings.clone();
                 tauri::async_runtime::spawn(async move {
-                    let key_res = tokio::task::spawn_blocking(crate::config::keychain::get_llm_api_key).await;
-                    if let Ok(Ok(Some(key))) = key_res {
-                        let mut settings = settings_arc.write().await;
-                        if let Some(ref mut llm) = settings.llm_config {
-                            if llm.api_key.is_empty() {
-                                llm.api_key = key;
-                                log::info!("已从密钥链后台异步预热 LLM API Key");
+                    let channel_ids: Vec<String> = {
+                        let settings = settings_arc.read().await;
+                        settings
+                            .llm_registry
+                            .channels
+                            .iter()
+                            .map(|c| c.id.clone())
+                            .collect()
+                    };
+                    for id in channel_ids {
+                        let id_owned = id.clone();
+                        let key_res = tokio::task::spawn_blocking(move || {
+                            crate::config::keychain::get_llm_channel_key(&id_owned)
+                        })
+                        .await;
+                        if let Ok(Ok(Some(key))) = key_res {
+                            let mut settings = settings_arc.write().await;
+                            if let Some(channel) = settings
+                                .llm_registry
+                                .channels
+                                .iter_mut()
+                                .find(|c| c.id == id)
+                            {
+                                if channel.api_key.is_empty() {
+                                    channel.api_key = key;
+                                }
                             }
                         }
                     }
+                    log::info!("已后台异步预热各渠道 LLM API Key");
                 });
             }
 
@@ -689,7 +716,10 @@ pub fn run() {
                 tauri::async_runtime::spawn(async move {
                     ssh_mgr
                         .register_disconnect_observer(std::sync::Arc::new(move |session_id| {
-                            interaction_mgr.cancel_session_interactions(&app_handle_for_disconnect, session_id);
+                            interaction_mgr.cancel_session_interactions(
+                                &app_handle_for_disconnect,
+                                session_id,
+                            );
                         }))
                         .await;
                 });
@@ -714,6 +744,9 @@ pub fn run() {
             commands::ssh::ssh_exec_long_cancel,
             commands::agent_lifecycle::agent_start_task,
             commands::agent_lifecycle::agent_stop_task,
+            commands::agent_attachment::agent_read_local_file,
+            commands::job::job_list,
+            commands::job::job_kill,
             commands::agent_lifecycle::agent_approve_operation,
             commands::agent_lifecycle::agent_reject_operation,
             commands::agent_lifecycle::agent_answer_question,
@@ -721,6 +754,7 @@ pub fn run() {
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
             commands::agent_conversation::agent_rename_conversation,
+            commands::agent_conversation::agent_set_conversation_model,
             commands::agent_conversation::agent_get_conversation,
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
@@ -762,8 +796,8 @@ pub fn run() {
             commands::quick_command::quick_command_add,
             commands::quick_command::quick_command_update,
             commands::quick_command::quick_command_delete,
-            commands::keychain::config_save_llm_api_key,
-            commands::keychain::config_delete_llm_api_key,
+            commands::keychain::config_save_llm_channel_api_key,
+            commands::keychain::config_delete_llm_channel_api_key,
             commands::keychain::config_save_web_search_api_key,
             commands::keychain::config_delete_web_search_api_key,
             commands::skill::skill_list,

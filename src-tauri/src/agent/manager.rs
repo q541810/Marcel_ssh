@@ -29,7 +29,7 @@ use crate::agent::tools::{
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::{LlmMessage, LlmRole, ProviderType, ToolDefinition};
+use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 use crate::mcp::store::McpServerConfig;
 use crate::plugins::context::{apply_to_string, SessionContext};
 use crate::plugins::registry::PluginRegistry;
@@ -125,8 +125,8 @@ impl AgentManager {
 
         // ── 1. 读取设置 ──
         let (
-            llm_config,
-            agent_settings,
+            llm_registry,
+            mut agent_settings,
             experimental_settings,
             mut enabled_skills,
             enabled_mcp_servers,
@@ -135,7 +135,7 @@ impl AgentManager {
             let skills = self.state.skill_store.read().await;
             let mcp_store = self.state.mcp_store.read().await;
             (
-                settings.llm_config.clone(),
+                settings.llm_registry.clone(),
                 settings.agent_mode_settings.clone(),
                 settings.experimental_settings.clone(),
                 skills
@@ -153,31 +153,47 @@ impl AgentManager {
             )
         };
 
-        let llm_config =
-            llm_config.ok_or_else(|| AppError::Llm("尚未配置 LLM，请前往设置填写".into()))?;
         if !crate::agent::tools::html_render_enabled(&experimental_settings) {
             enabled_skills.retain(|skill| skill.id != "builtin.visualize");
         }
-        if llm_config.provider_type != ProviderType::OpenAI {
-            return Err(AppError::Llm("当前仅支持 OpenAI 兼容 Provider".into()));
+
+        // ── 2. 模型路由：主任务走默认槽位，子任务按 model override（id 或名字）解析 ──
+        // registry 解析会兜底补读 keychain（渠道密钥），无需再手动预取。
+        let resolved = match spec.model_override.as_deref() {
+            Some(id_or_name) => llm_registry.resolve_override(id_or_name),
+            None => llm_registry.resolve_default(),
+        }?;
+        // 模型级上下文窗口（>0）优先于全局设置；0 表示「用全局」。
+        if resolved.context_window > 0 {
+            agent_settings.context_window = resolved.context_window;
         }
-        let mut provider_cfg = llm_config.clone();
-        // 兜底补齐：若异步预热尚未完成且内存 api_key 为空，按需尝试读取 Keychain
-        if provider_cfg.api_key.is_empty() {
-            if let Ok(Some(key)) = crate::config::keychain::get_llm_api_key() {
-                provider_cfg.api_key = key.clone();
-                let mut settings = self.state.settings.write().await;
-                if let Some(ref mut llm) = settings.llm_config {
-                    llm.api_key = key;
+        let llm_manager = LlmManager::new(resolved.config.clone())?;
+        log::info!(
+            "Agent task {} 使用模型: {} ({:?})",
+            spec.task_id,
+            resolved.display_label,
+            spec.mode
+        );
+
+        // ── 3. 命令审核专用模型：按审核槽位解析（空/失效自动回落主模型）。
+        // 失败不炸任务：审核是辅助能力，回落主模型即可（与旧行为一致）。
+        let approval_cfg = if agent_settings.enable_model_command_approval {
+            match llm_registry
+                .resolve_slot(&llm_registry.slots.model_approval_model_id)
+            {
+                Ok(mut r) => {
+                    // 审批调用不带自由参数（extra_body 针对主对话模型调参）。
+                    r.config.extra_body = None;
+                    Some(r.config)
+                }
+                Err(e) => {
+                    log::warn!("命令审核专用模型解析失败，回落主模型: {}", e);
+                    None
                 }
             }
-        }
-        if let Some(model) = spec.model_override {
-            provider_cfg.model = model;
-        }
-        let llm_manager = LlmManager::new(provider_cfg)?;
-
-        // ── 4. 派生工具集 / 插件段 ──
+        } else {
+            None
+        };
         let plugin_registry_guard = self.state.plugin_registry.read().await;
         let registry = self
             .build_registry(
@@ -226,6 +242,8 @@ impl AgentManager {
                 has_plan: false,
                 created_at: chrono::Utc::now(),
                 parent_task_id: spec.role.parent_task_id().map(String::from),
+                // 本任务实际使用的模型 id：子 agent 派发时据此继承父模型
+                model_id: Some(resolved.model_id.clone()),
             },
         );
         if spec.role == AgentRole::Main {
@@ -265,6 +283,7 @@ impl AgentManager {
                 tools,
                 mode_owned,
                 agent_settings,
+                approval_cfg,
                 loop_ctx,
             ))
             .catch_unwind()
@@ -574,9 +593,13 @@ mod tests {
 
     #[test]
     fn plan_sub_agent_does_not_get_task_tool() {
-        let registry = build_plan_registry(&AgentRole::Sub {
-            parent_task_id: "parent-1".to_string(),
-        }, &[], &exp());
+        let registry = build_plan_registry(
+            &AgentRole::Sub {
+                parent_task_id: "parent-1".to_string(),
+            },
+            &[],
+            &exp(),
+        );
         assert!(
             registry.get("task").is_none(),
             "子agent（Plan 只读）不应注册 task 工具，保证子agent 不派发子agent"
@@ -588,7 +611,7 @@ mod tests {
         let registry = build_plan_registry(&AgentRole::Main, &[], &exp());
         assert!(registry.get("read_file").is_some());
         assert!(registry.get("search_files").is_some());
-        assert!(registry.get("execute_command").is_some());
+        assert!(registry.get("bash").is_some());
         // Plan 模式仍不含写/改工具
         assert!(registry.get("write_file").is_none());
         assert!(registry.get("edit_file").is_none());
