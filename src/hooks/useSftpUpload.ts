@@ -1,6 +1,8 @@
 import { useCallback } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { enqueueTransfer, createTransferId } from '@/stores/transferScheduler';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { withForegroundKeepAlive } from '@/mobile/mobileBridge';
 
 export type FolderUploadMode = 'folder' | 'flat';
 
@@ -10,6 +12,9 @@ export interface PickedFolder {
 }
 
 export function useSftpUpload(sessionId: string, remotePath: string) {
+  const keepAliveEnabled = useSettingsStore(
+    (s) => s.settings.mobileBackgroundSettings.keepAliveEnabled,
+  );
   const uploadFile = useCallback(
     (localPath: string, fileName: string, targetPath: string, onFinished?: () => void) => {
       enqueueTransfer(
@@ -32,16 +37,18 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
   );
 
   const pickFolder = useCallback(async (): Promise<PickedFolder | null> => {
-    const folderPath = await open({
-      directory: true,
-      title: '选择文件夹',
-    });
+    const folderPath = await withForegroundKeepAlive(keepAliveEnabled, () =>
+      open({
+        directory: true,
+        title: '选择文件夹',
+      }),
+    );
     if (!folderPath) return null;
 
     const path = Array.isArray(folderPath) ? folderPath[0] : folderPath;
     const folderName = path.split(/[/\\]/).pop() || 'upload';
     return { localPath: path, folderName };
-  }, []);
+  }, [keepAliveEnabled]);
 
   const uploadFolder = useCallback(
     (localPath: string, folderName: string, mode: FolderUploadMode, onFinished?: () => void) => {

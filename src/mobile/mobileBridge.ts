@@ -55,6 +55,31 @@ export function stopForegroundService(): void {
   }
 }
 
+/**
+ * 在调用可能触发系统级全屏 Activity（文件选择器、SAV 文件管理器等）的
+ * 异步操作期间，临时开启前台保活服务，避免 Android OEM 电池优化在
+ * MainActivity.onPause 时冻结进程、回收网络，导致 SSH 长连接被掐断。
+ *
+ * 关键策略：
+ * - 只在用户未开启保活（keepAliveEnabled=false）时临时启动，已开启则不动
+ * - 操作结束后（成功/失败/取消都算）都恢复关闭，try/finally 保证异常也释放
+ * - 桌面端 / 非移动端环境整体静默 no-op，无需平台分支
+ */
+export async function withForegroundKeepAlive<T>(
+  shouldKeepAlive: boolean,
+  action: () => Promise<T>,
+): Promise<T> {
+  if (!isAndroidBridgeAvailable() || shouldKeepAlive) {
+    return action();
+  }
+  startForegroundService('Marcel SSH', '运行中');
+  try {
+    return await action();
+  } finally {
+    stopForegroundService();
+  }
+}
+
 /** 更新常驻通知文案（服务必须已启动）。 */
 export function updateForegroundNotification(title: string, body: string): void {
   try {

@@ -136,7 +136,8 @@ impl LlmManager {
                 Ok(msg) => return Ok(msg),
                 Err(err) => {
                     let max_attempts = max_retries + 1;
-                    let is_retryable = err.is_retryable(phase, &self.retry_conditions, retry_on_timeout);
+                    let is_retryable =
+                        err.is_retryable(phase, &self.retry_conditions, retry_on_timeout);
 
                     if attempt >= max_attempts || !is_retryable {
                         return Err(AppError::from(err));

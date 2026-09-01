@@ -37,8 +37,8 @@ describe('ConversationHistoryManager', () => {
 
   it('loads conversations for all connections', async () => {
     const connections: SavedConnection[] = [
-      { id: 'conn-1', name: 'Server 1', host: '1.1.1.1', port: 22, username: 'root' },
-      { id: 'conn-2', name: 'Server 2', host: '2.2.2.2', port: 22, username: 'root' },
+      { id: 'conn-1', name: 'Server 1', host: '1.1.1.1', port: 22, username: 'root', authMethod: '' },
+      { id: 'conn-2', name: 'Server 2', host: '2.2.2.2', port: 22, username: 'root', authMethod: '' },
     ];
 
     (tauri.agentListConversationsByConnection as any).mockImplementation(async (connId: string) => {

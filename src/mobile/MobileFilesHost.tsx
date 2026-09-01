@@ -37,6 +37,7 @@ import {
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { withForegroundKeepAlive } from './mobileBridge';
 import {
   batchDeleteProgressText,
   canQuickDelete,
@@ -99,6 +100,9 @@ export default function MobileFilesHost({
   const settingsLoaded = useSettingsStore((s) => s.loaded);
   const showHidden = useSettingsStore(
     (s) => s.settings.fileManagerShowHidden ?? false,
+  );
+  const keepAliveEnabled = useSettingsStore(
+    (s) => s.settings.mobileBackgroundSettings.keepAliveEnabled,
   );
   const updateSettings = useSettingsStore((s) => s.update);
 
@@ -379,10 +383,12 @@ export default function MobileFilesHost({
   const handleUpload = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const filePaths = await open({
-        multiple: false,
-        title: '选择文件',
-      });
+      const filePaths = await withForegroundKeepAlive(keepAliveEnabled, () =>
+        open({
+          multiple: false,
+          title: '选择文件',
+        }),
+      );
       if (!filePaths) return;
       const localPath = Array.isArray(filePaths) ? filePaths[0] : filePaths;
       // Android SAF 返回 content:// URI，最后一段是编码后的 document id 而非文件名，
@@ -399,7 +405,7 @@ export default function MobileFilesHost({
       if (isDialogCancelled(err)) return;
       setError(`上传失败：${getErrorMessage(err)}`);
     }
-  }, [sessionId, currentPath, uploadFile, loadDirectory]);
+  }, [sessionId, currentPath, uploadFile, loadDirectory, keepAliveEnabled]);
 
   const handleDownload = useCallback(async () => {
     if (!selectedEntry || selectedEntry.is_dir) return;

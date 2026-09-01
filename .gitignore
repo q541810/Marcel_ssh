@@ -13,6 +13,7 @@ AGENTS.md
 .vscode/
 .idea/
 .workbuddy/
+.zcode/
 .trae/*
 !.trae/skills/
 !.trae/skills/release/
