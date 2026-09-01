@@ -123,25 +123,38 @@ pub async fn config_delete_jump_passphrase(connection_id: String) -> Result<(), 
     keychain::delete_password(&format!("jump:pk:{}", connection_id))
 }
 
-/// Save the LLM API key to the system keychain.
+/// Save a per-channel LLM API key to the system keychain.
+/// 多渠道模型服务：每个渠道独立密钥，account = `llm_channel_{channel_id}`。
 #[tauri::command]
-pub async fn config_save_llm_api_key(
+pub async fn config_save_llm_channel_api_key(
     state: State<'_, AppState>,
+    channel_id: String,
     api_key: String,
 ) -> Result<(), AppError> {
-    keychain::save_llm_api_key(&api_key)?;
-    notify_secret_sync(&state, "secrets.llmApiKey", Some(&api_key));
+    keychain::save_llm_channel_key(&channel_id, &api_key)?;
+    notify_secret_sync(
+        &state,
+        &format!("secrets.llmChannel.{}", channel_id),
+        Some(&api_key),
+    );
     Ok(())
 }
 
-// config_get_llm_api_key 已移除。前端通过 SettingsResponse.has_api_key (bool) 判断是否有 API Key，
-// 避免将原始 API Key 返回给 WebView。
+// config_get_llm_api_key 已移除。前端通过 SettingsResponse.channelKeyStatus
+// （每渠道 has_key 布尔）判断是否有 API Key，避免将原始 API Key 返回给 WebView。
 
-/// Remove the LLM API key from the system keychain.
+/// Remove a per-channel LLM API key from the system keychain.
 #[tauri::command]
-pub async fn config_delete_llm_api_key(state: State<'_, AppState>) -> Result<(), AppError> {
-    keychain::delete_llm_api_key()?;
-    notify_secret_sync(&state, "secrets.llmApiKey", None);
+pub async fn config_delete_llm_channel_api_key(
+    state: State<'_, AppState>,
+    channel_id: String,
+) -> Result<(), AppError> {
+    keychain::delete_llm_channel_key(&channel_id)?;
+    notify_secret_sync(
+        &state,
+        &format!("secrets.llmChannel.{}", channel_id),
+        None,
+    );
     Ok(())
 }
 

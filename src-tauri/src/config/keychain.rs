@@ -140,6 +140,38 @@ pub fn delete_llm_api_key() -> Result<(), AppError> {
         .map_err(|e| AppError::Config(format!("删除密钥链条目失败：{}", e)))
 }
 
+/// 分渠道 LLM API Key：account = `llm_channel_{channel_id}`。
+/// 多渠道模型服务下每个渠道独立存放密钥，互不干扰。
+fn channel_key_account(channel_id: &str) -> String {
+    format!("llm_channel_{}", channel_id)
+}
+
+/// Store a per-channel LLM API key in the system keychain.
+pub fn save_llm_channel_key(channel_id: &str, api_key: &str) -> Result<(), AppError> {
+    let entry = store_impl::entry(SERVICE, &channel_key_account(channel_id))
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    entry
+        .set_password(api_key)
+        .map_err(|e| AppError::Config(format!("保存 API Key 到密钥链失败：{}", e)))?;
+    Ok(())
+}
+
+/// Retrieve a per-channel LLM API key. Returns `Ok(None)` if not found.
+pub fn get_llm_channel_key(channel_id: &str) -> Result<Option<String>, AppError> {
+    let entry = store_impl::entry(SERVICE, &channel_key_account(channel_id))
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    store_impl::get_optional_password(&entry)
+        .map_err(|e| AppError::Config(format!("读取密钥链失败：{}", e)))
+}
+
+/// Remove a per-channel LLM API key. Missing entries are treated as success.
+pub fn delete_llm_channel_key(channel_id: &str) -> Result<(), AppError> {
+    let entry = store_impl::entry(SERVICE, &channel_key_account(channel_id))
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    store_impl::delete_if_exists(&entry)
+        .map_err(|e| AppError::Config(format!("删除密钥链条目失败：{}", e)))
+}
+
 /// Store the web search API key in the system keychain.
 pub fn save_web_search_api_key(api_key: &str) -> Result<(), AppError> {
     let entry = store_impl::entry(SERVICE, "web_search_api_key")

@@ -89,20 +89,15 @@ impl SyncKey {
                 "terminalColors" | "fontSize" | "fontFamily" => {
                     Some(SyncCategory::TerminalSettings)
                 }
-                "llmConfig.baseUrl"
-                | "llmConfig.model"
-                | "llmConfig.vision"
-                | "llmConfig.maxRetries"
-                | "llmConfig.retryDelaySecs"
-                | "llmConfig.retryHttpStatuses"
-                | "llmConfig.firstByteTimeoutSecs"
-                | "llmConfig.retryOnTimeout"
+                "llmRegistry.channels"
+                | "llmRegistry.models"
+                | "llmRegistry.slots"
+                | "llmRegistry.netPolicy"
                 | "agentModeSettings.contextWindow" => Some(SyncCategory::ModelService),
                 "commandTimeoutSecs"
                 | "agentModeSettings.confirmEachCommand"
                 | "agentModeSettings.confirmEditFile"
                 | "agentModeSettings.enableModelCommandApproval"
-                | "agentModeSettings.modelApprovalModel"
                 | "agentModeSettings.modelApprovalPrompt"
                 | "agentModeSettings.listMode"
                 | "agentModeSettings.commandList"
@@ -158,9 +153,8 @@ impl SyncKey {
         {
             return false;
         }
-        if key == "settings.llmConfig.providerType" {
-            return false;
-        }
+        // 旧版 settings.llmConfig.* 已废弃（迁移为 llmRegistry.*），
+        // 不再出现在 all_field_paths，无需在此过滤。
 
         true
     }

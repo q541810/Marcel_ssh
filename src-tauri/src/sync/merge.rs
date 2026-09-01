@@ -171,6 +171,8 @@ pub fn is_whole_lww_key(key: &str) -> bool {
         || key.starts_with("skills.")
         || key.starts_with("mcpServers.")
         || key == "secrets.llmApiKey"
+        // 多渠道模型服务：每个渠道密钥独立整体同步（LWW）
+        || key.starts_with("secrets.llmChannel.")
         || key == "secrets.webSearchApiKey"
 }
 
@@ -340,10 +342,13 @@ mod tests {
         assert!(is_whole_lww_key("mcpServers.m1"));
         assert!(is_whole_lww_key("secrets.llmApiKey"));
         assert!(is_whole_lww_key("secrets.webSearchApiKey"));
+        // 多渠道：分渠道密钥走整体 LWW
+        assert!(is_whole_lww_key("secrets.llmChannel.ch-abc"));
 
         // settings 字段不是 LWW key
         assert!(!is_whole_lww_key("settings.fontSize"));
         assert!(!is_whole_lww_key("settings.llmConfig.baseUrl"));
+        assert!(!is_whole_lww_key("settings.llmRegistry.channels"));
 
         // conversations 也不是 LWW（走 Phase 4 fork 逻辑）
         assert!(!is_whole_lww_key("conversations.conv1"));

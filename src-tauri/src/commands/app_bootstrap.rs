@@ -17,10 +17,13 @@ use crate::AppState;
 pub struct AppBootstrapData {
     /// 应用全局设置（LLM api_key 已按安全规则排除序列化）
     pub settings: AppSettings,
-    /// 密钥链中是否已存储 LLM API Key
+    /// 密钥链中是否已存储 LLM API Key（多渠道下 = 任一渠道有 key）
     pub has_api_key: bool,
     /// 密钥链中是否已存储 Web Search API Key
     pub has_web_search_api_key: bool,
+    /// 各渠道密钥是否存在（多渠道模型服务）
+    #[serde(default)]
+    pub channel_key_status: Vec<crate::commands::settings::ChannelKeyStatus>,
     /// 设置加载时的非致命告警（如旧配置损坏备份）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub settings_warning: Option<String>,
@@ -36,12 +39,15 @@ pub struct AppBootstrapData {
 #[tauri::command]
 pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstrapData, AppError> {
     let settings = state.settings.read().await.clone();
-    let has_api_key = settings
-        .llm_config
-        .as_ref()
-        .map_or(false, |c| !c.api_key.is_empty())
+    let has_api_key = settings.llm_registry.channels.iter().any(|c| !c.api_key.is_empty())
+        || settings
+            .llm_registry
+            .channels
+            .iter()
+            .any(|c| keychain::get_llm_channel_key(&c.id).ok().flatten().is_some())
         || keychain::get_llm_api_key().ok().flatten().is_some();
     let has_web_search_api_key = keychain::get_web_search_api_key().ok().flatten().is_some();
+    let channel_key_status = crate::commands::settings::compute_channel_key_status(&settings);
     let settings_warning = state.settings_warning.write().take();
 
     let connections = state.connection_store.read().await.get_all().to_vec();
@@ -74,6 +80,8 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
         .map(|e| e.pending_count())
         .unwrap_or(0);
 
+    let version_block = state.sync_engine.as_ref().and_then(|e| e.version_block());
+
     let sync_summary = SyncSummary {
         configured,
         server_url,
@@ -84,12 +92,14 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
         error: last_error,
         progress,
         pending_count,
+        version_block,
     };
 
     Ok(AppBootstrapData {
         settings,
         has_api_key,
         has_web_search_api_key,
+        channel_key_status,
         settings_warning,
         connections,
         skills,

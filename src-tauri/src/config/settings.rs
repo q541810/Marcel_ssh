@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use super::persist::JsonPersistable;
 use crate::llm::provider::LlmConfig;
+use crate::llm::registry::LlmRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -88,7 +89,7 @@ pub struct AgentModeSettings {
     /// command that passes the list filter. When false, listed commands run
     /// silently — useful when the user has carefully curated the lists.
     pub confirm_each_command: bool,
-    /// When true, execute_command will later run an extra model-based approval
+    /// When true, bash will later run an extra model-based approval
     /// check before execution.
     #[serde(default)]
     pub enable_model_command_approval: bool,
@@ -410,6 +411,9 @@ pub struct AppSettings {
     pub default_agent_mode: String,
     #[serde(default)]
     pub llm_config: Option<LlmConfig>,
+    /// 多渠道多模型注册表（渠道/模型/场景槽位）。旧 `llm_config` 迁移后恒为 None。
+    #[serde(default)]
+    pub llm_registry: LlmRegistry,
     #[serde(default)]
     pub agent_mode_settings: AgentModeSettings,
     #[serde(default)]
@@ -516,6 +520,7 @@ impl Default for AppSettings {
             font_family: "monospace".into(),
             default_agent_mode: "agent".into(),
             llm_config: Some(LlmConfig::default()),
+            llm_registry: LlmRegistry::default(),
             agent_mode_settings: AgentModeSettings {
                 list_mode: CommandListMode::Denylist,
                 command_list: vec![

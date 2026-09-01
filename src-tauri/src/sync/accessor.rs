@@ -138,6 +138,8 @@ impl SyncStoreAccessor {
             .flatten()
         } else if key == "secrets.llmApiKey" {
             keychain::get_llm_api_key().ok().flatten()
+        } else if let Some(channel_id) = key.strip_prefix("secrets.llmChannel.") {
+            keychain::get_llm_channel_key(channel_id).ok().flatten()
         } else if key == "secrets.webSearchApiKey" {
             keychain::get_web_search_api_key().ok().flatten()
         } else {
@@ -171,7 +173,9 @@ impl SyncStoreAccessor {
         } else if let Some(id) = key.strip_prefix("conversations.") {
             self.apply_conversation(id, value).await?;
         } else if key == "secrets.llmApiKey" {
-            self.apply_llm_api_key(value)?;
+            self.apply_llm_api_key(value).await?;
+        } else if let Some(channel_id) = key.strip_prefix("secrets.llmChannel.") {
+            self.apply_llm_channel_key(channel_id, value)?;
         } else if key == "secrets.webSearchApiKey" {
             self.apply_web_search_api_key(value)?;
         } else {
@@ -228,10 +232,18 @@ impl SyncStoreAccessor {
             } else if key.starts_with("conversations.") {
                 conversations.push((key, value));
             } else if key == "secrets.llmApiKey" {
-                match self.apply_llm_api_key(value.as_deref()) {
+                match self.apply_llm_api_key(value.as_deref()).await {
                     Ok(()) => applied.push((key, value.is_none())),
                     Err(e) => {
                         log::warn!("[sync] 应用 secrets.llmApiKey 失败：{}", e);
+                        failed_keys.push(key);
+                    }
+                }
+            } else if let Some(channel_id) = key.strip_prefix("secrets.llmChannel.") {
+                match self.apply_llm_channel_key(channel_id, value.as_deref()) {
+                    Ok(()) => applied.push((key, value.is_none())),
+                    Err(e) => {
+                        log::warn!("[sync] 应用 {} 失败：{}", key, e);
                         failed_keys.push(key);
                     }
                 }
@@ -378,7 +390,8 @@ impl SyncStoreAccessor {
                                 Ok(skill) => {
                                     if is_builtin {
                                         // 内置 skill：内容以本机版本为准，仅同步 enabled 状态
-                                        match s.skills.iter_mut().find(|existing| existing.id == id) {
+                                        match s.skills.iter_mut().find(|existing| existing.id == id)
+                                        {
                                             Some(existing) => {
                                                 existing.enabled = skill.enabled;
                                                 existing.updated_at = skill.updated_at;
@@ -535,31 +548,15 @@ impl SyncStoreAccessor {
         }
 
         // 反序列化回 AppSettings（会丢弃未知字段，向前兼容）
-        let new_settings: AppSettings = serde_json::from_value(settings_json)
+        // 兼容旧端可能携带的 llmConfig：迁移为多渠道注册表（幂等，已有渠道则忽略）
+        let mut new_settings: AppSettings = serde_json::from_value(settings_json)
             .map_err(|e| AppError::Config(format!("反序列化 AppSettings 失败: {}", e)))?;
-
-        // 保留本机 LLM API Key（secrets 通过独立 key 同步，不走 settings）
-        let preserved_api_key = {
-            let current = self.settings.read().await;
-            current.llm_config.as_ref().and_then(|c| {
-                if c.api_key.is_empty() {
-                    None
-                } else {
-                    Some(c.api_key.clone())
-                }
-            })
-        };
-        let mut final_settings = new_settings;
-        if let Some(api_key) = preserved_api_key {
-            if let Some(ref mut llm) = final_settings.llm_config {
-                llm.api_key = api_key;
-            }
-        }
+        crate::llm::registry::migrate_legacy_settings(&mut new_settings);
 
         // 写入 store + 持久化
         {
             let mut settings = self.settings.write().await;
-            *settings = final_settings;
+            *settings = new_settings;
         }
         let snapshot = self.settings.read().await.clone();
         let path = AppSettings::default_file(&self.config_dir);
@@ -640,31 +637,15 @@ impl SyncStoreAccessor {
         }
 
         // 反序列化回 AppSettings（会丢弃未知字段，向前兼容）
-        let new_settings: AppSettings = serde_json::from_value(settings_json)
+        // 兼容旧端可能携带的 llmConfig：迁移为多渠道注册表（幂等，已有渠道则忽略）
+        let mut new_settings: AppSettings = serde_json::from_value(settings_json)
             .map_err(|e| AppError::Config(format!("反序列化 AppSettings 失败: {}", e)))?;
-
-        // 保留本机 LLM API Key（secrets 通过独立 key 同步，不走 settings）
-        let preserved_api_key = {
-            let current = self.settings.read().await;
-            current.llm_config.as_ref().and_then(|c| {
-                if c.api_key.is_empty() {
-                    None
-                } else {
-                    Some(c.api_key.clone())
-                }
-            })
-        };
-        let mut final_settings = new_settings;
-        if let Some(api_key) = preserved_api_key {
-            if let Some(ref mut llm) = final_settings.llm_config {
-                llm.api_key = api_key;
-            }
-        }
+        crate::llm::registry::migrate_legacy_settings(&mut new_settings);
 
         // 写入 store + 持久化（一次）
         {
             let mut settings = self.settings.write().await;
-            *settings = final_settings;
+            *settings = new_settings;
         }
         let snapshot = self.settings.read().await.clone();
         let path = AppSettings::default_file(&self.config_dir);
@@ -681,31 +662,14 @@ impl SyncStoreAccessor {
     pub async fn apply_settings_whole(&self, value: Option<&str>) -> Result<(), AppError> {
         match value {
             Some(json) => {
-                let new_settings: AppSettings = serde_json::from_str(json)
+                let mut new_settings: AppSettings = serde_json::from_str(json)
                     .map_err(|e| AppError::Config(format!("反序列化 AppSettings 失败: {}", e)))?;
-
-                // 保留本机已有的 LLM API Key
-                let preserved_api_key = {
-                    let current = self.settings.read().await;
-                    current.llm_config.as_ref().and_then(|c| {
-                        if c.api_key.is_empty() {
-                            None
-                        } else {
-                            Some(c.api_key.clone())
-                        }
-                    })
-                };
-
-                let mut final_settings = new_settings;
-                if let Some(api_key) = preserved_api_key {
-                    if let Some(ref mut llm) = final_settings.llm_config {
-                        llm.api_key = api_key;
-                    }
-                }
+                // 兼容旧端整体 settings 携带的 llmConfig：迁移为多渠道注册表
+                crate::llm::registry::migrate_legacy_settings(&mut new_settings);
 
                 {
                     let mut settings = self.settings.write().await;
-                    *settings = final_settings;
+                    *settings = new_settings;
                 }
                 let snapshot = self.settings.read().await.clone();
                 let path = AppSettings::default_file(&self.config_dir);
@@ -878,15 +842,51 @@ impl SyncStoreAccessor {
         Ok(())
     }
 
-    fn apply_llm_api_key(&self, value: Option<&str>) -> Result<(), AppError> {
+    /// 旧版 secrets.llmApiKey 应用：写入旧 keychain 条目（兼容旧端）。
+    /// 若本机恰好只有单个渠道且其渠道 key 为空，则同时播种到该渠道，
+    /// 让「旧端推全局 key → 新端多渠道」也能用上（幂等，重复写无害）。
+    async fn apply_llm_api_key(&self, value: Option<&str>) -> Result<(), AppError> {
         match value {
             Some(key) => {
                 if !key.is_empty() {
                     keychain::save_llm_api_key(key)?;
+                    // 单渠道播种（异步读 settings，避免 sync fn 里拿 tokio 锁）
+                    let single_channel_id = {
+                        let settings = self.settings.read().await;
+                        if settings.llm_registry.channels.len() == 1 {
+                            Some(settings.llm_registry.channels[0].id.clone())
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(id) = single_channel_id {
+                        if keychain::get_llm_channel_key(&id)
+                            .ok()
+                            .flatten()
+                            .is_none()
+                        {
+                            let _ = keychain::save_llm_channel_key(&id, key);
+                        }
+                    }
                 }
             }
             None => {
                 let _ = keychain::delete_llm_api_key();
+            }
+        }
+        Ok(())
+    }
+
+    /// 分渠道密钥应用：写入/删除 `llm_channel_{channel_id}` keychain 条目。
+    fn apply_llm_channel_key(&self, channel_id: &str, value: Option<&str>) -> Result<(), AppError> {
+        match value {
+            Some(key) => {
+                if !key.is_empty() {
+                    keychain::save_llm_channel_key(channel_id, key)?;
+                }
+            }
+            None => {
+                let _ = keychain::delete_llm_channel_key(channel_id);
             }
         }
         Ok(())
@@ -1147,13 +1147,27 @@ impl SyncStoreAccessor {
             }
         }
 
-        // secrets.llmApiKey（仅当存在时）
+        // secrets.llmApiKey（仅当存在时；旧版兼容）
         if crate::config::keychain::get_llm_api_key()
             .ok()
             .flatten()
             .is_some()
         {
             keys.push("secrets.llmApiKey".to_string());
+        }
+        // secrets.llmChannel.{id}（多渠道：每个渠道独立密钥）
+        {
+            let settings = self.settings.read().await;
+            for channel in &settings.llm_registry.channels {
+                if !channel.api_key.is_empty()
+                    || crate::config::keychain::get_llm_channel_key(&channel.id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                {
+                    keys.push(format!("secrets.llmChannel.{}", channel.id));
+                }
+            }
         }
         // secrets.webSearchApiKey（仅当存在时）
         if crate::config::keychain::get_web_search_api_key()

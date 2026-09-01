@@ -89,23 +89,17 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "terminalColors",
         "fontSize",
         "fontFamily",
-        // ModelService
-        "llmConfig.baseUrl",
-        "llmConfig.model",
-        "llmConfig.vision",
-        "llmConfig.maxRetries",
-        "llmConfig.retryDelaySecs",
-        "llmConfig.retryHttpStatuses",
-        "llmConfig.firstByteTimeoutSecs",
-        "llmConfig.retryOnTimeout",
-        "llmConfig.extraBody",
+        // ModelService（多渠道多模型：整体数组/槽位/全局网络策略字段级同步；密钥走 secrets.llmChannel.*）
+        "llmRegistry.channels",
+        "llmRegistry.models",
+        "llmRegistry.slots",
+        "llmRegistry.netPolicy",
         "agentModeSettings.contextWindow",
         // AgentPolicy
         "commandTimeoutSecs",
         "agentModeSettings.confirmEachCommand",
         "agentModeSettings.confirmEditFile",
         "agentModeSettings.enableModelCommandApproval",
-        "agentModeSettings.modelApprovalModel",
         "agentModeSettings.modelApprovalPrompt",
         "agentModeSettings.listMode",
         "agentModeSettings.commandList",
@@ -136,8 +130,8 @@ pub fn all_field_paths() -> &'static [&'static str] {
         "disabledPlugins",
         "authorizedCapabilities",
         "disableAllInjections",
-        // llmConfig.providerType 桌面专属，profile 已过滤
-        "llmConfig.providerType",
+        // llmConfig.* 旧字段已废弃（迁移为 llmRegistry.*），不再参与同步；
+        // 旧端 push 的 settings.llmConfig.* 由 accessor 忽略。
     ]
 }
 
