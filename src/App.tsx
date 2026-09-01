@@ -26,6 +26,7 @@ import { useSkillStore } from '@/stores/skillStore';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useMarketStore } from '@/stores/marketStore';
 import { useSyncStore } from '@/stores/syncStore';
+import { useJobStore } from '@/stores/jobStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, checkUpdate, sftpPreviewCleanup } from '@/lib/tauri';
@@ -123,7 +124,14 @@ export default function App() {
   useEffect(() => {
     attachTransferListeners();
     void initInteractionListener();
-    return () => detachTransferListeners();
+    const detachJobs = useJobStore.getState().initEventListener();
+    // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
+    // 作业靠这次全量拉取回到 UI；只 upsert 合并，不覆盖事件实时状态）
+    void useJobStore.getState().fetchJobs();
+    return () => {
+      detachTransferListeners();
+      detachJobs();
+    };
   }, []);
 
   useEffect(() => {

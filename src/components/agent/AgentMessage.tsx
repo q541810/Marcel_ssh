@@ -3,9 +3,12 @@ import type { AgentMessage as AgentMessageType } from '@/lib/types';
 import MessageImageThumb from './MessageImageThumb';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
+import rehypeKatex from 'rehype-katex';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { openExternalLink } from '@/lib/externalLinks';
+import 'katex/dist/katex.min.css';
 
 interface Props {
   message: AgentMessageType;
@@ -48,7 +51,7 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
 }
 
 const MARKDOWN_CLASS =
-  'text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic';
+  'text-[15px] leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-0.5 prose-code:text-pink-300 prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic [&_.katex-display]:my-2 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-0.5 [&_.katex]:text-zinc-100 [&_.katex-error]:text-red-400 [&_.katex-error]:text-[0.9em]';
 
 // ─── Retry indicator: 倒计时 + 错误折叠 ───
 // 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs
@@ -434,8 +437,18 @@ function AgentMessage({
         ) : (
           <div className={MARKDOWN_CLASS}>
             <Markdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
+              remarkPlugins={[remarkGfm, remarkMath]}
+              rehypePlugins={[
+                rehypeHighlight,
+                [
+                  rehypeKatex,
+                  {
+                    // rehype-katex v7 内部已硬编码 throwOnError:false 容错，
+                    // 这里只需透传错误显示颜色：流式半截公式渲染为红色文本，不崩
+                    errorColor: '#f87171',
+                  },
+                ],
+              ]}
               components={{
                 a: ({ href, children, ...props }) => (
                   <a

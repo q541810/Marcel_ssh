@@ -144,7 +144,7 @@ export default function PlanList() {
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur">
+    <div className="min-h-0 flex-shrink overflow-hidden border-t border-zinc-800 bg-zinc-900/80 backdrop-blur">
       {/* Header */}
       <button
         type="button"

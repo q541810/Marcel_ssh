@@ -22,6 +22,7 @@ import type {
   CommandCheckResult,
   SftpFileEntry,
   ModelInfo,
+  ChannelKeyStatus,
   PluginManifest,
   PluginHttpRequest,
   PluginHttpResponse,
@@ -39,6 +40,7 @@ import type {
   SyncPendingConflict,
   SyncConflictAction,
   SyncResolveResult,
+  JobInfo,
 } from "./types";
 
 // SSH commands
@@ -122,6 +124,7 @@ export async function agentStartTask(
     dbId?: string;
   }[],
   taskId?: string,
+  modelId?: string | null,
 ): Promise<string> {
   return invoke<string>("agent_start_task", {
     sessionId,
@@ -130,6 +133,18 @@ export async function agentStartTask(
     conversationId,
     history,
     taskId,
+    modelId: modelId ?? null,
+  });
+}
+
+/** 设置会话级模型选择（llmRegistry 模型条目 id）。null/空 = 清除选择，回落全局默认。 */
+export async function agentSetConversationModel(
+  conversationId: string,
+  modelId: string | null,
+): Promise<void> {
+  return invoke("agent_set_conversation_model", {
+    conversationId,
+    modelId: modelId ?? null,
   });
 }
 
@@ -180,6 +195,19 @@ export async function agentDeleteMessageImage(
   relativePath: string,
 ): Promise<void> {
   return invoke("agent_delete_message_image", { relativePath });
+}
+
+/** 读取本地文件用于附件导入（普通路径 / Android SAF content:// URI）。 */
+export interface LocalFilePayload {
+  name: string;
+  base64: string;
+  size: number;
+}
+
+export async function agentReadLocalFile(
+  path: string,
+): Promise<LocalFilePayload> {
+  return invoke<LocalFilePayload>("agent_read_local_file", { path });
 }
 
 export async function agentStopTask(taskId: string): Promise<void> {
@@ -377,6 +405,8 @@ export async function getSettings(): Promise<{
   settings: AppSettings;
   hasApiKey: boolean;
   hasWebSearchApiKey?: boolean;
+  /** 各渠道密钥是否存在（多渠道模型服务）。 */
+  channelKeyStatus?: ChannelKeyStatus[];
   warning?: string;
 }> {
   return invoke("config_get_settings");
@@ -549,14 +579,17 @@ export async function mcpRefreshTools(id: string): Promise<McpTool[]> {
   return invoke<McpTool[]>("mcp_refresh_tools", { id });
 }
 
-// LLM API Key management
+// LLM API Key management（多渠道：每个渠道独立密钥）
 
-export async function saveLlmApiKey(apiKey: string): Promise<void> {
-  return invoke("config_save_llm_api_key", { apiKey });
+export async function saveLlmChannelApiKey(
+  channelId: string,
+  apiKey: string,
+): Promise<void> {
+  return invoke("config_save_llm_channel_api_key", { channelId, apiKey });
 }
 
-export async function deleteLlmApiKey(): Promise<void> {
-  return invoke("config_delete_llm_api_key");
+export async function deleteLlmChannelApiKey(channelId: string): Promise<void> {
+  return invoke("config_delete_llm_channel_api_key", { channelId });
 }
 
 export async function saveWebSearchApiKey(apiKey: string): Promise<void> {
@@ -567,18 +600,38 @@ export async function deleteWebSearchApiKey(): Promise<void> {
   return invoke("config_delete_web_search_api_key");
 }
 
+// Background Jobs（统一命令执行体系：job_list / job_kill）
+
+/**
+ * 列出后台作业。
+ * @param sessionId 会话 ID；空 / null = 拉取全部会话的作业（启动恢复用）。
+ * @param status 可选状态过滤（running / completed / killed / failed）。
+ */
+export async function jobList(
+  sessionId?: string | null,
+  status?: string | null,
+): Promise<JobInfo[]> {
+  return invoke<JobInfo[]>("job_list", {
+    sessionId: sessionId ?? null,
+    status: status ?? null,
+  });
+}
+
 // LLM model discovery
 
 /**
  * Fetch the list of models available on the configured provider.
- * Pass the current draft baseUrl/apiKey so the request reflects the UI state;
- * the backend falls back to the keychain when apiKey is empty or masked.
+ * Pass the current draft channelId/baseUrl/apiKey so the request reflects
+ * the UI state; the backend falls back to that channel's keychain entry
+ * when apiKey is empty or masked.
  */
 export async function llmListModels(
+  channelId?: string | null,
   baseUrl?: string | null,
   apiKey?: string | null,
 ): Promise<ModelInfo[]> {
   return invoke<ModelInfo[]>("llm_list_models", {
+    channelId: channelId ?? null,
     baseUrl: baseUrl ?? null,
     apiKey: apiKey ?? null,
   });
@@ -902,14 +955,14 @@ export async function syncUpdateProfile(profile: SyncProfile): Promise<void> {
   return invoke<void>("sync_update_profile", { profile });
 }
 
-/** 手动触发 push */
-export async function syncPushNow(): Promise<void> {
-  return invoke<void>("sync_push_now");
+/** 手动触发 push（force = 忽略版本闸门，用户明确确认风险后调用） */
+export async function syncPushNow(force?: boolean): Promise<void> {
+  return invoke<void>("sync_push_now", { force: force ?? false });
 }
 
-/** 手动触发 pull */
-export async function syncPullNow(): Promise<void> {
-  return invoke<void>("sync_pull_now");
+/** 手动触发 pull（force = 忽略版本闸门，用户明确确认风险后调用） */
+export async function syncPullNow(force?: boolean): Promise<void> {
+  return invoke<void>("sync_pull_now", { force: force ?? false });
 }
 
 /** 列出已配对设备 */

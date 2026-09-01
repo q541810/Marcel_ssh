@@ -42,7 +42,7 @@ export default function MobileApprovalSheet({
   onMinimize,
 }: MobileApprovalSheetProps) {
   const isEditFile = toolCall.name === 'edit_file';
-  const isExecuteCommand = toolCall.name === 'execute_command';
+  const isExecuteCommand = toolCall.name === 'bash' || toolCall.name === 'execute_command';
   const path =
     typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
   const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;

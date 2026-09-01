@@ -9,6 +9,7 @@ import {
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
+import { useJobStore } from "@/stores/jobStore";
 import { getConversationAgentStatus, getActiveRunningTasks } from "@/stores/agentStatusSelectors";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { AgentTasksDrawer } from "./AgentTasksDrawer";
@@ -24,16 +25,25 @@ import { sessionConversationBindingManager } from "@/stores/sessionConversationB
 import { AGENT_MODES } from "@/lib/constants";
 import { isNearBottom } from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
+import { currentVision } from "@/lib/llmRegistry";
 import type { AgentMode, AgentMessage, QuestionAnswer } from "@/lib/types";
 import {
   type PendingImage,
-  filesToPendingImages,
   revokePendingImages,
   compressImageFile,
   pendingImageFromDataUrl,
   deletePersistedImagePaths,
   MAX_ATTACH_IMAGES,
 } from "@/lib/imageAttach";
+import {
+  classifyAttachment,
+  blobToText,
+  wrapTextAttachment,
+  base64ToBlob,
+  readLocalAttachment,
+  MAX_TEXT_FILE_BYTES,
+} from "@/lib/attachmentAttach";
+import { open } from "@tauri-apps/plugin-dialog";
 import * as tauri from "@/lib/tauri";
 import { bus } from "@/plugins/injection/bus";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
@@ -44,6 +54,7 @@ import PlanList from "./PlanList";
 import AgentCommandMenu, {
   type AgentCommandMenuHandle,
 } from "./AgentCommandMenu";
+import { ModelPicker } from "./ModelPicker";
 
 // ── Plugin input-activity bridge ──────────────────────────────────────
 // Emits `ui://input-activity` (typing bool only — never the content) so
@@ -71,6 +82,7 @@ function notifyInputStopped() {
 
 export default function AgentPanel() {
   const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
+  const modeDrawerPresence = useAnimatedPresence(modeDrawerOpen);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const historyDrawerPresence = useAnimatedPresence(historyDrawerOpen);
   const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
@@ -90,7 +102,7 @@ export default function AgentPanel() {
   const attachHintTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const visionEnabled = useSettingsStore(
-    (s) => s.settings.llmConfig?.vision ?? false,
+    (s) => currentVision(s.settings.llmRegistry),
   );
   const activeSession = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
@@ -120,6 +132,7 @@ export default function AgentPanel() {
     loadConversation,
     renameConversation,
     deleteConversation,
+    setConversationModel,
     rollbackToMessage,
     taskTokenUsage,
     syncActiveToConnection,
@@ -273,67 +286,217 @@ export default function AgentPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
   }, [visionEnabled]);
 
-  const addPendingFromFiles = useCallback(
-    async (files: FileList | File[]) => {
-      if (!visionEnabled) {
-        clearPendingImages({ deleteDisk: true });
-        showAttachHint("当前模型未开启「视觉 / 支持图片」");
-        return;
+  /** 追加文本附件到输入框草稿（带文件名标记），并保持输入框自动增高。 */
+  const appendTextAttachment = useCallback(
+    (text: string) => {
+      setInput((prev) => (prev ? prev + text : text));
+      requestAnimationFrame(() => {
+        resizeInput();
+        notifyInputTyping();
+      });
+    },
+    [setInput],
+  );
+
+  /** 统一处理一组本地 File（拖拽 / 粘贴）：图片 → 预览区，文本 → 插入输入框。 */
+  const handleFileObjects = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+
+      const imageFiles: File[] = [];
+      const textFiles: File[] = [];
+      const unsupported: string[] = [];
+      for (const f of files) {
+        const kind = classifyAttachment(f.name, f.type);
+        if (kind === "image") imageFiles.push(f);
+        else if (kind === "text") textFiles.push(f);
+        else unsupported.push(f.name);
       }
-      const { images, rejected } = await filesToPendingImages(
-        files,
-        pendingImages.length,
-      );
-      if (rejected && images.length === 0) {
-        showAttachHint(rejected);
-        return;
+
+      // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
+      if (unsupported.length > 0) {
+        const shown = unsupported.slice(0, 3).join("、");
+        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
+        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
       }
-      if (rejected) showAttachHint(rejected);
-      if (images.length > 0) {
-        setPendingImages((prev) =>
-          [...prev, ...images].slice(0, MAX_ATTACH_IMAGES),
-        );
+
+      // 图片 → 预览（与 ctrl+v 完全同路径）；vision 关闭时跳过图片，文本照常处理
+      if (imageFiles.length > 0) {
+        if (!visionEnabled) {
+          clearPendingImages({ deleteDisk: true });
+          showAttachHint("当前模型未开启「视觉 / 支持图片」");
+        } else {
+          const room = MAX_ATTACH_IMAGES - pendingImages.length;
+          const added: PendingImage[] = [];
+          for (const file of imageFiles.slice(0, room)) {
+            try {
+              const { dataUrl, previewUrl } = await compressImageFile(file);
+              added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
+            } catch {
+              // skip broken files
+            }
+          }
+          if (added.length > 0) {
+            setPendingImages((prev) =>
+              [...prev, ...added].slice(0, MAX_ATTACH_IMAGES),
+            );
+          }
+          if (imageFiles.length > room) {
+            showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张，已忽略多余图片`);
+          }
+        }
+      }
+
+      // 文本 → 输入框
+      for (const file of textFiles) {
+        if (file.size > MAX_TEXT_FILE_BYTES) {
+          showAttachHint(
+            `「${file.name}」超过 ${Math.round(MAX_TEXT_FILE_BYTES / 1024 / 1024)}MB，已跳过`,
+          );
+          continue;
+        }
+        try {
+          const content = await blobToText(file);
+          appendTextAttachment(wrapTextAttachment(file.name, content));
+        } catch {
+          showAttachHint(`读取「${file.name}」失败`);
+        }
       }
     },
-    [visionEnabled, pendingImages.length, clearPendingImages, showAttachHint],
+    [
+      visionEnabled,
+      pendingImages.length,
+      clearPendingImages,
+      showAttachHint,
+      appendTextAttachment,
+    ],
   );
+
+  /** 统一处理一组本地路径（文件选择器返回）：图片 → 预览区，文本 → 插入输入框。 */
+  const handleAttachmentPaths = useCallback(
+    async (paths: string[]) => {
+      if (paths.length === 0) return;
+
+      const imagePaths: string[] = [];
+      const textPaths: string[] = [];
+      const unsupported: string[] = [];
+      for (const p of paths) {
+        const name = p.split(/[/\\]/).pop() || p;
+        const kind = classifyAttachment(name);
+        if (kind === "image") imagePaths.push(p);
+        else if (kind === "text") textPaths.push(p);
+        else unsupported.push(name);
+      }
+
+      // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
+      if (unsupported.length > 0) {
+        const shown = unsupported.slice(0, 3).join("、");
+        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
+        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
+      }
+
+      // 图片 → 预览（读本地 → 压缩，与 ctrl+v 同链路）；vision 关闭时跳过图片，文本照常处理
+      if (imagePaths.length > 0) {
+        if (!visionEnabled) {
+          clearPendingImages({ deleteDisk: true });
+          showAttachHint("当前模型未开启「视觉 / 支持图片」");
+        } else {
+          const room = MAX_ATTACH_IMAGES - pendingImages.length;
+          const added: PendingImage[] = [];
+          for (const p of imagePaths.slice(0, room)) {
+            try {
+              const { base64 } = await readLocalAttachment(p);
+              const blob = base64ToBlob(base64, "image/*");
+              const { dataUrl, previewUrl } = await compressImageFile(blob);
+              added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
+            } catch {
+              // skip broken files
+            }
+          }
+          if (added.length > 0) {
+            setPendingImages((prev) =>
+              [...prev, ...added].slice(0, MAX_ATTACH_IMAGES),
+            );
+          }
+          if (imagePaths.length > room) {
+            showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张，已忽略多余图片`);
+          }
+        }
+      }
+
+      // 文本 → 输入框
+      for (const p of textPaths) {
+        try {
+          const { name, base64, size } = await readLocalAttachment(p);
+          if (size > MAX_TEXT_FILE_BYTES) {
+            showAttachHint(
+              `「${name}」超过 ${Math.round(MAX_TEXT_FILE_BYTES / 1024 / 1024)}MB，已跳过`,
+            );
+            continue;
+          }
+          const content = await blobToText(base64ToBlob(base64));
+          appendTextAttachment(wrapTextAttachment(name, content));
+        } catch {
+          const name = p.split(/[/\\]/).pop() || p;
+          showAttachHint(`读取「${name}」失败`);
+        }
+      }
+    },
+    [
+      visionEnabled,
+      pendingImages.length,
+      clearPendingImages,
+      showAttachHint,
+      appendTextAttachment,
+    ],
+  );
+
+  /** 附件按钮：系统文件选择器（图片 / 文本 / 所有文件）。 */
+  const handleAttach = useCallback(async () => {
+    if (!canInteract) return;
+    try {
+      const selected = await open({
+        multiple: true,
+        title: "添加图片和文件",
+        filters: [
+          {
+            name: "图片",
+            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"],
+          },
+          {
+            name: "文本",
+            extensions: [
+              "md", "txt", "log", "json", "yml", "yaml", "xml", "csv",
+              "ini", "conf", "sh", "py", "js", "ts", "html", "css",
+              "sql", "toml", "svg",
+            ],
+          },
+          { name: "所有文件", extensions: ["*"] },
+        ],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      await handleAttachmentPaths(paths);
+    } catch {
+      showAttachHint("打开文件选择器失败");
+    }
+  }, [canInteract, handleAttachmentPaths, showAttachHint]);
 
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    const imageFiles: File[] = [];
+    const files: File[] = [];
     for (const item of Array.from(items)) {
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
-      }
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      // 图片或文本文件才接管粘贴（普通文本粘贴走系统默认）
+      const kind = classifyAttachment(file.name, file.type);
+      if (kind === "image" || kind === "text") files.push(file);
     }
-    if (imageFiles.length === 0) return;
+    if (files.length === 0) return;
     e.preventDefault();
-    if (!visionEnabled) {
-      clearPendingImages({ deleteDisk: true });
-      showAttachHint("当前模型未开启「视觉 / 支持图片」");
-      return;
-    }
-    if (pendingImages.length >= MAX_ATTACH_IMAGES) {
-      showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张图片`);
-      return;
-    }
-    const room = MAX_ATTACH_IMAGES - pendingImages.length;
-    const added: PendingImage[] = [];
-    for (const file of imageFiles.slice(0, room)) {
-      try {
-        const { dataUrl, previewUrl } = await compressImageFile(file);
-        added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
-      } catch {
-        // skip
-      }
-    }
-    if (added.length === 0) {
-      showAttachHint("图片处理失败");
-      return;
-    }
-    setPendingImages((prev) => [...prev, ...added].slice(0, MAX_ATTACH_IMAGES));
+    await handleFileObjects(files);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -355,7 +518,7 @@ export default function AgentPanel() {
     if (!canInteract) return;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
-    await addPendingFromFiles(files);
+    await handleFileObjects(Array.from(files));
   };
 
   const handleSend = async () => {
@@ -662,7 +825,9 @@ export default function AgentPanel() {
     [messages],
   );
 
+  const jobs = useJobStore((s) => s.jobs);
   const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
+  const runningJobs = useMemo(() => Object.values(jobs).filter((j) => j.status === 'running'), [jobs]);
 
   return (
     <div
@@ -774,18 +939,27 @@ export default function AgentPanel() {
           </div>
         </div>
 
-          {/* Running indicator capsule: Visible when concurrent tasks > 1 OR running task is in another conversation */}
+          {/* Running indicator capsule: Visible when concurrent tasks > 1 OR running task is in another conversation OR background jobs are running */}
           {(runningTasks.length > 1 ||
             (runningTasks.length === 1 &&
-              runningTasks[0].conversationId !== activeConversationId)) && (
+              runningTasks[0].conversationId !== activeConversationId) ||
+            runningJobs.length > 0) && (
             <button
               type="button"
               onClick={() => setTasksDrawerOpen(true)}
-              className="flex items-center gap-1.5 px-2 py-0.5 bg-indigo-500/10 hover:bg-indigo-500/20 active:scale-95 border border-indigo-500/30 rounded-full text-indigo-300 text-[11px] font-medium transition-all animate-fadeIn"
-              title="查看所有运行中的 Agent 任务"
+              className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
+                runningJobs.length > 0
+                  ? 'bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-300'
+                  : 'bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300'
+              }`}
+              title="查看所有运行中的 Agent 任务与后台作业"
             >
               <AgentStatusIndicator status="running" size="xs" />
-              <span>{runningTasks.length} 个任务运行中</span>
+              <span>
+                {runningTasks.length > 0 && `${runningTasks.length} 个任务`}
+                {runningTasks.length > 0 && runningJobs.length > 0 && ' · '}
+                {runningJobs.length > 0 && `${runningJobs.length} 个后台作业`}
+              </span>
               <svg className="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
@@ -898,7 +1072,7 @@ export default function AgentPanel() {
       <PlanList />
 
       {rollbackNotice && (
-        <div className="border-t border-zinc-800 bg-zinc-900/90 backdrop-blur animate-fadeIn">
+        <div className="flex-shrink-0 border-t border-zinc-800 bg-zinc-900/90 backdrop-blur animate-fadeIn">
           <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-amber-200">
             <div className="flex items-center gap-2 min-w-0">
               <svg
@@ -976,7 +1150,7 @@ export default function AgentPanel() {
         </div>
       ) : (
         <div
-          className="p-3 border-t border-zinc-800"
+          className="flex-shrink-0 p-3 border-t border-zinc-800"
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -1008,7 +1182,7 @@ export default function AgentPanel() {
             </div>
           )}
           <div
-            className={`agent-input relative flex items-start rounded-lg bg-zinc-800 border focus-within:border-indigo-500 ${
+            className={`agent-input relative rounded-2xl bg-zinc-800 border transition-colors focus-within:border-indigo-500 ${
               dragOver
                 ? "border-indigo-400 ring-1 ring-indigo-500/40"
                 : "border-zinc-700"
@@ -1025,13 +1199,57 @@ export default function AgentPanel() {
               onCompact={handleCompact}
               onClose={() => setInput("")}
             />
-            {/* Mode selector (inside input) */}
-            <div className="relative flex-shrink-0 self-center" ref={drawerRef}>
+            {/* Input field — 顶部整行，操作工具条移至下方 */}
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              placeholder={
+                activeSession?.status === "connecting"
+                  ? "正在连接服务器..."
+                  : canInteract
+                    ? "描述您想要做的事情，输入 / 可查看命令..."
+                    : "请先连接到服务器..."
+              }
+              disabled={!canInteract}
+              className="w-full px-4 pt-3 pb-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
+            />
+
+            {/* Toolbar：+ 附件 / 模式 / 模型 —— 发送按钮右对齐 */}
+            <div className="flex items-center px-1.5 pb-1.5">
+              {/* + 附件按钮 — 图片/文本文件导入 */}
+              <button
+                type="button"
+                onClick={() => void handleAttach()}
+                disabled={!canInteract}
+                className="flex-shrink-0 p-1.5 -ml-0.5 rounded-full text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 active:scale-90"
+                title="添加图片或文本文件"
+                aria-label="添加图片或文本文件"
+              >
+                <svg
+                  className="w-[18px] h-[18px]"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+              </button>
+              {/* Mode selector */}
+              <div className="relative flex-shrink-0" ref={drawerRef}>
               <button
                 type="button"
                 onClick={() => setModeDrawerOpen((v) => !v)}
                 className={`
-                flex items-center gap-1 px-2 py-2 text-xs font-medium transition-colors rounded-l-lg
+                flex items-center gap-1 px-2 py-1.5 text-xs font-medium transition-colors rounded-full
                 ${
                   modeDrawerOpen
                     ? "bg-zinc-700 text-zinc-100"
@@ -1042,11 +1260,9 @@ export default function AgentPanel() {
                 aria-haspopup="listbox"
                 aria-expanded={modeDrawerOpen}
               >
-                <span className="font-semibold tracking-wider">
-                  {currentModeInfo.label}
-                </span>
+                <span>{currentModeInfo.label}</span>
                 <svg
-                  className={`w-3 h-3 transition-transform ${
+                  className={`w-3 h-3 transition-transform duration-200 ${
                     modeDrawerOpen ? "rotate-180" : ""
                   }`}
                   fill="none"
@@ -1057,15 +1273,20 @@ export default function AgentPanel() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M5 15l7-7 7 7"
+                    d="M19 9l-7 7-7-7"
                   />
                 </svg>
               </button>
 
-              {modeDrawerOpen && (
+              {modeDrawerPresence.mounted && (
                 <div
                   role="listbox"
-                  className="absolute bottom-full left-0 mb-2 w-64 rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl py-1 z-30"
+                  onAnimationEnd={modeDrawerPresence.onAnimationEnd}
+                  className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl py-1 z-30 ${
+                    modeDrawerPresence.phase === "exit"
+                      ? "mobile-popover-exit"
+                      : "mobile-popover-enter"
+                  }`}
                 >
                   {AGENT_MODES.map((m) => {
                     const active = m.value === mode;
@@ -1089,7 +1310,7 @@ export default function AgentPanel() {
                       >
                         <div className="flex items-center justify-between">
                           <span
-                            className={`text-sm font-bold tracking-wider ${
+                            className={`text-sm font-semibold ${
                               active ? "text-indigo-300" : "text-zinc-200"
                             }`}
                           >
@@ -1111,29 +1332,19 @@ export default function AgentPanel() {
               )}
             </div>
 
-            {/* Divider */}
-            <div className="w-px h-5 bg-zinc-700 self-center" />
-
-            {/* Input field */}
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                activeSession?.status === "connecting"
-                  ? "正在连接服务器..."
-                  : canInteract
-                    ? "描述您想要做的事情..."
-                    : "请先连接到服务器..."
-              }
+            {/* Model selector — 会话级模型切换，回车后生效 */}
+            <ModelPicker
+              value={activeConversation?.modelId}
+              onChange={(modelId) => {
+                if (!activeConversationId) return;
+                void setConversationModel(activeConversationId, modelId);
+              }}
               disabled={!canInteract}
-              className="flex-1 min-w-0 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
             />
 
-            {/* Send / Stop button (inside input) */}
+            <div className="flex-1" />
+
+            {/* Send / Stop button — 右下角 */}
             <button
               type="button"
               onClick={isRunning ? handleStop : handleSend}
@@ -1142,14 +1353,15 @@ export default function AgentPanel() {
                 ((!input.trim() && pendingImages.length === 0) || !canInteract)
               }
               className={`
-              flex-shrink-0 p-2 mr-1 self-center rounded-md transition-all
+              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-all duration-150 active:scale-95
               ${
                 isRunning
                   ? "bg-red-600 hover:bg-red-500 text-white"
-                  : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed"
               }
             `}
               title={isRunning ? "停止" : "发送"}
+              aria-label={isRunning ? "停止" : "发送"}
             >
               {isRunning ? (
                 <svg
@@ -1169,7 +1381,7 @@ export default function AgentPanel() {
                 </svg>
               ) : (
                 <svg
-                  className="w-4 h-4"
+                  className="w-[18px] h-[18px]"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -1178,11 +1390,12 @@ export default function AgentPanel() {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M5 12h14m-7-7l7 7-7 7"
+                    d="M12 19V5m-7 7l7-7 7 7"
                   />
                 </svg>
               )}
             </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -87,7 +88,7 @@ function buildRenderItems(messages: AgentMessage[]) {
   return result;
 }
 
-export default function AgentMessageList({
+function AgentMessageList({
   messages,
   isThinking,
   isRunning = false,
@@ -288,17 +289,26 @@ export default function AgentMessageList({
     const wrapper = contentWrapperRef.current;
     if (!wrapper || typeof ResizeObserver === "undefined") return;
 
+    let rafId: number | null = null;
     const ro = new ResizeObserver(() => {
-      const container = getScrollContainer();
-      if (!container) return;
-
-      if (!highlightMessageId && isPinnedToBottomRef.current) {
-        container.scrollTop = container.scrollHeight;
-      }
+      // rAF 合并：拖动 agent 栏宽度时消息内容每帧都可能尺寸变化，
+      // 直接设 scrollTop 会每帧强制 reflow，多个尺寸源叠加会把主线程打满。
+      if (rafId != null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const container = getScrollContainer();
+        if (!container) return;
+        if (!highlightMessageId && isPinnedToBottomRef.current) {
+          container.scrollTop = container.scrollHeight;
+        }
+      });
     });
 
     ro.observe(wrapper);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId != null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, [getScrollContainer, highlightMessageId]);
 
   const handleToolExpandChange = useCallback(
@@ -455,3 +465,8 @@ export default function AgentMessageList({
     </div>
   );
 }
+
+// memo：输入框每敲一个字（inputDraft 变化）父组件会重渲染，但 messages 等
+// props 引用不变时整棵消息树（含 HtmlVisualization/长文本）应完全跳过。
+// 否则消息多 + 重型可视化时打字明显卡顿。
+export default memo(AgentMessageList);

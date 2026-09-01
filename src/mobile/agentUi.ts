@@ -12,11 +12,12 @@ export function canSendAgentPrompt(
   session: Session | null | undefined,
   isRunning: boolean,
   draft: string,
+  hasImages = false,
 ): boolean {
   if (isRunning) return false;
   if (!session || session.status !== 'connected') return false;
   if (!session.configId) return false;
-  return draft.trim().length > 0;
+  return draft.trim().length > 0 || hasImages;
 }
 
 export function agentEmptyStateReason(

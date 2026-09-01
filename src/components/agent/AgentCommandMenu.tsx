@@ -195,7 +195,7 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-sm font-bold tracking-wider ${
+                      className={`text-sm font-semibold ${
                         active ? 'text-indigo-200' : 'text-zinc-200'
                       }`}
                     >

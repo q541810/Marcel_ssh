@@ -165,7 +165,9 @@ function heightReporter(token: string): string {
 (function () {
   var token = ${JSON.stringify(token)};
   var last = -1;
-  function report() {
+  var rafPending = false;
+  function measureAndReport() {
+    rafPending = false;
     // documentElement.scrollHeight includes the iframe viewport itself in
     // Chromium/WebView2. body.scrollHeight tracks the actual fragment and
     // can shrink again after a streaming update.
@@ -174,6 +176,15 @@ function heightReporter(token: string): string {
     if (height === last) return;
     last = height;
     parent.postMessage({ type: ${JSON.stringify(HTML_VIZ_HEIGHT_MESSAGE)}, token: token, height: height }, '*');
+  }
+  function report() {
+    // rAF 合并：ResizeObserver 在容器宽度/高度持续变化时（如拖动 agent 栏
+    // 宽度、流式内容增长）每帧可能触发多次，直接上报会让主线程每帧
+    // postMessage + setState，多个可视化 iframe 叠加会把主线程打满。
+    // 合并到每帧最多一次，且高度稳定后（last 命中）完全停止。
+    if (rafPending) return;
+    rafPending = true;
+    requestAnimationFrame(measureAndReport);
   }
   var observer = new ResizeObserver(report);
   if (document.body) observer.observe(document.body);

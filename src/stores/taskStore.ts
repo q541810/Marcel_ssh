@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { getErrorMessage } from "@/lib/errors";
+import { currentVision } from "@/lib/llmRegistry";
 import {
   attachStreamListener,
   attachPlanListener,
@@ -43,7 +44,8 @@ export interface TaskState {
   approveOperation: (taskId: string, operationId: string) => Promise<void>;
   rejectOperation: (taskId: string, operationId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
-  setInputDraft: (text: string) => void;
+  /** 支持函数式更新（追加文本附件用 `(prev) => ...`）。 */
+  setInputDraft: (text: string | ((prev: string) => string)) => void;
   updateTaskStatus: (taskId: string, status: AgentTask["status"]) => void;
   setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
   setPendingQuestion: (question: QuestionRequestPayload | null) => void;
@@ -96,8 +98,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   ) => {
     const { mode } = get();
     const conversationStore = useConversationStore.getState();
-    const vision =
-      useSettingsStore.getState().settings.llmConfig?.vision ?? false;
+    const vision = currentVision(useSettingsStore.getState().settings.llmRegistry);
     const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
 
     const titleSeed = prompt.trim() || (images.length > 0 ? "[image]" : "");
@@ -190,6 +191,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         attachPlanListener(taskId),
       ]);
       const llmHistory = conversationStore.buildLlmHistory(conversationId);
+      // 会话级模型选择：当前 conversation 的 modelId（无 = 跟随全局默认）
+      const convModelId =
+        useConversationStore.getState().conversations[conversationId]?.modelId ?? null;
       await tauri.agentStartTask(
         sessionId,
         prompt,
@@ -197,6 +201,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         conversationId,
         llmHistory,
         taskId,
+        convModelId,
       );
     } catch (err) {
       cleanupTaskListeners(taskId);
@@ -323,8 +328,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }
   },
 
-  setInputDraft: (text: string) => {
-    set({ inputDraft: text });
+  setInputDraft: (text: string | ((prev: string) => string)) => {
+    set((state) => ({
+      inputDraft:
+        typeof text === "function" ? text(state.inputDraft) : text,
+    }));
   },
 
   updateTaskStatus: (taskId: string, status: AgentTask["status"]) => {

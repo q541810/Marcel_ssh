@@ -37,6 +37,8 @@ export interface ConversationState {
   bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => void;
   unbindSessionConversation: (sessionId: string) => void;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
+  /** 设置会话级模型选择（llmRegistry 模型条目 id）。null = 回落全局默认。 */
+  setConversationModel: (conversationId: string, modelId: string | null) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   rollbackToMessage: (
     conversationId: string,
@@ -474,6 +476,20 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           ...state.conversations,
           [conversationId]: updated,
         }),
+      };
+    });
+  },
+
+  setConversationModel: async (conversationId: string, modelId: string | null) => {
+    await tauri.agentSetConversationModel(conversationId, modelId);
+    set((state) => {
+      const conv = state.conversations[conversationId];
+      if (!conv) return state;
+      return {
+        conversations: {
+          ...state.conversations,
+          [conversationId]: { ...conv, modelId: modelId ?? null },
+        },
       };
     });
   },
@@ -1177,10 +1193,11 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // 用户点停止时调用。把所有正在执行的 tool 卡片标记为「已中断」：
     // - isExecuting=false, modelApproval 清除
     // - wasAborted=true
-    // - 流式工具（execute_command，前端通过 toolOutput 事件已累积部分 result）：
-    //   追加「系统未停止进程，但已停止等待输出」提示
+    // - 流式工具（bash，前端通过 toolOutput 事件已累积部分 result）：
+    //   追加「用户中断：已停止等待输出并向远端发送 close…」提示
     // - 非流式工具（前端 result 为空）：用「工具可能已执行完成」提示
-    // 与后端 agent_loop 检查点4 的中断文案保持一致，确保 UI 与 LLM 视角同步。
+    // 文案与后端 agent_loop 检查点4 的中断保持逐字节一致（同一份语义，
+    // 前后端任何路径触发都不能让用户看到两套说辞）。
     // 注意：非流式工具后端有完整 output 但前端不可能收到（listener 已卸载），
     // 这里只反映用户视角的 UI 状态；LLM 历史由后端持久化保证完整。
     // conversationId 参数：子agent存在后，停止某个任务只标记该任务所属对话的
@@ -1192,8 +1209,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           !conversationId || convId === conversationId
             ? msgs.map((m) => {
                 if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
-                const isStreaming = m.toolResult?.toolName === 'execute_command';
-                const STREAMING_SUFFIX = '\n\n[用户手动触发中断，系统未停止进程，但已停止等待输出。这不代表进程已经停止，远端进程可能仍在运行。]';
+                const isStreaming = m.toolResult?.toolName === 'bash' || m.toolResult?.toolName === 'execute_command';
+                const STREAMING_SUFFIX = '\n\n[用户中断：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]';
                 const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
                 const existing = m.toolResult?.result ?? '';
                 // 已有流式输出时追加，否则整体替换为提示

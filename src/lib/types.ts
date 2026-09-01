@@ -455,8 +455,6 @@ export interface AgentModeSettings {
   commandList: string[];
   confirmEachCommand: boolean;
   enableModelCommandApproval: boolean;
-  /** Model name override for the approval step. Empty = use main model. */
-  modelApprovalModel: string;
   /** Custom system prompt for the approval step. Empty = use built-in prompt. */
   modelApprovalPrompt: string;
   systemPrompt: string;
@@ -467,6 +465,78 @@ export interface AgentModeSettings {
 }
 
 export type LlmProviderType = 'openai';
+
+/** 全局共享的网络与重试策略（所有渠道与模型统一生效）。 */
+export interface NetPolicy {
+  /** 最大自动重试次数，0-10，默认 1。 */
+  maxRetries: number;
+  /** 重试间隔秒数，1-60，默认 5。 */
+  retryDelaySecs: number;
+  /** 触发重试的 HTTP 状态码/范围，逗号分隔，如 "408, 429, 500-599"。 */
+  retryHttpStatuses: string;
+  /** 首字超时秒数，20-250，默认 60。 */
+  firstByteTimeoutSecs: number;
+  /** 超时后是否自动重试，默认 true。 */
+  retryOnTimeout: boolean;
+}
+
+/** 一个 OpenAI 兼容的服务接入点（渠道）：OpenRouter / DeepSeek / 硅基流动 / Ollama / OpenAI 官方等。 */
+export interface ChannelConfig {
+  /** 稳定唯一 ID（uuid）。 */
+  id: string;
+  /** 展示名称，如「DeepSeek 官方」「硅基流动」。 */
+  name: string;
+  /** API Base URL，如 `https://api.deepseek.com/v1`。必填（拒绝空值）。 */
+  baseUrl: string;
+  /** API Key。仅内存持有，不落盘（keychain 按渠道独立存储）。 */
+  apiKey?: string;
+  /** 是否启用。禁用的渠道不可被解析使用。 */
+  enabled: boolean;
+}
+
+/** 渠道下的一个具体模型条目。 */
+export interface ModelEntry {
+  /** 稳定唯一 ID（uuid）。 */
+  id: string;
+  /** 所属渠道 ID（外键 → ChannelConfig.id）。 */
+  channelId: string;
+  /** 实际请求 API 时使用的模型名，如 `deepseek-ai/DeepSeek-V3`。 */
+  modelName: string;
+  /** 展示别名（可选）。空时 UI 用 modelName 展示。 */
+  displayName?: string;
+  temperature: number;
+  /** 是否支持图片输入（多模态）。 */
+  vision?: boolean;
+  /** 模型上下文窗口（tokens）。0 = 未设置，回落全局 agentModeSettings.contextWindow。 */
+  contextWindow?: number;
+  /** 该模型特有的请求体参数覆写（如 thinking、top_p）。 */
+  extraBody?: Record<string, unknown> | null;
+}
+
+/** 场景槽位：把「用途」绑定到具体模型。空 = 回落主模型。 */
+export interface ModelSlots {
+  /** 默认（主对话）模型。空 = 回落第一个模型。 */
+  defaultModelId: string;
+  /** 命令审核模型（enableModelCommandApproval 开启时使用）。空 = 跟随默认模型。 */
+  modelApprovalModelId: string;
+  /** 上下文压缩摘要模型。空 = 跟随默认模型。 */
+  summarizerModelId: string;
+}
+
+/** 多渠道多模型注册表（AppSettings 内嵌，随设置持久化与同步）。 */
+export interface LlmRegistry {
+  channels: ChannelConfig[];
+  models: ModelEntry[];
+  slots: ModelSlots;
+  /** 全局共享的网络与重试策略（所有渠道/模型统一生效）。 */
+  netPolicy: NetPolicy;
+}
+
+/** 单个渠道的密钥链状态（仅布尔，后端绝不回传密钥本身）。 */
+export interface ChannelKeyStatus {
+  channelId: string;
+  hasKey: boolean;
+}
 
 export interface LlmConfig {
   providerType: LlmProviderType;
@@ -590,7 +660,8 @@ export interface AppSettings {
   fontSize: number;
   fontFamily: string;
   defaultAgentMode: string;
-  llmConfig?: LlmConfig | null;
+  /** 多渠道多模型注册表（渠道 / 模型 / 场景槽位）。取代旧 llmConfig。 */
+  llmRegistry: LlmRegistry;
   agentModeSettings: AgentModeSettings;
   experimentalSettings?: ExperimentalSettings;
   fileManagerPath: string;
@@ -818,6 +889,8 @@ export interface AgentConversation {
   updatedAt: string;
   /** 子agent对话（task 工具创建）的父对话 id；主对话无此字段。 */
   parentConversationId?: string;
+  /** 会话级模型选择（llmRegistry 模型条目 id）。缺省 = 跟随全局默认模型。 */
+  modelId?: string | null;
 }
 
 export interface StoredMessage {
@@ -974,6 +1047,18 @@ export type SyncPlatform = 'desktop' | 'mobile';
 /** 同步状态机（与 sync/scheduler.rs SyncState 对齐，camelCase 序列化） */
 export type SyncState = 'idle' | 'pushing' | 'pulling' | 'error' | 'notConfigured';
 
+/**
+ * 版本闸门命中信息（与 Rust sync::engine::VersionBlock 对齐）。
+ * 云端（账户内其他设备已上报）的客户端版本号高于本机时同步被挂起：
+ * 自动 push/pull 暂停，避免旧版 App 反序列化丢字段后把新格式配置啃坏。
+ */
+export interface SyncVersionBlock {
+  /** 云端最高版本号 */
+  cloudVersion: string;
+  /** 本机版本号 */
+  localVersion: string;
+}
+
 /** pull 进度（与 sync/scheduler.rs SyncProgress 对齐） */
 export interface SyncProgress {
   /** 本次 pull 待处理的 item 总数（profile 过滤后） */
@@ -1018,6 +1103,8 @@ export interface SyncSummary {
   error: string | null;
   /** pull 进度（pulling 时非 null） */
   progress: SyncProgress | null;
+  /** 版本闸门：云端配置版本高于本机时非 null（自动同步挂起，需升级本应用） */
+  versionBlock: SyncVersionBlock | null;
 }
 
 /** sync-state-changed 事件 payload */
@@ -1026,6 +1113,8 @@ export interface SyncStateEvent {
   pendingCount: number;
   error: string | null;
   progress: SyncProgress | null;
+  /** 版本闸门：云端配置版本高于本机时非 null */
+  versionBlock: SyncVersionBlock | null;
 }
 
 /** 已配对设备信息 */
@@ -1036,6 +1125,8 @@ export interface SyncDeviceInfo {
   platform: SyncPlatform;
   /** 最后活跃时间（ISO 8601 字符串） */
   lastSeenAt: string;
+  /** 客户端版本号（设备上报）；旧服务端 / 未上报为 null */
+  appVersion: string | null;
 }
 
 /** 账户配额使用情况（GET sync_get_quota 返回；旧服务端无此端点时前端静默隐藏配额行） */
@@ -1109,11 +1200,44 @@ export interface SyncConflictsEvent {
   count: number;
 }
 
+// ──────────── Background Jobs (Job 体系) ────────────
+// 后端统一由 command_exec::CommandExecutionManager 管理（submit_background），
+// 事件载荷 job://started / job://updated 与 job_list / job_kill 返回 JobInfo。
+
+export type JobStatus = 'running' | 'completed' | 'killed' | 'failed';
+
+export interface JobInfo {
+  jobId: string;
+  sessionId: string;
+  taskId?: string | null;
+  description: string;
+  command: string;
+  status: JobStatus;
+  startedAtMillis: number;
+  finishedAtMillis?: number | null;
+  totalOutputBytes: number;
+}
+
+export interface JobOutputResult {
+  jobId: string;
+  delta: string;
+  offset: number;
+  status: JobStatus;
+  /**
+   * 终止来源（仅 killed/断连结算时有值）：user=界面手动终止，
+   * agent=Agent job_kill，task=任务停止级联，disconnected=会话断开。
+   * 旧数据/未知来源为 null/缺省，展示层保持中性文案。
+   */
+  cancelReason?: 'user' | 'agent' | 'task' | 'disconnected' | null;
+}
+
 /** 启动快照数据包契约（与后端 app_get_bootstrap 对齐） */
 export interface AppBootstrapData {
   settings: AppSettings;
   hasApiKey: boolean;
   hasWebSearchApiKey: boolean;
+  /** 各渠道密钥是否存在（多渠道模型服务）。 */
+  channelKeyStatus?: ChannelKeyStatus[];
   settingsWarning?: string | null;
   connections: SavedConnection[];
   skills: Skill[];

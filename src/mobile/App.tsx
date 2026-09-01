@@ -11,6 +11,7 @@ import MobileUpdateToast from './MobileUpdateToast';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
+import { useJobStore } from '@/stores/jobStore';
 import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
@@ -42,6 +43,13 @@ export default function MobileApp() {
       onUpdateAvailable: (version, url) => setUpdateToast({ version, url }),
     }).catch(() => {});
     void initInteractionListener();
+    const detachJobs = useJobStore.getState().initEventListener();
+    // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
+    // 作业靠这次全量拉取回到 UI；只 upsert 合并，不覆盖事件实时状态）
+    void useJobStore.getState().fetchJobs();
+    return () => {
+      detachJobs();
+    };
   }, []);
 
   // Android WebView may still pan the document when an input focuses (despite
