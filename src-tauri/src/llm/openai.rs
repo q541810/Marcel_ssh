@@ -7,8 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::llm::error::{format_reqwest_error, LlmError, RequestPhase};
 use crate::llm::provider::{
-    LlmConfig, LlmMessage, LlmRole, TokenUsage, ToolCall, ToolDefinition,
-    VISION_RECENT_USER_TURNS, IMAGE_PLACEHOLDER,
+    LlmConfig, LlmMessage, LlmRole, TokenUsage, ToolCall, ToolDefinition, IMAGE_PLACEHOLDER,
 };
 use crate::llm::streaming::StreamEvent;
 
@@ -540,34 +539,11 @@ fn build_request_body_with_max_tokens(
     stream: bool,
     max_tokens: Option<u32>,
 ) -> serde_json::Value {
-    let user_indices: Vec<usize> = messages
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| m.role == LlmRole::User)
-        .map(|(i, _)| i)
-        .collect();
-    let keep_from = if config.vision && user_indices.len() > VISION_RECENT_USER_TURNS {
-        user_indices.len() - VISION_RECENT_USER_TURNS
-    } else {
-        0
-    };
-    let recent_user: std::collections::HashSet<usize> = if config.vision {
-        user_indices
-            .iter()
-            .enumerate()
-            .filter(|(rank, _)| *rank >= keep_from)
-            .map(|(_, &idx)| idx)
-            .collect()
-    } else {
-        std::collections::HashSet::new()
-    };
-
     let messages = messages
         .iter()
-        .enumerate()
-        .map(|(idx, m)| RequestMessage {
+        .map(|m| RequestMessage {
             role: m.role.to_string(),
-            content: build_request_content(m, config.vision && recent_user.contains(&idx)),
+            content: build_request_content(m, config.vision),
             tool_calls: m.tool_calls.as_ref().map(|tcs| {
                 tcs.iter()
                     .map(|tc| RequestToolCall {
@@ -657,7 +633,7 @@ fn value_type_name(v: &serde_json::Value) -> &'static str {
     }
 }
 
-/// `send_images`: true only for recent user turns when vision is enabled.
+/// `send_images`: true when vision is enabled (all image-bearing user turns keep images).
 fn build_request_content(m: &LlmMessage, send_images: bool) -> RequestContent {
     let paths = m.image_paths.as_ref().filter(|p| !p.is_empty());
     let Some(paths) = paths else {
@@ -851,7 +827,7 @@ mod build_request_body_tests {
         let mut msg = LlmMessage::assistant("");
         msg.tool_calls = Some(vec![ToolCall {
             id: "call-1".into(),
-            name: "execute_command".into(),
+            name: "bash".into(),
             arguments: serde_json::json!({ "command": "ls" }),
         }]);
         msg.reasoning_content = Some("let me check the directory".to_string());
@@ -1000,14 +976,17 @@ mod vision_request_tests {
     }
 
     fn messages_of(body: &serde_json::Value) -> &Vec<serde_json::Value> {
-        body.get("messages").and_then(|v| v.as_array()).expect("messages")
+        body.get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages")
     }
 
     /// 在测试专用临时目录初始化 image_store 根并写入一张真实小图，
     /// 返回相对路径。`IMAGES_ROOT` 是 OnceLock（进程内首个 init 胜出），
     /// 但保存与读取都走同一个根，因此无论谁先 init 结果一致。
     fn save_real_image(conversation: &str, message: &str, index: usize) -> String {
-        let dir = std::env::temp_dir().join(format!("marcel_openai_vision_test_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("marcel_openai_vision_test_{}", std::process::id()));
         crate::agent::image_store::init(&dir);
         // 最小 GIF 头（6 字节），guess_mime 按扩展名兜底为 webp 也能解析
         let bytes: &[u8] = b"GIF89a";
@@ -1021,17 +1000,22 @@ mod vision_request_tests {
         let msgs = vec![user_with_images("look", &["c/a.webp"])];
         let body = build_request_body(&cfg, &msgs, &[], true);
         let ms = messages_of(&body);
-        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
-        assert!(content.contains("[image]"), "vision off must append placeholder: {content}");
+        let content = ms[0]
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("text content");
+        assert!(
+            content.contains("[image]"),
+            "vision off must append placeholder: {content}"
+        );
         assert!(content.contains("look"));
     }
 
     #[test]
-    fn vision_on_latest_user_keeps_images_older_get_placeholder() {
+    fn vision_on_all_image_turns_keep_images() {
         let cfg = config_with_vision(true);
-        // 两个带图 user 轮：只有最后一轮保留真图（VISION_RECENT_USER_TURNS = 1），
-        // 且按"所有 user 消息"计数而非"带图候选"——中间插入不带图的 user 轮
-        // 不应改变窗口归属。
+        // 多个带图 user 轮 + 中间夹不带图的 user 轮：所有带图轮都保留真图，
+        // 不带图的轮保持纯文本（不产生占位符）。
         let rel = save_real_image("c", "m2", 0);
         let msgs = vec![
             user_with_images("first", &["c/missing.webp"]),
@@ -1042,19 +1026,39 @@ mod vision_request_tests {
         let body = build_request_body(&cfg, &msgs, &[], true);
         let ms = messages_of(&body);
 
-        // 旧图轮：降级为文本 + 占位符
-        let old = ms[0].get("content").and_then(|v| v.as_str()).expect("old turn text");
-        assert!(old.contains("[image]"), "older image turn must degrade: {old}");
-        assert!(old.contains("first"));
+        // 第一个带图轮的文件缺失（c/missing.webp）：整体降级为文本 + 占位符
+        let first = ms[0]
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("missing-file turn must degrade to plain text");
+        assert!(
+            first.contains("[image]"),
+            "first turn missing file must degrade to placeholder: {first}"
+        );
+        assert!(first.contains("first"));
+
+        // 中间不带图的轮：纯文本，无 image parts、无占位符
+        let middle = ms[2]
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("middle turn must be plain text");
+        assert!(middle.contains("middle, no image"));
+        assert!(!middle.contains("[image]"));
 
         // 最新带图轮：multimodal parts（text + image_url）
         let latest = &ms[3];
-        let parts = latest.get("content").and_then(|v| v.as_array()).expect("latest turn must be multimodal parts");
+        let parts = latest
+            .get("content")
+            .and_then(|v| v.as_array())
+            .expect("latest turn must be multimodal parts");
         let has_image = parts.iter().any(|p| {
             p.get("type").and_then(|v| v.as_str()) == Some("image_url")
                 && p.get("image_url").is_some()
         });
-        assert!(has_image, "latest image turn must carry image_url part: {parts:?}");
+        assert!(
+            has_image,
+            "latest image turn must carry image_url part: {parts:?}"
+        );
     }
 
     #[test]
@@ -1064,8 +1068,14 @@ mod vision_request_tests {
         let body = build_request_body(&cfg, &msgs, &[], true);
         let ms = messages_of(&body);
         // 文件已被清理（撤回/删会话）时必须降级为占位符，而不是静默只发文本
-        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
-        assert!(content.contains("[image]"), "missing files must degrade: {content}");
+        let content = ms[0]
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("text content");
+        assert!(
+            content.contains("[image]"),
+            "missing files must degrade: {content}"
+        );
     }
 
     #[test]
@@ -1075,13 +1085,22 @@ mod vision_request_tests {
         let msgs = vec![user_with_images("look", &[&rel, "c/missing.webp"])];
         let body = build_request_body(&cfg, &msgs, &[], true);
         let ms = messages_of(&body);
-        let parts = ms[0].get("content").and_then(|v| v.as_array()).expect("parts");
+        let parts = ms[0]
+            .get("content")
+            .and_then(|v| v.as_array())
+            .expect("parts");
         let images: Vec<&serde_json::Value> = parts
             .iter()
             .filter(|p| p.get("type").and_then(|v| v.as_str()) == Some("image_url"))
             .collect();
-        assert_eq!(images.len(), 1, "only the successfully loaded image is sent");
-        let text = parts.iter().any(|p| p.get("type").and_then(|v| v.as_str()) == Some("text"));
+        assert_eq!(
+            images.len(),
+            1,
+            "only the successfully loaded image is sent"
+        );
+        let text = parts
+            .iter()
+            .any(|p| p.get("type").and_then(|v| v.as_str()) == Some("text"));
         assert!(text, "text part must be preserved");
     }
 
@@ -1095,8 +1114,14 @@ mod vision_request_tests {
         asst.image_paths = Some(vec![rel]);
         let body = build_request_body(&cfg, &[asst], &[], true);
         let ms = messages_of(&body);
-        let content = ms[0].get("content").and_then(|v| v.as_str()).expect("text content");
-        assert!(content.contains("[image]"), "assistant images must degrade: {content}");
+        let content = ms[0]
+            .get("content")
+            .and_then(|v| v.as_str())
+            .expect("text content");
+        assert!(
+            content.contains("[image]"),
+            "assistant images must degrade: {content}"
+        );
     }
 }
 
@@ -1144,7 +1169,10 @@ mod partial_tool_call_tests {
         let (events, call) = run(&[delta(Some("c1"), Some("read_file"), Some("{\"p\""))]);
         // start 必须是第一个工具事件，且先于 arguments delta（前端靠 start 注册 id 路由）
         assert_eq!(start_of(&events), Some(("c1", "read_file")));
-        assert!(matches!(events.first(), Some(StreamEvent::ToolCallStart { .. })));
+        assert!(matches!(
+            events.first(),
+            Some(StreamEvent::ToolCallStart { .. })
+        ));
         assert!(events.len() == 2 && matches!(events[1], StreamEvent::ToolCallDelta { .. }));
         let call = call.expect("call");
         assert_eq!(call.id, "c1");
@@ -1199,15 +1227,18 @@ mod partial_tool_call_tests {
     #[test]
     fn into_tool_call_keeps_empty_name_for_unknown_tool_feedback() {
         let mut tc = PartialToolCall::default();
-        tc.apply_delta(&delta(Some("c1"), None, Some("{}")), &mpsc::unbounded_channel().0);
+        tc.apply_delta(
+            &delta(Some("c1"), None, Some("{}")),
+            &mpsc::unbounded_channel().0,
+        );
         let call = tc.into_tool_call().expect("empty name must be kept");
         assert_eq!(call.name, "");
     }
 
     #[test]
     fn into_tool_call_invalid_json_falls_back_to_string() {
-        let (events, call) = run(&[delta(Some("c1"), Some("execute_command"), Some("ls -la"))]);
-        assert_eq!(start_of(&events), Some(("c1", "execute_command")));
+        let (events, call) = run(&[delta(Some("c1"), Some("bash"), Some("ls -la"))]);
+        assert_eq!(start_of(&events), Some(("c1", "bash")));
         let call = call.expect("call");
         // 旧语义：解析失败回退为原始字符串（而非 {"_raw": ...} 包装），
         // 工具层按缺参报错给模型自纠
@@ -1216,7 +1247,11 @@ mod partial_tool_call_tests {
 
     #[test]
     fn into_tool_call_valid_json_parses_object() {
-        let (_, call) = run(&[delta(Some("c1"), Some("read_file"), Some(r#"{"path":"/a"}"#))]);
+        let (_, call) = run(&[delta(
+            Some("c1"),
+            Some("read_file"),
+            Some(r#"{"path":"/a"}"#),
+        )]);
         let call = call.expect("call");
         assert_eq!(call.arguments, serde_json::json!({ "path": "/a" }));
     }
@@ -1228,6 +1263,9 @@ mod partial_tool_call_tests {
             delta(None, None, Some(r#""content":"hi"}"#)),
         ]);
         let call = call.expect("call");
-        assert_eq!(call.arguments, serde_json::json!({ "path": "x", "content": "hi" }));
+        assert_eq!(
+            call.arguments,
+            serde_json::json!({ "path": "x", "content": "hi" })
+        );
     }
 }
