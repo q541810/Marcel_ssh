@@ -44,9 +44,41 @@ describe('settingsStore', () => {
     expect(am.commandList).toContain('rm');
     expect(am.confirmEachCommand).toBe(true);
     expect(am.enableModelCommandApproval).toBe(false);
-    expect(am.modelApprovalModel).toBe('');
     expect(am.modelApprovalPrompt).toBe('');
     expect(am.confirmEditFile).toBe(true);
+  });
+
+  it('default llm registry is empty (channels/models/slots)', () => {
+    const r = useSettingsStore.getState().settings.llmRegistry;
+    expect(r).toBeDefined();
+    expect(r.channels).toEqual([]);
+    expect(r.models).toEqual([]);
+    expect(r.slots).toEqual({
+      defaultModelId: '',
+      modelApprovalModelId: '',
+      summarizerModelId: '',
+    });
+  });
+
+  it('normalizes a partial llmRegistry (missing fields get defaults)', () => {
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        llmRegistry: {
+          channels: [],
+          models: [],
+          // slots 缺失 → 默认空槽位（兼容旧数据）
+        } as never,
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+    });
+    const r = useSettingsStore.getState().settings.llmRegistry;
+    expect(r.slots).toEqual({
+      defaultModelId: '',
+      modelApprovalModelId: '',
+      summarizerModelId: '',
+    });
   });
 
   it('default experimental settings are correct', () => {

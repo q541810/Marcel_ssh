@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
 
 export interface SelectOption<T extends string = string> {
   value: T;
@@ -6,10 +6,19 @@ export interface SelectOption<T extends string = string> {
   disabled?: boolean;
 }
 
+/** 分组选项：`{ label, options }`。扁平选项直接是 SelectOption[]。 */
+export interface SelectGroup<T extends string = string> {
+  label: ReactNode;
+  options: SelectOption<T>[];
+}
+
+/** 扁平选项或分组选项的混合数组（同一列表可混用，如「跟随默认」+ 分组）。 */
+export type SelectSource<T extends string = string> = (SelectOption<T> | SelectGroup<T>)[];
+
 interface Props<T extends string = string> {
   value: T;
   onChange: (value: T) => void;
-  options: SelectOption<T>[];
+  options: SelectSource<T>;
   placeholder?: string;
   disabled?: boolean;
   className?: string;
@@ -20,6 +29,11 @@ const chevron = (
     <path d="m6 9 6 6 6-6" />
   </svg>
 );
+
+/** 把扁平/分组选项统一展平，用于「当前值对应的选项」查找与键盘导航。 */
+function flattenOptions<T extends string>(options: SelectSource<T>): SelectOption<T>[] {
+  return options.flatMap((o) => ('options' in o ? o.options : [o]));
+}
 
 export default function Select<T extends string = string>({
   value,
@@ -34,7 +48,15 @@ export default function Select<T extends string = string>({
   const listRef = useRef<HTMLDivElement>(null);
   const [focusIdx, setFocusIdx] = useState(-1);
 
-  const selected = options.find((o) => o.value === value);
+  const flat = flattenOptions(options);
+  const flatIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    flat.forEach((o, i) => {
+      if (!map.has(o.value)) map.set(o.value, i);
+    });
+    return map;
+  }, [flat]);
+  const selected = flat.find((o) => o.value === value);
   const selectedLabel = selected?.label ?? placeholder ?? value;
 
   const close = useCallback(() => {
@@ -44,13 +66,14 @@ export default function Select<T extends string = string>({
 
   useEffect(() => {
     if (!open) return;
-    const idx = options.findIndex((o) => o.value === value && !o.disabled);
+    const idx = flat.findIndex((o) => o.value === value && !o.disabled);
     setFocusIdx(idx >= 0 ? idx : 0);
-  }, [open, options, value]);
+  }, [open, flat, value]);
 
   useEffect(() => {
     if (!open || !listRef.current || focusIdx < 0) return;
-    const el = listRef.current.children[focusIdx] as HTMLElement | undefined;
+    const children = listRef.current.querySelectorAll('[data-opt]');
+    const el = children[focusIdx] as HTMLElement | undefined;
     el?.scrollIntoView({ block: 'nearest' });
   }, [focusIdx, open]);
 
@@ -89,7 +112,7 @@ export default function Select<T extends string = string>({
         e.preventDefault();
         setFocusIdx((prev) => {
           const next = prev + 1;
-          return next < options.length ? next : prev;
+          return next < flat.length ? next : prev;
         });
         break;
       case 'ArrowUp':
@@ -102,11 +125,48 @@ export default function Select<T extends string = string>({
       case 'Enter':
       case ' ':
         e.preventDefault();
-        if (focusIdx >= 0 && focusIdx < options.length) {
-          select(options[focusIdx]);
+        if (focusIdx >= 0 && focusIdx < flat.length) {
+          select(flat[focusIdx]);
         }
         break;
     }
+  };
+
+  /** 渲染一个扁平选项行（键盘索引由调用方统一维护）。 */
+  const renderOption = (opt: SelectOption<T>, flatIdx: number) => {
+    const active = flatIdx === focusIdx;
+    const selected = opt.value === value;
+    return (
+      <div
+        key={opt.value}
+        data-opt
+        role="option"
+        aria-selected={selected}
+        aria-disabled={opt.disabled}
+        onPointerDown={(e) => {
+          e.preventDefault();
+          select(opt);
+        }}
+        onPointerEnter={() => setFocusIdx(flatIdx)}
+        className={`
+          flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
+          ${active ? 'bg-zinc-700' : ''}
+          ${selected ? 'text-indigo-400' : 'text-zinc-200'}
+          ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-700'}
+        `}
+      >
+        {selected ? (
+          <span className="flex-shrink-0 w-4">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </span>
+        ) : (
+          <span className="flex-shrink-0 w-4" />
+        )}
+        <span className="flex-1 truncate">{opt.label}</span>
+      </div>
+    );
   };
 
   return (
@@ -142,39 +202,26 @@ export default function Select<T extends string = string>({
           `}
           style={{ top: '100%' }}
         >
-          {options.map((opt, i) => {
-            const active = i === focusIdx;
-            const selected = opt.value === value;
-            return (
-              <div
-                key={opt.value}
-                role="option"
-                aria-selected={selected}
-                aria-disabled={opt.disabled}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  select(opt);
-                }}
-                onPointerEnter={() => setFocusIdx(i)}
-                className={`
-                  flex items-center gap-2 px-3 py-2 text-sm cursor-pointer transition-colors
-                  ${active ? 'bg-zinc-700' : ''}
-                  ${selected ? 'text-indigo-400' : 'text-zinc-200'}
-                  ${opt.disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-zinc-700'}
-                `}
-              >
-                {selected ? (
-                  <span className="flex-shrink-0 w-4">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  </span>
-                ) : (
-                  <span className="flex-shrink-0 w-4" />
-                )}
-                <span className="flex-1 truncate">{opt.label}</span>
-              </div>
-            );
+          {options.map((entry, groupIdx) => {
+            if ('options' in entry) {
+              // 分组：标题 + 组内选项
+              const group = entry as SelectGroup<T>;
+              return (
+                <div key={`g-${groupIdx}`}>
+                  <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                    {group.label}
+                  </div>
+                  {group.options.map((opt) => {
+                    const idx = flatIndex.get(opt.value) ?? 0;
+                    return renderOption(opt, idx);
+                  })}
+                </div>
+              );
+            }
+            // 扁平：普通选项
+            const opt = entry as SelectOption<T>;
+            const flatIdx = flatIndex.get(opt.value) ?? groupIdx;
+            return renderOption(opt, flatIdx);
           })}
         </div>
       )}

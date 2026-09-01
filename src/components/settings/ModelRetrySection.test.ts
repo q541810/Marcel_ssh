@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateRetryHttpStatuses } from '@/components/settings/ModelRetrySection';
+import { validateRetryHttpStatuses } from '@/lib/llmParams';
 
 describe('validateRetryHttpStatuses', () => {
   it('accepts empty string', () => {

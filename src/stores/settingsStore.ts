@@ -1,16 +1,16 @@
 import { create } from 'zustand';
 import * as tauri from '@/lib/tauri';
-import type { AppSettings, AgentModeSettings, LlmConfig, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings } from '@/lib/types';
+import type { AppSettings, AgentModeSettings, ExperimentalSettings, NotificationSettings, MobileNotificationSettings, MobileBackgroundSettings, LlmRegistry, ChannelKeyStatus } from '@/lib/types';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { setNotificationVolume } from '@/lib/notificationSound';
+import { emptyRegistry, emptySlots, defaultNetPolicy } from '@/lib/llmRegistry';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
   commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
   enableModelCommandApproval: false,
-  modelApprovalModel: '',
   modelApprovalPrompt: '',
   systemPrompt: '',
   maxToolRounds: 500,
@@ -18,20 +18,18 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   confirmEditFile: true,
 };
 
-const DEFAULT_LLM_CONFIG: LlmConfig = {
-  providerType: 'openai',
-  apiKey: '',
-  model: '',
-  baseUrl: '',
-  temperature: 0.1,
-  maxRetries: 1,
-  retryDelaySecs: 5,
-  retryHttpStatuses: '408, 429, 500-599',
-  firstByteTimeoutSecs: 60,
-  retryOnTimeout: true,
-  vision: false,
-  extraBody: null,
-};
+const DEFAULT_LLM_REGISTRY: LlmRegistry = emptyRegistry();
+
+/** 归一化注册表：缺字段补默认（兼容旧数据 / 字段缺失 = 保持原样 + 默认填充）。 */
+function normalizeRegistry(r: Partial<LlmRegistry> | null | undefined): LlmRegistry {
+  if (!r) return DEFAULT_LLM_REGISTRY;
+  return {
+    channels: Array.isArray(r.channels) ? r.channels : [],
+    models: Array.isArray(r.models) ? r.models : [],
+    slots: r.slots ? { ...emptySlots(), ...r.slots } : emptySlots(),
+    netPolicy: r.netPolicy ? { ...defaultNetPolicy(), ...r.netPolicy } : defaultNetPolicy(),
+  };
+}
 
 const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableWebSearch: true,
@@ -70,7 +68,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 14,
   fontFamily: 'JetBrains Mono, Fira Code, Consolas, "Microsoft YaHei", monospace',
   defaultAgentMode: 'agent',
-  llmConfig: DEFAULT_LLM_CONFIG,
+  llmRegistry: DEFAULT_LLM_REGISTRY,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
   fileManagerShowHidden: false,
@@ -102,6 +100,8 @@ interface SettingsState {
   hasApiKey: boolean;
   /** True if a web search API key is stored in the system keychain. */
   hasWebSearchApiKey: boolean;
+  /** 各渠道密钥是否存在（多渠道模型服务）。key = channelId。 */
+  channelKeyStatus: Record<string, boolean>;
   /** Non-fatal warning from the backend (e.g. settings.json was backed up). */
   warning: string | null;
 
@@ -112,6 +112,7 @@ interface SettingsState {
     settings: AppSettings;
     hasApiKey: boolean;
     hasWebSearchApiKey: boolean;
+    channelKeyStatus?: ChannelKeyStatus[];
     warning?: string | null;
   }) => void;
   /** Persist a full settings object and update local state. */
@@ -128,11 +129,19 @@ interface SettingsState {
   clearPreview: () => void;
 }
 
+/** 把后端 channelKeyStatus 数组转为 id → bool 映射。 */
+function toKeyStatusMap(list: ChannelKeyStatus[] | undefined): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+  for (const s of list ?? []) map[s.channelId] = s.hasKey;
+  return map;
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
   hasApiKey: false,
   hasWebSearchApiKey: false,
+  channelKeyStatus: {},
   warning: null,
   preview: null,
 
@@ -143,9 +152,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ...fromDisk,
       terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
       agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
-      llmConfig: fromDisk.llmConfig
-        ? { ...DEFAULT_LLM_CONFIG, ...fromDisk.llmConfig }
-        : DEFAULT_LLM_CONFIG,
+      llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
       experimentalSettings: {
         ...DEFAULT_EXPERIMENTAL_SETTINGS,
         ...(fromDisk.experimentalSettings ?? {}),
@@ -166,6 +173,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       loaded: true,
       hasApiKey: data.hasApiKey,
       hasWebSearchApiKey: data.hasWebSearchApiKey ?? false,
+      channelKeyStatus: toKeyStatusMap(data.channelKeyStatus),
       warning: data.warning ?? null,
     });
     setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);
@@ -181,9 +189,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...fromDisk,
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
-        llmConfig: fromDisk.llmConfig
-          ? { ...DEFAULT_LLM_CONFIG, ...fromDisk.llmConfig }
-          : DEFAULT_LLM_CONFIG,
+        llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
         experimentalSettings: {
           ...DEFAULT_EXPERIMENTAL_SETTINGS,
           ...(fromDisk.experimentalSettings ?? {}),
@@ -205,6 +211,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         loaded: true,
         hasApiKey: resp.hasApiKey,
         hasWebSearchApiKey: resp.hasWebSearchApiKey ?? false,
+        channelKeyStatus: toKeyStatusMap(resp.channelKeyStatus),
         warning: resp.warning ?? null,
       });
       setNotificationVolume(merged.notificationSettings?.notificationVolume ?? 70);

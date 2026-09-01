@@ -3,7 +3,7 @@ import {
   validateExtraBodyJson,
   extraBodyToText,
   textToExtraBody,
-} from '@/components/settings/ModelServiceSection';
+} from '@/lib/llmParams';
 
 describe('validateExtraBodyJson', () => {
   it('accepts empty string (not set)', () => {

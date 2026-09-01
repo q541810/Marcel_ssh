@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import type { CommandCheckResult, CommandListMode } from '@/lib/types';
+import { Trash2, ChevronDown } from 'lucide-react';
+import type { CommandCheckResult, CommandListMode, LlmRegistry } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
@@ -9,6 +9,8 @@ import {
   DEFAULT_APPROVAL_PROMPT,
   preCheckCustomPath,
 } from '@/components/settings/AgentPolicySection';
+import { modelFullLabel, modelLabel } from '@/lib/llmRegistry';
+import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
@@ -35,6 +37,7 @@ export function MobileAgentPolicySection() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const [approvalModelPickerOpen, setApprovalModelPickerOpen] = useState(false);
 
   const customPaths = settings.customProtectedPaths ?? [];
   const [draftPath, setDraftPath] = useState('');
@@ -151,20 +154,23 @@ export function MobileAgentPolicySection() {
       >
         {agent.enableModelCommandApproval && (
           <div className="mt-2 space-y-1.5">
-            <input
-              type="text"
-              value={agent.modelApprovalModel ?? ''}
-              onChange={(e) =>
-                updateAgent({ modelApprovalModel: e.target.value })
-              }
-              placeholder="审批模型（留空使用主模型）"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className={inputClass}
-            />
+            <button
+              type="button"
+              onClick={() => setApprovalModelPickerOpen(true)}
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none active:bg-zinc-700"
+            >
+              <span className="truncate">
+                {settings.llmRegistry?.slots?.modelApprovalModelId
+                  ? modelFullLabel(
+                      settings.llmRegistry,
+                      settings.llmRegistry.slots.modelApprovalModelId,
+                    )
+                  : '跟随默认模型'}
+              </span>
+              <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+            </button>
             <p className="text-xs text-zinc-500">
-              填写轻量模型可降低审批延迟和成本
+              选择轻量模型可降低审批延迟和成本，留空跟随默认模型
             </p>
             <div className="flex items-center justify-between pt-1">
               <span className="text-xs text-zinc-400">审批提示词</span>
@@ -473,6 +479,109 @@ export function MobileAgentPolicySection() {
           className="mt-2 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
         />
       </MobileSettingRow>
+
+      {/* 审批模型选择 */}
+      <MobileSheet
+        open={approvalModelPickerOpen}
+        onClose={() => setApprovalModelPickerOpen(false)}
+        title="选择审批模型"
+      >
+        <div className="px-4 pb-4">
+          <button
+            type="button"
+            onClick={() => {
+              update({
+                llmRegistry: {
+                  ...(settings.llmRegistry ?? emptyRegistryFallback()),
+                  slots: {
+                    ...(settings.llmRegistry?.slots ?? emptyRegistryFallback().slots),
+                    modelApprovalModelId: '',
+                  },
+                },
+              });
+              setApprovalModelPickerOpen(false);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm active:bg-zinc-800"
+          >
+            <span className="text-zinc-200">跟随默认模型</span>
+            {!settings.llmRegistry?.slots?.modelApprovalModelId && (
+              <span className="text-indigo-400 text-xs">当前</span>
+            )}
+          </button>
+          {/* 按提供商（渠道）分组 */}
+          {(settings.llmRegistry?.channels ?? []).map((ch) => {
+            const reg = settings.llmRegistry ?? emptyRegistryFallback();
+            const channelModels = reg.models.filter((m) => m.channelId === ch.id);
+            if (channelModels.length === 0) return null;
+            const channelDisabled = !ch.enabled;
+            return (
+              <div key={ch.id} className="mt-1">
+                <div className="flex items-center gap-2 px-3 pb-1 pt-2">
+                  <span className="truncate text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+                    {ch.name}
+                  </span>
+                  {channelDisabled && (
+                    <span className="flex-shrink-0 rounded bg-zinc-700 px-1 py-0.5 text-[10px] text-zinc-400">
+                      已禁用
+                    </span>
+                  )}
+                </div>
+                <div className="divide-y divide-zinc-800/70">
+                  {channelModels.map((m) => {
+                    const selected = settings.llmRegistry?.slots?.modelApprovalModelId === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        disabled={channelDisabled}
+                        onClick={() => {
+                          const registry = settings.llmRegistry ?? emptyRegistryFallback();
+                          update({
+                            llmRegistry: {
+                              ...registry,
+                              slots: { ...registry.slots, modelApprovalModelId: m.id },
+                            },
+                          });
+                          setApprovalModelPickerOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-3 text-left active:bg-zinc-800 ${
+                          channelDisabled ? "opacity-40" : ""
+                        }`}
+                      >
+                        <span className="min-w-0 truncate text-sm text-zinc-200">
+                          {modelLabel(m)}
+                        </span>
+                        {selected && <span className="flex-shrink-0 text-xs text-indigo-400">当前</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {(settings.llmRegistry?.models ?? []).length === 0 && (
+            <p className="py-6 text-center text-sm text-zinc-500">
+              还没有可用的模型，请先在「模型服务」中添加
+            </p>
+          )}
+        </div>
+      </MobileSheet>
     </div>
   );
+}
+
+/** 空注册表兜底（settings 未初始化时）。 */
+function emptyRegistryFallback(): LlmRegistry {
+  return {
+    channels: [],
+    models: [],
+    slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+    netPolicy: {
+      maxRetries: 1,
+      retryDelaySecs: 5,
+      retryHttpStatuses: '408, 429, 500-599',
+      firstByteTimeoutSecs: 60,
+      retryOnTimeout: true,
+    },
+  };
 }

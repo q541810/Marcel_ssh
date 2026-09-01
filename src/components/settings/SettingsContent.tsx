@@ -5,7 +5,6 @@ import { AgentSystemPromptSection } from './AgentSystemPromptSection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
 import { ModelServiceSection } from './ModelServiceSection';
-import { ModelRetrySection } from './ModelRetrySection';
 import { NotificationSection } from './NotificationSection';
 import { SyncSettingsSection } from './SyncSettingsSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
@@ -58,7 +57,6 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-appearance', element: <TerminalAppearanceSection /> },
     { id: 'settings-display', element: <ConversationDisplaySection /> },
     { id: 'settings-llm', element: <ModelServiceSection /> },
-    { id: 'settings-llm-retry', element: <ModelRetrySection /> },
     { id: 'settings-command-policy', element: <AgentPolicySection /> },
     { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },

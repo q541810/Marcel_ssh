@@ -14,7 +14,6 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-appearance': 'half',
   'settings-display': 'half',
   'settings-llm': 'full',
-  'settings-llm-retry': 'full',
   'settings-command-policy': 'full',
   'settings-agent-system-prompt': 'full',
   'settings-notification': 'half',
@@ -37,7 +36,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'model',
     label: '模型',
     icon: <Cpu className="w-4 h-4" />,
-    sections: ['settings-llm', 'settings-llm-retry'],
+    sections: ['settings-llm'],
   },
   {
     id: 'agent',
@@ -89,7 +88,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
 
 export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
   interface: ['settings-appearance', 'settings-display'],
-  model: ['settings-llm', 'settings-llm-retry'],
+  model: ['settings-llm'],
   agent: [
     'settings-command-policy',
     'settings-agent-system-prompt',

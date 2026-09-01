@@ -8,6 +8,8 @@ import type { ModelInfo } from '@/lib/types';
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** 所属渠道 ID：apiKey 为空/掩码时后端用它查该渠道的密钥。 */
+  channelId?: string;
   /** Currently configured model id — highlighted in the list. */
   currentModel: string;
   /** Draft baseUrl/apiKey from the form — reflects what the user sees. */
@@ -20,6 +22,7 @@ interface Props {
 export default function ModelListModal({
   open,
   onClose,
+  channelId,
   currentModel,
   baseUrl,
   apiKey,
@@ -34,7 +37,7 @@ export default function ModelListModal({
     setLoading(true);
     setError(null);
     try {
-      const list = await llmListModels(baseUrl, apiKey);
+      const list = await llmListModels(channelId ?? null, baseUrl, apiKey);
       list.sort((a, b) => a.id.localeCompare(b.id));
       setModels(list);
     } catch (err) {
@@ -42,7 +45,7 @@ export default function ModelListModal({
     } finally {
       setLoading(false);
     }
-  }, [baseUrl, apiKey]);
+  }, [channelId, baseUrl, apiKey]);
 
   useEffect(() => {
     if (open) {

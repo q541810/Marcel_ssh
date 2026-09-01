@@ -1,14 +1,15 @@
 import { useState, useRef, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
-import type { CommandListMode, CommandCheckResult } from '@/lib/types';
+import type { CommandListMode, CommandCheckResult, LlmRegistry } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
+import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
-import ModelListModal from './ModelListModal';
 import { ValidatedInput } from './ValidatedInput';
+import { modelOptionsByChannel } from '@/lib/llmRegistry';
 
 export const DEFAULT_APPROVAL_PROMPT = `你是一个命令执行审批助手。Agent 即将在远程服务器上执行一条 shell 命令，你需要结合上下文判断这条命令是否可以安全放行。
 
@@ -93,7 +94,6 @@ export function AgentPolicySection() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
-  const [approvalModelsOpen, setApprovalModelsOpen] = useState(false);
   // 「命令超时」和「执行前模型审批」是偶尔调整的高级项，折叠收纳避免主面板太长。
   // 跟 ModelServiceSection 的「高级：自定义请求参数」折叠风格一致。
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -524,31 +524,48 @@ export function AgentPolicySection() {
                     onChange={(checked) =>
                       updateAgent({ enableModelCommandApproval: checked })
                     }
-                    label="在 execute_command 执行前调用模型做一次审批判定"
+                    label="在 bash 执行前调用模型做一次审批判定"
                   />
                   {agent.enableModelCommandApproval && (
                     <div className="pl-1 space-y-2">
-                      <div className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={agent.modelApprovalModel ?? ''}
-                          onChange={(e) =>
-                            updateAgent({ modelApprovalModel: e.target.value })
-                          }
-                          placeholder="留空使用主模型"
-                          className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-400 flex-shrink-0 w-24">
+                          审批模型
+                        </span>
+                        <Select
+                          value={settings.llmRegistry?.slots?.modelApprovalModelId ?? ''}
+                          onChange={(v) => {
+                            const registry: LlmRegistry = settings.llmRegistry ?? {
+                              channels: [],
+                              models: [],
+                              slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+                              netPolicy: {
+                                maxRetries: 1,
+                                retryDelaySecs: 5,
+                                retryHttpStatuses: '408, 429, 500-599',
+                                firstByteTimeoutSecs: 60,
+                                retryOnTimeout: true,
+                              },
+                            };
+                            update({
+                              llmRegistry: {
+                                ...registry,
+                                slots: { ...registry.slots, modelApprovalModelId: v },
+                              },
+                            });
+                          }}
+                          options={[
+                            { value: '', label: '跟随默认模型' },
+                            ...(settings.llmRegistry
+                              ? modelOptionsByChannel(settings.llmRegistry)
+                              : []),
+                          ]}
+                          placeholder="跟随默认模型"
+                          className="w-72"
                         />
-                        <button
-                          type="button"
-                          onClick={() => setApprovalModelsOpen(true)}
-                          className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors whitespace-nowrap"
-                        >
-                          获取模型列表
-                        </button>
                       </div>
                       <p className="text-xs text-zinc-500">
-                        填写模型名可降低审批延迟和成本，如{' '}
-                        <code className="text-indigo-300">MIMo-v2.5</code>
+                        选择更小更快的模型可降低审批延迟和成本。留空 = 跟随默认模型。
                       </p>
                       <div className="flex items-center justify-between pt-1">
                         <span className="text-xs text-zinc-400">审批提示词</span>
@@ -616,14 +633,6 @@ export function AgentPolicySection() {
             className="w-24"
           />
         </SettingItem>
-        <ModelListModal
-          open={approvalModelsOpen}
-          onClose={() => setApprovalModelsOpen(false)}
-          currentModel={agent.modelApprovalModel ?? ''}
-          baseUrl={settings.llmConfig?.baseUrl ?? ''}
-          apiKey={settings.llmConfig?.apiKey ?? ''}
-          onSelect={(id) => updateAgent({ modelApprovalModel: id })}
-        />
       </Card>
     </div>
   );
