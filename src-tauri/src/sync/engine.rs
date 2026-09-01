@@ -100,10 +100,18 @@ pub enum ResolveOutcome {
 pub struct LocalVersionTable {
     /// key → 当前版本号
     pub versions: HashMap<String, i64>,
-    /// key → 上次同步的加密值（用于 diff 比对）
+    /// key → 上次同步的加密值（用于三方合并 base；pull 时解密比对）
     pub last_synced_values: HashMap<String, String>,
     /// key → 上次成功 push/pull 后的版本号（用于 pull 增量）
     pub last_sync_versions: HashMap<String, i64>,
+    /// key → 上次成功同步的**明文**值（仅内存，不持久化）。
+    ///
+    /// 用途：`record_local_change` 用明文与它比对，判断「值是否真的变了」。
+    /// `last_synced_values` 存的是密文（AES-GCM 每次随机 nonce，密文永不相等），
+    /// 拿明文去比密文会永远不等 → 每次保存都 bump 版本 → 双端频繁伪冲突。
+    /// 敏感 key（secrets.*）的明文 = API Key，绝不能落盘，故本表不持久化。
+    #[serde(skip)]
+    pub last_plain_values: HashMap<String, String>,
 }
 
 impl LocalVersionTable {
@@ -140,7 +148,16 @@ impl LocalVersionTable {
     }
 
     /// 记录已同步的值（push 或 pull 后）。
-    pub fn record_synced(&mut self, key: &str, version: i64, encrypted_value: Option<&str>) {
+    ///
+    /// `encrypted_value` 存进 `last_synced_values`（三方合并 base）；
+    /// `plaintext` 存进 `last_plain_values`（仅内存，供 diff 比对）。
+    pub fn record_synced(
+        &mut self,
+        key: &str,
+        version: i64,
+        encrypted_value: Option<&str>,
+        plaintext: Option<&str>,
+    ) {
         self.versions.insert(key.to_string(), version);
         self.last_sync_versions.insert(key.to_string(), version);
         match encrypted_value {
@@ -152,11 +169,26 @@ impl LocalVersionTable {
                 self.last_synced_values.remove(&key.to_string());
             }
         }
+        match plaintext {
+            Some(v) => {
+                self.last_plain_values
+                    .insert(key.to_string(), v.to_string());
+            }
+            None => {
+                self.last_plain_values.remove(&key.to_string());
+            }
+        }
     }
 
     /// push 被服务端接受后：只推进 last_sync_versions + last_synced_values，
     /// 不覆盖 `versions`（本地可能在 push 飞行中又 bump 了更高版本）。
-    pub fn record_push_accepted(&mut self, key: &str, version: i64, encrypted_value: Option<&str>) {
+    pub fn record_push_accepted(
+        &mut self,
+        key: &str,
+        version: i64,
+        encrypted_value: Option<&str>,
+        plaintext: Option<&str>,
+    ) {
         self.last_sync_versions.insert(key.to_string(), version);
         match encrypted_value {
             Some(v) => {
@@ -165,6 +197,15 @@ impl LocalVersionTable {
             }
             None => {
                 self.last_synced_values.remove(key);
+            }
+        }
+        match plaintext {
+            Some(v) => {
+                self.last_plain_values
+                    .insert(key.to_string(), v.to_string());
+            }
+            None => {
+                self.last_plain_values.remove(key);
             }
         }
     }
@@ -195,6 +236,23 @@ fn value_unchanged(ours: Option<&str>, target: Option<&str>) -> bool {
     }
 }
 
+/// 版本闸门命中信息（云端配置版本高于本机，同步被挂起）。
+///
+/// 触发场景：账户内某台设备升级到更新版本后写入了新结构数据；旧版本设备
+/// 一旦把该数据反序列化进本地 store，重新序列化会丢未知字段，再被三方合并
+/// 当成"本地修改"推回云端，把新格式配置啃坏。因此云端版本更高时：
+/// - pull/snapshot 的变更一项都不应用（peek-before-apply）
+/// - 自动 push/pull 挂起（scheduler 侧），UI 显示升级引导
+/// - 用户可在 UI 明确确认风险后手动强制执行一次（force）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionBlock {
+    /// 云端（账户内其他设备已上报的）最高版本号
+    pub cloud_version: String,
+    /// 本机版本号
+    pub local_version: String,
+}
+
 /// 同步引擎状态
 pub struct SyncEngine {
     /// 配置目录（用于持久化 local_versions.json）
@@ -212,6 +270,8 @@ pub struct SyncEngine {
     /// 待解决的冲突列表（pull 时检测到，等用户通过 UI 决策）
     /// 非空时表示有冲突等待处理，下次 pull 会阻塞或追加
     pending_conflicts: RwLock<Vec<PendingConflict>>,
+    /// 版本闸门：云端配置版本高于本机时非 None（同步挂起，见 VersionBlock 文档）
+    version_block: RwLock<Option<VersionBlock>>,
 }
 
 impl SyncEngine {
@@ -228,6 +288,7 @@ impl SyncEngine {
             platform,
             accessor: RwLock::new(None),
             pending_conflicts: RwLock::new(Vec::new()),
+            version_block: RwLock::new(None),
         }
     }
 
@@ -450,19 +511,20 @@ impl SyncEngine {
 
         let mut local = self.local_versions.write();
 
-        // 检查值是否真的变了（避免无变更 bump 版本）
-        if let Some(last) = local.last_synced_values.get(key) {
+        // 检查值是否真的变了（避免无变更 bump 版本）。
+        // 用**明文**与 last_plain_values 比对——last_synced_values 存的是密文
+        // （AES-GCM 随机 nonce），拿明文比密文永远不等，会导致每次保存都 bump。
+        if let Some(last) = local.last_plain_values.get(key) {
             if last == value {
                 return Ok(local.get_version(key)); // 值没变，不 bump
             }
         }
 
         let new_version = local.bump_version(key);
-        // 暂存新值（未加密，push 时才加密）
-        // 注意：这里不存明文，只在 push 时加密。last_synced_values 存的是加密后的值。
-        // 但为了 diff 比对，我们需要存明文用于比较。
-        // 改为：存明文到临时字段，push 时加密后更新 last_synced_values。
-        // 简化：直接用 value 做比较，push 时加密。
+        // 更新明文快照（仅内存，不落盘；secrets 明文不持久化）
+        local
+            .last_plain_values
+            .insert(key.to_string(), value.to_string());
         drop(local);
 
         Ok(new_version)
@@ -479,6 +541,7 @@ impl SyncEngine {
         let mut local = self.local_versions.write();
         let new_version = local.bump_version(key);
         local.last_synced_values.remove(key); // 删除标记
+        local.last_plain_values.remove(key);
         drop(local);
 
         Ok(new_version)
@@ -536,7 +599,9 @@ impl SyncEngine {
     where
         F: Fn(&str) -> Option<String>,
     {
-        let pending = self.compute_pending_changes(get_current_value)?;
+        // 先收集待推送 key 的明文快照（闭包会被 compute_pending_changes move，
+        // 这里提前用一次；key 列表来自版本表）
+        let pending = self.compute_pending_changes(&get_current_value)?;
 
         if pending.is_empty() {
             return Ok(PushResponse {
@@ -544,6 +609,10 @@ impl SyncEngine {
                 rejected: vec![],
             });
         }
+        let plain_by_key: HashMap<String, Option<String>> = pending
+            .iter()
+            .map(|(key, _, _)| (key.clone(), get_current_value(key)))
+            .collect();
 
         let changes: Vec<SyncItem> = pending
             .into_iter()
@@ -570,7 +639,8 @@ impl SyncEngine {
                 let enc = encrypted_by_key
                     .get(&accepted.key)
                     .and_then(|v| v.as_deref());
-                local.record_push_accepted(&accepted.key, accepted.version, enc);
+                let plain = plain_by_key.get(&accepted.key).and_then(|v| v.as_deref());
+                local.record_push_accepted(&accepted.key, accepted.version, enc, plain);
             }
         }
         self.persist().await?;
@@ -633,9 +703,14 @@ impl SyncEngine {
             // 应用到本地
             apply_value(&item.key, plaintext.as_deref())?;
 
-            // 更新本地版本表
+            // 更新本地版本表（明文快照 = 解密后的明文，供 diff 比对）
             let mut local = self.local_versions.write();
-            local.record_synced(&item.key, item.version, item.encrypted_value.as_deref());
+            local.record_synced(
+                &item.key,
+                item.version,
+                item.encrypted_value.as_deref(),
+                plaintext.as_deref(),
+            );
         }
 
         self.persist().await?;
@@ -654,6 +729,14 @@ impl SyncEngine {
         F: Fn(&str, Option<&str>) -> Result<(), AppError>,
     {
         let response = client.snapshot(api_key).await?;
+
+        // ── 版本闸门：云端配置版本更高 → 快照一项都不应用 ──
+        // （新设备首次同步路径；旧客户端会被服务端 403 拦下，这里是
+        //   "本机版本 ≥ 服务端阈值但低于账户内其他设备" 场景的兜底）
+        if self.apply_version_gate(response.max_app_version.as_deref()) {
+            log::info!("[sync] 版本闸门：云端配置版本更高，跳过应用快照");
+            return Ok(response);
+        }
 
         let sync_key = match keychain::get_sync_key()? {
             Some(k) => k,
@@ -686,7 +769,12 @@ impl SyncEngine {
             apply_value(&item.key, plaintext.as_deref())?;
 
             let mut local = self.local_versions.write();
-            local.record_synced(&item.key, item.version, item.encrypted_value.as_deref());
+            local.record_synced(
+                &item.key,
+                item.version,
+                item.encrypted_value.as_deref(),
+                plaintext.as_deref(),
+            );
         }
 
         self.persist().await?;
@@ -713,6 +801,55 @@ impl SyncEngine {
     /// 获取当前平台。
     pub fn platform(&self) -> Platform {
         self.platform
+    }
+
+    /// 本机应用版本号（编译期常量，如 "1.2.1"）。
+    pub fn local_app_version() -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    /// 当前版本闸门状态：云端配置版本高于本机时返回 Some，否则 None。
+    pub fn version_block(&self) -> Option<VersionBlock> {
+        self.version_block.read().clone()
+    }
+
+    /// 应用版本闸门判定。返回 true = 本轮远端变更不应应用。
+    ///
+    /// 规则：云端最高版本 > 本机版本 → 置 block 并返回 true；
+    /// 云端版本 ≤ 本机（含云端无版本信息，如旧服务端 / 全员旧客户端）→
+    /// 清除既有 block（升级后自动恢复同步）并返回 false。
+    /// 云端版本非法时按"不高"处理（不因脏数据锁死账户）。
+    fn apply_version_gate(&self, cloud_max: Option<&str>) -> bool {
+        let blocked = match cloud_max {
+            Some(cloud) => crate::util::is_newer_version(cloud, Self::local_app_version()),
+            None => false,
+        };
+        if blocked {
+            let cloud = cloud_max.unwrap().to_string();
+            let mut guard = self.version_block.write();
+            // 仅在版本变化时打日志，避免 15s 轮询刷屏
+            if guard.as_ref().map(|b| b.cloud_version.as_str()) != Some(cloud.as_str()) {
+                log::warn!(
+                    "[sync] 版本闸门：云端配置版本 v{} 高于本机 v{}，挂起同步（不应用远端变更，不推送本地变更）",
+                    cloud,
+                    Self::local_app_version()
+                );
+            }
+            *guard = Some(VersionBlock {
+                cloud_version: cloud,
+                local_version: Self::local_app_version().to_string(),
+            });
+            true
+        } else {
+            if self.version_block.read().is_some() {
+                log::info!(
+                    "[sync] 版本闸门解除：云端配置版本不再高于本机 v{}，恢复同步",
+                    Self::local_app_version()
+                );
+                *self.version_block.write() = None;
+            }
+            false
+        }
     }
 
     /// 获取待解决冲突列表（UI 读取后渲染冲突 Modal/Sheet）。
@@ -816,6 +953,7 @@ impl SyncEngine {
                         &conflict.key,
                         conflict.remote_version,
                         encrypted_theirs.as_deref(),
+                        conflict.theirs.as_deref(),
                     );
                 }
                 self.persist().await?;
@@ -1007,11 +1145,20 @@ impl SyncEngine {
 
     /// 使用 accessor 读取本地值执行 push。
     /// 替代旧的 `push(client, api_key, |key| None)` 占位实现。
+    ///
+    /// `force`：忽略版本闸门（用户在 UI 明确确认风险后的手动推送）。
+    /// 默认路径下版本闸门命中时拒绝 push，防止旧结构数据覆盖云端新格式。
     pub async fn push_with_accessor(
         &self,
         client: &SyncClient,
         api_key: &str,
+        force: bool,
     ) -> Result<PushResponse, AppError> {
+        if !force && self.version_block().is_some() {
+            return Err(AppError::Config(
+                "同步已被版本闸门暂停：云端配置的客户端版本号高于本机（升级后自动恢复）".into(),
+            ));
+        }
         let accessor = self.accessor.read().clone();
         let accessor = accessor
             .ok_or_else(|| AppError::Config("SyncStoreAccessor 未注入，无法执行 push".into()))?;
@@ -1043,8 +1190,11 @@ impl SyncEngine {
 
         // 第三步：对每个 pending key，通过 accessor 异步读取当前值并加密
         let mut changes: Vec<SyncItem> = Vec::with_capacity(pending_keys.len());
+        let mut plain_by_key: HashMap<String, Option<String>> =
+            HashMap::with_capacity(pending_keys.len());
         for (key, version) in pending_keys {
             let plaintext = accessor.read_value(&key).await;
+            plain_by_key.insert(key.clone(), plaintext.clone());
             let encrypted_value = match &plaintext {
                 Some(text) => Some(crypto::encrypt_data(&sync_key, text.as_bytes())?),
                 None => None, // 删除标记
@@ -1072,7 +1222,8 @@ impl SyncEngine {
                 let enc = encrypted_by_key
                     .get(&accepted.key)
                     .and_then(|v| v.as_deref());
-                local.record_push_accepted(&accepted.key, accepted.version, enc);
+                let plain = plain_by_key.get(&accepted.key).and_then(|v| v.as_deref());
+                local.record_push_accepted(&accepted.key, accepted.version, enc, plain);
             }
         }
         self.persist().await?;
@@ -1104,11 +1255,14 @@ impl SyncEngine {
     /// - 单项失败收集，不中断其余 key（下次 pull 自动重试）
     ///
     /// `progress`：可选进度回调 (done, total)，阶段 1 每处理一个 item 调用一次。
+    ///
+    /// `force`：忽略版本闸门（用户在 UI 明确确认"我知道我在做什么"后的手动拉取）。
     pub async fn pull_with_accessor(
         &self,
         client: &SyncClient,
         api_key: &str,
         progress: Option<&(dyn Fn(usize, usize) + Sync)>,
+        force: bool,
     ) -> Result<PullResponse, AppError> {
         let accessor = self.accessor.read().clone();
         let accessor = accessor
@@ -1122,6 +1276,15 @@ impl SyncEngine {
 
         let request = PullRequest { last_sync_versions };
         let response = client.pull(api_key, request).await?;
+
+        // ── 版本闸门：云端配置版本更高 → 本轮变更一项都不应用 ──
+        // 必须在解密/合并/写盘之前拦截：旧版 App 一旦把新格式数据反序列化进
+        // 本地 store，重新序列化会丢未知字段，随后被三方合并当成"本地修改"
+        // 推回云端，把新格式配置啃坏。force = 用户明确确认风险后放行。
+        if !force && self.apply_version_gate(response.max_app_version.as_deref()) {
+            log::info!("[sync] 版本闸门：云端配置版本更高，跳过应用本轮远端变更");
+            return Ok(response);
+        }
 
         // 解密 sync_key
         let sync_key = match keychain::get_sync_key()? {
@@ -1152,8 +1315,9 @@ impl SyncEngine {
         // ── 阶段 1：逐 item 解密 + 读 ours + 三方合并（纯计算，不写盘） ──
         let mut apply_ops: Vec<ApplyOp> = Vec::new();
         let mut new_conflicts: Vec<PendingConflict> = Vec::new();
-        // 无需写盘的项（BothDeleted / 值未变）：直接推进版本表
-        let mut synced_keys: Vec<(String, i64, Option<String>)> = Vec::new();
+        // 无需写盘的项（BothDeleted / 值未变）：直接推进版本表。
+        // 元组：key, version, encrypted, plaintext（明文供 diff 比对）
+        let mut synced_keys: Vec<(String, i64, Option<String>, Option<String>)> = Vec::new();
         let mut done = 0usize;
 
         for item in &filtered_items {
@@ -1207,6 +1371,7 @@ impl SyncEngine {
                             item.key.clone(),
                             item.version,
                             item.encrypted_value.clone(),
+                            apply_value,
                         ));
                     } else {
                         let version_at_merge = self.local_versions.read().get_version(&item.key);
@@ -1238,7 +1403,7 @@ impl SyncEngine {
                 }
                 MergeResult::BothDeleted => {
                     // 两端都删除，无需 apply
-                    synced_keys.push((item.key.clone(), item.version, None));
+                    synced_keys.push((item.key.clone(), item.version, None, None));
                 }
             }
 
@@ -1264,7 +1429,7 @@ impl SyncEngine {
                 }
                 applied_keys.push(op.key.clone());
                 to_apply.push((op.key.clone(), op.value.clone()));
-                synced_keys.push((op.key, op.version, op.encrypted_value));
+                synced_keys.push((op.key, op.version, op.encrypted_value, op.value));
             }
             if skipped > 0 {
                 log::info!("[sync] pull 跳过 {} 个并发修改的 key", skipped);
@@ -1290,7 +1455,7 @@ impl SyncEngine {
                         }
                     };
                 if !failed_set.is_empty() {
-                    synced_keys.retain(|(k, _, _)| !failed_set.contains(k));
+                    synced_keys.retain(|(k, _, _, _)| !failed_set.contains(k));
                 }
             }
         }
@@ -1298,8 +1463,8 @@ impl SyncEngine {
         // ── 阶段 3：推进版本表 + 冲突入库 + 持久化 ──
         {
             let mut local = self.local_versions.write();
-            for (key, version, encrypted) in synced_keys {
-                local.record_synced(&key, version, encrypted.as_deref());
+            for (key, version, encrypted, plaintext) in synced_keys {
+                local.record_synced(&key, version, encrypted.as_deref(), plaintext.as_deref());
             }
         }
 
@@ -1347,6 +1512,78 @@ impl SyncEngine {
 mod tests {
     use super::*;
 
+    /// 构造一个独立临时目录的引擎（版本闸门测试用，不触碰真实 config_dir）。
+    fn test_engine(tag: &str) -> SyncEngine {
+        let dir = std::env::temp_dir().join(format!(
+            "marcel-sync-engine-test-{}-{}-{}",
+            tag,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        SyncEngine::new(dir, SyncProfile::default())
+    }
+
+    #[test]
+    fn test_version_gate_blocks_on_higher_cloud_version() {
+        let engine = test_engine("block");
+        assert_eq!(engine.version_block(), None);
+
+        // 云端更高 → block + 返回 true（不应用）
+        assert!(engine.apply_version_gate(Some("1.3.0")));
+        let block = engine.version_block().unwrap();
+        assert_eq!(block.cloud_version, "1.3.0");
+        assert_eq!(block.local_version, SyncEngine::local_app_version());
+
+        // 云端更高但版本号没变 → 仍 block，不重复触发日志路径
+        assert!(engine.apply_version_gate(Some("1.3.0")));
+
+        // 云端降到与本机相同 → 解除，返回 false
+        let local = SyncEngine::local_app_version();
+        assert!(!engine.apply_version_gate(Some(local)));
+        assert_eq!(engine.version_block(), None);
+    }
+
+    #[test]
+    fn test_version_gate_cloud_lower_or_missing_passes() {
+        let engine = test_engine("pass");
+
+        // 云端更低 → 放行
+        assert!(!engine.apply_version_gate(Some("0.0.9")));
+        assert_eq!(engine.version_block(), None);
+
+        // 云端无版本信息（旧服务端）→ 放行
+        assert!(!engine.apply_version_gate(None));
+        assert_eq!(engine.version_block(), None);
+
+        // 云端版本非法 → 按"不高"处理，放行（不因脏数据锁死账户）
+        assert!(!engine.apply_version_gate(Some("junk")));
+        assert_eq!(engine.version_block(), None);
+
+        // 先 block，再收到非法/缺失版本 → 解除
+        assert!(engine.apply_version_gate(Some("99.0.0")));
+        assert_eq!(engine.version_block().unwrap().cloud_version, "99.0.0");
+        assert!(!engine.apply_version_gate(None));
+        assert_eq!(engine.version_block(), None);
+    }
+
+    #[test]
+    fn test_version_gate_reacts_to_version_bump() {
+        let engine = test_engine("bump");
+        // 云端 1.2.1，本机 1.2.0（local_app_version 为编译期值，此处仅验证状态翻转）
+        let blocked = engine.apply_version_gate(Some("999.0.0"));
+        assert!(blocked);
+        // 云端更新为更高版本 → block 信息跟随更新
+        assert!(engine.apply_version_gate(Some("999.0.1")));
+        assert_eq!(engine.version_block().unwrap().cloud_version, "999.0.1");
+        // 本机升级（模拟：云端不再更高）→ 自动恢复
+        assert!(!engine.apply_version_gate(Some("0.1.0")));
+        assert_eq!(engine.version_block(), None);
+    }
+
     #[test]
     fn test_local_version_table_bump() {
         let mut table = LocalVersionTable::default();
@@ -1365,7 +1602,7 @@ mod tests {
         let mut table = LocalVersionTable::default();
 
         table.bump_version("key1");
-        table.record_synced("key1", 1, Some("encrypted_value"));
+        table.record_synced("key1", 1, Some("encrypted_value"), Some("plain"));
 
         assert_eq!(table.get_version("key1"), 1);
         assert_eq!(table.last_sync_versions.get("key1"), Some(&1));
@@ -1373,14 +1610,17 @@ mod tests {
             table.last_synced_values.get("key1"),
             Some(&"encrypted_value".to_string())
         );
+        // 明文快照用于 diff 比对
+        assert_eq!(table.last_plain_values.get("key1"), Some(&"plain".to_string()));
     }
 
     #[test]
     fn test_local_version_table_record_delete() {
         let mut table = LocalVersionTable::default();
 
-        table.record_synced("key1", 1, Some("encrypted_value"));
+        table.record_synced("key1", 1, Some("encrypted_value"), Some("plain"));
         assert!(table.last_synced_values.contains_key("key1"));
+        assert!(table.last_plain_values.contains_key("key1"));
 
         // 删除：版本 +1，值移除
         table.bump_version("key1");
@@ -1443,13 +1683,17 @@ mod tests {
 
         // push 飞行中本地又改了 → versions 已到 7
         table.versions.insert("k".into(), 7);
-        table.record_push_accepted("k", 6, Some("enc_ours"));
+        table.record_push_accepted("k", 6, Some("enc_ours"), Some("ours_plain"));
 
         assert_eq!(table.get_version("k"), 7); // 不覆盖更高本地 version
         assert_eq!(table.last_sync_versions.get("k"), Some(&6));
         assert_eq!(
             table.last_synced_values.get("k"),
             Some(&"enc_ours".to_string())
+        );
+        assert_eq!(
+            table.last_plain_values.get("k"),
+            Some(&"ours_plain".to_string())
         );
         // 仍有 pending（7 > 6）
         assert!(table.get_version("k") > table.last_sync_versions["k"]);

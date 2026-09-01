@@ -223,6 +223,8 @@ class DeviceItem(BaseModel):
     platform: str
     last_seen_at: str
     online: bool
+    # 客户端版本号（X-App-Version 上报）；旧客户端 / 未上报为 None
+    app_version: str | None = None
 
 
 class AccountListResponse(BaseModel):
@@ -464,7 +466,7 @@ async def _collect_devices(account_id: str) -> DeviceListResponse | None:
     online_devices = set(_ws_manager.get_online_devices(full_id))
 
     dev_rows = await _db.fetchall(
-        "SELECT id, platform, last_seen_at FROM devices WHERE account_id = ? ORDER BY last_seen_at DESC",
+        "SELECT id, platform, last_seen_at, app_version FROM devices WHERE account_id = ? ORDER BY last_seen_at DESC",
         (full_id,),
     )
     devices = [
@@ -473,6 +475,7 @@ async def _collect_devices(account_id: str) -> DeviceListResponse | None:
             platform=r["platform"],
             last_seen_at=r["last_seen_at"],
             online=r["id"] in online_devices,
+            app_version=r["app_version"],
         )
         for r in dev_rows
     ]

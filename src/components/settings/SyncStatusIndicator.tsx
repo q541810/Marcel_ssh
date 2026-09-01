@@ -39,6 +39,8 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
   const progress = summary.progress;
   const pr = progress && progress.total > 0 ? progress : null;
   const pullPct = pr ? Math.min(100, Math.round((pr.done / pr.total) * 100)) : null;
+  // 版本闸门：云端配置版本更高，自动同步挂起
+  const versionBlock = summary.versionBlock ?? null;
 
   const config: Record<
     SyncState,
@@ -53,6 +55,8 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
 
   const c = config[state] ?? config.notConfigured;
   const stateIcon = state === 'idle' ? Cloud : c.icon;
+  // 版本闸门命中时，空闲/错误态显示琥珀色"已暂停"而非"已同步"，避免误导
+  const paused = !!versionBlock && (state === 'idle' || state === 'error');
 
   const handleClick = () => {
     // 优先处理冲突：有未解决冲突时点击直接打开冲突 Modal
@@ -65,24 +69,32 @@ export function SyncStatusIndicator({ compact = false }: SyncStatusIndicatorProp
     useSettingsNavStore.getState().requestNavigate('sync');
   };
 
-  // 有冲突时覆盖显示样式（红色 + 冲突数）
+  // 有冲突时覆盖显示样式（红色 + 冲突数）；版本闸门命中时琥珀色
   const hasConflicts = conflictCount > 0;
-  const displayColor = hasConflicts ? 'text-red-400' : c.color;
-  const Icon = hasConflicts ? AlertTriangle : stateIcon;
+  const displayColor = hasConflicts
+    ? 'text-red-400'
+    : paused
+      ? 'text-amber-400'
+      : c.color;
+  const Icon = hasConflicts ? AlertTriangle : paused ? AlertTriangle : stateIcon;
   const displayLabel = hasConflicts
     ? compact
       ? `${conflictCount}`
       : `冲突 ${conflictCount}`
-    : state === 'pulling' && pullPct !== null
-      ? `同步中 ${pullPct}%`
-      : c.label;
+    : paused
+      ? '同步已暂停'
+      : state === 'pulling' && pullPct !== null
+        ? `同步中 ${pullPct}%`
+        : c.label;
   const title = hasConflicts
     ? `有 ${conflictCount} 项未解决冲突，点击处理`
-    : summary.error
-      ? `错误：${summary.error}`
-      : state === 'pulling' && pr
-        ? `正在拉取 ${pr.done}/${pr.total} 项 · ${pullPct}%`
-        : c.label;
+    : paused && versionBlock
+      ? `同步已暂停：云端配置的客户端版本号（v${versionBlock.cloudVersion}）高于本机（v${versionBlock.localVersion}），点击查看`
+      : summary.error
+        ? `错误：${summary.error}`
+        : state === 'pulling' && pr
+          ? `正在拉取 ${pr.done}/${pr.total} 项 · ${pullPct}%`
+          : c.label;
 
   return (
     <button

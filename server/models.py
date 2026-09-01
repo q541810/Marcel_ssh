@@ -112,6 +112,8 @@ class DeviceInfoResponse(BaseModel):
     platform: str
     sync_profile: dict
     last_seen_at: str
+    # 客户端版本号（X-App-Version header 上报）；旧客户端未上报为 null
+    app_version: str | None = None
 
 
 # ── 同步 ──────────────────────────────────────────────
@@ -155,12 +157,16 @@ class PullRequest(BaseModel):
 class PullResponse(BaseModel):
     items: list[SyncItem]
     latest_versions: dict[str, int] = Field(..., description="每个 key 的当前版本号")
+    # 账户内所有设备已上报的最高客户端版本号（版本闸门：客户端据此暂停同步）
+    # 旧服务端 / 账户内全部为未上报版本的设备时为 null
+    max_app_version: str | None = Field(None, description="账户内设备已上报的最高客户端版本号")
 
 
 class SnapshotResponse(BaseModel):
     """全量快照拉取。"""
     items: list[SyncItem]
     total_size: int = Field(..., description="总字节数，用于配额展示")
+    max_app_version: str | None = Field(None, description="账户内设备已上报的最高客户端版本号")
 
 
 class AccountQuotaResponse(BaseModel):

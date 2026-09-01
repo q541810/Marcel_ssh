@@ -37,6 +37,7 @@ from auth import AuthManager, sha256_hex
 from device import DeviceManager
 from sync import SyncEngine, QuotaExceededError
 from ws import ConnectionManager
+from versioning import parse_version
 from rate_limit import rate_limit_middleware, RateLimiter, get_client_ip, set_trusted_proxy_ips
 from models import (
     AccountSetupRequest,
@@ -248,21 +249,86 @@ ws_handshake_limiter = RateLimiter()
 # ── 认证依赖 ──────────────────────────────────────────
 
 
-async def verify_auth(authorization: str = Header(...)) -> tuple[str, str]:
-    """从 Authorization header 提取并验证 API Key，返回 (account_id, device_id)。"""
+def _client_app_version(request: Request) -> str | None:
+    """提取客户端上报的应用版本号（X-App-Version header）。
+
+    旧客户端（< 1.2.1）不带该 header，返回 None。空字符串按未上报处理。
+    """
+    value = request.headers.get("x-app-version")
+    if value is None or not value.strip():
+        return None
+    return value.strip()
+
+
+async def verify_auth(
+    request: Request,
+    authorization: str = Header(...),
+) -> tuple[str, str]:
+    """从 Authorization header 提取并验证 API Key，返回 (account_id, device_id)。
+
+    顺带把客户端版本号（X-App-Version）写入 devices.app_version，
+    供版本闸门（enforce_client_version）与设备列表展示使用。
+    """
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header 必须是 Bearer 格式",
         )
     api_key = authorization[7:]  # 去掉 "Bearer "
-    result = await auth.verify_api_key(api_key)
+    result = await auth.verify_api_key(api_key, _client_app_version(request))
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的 API Key",
         )
     return result
+
+
+async def enforce_client_version(account_id: str, request: Request) -> None:
+    """版本闸门：拒绝过低版本的客户端同步。
+
+    规则：账户内已有 >= min_sync_app_version 的设备版本（即云端数据已由
+    新版结构写入）时，拒绝版本低于阈值的客户端调用 push/pull/snapshot。
+
+    fail 策略：
+    - 云端最高版本非法/不存在 → 放行（不因脏数据锁死整个账户）
+    - 客户端版本缺失（旧客户端不带 header）或非法 → 拒绝（fail-closed，
+      宁可让异常客户端报错，也不能让它的旧结构数据污染云端）
+    """
+    cloud_max = await device_mgr.get_max_app_version(account_id)
+    if cloud_max is None:
+        return
+    cloud_parsed = parse_version(cloud_max)
+    if cloud_parsed is None:
+        logger.warning(
+            "版本闸门：账户 %s 云端最高版本 %r 非法，跳过校验",
+            account_id[:8] + "…",
+            cloud_max,
+        )
+        return
+
+    threshold = parse_version(config.min_sync_app_version)
+    if threshold is None or cloud_parsed < threshold:
+        return
+
+    client_version = _client_app_version(request)
+    client_parsed = parse_version(client_version) if client_version else None
+    if client_parsed is None or client_parsed < threshold:
+        logger.warning(
+            "版本闸门：拒绝设备同步（云端最高 %s，客户端 %r，阈值 %s）账户 %s",
+            cloud_max,
+            client_version,
+            config.min_sync_app_version,
+            account_id[:8] + "…",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"客户端版本过低，已拒绝同步：{config.min_sync_app_version} 版本对模型渠道进行大改，"
+                "若双端版本不一致可能导致配置文件被啃坏。"
+                f"请将所有设备升级到 {config.min_sync_app_version} 及以上后再使用同步功能。"
+            ),
+        )
 
 
 # ── 健康检查 ──────────────────────────────────────────
@@ -275,7 +341,7 @@ async def health():
 # ── 账户路由 ──────────────────────────────────────────
 
 @app.post("/api/account/setup", response_model=AccountSetupResponse)
-async def setup_account(request: AccountSetupRequest):
+async def setup_account(request: AccountSetupRequest, http_request: Request):
     """第一台设备注册账户。
 
     客户端流程：
@@ -306,6 +372,7 @@ async def setup_account(request: AccountSetupRequest):
             device_id=request.device_id,
             platform=request.platform,
             sync_profile=request.sync_profile,
+            app_version=_client_app_version(http_request),
         )
 
         logger.info(
@@ -333,7 +400,7 @@ async def setup_account(request: AccountSetupRequest):
 
 
 @app.post("/api/account/join", response_model=AccountJoinResponse)
-async def join_account(request: AccountJoinRequest):
+async def join_account(request: AccountJoinRequest, http_request: Request):
     """后续设备加入已有账户，并注册本设备。
 
     客户端流程：
@@ -359,6 +426,7 @@ async def join_account(request: AccountJoinRequest):
                 platform=request.platform,
                 sync_profile=request.sync_profile,
             ),
+            app_version=_client_app_version(http_request),
         )
     except QuotaExceededError as e:
         raise HTTPException(
@@ -449,6 +517,7 @@ async def get_account_quota(auth_ctx: tuple[str, str] = Depends(verify_auth)):
 @app.post("/api/device/register", response_model=DeviceRegisterResponse)
 async def register_device(
     request: DeviceRegisterRequest,
+    http_request: Request,
     auth_ctx: tuple[str, str] = Depends(verify_auth),
 ):
     """注册新设备（join 之后调用）。
@@ -457,7 +526,9 @@ async def register_device(
     """
     account_id, _ = auth_ctx
     try:
-        return await device_mgr.register_device(account_id, request)
+        return await device_mgr.register_device(
+            account_id, request, app_version=_client_app_version(http_request)
+        )
     except QuotaExceededError as e:
         raise HTTPException(
             status_code=413,
@@ -530,10 +601,12 @@ async def delete_device(
 @app.post("/api/sync/push", response_model=PushResponse)
 async def push(
     request: PushRequest,
+    http_request: Request,
     auth_ctx: tuple[str, str] = Depends(verify_auth),
 ):
     """推送本地变更到服务端。"""
     account_id, device_id = auth_ctx
+    await enforce_client_version(account_id, http_request)
     try:
         result = await sync_engine.push(account_id, device_id, request)
         # 通知同账户其他在线设备
@@ -555,18 +628,28 @@ async def push(
 @app.post("/api/sync/pull", response_model=PullResponse)
 async def pull(
     request: PullRequest,
+    http_request: Request,
     auth_ctx: tuple[str, str] = Depends(verify_auth),
 ):
     """增量拉取：只返回 version > 客户端持有版本的项。"""
     account_id, _ = auth_ctx
-    return await sync_engine.pull(account_id, request)
+    await enforce_client_version(account_id, http_request)
+    result = await sync_engine.pull(account_id, request)
+    result.max_app_version = await device_mgr.get_max_app_version(account_id)
+    return result
 
 
 @app.get("/api/sync/snapshot", response_model=SnapshotResponse)
-async def snapshot(auth_ctx: tuple[str, str] = Depends(verify_auth)):
+async def snapshot(
+    http_request: Request,
+    auth_ctx: tuple[str, str] = Depends(verify_auth),
+):
     """全量快照拉取（新设备首次同步用）。"""
     account_id, _ = auth_ctx
-    return await sync_engine.snapshot(account_id)
+    await enforce_client_version(account_id, http_request)
+    result = await sync_engine.snapshot(account_id)
+    result.max_app_version = await device_mgr.get_max_app_version(account_id)
+    return result
 
 
 # ── WebSocket ────────────────────────────────────────

@@ -72,6 +72,10 @@ export function MobileSyncSection() {
   const [hint, setHint] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 版本闸门：手动同步前的风险确认（'push' | 'pull' | null）
+  const [forceSyncConfirm, setForceSyncConfirm] = useState<'push' | 'pull' | null>(null);
+  const [forceSyncLoading, setForceSyncLoading] = useState(false);
+
   // 设置一条引导提示，5 秒后自动消失。重复调用会重置计时器。
   const showHint = (text: string) => {
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
@@ -140,6 +144,38 @@ export function MobileSyncSection() {
     await disable();
   };
 
+  // 手动同步：版本闸门命中时先弹风险确认，用户明确坚持才带 force 执行
+  const handleManualPush = () => {
+    if (summary?.versionBlock) {
+      setForceSyncConfirm('push');
+      return;
+    }
+    void pushNow();
+  };
+
+  const handleManualPull = () => {
+    if (summary?.versionBlock) {
+      setForceSyncConfirm('pull');
+      return;
+    }
+    void pullNow();
+  };
+
+  const handleForceSync = async () => {
+    const action = forceSyncConfirm;
+    if (!action) return;
+    setForceSyncLoading(true);
+    try {
+      if (action === 'push') await pushNow(true);
+      else await pullNow(true);
+      setForceSyncConfirm(null);
+    } catch {
+      // error 已在 store
+    } finally {
+      setForceSyncLoading(false);
+    }
+  };
+
   // 加载中
   if (!loaded) {
     return (
@@ -170,6 +206,54 @@ export function MobileSyncSection() {
       >
         <div className="whitespace-pre-wrap px-1 pb-2 text-sm leading-relaxed text-zinc-300">
           {SYNC_DISCLAIMER_BODY}
+        </div>
+      </MobileSheet>
+
+      {/* 版本闸门：强制同步风险确认（用户明确坚持才放行一次） */}
+      <MobileSheet
+        open={forceSyncConfirm !== null}
+        onClose={() => setForceSyncConfirm(null)}
+        title="确定要强制同步吗？"
+        footer={
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setForceSyncConfirm(null)}
+              className="flex-1 rounded-lg border border-zinc-700 py-3 text-sm font-medium text-zinc-200 active:bg-zinc-800"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={forceSyncLoading}
+              onClick={() => void handleForceSync()}
+              className="flex-1 rounded-lg bg-red-600 py-3 text-sm font-medium text-white active:bg-red-500 disabled:opacity-50"
+            >
+              {forceSyncLoading
+                ? '同步中…'
+                : forceSyncConfirm === 'push'
+                  ? '仍要推送'
+                  : '仍要拉取'}
+            </button>
+          </div>
+        }
+      >
+        <div className="rounded-lg border border-amber-800 bg-amber-900/20 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <span className="text-sm font-medium text-amber-200">
+              注意，你的客户端版本号低于云端配置的客户端版本号
+            </span>
+          </div>
+          <p className="text-xs leading-relaxed text-amber-400/80">
+            这很可能导致你的数据损坏，请不要这么做，除非你知道你在做什么。
+            {summary?.versionBlock && (
+              <>
+                本机 v{summary.versionBlock.localVersion}，云端
+                v{summary.versionBlock.cloudVersion}。
+              </>
+            )}
+          </p>
         </div>
       </MobileSheet>
 
@@ -222,6 +306,23 @@ export function MobileSyncSection() {
       {/* 已配置：状态 + profile */}
       {summary?.configured && (
         <>
+          {/* 版本闸门警告：云端配置版本更高，自动同步已挂起 */}
+          {summary.versionBlock && (
+            <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-3 py-2.5 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 space-y-1">
+                <p className="text-xs font-medium text-amber-200">
+                  同步已暂停：云端配置的客户端版本号高于本机
+                </p>
+                <p className="text-[11px] leading-relaxed text-amber-400/80">
+                  本机 v{summary.versionBlock.localVersion}，云端
+                  v{summary.versionBlock.cloudVersion}。低版本客户端应用新格式数据后可能损坏配置。
+                  升级本应用到 v{summary.versionBlock.cloudVersion} 及以上后将自动恢复。
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* 状态 */}
           <MobileSettingRow
             label="同步状态"
@@ -229,14 +330,14 @@ export function MobileSyncSection() {
           >
             <div className="flex gap-2 mt-2">
               <button
-                onClick={() => pushNow()}
+                onClick={() => handleManualPush()}
                 disabled={summary.state === 'pushing'}
                 className="flex-1 rounded-lg border border-zinc-700 text-zinc-200 text-xs py-2 active:bg-zinc-800"
               >
                 {summary.state === 'pushing' ? '推送中…' : '推送'}
               </button>
               <button
-                onClick={() => pullNow()}
+                onClick={() => handleManualPull()}
                 disabled={summary.state === 'pulling'}
                 className="flex-1 rounded-lg border border-zinc-700 text-zinc-200 text-xs py-2 active:bg-zinc-800"
               >

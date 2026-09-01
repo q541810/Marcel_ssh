@@ -56,6 +56,7 @@ pip install -r requirements.txt
 | `[server].max_devices_per_account` | 自部署 100 / 托管 10 | 每账户最大设备数 |
 | `[server].account_quota_bytes` | 托管 209715200（200MB） | 每账户存储配额（字节）；自部署为 0 表示无限制 |
 | `[server].cors_origins` | 自部署 `["*"]` / 托管空 | 允许的 CORS 来源，TOML 数组。例：`["https://app.marcel.example", "https://mobile.marcel.example"]` |
+| `[server].min_sync_app_version` | `1.2.1` | 版本闸门阈值：账户内已有 ≥ 此版本的设备写入过数据时，拒绝低于此版本的客户端 push/pull/snapshot（返回 403），防止旧版客户端把新格式配置啃坏。每次数据结构大版本迁移后调高即可 |
 | `[websocket].ping_interval` | `20` | WebSocket ping 间隔（秒） |
 | `[websocket].ping_timeout` | `60` | WebSocket pong 超时（秒） |
 | `[proxy].trusted_ips` | `["127.0.0.1", "::1", "localhost"]` | 可信反代 IP（TOML 数组）；仅白名单内对端才采信 `X-Forwarded-For` / `X-Real-IP`。本机反代保持默认即可 |

@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use tokio::time::{interval, sleep};
 
 use crate::sync::client::SyncClient;
-use crate::sync::engine::SyncEngine;
+use crate::sync::engine::{SyncEngine, VersionBlock};
 use crate::sync::ws_client;
 
 /// push 防抖延迟（700ms）
@@ -84,6 +84,8 @@ pub struct SyncStateEvent {
     pub error: Option<String>,
     /// pull 进度（非 pulling 状态为 None）
     pub progress: Option<SyncProgress>,
+    /// 版本闸门：云端配置版本高于本机时非 None（同步挂起，前端显示升级引导）
+    pub version_block: Option<VersionBlock>,
 }
 
 /// 冲突检测事件 payload（pull 后发现有冲突时 emit）
@@ -243,12 +245,21 @@ impl SyncScheduler {
             log::debug!("[sync] 自动 pull 被退避抑制（失败退避中）");
             return;
         }
-        self.do_pull().await;
+        self.do_pull(false).await;
     }
 
     /// 手动触发 pull（用户显式操作，不受失败退避限制）。
-    pub async fn trigger_pull_manual(&self) {
-        self.do_pull().await;
+    ///
+    /// `force`：忽略版本闸门（用户在 UI 明确确认风险后的强制拉取）。
+    pub async fn trigger_pull_manual(&self, force: bool) {
+        self.do_pull(force).await;
+    }
+
+    /// 手动触发 push（用户显式操作，可选忽略版本闸门）。
+    ///
+    /// 与 `schedule_push`（防抖）不同：立即执行、不等待防抖窗口。
+    pub async fn trigger_push_manual(&self, force: bool) {
+        self.do_push(force).await;
     }
 
     /// 启动调度器（后台任务）。
@@ -310,7 +321,7 @@ impl SyncScheduler {
                 }
             }
 
-            self.do_push().await;
+            self.do_push(false).await;
         }
     }
 
@@ -338,7 +349,7 @@ impl SyncScheduler {
                     _ = self.ws_pull_notify.notified() => continue,
                 }
             }
-            self.do_pull().await;
+            self.do_pull(false).await;
         }
     }
 
@@ -398,7 +409,9 @@ impl SyncScheduler {
     /// 顺序：先 pull（合并远端、暴露冲突）再 push。
     /// 避免「本机直接推 → 对端再 pull 才发现冲突 → 双端都弹窗」。
     /// 若 pull 后已有待解决冲突，则中止本次 push，等用户处理。
-    async fn do_push(&self) {
+    ///
+    /// `force`：忽略版本闸门（用户在 UI 明确确认风险后的手动推送）。
+    async fn do_push(&self, force: bool) {
         let _lock = self.operation_lock.lock().await;
 
         let api_key = {
@@ -417,10 +430,16 @@ impl SyncScheduler {
         self.update_state_and_emit(SyncState::Pulling, None, None);
         match self
             .engine
-            .pull_with_accessor(&self.client, &api_key, None)
+            .pull_with_accessor(&self.client, &api_key, None, force)
             .await
         {
             Ok(_) => {
+                // 版本闸门：云端配置版本更高 → 不推送本地（旧结构）数据
+                if !force && self.engine.version_block().is_some() {
+                    self.update_state_and_emit(SyncState::Idle, None, None);
+                    log::info!("[sync] 版本闸门：云端配置版本更高，跳过本次 push");
+                    return;
+                }
                 if self.engine.has_pending_conflicts() {
                     self.update_state_and_emit(SyncState::Idle, None, None);
                     self.emit_conflicts_detected();
@@ -436,10 +455,35 @@ impl SyncScheduler {
 
         // 2) push
         self.update_state_and_emit(SyncState::Pushing, None, None);
-        let result = self.engine.push_with_accessor(&self.client, &api_key).await;
+        let result = self
+            .engine
+            .push_with_accessor(&self.client, &api_key, force)
+            .await;
 
         match result {
-            Ok(_) => {
+            Ok(resp) => {
+                // push 被服务端拒绝（版本过低）：说明服务端已有更新的值（通常是
+                // 对端先推了同 key 更高版本）。静默 pending 会让「待同步 N」永远挂着，
+                // 且两端配置无法收敛——立即补一轮 pull 把更新的值拉下来合并。
+                if !resp.rejected.is_empty() {
+                    let keys: Vec<&str> = resp.rejected.iter().map(|r| r.key.as_str()).collect();
+                    log::warn!(
+                        "[sync] push 被服务端拒绝 {} 个 key（版本过低）：{:?}，补一轮 pull 合并远端值",
+                        keys.len(),
+                        keys
+                    );
+                    drop(resp);
+                    if let Err(e) = self
+                        .engine
+                        .pull_with_accessor(&self.client, &api_key, None, force)
+                        .await
+                    {
+                        log::warn!("[sync] 补拉失败：{}", e);
+                    }
+                    if self.engine.has_pending_conflicts() {
+                        self.emit_conflicts_detected();
+                    }
+                }
                 let pending = self.engine.pending_count();
                 log::debug!("[sync] push 完成（耗时 {:?}）", started.elapsed());
                 self.update_state_and_emit(SyncState::Idle, None, None);
@@ -454,7 +498,12 @@ impl SyncScheduler {
     }
 
     /// 执行 pull 操作。
-    async fn do_pull(&self) {
+    ///
+    /// `force`：忽略版本闸门（用户在 UI 明确确认风险后的手动拉取）。
+    /// 注意：即使处于版本闸门状态，pull 仍会照常发起（闸门在引擎内
+    /// peek-after-fetch、apply-before 拦截），否则无法感知"云端版本降回/本机
+    /// 升级完成"而自动恢复同步。
+    async fn do_pull(&self, force: bool) {
         // PullGuard：已有 pull 在执行（或排队等待）时直接跳过，防止排队 pull 风暴。
         // guard 先于 operation_lock 声明：drop 顺序逆序 → 锁先释放、标志后复位，
         // 下一个 pull 在无锁竞争时启动。
@@ -510,7 +559,7 @@ impl SyncScheduler {
 
         let result = self
             .engine
-            .pull_with_accessor(&self.client, &api_key, Some(&progress_cb))
+            .pull_with_accessor(&self.client, &api_key, Some(&progress_cb), force)
             .await;
 
         match result {
@@ -590,6 +639,7 @@ impl SyncScheduler {
                 pending_count: self.engine.pending_count(),
                 error,
                 progress,
+                version_block: self.engine.version_block(),
             };
             let _ = handle.emit("sync-state-changed", &payload);
         }

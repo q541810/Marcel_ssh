@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS devices (
     sync_profile TEXT NOT NULL DEFAULT '{}',
     api_key_hash TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
+    app_version TEXT,
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
 
@@ -72,7 +73,16 @@ class Database:
         await self._conn.execute("PRAGMA journal_mode = WAL")
 
         await self._conn.executescript(SCHEMA_SQL)
+        await self._migrate()
         await self._conn.commit()
+
+    async def _migrate(self) -> None:
+        """存量库增量迁移（幂等）。新建库由 SCHEMA_SQL 直接建全列，无需迁移。"""
+        # v1.2.1：devices.app_version —— 版本闸门（记录每台设备的客户端版本号）
+        cursor = await self._conn.execute("PRAGMA table_info(devices)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "app_version" not in columns:
+            await self._conn.execute("ALTER TABLE devices ADD COLUMN app_version TEXT")
 
     async def close(self) -> None:
         if self._conn:

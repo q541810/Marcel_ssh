@@ -42,6 +42,7 @@ class DeviceManager:
         self,
         account_id: str,
         request: DeviceRegisterRequest,
+        app_version: str | None = None,
     ) -> DeviceRegisterResponse:
         """为新设备生成 API Key 并注册。
 
@@ -78,8 +79,8 @@ class DeviceManager:
 
         try:
             await self._db.execute(
-                """INSERT INTO devices (id, account_id, platform, sync_profile, api_key_hash, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO devices (id, account_id, platform, sync_profile, api_key_hash, last_seen_at, app_version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     request.device_id,
                     account_id,
@@ -87,6 +88,7 @@ class DeviceManager:
                     sync_profile_json,
                     api_key_hash,
                     now,
+                    app_version,
                 ),
             )
         except aiosqlite.IntegrityError as e:
@@ -123,7 +125,7 @@ class DeviceManager:
 
     async def get_devices(self, account_id: str) -> list[DeviceInfoResponse]:
         rows = await self._db.fetchall(
-            "SELECT id, platform, sync_profile, last_seen_at FROM devices WHERE account_id = ?",
+            "SELECT id, platform, sync_profile, last_seen_at, app_version FROM devices WHERE account_id = ?",
             (account_id,),
         )
         return [
@@ -132,9 +134,23 @@ class DeviceManager:
                 platform=row["platform"],
                 sync_profile=json.loads(row["sync_profile"]),
                 last_seen_at=row["last_seen_at"],
+                app_version=row["app_version"],
             )
             for row in rows
         ]
+
+    async def get_max_app_version(self, account_id: str) -> str | None:
+        """获取账户内所有设备已上报的最高客户端版本号。
+
+        仅统计带有效版本号的设备（旧客户端未上报 → NULL，不参与）。
+        全部未上报 / 账户无设备时返回 None。
+        """
+        rows = await self._db.fetchall(
+            "SELECT app_version FROM devices WHERE account_id = ? AND app_version IS NOT NULL",
+            (account_id,),
+        )
+        from versioning import max_version
+        return max_version([row["app_version"] for row in rows])
 
     async def get_sync_profile(self, device_id: str) -> dict | None:
         """获取设备的 sync_profile。"""

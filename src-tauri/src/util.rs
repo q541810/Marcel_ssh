@@ -112,6 +112,40 @@ fn percent_decode_lossy(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+// ── 版本号解析与比较（同步版本闸门 / 插件 minAppVersion 共用） ────────
+
+/// 解析点分隔的纯数字版本号（如 "1.2.0" → vec![1, 2, 0]）。
+/// 任一段不是纯数字 → None（"1.10.0" 与 "1.2.0" 必须按数值逐段比，字典序会错）。
+pub(crate) fn parse_version_parts(s: &str) -> Option<Vec<u64>> {
+    s.split('.')
+        .map(|seg| seg.trim().parse::<u64>().ok())
+        .collect()
+}
+
+/// 比较两个点分隔数字版本号：-1 = a<b，0 = 相等，1 = a>b，格式非法 = None。
+/// 缺失段按 0 处理（"1.7" == "1.7.0"）。
+pub(crate) fn compare_versions(a: &str, b: &str) -> Option<i32> {
+    let a_parts = parse_version_parts(a)?;
+    let b_parts = parse_version_parts(b)?;
+    let len = a_parts.len().max(b_parts.len());
+    for i in 0..len {
+        let av = a_parts.get(i).copied().unwrap_or(0);
+        let bv = b_parts.get(i).copied().unwrap_or(0);
+        if av < bv {
+            return Some(-1);
+        }
+        if av > bv {
+            return Some(1);
+        }
+    }
+    Some(0)
+}
+
+/// `remote` 是否严格高于 `local`（任一版本非法 → false，不误伤）。
+pub(crate) fn is_newer_version(remote: &str, local: &str) -> bool {
+    matches!(compare_versions(remote, local), Some(1))
+}
+
 /// Android：通过 ContentResolver 查询 content:// URI 的 DISPLAY_NAME。
 /// 任何 JNI 失败都返回 None（调用方回退到 URI 段解析），不 panic、不留 pending exception。
 #[cfg(target_os = "android")]
@@ -374,5 +408,43 @@ mod tests {
             Some("5678".to_string())
         );
         assert_eq!(content_uri_fallback_name(""), None);
+    }
+
+    // ──────────── 版本号比较 ────────────
+
+    #[test]
+    fn compare_versions_equal() {
+        assert_eq!(compare_versions("1.2.0", "1.2.0"), Some(0));
+        // 缺失段按 0 补齐
+        assert_eq!(compare_versions("1.7", "1.7.0"), Some(0));
+    }
+
+    #[test]
+    fn compare_versions_ordering() {
+        assert_eq!(compare_versions("1.0.1", "1.0.0"), Some(1));
+        // 字典序会把 "1.10.0" 排在 "1.2.0" 前面，数值比较必须正确
+        assert_eq!(compare_versions("1.10.0", "1.9.9"), Some(1));
+        assert_eq!(compare_versions("2.0", "1.99.99"), Some(1));
+        assert_eq!(compare_versions("1.0.0", "1.0.1"), Some(-1));
+        assert_eq!(compare_versions("1.9.9", "1.10.0"), Some(-1));
+        assert_eq!(compare_versions("1.2.0", "1.2.1"), Some(-1));
+    }
+
+    #[test]
+    fn compare_versions_malformed() {
+        assert_eq!(compare_versions("abc", "1.0.0"), None);
+        assert_eq!(compare_versions("1.x", "1.0.0"), None);
+        assert_eq!(compare_versions("", "1.0.0"), None);
+    }
+
+    #[test]
+    fn is_newer_version_basic() {
+        assert!(is_newer_version("1.2.1", "1.2.0"));
+        assert!(is_newer_version("1.10.0", "1.2.0"));
+        assert!(!is_newer_version("1.2.1", "1.2.1"));
+        assert!(!is_newer_version("1.2.0", "1.2.1"));
+        // 任一版本非法 → 不算更新（不误伤）
+        assert!(!is_newer_version("junk", "1.2.0"));
+        assert!(!is_newer_version("1.2.1", "junk"));
     }
 }

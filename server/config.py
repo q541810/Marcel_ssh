@@ -96,6 +96,9 @@ class ServerConfig:
     # 维护任务
     cleanup_empty_accounts_enabled: bool = True
     cleanup_empty_accounts_hour: int = 4  # UTC 小时，0-23
+    # 版本闸门阈值：账户内已有 >= 此版本的设备写入过数据时，
+    # 拒绝低于此版本的客户端同步（v1.2.1 对模型渠道配置做了大改）
+    min_sync_app_version: str = "1.2.1"
 
     @property
     def is_hosted(self) -> bool:
@@ -199,6 +202,13 @@ def load_config(config_path: str | None = None) -> ServerConfig:
         logger.warning("[maintenance].cleanup_empty_accounts_hour=%s 超出 0-23，回退默认 4", cleanup_hour)
         cleanup_hour = 4
 
+    # 版本闸门阈值：配置非法（解析不出数字版本号）时回退默认，不阻断启动
+    min_sync_app_version = str(_get(raw, "server", "min_sync_app_version", "1.2.1", str)).strip()
+    from versioning import parse_version
+    if parse_version(min_sync_app_version) is None:
+        logger.error("[server].min_sync_app_version=%r 不是合法版本号，回退默认 1.2.1", min_sync_app_version)
+        min_sync_app_version = "1.2.1"
+
     return ServerConfig(
         hosted_mode=hosted,
         db_path=db_path,
@@ -218,4 +228,5 @@ def load_config(config_path: str | None = None) -> ServerConfig:
         admin_ip_whitelist=admin_ip_whitelist,
         cleanup_empty_accounts_enabled=cleanup_enabled,
         cleanup_empty_accounts_hour=cleanup_hour,
+        min_sync_app_version=min_sync_app_version,
     )

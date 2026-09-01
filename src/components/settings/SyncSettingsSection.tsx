@@ -36,14 +36,14 @@ const CATEGORY_LABELS: Record<SyncCategory, { label: string; description: string
   },
   conversations: { label: '对话历史', description: '同步对话 + 消息 + plans（不含图片）' },
   terminalSettings: { label: '终端设置', description: '颜色 / 字号 / 字体' },
-  modelService: { label: '模型服务', description: 'baseUrl / model / vision / 重试策略' },
+  modelService: { label: '模型服务', description: '多渠道 / 模型 / 场景槽位 / 上下文窗口' },
   agentPolicy: { label: 'Agent 策略', description: '命令确认 / 超时 / 系统提示词等' },
   displaySettings: { label: '对话显示', description: '隐藏思考过程等展示偏好' },
   agentTools: {
     label: 'Agent 工具',
     description: '联网搜索 / HTTP 抓取 / 云页面开关，及搜索模式、提供商',
   },
-  secrets: { label: 'API Key', description: '同步 LLM API Key 与搜索 API Key（敏感，默认关闭）', sensitive: true },
+  secrets: { label: 'API Key', description: '同步各渠道 LLM API Key 与搜索 API Key（敏感，默认关闭）', sensitive: true },
 };
 
 export function SyncSettingsSection() {
@@ -81,6 +81,10 @@ export function SyncSettingsSection() {
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 版本闸门：手动同步前的风险确认（'push' | 'pull' | null）
+  const [forceSyncConfirm, setForceSyncConfirm] = useState<'push' | 'pull' | null>(null);
+  const [forceSyncLoading, setForceSyncLoading] = useState(false);
 
   // 设置一条引导提示，5 秒后自动消失。重复调用会重置计时器。
   const showHint = (text: string) => {
@@ -227,6 +231,39 @@ export function SyncSettingsSection() {
   }
 
   const configured = summary?.configured ?? false;
+  const versionBlock = summary?.versionBlock ?? null;
+
+  // 手动同步：版本闸门命中时先弹风险确认，用户明确坚持才带 force 执行
+  const handleManualPush = () => {
+    if (versionBlock) {
+      setForceSyncConfirm('push');
+      return;
+    }
+    void pushNow();
+  };
+
+  const handleManualPull = () => {
+    if (versionBlock) {
+      setForceSyncConfirm('pull');
+      return;
+    }
+    void pullNow();
+  };
+
+  const handleForceSync = async () => {
+    const action = forceSyncConfirm;
+    if (!action) return;
+    setForceSyncLoading(true);
+    try {
+      if (action === 'push') await pushNow(true);
+      else await pullNow(true);
+      setForceSyncConfirm(null);
+    } catch {
+      // 错误已在 syncStore.error 展示
+    } finally {
+      setForceSyncLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -249,6 +286,39 @@ export function SyncSettingsSection() {
           >
             我已了解
           </Button>
+        </div>
+      </Modal>
+
+      {/* 版本闸门：强制同步风险确认（用户明确坚持才放行一次） */}
+      <Modal
+        open={forceSyncConfirm !== null}
+        onClose={() => setForceSyncConfirm(null)}
+        title="确定要强制同步吗？"
+        size="sm"
+      >
+        <div className="px-4 pb-4 space-y-4">
+          <div className="rounded-lg border border-amber-800 bg-amber-900/20 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span className="text-sm font-medium text-amber-200">
+                注意，你的客户端版本号低于云端配置的客户端版本号
+              </span>
+            </div>
+            <p className="text-xs leading-relaxed text-amber-400/80">
+              这很可能导致你的数据损坏，请不要这么做，除非你知道你在做什么。
+              {versionBlock && (
+                <>本机 v{versionBlock.localVersion}，云端 v{versionBlock.cloudVersion}。</>
+              )}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="danger" loading={forceSyncLoading} onClick={() => void handleForceSync()}>
+              仍要{forceSyncConfirm === 'push' ? '推送' : '拉取'}
+            </Button>
+            <Button variant="ghost" onClick={() => setForceSyncConfirm(null)}>
+              取消
+            </Button>
+          </div>
         </div>
       </Modal>
 
@@ -484,6 +554,23 @@ export function SyncSettingsSection() {
       {/* 已配置：状态 + profile + 设备列表 */}
       {configured && summary && (
         <>
+          {/* 版本闸门警告：云端配置版本更高，自动同步已挂起 */}
+          {summary.versionBlock && (
+            <div className="rounded-lg border border-amber-800 bg-amber-900/20 px-4 py-3 flex items-start gap-3">
+              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 space-y-1">
+                <p className="text-sm font-medium text-amber-200">
+                  同步已暂停：云端配置的客户端版本号高于本机
+                </p>
+                <p className="text-xs leading-relaxed text-amber-400/80">
+                  本机 v{summary.versionBlock.localVersion}，云端
+                  v{summary.versionBlock.cloudVersion}。低版本客户端应用新格式数据后可能损坏配置，
+                  自动同步已挂起。升级本应用到 v{summary.versionBlock.cloudVersion} 及以上后将自动恢复。
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* 状态摘要 */}
           <Card id={SECTION_ID} title="跨设备同步" description={`服务器：${summary.serverUrl ?? '未设置'}`}>
             <SettingItem
@@ -494,12 +581,12 @@ export function SyncSettingsSection() {
               keywords={['status', 'state', '同步状态']}
             >
               <div className="flex items-center gap-2">
-                <SyncStateBadge state={summary.state} />
-                <Button variant="secondary" onClick={() => pushNow()} disabled={summary.state === 'pushing'}>
+                <SyncStateBadge state={summary.state} paused={!!summary.versionBlock} />
+                <Button variant="secondary" onClick={handleManualPush} disabled={summary.state === 'pushing'}>
                   <RefreshCw className={`w-4 h-4 ${summary.state === 'pushing' ? 'animate-spin' : ''}`} />
                   推送
                 </Button>
-                <Button variant="secondary" onClick={() => pullNow()} disabled={summary.state === 'pulling'}>
+                <Button variant="secondary" onClick={handleManualPull} disabled={summary.state === 'pulling'}>
                   <RefreshCw className={`w-4 h-4 ${summary.state === 'pulling' ? 'animate-spin' : ''}`} />
                   {summary.state === 'pulling' &&
                   summary.progress &&
@@ -587,7 +674,7 @@ export function SyncSettingsSection() {
                   key={d.deviceId}
                   id={`sync-device-${d.deviceId}`}
                   label={d.platform === 'desktop' ? '桌面端' : '移动端'}
-                  description={`最后活跃：${new Date(d.lastSeenAt).toLocaleString()}`}
+                  description={`最后活跃：${new Date(d.lastSeenAt).toLocaleString()}${d.appVersion ? ` · v${d.appVersion}` : ''}`}
                   sectionId="settings-sync-devices"
                   keywords={['device', '设备', d.platform]}
                 >
@@ -685,7 +772,7 @@ export function SyncSettingsSection() {
 }
 
 /** 同步状态徽章 */
-function SyncStateBadge({ state }: { state: string }) {
+function SyncStateBadge({ state, paused }: { state: string; paused?: boolean }) {
   const config: Record<string, { label: string; color: string; dot?: boolean }> = {
     idle: { label: '已同步', color: 'text-emerald-400 bg-emerald-900/20 border-emerald-800' },
     pushing: { label: '推送中', color: 'text-indigo-300 bg-indigo-900/20 border-indigo-800', dot: true },
@@ -693,7 +780,11 @@ function SyncStateBadge({ state }: { state: string }) {
     error: { label: '错误', color: 'text-red-300 bg-red-900/20 border-red-800' },
     notConfigured: { label: '未配置', color: 'text-zinc-400 bg-zinc-800 border-zinc-700' },
   };
-  const c = config[state] ?? config.notConfigured;
+  // 版本闸门命中：空闲态显示"已暂停"而非"已同步"，避免误导
+  const c =
+    paused && (state === 'idle' || state === 'error')
+      ? { label: '同步已暂停', color: 'text-amber-300 bg-amber-900/20 border-amber-800' }
+      : config[state] ?? config.notConfigured;
   return (
     <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border ${c.color}`}>
       {c.dot && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}

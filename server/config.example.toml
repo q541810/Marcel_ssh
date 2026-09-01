@@ -37,6 +37,13 @@ account_quota_bytes = 0
 # 例：["https://app.marcel.example", "https://mobile.marcel.example"]
 cors_origins = ["*"]
 
+# 版本闸门阈值。账户内已有 >= 此版本的设备写入过数据时，
+# 服务端拒绝低于此版本的客户端进行 push/pull/snapshot 同步（直接返回 403），
+# 防止旧版客户端反序列化丢字段后把新格式配置啃坏。
+# 客户端通过 X-App-Version header 上报版本；未上报的旧客户端按低于阈值处理。
+# 每次数据结构大版本迁移后调高此值即可，无需改代码。
+min_sync_app_version = "1.2.1"
+
 # ── WebSocket ─────────────────────────────────────────
 [websocket]
 ping_interval = 20   # ping 间隔（秒）

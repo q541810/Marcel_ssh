@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::sync::client::SyncClient;
 use crate::sync::config_code;
 use crate::sync::crypto;
-use crate::sync::engine::{ConflictAction, ResolveOutcome};
+use crate::sync::engine::{ConflictAction, ResolveOutcome, VersionBlock};
 use crate::sync::keychain as sync_keychain;
 use crate::sync::profile::{Platform, SyncProfile};
 use crate::sync::scheduler::{SyncProgress, SyncState};
@@ -35,6 +35,8 @@ pub struct SyncSummary {
     pub error: Option<String>,
     /// pull 进度（pulling 时非 None）
     pub progress: Option<SyncProgress>,
+    /// 版本闸门：云端配置版本高于本机时非 None（自动同步挂起，前端显示升级引导）
+    pub version_block: Option<VersionBlock>,
 }
 
 #[derive(Debug, Serialize)]
@@ -60,6 +62,8 @@ pub struct SyncDeviceInfoDto {
     pub device_id: String,
     pub platform: String,
     pub last_seen_at: String,
+    /// 客户端版本号（设备上报）；旧服务端 / 未上报为 None
+    pub app_version: Option<String>,
 }
 
 /// 账户配额使用情况（camelCase，与前端 SyncQuota 对齐）
@@ -111,6 +115,11 @@ pub async fn sync_get_summary(state: State<'_, AppState>) -> Result<SyncSummary,
         None => 0,
     };
 
+    let version_block = match state.sync_engine.as_ref() {
+        Some(engine) => engine.version_block(),
+        None => None,
+    };
+
     Ok(SyncSummary {
         configured,
         server_url,
@@ -121,6 +130,7 @@ pub async fn sync_get_summary(state: State<'_, AppState>) -> Result<SyncSummary,
         pending_count,
         error: last_error,
         progress,
+        version_block,
     })
 }
 
@@ -393,19 +403,27 @@ pub async fn sync_update_profile(
 }
 
 /// 手动触发 push。
+///
+/// `force`：true = 忽略版本闸门（用户在 UI 明确确认风险后的强制推送）。
 #[tauri::command]
-pub async fn sync_push_now(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn sync_push_now(state: State<'_, AppState>, force: Option<bool>) -> Result<(), AppError> {
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
-        scheduler.schedule_push();
+        if force.unwrap_or(false) {
+            scheduler.trigger_push_manual(true).await;
+        } else {
+            scheduler.schedule_push();
+        }
     }
     Ok(())
 }
 
 /// 手动触发 pull（用户显式操作，不受失败退避限制）。
+///
+/// `force`：true = 忽略版本闸门（用户在 UI 明确确认风险后的强制拉取）。
 #[tauri::command]
-pub async fn sync_pull_now(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn sync_pull_now(state: State<'_, AppState>, force: Option<bool>) -> Result<(), AppError> {
     if let Some(scheduler) = state.sync_scheduler.as_ref() {
-        scheduler.trigger_pull_manual().await;
+        scheduler.trigger_pull_manual(force.unwrap_or(false)).await;
     }
     Ok(())
 }
@@ -433,6 +451,7 @@ pub async fn sync_list_devices(
             device_id: d.device_id,
             platform: d.platform,
             last_seen_at: d.last_seen_at,
+            app_version: d.app_version,
         })
         .collect())
 }

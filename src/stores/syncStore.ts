@@ -103,10 +103,10 @@ interface SyncStoreActions {
   pairJoin: (serverUrl: string, configCode: string, password: string) => Promise<void>;
   /** 更新 sync_profile */
   updateProfile: (profile: SyncProfile) => Promise<void>;
-  /** 手动 push */
-  pushNow: () => Promise<void>;
-  /** 手动 pull */
-  pullNow: () => Promise<void>;
+  /** 手动 push（force = 忽略版本闸门，仅在用户确认风险后传 true） */
+  pushNow: (force?: boolean) => Promise<void>;
+  /** 手动 pull（force = 忽略版本闸门，仅在用户确认风险后传 true） */
+  pullNow: (force?: boolean) => Promise<void>;
   /** 刷新设备列表 */
   refreshDevices: () => Promise<void>;
   /** 删除某设备 */
@@ -263,9 +263,9 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     }
   },
 
-  async pushNow() {
+  async pushNow(force?: boolean) {
     try {
-      await syncPushNow();
+      await syncPushNow(force);
       // push 会改变服务端存储用量，推送后刷新配额（失败静默：旧服务端无此端点时保持旧值）
       try {
         const quota = await syncGetQuota();
@@ -279,9 +279,9 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     }
   },
 
-  async pullNow() {
+  async pullNow(force?: boolean) {
     try {
-      await syncPullNow();
+      await syncPullNow(force);
     } catch (e) {
       set({ error: getErrorMessage(e) });
       throw e;
@@ -337,7 +337,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
     if (get()._unlisten) return;
 
     try {
-      // 1. 监听同步状态变更（pushing/pulling/idle/error + pull 进度）
+      // 1. 监听同步状态变更（pushing/pulling/idle/error + pull 进度 + 版本闸门）
       const unlisten = await listen<SyncStateEvent>('sync-state-changed', (event) => {
         const payload = event.payload;
         const summary = get().summary;
@@ -349,6 +349,7 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
               pendingCount: payload.pendingCount,
               error: payload.error,
               progress: payload.progress ?? null,
+              versionBlock: payload.versionBlock ?? null,
             },
           });
         }

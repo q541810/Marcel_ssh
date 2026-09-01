@@ -79,6 +79,7 @@ class AuthManager:
         device_id: str,
         platform: str,
         sync_profile: dict,
+        app_version: str | None = None,
     ) -> None:
         """第一台设备注册账户 + 注册设备。事务性操作。
 
@@ -104,9 +105,9 @@ class AuthManager:
                     (config_code_hash, encrypted_sync_key, now),
                 )
                 await conn.execute(
-                    """INSERT INTO devices (id, account_id, platform, sync_profile, api_key_hash, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (device_id, config_code_hash, platform, json.dumps(sync_profile), api_key_hash, now),
+                    """INSERT INTO devices (id, account_id, platform, sync_profile, api_key_hash, last_seen_at, app_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (device_id, config_code_hash, platform, json.dumps(sync_profile), api_key_hash, now, app_version),
                 )
                 await conn.commit()
             except aiosqlite.IntegrityError:
@@ -151,11 +152,16 @@ class AuthManager:
             await conn.commit()
             return cursor.rowcount
 
-    async def verify_api_key(self, api_key: str) -> tuple[str, str] | None:
+    async def verify_api_key(
+        self,
+        api_key: str,
+        app_version: str | None = None,
+    ) -> tuple[str, str] | None:
         """验证 API Key，返回 (account_id, device_id) 或 None。
 
         服务端只存 SHA-256(api_key)，验证时比对哈希。
-        同时更新设备 last_seen_at。
+        同时更新设备 last_seen_at 与 app_version（客户端通过 X-App-Version
+        header 上报；旧客户端不带该 header，传 None 时保留库中已有值）。
         """
         api_key_hash = sha256_hex(api_key)
         row = await self._db.fetchone(
@@ -165,9 +171,9 @@ class AuthManager:
         if row is None:
             return None
 
-        # 更新最后活跃时间
+        # 更新最后活跃时间 + 客户端版本（None = 旧客户端未上报，保留原值）
         await self._db.execute(
-            "UPDATE devices SET last_seen_at = ? WHERE id = ?",
-            (now_iso(), row["device_id"]),
+            "UPDATE devices SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE id = ?",
+            (now_iso(), app_version, row["device_id"]),
         )
         return row["account_id"], row["device_id"]

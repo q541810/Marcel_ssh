@@ -102,6 +102,9 @@ pub struct DeviceInfoResponse {
     pub platform: String,
     pub sync_profile: serde_json::Value,
     pub last_seen_at: String,
+    /// 客户端版本号（设备上报）；旧服务端 / 未上报为 None
+    #[serde(default)]
+    pub app_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,12 +147,19 @@ pub struct PullRequest {
 pub struct PullResponse {
     pub items: Vec<SyncItem>,
     pub latest_versions: std::collections::HashMap<String, i64>,
+    /// 账户内设备已上报的最高客户端版本号（版本闸门用）。
+    /// 旧服务端无此字段 → serde default None → 闸门不生效（向前兼容）。
+    #[serde(default)]
+    pub max_app_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SnapshotResponse {
     pub items: Vec<SyncItem>,
     pub total_size: i64,
+    /// 账户内设备已上报的最高客户端版本号（版本闸门用）；旧服务端为 None
+    #[serde(default)]
+    pub max_app_version: Option<String>,
 }
 
 /// 账户配额使用情况（GET /api/account/quota）
@@ -179,9 +189,18 @@ struct QuotaExceededDetail {
 impl SyncClient {
     /// 创建客户端。base_url 应形如 `https://ssh.neopig.top` 或 `http://192.168.1.100:8787`。
     pub fn new(base_url: &str) -> Result<Self, AppError> {
+        // 所有请求默认带上本机应用版本号（X-App-Version）：
+        // 服务端记录到 devices.app_version，用于版本闸门（云端有更高版本时
+        // 拒绝过低版本客户端同步）与设备列表版本展示。
+        let mut default_headers = reqwest::header::HeaderMap::new();
+        if let Ok(hv) = reqwest::header::HeaderValue::from_str(super::engine::SyncEngine::local_app_version()) {
+            default_headers.insert("x-app-version", hv);
+        }
+
         let http = reqwest::Client::builder()
             .timeout(DEFAULT_TIMEOUT)
             .connect_timeout(CONNECT_TIMEOUT)
+            .default_headers(default_headers)
             .build()
             .map_err(|e| AppError::Config(format!("HTTP 客户端初始化失败：{}", e)))?;
 
