@@ -6,7 +6,6 @@ import MobileAgentHost from './MobileAgentHost';
 import MobileFilesHost from './MobileFilesHost';
 import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
-import MobileSyncConflictSheet from './MobileSyncConflictSheet';
 import MobileUpdateToast from './MobileUpdateToast';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
@@ -204,7 +203,6 @@ export default function MobileApp() {
         <MobileOnboarding onComplete={handleOnboardingComplete} />
       )}
 
-      <MobileSyncConflictSheet />
       <MobileStarPromptSheet />
       <MobileGlobalInteractionOverlay />
     </div>

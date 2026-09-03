@@ -6,7 +6,6 @@ import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
 import { ModelServiceSection } from './ModelServiceSection';
 import { NotificationSection } from './NotificationSection';
-import { SyncSettingsSection } from './SyncSettingsSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
@@ -65,7 +64,6 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-about', element: <AboutSection /> },
     { id: 'settings-plugins', element: <PluginSection /> },
     { id: 'settings-market', element: <MarketSection /> },
-    { id: 'settings-sync', element: <SyncSettingsSection /> },
   ];
   // 搜索时渲染全部 Section（隐藏不匹配的），确保所有 SettingItem 注册到搜索索引；
   // 非搜索时只渲染当前分类，零额外开销。

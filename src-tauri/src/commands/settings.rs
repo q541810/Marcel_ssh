@@ -100,11 +100,24 @@ pub async fn config_save_settings(
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<(), AppError> {
-    // 兜底迁移（理论上前端不会再带旧字段，防御 sync/旧端数据）
+    // 兜底迁移（理论上前端不会再带旧字段，防御旧端/历史数据）
     let mut candidate = settings;
     migrate_legacy_settings(&mut candidate);
 
-    // 校验多渠道配置（含渠道重试参数与引用完整性）
+    // 自愈兜底：去重同 id 重复模型（历史「保存渠道」合并 bug 可能仍让前端
+    // 内存里带重复条目；先去重再校验，避免合法保存被重复数据拦住）
+    if candidate.llm_registry.dedupe_duplicate_models() {
+        log::warn!("保存设置前检测到重复模型记录（同 id），已自动去重");
+    }
+
+    // 自愈兜底：归一化思考强度档位（trim + 丢空 + 去重）。旧数据可能携带
+    // 首尾空格档位，会令任务注入（原始值全等比较）匹配失败而被静默忽略；
+    // 归一后再校验，使「展示、持久化、注入」三处语义一致。
+    if candidate.llm_registry.normalize_reasoning_efforts() {
+        log::warn!("保存设置前检测到思考强度档位含空格/重复/空项，已自动归一化");
+    }
+
+    // 校验多渠道配置（含渠道重试参数、引用完整性与模型 ID 唯一性）
     candidate.llm_registry.validate()?;
 
     // 密钥链写入：每个渠道独立。掩码/空值 = 保留旧 key（不写）。
@@ -148,34 +161,6 @@ pub async fn config_save_settings(
     *store = candidate.clone();
     let snapshot = candidate;
     drop(store);
-
-    // 触发跨设备同步：settings 字段级 diff + 渠道密钥 secrets
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            // 渠道密钥：新提供真实 key 的渠道单独同步；被删渠道删除同步
-            for channel in &snapshot.llm_registry.channels {
-                if !channel.api_key.is_empty() && !is_masked_key(&channel.api_key) {
-                    let _ = engine.record_local_change(
-                        &format!("secrets.llmChannel.{}", channel.id),
-                        &channel.api_key,
-                    );
-                }
-            }
-            let new_json = serde_json::to_value(&snapshot).unwrap_or(serde_json::Value::Null);
-            // 对每个字段路径 diff，变更的 bump 版本
-            for field_path in crate::sync::settings_field::all_field_paths() {
-                let sync_key = format!("settings.{}", field_path);
-                let new_field = crate::sync::settings_field::get_field(&new_json, field_path);
-                let new_field_str = new_field
-                    .as_ref()
-                    .and_then(|v| serde_json::to_string(v).ok())
-                    .unwrap_or_default();
-                // record_local_change 内部会与 last_synced_values 比对，相同则不 bump
-                let _ = engine.record_local_change(&sync_key, &new_field_str);
-            }
-            scheduler.schedule_push();
-        }
-    }
 
     // Settings changes (enable/disable plugin, authorized capabilities) may
     // affect the plugin registry. Reload and emit so the frontend can

@@ -98,7 +98,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   ) => {
     const { mode } = get();
     const conversationStore = useConversationStore.getState();
-    const vision = currentVision(useSettingsStore.getState().settings.llmRegistry);
+    // 先按全局兜底模型判断能否附图（新会话 title 需要）；ensure 拿到真实
+    // 会话后按「会话记忆 → 全局最近使用」的生效模型再精算一次。
+    const settingsStore = useSettingsStore.getState();
+    const vision = currentVision(settingsStore.settings.llmRegistry);
     const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
 
     const titleSeed = prompt.trim() || (images.length > 0 ? "[image]" : "");
@@ -108,14 +111,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       titleSeed || "新会话",
     );
 
+    // 精算：当前会话实际生效模型的视觉能力（会话记忆 → 全局最近使用）
+    const conv = useConversationStore.getState().conversations[conversationId];
+    const effectiveVision = currentVision(
+      useSettingsStore.getState().settings.llmRegistry,
+      conv?.modelId ?? null,
+    );
+    const allowedImages = effectiveVision ? (imageDataUrls ?? []).slice(0, 5) : [];
+
     const userMessageId = crypto.randomUUID();
     let imagePaths: string[] | undefined;
-    if (images.length > 0) {
+    if (allowedImages.length > 0) {
       try {
         imagePaths = await tauri.agentSaveMessageImages(
           conversationId,
           userMessageId,
-          images,
+          allowedImages,
         );
         // 新图已落盘：旧撤回路径可删（start 失败也不回滚新图）
         if (replaceImagePaths?.length) {

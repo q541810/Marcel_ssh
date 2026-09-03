@@ -5,6 +5,7 @@ import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
 import { Pencil, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
+import { useJobStore } from "@/stores/jobStore";
 import { getConversationAgentStatus, getActiveRunningTasks } from "@/stores/agentStatusSelectors";
 import { AgentStatusIndicator } from "@/components/agent/AgentStatusIndicator";
 import MobileActiveAgentsSheet from "./MobileActiveAgentsSheet";
@@ -25,6 +26,8 @@ import AgentMessageList from "@/components/agent/AgentMessageList";
 import PlanList from "@/components/agent/PlanList";
 import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
 import { ModelPicker } from "@/components/agent/ModelPicker";
+import { ReasoningEffortPicker } from "@/components/agent/ReasoningEffortPicker";
+import { effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import { registerBackHandler } from "./backHandler";
 import MobileApprovalSheet from "./MobileApprovalSheet";
 import MobileQuestionSheet from "./MobileQuestionSheet";
@@ -102,9 +105,6 @@ export default function MobileAgentHost({
   /** Connected + bound saved connection — required for conversation/task IPC. */
   const canInteract = !!ids && activeSession?.status === "connected";
   const emptyReason = agentEmptyStateReason(activeSession);
-  const visionEnabled = useSettingsStore(
-    (s) => currentVision(s.settings.llmRegistry),
-  );
 
   const {
     messages,
@@ -128,9 +128,20 @@ export default function MobileAgentHost({
     renameConversation,
     deleteConversation,
     setConversationModel,
+    setConversationEffort,
     syncActiveToConnection,
     rollbackToMessage,
   } = useAgent();
+
+  // 当前会话（含会话级模型记忆 overlay）：提前到 vision 依赖之前
+  const activeConversation = activeConversationId
+    ? (conversations[activeConversationId] ?? null)
+    : null;
+  const isSubConversation = !!activeConversation?.parentConversationId;
+  const parentConversationId = activeConversation?.parentConversationId ?? null;
+  // 图片支持按「当前会话实际生效模型」判定（会话记忆 → 全局最近使用）
+  const registry = useSettingsStore((s) => s.settings.llmRegistry);
+  const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
 
   const [modeOpen, setModeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -168,6 +179,14 @@ export default function MobileAgentHost({
     (s) => s.unreadCompletedConversations,
   );
   const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
+  // 后台作业（跨会话）：header 胶囊与任务/作业中心的显示入口依赖它——
+  // 即使没有任何运行中任务，只要本会话仍有后台作业在跑，入口就必须可见
+  //（对齐桌面 AgentPanel：runningJobs.length > 0 时也显示胶囊）。
+  const jobs = useJobStore((s) => s.jobs);
+  const runningJobs = useMemo(
+    () => Object.values(jobs).filter((j) => j.status === "running"),
+    [jobs],
+  );
 
   const sessionConversations = useMemo(
     () =>
@@ -331,11 +350,7 @@ export default function MobileAgentHost({
   }, [pendingQuestion, submitAnswer]);
 
   // 子agent对话：输入区替换为"返回主对话"条（子agent由主 Agent 停止，停止主 Agent 级联停止）
-  const activeConversation = activeConversationId
-    ? (conversations[activeConversationId] ?? null)
-    : null;
-  const isSubConversation = !!activeConversation?.parentConversationId;
-  const parentConversationId = activeConversation?.parentConversationId ?? null;
+  // （activeConversation / isSubConversation / parentConversationId 已在顶部派生）
 
   const handleBackToParent = useCallback(() => {
     if (parentConversationId) {
@@ -751,15 +766,24 @@ export default function MobileAgentHost({
         </div>
         {(runningTasks.length > 1 ||
           (runningTasks.length === 1 &&
-            runningTasks[0].conversationId !== activeConversationId)) && (
+            runningTasks[0].conversationId !== activeConversationId) ||
+          runningJobs.length > 0) && (
           <button
             type="button"
             onClick={() => setActiveAgentsSheetOpen(true)}
-            className="flex items-center gap-1 px-2 py-1 bg-indigo-500/10 active:scale-95 border border-indigo-500/30 rounded-full text-indigo-300 text-xs font-medium transition-all"
-            title="查看所有运行中的任务"
+            className={`flex items-center gap-1 px-2 py-1 active:scale-95 border rounded-full text-xs font-medium transition-all ${
+              runningJobs.length > 0
+                ? "bg-sky-500/10 border-sky-500/30 text-sky-300"
+                : "bg-indigo-500/10 border-indigo-500/30 text-indigo-300"
+            }`}
+            title="查看所有运行中的任务与后台作业"
           >
             <AgentStatusIndicator status="running" size="xs" />
-            <span>{runningTasks.length} 个运行中</span>
+            <span>
+              {runningTasks.length > 0 && `${runningTasks.length} 个任务`}
+              {runningTasks.length > 0 && runningJobs.length > 0 && " · "}
+              {runningJobs.length > 0 && `${runningJobs.length} 个作业`}
+            </span>
           </button>
         )}
         <button
@@ -1195,6 +1219,24 @@ export default function MobileAgentHost({
               disabled={!canInteract || !ids}
               compact
             />
+            {/* 思考强度选择器（仅当前生效模型声明档位时显示；compact 闪电态） */}
+            {(() => {
+              const effModel = effectiveModel(registry, activeConversation?.modelId);
+              const efforts = modelReasoningEfforts(effModel);
+              if (efforts.length === 0) return null;
+              return (
+                <ReasoningEffortPicker
+                  value={activeConversation?.reasoningEffort}
+                  efforts={efforts}
+                  onChange={(effort) => {
+                    if (!activeConversationId) return;
+                    void setConversationEffort(activeConversationId, effort);
+                  }}
+                  disabled={!canInteract || !ids}
+                  compact
+                />
+              );
+            })()}
             <div className="flex-1 min-w-2" />
             <button
               type="button"

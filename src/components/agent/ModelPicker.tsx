@@ -12,12 +12,12 @@ import {
 /**
  * 输入框内的模型选择器（桌面端 / 移动端共用）。
  *
- * 展示当前会话生效的模型：会话级选择（conversation.modelId）优先，
- * 否则回落全局默认模型（设置页「默认模型」槽位）。点按弹出模型列表，
- * 选中即写入当前会话（经 setConversationModel 持久化 + 同步）。
+ * 触发按钮始终直接显示「本会话当前生效的模型」：会话曾切过模型 → 该会话
+ * 记住上次选的（内存级）；从未切过的会话 → 自动跟随全局最后一次选择的
+ * 模型。展示不带任何"跟随/默认/最近使用"前缀——它就是当前实际在用的模型。
  *
- * 弹窗使用与移动端模式切换一致的 mobile-popover 进出场动画（两端统一）；
- * 宽度受限 viewport 防止窄屏/键盘弹出时溢出。
+ * 弹窗只列真实模型（按渠道分组），点选 = 本会话固定用它 + 顺带更新全局
+ * 最后一次选择。弹窗使用与移动端模式切换一致的进出场动画（两端统一）。
  */
 export function ModelPicker({
   value,
@@ -25,7 +25,7 @@ export function ModelPicker({
   disabled,
   compact = false,
 }: {
-  /** 当前会话的 modelId（null = 跟随全局默认）。 */
+  /** 当前会话的 modelId（null/失效 = 自动跟随全局最后选择的模型）。 */
   value: string | null | undefined;
   onChange: (modelId: string | null) => void;
   disabled?: boolean;
@@ -46,24 +46,17 @@ export function ModelPicker({
     maxHeight: number;
   } | null>(null);
 
-  const effectiveModel = value
+  // 当前生效模型：会话记忆有效用记忆；否则（无记忆/记忆失效）回落全局
+  // 最后选择的模型（lastUsed → 首个）。直接显示模型名，不带任何前缀。
+  const sessionModelValid = !!value && registry.models.some((m) => m.id === value);
+  const effectiveModel = sessionModelValid
     ? registry.models.find((m) => m.id === value)
     : effectiveDefaultModel(registry);
   // 输入框窄空间只显示模型名；仅当跨渠道有同名模型时才带「渠道名/」前缀消歧
   const triggerLabel = modelPickerTriggerLabel(registry, effectiveModel);
-  const label = value
-    ? (effectiveModel
-        ? triggerLabel
-        : '模型已失效（请重新选择）')
-    : (effectiveDefaultModel(registry)
-        ? `跟随默认 · ${triggerLabel}`
-        : '未配置模型');
-  // 紧凑模式（移动端）文字：与桌面同规则（重名消歧），替代原先的显示器图标
-  const compactLabel = effectiveModel
-    ? triggerLabel
-    : value
-      ? '已失效'
-      : '未配置';
+  const label = effectiveModel ? triggerLabel : '未配置模型';
+  // 紧凑模式（移动端）文字：与桌面同规则
+  const compactLabel = effectiveModel ? triggerLabel : '未配置';
 
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
@@ -103,13 +96,15 @@ export function ModelPicker({
   }, [open]);
 
   return (
-    <div ref={containerRef} className="relative flex-shrink-0 self-center">
+    // min-w-0 + 可收缩：工具栏空间不足时模型名随可用宽度截断让位，
+    // 而不是把后面的按钮顶出输入框（空间充裕时仍按 max-w 上限完整展示）
+    <div ref={containerRef} className="relative min-w-0 self-center">
       <button
         type="button"
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         className={`
-          flex items-center gap-1 rounded-full text-xs font-medium transition-colors
+          flex w-full min-w-0 items-center gap-1 rounded-full text-xs font-medium transition-colors
           ${
             open
               ? "bg-zinc-700 text-zinc-100"
@@ -118,15 +113,19 @@ export function ModelPicker({
           ${compact ? "px-1.5 py-1.5" : "px-2 py-1.5"}
           disabled:opacity-40 disabled:cursor-not-allowed
         `}
-        title="切换本会话使用的模型（回车后生效）"
+        title={
+          effectiveModel
+            ? `${label} · 点击切换模型`
+            : "未配置模型，请先到「设置 → 模型服务」添加"
+        }
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className={`truncate ${compact ? "max-w-[5rem]" : "max-w-[9rem]"}`}>
+        <span className={`truncate min-w-0 ${compact ? "max-w-[5rem]" : "max-w-[9rem]"}`}>
           {compact ? compactLabel : label}
         </span>
         <svg
-          className={`w-3 h-3 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -159,33 +158,6 @@ export function ModelPicker({
                 : "mobile-popover-enter"
             }`}
           >
-          {/* 跟随全局默认 */}
-          <button
-            type="button"
-            role="option"
-            aria-selected={!value}
-            onClick={() => {
-              onChange(null);
-              setOpen(false);
-            }}
-            className={`
-              w-full text-left px-3 py-2 transition-colors
-              ${!value
-                ? "bg-indigo-600/20 border-l-2 border-indigo-500"
-                : "hover:bg-zinc-700 border-l-2 border-transparent"}
-            `}
-          >
-            <div className="flex items-center justify-between">
-              <span className={`text-sm ${!value ? "text-indigo-300" : "text-zinc-200"}`}>
-                跟随全局默认
-              </span>
-              {!value && <span className="text-xs text-indigo-400">已选</span>}
-            </div>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              使用设置页「默认模型」槽位
-            </p>
-          </button>
-
           {/* 按提供商（渠道）分组的模型列表 */}
           {registry.channels.map((ch) => {
             const channelModels = registry.models.filter((m) => m.channelId === ch.id);
@@ -204,7 +176,11 @@ export function ModelPicker({
                   )}
                 </div>
                 {channelModels.map((m) => {
-                  const active = value === m.id;
+                  // 「已选」= 当前实际生效的模型（与触发按钮显示一致）：
+                  // 会话手动切过的 → 勾会话记住的那个；从未手动切过（默认
+                  // 跟随全局最近使用/首个）→ 勾自动落到的那个模型。勾选态
+                  // 只表示"正在用它"，不代表会话有手动记忆。
+                  const active = m.id === effectiveModel?.id;
                   const disabled = channelDisabled;
                   return (
                     <button
@@ -214,6 +190,8 @@ export function ModelPicker({
                       aria-selected={active}
                       disabled={disabled}
                       onClick={() => {
+                        // 点当前已在生效的模型 = 与现状一致：会话若无手动
+                        // 记忆则借此显式固定（内存级），行为不变
                         onChange(m.id);
                         setOpen(false);
                       }}
@@ -253,7 +231,10 @@ export function ModelPicker({
   );
 }
 
-/** 从 registry 解析有效模型 id（会话级优先，否则全局默认）。 */
+/**
+ * 从 registry 解析有效模型 id（会话记忆优先，否则全局最后选择/首个）。
+ * `conversationModelId` 失效（模型被删除）→ 回落全局最后选择。
+ */
 export function resolveEffectiveModelId(
   registry: LlmRegistry,
   conversationModelId: string | null | undefined,
@@ -262,7 +243,7 @@ export function resolveEffectiveModelId(
     if (registry.models.some((m) => m.id === conversationModelId)) {
       return conversationModelId;
     }
-    // 会话级模型已失效（被删除）→ 回落全局默认
+    // 会话记忆指向的模型已失效（被删除）→ 回落全局最后选择
     return effectiveDefaultModel(registry)?.id ?? null;
   }
   return effectiveDefaultModel(registry)?.id ?? null;

@@ -33,7 +33,7 @@ export default function Settings() {
   const [shellWidth, setShellWidth] = useState(1200);
   const savedNoticeTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout>>();
-  /** 上次已同步进 draft 的 store 快照；用于区分「用户本地改动」与「远端 sync 刷新 store」 */
+  /** 上次已同步进 draft 的 store 快照；用于区分「用户本地改动」与「外部 store 刷新」 */
   const lastSyncedStoreRef = useRef<AppSettings | null>(
     useSettingsStore.getState().loaded ? useSettingsStore.getState().settings : null,
   );
@@ -45,7 +45,7 @@ export default function Settings() {
     };
   }, []);
 
-  // 消费外部发起的 category 跳转意图（如 SyncStatusIndicator 点击）。
+  // 消费外部发起的 category 跳转意图（点击后跳转到设置页某个分类）。
   // 单次消费：读到立即清空，避免残留影响后续手动切换。
   useEffect(() => {
     const pending = useSettingsNavStore.getState().consume();
@@ -71,10 +71,9 @@ export default function Settings() {
     [storeSetPreview]
   );
 
-  // storeSettings 变化：初次加载 / 跨设备 sync pull 后 load(true)。
+  // storeSettings 变化：初次加载 / 外部刷新 store。
   // layout 阶段跟进，避免 paint 一帧 draft 落后 → 闪「未保存的更改」。
-  // 字段级跟进：用户未改过的顶层字段跟进 sync，改过的保留（避免远端覆盖本地编辑）。
-  // 这样当本地编辑与远端 sync 在同字段同值时，dirty 自动消失，不会误显「未保存」。
+  // 字段级跟进：用户未改过的顶层字段跟进刷新，改过的保留（避免外部覆盖本地编辑）。
   useLayoutEffect(() => {
     if (!loaded) return;
     const prevStore = lastSyncedStoreRef.current;

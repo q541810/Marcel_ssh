@@ -23,7 +23,6 @@ export type MobileSettingsCategoryId =
   | 'agent-tools'
   | 'commands-skills'
   | 'notification-background'
-  | 'sync'
   | 'about';
 
 export interface MobileSettingsCategory {
@@ -62,11 +61,6 @@ export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
     id: 'notification-background',
     title: '通知与后台',
     description: 'Agent 事件提醒与后台保活（仅 Android）',
-  },
-  {
-    id: 'sync',
-    title: '跨设备同步',
-    description: '自动同步配置与聊天记录',
   },
   {
     id: 'about',

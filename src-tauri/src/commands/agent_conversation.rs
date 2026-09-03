@@ -54,17 +54,109 @@ pub async fn agent_create_conversation(
     Ok(conversation.id)
 }
 
+/// 解析会话当前「生效模型 id」：会话级模型记忆（session_models，须仍存在
+/// 于注册表）优先；无记忆/记忆失效 → 全局最近使用（last_used_model_id，仍
+/// 存在时）→ 注册表第一个模型；完全无模型 → None。
+/// 语义与前端 `effectiveModel`/`effectiveDefaultModel` 完全一致。
+fn effective_model_id(
+    registry: &crate::llm::registry::LlmRegistry,
+    session_models: &std::collections::HashMap<String, String>,
+    conv_id: &str,
+) -> Option<String> {
+    if let Some(mid) = session_models.get(conv_id).filter(|s| !s.is_empty()) {
+        if registry.find_model(mid).is_some() {
+            return Some(mid.clone());
+        }
+    }
+    if !registry.last_used_model_id.is_empty() {
+        if registry.find_model(&registry.last_used_model_id).is_some() {
+            return Some(registry.last_used_model_id.clone());
+        }
+    }
+    registry.models.first().map(|m| m.id.clone())
+}
+
+/// 会话当前生效模型的思考档位：`session_efforts[conv][生效模型 id]`。
+/// 无记忆/空档位 = None（跟随模型自身默认，不注入 reasoning_effort）。
+fn effort_for_model<'a>(
+    efforts: &'a std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    conv_id: &str,
+    eff_model_id: Option<&str>,
+) -> Option<String> {
+    let eff = eff_model_id?;
+    efforts
+        .get(conv_id)
+        .and_then(|m| m.get(eff))
+        .filter(|s| !s.is_empty())
+        .cloned()
+}
+
+/// 把会话级模型记忆 / 思考强度记忆（内存）覆盖到会话元数据上返回给前端。
+///
+/// DB 的 `Conversation.model_id` 列已停用（启动迁移后清空），但前端 UI
+/// 仍从 `conversations[id].modelId` 读取会话当前模型。
+/// 这里统一用内存 `session_models` / `session_efforts` 覆盖该字段（有记忆 =
+/// 记忆值；无记忆 = None = 跟随全局最近使用 / 模型默认），保证前端所有
+/// 读取点语义与后端路由完全一致，且 DB 列保持干净。
+/// `reasoningEffort` 语义：**当前生效模型**的档位（会话×模型 双维记忆里
+/// 取生效模型那一维），模型切换后随 list/get 自动变为新模型自己的档位。
+async fn overlay_session_model(state: &AppState, mut conv: Conversation) -> Conversation {
+    let settings = state.settings.read().await;
+    let registry = &settings.llm_registry;
+    let mem = state.session_models.read();
+    let session_model_id = mem.get(&conv.id).filter(|s| !s.is_empty()).cloned();
+    let eff_model_id = effective_model_id(registry, &mem, &conv.id);
+    drop(mem);
+    let efforts = state.session_efforts.read();
+    let effort = effort_for_model(&efforts, &conv.id, eff_model_id.as_deref());
+    drop(efforts);
+    conv.model_id = session_model_id;
+    conv.reasoning_effort = effort;
+    conv
+}
+
+async fn overlay_session_models(state: &AppState, convs: Vec<Conversation>) -> Vec<Conversation> {
+    let settings = state.settings.read().await;
+    let registry = &settings.llm_registry;
+    let mem = state.session_models.read();
+    let efforts = state.session_efforts.read();
+    let mut out = Vec::with_capacity(convs.len());
+    for mut c in convs {
+        let session_model_id = mem.get(&c.id).filter(|s| !s.is_empty()).cloned();
+        let eff_model_id = effective_model_id(registry, &mem, &c.id);
+        let effort = effort_for_model(&efforts, &c.id, eff_model_id.as_deref());
+        c.model_id = session_model_id;
+        c.reasoning_effort = effort;
+        out.push(c);
+    }
+    out
+}
+
+/// 删除会话时同步清理内存模型/思考强度记忆，避免悬挂条目累积。
+fn drop_session_models(state: &AppState, ids: &[String]) {
+    if ids.is_empty() {
+        return;
+    }
+    let mut mem = state.session_models.write();
+    let mut efforts = state.session_efforts.write();
+    for id in ids {
+        mem.remove(id);
+        efforts.remove(id);
+    }
+}
+
 /// 读取单个会话元数据（含 parent_conversation_id，用于子对话"返回主对话"）。
 #[tauri::command]
 pub async fn agent_get_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<Conversation, AppError> {
-    state
+    let conv = state
         .conversation_db
         .get_conversation(&conversation_id)
         .map_err(|e| AppError::Agent(format!("Failed to get conversation: {}", e)))?
-        .ok_or_else(|| AppError::Agent(format!("会话不存在: {}", conversation_id)))
+        .ok_or_else(|| AppError::Agent(format!("会话不存在: {}", conversation_id)))?;
+    Ok(overlay_session_model(&state, conv).await)
 }
 
 /// 过滤掉子agent对话（task 工具创建，parent_conversation_id 非空）：
@@ -92,7 +184,11 @@ pub async fn agent_list_conversations(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(filter_sub_conversations(conversations))
+    Ok(overlay_session_models(
+        &state,
+        filter_sub_conversations(conversations),
+    )
+    .await)
 }
 
 /// Load all messages for a conversation.
@@ -152,50 +248,145 @@ pub async fn agent_rename_conversation(
         .map_err(|e| AppError::Agent(format!("Failed to rename conversation: {}", e)))?;
     log::info!("Renamed conversation: {} to {}", conversation_id, trimmed);
 
-    // 触发跨设备同步：conversations 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let marker = chrono::Utc::now().to_rfc3339();
-            let _ =
-                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
-            scheduler.schedule_push();
-        }
-    }
-
     Ok(())
 }
 
-/// 设置会话级模型选择（`llmRegistry` 模型条目 id）。
-/// `model_id` 为空串/None = 清除选择，回落全局默认模型。
-/// 触发跨设备同步（conversations 整体快照自动携带 modelId）。
+/// 设置会话级模型（**仅内存**：`AppState.session_models`）。
+///
+/// 会话 → 模型 的选择不再落盘（SQLite `conversations.model_id` 仅作旧数据
+/// 遗留，启动时一次性迁入内存后清空）。`model_id` 为空串/None = 清除本会话
+/// 的记忆，回落全局「最近使用」模型。
+///
+/// 注意：全局 `llmRegistry.lastUsedModelId` 的持久化由**前端**在用户切换
+/// 模型后经 `settingsStore.update` 完成（复用完整设置保存链路），本命令
+/// 不落盘设置——职责分离：本命令管「这个会话现在用哪个」，设置管「全局
+/// 最近用哪个（重启后默认）」。
 #[tauri::command]
-pub async fn agent_set_conversation_model(
+pub async fn agent_set_session_model(
     state: State<'_, AppState>,
     conversation_id: String,
     model_id: Option<String>,
 ) -> Result<(), AppError> {
     let model_id = model_id.filter(|s| !s.trim().is_empty()).map(String::from);
-    let updated = state
+    let exists = state
         .conversation_db
-        .set_conversation_model_id(&conversation_id, model_id.as_deref())
-        .map_err(|e| AppError::Agent(format!("Failed to set conversation model: {}", e)))?;
-    if updated {
-        log::info!(
-            "Set conversation {} model to {:?}",
-            conversation_id,
-            model_id
-        );
-        // 触发跨设备同步：conversations 变更（快照 JSON 自动带 modelId）
-        if let Some(ref scheduler) = state.sync_scheduler {
-            if let Some(ref engine) = state.sync_engine {
-                let marker = chrono::Utc::now().to_rfc3339();
-                let _ = engine
-                    .record_local_change(&format!("conversations.{}", conversation_id), &marker);
-                scheduler.schedule_push();
+        .get_conversation(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("读取会话失败: {}", e)))?
+        .is_some();
+    if !exists {
+        return Err(AppError::Agent(format!("会话不存在: {}", conversation_id)));
+    }
+    state.session_models.write().insert(
+        conversation_id.clone(),
+        model_id.clone().unwrap_or_default(),
+    );
+    log::info!(
+        "Set session {} model override to {:?} (in-memory)",
+        conversation_id,
+        model_id
+    );
+    Ok(())
+}
+
+/// 读取会话级模型记忆（内存）。返回 None = 无记忆，跟随全局「最近使用」。
+#[tauri::command]
+pub async fn agent_get_session_model(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<Option<String>, AppError> {
+    let guard = state.session_models.read();
+    Ok(guard
+        .get(&conversation_id)
+        .filter(|s| !s.is_empty())
+        .cloned())
+}
+
+/// 设置会话级思考强度（内存 + 落盘：`AppState.session_efforts` +
+/// `conversations.efforts_json`）。
+///
+/// 档位按「会话 × 模型」双维记忆：`model_id` = 该档位归属的模型（调用方
+/// 传当前生效模型 id），会话切到别的模型时各模型记忆互不污染。
+/// 档位字符串（如 `low` / `medium` / `high` / `max`）由该模型的
+/// `reasoning_efforts` 声明决定，启动任务时若不在声明内则忽略。
+/// `None`/空串 = 清除该 (会话, 模型) 的强度记忆，回落模型自身默认。
+///
+/// 每次变更后把该会话整张 (model→effort) 映射序列化写回 `efforts_json`
+/// 列——**重启后档位仍记住**（启动时装载回内存 `session_efforts`）。
+#[tauri::command]
+pub async fn agent_set_session_effort(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    model_id: String,
+    reasoning_effort: Option<String>,
+) -> Result<(), AppError> {
+    let effort = reasoning_effort
+        .filter(|s| !s.trim().is_empty())
+        .map(String::from);
+    let exists = state
+        .conversation_db
+        .get_conversation(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("读取会话失败: {}", e)))?
+        .is_some();
+    if !exists {
+        return Err(AppError::Agent(format!("会话不存在: {}", conversation_id)));
+    }
+    if model_id.trim().is_empty() {
+        return Err(AppError::Agent("model_id 不能为空".into()));
+    }
+    let persisted_json = {
+        let mut efforts = state.session_efforts.write();
+        match effort.clone() {
+            Some(e) => {
+                efforts
+                    .entry(conversation_id.clone())
+                    .or_default()
+                    .insert(model_id.clone(), e);
+            }
+            None => {
+                if let Some(m) = efforts.get_mut(&conversation_id) {
+                    m.remove(&model_id);
+                    if m.is_empty() {
+                        efforts.remove(&conversation_id);
+                    }
+                }
             }
         }
-    }
+        // 落盘该会话最新整张映射：空 = 清空列
+        match efforts.get(&conversation_id) {
+            Some(m) if !m.is_empty() => Some(
+                serde_json::to_string(m)
+                    .map_err(|e| AppError::Agent(format!("序列化思考档位失败: {}", e)))?,
+            ),
+            _ => None,
+        }
+    };
+    state
+        .conversation_db
+        .save_conversation_efforts(&conversation_id, persisted_json.as_deref())
+        .map_err(|e| AppError::Agent(format!("持久化思考档位失败: {}", e)))?;
+    log::info!(
+        "Set session {} model {} reasoning effort to {:?} (persisted)",
+        conversation_id,
+        model_id,
+        effort
+    );
     Ok(())
+}
+
+/// 读取会话级思考强度记忆（内存）。`model_id` = 要读的模型；该模型无记忆
+/// 时返回 None = 跟随模型默认。
+#[tauri::command]
+pub async fn agent_get_session_effort(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    model_id: String,
+) -> Result<Option<String>, AppError> {
+    let guard = state.session_efforts.read();
+    Ok(guard
+        .get(&conversation_id)
+        .and_then(|m| m.get(&model_id))
+        .filter(|s| !s.is_empty())
+        .cloned())
 }
 
 /// Delete a single conversation and all its subagent conversations (cascade).
@@ -213,16 +404,7 @@ pub async fn agent_delete_conversation(
         conversation_id,
         deleted.len()
     );
-
-    // 触发跨设备同步：主对话 + 全部子对话逐个 delete 事件
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            for id in &deleted {
-                let _ = engine.record_local_delete(&format!("conversations.{}", id));
-            }
-            scheduler.schedule_push();
-        }
-    }
+    drop_session_models(&state, &deleted);
 
     Ok(())
 }
@@ -287,16 +469,6 @@ pub async fn agent_save_user_message(
             image_paths_json.as_deref(),
         )
         .map_err(|e| AppError::Agent(format!("保存用户消息失败: {}", e)))?;
-
-    // 触发跨设备同步：conversations 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let marker = chrono::Utc::now().to_rfc3339();
-            let _ =
-                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
-            scheduler.schedule_push();
-        }
-    }
 
     Ok(())
 }
@@ -447,16 +619,6 @@ pub async fn agent_truncate_conversation(
         restored_plan.is_some()
     );
 
-    // 触发跨设备同步：conversations 变更（truncate 改变了消息列表）
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let marker = chrono::Utc::now().to_rfc3339();
-            let _ =
-                engine.record_local_change(&format!("conversations.{}", conversation_id), &marker);
-            scheduler.schedule_push();
-        }
-    }
-
     Ok(TruncateConversationResult {
         deleted_messages: deleted,
         plan_adjusted,
@@ -496,7 +658,11 @@ pub async fn agent_list_conversations_by_connection(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(filter_sub_conversations(conversations))
+    Ok(overlay_session_models(
+        &state,
+        filter_sub_conversations(conversations),
+    )
+    .await)
 }
 
 /// 全文搜索聊天历史（消息 content），按会话聚合。
@@ -531,7 +697,7 @@ pub async fn agent_delete_conversations_by_session(
         .await
         .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
 
-    // 先列出待删除的 conversation ids，删除后逐个触发 sync
+    // 先列出待删除的 conversation ids，用于日志与级联清理
     let conv_ids = state
         .conversation_db
         .list_conversations(&connection_id)
@@ -550,14 +716,7 @@ pub async fn agent_delete_conversations_by_session(
         connection_id,
         conv_ids.len()
     );
-
-    // 触发跨设备同步：逐个 conversations 删除
-    if let (Some(ref engine), Some(ref scheduler)) = (&state.sync_engine, &state.sync_scheduler) {
-        for id in &conv_ids {
-            let _ = engine.record_local_delete(&format!("conversations.{}", id));
-        }
-        scheduler.schedule_push();
-    }
+    drop_session_models(&state, &conv_ids);
 
     Ok(())
 }

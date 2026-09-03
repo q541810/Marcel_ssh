@@ -3,8 +3,6 @@ use chrono::Utc;
 use crate::agent::context::CompactionOutcome;
 use crate::agent::conversation::ConversationDb;
 use crate::llm::provider::{LlmMessage, LlmRole};
-use crate::sync::engine::SyncEngine;
-use crate::sync::scheduler::SyncScheduler;
 
 /// 压缩卡片内容前缀（与前端 `parseCompactionSummary` 同源；改任一侧需同步）。
 pub const COMPACTION_CARD_PREFIX: &str = "【上下文已压缩】";
@@ -12,10 +10,6 @@ pub const COMPACTION_CARD_PREFIX: &str = "【上下文已压缩】";
 pub(crate) struct ConversationPersister {
     pub conv_db: std::sync::Arc<ConversationDb>,
     pub conversation_id: String,
-    /// 同步引擎（可选，未配置同步时为 None）
-    sync_engine: Option<std::sync::Arc<SyncEngine>>,
-    /// 同步调度器（可选，未配置同步时为 None）
-    sync_scheduler: Option<std::sync::Arc<SyncScheduler>>,
 }
 
 impl ConversationPersister {
@@ -23,20 +17,7 @@ impl ConversationPersister {
         Self {
             conv_db,
             conversation_id,
-            sync_engine: None,
-            sync_scheduler: None,
         }
-    }
-
-    /// 注入同步组件（由 agent_loop 创建 persister 后调用）。
-    pub fn with_sync(
-        mut self,
-        engine: Option<std::sync::Arc<SyncEngine>>,
-        scheduler: Option<std::sync::Arc<SyncScheduler>>,
-    ) -> Self {
-        self.sync_engine = engine;
-        self.sync_scheduler = scheduler;
-        self
     }
 
     /// Auto-update conversation title from the first user message if title is still default or empty.
@@ -98,7 +79,6 @@ impl ConversationPersister {
             if let Some(stored) = saved {
                 messages[idx].db_id = Some(stored.id);
             }
-            self.trigger_sync();
         }
     }
 
@@ -122,23 +102,7 @@ impl ConversationPersister {
                 reasoning,
             )
             .ok()?;
-        self.trigger_sync();
         Some(saved.id)
-    }
-
-    /// 触发跨设备同步：记录本地变更 + 调度 push（防抖 700ms）。
-    /// 未配置同步时静默跳过。
-    fn trigger_sync(&self) {
-        if let (Some(ref engine), Some(ref scheduler)) = (&self.sync_engine, &self.sync_scheduler) {
-            // 会话作为整体版本单元 push（含 conversation 元数据 + 所有 messages）
-            let key = format!("conversations.{}", self.conversation_id);
-            // record_local_change 的 value 参数用于 diff 比对（避免无变更 bump 版本）。
-            // 会话内容每次 save_msg 都会变化，传时间戳确保每次都 bump。
-            // push 时 accessor.read_value 会读取真实值进行加密。
-            let marker = chrono::Utc::now().to_rfc3339();
-            let _ = engine.record_local_change(&key, &marker);
-            scheduler.schedule_push();
-        }
     }
 
     /// 提交一次上下文压缩到会话库（压缩由 LLM 完成后、splice 之外的结构化落库）。
@@ -223,7 +187,6 @@ impl ConversationPersister {
             );
             return false;
         }
-        self.trigger_sync();
         true
     }
 }

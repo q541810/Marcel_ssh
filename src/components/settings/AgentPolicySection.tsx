@@ -538,7 +538,7 @@ export function AgentPolicySection() {
                             const registry: LlmRegistry = settings.llmRegistry ?? {
                               channels: [],
                               models: [],
-                              slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+                              slots: { modelApprovalModelId: '', summarizerModelId: '' },
                               netPolicy: {
                                 maxRetries: 1,
                                 retryDelaySecs: 5,
@@ -555,17 +555,17 @@ export function AgentPolicySection() {
                             });
                           }}
                           options={[
-                            { value: '', label: '跟随默认模型' },
+                            { value: '', label: '跟随会话模型' },
                             ...(settings.llmRegistry
                               ? modelOptionsByChannel(settings.llmRegistry)
                               : []),
                           ]}
-                          placeholder="跟随默认模型"
+                          placeholder="跟随会话模型"
                           className="w-72"
                         />
                       </div>
                       <p className="text-xs text-zinc-500">
-                        选择更小更快的模型可降低审批延迟和成本。留空 = 跟随默认模型。
+                        选择更小更快的模型可降低审批延迟和成本。留空 = 跟随本会话正在使用的模型。
                       </p>
                       <div className="flex items-center justify-between pt-1">
                         <span className="text-xs text-zinc-400">审批提示词</span>

@@ -511,23 +511,30 @@ export interface ModelEntry {
   contextWindow?: number;
   /** 该模型特有的请求体参数覆写（如 thinking、top_p）。 */
   extraBody?: Record<string, unknown> | null;
+  /**
+   * 该模型支持的「思考强度」档位（自填字符串列表，如 `['low','medium','high']`）。
+   * 空 = 模型未启用思考强度选择（会话输入条不显示强度选择器，请求体不注入
+   * `reasoning_effort`）。值原样透传为请求体顶层 `reasoning_effort`。
+   */
+  reasoningEfforts?: string[];
 }
 
-/** 场景槽位：把「用途」绑定到具体模型。空 = 回落主模型。 */
+/** 场景槽位：把「辅助用途」绑定到具体模型。空 = 跟随会话主模型。 */
 export interface ModelSlots {
-  /** 默认（主对话）模型。空 = 回落第一个模型。 */
-  defaultModelId: string;
-  /** 命令审核模型（enableModelCommandApproval 开启时使用）。空 = 跟随默认模型。 */
+  /** 命令审核模型（enableModelCommandApproval 开启时使用）。空 = 跟随会话模型。 */
   modelApprovalModelId: string;
-  /** 上下文压缩摘要模型。空 = 跟随默认模型。 */
+  /** 上下文压缩摘要模型。空 = 跟随会话模型。 */
   summarizerModelId: string;
 }
 
-/** 多渠道多模型注册表（AppSettings 内嵌，随设置持久化与同步）。 */
+/** 多渠道多模型注册表（AppSettings 内嵌，随设置持久化）。 */
 export interface LlmRegistry {
   channels: ChannelConfig[];
   models: ModelEntry[];
   slots: ModelSlots;
+  /** 全局主模型：最近一次在任意会话选择的模型（「最后使用」）。
+   *  空/失效 → 解析时回落第一个模型。取代旧版 slots.defaultModelId。 */
+  lastUsedModelId?: string;
   /** 全局共享的网络与重试策略（所有渠道/模型统一生效）。 */
   netPolicy: NetPolicy;
 }
@@ -628,7 +635,7 @@ export interface NotificationSettings {
 }
 
 /**
- * 移动端独立通知开关（不参与云端同步，与桌面端 NotificationSettings 隔离）。
+ * 移动端独立通知开关（与桌面端 NotificationSettings 隔离）。
  * 无 notificationVolume：移动端走系统通知通道，不发提示音。
  */
 export interface MobileNotificationSettings {
@@ -639,7 +646,7 @@ export interface MobileNotificationSettings {
 }
 
 /**
- * 移动端后台保活设置（不参与云端同步）。
+ * 移动端后台保活设置（设备本地）。
  * 开启后 App 启动即启动 Android 前台服务，切后台维持 SSH/Agent 运行。
  */
 export interface MobileBackgroundSettings {
@@ -681,9 +688,9 @@ export interface AppSettings {
    *  values — only their on-screen display is masked. */
   privacyMode: boolean;
   notificationSettings: NotificationSettings;
-  /** 移动端独立通知开关（不参与云端同步）。桌面端读写无副作用，UI 不暴露。 */
+  /** 移动端独立通知开关（设备本地）。桌面端读写无副作用，UI 不暴露。 */
   mobileNotificationSettings: MobileNotificationSettings;
-  /** 移动端后台保活设置（不参与云端同步）。 */
+  /** 移动端后台保活设置（设备本地）。 */
   mobileBackgroundSettings: MobileBackgroundSettings;
   workspaceLayout: WorkspaceLayoutSettings;
   /** User-defined protected paths. Writes to anything under these paths
@@ -693,8 +700,6 @@ export interface AppSettings {
   commandTimeoutSecs: number;
   /** Whether the user has completed the onboarding wizard. */
   hasCompletedOnboarding: boolean;
-  /** Whether the user has accepted the cross-device sync disclaimer (first visit only). */
-  hasAcceptedSyncDisclaimer: boolean;
   /** Disabled plugin IDs. Plugins listed here are scanned but not loaded. */
   disabledPlugins: string[];
   /**
@@ -889,8 +894,20 @@ export interface AgentConversation {
   updatedAt: string;
   /** 子agent对话（task 工具创建）的父对话 id；主对话无此字段。 */
   parentConversationId?: string;
-  /** 会话级模型选择（llmRegistry 模型条目 id）。缺省 = 跟随全局默认模型。 */
+  /**
+   * 会话级模型选择（llmRegistry 模型条目 id）。**仅作旧数据/快照遗留**：
+   * 新架构不落盘每会话模型，真正的会话记忆在内存
+   * （`sessionModels` store 层 / 后端 `agent_get_session_model`）。
+   * 缺省 = 跟随全局最近使用。
+   */
   modelId?: string | null;
+  /**
+   * 会话级思考强度（`reasoning_effort` 档位字符串）：overlay 表达当前
+   * 生效模型的档位，后端按「会话 × 模型」双维持久化
+   * （`conversations.efforts_json`，重启后记住，启动时装载回内存再 overlay
+   * 到这里）：`undefined`/null = 未设置，跟随模型自身默认。
+   */
+  reasoningEffort?: string | null;
 }
 
 export interface StoredMessage {
@@ -1025,181 +1042,6 @@ export interface Skill {
   updatedAt: string;
 }
 
-// ──────────── 跨设备同步（与 Rust sync 模块对齐，camelCase） ────────────
-
-/** 一级同步分类（与 src-tauri/src/sync/profile.rs SyncCategory 对齐） */
-export type SyncCategory =
-  | 'connections'
-  | 'quickCommands'
-  | 'skills'
-  | 'mcpServers'
-  | 'conversations'
-  | 'terminalSettings'
-  | 'modelService'
-  | 'agentPolicy'
-  | 'displaySettings'
-  | 'agentTools'
-  | 'secrets';
-
-/** 平台标识（与 sync/profile.rs Platform 对齐，lowercase 序列化） */
-export type SyncPlatform = 'desktop' | 'mobile';
-
-/** 同步状态机（与 sync/scheduler.rs SyncState 对齐，camelCase 序列化） */
-export type SyncState = 'idle' | 'pushing' | 'pulling' | 'error' | 'notConfigured';
-
-/**
- * 版本闸门命中信息（与 Rust sync::engine::VersionBlock 对齐）。
- * 云端（账户内其他设备已上报）的客户端版本号高于本机时同步被挂起：
- * 自动 push/pull 暂停，避免旧版 App 反序列化丢字段后把新格式配置啃坏。
- */
-export interface SyncVersionBlock {
-  /** 云端最高版本号 */
-  cloudVersion: string;
-  /** 本机版本号 */
-  localVersion: string;
-}
-
-/** pull 进度（与 sync/scheduler.rs SyncProgress 对齐） */
-export interface SyncProgress {
-  /** 本次 pull 待处理的 item 总数（profile 过滤后） */
-  total: number;
-  /** 已处理 item 数 */
-  done: number;
-}
-
-/**
- * sync_profile：用户选择的同步项集合。
- * Rust 端用 HashSet<SyncCategory>，序列化后是数组；前端用数组以保持顺序与可遍历。
- */
-export interface SyncProfile {
-  /** 开启的一级分类列表 */
-  enabledCategories: SyncCategory[];
-  /** 字段级排除清单（用户在冲突 UI 选"永久跳过"时加入）
-   *  存储完整 key 字符串（如 "settings.fontSize"）
-   *  与 Rust 端 HashSet<String> 对齐，序列化为数组 */
-  excludedKeys: string[];
-  /** 结构版本（与后端 SYNC_PROFILE_SCHEMA_VERSION 对齐）。
-   *  老版本缺省 = v1，后端加载时会自动迁移补上新增分类默认开启项 */
-  schemaVersion?: number;
-}
-
-/** 同步摘要（GET sync_get_summary 返回） */
-export interface SyncSummary {
-  /** 是否已完成配对（sync_key + device_id + api_key 全部就绪） */
-  configured: boolean;
-  /** 服务器 URL（未配置时为 null） */
-  serverUrl: string | null;
-  /** 本设备 ID（未配置时为 null） */
-  deviceId: string | null;
-  /** 平台标识：'desktop' | 'mobile' */
-  platform: string;
-  /** 当前 sync_profile */
-  profile: SyncProfile;
-  /** 当前同步状态机值 */
-  state: SyncState;
-  /** 待 push 的本地变更数 */
-  pendingCount: number;
-  /** 最近错误信息（无错为 null） */
-  error: string | null;
-  /** pull 进度（pulling 时非 null） */
-  progress: SyncProgress | null;
-  /** 版本闸门：云端配置版本高于本机时非 null（自动同步挂起，需升级本应用） */
-  versionBlock: SyncVersionBlock | null;
-}
-
-/** sync-state-changed 事件 payload */
-export interface SyncStateEvent {
-  state: SyncState;
-  pendingCount: number;
-  error: string | null;
-  progress: SyncProgress | null;
-  /** 版本闸门：云端配置版本高于本机时非 null */
-  versionBlock: SyncVersionBlock | null;
-}
-
-/** 已配对设备信息 */
-export interface SyncDeviceInfo {
-  /** 设备 ID（UUID） */
-  deviceId: string;
-  /** 平台：'desktop' | 'mobile' */
-  platform: SyncPlatform;
-  /** 最后活跃时间（ISO 8601 字符串） */
-  lastSeenAt: string;
-  /** 客户端版本号（设备上报）；旧服务端 / 未上报为 null */
-  appVersion: string | null;
-}
-
-/** 账户配额使用情况（GET sync_get_quota 返回；旧服务端无此端点时前端静默隐藏配额行） */
-export interface SyncQuota {
-  /** 已用字节数（snapshots + sync_profiles） */
-  quotaUsedBytes: number;
-  /** 配额上限字节数；0 = 无限制 */
-  quotaLimitBytes: number;
-  /** 'hosted' | 'self-hosted' */
-  mode: string;
-}
-
-/** sync_pair_first / sync_pair_join 返回值 */
-export interface SyncPairResult {
-  /** 第一台设备返回新生成的配置码（仅此一次，用户必须手抄保存）；其他设备返回 null */
-  configCode: string | null;
-  /** 是否是第一台设备（true = 新账户，false = 加入已有账户） */
-  isFirstDevice: boolean;
-}
-
-/** sync_reset_account 返回值 */
-export interface SyncResetResult {
-  success: boolean;
-  error: string | null;
-}
-
-// ──────────── 冲突解决（与 Rust sync::engine 对齐） ────────────
-
-/**
- * 待解决的同步冲突项。
- * pull 时检测到本地和远程都改了同一 key 且值不同，缓存到内存等用户决策。
- */
-export interface SyncPendingConflict {
-  /** 冲突的 key（如 `settings.fontSize`、`connections.abc`） */
-  key: string;
-  /** 远程版本号 */
-  remoteVersion: number;
-  /** base：上次同步的值（明文 JSON 字符串），首次同步时为 null */
-  base: string | null;
-  /** ours：当前本地值（明文 JSON 字符串），删除时为 null */
-  ours: string | null;
-  /** theirs：远程值（明文 JSON 字符串），远程删除时为 null */
-  theirs: string | null;
-}
-
-/**
- * 用户在 UI 选择的冲突解决动作（与 Rust ConflictActionDto 对齐）。
- * 使用 serde tag = "type" 序列化。
- */
-export type SyncConflictAction =
-  | { type: 'ours' }
-  | { type: 'theirs' }
-  | { type: 'skipOnce' }
-  | { type: 'skipForever' }
-  | { type: 'custom'; value: string }
-  | { type: 'fork' };
-
-/** sync_resolve_conflict / sync_resolve_all_conflicts 返回值 */
-export interface SyncResolveResult {
-  /** "pushNeeded" | "appliedTheirs" | "skipped" | "excluded" */
-  outcome: string;
-  /** 是否已自动调度 push */
-  pushTriggered: boolean;
-}
-
-/** sync-conflicts-detected 事件 payload */
-export interface SyncConflictsEvent {
-  /** 所有待解决的冲突（含 base/ours/theirs 明文 JSON） */
-  conflicts: SyncPendingConflict[];
-  /** 冲突数量 */
-  count: number;
-}
-
 // ──────────── Background Jobs (Job 体系) ────────────
 // 后端统一由 command_exec::CommandExecutionManager 管理（submit_background），
 // 事件载荷 job://started / job://updated 与 job_list / job_kill 返回 JobInfo。
@@ -1241,6 +1083,5 @@ export interface AppBootstrapData {
   settingsWarning?: string | null;
   connections: SavedConnection[];
   skills: Skill[];
-  syncSummary: SyncSummary;
 }
 

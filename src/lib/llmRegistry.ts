@@ -37,7 +37,7 @@ export function emptyRegistry(): LlmRegistry {
 }
 
 export function emptySlots(): ModelSlots {
-  return { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' };
+  return { modelApprovalModelId: '', summarizerModelId: '' };
 }
 
 export function findChannel(r: LlmRegistry, channelId: string): ChannelConfig | undefined {
@@ -104,23 +104,50 @@ export function modelsOfChannel(r: LlmRegistry, channelId: string): ModelEntry[]
   return r.models.filter((m) => m.channelId === channelId);
 }
 
-/** 有效默认模型：槽位优先；槽位为空/失效回落第一个模型（与后端一致）。 */
+/**
+ * 当前会话/全局生效的主模型：
+ * `sessionModelId`（会话级内存记忆，可选）> 全局最近使用 lastUsedModelId > 第一个模型。
+ * 与后端解析优先级一致：会话记忆 → last_used → 首个可用。
+ */
+export function effectiveModel(
+  r: LlmRegistry,
+  sessionModelId?: string | null,
+): ModelEntry | undefined {
+  if (sessionModelId) {
+    const m = findModel(r, sessionModelId);
+    if (m) return m;
+  }
+  return effectiveDefaultModel(r);
+}
+
+/** 有效主模型 ID（会话记忆 → lastUsed → 首个；无模型 = ''）。 */
+export function effectiveModelId(
+  r: LlmRegistry,
+  sessionModelId?: string | null,
+): string {
+  return effectiveModel(r, sessionModelId)?.id ?? '';
+}
+
+/**
+ * 全局兜底主模型：全局最近使用（lastUsedModelId）优先；为空/失效回落
+ * 第一个模型（与后端 default_model 一致）。只依赖全局设置，不感知会话。
+ */
 export function effectiveDefaultModel(r: LlmRegistry): ModelEntry | undefined {
-  if (r.slots.defaultModelId) {
-    const m = findModel(r, r.slots.defaultModelId);
+  if (r.lastUsedModelId) {
+    const m = findModel(r, r.lastUsedModelId);
     if (m) return m;
   }
   return r.models[0];
 }
 
-/** 有效默认模型 ID（槽位为空时 = 第一个模型的 id；无模型 = ''）。 */
+/** 有效默认模型 ID（lastUsed 为空时 = 第一个模型的 id；无模型 = ''）。 */
 export function effectiveDefaultModelId(r: LlmRegistry): string {
   return effectiveDefaultModel(r)?.id ?? '';
 }
 
-/** 当前默认模型是否支持图片输入（AgentPanel / taskStore 的 vision 来源）。 */
-export function currentVision(r: LlmRegistry): boolean {
-  return effectiveDefaultModel(r)?.vision ?? false;
+/** 当前主模型是否支持图片输入（AgentPanel / taskStore 的 vision 来源）。 */
+export function currentVision(r: LlmRegistry, sessionModelId?: string | null): boolean {
+  return effectiveModel(r, sessionModelId)?.vision ?? false;
 }
 
 /** 新建一个渠道（生成 ID，默认启用）。网络策略走全局，渠道不再持有。 */
@@ -145,38 +172,145 @@ export function createModel(channelId: string, modelName: string): ModelEntry {
     vision: false,
     contextWindow: 0,
     extraBody: null,
+    reasoningEfforts: [],
   };
 }
 
-/** 删除渠道：级联删除其模型，并清理指向被删模型的槽位。返回新 registry。 */
+/** 模型声明的可用思考强度档位（归一化去重；空 = 未启用）。 */
+export function modelReasoningEfforts(model: ModelEntry | undefined): string[] {
+  if (!model) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of model.reasoningEfforts ?? []) {
+    const t = e.trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}
+
+/** 会话当前生效模型的思考档位是否可用（即模型声明了且含该档位）。 */
+export function effortValidForModel(
+  model: ModelEntry | undefined,
+  effort: string | null | undefined,
+): boolean {
+  if (!effort) return false;
+  return modelReasoningEfforts(model).includes(effort);
+}
+
+/**
+ * 按 id 去重模型条目（保留每个 id 的「最后一次出现」并维持原有相对顺序）。
+ *
+ * 语义说明：历史「保存渠道」合并逻辑（已修复，见 mergeChannelModels）曾把
+ * 该渠道仍保留在草稿里的旧模型原样保留、又整体追加草稿，产生同 id 重复
+ * 条目。重复中靠后的条目通常是草稿中较新的编辑版本（编辑 = 保留原 id 的
+ * 新对象），因此去重保留最后出现者，避免丢掉用户最近的编辑。
+ * 无 id 的条目不丢弃（保持原样，交由后端校验拦截）。
+ */
+export function dedupeModelEntries(models: ModelEntry[]): ModelEntry[] {
+  const lastSeen = new Map<string, number>();
+  models.forEach((m, i) => {
+    if (m && m.id) lastSeen.set(m.id, i);
+  });
+  return models.filter((m, i) => !m || !m.id || lastSeen.get(m.id) === i);
+}
+
+/**
+ * 保存渠道后合并模型列表（桌面端 / 移动端共用，替代两处重复的手写合并）。
+ *
+ * 规则：
+ * - 该渠道的模型**整体替换**为草稿（旧列表里被删掉的模型不再保留）；
+ * - 其它渠道的模型原样保留，相对顺序不变；
+ * - 合并结果按 id 去重（保留最后出现者，防御旧损坏数据/草稿自带重复）；
+ * - 清理指向被删除模型的槽位引用与全局最近使用；
+ * - 新建渠道且尚无最近使用模型时，把草稿第一个模型设为最近使用（与旧行为一致）。
+ *
+ * 修复背景：旧实现 `otherModels` 用 `keptModelIds.has(m.id)` 把本渠道仍在
+ * 草稿中的旧模型也保留，随后又整体追加草稿 → 每次保存渠道都会把该渠道
+ * 每个保留模型复制成同 id 两条（表现为模型选择器里同一模型出现两次）。
+ */
+export function mergeChannelModels(
+  r: LlmRegistry,
+  channel: ChannelConfig,
+  draftModels: ModelEntry[],
+): LlmRegistry {
+  const isNew = !r.channels.some((c) => c.id === channel.id);
+  const channels = isNew
+    ? [...r.channels, channel]
+    : r.channels.map((c) => (c.id === channel.id ? channel : c));
+
+  // 本渠道模型整体替换为草稿；其余渠道原样保留；同 id 只留最后一条。
+  const merged = [
+    ...r.models.filter((m) => m.channelId !== channel.id),
+    ...draftModels,
+  ];
+  const models = dedupeModelEntries(merged);
+
+  // 槽位清理：被删除的模型若被槽位引用则清空
+  const slotTargets = new Set(models.map((m) => m.id));
+  const slots = { ...r.slots };
+  if (!slotTargets.has(slots.modelApprovalModelId)) slots.modelApprovalModelId = '';
+  if (!slotTargets.has(slots.summarizerModelId)) slots.summarizerModelId = '';
+
+  // 最近使用清理：被删模型若是全局最近使用则清空（解析回落第一个模型）
+  let lastUsedModelId =
+    r.lastUsedModelId && !slotTargets.has(r.lastUsedModelId)
+      ? ''
+      : r.lastUsedModelId;
+  // 新建第一个渠道且尚无全局最近使用模型时，自动把第一个模型设为最近使用
+  if (isNew && !lastUsedModelId && draftModels[0]) {
+    lastUsedModelId = draftModels[0].id;
+  }
+
+  return { ...r, channels, models, slots, lastUsedModelId };
+}
+
+/** 删除渠道：级联删除其模型，并清理指向被删模型的槽位与最近使用。返回新 registry。 */
 export function removeChannel(r: LlmRegistry, channelId: string): LlmRegistry {
   const removedModelIds = new Set(
     r.models.filter((m) => m.channelId === channelId).map((m) => m.id),
   );
-  return {
-    channels: r.channels.filter((c) => c.id !== channelId),
-    models: r.models.filter((m) => m.channelId !== channelId),
-    slots: clearSlotsForRemoved(r.slots, removedModelIds),
-    netPolicy: r.netPolicy,
-  };
+  return clearModelReferences(
+    {
+      ...r,
+      channels: r.channels.filter((c) => c.id !== channelId),
+      models: r.models.filter((m) => m.channelId !== channelId),
+    },
+    removedModelIds,
+  );
 }
 
-/** 删除单个模型：清理指向它的槽位。返回新 registry。 */
+/** 删除单个模型：清理指向它的槽位与最近使用。返回新 registry。 */
 export function removeModel(r: LlmRegistry, modelId: string): LlmRegistry {
-  return {
-    channels: r.channels,
-    models: r.models.filter((m) => m.id !== modelId),
-    slots: clearSlotsForRemoved(r.slots, new Set([modelId])),
-    netPolicy: r.netPolicy,
-  };
+  return clearModelReferences(
+    {
+      ...r,
+      models: r.models.filter((m) => m.id !== modelId),
+    },
+    new Set([modelId]),
+  );
 }
 
 function clearSlotsForRemoved(slots: ModelSlots, removedIds: Set<string>): ModelSlots {
   const next = { ...slots };
-  if (removedIds.has(next.defaultModelId)) next.defaultModelId = '';
   if (removedIds.has(next.modelApprovalModelId)) next.modelApprovalModelId = '';
   if (removedIds.has(next.summarizerModelId)) next.summarizerModelId = '';
   return next;
+}
+
+/** 删除模型后清理 registry 顶层引用（lastUsed + 槽位）。返回新 registry。 */
+export function clearModelReferences(
+  r: LlmRegistry,
+  removedIds: Set<string>,
+): LlmRegistry {
+  return {
+    ...r,
+    lastUsedModelId:
+      r.lastUsedModelId && removedIds.has(r.lastUsedModelId) ? '' : r.lastUsedModelId,
+    slots: clearSlotsForRemoved(r.slots, removedIds),
+  };
 }
 
 /** 设置槽位后自动清理失效引用（防悬挂）。返回新 registry。 */

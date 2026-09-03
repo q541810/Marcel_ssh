@@ -4,7 +4,7 @@ import type { MountPoint, NavGroup, ViewProvider } from '@/lib/types';
 interface ViewState {
   providers: ViewProvider[];
   /** 当前激活的视图 ID。提升到 store 后，任意组件都可触发视图切换
-   *  （例如 SyncStatusIndicator 点击后跳转到设置页）。 */
+   *  （例如外部入口跳转到设置页）。 */
   activeId: string;
   setActiveId: (id: string) => void;
   register: (p: ViewProvider) => void;

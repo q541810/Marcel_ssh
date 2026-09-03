@@ -30,17 +30,6 @@ pub async fn quick_command_add(
     candidate.save_to_path(&path)?;
     *store = candidate;
 
-    // 触发跨设备同步：quickCommands 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_change(
-                &format!("quickCommands.{}", created.id),
-                &serde_json::to_string(&created).unwrap_or_default(),
-            );
-            scheduler.schedule_push();
-        }
-    }
-
     Ok(created)
 }
 
@@ -50,31 +39,13 @@ pub async fn quick_command_update(
     id: String,
     patch: QuickCommandPatch,
 ) -> Result<(), AppError> {
-    let updated = {
+    let path = QuickCommandStore::default_file(&state.config_dir);
+    {
         let mut store = state.quick_command_store.write().await;
         let mut candidate = store.clone();
         candidate.update(&id, patch)?;
-        let updated = candidate
-            .commands
-            .iter()
-            .find(|c| c.id == id)
-            .cloned()
-            .ok_or_else(|| AppError::Config(format!("未找到快捷指令: {}", id)))?;
-        let path = QuickCommandStore::default_file(&state.config_dir);
         candidate.save_to_path(&path)?;
         *store = candidate;
-        updated
-    };
-
-    // 触发跨设备同步：quickCommands 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_change(
-                &format!("quickCommands.{}", id),
-                &serde_json::to_string(&updated).unwrap_or_default(),
-            );
-            scheduler.schedule_push();
-        }
     }
 
     Ok(())
@@ -90,15 +61,6 @@ pub async fn quick_command_delete(state: State<'_, AppState>, id: String) -> Res
     let path = QuickCommandStore::default_file(&state.config_dir);
     candidate.save_to_path(&path)?;
     *store = candidate;
-    drop(store);
-
-    // 触发跨设备同步：quickCommands 删除
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_delete(&format!("quickCommands.{}", id));
-            scheduler.schedule_push();
-        }
-    }
 
     Ok(())
 }

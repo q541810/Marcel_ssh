@@ -18,7 +18,6 @@ import { MobileAppearanceSection } from './settings/MobileAppearanceSection';
 import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSection';
 import { MobileModelSection } from './settings/MobileModelSection';
 import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
-import { MobileSyncSection } from './settings/MobileSyncSection';
 import { registerBackHandler } from './backHandler';
 
 interface MobileSettingsProps {
@@ -238,12 +237,6 @@ export default function MobileSettings({
           {activeCategory === 'notification-background' && (
             <div className="p-3">
               <MobileNotificationBackgroundSection />
-            </div>
-          )}
-
-          {activeCategory === 'sync' && (
-            <div className="p-3">
-              <MobileSyncSection />
             </div>
           )}
 

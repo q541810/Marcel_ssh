@@ -16,7 +16,6 @@ import HostKeyWarningToast from '@/components/layout/HostKeyWarningToast';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
 import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
-import SyncConflictModal from '@/components/settings/SyncConflictModal';
 import StarPromptModal from '@/components/star/StarPromptModal';
 import GlobalInteractionOverlay from '@/components/agent/GlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
@@ -25,7 +24,6 @@ import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useMarketStore } from '@/stores/marketStore';
-import { useSyncStore } from '@/stores/syncStore';
 import { useJobStore } from '@/stores/jobStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
@@ -332,20 +330,8 @@ export default function App() {
     }
   }, []);
 
-  // 启动跨设备同步：监听同步事件（state-changed / data-applied / conflicts-detected）。
-  // 摘要数据已在 hydrateBootstrapData 中一次性填充，此处直接启动监听器。
   useEffect(() => {
-    const syncStore = useSyncStore.getState();
-    syncStore.startListening().catch((err) => {
-      console.error('Failed to start sync listeners:', err);
-    });
-    return () => {
-      syncStore.stopListening();
-    };
-  }, []);
-
-  useEffect(() => {
-    // 聚合启动快照：一次 IPC 注入 settings + connections + skills + syncSummary
+    // 聚合启动快照：一次 IPC 注入 settings + connections + skills
     hydrateBootstrapData().catch(err => {
       console.error('Failed to hydrate bootstrap data:', err);
     });
@@ -536,7 +522,6 @@ export default function App() {
 
       <SettingsWarningToast />
       <HostKeyWarningToast />
-      <SyncConflictModal />
       <StarPromptModal />
       <GlobalInteractionOverlay />
 

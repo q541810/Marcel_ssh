@@ -67,3 +67,22 @@ export function textToExtraBody(text: string): Record<string, unknown> | null {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   return parsed as Record<string, unknown>;
 }
+
+/** 思考强度档位列表 ↔ 每行一个的文本表示（'low\nhigh\nmax'）。 */
+export function effortsToText(efforts: string[] | undefined): string {
+  return (efforts ?? []).join('\n');
+}
+
+/** 文本 → 思考强度档位列表：按行拆分、trim、去空、去重（保留首次顺序）。 */
+export function textToEfforts(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  return out;
+}

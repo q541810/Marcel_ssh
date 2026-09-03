@@ -22,7 +22,7 @@ import { MobileSettingRow } from './MobileSettingRow';
  *
  * 关闭时停止前台服务，切后台后系统可能冻结进程导致 SSH 断线。
  *
- * 不参与云端同步（settings_field.rs 白名单未包含 mobileBackgroundSettings）。
+ * 设备本地设置，每台设备独立生效。
  */
 export function MobileBackgroundSection() {
   const { settings, update } = useSettingsActions();
@@ -126,7 +126,7 @@ export function MobileBackgroundSection() {
           <li>· 系统仍可能在极端情况下（低内存、电池优化）杀死进程</li>
           <li>· 进程被杀后不会自动重连 SSH，需手动重新打开 App</li>
           <li>· 部分厂商 ROM 需在系统设置中关闭「电池优化」才能稳定保活</li>
-          <li>· 此配置不参与云端同步，每台设备独立设置</li>
+          <li>· 此配置为设备本地设置，每台设备独立生效</li>
         </ul>
       </div>
     </div>

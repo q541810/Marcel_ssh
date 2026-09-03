@@ -1,3 +1,4 @@
+use std::time::Duration;
 use tauri::AppHandle;
 use tokio::sync::mpsc;
 
@@ -59,6 +60,36 @@ fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
         .read()
         .get(task_id)
         .map_or(false, |t| t.status == AgentStatus::Cancelled)
+}
+
+/// 把一批已结算的后台作业渲染成一条给模型的 user 通知。
+/// 格式对齐 DSH completion notice：列出 job_id、描述与终态，
+/// 并指示用 `job_output` 读取输出。多条合并为一条（一次决策）。
+fn build_job_settlement_notice(jobs: &[crate::command_exec::JobInfo]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for j in jobs {
+        let status = match j.status {
+            crate::command_exec::JobStatus::Completed => "已完成",
+            crate::command_exec::JobStatus::Killed => "已被终止",
+            crate::command_exec::JobStatus::Failed => "执行失败",
+            crate::command_exec::JobStatus::Running => "仍在运行", // 理论不可达
+        };
+        let desc = if j.description.is_empty() {
+            j.command.clone()
+        } else {
+            j.description.clone()
+        };
+        lines.push(format!(
+            "后台作业 {}（{}）{}",
+            j.job_id, desc, status
+        ));
+    }
+    lines.push(
+        "用 job_output(job_id=...) 读取其输出并纳入结论；\
+         若作业已不再需要，可用 job_kill 终止。"
+            .to_string(),
+    );
+    lines.join("\n")
 }
 
 /// 把单个压缩生命周期事件实时转发为前端 stream 事件（压缩可感知/可监视）。
@@ -157,8 +188,7 @@ pub(crate) async fn run_agent_loop(
         is_subtask,
     } = ctx;
 
-    let persister = ConversationPersister::new(conv_db, conversation_id.clone())
-        .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
+    let persister = ConversationPersister::new(conv_db, conversation_id.clone());
 
     // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
     // （db_id_known=true，自动 pressure 压缩据此收缩到前端能找到的区间末条）；
@@ -175,12 +205,47 @@ pub(crate) async fn run_agent_loop(
     let max_rounds = agent_settings.max_tool_rounds.max(10);
     // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
     let mut overflow_retries = 0usize;
-    // 子 agent 作业未完成提醒计数（有界，最多 2 次）
-    let mut job_nudges: u32 = 0;
 
     // Wrap the manager in Arc so the dispatcher's command approver can share
     // it without cloning the underlying HTTP client / config.
     let llm_manager = std::sync::Arc::new(llm_manager);
+
+    // ── 上下文压缩（摘要）模型 ──
+    // 显式「上下文压缩模型」槽位存在 → 压缩调用用该模型（用户选定优先）；
+    // 否则压缩**复用主模型 manager**——主模型即本会话 agent 正在用的模型
+    // （会话级记忆 > 全局最近使用），自动压缩天然「跟随会话模型」。
+    let summarizer_manager: Option<std::sync::Arc<LlmManager>> = {
+        let reg = state.settings.read().await.llm_registry.clone();
+        if reg.slots.summarizer_model_id.is_empty() {
+            None
+        } else {
+            match reg.resolve_model(&reg.slots.summarizer_model_id) {
+                Ok(r) => match LlmManager::new(r.config) {
+                    Ok(m) => {
+                        log::info!(
+                            "上下文压缩使用独立模型: {}（会话 {}）",
+                            m.config().model,
+                            conversation_id
+                        );
+                        Some(std::sync::Arc::new(m))
+                    }
+                    Err(e) => {
+                        log::warn!("上下文压缩独立模型创建失败，回落主模型: {}", e);
+                        None
+                    }
+                },
+                Err(e) => {
+                    log::warn!("上下文压缩独立模型解析失败，回落主模型: {}", e);
+                    None
+                }
+            }
+        }
+    };
+    // 压缩调用统一入口：显式槽位模型优先，否则主模型
+    let compact_manager: &LlmManager = match &summarizer_manager {
+        Some(m) => m,
+        None => &llm_manager,
+    };
 
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
@@ -194,7 +259,7 @@ pub(crate) async fn run_agent_loop(
         approval_cfg,
     );
 
-    for round in 0..max_rounds {
+    'round: for round in 0..max_rounds {
         log::info!("Agent {} round {}", task_id, round);
 
         if is_task_cancelled(&state, &task_id) {
@@ -226,7 +291,7 @@ pub(crate) async fn run_agent_loop(
         };
         let run = crate::agent::context::compact_if_needed(
             &mut messages,
-            &llm_manager,
+            compact_manager,
             &tools,
             agent_settings.context_window,
             crate::agent::context::CompactionTrigger::Pressure,
@@ -296,7 +361,7 @@ pub(crate) async fn run_agent_loop(
                     };
                     let run = crate::agent::context::compact_if_needed(
                         &mut messages,
-                        &llm_manager,
+                        compact_manager,
                         &tools,
                         agent_settings.context_window,
                         crate::agent::context::CompactionTrigger::ContextOverflow,
@@ -420,29 +485,153 @@ pub(crate) async fn run_agent_loop(
                 );
                 continue;
             }
-            // 子 agent 收尾守卫：名下仍有运行中的后台作业时，不允许带着
-            // "孤儿作业" 结束——注入一条提醒让模型 job_output 收集或
-            // job_kill 终止（有界，最多 2 次防止死循环）。
-            if is_subtask && job_nudges < 2 {
-                let running = state.command_exec.running_jobs_for_task(&task_id).await;
-                if !running.is_empty() {
-                    job_nudges += 1;
-                    let list = running
-                        .iter()
-                        .map(|j| format!("- {}（{}）", j.job_id, j.description))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let nudge = format!(
-                        "你派发的后台作业尚未结束，不能直接完成调研：\n{}\n\
-                         请先用 job_output(wait=true) 收集其输出直到作业结束；\
-                         若作业对调研结论不再必要，用 job_kill 终止。\
-                         处理完后再输出最终结论。",
-                        list
+            // ── 自然结束守卫：模型已给出文本，但名下可能仍有后台作业 ──
+            // 语义（对齐 DSH completion notice）：
+            // 1. 名下还有 running job → **不允许结束**：任务保持 running
+            //    （前端按钮=停止），loop 静默挂起等待 job 结算信号或超时
+            //    提醒，绝不 emit Done。
+            // 2. job 结算（完成/失败/kill）→ 注入一条「作业已完成」通知
+            //    （落库，role=user），随后退出守卫进入下一轮，让模型
+            //    job_output 收集并给出最终结论。
+            // 3. job 超 300s / 450s / 600s 仍未结算 → 注入递进提醒（间隔
+            //    递增 150s，最多 3 次），同样退出守卫让模型决策；之后
+            //    静默挂起直到结算或用户停止。
+            // 4. 名下无 running job（全被模型 job_output 收走或结算完）→
+            //    break 守卫走正常 Done：此时模型本轮给出的文本就是最终
+            //    结论（所有 job 都已处理完），直接结束任务。
+            //
+            // 挂起期间**不调模型、不发任何事件**——任务状态保持 Executing，
+            // 用户看到的发送按钮仍是「停止」。
+            let final_text = cleaned_content.clone();
+            let settled_rx = state.command_exec.subscribe_task_settlements(&task_id);
+            // 递进提醒节点：300s → 450s → 600s
+            const REMIND_AFTER_SECS: [u64; 3] = [300, 450, 600];
+            let mut remind_idx = 0usize;
+
+            'finish_guard: loop {
+                // (a) 已结算待通知作业：取出并注入为一条通知，然后
+                //     continue 'round——回 for round 下一轮，让模型看到
+                //     notice 并 job_output 收集（不能 break 走 Done）。
+                let settled_jobs = state.command_exec.take_settled_jobs_for_task(&task_id);
+                if !settled_jobs.is_empty() {
+                    let notice = build_job_settlement_notice(&settled_jobs);
+                    log::info!(
+                        "Agent {} job settled notice: {}",
+                        task_id,
+                        notice.lines().next().unwrap_or_default()
                     );
-                    // 循环瞬态消息，不落库（与对话内容无关，仅用于本轮调度）
-                    messages.push(LlmMessage::user(nudge));
-                    continue;
+                    // 通知落库：与普通消息同生命周期，重启后仍可见。
+                    if let Some(db_id) = persister.save_msg("user", &notice, None, None) {
+                        let mut m = LlmMessage::user(notice);
+                        m.db_id = Some(db_id);
+                        messages.push(m);
+                    } else {
+                        messages.push(LlmMessage::user(notice));
+                    }
+                    continue 'round;
                 }
+
+                // (b) 名下仍 running 的作业：没有则真正结束（守卫后 for
+                //     round 会走正常 Done 路径——但注意：一旦进入本守卫，
+                //    running 为空意味着模型上一轮已处理完所有 job，且本轮
+                //    文本就是最终结论，可直接结束）。
+                let running = state.command_exec.running_jobs_for_task(&task_id).await;
+                if running.is_empty() {
+                    break 'finish_guard;
+                }
+
+                // (c) 有 running job 且无新结算 → 挂起等结算信号 / 取消 / 提醒。
+                if is_task_cancelled(&state, &task_id) {
+                    log::info!("Agent {} cancelled while waiting for jobs, exiting", task_id);
+                    return None;
+                }
+
+                let mut wait_until_remind = false;
+                let mut wait_secs = 0u64;
+                if remind_idx < REMIND_AFTER_SECS.len() {
+                    wait_secs = REMIND_AFTER_SECS[remind_idx];
+                    wait_until_remind = true;
+                }
+
+                let remind = async {
+                    if wait_until_remind {
+                        tokio::time::sleep(Duration::from_secs(wait_secs)).await;
+                        true
+                    } else {
+                        std::future::pending::<bool>().await
+                    }
+                };
+                let cancelled = async {
+                    let mut rx = cancel_rx.clone();
+                    rx.changed().await.ok()
+                };
+                tokio::pin!(remind);
+                tokio::pin!(cancelled);
+
+                // 结算通道被清理（task 停止/结束）时 changed() 返回 Err，
+                // 视为「没有活跃通道」→ 重新查 running 决定去向。
+                let changed = async {
+                    let mut rx = settled_rx.clone();
+                    rx.changed().await.is_ok()
+                };
+                tokio::pin!(changed);
+
+                tokio::select! {
+                    // 结算信号到达：重入守卫 drain 已结算作业。
+                    _ = &mut changed => {
+                        continue 'finish_guard;
+                    }
+                    // 提醒节点到达：注入提醒并退出守卫让模型决策。
+                    _ = &mut remind => {
+                        let running_now =
+                            state.command_exec.running_jobs_for_task(&task_id).await;
+                        if running_now.is_empty() {
+                            // 等待期间 job 恰好结算完：回到守卫顶部 drain，
+                            // 把结算通知注入给模型（不直接结束丢结果）。
+                            continue 'finish_guard;
+                        }
+                        let elapsed = REMIND_AFTER_SECS[remind_idx];
+                        remind_idx += 1;
+                        let list = running_now
+                            .iter()
+                            .map(|j| format!("- {}（{}）", j.job_id, j.description))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        let reminder = format!(
+                            "你派发的后台作业已超过 {} 秒仍未结束：\n{}\n\
+                             请用 job_output 查看进度；若不再需要，用 job_kill 终止；\
+                             或继续等待（结算时会自动通知你）。",
+                            elapsed, list
+                        );
+                        log::info!(
+                            "Agent {} job reminder #{} ({}s)",
+                            task_id,
+                            remind_idx,
+                            elapsed
+                        );
+                        if let Some(db_id) = persister.save_msg("user", &reminder, None, None) {
+                            let mut m = LlmMessage::user(reminder);
+                            m.db_id = Some(db_id);
+                            messages.push(m);
+                        } else {
+                            messages.push(LlmMessage::user(reminder));
+                        }
+                        // 注入提醒后进 for round 下一轮，让模型看到并决策。
+                        continue 'round;
+                    }
+                    // 用户取消：直接结束（job 由取消级联清理）。
+                    _ = &mut cancelled => {
+                        log::info!("Agent {} cancelled during job wait, exiting", task_id);
+                        return None;
+                    }
+                }
+            }
+            // 挂起期间被取消（任务停止级联清掉了 job 与通道）：
+            // 守卫可能因 running 清空而 break，此处兜底——取消的任务
+            // 不得走 Done/Completed 路径。
+            if is_task_cancelled(&state, &task_id) {
+                log::info!("Agent {} cancelled after job guard, exiting", task_id);
+                return None;
             }
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Done);
@@ -456,7 +645,7 @@ pub(crate) async fn run_agent_loop(
                     "您的 Agent 任务已成功完成",
                 );
             }
-            return Some(cleaned_content);
+            return Some(final_text);
         }
 
         // 3. 将带 tool_calls 的 assistant 消息写入 history。
@@ -843,8 +1032,8 @@ async fn execute_single_tool(
 #[cfg(test)]
 mod tests {
     use super::{
-        group_tool_calls_into_batches, PersistedAssistantToolCall, PersistedToolResult,
-        MAX_CONCURRENT_TOOL_EXECUTIONS,
+        build_job_settlement_notice, group_tool_calls_into_batches, PersistedAssistantToolCall,
+        PersistedToolResult, MAX_CONCURRENT_TOOL_EXECUTIONS,
     };
     use crate::agent::sandbox::RiskLevel;
     use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
@@ -1084,5 +1273,55 @@ mod tests {
         assert_eq!(parsed.len(), 2);
         assert_eq!(parsed[0].id, "call-a");
         assert_eq!(parsed[1].name, "system_info");
+    }
+
+    fn job_info(
+        job_id: &str,
+        description: &str,
+        command: &str,
+        status: crate::command_exec::JobStatus,
+    ) -> crate::command_exec::JobInfo {
+        crate::command_exec::JobInfo {
+            job_id: job_id.into(),
+            session_id: "s1".into(),
+            task_id: Some("task-1".into()),
+            description: description.into(),
+            command: command.into(),
+            status,
+            started_at_millis: 0,
+            finished_at_millis: Some(1),
+            total_output_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn job_settlement_notice_lists_completed_jobs_and_collection_hint() {
+        let jobs = vec![
+            job_info("job_1", "编译 release", "cargo build --release", crate::command_exec::JobStatus::Completed),
+            job_info("job_2", "下载模型", "wget big.bin", crate::command_exec::JobStatus::Killed),
+        ];
+        let notice = build_job_settlement_notice(&jobs);
+        assert!(notice.contains("job_1"));
+        assert!(notice.contains("编译 release"));
+        assert!(notice.contains("已完成"));
+        assert!(notice.contains("job_2"));
+        assert!(notice.contains("已被终止"));
+        assert!(notice.contains("job_output"));
+        // 单条 notice 覆盖全部作业（一次决策，不逐条打断）
+        assert!(notice.contains("job_1") && notice.contains("job_2"));
+    }
+
+    #[test]
+    fn job_settlement_notice_fallback_description_to_command() {
+        let jobs = vec![job_info(
+            "job_3",
+            "",
+            "cargo test",
+            crate::command_exec::JobStatus::Failed,
+        )];
+        let notice = build_job_settlement_notice(&jobs);
+        assert!(notice.contains("job_3"));
+        assert!(notice.contains("cargo test"));
+        assert!(notice.contains("执行失败"));
     }
 }

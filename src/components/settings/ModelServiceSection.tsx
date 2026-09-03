@@ -12,10 +12,9 @@ import ChannelEditModal from './ChannelEditModal';
 import { validateRetryHttpStatuses } from '@/lib/llmParams';
 import {
   modelsOfChannel,
-  modelFullLabel,
-  effectiveDefaultModel,
   removeChannel,
   modelOptionsByChannel,
+  mergeChannelModels,
 } from '@/lib/llmRegistry';
 
 /** 从注册表生成槽位选择器的选项（按渠道分组）。 */
@@ -30,7 +29,7 @@ export function ModelServiceSection() {
   const registry: LlmRegistry = settings.llmRegistry ?? {
     channels: [],
     models: [],
-    slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+    slots: { modelApprovalModelId: '', summarizerModelId: '' },
     netPolicy: {
       maxRetries: 1,
       retryDelaySecs: 5,
@@ -59,43 +58,19 @@ export function ModelServiceSection() {
     updateRegistry({ ...registry, netPolicy: { ...netPolicy, ...patch } });
   };
 
-  const effectiveDefault = effectiveDefaultModel(registry);
   const options = useMemo(() => modelOptions(registry), [registry]);
-  // 槽位 Select 需要「跟随默认模型/无」选项
+  // 辅助槽位 Select 需要「跟随会话模型/无」选项
   const slotOptions = useMemo(
     () => [
-      { value: '', label: '跟随默认模型' },
+      { value: '', label: '跟随会话使用的模型' },
       ...options,
     ],
     [options],
   );
 
   const handleChannelSave = (channel: ChannelConfig, channelModels: ModelEntry[]) => {
-    const isNew = !registry.channels.some((c) => c.id === channel.id);
-    const channels = isNew
-      ? [...registry.channels, channel]
-      : registry.channels.map((c) => (c.id === channel.id ? channel : c));
-
-    // 合并该渠道的模型草稿：删除被移除的旧模型、替换/新增草稿中的模型
-    const keptModelIds = new Set(channelModels.map((m) => m.id));
-    const otherModels = registry.models.filter(
-      (m) => m.channelId !== channel.id || keptModelIds.has(m.id),
-    );
-    const models = [...otherModels, ...channelModels];
-
-    // 槽位清理：被删除的模型若被槽位引用则清空
-    const slotTargets = new Set(models.map((m) => m.id));
-    const slots = { ...registry.slots };
-    if (!slotTargets.has(slots.defaultModelId)) slots.defaultModelId = '';
-    if (!slotTargets.has(slots.modelApprovalModelId)) slots.modelApprovalModelId = '';
-    if (!slotTargets.has(slots.summarizerModelId)) slots.summarizerModelId = '';
-
-    // 新建第一个渠道且尚无默认模型时，自动把第一个模型设为默认
-    if (isNew && !slots.defaultModelId && channelModels[0]) {
-      slots.defaultModelId = channelModels[0].id;
-    }
-
-    updateRegistry({ ...registry, channels, models, slots });
+    // 本渠道模型整体替换为草稿 + 按 id 去重 + 槽位/最近使用清理（桌面/移动端共用）
+    updateRegistry(mergeChannelModels(registry, channel, channelModels));
   };
 
   const handleDeleteChannel = (channel: ChannelConfig) => {
@@ -103,35 +78,11 @@ export function ModelServiceSection() {
   };
 
   return (
-    <Card id="settings-llm" title="模型服务" description="管理多渠道接入与模型，并绑定默认 / 审核 / 摘要等场景模型">
-      {/* ── 场景槽位 ── */}
-      <SettingItem
-        id="llm-default-model"
-        label="默认模型"
-        description="主对话使用的模型。未设置时自动使用第一个模型"
-        sectionId="settings-llm"
-        keywords={['default', '默认', '主模型', 'model', '模型']}
-      >
-        <div className="flex-1 flex gap-2 items-center">
-          <Select
-            value={slots.defaultModelId || effectiveDefault?.id || ''}
-            onChange={(v) => updateSlots({ defaultModelId: v })}
-            options={options}
-            placeholder="选择默认模型"
-            className="w-72"
-          />
-          {effectiveDefault && (
-            <span className="text-xs text-zinc-500 flex-shrink-0">
-              当前：{modelFullLabel(registry, effectiveDefault.id)}
-            </span>
-          )}
-        </div>
-      </SettingItem>
-
+    <Card id="settings-llm" title="模型服务" description="管理多渠道接入与模型，并绑定审核 / 摘要等辅助场景模型">
       <SettingItem
         id="llm-summarizer-model"
         label="上下文压缩模型"
-        description="压缩历史上下文时的摘要模型。留空 = 跟随默认模型"
+        description="压缩历史上下文时的摘要模型。留空 = 跟随会话正在使用的模型（运行中的 Agent 用什么，压缩就用什么）"
         sectionId="settings-llm"
         keywords={['summarizer', '摘要', '压缩', 'compaction', '模型']}
       >
@@ -139,7 +90,7 @@ export function ModelServiceSection() {
           value={slots.summarizerModelId}
           onChange={(v) => updateSlots({ summarizerModelId: v })}
           options={slotOptions}
-          placeholder="跟随默认模型"
+          placeholder="跟随会话模型"
           className="w-72"
         />
       </SettingItem>
@@ -280,7 +231,6 @@ export function ModelServiceSection() {
             {registry.channels.map((ch) => {
               const models = modelsOfChannel(registry, ch.id);
               const hasKey = channelKeyStatus[ch.id] ?? !!ch.apiKey;
-              const isDefaultChannel = effectiveDefault?.channelId === ch.id;
               return (
                 <li key={ch.id} className="flex items-center gap-3 px-4 py-3 bg-zinc-900/40">
                   <div className="min-w-0 flex-1">
@@ -289,11 +239,6 @@ export function ModelServiceSection() {
                       {!ch.enabled && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-400">
                           已禁用
-                        </span>
-                      )}
-                      {isDefaultChannel && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300">
-                          默认
                         </span>
                       )}
                     </div>

@@ -40,6 +40,12 @@ pub struct Conversation {
     /// `AgentSpec.model_override` 解析；子 agent 继承父任务模型。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
+    /// 会话级思考强度（`reasoning_effort` 档位字符串，**内存 overlay**，
+    /// 落盘由 `conversations.efforts_json` 承载（(model→effort) 映射，
+    /// 启动时装载回内存 `session_efforts`））：`None` = 未设置，跟随模型
+    /// 自身默认。此字段只表达「当前生效模型的档位」，持久化的是整张映射。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,7 +135,8 @@ impl ConversationDb {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 parent_conversation_id TEXT,
-                model_id TEXT
+                model_id TEXT,
+                efforts_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -236,6 +243,19 @@ impl ConversationDb {
             log::info!("Migration complete: model_id column added");
         }
 
+        // Migration: add efforts_json for per-conversation (model → reasoning
+        // effort) persisted map. 旧库 ALTER 加列；新库建表已带列。缺省 NULL =
+        // 无档位记忆（跟随模型默认，兼容旧数据）。
+        if !column_exists(&conn, "conversations", "efforts_json") {
+            log::info!("Migrating conversation database: adding efforts_json column");
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN efforts_json TEXT",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: efforts_json column added");
+        }
+
         // Migration: plan_snapshots for older DBs that already had plans table only
         conn.execute_batch(
             "
@@ -292,8 +312,8 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             (
                 &id,
                 connection_id,
@@ -301,7 +321,6 @@ impl ConversationDb {
                 &now_str,
                 &now_str,
                 parent_conversation_id,
-                Option::<&str>::None, // 新会话默认跟随全局模型（会话级选择由 set_conversation_model_id 设置）
             ),
         )?;
 
@@ -313,6 +332,7 @@ impl ConversationDb {
             updated_at: now,
             parent_conversation_id: parent_conversation_id.map(String::from),
             model_id: None,
+            reasoning_effort: None,
         })
     }
 
@@ -341,6 +361,7 @@ impl ConversationDb {
                         .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                     parent_conversation_id: row.get(5).ok(),
                     model_id: row.get(6).ok(),
+                    reasoning_effort: None,
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -926,6 +947,7 @@ impl ConversationDb {
                     .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
                 parent_conversation_id: row.get(5).ok(),
                 model_id: row.get(6).ok(),
+                reasoning_effort: None,
             })
         })?;
         match rows.next() {
@@ -969,18 +991,20 @@ impl ConversationDb {
 
     /// upsert 会话元数据（用于跨设备同步 pull 应用）。
     /// 注意：不修改 updated_at，保留传入的值（同步语义）。
+    /// `model_id` 不再写入——会话级模型已收敛为内存映射（启动时迁移装载），
+    /// DB 列仅作旧数据遗留；收到带 model_id 的旧端快照也不落库，避免重新
+    /// 固定会话模型（由内存映射的 last-used 语义接管）。
     pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(id) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 title = excluded.title,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                parent_conversation_id = excluded.parent_conversation_id,
-                model_id = excluded.model_id",
+                parent_conversation_id = excluded.parent_conversation_id",
             (
                 &conv.id,
                 &conv.connection_id,
@@ -988,10 +1012,68 @@ impl ConversationDb {
                 conv.created_at.to_rfc3339(),
                 conv.updated_at.to_rfc3339(),
                 &conv.parent_conversation_id,
-                &conv.model_id,
             ),
         )?;
         Ok(())
+    }
+
+    /// 一次性迁移：把旧版持久化的会话级模型选择读入内存映射，并清空 DB 列。
+    ///
+    /// 旧版 `conversations.model_id` 曾随每个会话落盘（"商鞅分裂"的来源）。
+    /// 新架构把「会话 → 模型」收敛为**内存映射**：启动时把存量值搬到调用方
+    /// 的内存 map，之后不再落盘。返回 `(conversation_id, model_id)` 列表。
+    /// 幂等：列已清空后再调用返回空。
+    pub fn take_persisted_model_ids(&self) -> RusqliteResult<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, model_id FROM conversations WHERE model_id IS NOT NULL AND model_id != ''",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<RusqliteResult<Vec<_>>>()?;
+        if rows.is_empty() {
+            return Ok(rows);
+        }
+        conn.execute(
+            "UPDATE conversations SET model_id = NULL WHERE model_id IS NOT NULL AND model_id != ''",
+            [],
+        )?;
+        Ok(rows)
+    }
+
+    /// 读出全部会话的思考档位映射（`efforts_json` 列），用于启动时装载进
+    /// 内存 `session_efforts`。每行 `efforts_json` 为 `{"model_id":"effort"}`
+    /// JSON 对象（可能为空对象/损坏——损坏行由调用方容忍跳过）。
+    pub fn load_all_conversation_efforts(
+        &self,
+    ) -> RusqliteResult<Vec<(String, Option<String>)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, efforts_json FROM conversations WHERE efforts_json IS NOT NULL AND efforts_json != ''",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<RusqliteResult<Vec<_>>>()?;
+        Ok(rows.into_iter().map(|(id, json)| (id, Some(json))).collect())
+    }
+
+    /// 写回某个会话的整张 (model → effort) 思考档位映射（JSON 对象串）。
+    /// `None` = 清除该会话的档位记忆。会话不存在时静默无操作（返回 false）。
+    pub fn save_conversation_efforts(
+        &self,
+        conversation_id: &str,
+        efforts_json: Option<&str>,
+    ) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE conversations SET efforts_json = ?1 WHERE id = ?2",
+            (efforts_json, conversation_id),
+        )?;
+        Ok(rows > 0)
     }
 
     /// 替换会话的全部消息（删除旧的 + 插入新的）。
@@ -1908,17 +1990,138 @@ mod tests {
         assert!(loaded.model_id.is_none());
         db.set_conversation_model_id("conv-old", Some("model-abc"))
             .expect("set model");
-        let updated = db.get_conversation("conv-old").expect("get").expect("exists");
+        let updated = db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists");
         assert_eq!(updated.model_id.as_deref(), Some("model-abc"));
         // 清空选择（回落全局默认）
-        db.set_conversation_model_id("conv-old", None).expect("clear model");
-        let cleared = db.get_conversation("conv-old").expect("get").expect("exists");
+        db.set_conversation_model_id("conv-old", None)
+            .expect("clear model");
+        let cleared = db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists");
         assert!(cleared.model_id.is_none());
+
+        // 旧库迁移后 efforts_json 列可用（思考档位持久化）
+        db.save_conversation_efforts("conv-old", Some(r#"{"m1":"high"}"#))
+            .expect("save efforts");
+        let rows = db.load_all_conversation_efforts().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "conv-old");
 
         // 历史消息保留
         let msgs = db.load_messages("conv-old").expect("load");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hello");
+    }
+
+    #[test]
+    fn test_take_persisted_model_ids_moves_and_clears() {
+        let db = create_test_db();
+        let c1 = db.create_conversation("conn_1", "C1").expect("c1");
+        let c2 = db.create_conversation("conn_1", "C2").expect("c2");
+        // 模拟旧版遗留的持久化会话级模型
+        db.set_conversation_model_id(&c1.id, Some("model-a"))
+            .unwrap();
+        db.set_conversation_model_id(&c2.id, Some("model-b"))
+            .unwrap();
+        assert_eq!(
+            db.get_conversation(&c1.id)
+                .unwrap()
+                .unwrap()
+                .model_id
+                .as_deref(),
+            Some("model-a")
+        );
+
+        let taken = db.take_persisted_model_ids().expect("take");
+        assert_eq!(taken.len(), 2);
+        let map: std::collections::HashMap<String, String> = taken.into_iter().collect();
+        assert_eq!(map.get(&c1.id).map(String::as_str), Some("model-a"));
+        assert_eq!(map.get(&c2.id).map(String::as_str), Some("model-b"));
+
+        // DB 列已清空（幂等：再取为空）
+        assert!(db
+            .get_conversation(&c1.id)
+            .unwrap()
+            .unwrap()
+            .model_id
+            .is_none());
+        assert!(db.take_persisted_model_ids().unwrap().is_empty());
+        // 新插入的会话不再写 model_id
+        let c3 = db.create_conversation("conn_1", "C3").expect("c3");
+        assert!(db
+            .get_conversation(&c3.id)
+            .unwrap()
+            .unwrap()
+            .model_id
+            .is_none());
+    }
+
+    #[test]
+    fn test_conversation_efforts_persist_roundtrip_and_clear() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "C1").expect("c1");
+
+        // 初始无持久化档位
+        assert!(db.load_all_conversation_efforts().unwrap().is_empty());
+
+        // 写回整张映射
+        db.save_conversation_efforts(
+            &conv.id,
+            Some(r#"{"model-x":"high","model-y":"low"}"#),
+        )
+        .expect("save");
+        let rows = db.load_all_conversation_efforts().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, conv.id);
+        assert_eq!(rows[0].1.as_deref(), Some(r#"{"model-x":"high","model-y":"low"}"#));
+
+        // 清空（None → 列置 NULL，重新装载为空）
+        db.save_conversation_efforts(&conv.id, None).expect("clear");
+        assert!(db.load_all_conversation_efforts().unwrap().is_empty());
+
+        // 删除会话 → 持久化档位随行删除（无悬挂）
+        db.save_conversation_efforts(
+            &conv.id,
+            Some(r#"{"model-x":"high"}"#),
+        )
+        .expect("save2");
+        db.delete_conversation(&conv.id).expect("delete");
+        assert!(db.load_all_conversation_efforts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_conversation_efforts_survive_db_reopen() {
+        let dir = std::env::temp_dir().join(format!(
+            "marcel-ssh-efforts-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("conversations.db");
+
+        let conv_id = {
+            let db = ConversationDb::new(&db_path).expect("open1");
+            let conv = db.create_conversation("conn_1", "C1").expect("c1");
+            db.save_conversation_efforts(
+                &conv.id,
+                Some(r#"{"model-x":"max"}"#),
+            )
+            .expect("save");
+            conv.id
+        };
+
+        // 模拟重启：重新打开同一 DB 文件
+        let db2 = ConversationDb::new(&db_path).expect("open2");
+        let rows = db2.load_all_conversation_efforts().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, conv_id);
+        assert_eq!(rows[0].1.as_deref(), Some(r#"{"model-x":"max"}"#));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

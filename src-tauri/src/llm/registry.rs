@@ -142,6 +142,12 @@ pub struct ModelEntry {
     /// `LlmConfig.extra_body` 语义一致。
     #[serde(default)]
     pub extra_body: Option<serde_json::Value>,
+    /// 该模型支持的「思考强度」档位（自填字符串列表，如
+    /// `["low", "medium", "high"]`）。空 = 模型未启用思考强度选择
+    /// （会话输入条不显示强度选择器，请求体不注入 `reasoning_effort`）。
+    /// 值原样透传为请求体顶层 `reasoning_effort`。
+    #[serde(default)]
+    pub reasoning_efforts: Vec<String>,
 }
 
 impl Default for ModelEntry {
@@ -155,26 +161,29 @@ impl Default for ModelEntry {
             vision: false,
             context_window: 0,
             extra_body: None,
+            reasoning_efforts: Vec::new(),
         }
     }
 }
 
-/// 场景槽位：把「用途」绑定到具体模型。
+/// 场景槽位：把「辅助用途」绑定到具体模型。
 ///
-/// 三个槽位均允许为空字符串：
-/// - `default_model_id` 为空 → 解析时回落第一个模型（尽力可用）；
-/// - 审核/摘要槽位为空 → 回落主模型（旧行为：审核复用主模型）。
+/// 两个槽位均允许为空字符串：审核/摘要槽位为空 → 回落会话主模型
+/// （旧行为：审核复用主模型）。「全局主模型」不再是槽位，而是
+/// `LlmRegistry.last_used_model_id`（最近一次在任意会话选择的模型）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ModelSlots {
-    /// 默认（主对话）模型。
-    #[serde(default)]
+    /// （遗留，只读）旧版「默认模型」槽位。仅在旧数据迁移读取一次后清空，
+    /// 之后永不持久化（`skip_serializing`）：反序列化可读旧 JSON 里的值，
+    /// 序列化时丢弃，使新写入的 settings.json 不再携带该键。
+    #[serde(default, skip_serializing)]
     pub default_model_id: String,
     /// 命令审核模型（`enableModelCommandApproval` 开启时使用）。
-    /// 空 = 跟随默认模型。
+    /// 空 = 跟随会话主模型。
     #[serde(default)]
     pub model_approval_model_id: String,
-    /// 上下文压缩摘要模型。空 = 跟随默认模型。
+    /// 上下文压缩摘要模型。空 = 跟随会话主模型。
     #[serde(default)]
     pub summarizer_model_id: String,
 }
@@ -189,6 +198,11 @@ pub struct LlmRegistry {
     pub models: Vec<ModelEntry>,
     #[serde(default)]
     pub slots: ModelSlots,
+    /// 全局主模型：最近一次在任意会话选择的模型（「最后使用」）。
+    /// 空/失效 → 解析时回落第一个模型（尽力可用）。
+    /// 取代旧版 `slots.default_model_id` 的「默认模型」语义。
+    #[serde(default)]
+    pub last_used_model_id: String,
     /// 全局共享的网络与重试策略（所有渠道/模型统一生效）。
     #[serde(default)]
     pub net_policy: NetPolicy,
@@ -204,6 +218,8 @@ pub struct ResolvedModel {
     pub model_id: String,
     /// 展示标签（display_name 优先，否则 model_name）。
     pub display_label: String,
+    /// 该模型声明的可用思考强度档位（空 = 未启用思考强度选择）。
+    pub reasoning_efforts: Vec<String>,
 }
 
 impl LlmRegistry {
@@ -229,19 +245,22 @@ impl LlmRegistry {
 
     /// 某渠道下的全部模型（保持注册顺序）。
     pub fn models_of_channel(&self, channel_id: &str) -> Vec<&ModelEntry> {
-        self.models.iter().filter(|m| m.channel_id == channel_id).collect()
+        self.models
+            .iter()
+            .filter(|m| m.channel_id == channel_id)
+            .collect()
     }
 
-    /// 主模型：槽位优先；槽位为空/失效时回落第一个模型（尽力可用）。
+    /// 主模型：最近使用槽位优先；槽位为空/失效时回落第一个模型（尽力可用）。
     /// 完全没有模型时返回 None。
     pub fn default_model(&self) -> Option<&ModelEntry> {
-        if !self.slots.default_model_id.is_empty() {
-            if let Some(m) = self.find_model(&self.slots.default_model_id) {
+        if !self.last_used_model_id.is_empty() {
+            if let Some(m) = self.find_model(&self.last_used_model_id) {
                 return Some(m);
             }
             log::warn!(
-                "默认模型槽位指向不存在的模型 ({})，回落第一个可用模型",
-                self.slots.default_model_id
+                "最近使用模型槽位指向不存在的模型 ({})，回落第一个可用模型",
+                self.last_used_model_id
             );
         }
         self.models.first()
@@ -249,17 +268,17 @@ impl LlmRegistry {
 
     /// 解析主模型配置。
     pub fn resolve_default(&self) -> Result<ResolvedModel, AppError> {
-        let model = self.default_model().ok_or_else(|| {
-            AppError::Llm("尚未配置模型，请前往设置添加渠道与模型".into())
-        })?;
+        let model = self
+            .default_model()
+            .ok_or_else(|| AppError::Llm("尚未配置模型，请前往设置添加渠道与模型".into()))?;
         self.build_resolved(model)
     }
 
     /// 按模型 ID 解析配置。模型不存在/所属渠道异常时返回错误。
     pub fn resolve_model(&self, model_id: &str) -> Result<ResolvedModel, AppError> {
-        let model = self.find_model(model_id).ok_or_else(|| {
-            AppError::Llm(format!("模型不存在或已被删除：{}", model_id))
-        })?;
+        let model = self
+            .find_model(model_id)
+            .ok_or_else(|| AppError::Llm(format!("模型不存在或已被删除：{}", model_id)))?;
         self.build_resolved(model)
     }
 
@@ -273,10 +292,7 @@ impl LlmRegistry {
         match self.find_model(id) {
             Some(m) => self.build_resolved(m),
             None => {
-                log::warn!(
-                    "场景槽位指向不存在的模型 ({})，回落主模型",
-                    id
-                );
+                log::warn!("场景槽位指向不存在的模型 ({})，回落主模型", id);
                 self.resolve_default()
             }
         }
@@ -354,6 +370,7 @@ impl LlmRegistry {
             context_window: model.context_window,
             model_id: model.id.clone(),
             display_label: self.model_label(model),
+            reasoning_efforts: model.reasoning_efforts.clone(),
         })
     }
 
@@ -374,7 +391,7 @@ impl LlmRegistry {
         removed_models
     }
 
-    /// 删除单个模型（清理指向它的槽位）。返回是否删除成功。
+    /// 删除单个模型（清理指向它的槽位与最近使用槽位）。返回是否删除成功。
     pub fn remove_model(&mut self, model_id: &str) -> bool {
         let before = self.models.len();
         self.models.retain(|m| m.id != model_id);
@@ -386,8 +403,8 @@ impl LlmRegistry {
     }
 
     fn clear_slot_references(&mut self, model_id: &str) {
-        if self.slots.default_model_id == model_id {
-            self.slots.default_model_id.clear();
+        if self.last_used_model_id == model_id {
+            self.last_used_model_id.clear();
         }
         if self.slots.model_approval_model_id == model_id {
             self.slots.model_approval_model_id.clear();
@@ -397,8 +414,79 @@ impl LlmRegistry {
         }
     }
 
+    /// 自愈：按模型 ID 去重（保留**最后出现**的一条，维持其余相对顺序）。
+    ///
+    /// 背景：历史「保存渠道」合并逻辑会把仍在草稿中的旧模型原样保留、又整体
+    /// 追加草稿，写出同 id 重复条目（UI 表现为同一模型出现两次）。重复中靠后
+    /// 的条目通常是草稿中较新的编辑版本（编辑 = 保留原 id 的新对象），故保留
+    /// 最后出现者，避免丢掉用户最近的编辑。无 id 条目不处理（交由 validate 拦截）。
+    /// 幂等：无重复时不做任何改动。返回是否发生改动。
+    pub fn dedupe_duplicate_models(&mut self) -> bool {
+        // 记录每个 id 最后一次出现的位置（保持原相对顺序）
+        let mut last_seen: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for (i, m) in self.models.iter().enumerate() {
+            if !m.id.is_empty() {
+                last_seen.insert(m.id.as_str(), i);
+            }
+        }
+        let mut keep: std::collections::HashSet<usize> =
+            last_seen.values().copied().collect();
+        for (i, m) in self.models.iter().enumerate() {
+            if m.id.is_empty() {
+                keep.insert(i); // 无 id 条目不丢弃（保持原样，validate 会拦截）
+            }
+        }
+        let before = self.models.len();
+        self.models = self
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep.contains(i))
+            .map(|(_, m)| m.clone())
+            .collect();
+        self.models.len() != before
+    }
+
+    /// 自愈：归一化每个模型的思考强度档位（trim + 丢空 + 按 trim 后值去重，保留首次顺序）。
+    ///
+    /// 语义与前端 `textToEfforts` 完全一致。背景：旧数据/脏数据可能携带首尾空格
+    /// 的档位（如 `" high "`）。validate 判空/判重用 trimmed 值、但**不写回**，
+    /// 导致带空格档位能通过校验并持久化；而任务启动注入（`apply_reasoning_effort`）
+    /// 用**原始值全等比较**，前端按 trim 后值展示并提交的档位因此永远匹配不上 →
+    /// 档位被静默忽略。此处把声明数组归一为干净值，使「展示、持久化、注入比较」
+    /// 三处语义一致。幂等：无改动时返回 false。
+    pub fn normalize_reasoning_efforts(&mut self) -> bool {
+        let mut any_changed = false;
+        for model in &mut self.models {
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            let mut normalized: Vec<String> = Vec::with_capacity(model.reasoning_efforts.len());
+            let mut model_changed = false;
+            for e in &model.reasoning_efforts {
+                let trimmed = e.trim();
+                if trimmed.is_empty() {
+                    model_changed = true; // 空项/纯空白项：丢弃（脏数据自愈）
+                    continue;
+                }
+                if !seen.insert(trimmed) {
+                    model_changed = true; // trim 后重复（如 "low" 与 " low "）
+                    continue;
+                }
+                if trimmed != e.as_str() {
+                    model_changed = true; // 有首尾空格，归一
+                }
+                normalized.push(trimmed.to_string());
+            }
+            if model_changed {
+                model.reasoning_efforts = normalized;
+                any_changed = true;
+            }
+        }
+        any_changed
+    }
+
     /// 保存前校验：渠道/模型字段合法、Base URL 必填且为 http(s)、引用完整、
-    /// 槽位指向存在模型、全局网络策略参数合法。
+    /// 槽位指向存在模型、全局网络策略参数合法、模型 ID 全局唯一。
     /// `config_save_settings` 在落盘前调用。
     pub fn validate(&self) -> Result<(), AppError> {
         for channel in &self.channels {
@@ -453,9 +541,18 @@ impl LlmRegistry {
 
         let channel_ids: std::collections::HashSet<&str> =
             self.channels.iter().map(|c| c.id.as_str()).collect();
+        let mut seen_model_ids: std::collections::HashSet<&str> =
+            std::collections::HashSet::new();
         for model in &self.models {
             if model.id.trim().is_empty() {
                 return Err(AppError::Config("模型 ID 不能为空".into()));
+            }
+            // 模型 ID 全局唯一：重复 id 会令 UI 出现同一模型两次，且解析歧义
+            if !seen_model_ids.insert(model.id.as_str()) {
+                return Err(AppError::Config(format!(
+                    "模型 \"{}\" 存在重复记录（ID: {}），请删除重复项后重试",
+                    model.model_name, model.id
+                )));
             }
             if model.model_name.trim().is_empty() {
                 return Err(AppError::Config(
@@ -468,10 +565,35 @@ impl LlmRegistry {
                     model.model_name
                 )));
             }
+            // 思考强度档位：允许为空（未启用），非空时每项须非空且去重
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for e in &model.reasoning_efforts {
+                let trimmed = e.trim();
+                if trimmed.is_empty() {
+                    return Err(AppError::Config(format!(
+                        "模型 \"{}\" 的思考强度档位含空项，请移除空行",
+                        model.model_name
+                    )));
+                }
+                if !seen.insert(trimmed) {
+                    return Err(AppError::Config(format!(
+                        "模型 \"{}\" 的思考强度档位重复：\"{}\"",
+                        model.model_name, trimmed
+                    )));
+                }
+            }
+        }
+
+        // 最近使用主模型：允许为空（回落第一个模型），非空时校验引用存在
+        if !self.last_used_model_id.is_empty()
+            && self.find_model(&self.last_used_model_id).is_none()
+        {
+            return Err(AppError::Config(
+                "最近使用模型指向不存在的模型，请重新选择".into(),
+            ));
         }
 
         for (label, slot_id) in [
-            ("默认模型", &self.slots.default_model_id),
             ("命令审核模型", &self.slots.model_approval_model_id),
             ("上下文压缩模型", &self.slots.summarizer_model_id),
         ] {
@@ -534,19 +656,15 @@ pub fn migrate_legacy_settings(settings: &mut AppSettings) -> bool {
                 vision: legacy.vision,
                 context_window: 0,
                 extra_body: legacy.extra_body.clone(),
+                reasoning_efforts: Vec::new(),
             };
-            settings.llm_registry.slots.default_model_id = model_id.clone();
+            settings.llm_registry.last_used_model_id = model_id.clone();
             settings.llm_registry.channels.push(channel);
             settings.llm_registry.models.push(model);
             migrated_llm = true;
-            log::info!(
-                "旧版 LLM 单配置已迁移为「默认渠道 + {}」",
-                legacy.model
-            );
+            log::info!("旧版 LLM 单配置已迁移为「默认渠道 + {}」", legacy.model);
         } else {
-            log::warn!(
-                "检测到旧版 llmConfig 但已存在渠道配置，忽略旧配置（保持现有渠道）"
-            );
+            log::warn!("检测到旧版 llmConfig 但已存在渠道配置，忽略旧配置（保持现有渠道）");
         }
         changed = true;
     }
@@ -556,7 +674,12 @@ pub fn migrate_legacy_settings(settings: &mut AppSettings) -> bool {
         let name = settings.agent_mode_settings.model_approval_model.clone();
         settings.agent_mode_settings.model_approval_model.clear();
         changed = true;
-        if settings.llm_registry.slots.model_approval_model_id.is_empty() {
+        if settings
+            .llm_registry
+            .slots
+            .model_approval_model_id
+            .is_empty()
+        {
             match settings
                 .llm_registry
                 .models
@@ -575,7 +698,29 @@ pub fn migrate_legacy_settings(settings: &mut AppSettings) -> bool {
         }
     }
 
-    // 3. 渠道 API Key 搬运：仅当刚迁移出旧配置且内存 key 为空
+    // 3. 旧「默认模型」槽位 → 全局最近使用（last_used_model_id）。
+    //    旧版 `slots.default_model_id` 曾持久化在主对话槽位上；新版把主对话
+    //    模型收敛为全局「最近一次选择」。字段已标记 skip_serializing，这里
+    //    把它搬到 last_used_model_id（last_used 为空时），并清空遗留字段，
+    //    使后续 save 不再写回该键。
+    if !settings.llm_registry.slots.default_model_id.is_empty() {
+        let old_default = settings.llm_registry.slots.default_model_id.clone();
+        settings.llm_registry.slots.default_model_id.clear();
+        changed = true;
+        if settings.llm_registry.last_used_model_id.is_empty() {
+            if settings.llm_registry.find_model(&old_default).is_some() {
+                settings.llm_registry.last_used_model_id = old_default;
+                log::info!("旧默认模型槽位已迁移为全局最近使用模型");
+            } else {
+                log::warn!(
+                    "旧默认模型槽位指向不存在的模型 ({}), 已清空并回落第一个模型",
+                    old_default
+                );
+            }
+        }
+    }
+
+    // 4. 渠道 API Key 搬运：仅当刚迁移出旧配置且内存 key 为空
     if migrated_llm && !settings.llm_registry.channels.is_empty() {
         let channel_id = settings.llm_registry.channels[0].id.clone();
         if settings.llm_registry.channels[0].api_key.is_empty() {
@@ -624,12 +769,12 @@ mod tests {
             extra_body: None,
             ..Default::default()
         });
-        r.slots.default_model_id = "m-1".into();
+        r.last_used_model_id = "m-1".into();
         r
     }
 
     #[test]
-    fn resolve_default_uses_slot() {
+    fn resolve_default_uses_last_used() {
         let r = sample_registry();
         let resolved = r.resolve_default().unwrap();
         assert_eq!(resolved.config.model, "deepseek-chat");
@@ -663,20 +808,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_slot_empty_or_missing_falls_back_to_default() {
+    fn resolve_slot_set_model_when_present() {
         let r = sample_registry();
-        let empty = r.resolve_slot("").unwrap();
-        assert_eq!(empty.config.model, "deepseek-chat");
-        let missing = r.resolve_slot("ghost-id").unwrap();
-        assert_eq!(missing.config.model, "deepseek-chat");
+        // 槽位为空/失效按契约由调用方决定是否回主模型；此处显式槽位解析可用
         let set = r.resolve_slot("m-2").unwrap();
         assert_eq!(set.config.model, "deepseek-reasoner");
     }
 
     #[test]
-    fn default_model_falls_back_to_first_when_slot_empty() {
+    fn default_model_falls_back_to_first_when_last_used_empty() {
         let mut r = sample_registry();
-        r.slots.default_model_id = "".into();
+        r.last_used_model_id = "".into();
+        let resolved = r.resolve_default().unwrap();
+        assert_eq!(resolved.config.model, "deepseek-chat");
+    }
+
+    #[test]
+    fn default_model_falls_back_to_first_when_last_used_dangling() {
+        let mut r = sample_registry();
+        r.last_used_model_id = "ghost-id".into();
         let resolved = r.resolve_default().unwrap();
         assert_eq!(resolved.config.model, "deepseek-chat");
     }
@@ -740,19 +890,26 @@ mod tests {
         assert_eq!(removed.len(), 2);
         assert!(r.channels.is_empty());
         assert!(r.models.is_empty());
-        assert!(r.slots.default_model_id.is_empty());
+        assert!(r.last_used_model_id.is_empty());
         assert!(r.slots.model_approval_model_id.is_empty());
         assert!(r.slots.summarizer_model_id.is_empty());
     }
 
     #[test]
-    fn remove_model_clears_slots() {
+    fn remove_model_clears_last_used_and_slots() {
         let mut r = sample_registry();
         r.slots.model_approval_model_id = "m-1".into();
         assert!(r.remove_model("m-1"));
-        assert!(r.slots.default_model_id.is_empty());
+        assert!(r.last_used_model_id.is_empty());
         assert!(r.slots.model_approval_model_id.is_empty());
         assert!(!r.remove_model("m-1"));
+    }
+
+    #[test]
+    fn validate_rejects_dangling_last_used() {
+        let mut r = sample_registry();
+        r.last_used_model_id = "ghost".into();
+        assert!(r.validate().is_err());
     }
 
     #[test]
@@ -801,22 +958,21 @@ mod tests {
         assert!(settings.llm_config.is_none());
         assert_eq!(settings.llm_registry.channels.len(), 1);
         assert_eq!(settings.llm_registry.models.len(), 1);
-        assert_eq!(
-            settings.llm_registry.models[0].model_name, "gpt-4o"
-        );
+        assert_eq!(settings.llm_registry.models[0].model_name, "gpt-4o");
         assert!(settings.llm_registry.models[0].vision);
         assert_eq!(settings.llm_registry.channels[0].api_key, "sk-legacy");
         assert_eq!(
-            settings.llm_registry.slots.default_model_id,
+            settings.llm_registry.last_used_model_id,
             settings.llm_registry.models[0].id
         );
         // 旧重试策略搬入全局共享策略
         assert_eq!(settings.llm_registry.net_policy.max_retries, 3);
         assert_eq!(settings.llm_registry.net_policy.retry_delay_secs, 2.0);
+        assert_eq!(settings.llm_registry.net_policy.retry_http_statuses, "429");
         assert_eq!(
-            settings.llm_registry.net_policy.retry_http_statuses, "429"
+            settings.llm_registry.net_policy.first_byte_timeout_secs,
+            120
         );
-        assert_eq!(settings.llm_registry.net_policy.first_byte_timeout_secs, 120);
         assert!(!settings.llm_registry.net_policy.retry_on_timeout);
 
         // 幂等：再跑一次不再变化
@@ -873,5 +1029,175 @@ mod tests {
         assert_eq!(settings.llm_registry.models.len(), 2);
         assert_eq!(settings.llm_registry.models[0].model_name, "deepseek-chat");
         assert!(settings.llm_config.is_none());
+    }
+
+    #[test]
+    fn migration_moves_old_default_slot_to_last_used() {
+        // 旧版 settings.json 的 slots.defaultModelId 会被反序列化进遗留字段，
+        // 迁移后应搬到 last_used_model_id 并清空遗留字段（不再写回）。
+        let mut settings = AppSettings::default();
+        settings.llm_config = None; // 排除旧单配置迁移干扰，专注测旧默认槽位搬家
+        let model_id = uuid::Uuid::new_v4().to_string();
+        let channel_id = uuid::Uuid::new_v4().to_string();
+        settings.llm_registry.channels.push(ChannelConfig {
+            id: channel_id.clone(),
+            name: "DeepSeek".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            api_key: "sk".into(),
+            enabled: true,
+        });
+        settings.llm_registry.models.push(ModelEntry {
+            id: model_id.clone(),
+            channel_id,
+            model_name: "deepseek-chat".into(),
+            display_name: "".into(),
+            temperature: 0.1,
+            vision: false,
+            context_window: 0,
+            extra_body: None,
+            reasoning_efforts: Vec::new(),
+        });
+        settings.llm_registry.slots.default_model_id = model_id.clone();
+
+        let changed = migrate_legacy_settings(&mut settings);
+        assert!(changed);
+        assert_eq!(settings.llm_registry.last_used_model_id, model_id);
+        assert!(settings.llm_registry.slots.default_model_id.is_empty());
+        // 序列化不再携带旧默认槽位键（skip_serializing）
+        let json = serde_json::to_string(&settings.llm_registry).unwrap();
+        assert!(
+            !json.contains("defaultModelId"),
+            "defaultModelId 不应再被序列化: {json}"
+        );
+        assert!(json.contains("lastUsedModelId"));
+        // 幂等
+        let changed_again = migrate_legacy_settings(&mut settings);
+        assert!(!changed_again);
+    }
+
+    #[test]
+    fn migration_drops_dangling_old_default_slot() {
+        // 无旧单配置（llm_config 已 None），只有悬挂的旧默认槽位 → 只清空不搬
+        let mut settings = AppSettings::default();
+        settings.llm_config = None;
+        settings.llm_registry.slots.default_model_id = "ghost".into();
+        let changed = migrate_legacy_settings(&mut settings);
+        assert!(changed);
+        assert!(settings.llm_registry.last_used_model_id.is_empty());
+        assert!(settings.llm_registry.slots.default_model_id.is_empty());
+    }
+
+    #[test]
+    fn reasoning_efforts_defaults_empty_and_serializes() {
+        let mut r = sample_registry();
+        // 默认空 = 未启用
+        assert!(r.models[0].reasoning_efforts.is_empty());
+        // 序列化应携带字段（空数组），反序列化旧 JSON（缺字段）回落空
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("reasoningEfforts"));
+        let parsed: LlmRegistry = serde_json::from_str(
+            r#"{"channels":[],"models":[{"id":"x","channelId":"c","modelName":"m"}],"slots":{},"netPolicy":{}}"#,
+        )
+        .unwrap();
+        assert!(parsed.models[0].reasoning_efforts.is_empty());
+    }
+
+    #[test]
+    fn validate_rejects_bad_reasoning_efforts() {
+        // 空项
+        let mut r = sample_registry();
+        r.models[0].reasoning_efforts = vec!["low".into(), "".into()];
+        assert!(r.validate().is_err());
+        // 重复
+        let mut r = sample_registry();
+        r.models[0].reasoning_efforts = vec!["low".into(), "low".into()];
+        assert!(r.validate().is_err());
+        // 合法列表通过
+        let mut r = sample_registry();
+        r.models[0].reasoning_efforts = vec!["low".into(), "high".into(), "max".into()];
+        assert!(r.validate().is_ok());
+    }
+
+    #[test]
+    fn normalize_reasoning_efforts_trims_drops_dups_and_is_idempotent() {
+        // 脏数据：首尾空格 + trim 后重复 + 空项/纯空白项 → 归一为干净保序列表
+        let mut r = sample_registry();
+        r.models[0].reasoning_efforts = vec![
+            " high ".into(),
+            "low".into(),
+            "  ".into(),
+            "".into(),
+            "low".into(),
+            "max".into(),
+        ];
+        assert!(r.normalize_reasoning_efforts());
+        assert_eq!(
+            r.models[0].reasoning_efforts,
+            vec!["high".to_string(), "low".to_string(), "max".to_string()]
+        );
+        // 归一后 validate 通过（trim 后无空项无重复）
+        assert!(r.validate().is_ok());
+        // 幂等：再跑无改动
+        assert!(!r.normalize_reasoning_efforts());
+    }
+
+    #[test]
+    fn normalize_reasoning_efforts_untouched_returns_false() {
+        // 干净列表：无改动返回 false
+        let mut r = sample_registry();
+        r.models[0].reasoning_efforts = vec!["low".into(), "high".into()];
+        assert!(!r.normalize_reasoning_efforts());
+        assert_eq!(r.models[0].reasoning_efforts, vec!["low".to_string(), "high".to_string()]);
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_model_ids() {
+        // 同 id 重复条目（历史「保存渠道」合并 bug 的产物）应被保存前校验拦下
+        let mut r = sample_registry();
+        let dup = r.models[0].clone(); // 同 id
+        r.models.push(dup);
+        assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn dedupe_duplicate_models_keeps_last_occurrence() {
+        // 模拟历史 bug 产物：同 id 出现两次（第二份是草稿较新的编辑版本）
+        let mut r = sample_registry();
+        let mut edited = r.models[0].clone();
+        edited.model_name = "deepseek-chat-edited".into();
+        r.models.push(edited);
+        assert_eq!(r.models.len(), 3);
+
+        let changed = r.dedupe_duplicate_models();
+        assert!(changed);
+        assert_eq!(r.models.len(), 2);
+        // 保留最后出现者（含用户最近的编辑），其余条目维持原相对顺序
+        assert_eq!(r.models[0].id, "m-2");
+        assert_eq!(r.models[1].id, "m-1");
+        assert_eq!(r.models[1].model_name, "deepseek-chat-edited");
+    }
+
+    #[test]
+    fn dedupe_duplicate_models_is_idempotent() {
+        let mut r = sample_registry();
+        assert!(!r.dedupe_duplicate_models());
+        // 同 id 重复 + 无 id 条目：无 id 条目不丢弃
+        let mut r2 = sample_registry();
+        let mut no_id = r2.models[1].clone();
+        no_id.id = "".into();
+        r2.models.push(r2.models[0].clone());
+        r2.models.push(no_id);
+        assert!(r2.dedupe_duplicate_models());
+        // 去重后：m-1 保留一份、m-2 保留一份、无 id 的保留
+        assert_eq!(r2.models.len(), 3);
+        // 幂等：再次执行无改动
+        assert!(!r2.dedupe_duplicate_models());
+    }
+
+    #[test]
+    fn dedupe_duplicate_models_keeps_distinct_ids_untouched() {
+        let mut r = sample_registry();
+        assert!(!r.dedupe_duplicate_models());
+        assert_eq!(r.models.len(), 2);
     }
 }

@@ -436,7 +436,7 @@ export default function MobileConnectionList({
               新建连接
             </button>
             <p className="max-w-xs text-xs leading-relaxed text-zinc-600">
-              与桌面端共用同一配置，任意一端添加后另一端会自动同步。
+              保存的连接会安全存于本机密钥链与配置中。
             </p>
           </div>
         )}

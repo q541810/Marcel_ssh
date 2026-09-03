@@ -165,12 +165,12 @@ export function MobileAgentPolicySection() {
                       settings.llmRegistry,
                       settings.llmRegistry.slots.modelApprovalModelId,
                     )
-                  : '跟随默认模型'}
+                  : '跟随会话模型'}
               </span>
               <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
             </button>
             <p className="text-xs text-zinc-500">
-              选择轻量模型可降低审批延迟和成本，留空跟随默认模型
+              选择轻量模型可降低审批延迟和成本，留空跟随本会话正在使用的模型
             </p>
             <div className="flex items-center justify-between pt-1">
               <span className="text-xs text-zinc-400">审批提示词</span>
@@ -503,7 +503,7 @@ export function MobileAgentPolicySection() {
             }}
             className="flex w-full items-center justify-between rounded-lg px-3 py-3 text-left text-sm active:bg-zinc-800"
           >
-            <span className="text-zinc-200">跟随默认模型</span>
+            <span className="text-zinc-200">跟随会话模型</span>
             {!settings.llmRegistry?.slots?.modelApprovalModelId && (
               <span className="text-indigo-400 text-xs">当前</span>
             )}
@@ -575,7 +575,7 @@ function emptyRegistryFallback(): LlmRegistry {
   return {
     channels: [],
     models: [],
-    slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+    slots: { modelApprovalModelId: '', summarizerModelId: '' },
     netPolicy: {
       maxRetries: 1,
       retryDelaySecs: 5,

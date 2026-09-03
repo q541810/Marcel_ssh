@@ -24,7 +24,6 @@ pub mod settings;
 pub mod sftp;
 pub mod skill;
 pub mod ssh;
-pub mod sync;
 pub mod update;
 
 #[cfg(desktop)]

@@ -11,7 +11,7 @@ import { MobileSettingRow } from './MobileSettingRow';
  * 移动端通知设置页。
  *
  * 4 个 Agent 事件开关，与桌面端 NotificationSettings 完全隔离：
- * - 不参与云端同步（settings_field.rs 白名单未包含 mobileNotificationSettings）
+ * - 设备本地，不随设置全局分发
  * - 无提示音（marcel_agent channel IMPORTANCE_HIGH 无声）
  * - 桌面端 notificationVolume 等字段不在此处暴露
  *
@@ -94,7 +94,7 @@ export function MobileNotificationSection() {
       />
 
       <p className="mt-2 px-1 text-xs leading-relaxed text-zinc-500">
-        仅在 App 切到后台时弹出系统通知（无声横幅 + 振动）。前台不打扰。本配置独立于桌面端，不参与云端同步。
+        仅在 App 切到后台时弹出系统通知（无声横幅 + 振动）。前台不打扰。本配置独立于桌面端，设备本地生效。
       </p>
     </div>
   );

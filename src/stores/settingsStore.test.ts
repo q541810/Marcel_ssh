@@ -54,10 +54,10 @@ describe('settingsStore', () => {
     expect(r.channels).toEqual([]);
     expect(r.models).toEqual([]);
     expect(r.slots).toEqual({
-      defaultModelId: '',
       modelApprovalModelId: '',
       summarizerModelId: '',
     });
+    expect(r.lastUsedModelId).toBeUndefined();
   });
 
   it('normalizes a partial llmRegistry (missing fields get defaults)', () => {
@@ -75,10 +75,98 @@ describe('settingsStore', () => {
     });
     const r = useSettingsStore.getState().settings.llmRegistry;
     expect(r.slots).toEqual({
-      defaultModelId: '',
       modelApprovalModelId: '',
       summarizerModelId: '',
     });
+  });
+
+  it('normalizeRegistry dedupes same-id model entries on hydrate (heal old bug)', () => {
+    const ch = { id: 'ch-1', name: '默认渠道', baseUrl: 'https://x/v1', enabled: true };
+    const m = {
+      id: 'm-1',
+      channelId: 'ch-1',
+      modelName: 'gemini-3.7-flash',
+      displayName: '',
+      temperature: 0.1,
+      vision: false,
+      contextWindow: 0,
+      extraBody: null,
+      reasoningEfforts: [],
+    };
+    // 历史「保存渠道」合并 bug 的产物：同 id 两条
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        llmRegistry: {
+          channels: [ch],
+          models: [m, { ...m }],
+          slots: { modelApprovalModelId: '', summarizerModelId: '' },
+        } as never,
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+    });
+    const models = useSettingsStore.getState().settings.llmRegistry.models;
+    expect(models).toHaveLength(1);
+    expect(models[0].id).toBe('m-1');
+  });
+
+  it('hydrate preserves a valid lastUsedModelId (global last-used survives restart)', () => {
+    const ch = { id: 'ch-1', name: '默认渠道', baseUrl: 'https://x/v1', enabled: true };
+    const m = {
+      id: 'm-1',
+      channelId: 'ch-1',
+      modelName: 'gemini-3.7-flash',
+      displayName: '',
+      temperature: 0.1,
+      vision: false,
+      contextWindow: 0,
+      extraBody: null,
+      reasoningEfforts: [],
+    };
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        llmRegistry: {
+          channels: [ch],
+          models: [m],
+          slots: { modelApprovalModelId: '', summarizerModelId: '' },
+          lastUsedModelId: 'm-1',
+        } as never,
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+    });
+    expect(useSettingsStore.getState().settings.llmRegistry.lastUsedModelId).toBe('m-1');
+  });
+
+  it('hydrate drops a dangling lastUsedModelId (points to deleted model)', () => {
+    const ch = { id: 'ch-1', name: '默认渠道', baseUrl: 'https://x/v1', enabled: true };
+    const m = {
+      id: 'm-1',
+      channelId: 'ch-1',
+      modelName: 'gemini-3.7-flash',
+      displayName: '',
+      temperature: 0.1,
+      vision: false,
+      contextWindow: 0,
+      extraBody: null,
+      reasoningEfforts: [],
+    };
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        llmRegistry: {
+          channels: [ch],
+          models: [m],
+          slots: { modelApprovalModelId: '', summarizerModelId: '' },
+          lastUsedModelId: 'ghost-deleted-model',
+        } as never,
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+    });
+    expect(useSettingsStore.getState().settings.llmRegistry.lastUsedModelId).toBeUndefined();
   });
 
   it('default experimental settings are correct', () => {

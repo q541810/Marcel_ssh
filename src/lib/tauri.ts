@@ -31,15 +31,6 @@ import type {
   MarketDetail,
   PluginInstallResult,
   TruncateConversationResult,
-  SyncSummary,
-  SyncProfile,
-  SyncDeviceInfo,
-  SyncQuota,
-  SyncPairResult,
-  SyncResetResult,
-  SyncPendingConflict,
-  SyncConflictAction,
-  SyncResolveResult,
   JobInfo,
 } from "./types";
 
@@ -137,14 +128,52 @@ export async function agentStartTask(
   });
 }
 
-/** 设置会话级模型选择（llmRegistry 模型条目 id）。null/空 = 清除选择，回落全局默认。 */
-export async function agentSetConversationModel(
+/** 设置会话级模型记忆（**仅内存**，后端 AppState.session_models）。
+ *  llmRegistry 模型条目 id；null/空 = 清除本会话记忆，回落全局最近使用。 */
+export async function agentSetSessionModel(
   conversationId: string,
   modelId: string | null,
 ): Promise<void> {
-  return invoke("agent_set_conversation_model", {
+  return invoke("agent_set_session_model", {
     conversationId,
     modelId: modelId ?? null,
+  });
+}
+
+/** 读取会话级模型记忆（内存）。null = 无记忆，跟随全局最近使用。 */
+export async function agentGetSessionModel(
+  conversationId: string,
+): Promise<string | null> {
+  return invoke<string | null>("agent_get_session_model", {
+    conversationId,
+  });
+}
+
+/** 设置会话级思考强度记忆（内存 + 落盘：后端 session_efforts +
+ *  conversations.efforts_json，**重启后记住**）。
+ *  `modelId` = 档位归属的模型 id（传当前生效模型）；档位按「会话 × 模型」
+ *  双维记忆，切到别的模型互不污染。reasoningEffort 档位字符串
+ *  （low/medium/high/max 等）；null/空 = 清除该 (会话, 模型) 的记忆。 */
+export async function agentSetSessionEffort(
+  conversationId: string,
+  modelId: string,
+  reasoningEffort: string | null,
+): Promise<void> {
+  return invoke("agent_set_session_effort", {
+    conversationId,
+    modelId,
+    reasoningEffort: reasoningEffort ?? null,
+  });
+}
+
+/** 读取会话级思考强度记忆（内存）。`modelId` 无记忆 → null = 跟随模型默认。 */
+export async function agentGetSessionEffort(
+  conversationId: string,
+  modelId: string,
+): Promise<string | null> {
+  return invoke<string | null>("agent_get_session_effort", {
+    conversationId,
+    modelId,
   });
 }
 
@@ -912,133 +941,6 @@ export async function sftpOpenWithSystem(
 /** 取消 sysopen 任务（下载阶段与监视阶段均可中止）。 */
 export async function sftpCancelSysopen(taskId: string): Promise<void> {
   return invoke("sftp_cancel_sysopen", { taskId });
-}
-
-// ──────────── 跨设备同步（sync_* commands） ────────────
-
-/** 获取同步配置摘要（状态 + profile + 配置信息） */
-export async function syncGetSummary(): Promise<SyncSummary> {
-  return invoke<SyncSummary>("sync_get_summary");
-}
-
-/** 第一台设备配对：生成配置码 + 注册账户。
- *
- * serverUrl: 服务器地址
- * password: 账户密码（参与密钥派生，服务端不存储）
- * 返回 SyncPairResult，含 configCode（仅此一次）
- */
-export async function syncPairFirst(
-  serverUrl: string,
-  password: string,
-): Promise<SyncPairResult> {
-  return invoke<SyncPairResult>("sync_pair_first", { serverUrl, password });
-}
-
-/** 后续设备加入：配置码 + 账户密码。
- *
- * password 可为空字符串：兼容旧账户（仅配置码包装）。
- */
-export async function syncPairJoin(
-  serverUrl: string,
-  configCode: string,
-  password: string,
-): Promise<SyncPairResult> {
-  return invoke<SyncPairResult>("sync_pair_join", {
-    serverUrl,
-    configCode,
-    password,
-  });
-}
-
-/** 更新 sync_profile */
-export async function syncUpdateProfile(profile: SyncProfile): Promise<void> {
-  return invoke<void>("sync_update_profile", { profile });
-}
-
-/** 手动触发 push（force = 忽略版本闸门，用户明确确认风险后调用） */
-export async function syncPushNow(force?: boolean): Promise<void> {
-  return invoke<void>("sync_push_now", { force: force ?? false });
-}
-
-/** 手动触发 pull（force = 忽略版本闸门，用户明确确认风险后调用） */
-export async function syncPullNow(force?: boolean): Promise<void> {
-  return invoke<void>("sync_pull_now", { force: force ?? false });
-}
-
-/** 列出已配对设备 */
-export async function syncListDevices(): Promise<SyncDeviceInfo[]> {
-  return invoke<SyncDeviceInfo[]>("sync_list_devices");
-}
-
-/** 查询账户配额使用情况（未配置同步返回 null；旧服务端无此端点会报错，调用方静默降级） */
-export async function syncGetQuota(): Promise<SyncQuota | null> {
-  return invoke<SyncQuota | null>("sync_get_quota");
-}
-
-/** 删除（撤销）某设备的 API Key */
-export async function syncRemoveDevice(deviceId: string): Promise<void> {
-  return invoke<void>("sync_remove_device", { deviceId });
-}
-
-/** 账户重置：删除账户及所有数据（需配置码验证） */
-export async function syncResetAccount(
-  configCode: string,
-): Promise<SyncResetResult> {
-  return invoke<SyncResetResult>("sync_reset_account", { configCode });
-}
-
-/** 关闭同步（清除本机凭证，不删服务端数据） */
-export async function syncDisable(): Promise<void> {
-  return invoke<void>("sync_disable");
-}
-
-// ──────────── 冲突解决 commands ────────────
-
-/** 获取所有待解决的冲突列表 */
-export async function syncGetPendingConflicts(): Promise<
-  SyncPendingConflict[]
-> {
-  return invoke<SyncPendingConflict[]>("sync_get_pending_conflicts");
-}
-
-/** 解决单个冲突
- *
- * key: 冲突的 key（如 `settings.fontSize`）
- * action: 解决动作（{ type: 'ours' } / { type: 'custom', value: '...' } 等）
- *
- * 返回 SyncResolveResult，outcome 为 "pushNeeded" 时后端已自动调度 push
- */
-export async function syncResolveConflict(
-  key: string,
-  action: SyncConflictAction,
-): Promise<SyncResolveResult> {
-  return invoke<SyncResolveResult>("sync_resolve_conflict", { key, action });
-}
-
-/** 批量解决所有冲突
- *
- * actions: 每个冲突对应的解决动作（按 key 索引）
- * 未在 actions 中提供的冲突默认为 skipOnce
- */
-export async function syncResolveAllConflicts(
-  actions: Record<string, SyncConflictAction>,
-): Promise<SyncResolveResult[]> {
-  return invoke<SyncResolveResult[]>("sync_resolve_all_conflicts", { actions });
-}
-
-/** 添加永久跳过项（用户在设置 UI 主动排除某 key） */
-export async function syncAddExcludedKey(key: string): Promise<void> {
-  return invoke<void>("sync_add_excluded_key", { key });
-}
-
-/** 移除永久跳过项（用户在设置 UI 重新启用某 key） */
-export async function syncRemoveExcludedKey(key: string): Promise<void> {
-  return invoke<void>("sync_remove_excluded_key", { key });
-}
-
-/** 获取当前所有永久跳过项 */
-export async function syncGetExcludedKeys(): Promise<string[]> {
-  return invoke<string[]>("sync_get_excluded_keys");
 }
 
 /**

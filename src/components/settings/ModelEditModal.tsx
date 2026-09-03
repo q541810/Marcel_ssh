@@ -7,6 +7,8 @@ import {
   validateExtraBodyJson,
   extraBodyToText,
   textToExtraBody,
+  effortsToText,
+  textToEfforts,
 } from '@/lib/llmParams';
 
 interface Props {
@@ -29,6 +31,8 @@ export interface ModelDraft {
   vision: boolean;
   contextWindow: number;
   extraBody: Record<string, unknown> | null;
+  /** 可用思考强度档位（每项为 trim 后的非空字符串）。 */
+  reasoningEfforts: string[];
 }
 
 const EXTRA_BODY_PLACEHOLDER = `{
@@ -52,6 +56,7 @@ export default function ModelEditModal({
   const [contextWindow, setContextWindow] = useState(0);
   const [extraBodyText, setExtraBodyText] = useState('');
   const [extraBodyError, setExtraBodyError] = useState<string | null>(null);
+  const [effortsText, setEffortsText] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   // 「更多」折叠区：高级参数默认收起；编辑已有模型且已有自定义参数时默认展开
   const [moreOpen, setMoreOpen] = useState(false);
@@ -66,7 +71,10 @@ export default function ModelEditModal({
       setContextWindow(initial?.contextWindow ?? 0);
       const body = extraBodyToText(initial?.extraBody);
       setExtraBodyText(body);
-      setMoreOpen(body.trim() !== '');
+      const efforts = effortsToText(initial?.reasoningEfforts);
+      setEffortsText(efforts);
+      // 编辑已有模型且已设高级参数/思考档位时默认展开，让用户直接看到
+      setMoreOpen(body.trim() !== '' || efforts.trim() !== '');
       setExtraBodyError(null);
       setLocalError(null);
     }
@@ -91,6 +99,7 @@ export default function ModelEditModal({
       vision,
       contextWindow: Math.max(0, Math.trunc(contextWindow)),
       extraBody: textToExtraBody(extraBodyText),
+      reasoningEfforts: textToEfforts(effortsText),
     };
     const checkErr = validate?.(draft);
     if (checkErr) {
@@ -204,36 +213,57 @@ export default function ModelEditModal({
               <path d="M6 4l4 4-4 4" />
             </svg>
             <span>更多</span>
-            {extraBodyText.trim() !== '' && (
+            {(extraBodyText.trim() !== '' || effortsText.trim() !== '') && (
               <span className="text-[11px] text-zinc-500 font-normal">
-                已设置自定义请求参数
+                已设置高级参数
               </span>
             )}
           </button>
           {moreOpen && (
-            <div className="mt-3">
-              <label className="block text-xs text-zinc-400 mb-1">
-                高级：自定义请求参数（可选）
-              </label>
-              <textarea
-                value={extraBodyText}
-                onChange={(e) => {
-                  setExtraBodyText(e.target.value);
-                  setExtraBodyError(validateExtraBodyJson(e.target.value));
-                }}
-                placeholder={EXTRA_BODY_PLACEHOLDER}
-                spellCheck={false}
-                rows={5}
-                className={`w-full rounded-lg px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y ${
-                  extraBodyError
-                    ? 'bg-red-900/20 border border-red-500/50'
-                    : 'bg-zinc-900 border border-zinc-700'
-                }`}
-              />
-              {extraBodyError && <p className="text-xs text-red-400 mt-1">{extraBodyError}</p>}
-              <p className="text-[11px] text-zinc-500 mt-1">
-                以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
-              </p>
+            <div className="mt-3 space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">
+                  思考强度档位 <span className="text-zinc-600">（每行一个，不填 = 不启用）</span>
+                </label>
+                <textarea
+                  value={effortsText}
+                  onChange={(e) => setEffortsText(e.target.value)}
+                  placeholder={'low\nhigh\nmax'}
+                  spellCheck={false}
+                  rows={3}
+                  className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y"
+                />
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  填写该模型支持的推理档位（如 OpenAI o 系 low/medium/high、DeepSeek low/high/max）。填了之后，
+                  会话输入条模型名旁会出现强度选择器，所选档位原样作为请求体顶层{' '}
+                  <code className="text-zinc-400">reasoning_effort</code> 透传。留空则该模型不参与强度选择。
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1">
+                  高级：自定义请求参数（可选）
+                </label>
+                <textarea
+                  value={extraBodyText}
+                  onChange={(e) => {
+                    setExtraBodyText(e.target.value);
+                    setExtraBodyError(validateExtraBodyJson(e.target.value));
+                  }}
+                  placeholder={EXTRA_BODY_PLACEHOLDER}
+                  spellCheck={false}
+                  rows={5}
+                  className={`w-full rounded-lg px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y ${
+                    extraBodyError
+                      ? 'bg-red-900/20 border border-red-500/50'
+                      : 'bg-zinc-900 border border-zinc-700'
+                  }`}
+                />
+                {extraBodyError && <p className="text-xs text-red-400 mt-1">{extraBodyError}</p>}
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
+                </p>
+              </div>
             </div>
           )}
         </div>

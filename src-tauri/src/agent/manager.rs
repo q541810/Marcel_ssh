@@ -29,7 +29,7 @@ use crate::agent::tools::{
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
+use crate::llm::provider::{LlmConfig, LlmMessage, LlmRole, ToolDefinition};
 use crate::mcp::store::McpServerConfig;
 use crate::plugins::context::{apply_to_string, SessionContext};
 use crate::plugins::registry::PluginRegistry;
@@ -157,17 +157,77 @@ impl AgentManager {
             enabled_skills.retain(|skill| skill.id != "builtin.visualize");
         }
 
-        // ── 2. 模型路由：主任务走默认槽位，子任务按 model override（id 或名字）解析 ──
+        // ── 2. 模型路由（主模型语义 = 会话级 → 全局最近使用 → 第一个） ──
+        // - 主任务：`spec.model_override` 为空时，先查本会话内存模型记忆；
+        //   无记忆 → 全局最近使用（resolve_default = last_used/首个）。
+        // - 子任务：model_override 由 `task` 工具显式传入或继承父任务模型，
+        //   空时同样回落到会话记忆/最近使用（与主任务同源语义）。
         // registry 解析会兜底补读 keychain（渠道密钥），无需再手动预取。
-        let resolved = match spec.model_override.as_deref() {
-            Some(id_or_name) => llm_registry.resolve_override(id_or_name),
-            None => llm_registry.resolve_default(),
-        }?;
+        let session_override = if spec.model_override.is_none() && spec.role == AgentRole::Main {
+            self.state
+                .session_models
+                .read()
+                .get(&spec.conversation_id)
+                .filter(|s| !s.is_empty())
+                .cloned()
+        } else {
+            None
+        };
+        let resolved = match spec
+            .model_override
+            .as_deref()
+            .or(session_override.as_deref())
+        {
+            Some(id_or_name) => llm_registry.resolve_override(id_or_name)?,
+            None => llm_registry.resolve_default()?,
+        };
         // 模型级上下文窗口（>0）优先于全局设置；0 表示「用全局」。
         if resolved.context_window > 0 {
             agent_settings.context_window = resolved.context_window;
         }
-        let llm_manager = LlmManager::new(resolved.config.clone())?;
+
+        // ── 2.5 会话级思考强度（`reasoning_effort`，**仅主任务**）──
+        // 档位字符串（low/medium/high/max 等）由用户在会话内选择，按
+        // 「会话 × 模型」双维存于 `session_efforts`（内存）；任务启动时取
+        // **该会话当前生效模型**的记忆（实时生效语义：正在运行的任务不受
+        // 后续切换影响，只影响之后发起/继续的任务；切到别的模型用那个
+        // 模型自己的记忆，切回原模型原档位仍在）。
+        // - 主任务：查 (会话, 生效模型) 记忆；子任务**不继承**（调研子
+        //   agent 只跟随自身模型默认，语义干净）。档位须在模型声明内才注入。
+        let mut llm_config = resolved.config.clone();
+        if spec.role == AgentRole::Main {
+            let effort = self
+                .state
+                .session_efforts
+                .read()
+                .get(&spec.conversation_id)
+                .and_then(|m| m.get(&resolved.model_id))
+                .filter(|s| !s.is_empty())
+                .cloned();
+            if let Some(e) = effort {
+                llm_config = apply_reasoning_effort(
+                    llm_config,
+                    &resolved.display_label,
+                    &resolved.reasoning_efforts,
+                    &e,
+                );
+                if let Some(v) = llm_config
+                    .extra_body
+                    .as_ref()
+                    .and_then(|b| b.get("reasoning_effort"))
+                    .and_then(|v| v.as_str())
+                {
+                    log::info!(
+                        "Agent task {} 会话 {} 模型 {} 思考强度: {}",
+                        spec.task_id,
+                        spec.conversation_id,
+                        resolved.model_id,
+                        v
+                    );
+                }
+            }
+        }
+        let llm_manager = LlmManager::new(llm_config)?;
         log::info!(
             "Agent task {} 使用模型: {} ({:?})",
             spec.task_id,
@@ -175,12 +235,16 @@ impl AgentManager {
             spec.mode
         );
 
-        // ── 3. 命令审核专用模型：按审核槽位解析（空/失效自动回落主模型）。
-        // 失败不炸任务：审核是辅助能力，回落主模型即可（与旧行为一致）。
-        let approval_cfg = if agent_settings.enable_model_command_approval {
-            match llm_registry
-                .resolve_slot(&llm_registry.slots.model_approval_model_id)
-            {
+        // ── 3. 命令审核模型：显式审核槽位 > 本任务主模型（会话/最近使用）。
+        //    旧实现 `resolve_slot("")` 会把空槽位解析成"全局默认模型"——与
+        //    主任务模型可能不同（会话内选了 A、审核却走全局 B）。现在空槽位
+        //    直接回落主模型 manager（tool_dispatcher 无独立配置时本就复用
+        //    主模型），只有显式选了审核模型才切换。
+        //    失败不炸任务：审核是辅助能力，回落主模型即可（与旧行为一致）。
+        let approval_cfg = if agent_settings.enable_model_command_approval
+            && !llm_registry.slots.model_approval_model_id.is_empty()
+        {
+            match llm_registry.resolve_model(&llm_registry.slots.model_approval_model_id) {
                 Ok(mut r) => {
                     // 审批调用不带自由参数（extra_body 针对主对话模型调参）。
                     r.config.extra_body = None;
@@ -431,6 +495,64 @@ fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<Tool
     }
 }
 
+/// 把会话级思考强度注入 LLM 配置（纯函数，便于单测）。
+///
+/// 语义：
+/// - `session_effort` 须在模型声明的 `declared` 内才注入；否则**原样返回**
+///   config（不注入、不改动已有 extra_body），只记 warn。
+/// - 注入方式：把 `reasoning_effort` 键写入 `config.extra_body` 顶层对象
+///   （openai.rs 构建请求体时把 extra_body 合并进请求体顶层，等效顶层字段）。
+///   若模型已有非对象 extra_body（异常数据）则保留原样返回，不污染。
+pub(crate) fn apply_reasoning_effort(
+    config: LlmConfig,
+    model_label: &str,
+    declared: &[String],
+    session_effort: &str,
+) -> LlmConfig {
+    let effort = session_effort.trim();
+    if effort.is_empty() {
+        return config;
+    }
+    if !declared.iter().any(|x| x == effort) {
+        log::warn!(
+            "会话思考强度档位 \"{}\" 不在模型 \"{}\" 声明内（{:?}），已忽略",
+            effort,
+            model_label,
+            declared
+        );
+        return config;
+    }
+    let Some(mut extra) = config.extra_body.clone() else {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "reasoning_effort".to_string(),
+            serde_json::Value::String(effort.to_string()),
+        );
+        let mut next = config;
+        next.extra_body = Some(serde_json::Value::Object(obj));
+        return next;
+    };
+    match extra.as_object_mut() {
+        Some(obj) => {
+            obj.insert(
+                "reasoning_effort".to_string(),
+                serde_json::Value::String(effort.to_string()),
+            );
+            let mut next = config;
+            next.extra_body = Some(extra);
+            next
+        }
+        None => {
+            log::warn!(
+                "模型 {} 的 extra_body 非 JSON 对象，无法注入 reasoning_effort={}",
+                model_label,
+                effort
+            );
+            config
+        }
+    }
+}
+
 fn apply_section_context_variables(
     s: &str,
     info: Option<&SessionInfo>,
@@ -539,6 +661,9 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
         }
     }
     state.cancel_senders.write().remove(task_id);
+    // 释放该 task 的作业结算通知通道（挂起中的 agent loop 若因取消/失败
+    // 退出，此处确保通道不泄漏；正常路径 loop 已自行 break，这里幂等）。
+    state.command_exec.remove_task_settlement_channel(task_id);
 }
 
 fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
@@ -615,5 +740,70 @@ mod tests {
         // Plan 模式仍不含写/改工具
         assert!(registry.get("write_file").is_none());
         assert!(registry.get("edit_file").is_none());
+    }
+
+    fn base_cfg() -> LlmConfig {
+        let mut c = LlmConfig::default();
+        c.extra_body = None;
+        c
+    }
+
+    fn declared(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn apply_effort_injects_top_level_when_declared() {
+        let cfg = apply_reasoning_effort(base_cfg(), "ds", &declared(&["low", "high", "max"]), "high");
+        let extra = cfg.extra_body.expect("extra_body set");
+        assert_eq!(
+            extra.get("reasoning_effort").and_then(|v| v.as_str()),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn apply_effort_merges_into_existing_extra_body() {
+        let mut c = base_cfg();
+        c.extra_body = Some(serde_json::json!({ "thinking": { "type": "enabled" } }));
+        let cfg = apply_reasoning_effort(c, "ds", &declared(&["low", "high"]), "low");
+        let extra = cfg.extra_body.expect("extra_body set");
+        assert_eq!(
+            extra.get("reasoning_effort").and_then(|v| v.as_str()),
+            Some("low")
+        );
+        // 既有 thinking 键保留
+        assert_eq!(
+            extra
+                .get("thinking")
+                .and_then(|v| v.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("enabled")
+        );
+    }
+
+    #[test]
+    fn apply_effort_ignores_undeclared_or_empty() {
+        // 未声明档位：原样返回（不注入、不 panic）
+        let cfg = apply_reasoning_effort(base_cfg(), "gpt", &declared(&[]), "high");
+        assert!(cfg.extra_body.is_none());
+        // 声明内不包含该档位
+        let cfg = apply_reasoning_effort(base_cfg(), "ds", &declared(&["low"]), "max");
+        assert!(cfg.extra_body.is_none());
+        // 空档位
+        let cfg = apply_reasoning_effort(base_cfg(), "ds", &declared(&["low"]), "  ");
+        assert!(cfg.extra_body.is_none());
+    }
+
+    #[test]
+    fn apply_effort_keeps_non_object_extra_body_untouched() {
+        let mut c = base_cfg();
+        c.extra_body = Some(serde_json::json!([1, 2, 3]));
+        let cfg = apply_reasoning_effort(c, "odd", &declared(&["low"]), "low");
+        // 异常数据不注入也不破坏
+        assert_eq!(
+            cfg.extra_body,
+            Some(serde_json::json!([1, 2, 3]))
+        );
     }
 }

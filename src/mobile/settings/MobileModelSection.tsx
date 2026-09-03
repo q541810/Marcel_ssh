@@ -7,17 +7,17 @@ import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import { contextWindowHint } from '@/lib/contextWindowHints';
-import { validateRetryHttpStatuses, validateExtraBodyJson, extraBodyToText, textToExtraBody } from '@/lib/llmParams';
+import { validateRetryHttpStatuses, validateExtraBodyJson, extraBodyToText, textToExtraBody, textToEfforts } from '@/lib/llmParams';
 import {
   modelsOfChannel,
   modelLabel,
   modelFullLabel,
-  effectiveDefaultModel,
   createModel,
   removeChannel,
   duplicateChannelName,
   duplicateModelName,
   defaultNetPolicy,
+  mergeChannelModels,
 } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -30,12 +30,12 @@ function emptyRegistry(): LlmRegistry {
   return {
     channels: [],
     models: [],
-    slots: { defaultModelId: '', modelApprovalModelId: '', summarizerModelId: '' },
+    slots: { modelApprovalModelId: '', summarizerModelId: '' },
     netPolicy: defaultNetPolicy(),
   };
 }
 
-/** 模型选择底部弹层（默认模型 / 摘要模型槽位共用）。 */
+/** 模型选择底部弹层（辅助场景槽位选择用）。 */
 function MobileModelPickerSheet({
   open,
   onClose,
@@ -155,9 +155,13 @@ function MobileModelEditorSheet({
   const [vision, setVision] = useState(initial?.vision ?? false);
   const [contextWindow, setContextWindow] = useState(initial?.contextWindow ?? 0);
   const [extraBodyText, setExtraBodyText] = useState(extraBodyToText(initial?.extraBody));
-  // 「更多」折叠区：高级参数默认收起；编辑已有模型且已有自定义参数时默认展开
+  const [effortsText, setEffortsText] = useState(
+    (initial?.reasoningEfforts ?? []).join('\n'),
+  );
+  // 「更多」折叠区：高级参数默认收起；编辑已有模型且已设置高级参数/思考档位时默认展开
   const [moreOpen, setMoreOpen] = useState(
-    extraBodyToText(initial?.extraBody).trim() !== '',
+    extraBodyToText(initial?.extraBody).trim() !== '' ||
+      (initial?.reasoningEfforts ?? []).join('').trim() !== '',
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -185,6 +189,7 @@ function MobileModelEditorSheet({
           vision,
           contextWindow: Math.max(0, Math.trunc(contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
+          reasoningEfforts: textToEfforts(effortsText),
         }
       : {
           ...createModel(channelId, trimmed),
@@ -192,6 +197,7 @@ function MobileModelEditorSheet({
           vision,
           contextWindow: Math.max(0, Math.trunc(contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
+          reasoningEfforts: textToEfforts(effortsText),
         };
     onSaved(model);
     onClose();
@@ -270,28 +276,48 @@ function MobileModelEditorSheet({
               <path d="M6 4l4 4-4 4" />
             </svg>
             <span>更多</span>
-            {extraBodyText.trim() !== '' && (
+            {(extraBodyText.trim() !== '' || effortsText.trim() !== '') && (
               <span className="text-[11px] font-normal text-zinc-500">
-                已设置自定义请求参数
+                已设置高级参数
               </span>
             )}
           </button>
           {moreOpen && (
-            <div className="mt-1 space-y-1">
-              <label className="mb-1 block text-xs text-zinc-400">
-                高级：自定义请求参数（可选）
-              </label>
-              <textarea
-                value={extraBodyText}
-                onChange={(e) => setExtraBodyText(e.target.value)}
-                placeholder={`{\n  "thinking": { "type": "enabled" },\n  "top_p": 0.9\n}`}
-                spellCheck={false}
-                rows={4}
-                className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
-              />
-              <p className="text-[11px] text-zinc-500">
-                以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
-              </p>
+            <div className="mt-1 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs text-zinc-400">
+                  思考强度档位 <span className="text-zinc-600">（每行一个，不填 = 不启用）</span>
+                </label>
+                <textarea
+                  value={effortsText}
+                  onChange={(e) => setEffortsText(e.target.value)}
+                  placeholder={'low\nhigh\nmax'}
+                  spellCheck={false}
+                  rows={3}
+                  className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+                />
+                <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                  填写该模型支持的推理档位（如 low/medium/high、max）。填了之后，会话输入条模型名旁会出现
+                  强度选择器，所选档位作为请求体顶层 reasoning_effort 透传。留空则该模型不参与强度选择。
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-zinc-400">
+                  高级：自定义请求参数（可选）
+                </label>
+                <textarea
+                  value={extraBodyText}
+                  onChange={(e) => setExtraBodyText(e.target.value)}
+                  placeholder={`{\n  "thinking": { "type": "enabled" },\n  "top_p": 0.9\n}`}
+                  spellCheck={false}
+                  rows={4}
+                  className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"
+                />
+                <p className="text-[11px] text-zinc-500">
+                  以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -655,9 +681,7 @@ export function MobileModelSection() {
   const registry: LlmRegistry = settings.llmRegistry ?? emptyRegistry();
   const slots = registry.slots;
   const netPolicy: NetPolicy = registry.netPolicy;
-  const effectiveDefault = effectiveDefaultModel(registry);
 
-  const [defaultPicker, setDefaultPicker] = useState(false);
   const [summarizerPicker, setSummarizerPicker] = useState(false);
   const [channelEditor, setChannelEditor] = useState<{ open: boolean; channel?: ChannelConfig }>({
     open: false,
@@ -670,57 +694,15 @@ export function MobileModelSection() {
   };
 
   const handleChannelSave = (channel: ChannelConfig, channelModels: ModelEntry[]) => {
-    const isNew = !registry.channels.some((c) => c.id === channel.id);
-    const channels = isNew
-      ? [...registry.channels, channel]
-      : registry.channels.map((c) => (c.id === channel.id ? channel : c));
-
-    // 合并该渠道的模型草稿：删除被移除的旧模型、替换/新增草稿中的模型
-    const keptModelIds = new Set(channelModels.map((m) => m.id));
-    const otherModels = registry.models.filter(
-      (m) => m.channelId !== channel.id || keptModelIds.has(m.id),
-    );
-    const models = [...otherModels, ...channelModels];
-
-    // 槽位清理：被删除的模型若被槽位引用则清空
-    const slotTargets = new Set(models.map((m) => m.id));
-    const slots = { ...registry.slots };
-    if (!slotTargets.has(slots.defaultModelId)) slots.defaultModelId = '';
-    if (!slotTargets.has(slots.modelApprovalModelId)) slots.modelApprovalModelId = '';
-    if (!slotTargets.has(slots.summarizerModelId)) slots.summarizerModelId = '';
-
-    // 新建第一个渠道且尚无默认模型时，自动把第一个模型设为默认
-    if (isNew && !slots.defaultModelId && channelModels[0]) {
-      slots.defaultModelId = channelModels[0].id;
-    }
-
-    updateRegistry({ ...registry, channels, models, slots });
+    // 本渠道模型整体替换为草稿 + 按 id 去重 + 槽位/最近使用清理（桌面/移动端共用）
+    updateRegistry(mergeChannelModels(registry, channel, channelModels));
   };
 
   return (
     <div className="flex flex-col gap-2">
-      {/* ── 场景槽位 ── */}
-      <MobileSettingRow
-        label="默认模型"
-        description="主对话使用的模型。未设置时自动使用第一个模型"
-      >
-        <button
-          type="button"
-          onClick={() => setDefaultPicker(true)}
-          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 active:bg-zinc-700"
-        >
-          <span className="truncate">
-            {effectiveDefault
-              ? modelFullLabel(registry, effectiveDefault.id)
-              : '尚未配置模型'}
-          </span>
-          <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
-        </button>
-      </MobileSettingRow>
-
       <MobileSettingRow
         label="上下文压缩模型"
-        description="压缩历史时的摘要模型。留空 = 跟随默认模型"
+        description="压缩历史时的摘要模型。留空 = 跟随会话正在使用的模型"
       >
         <button
           type="button"
@@ -730,7 +712,7 @@ export function MobileModelSection() {
           <span className="truncate">
             {slots.summarizerModelId
               ? modelFullLabel(registry, slots.summarizerModelId)
-              : '跟随默认模型'}
+              : '跟随会话模型'}
           </span>
           <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
         </button>
@@ -883,7 +865,6 @@ export function MobileModelSection() {
             {registry.channels.map((ch) => {
               const models = modelsOfChannel(registry, ch.id);
               const hasKey = channelKeyStatus[ch.id] ?? !!ch.apiKey;
-              const isDefault = effectiveDefault?.channelId === ch.id;
               return (
                 <button
                   key={ch.id}
@@ -897,11 +878,6 @@ export function MobileModelSection() {
                       {!ch.enabled && (
                         <span className="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] text-zinc-400">
                           已禁用
-                        </span>
-                      )}
-                      {isDefault && (
-                        <span className="rounded bg-indigo-600/20 px-1.5 py-0.5 text-[10px] text-indigo-300">
-                          默认
                         </span>
                       )}
                     </div>
@@ -920,20 +896,6 @@ export function MobileModelSection() {
         )}
       </div>
 
-      {/* 默认模型选择 */}
-      <MobileModelPickerSheet
-        open={defaultPicker}
-        onClose={() => setDefaultPicker(false)}
-        title="选择默认模型"
-        registry={registry}
-        value={effectiveDefault?.id ?? ''}
-        allowEmpty={false}
-        emptyLabel=""
-        onChange={(modelId) =>
-          updateRegistry({ ...registry, slots: { ...slots, defaultModelId: modelId } })
-        }
-      />
-
       {/* 摘要模型选择 */}
       <MobileModelPickerSheet
         open={summarizerPicker}
@@ -942,7 +904,7 @@ export function MobileModelSection() {
         registry={registry}
         value={slots.summarizerModelId}
         allowEmpty
-        emptyLabel="跟随默认模型"
+        emptyLabel="跟随会话模型"
         onChange={(modelId) =>
           updateRegistry({ ...registry, slots: { ...slots, summarizerModelId: modelId } })
         }

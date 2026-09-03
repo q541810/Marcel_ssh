@@ -65,9 +65,27 @@ pub async fn agent_compact_conversation(
         ));
     }
 
-    // LLM 配置：摘要走「上下文压缩模型」槽位（空/失效自动回落主模型）。
+    // LLM 配置（摘要模型解析优先级）：
+    //   1. 显式「上下文压缩模型」槽位（用户明确选了就固定用它，与会话无关）；
+    //   2. 否则会话级模型记忆（本会话 agent 正在用的模型）；
+    //   3. 否则全局最近使用（last_used）。
+    // 旧实现把空槽位直接回落"默认模型"——会话内选了别的模型时压缩却用全局
+    // 默认，现在改为跟随会话。任一解析失败（未配置模型）返回错误由调用方提示。
     let llm_registry = state.settings.read().await.llm_registry.clone();
-    let resolved = llm_registry.resolve_slot(&llm_registry.slots.summarizer_model_id)?;
+    let resolved = if !llm_registry.slots.summarizer_model_id.is_empty() {
+        llm_registry.resolve_model(&llm_registry.slots.summarizer_model_id)
+    } else {
+        let session_model = state
+            .session_models
+            .read()
+            .get(&conversation_id)
+            .filter(|s| !s.is_empty())
+            .cloned();
+        match session_model {
+            Some(id) => llm_registry.resolve_override(&id),
+            None => llm_registry.resolve_default(),
+        }
+    }?;
     let llm_manager = LlmManager::new(resolved.config)?;
 
     let mut messages: Vec<LlmMessage> = history;
@@ -155,8 +173,7 @@ pub async fn agent_compact_conversation(
     // 压缩成功：结构化落库（count-walk + 指纹校验 + 归档 + 卡片定位），
     // 与自动压缩同一路径；前端经 Done 事件原位替换 live store。
     let persister =
-        ConversationPersister::new(state.conversation_db.clone(), conversation_id.clone())
-            .with_sync(state.sync_engine.clone(), state.sync_scheduler.clone());
+        ConversationPersister::new(state.conversation_db.clone(), conversation_id.clone());
     let persisted = persister.persist_compaction(outcome);
     log::info!(
         "Manual compaction for conversation {}: {} messages, ~{} tokens (persisted={})",

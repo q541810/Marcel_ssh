@@ -15,7 +15,7 @@ description: 当用户询问如何配置 AI 模型、填写 API Key、修改 Bas
 
 - **Provider**：目前支持「OpenAI 兼容」协议。任何提供 OpenAI 兼容 API 的服务都可以接入（OpenAI、DeepSeek、Moonshot、通义千问、OpenRouter、中转站、本地 vLLM/Ollama 的 OpenAI 兼容端点等）。
 - **Base URL**：API 基础地址，例如 `https://api.openai.com/v1`。注意大多数服务商需要以 `/v1` 结尾，用户报 404 时优先检查这里。
-- **API Key**：API 密钥。加密保存在本设备的系统密钥链（Windows 凭据管理器 / macOS 钥匙串 / Android Keystore），不会明文写入配置文件，也不参与跨设备同步——换设备需重新填写。已保存时输入框显示掩码 sk-******。
+- **API Key**：API 密钥。加密保存在本设备的系统密钥链（Windows 凭据管理器 / macOS 钥匙串 / Android Keystore），不会明文写入配置文件——换设备需重新填写。已保存时输入框显示掩码 sk-******。
 - **Model**：模型名称。可点击「获取模型列表」从服务商拉取可用模型直接选择——这也是验证 Base URL 和 API Key 是否正确的最快方法：能拉到列表说明配置可用。
 - **视觉 / 支持图片**：开启后可粘贴或拖入图片发给模型，需模型本身支持多模态。
 - **模型上下文窗口 (tokens)**：留空或 0 时仅在模型报告超限时压缩历史；填写后按窗口 80% 阈值预防式压缩。

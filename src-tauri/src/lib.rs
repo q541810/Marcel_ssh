@@ -9,7 +9,6 @@ pub mod notification;
 pub mod plugins;
 pub mod skills;
 pub mod ssh;
-pub mod sync;
 pub mod util;
 
 use std::collections::HashMap;
@@ -17,7 +16,6 @@ use std::path::PathBuf;
 
 use parking_lot::RwLock as PlRwLock;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::oneshot;
 use tokio::sync::RwLock as TokioRwLock;
 
 use crate::agent::conversation::ConversationDb;
@@ -56,6 +54,21 @@ pub struct AppState {
     pub ssh_manager: SshManager,
     pub agent_tasks: std::sync::Arc<PlRwLock<HashMap<String, AgentTask>>>,
     pub plans: std::sync::Arc<PlRwLock<HashMap<String, AgentTaskPlan>>>,
+    /// 会话级模型记忆（**仅内存**，不落盘）：conversation_id → llmRegistry
+    /// 模型条目 id（空串 = 无记忆，跟随全局最近使用）。
+    /// 取代旧版 SQLite `conversations.model_id` 的每会话持久化。
+    /// 启动时由 `take_persisted_model_ids` 一次性装载存量值。
+    pub session_models: std::sync::Arc<PlRwLock<HashMap<String, String>>>,
+    /// 会话级思考强度记忆（**仅内存**，不落盘）：conversation_id →
+    /// { model_id → `reasoning_effort` 档位字符串 }。
+    ///
+    /// 档位按「会话 × 模型」双维记忆：每个会话分别记住它用过的每个模型的
+    /// 档位，切到别的模型显示该模型自己的记忆（无记忆 = 不传/跟随模型
+    /// 默认），切回原模型原档位仍在——互不污染、切走不丢。
+    /// 空串 = 无记忆。与 `session_models` 同生命周期（启动装载、会话删除
+    /// 级联清理），但独立维度：仅当档位在当前生效模型声明内才生效。
+    pub session_efforts:
+        std::sync::Arc<PlRwLock<HashMap<String, HashMap<String, String>>>>,
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub quick_command_store: std::sync::Arc<TokioRwLock<QuickCommandStore>>,
@@ -102,10 +115,6 @@ pub struct AppState {
     /// Reloads on startup and whenever settings change (enable/disable plugin,
     /// authorized capabilities). Emits `plugin-registry-changed` after reload.
     pub plugin_registry: crate::plugins::registry::SharedPluginRegistry,
-    /// 跨设备同步引擎（None = 未初始化）
-    pub sync_engine: Option<std::sync::Arc<crate::sync::engine::SyncEngine>>,
-    /// 同步调度器（None = 未初始化）
-    pub sync_scheduler: Option<std::sync::Arc<crate::sync::scheduler::SyncScheduler>>,
 }
 
 impl AppState {
@@ -265,6 +274,33 @@ impl AppState {
             let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
         }
 
+        // 自愈：清理注册表里同 id 重复的模型条目（历史「保存渠道」合并 bug 的
+        // 遗留数据，UI 表现为同一模型出现两次）。有改动则立即落盘修复。
+        {
+            let before = settings.llm_registry.models.len();
+            let changed = settings.llm_registry.dedupe_duplicate_models();
+            if changed {
+                log::warn!(
+                    "检测到 {} 条重复模型记录（同 id），已自动去重（{} → {}）并落盘修复",
+                    before - settings.llm_registry.models.len(),
+                    before,
+                    settings.llm_registry.models.len()
+                );
+                let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
+            }
+        }
+
+        // 自愈：归一化思考强度档位（trim + 丢空 + 去重）。旧数据可能携带首尾
+        // 空格档位，会令任务注入（原始值全等比较）匹配失败而被静默忽略；
+        // 启动时修一次并落盘，与「展示、持久化、注入」语义对齐。
+        {
+            let changed = settings.llm_registry.normalize_reasoning_efforts();
+            if changed {
+                log::warn!("检测到思考强度档位含空格/重复/空项，已自动归一化并落盘修复");
+                let _ = settings.save_to_path(&AppSettings::default_file(&config_dir));
+            }
+        }
+
         // ── Phase 3: settings-dependent work (sequential) ──────────────────
 
         // LLM API Key: 移出启动关键路径（不在此处同步阻塞读取系统密钥链）。
@@ -277,6 +313,63 @@ impl AppState {
         );
 
         let conversation_db = db_handle.expect("对话数据库初始化任务失败");
+
+        // 旧版每会话持久化的模型选择 → 内存映射（一次性装载并清空 DB 列）。
+        // 之后「会话 → 模型」只存内存，重启后由「全局最近使用」接管默认语义。
+        let session_models: std::sync::Arc<PlRwLock<HashMap<String, String>>> =
+            std::sync::Arc::new(PlRwLock::new(HashMap::new()));
+        // 会话级思考强度：按「会话 × 模型」双维记忆，**重启后记住**——
+        // 存量从 `conversations.efforts_json` 列装载（每会话一张
+        // {model_id → effort} JSON 映射），之后每次变更经 set 命令回写。
+        let session_efforts: std::sync::Arc<
+            PlRwLock<HashMap<String, HashMap<String, String>>>,
+        > = std::sync::Arc::new(PlRwLock::new(HashMap::new()));
+        match conversation_db.load_all_conversation_efforts() {
+            Ok(rows) if !rows.is_empty() => {
+                let mut loaded = 0usize;
+                {
+                    let mut map = session_efforts.write();
+                    for (conv_id, json) in rows {
+                        if let Some(json) = json {
+                            match serde_json::from_str::<HashMap<String, String>>(&json) {
+                                Ok(inner) if !inner.is_empty() => {
+                                    loaded += inner.len();
+                                    map.insert(conv_id, inner);
+                                }
+                                // 损坏/空映射：容忍跳过（保持原样，不报错不清数据）
+                                _ => log::warn!(
+                                    "会话 {} 的思考档位映射无法解析，已忽略（不覆盖）",
+                                    conv_id
+                                ),
+                            }
+                        }
+                    }
+                }
+                log::info!(
+                    "已装载 {} 个会话的持久化思考档位（共 {} 条 model→档位）",
+                    session_efforts.read().len(),
+                    loaded
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("读取持久化思考档位失败（忽略，回落默认）: {}", e),
+        }
+        match conversation_db.take_persisted_model_ids() {
+            Ok(rows) if !rows.is_empty() => {
+                {
+                    let mut map = session_models.write();
+                    for (conv_id, model_id) in rows {
+                        map.insert(conv_id, model_id);
+                    }
+                }
+                log::info!(
+                    "已把 {} 个会话的旧模型选择迁移到内存映射（DB 列已清空）",
+                    session_models.read().len()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("读取会话旧模型选择失败（忽略，回落全局最近使用）: {}", e),
+        }
 
         let skill_store = match skills_res {
             Ok(Ok(store)) => store,
@@ -292,7 +385,7 @@ impl AppState {
 
         // 内置教学 skill：注入缺失项 / 覆盖旧版内容（enabled 状态保留）。
         // 内容以二进制内嵌版本为准，保证应用升级后用户吃到最新教学内容。
-        let (skill_store, builtin_skill_changes) = {
+        let skill_store = {
             let mut store = skill_store;
             let changed = crate::skills::builtin::ensure_builtin_skills(&mut store);
             if !changed.is_empty() {
@@ -302,7 +395,7 @@ impl AppState {
                 }
                 log::info!("内置 skill 已注入/更新 {} 项", changed.len());
             }
-            (store, changed)
+            store
         };
 
         let quick_command_store = match qc_res {
@@ -329,12 +422,8 @@ impl AppState {
             }
         };
 
-        // ── Phase 3: sync engine + scheduler + accessor ──────────────
-        // Sync is optional — initialization is best-effort and non-fatal.
-        // Scheduler stays NotConfigured until the user pairs via sync_pair_first/join.
-        //
-        // 先把各 store 包成 Arc<TokioRwLock<T>>，这样 accessor 可以 clone 这些 Arc，
-        // 同时 Self{} 可以直接 move 它们。
+        // ── Phase 3: wire up shared store handles ─────────────────────
+        // 先把各 store 包成 Arc<TokioRwLock<T>>，供 Self{} 使用。
         let connection_store_arc = std::sync::Arc::new(TokioRwLock::new(connection_store));
         let settings_arc = std::sync::Arc::new(TokioRwLock::new(settings));
         let quick_command_store_arc = std::sync::Arc::new(TokioRwLock::new(quick_command_store));
@@ -353,106 +442,12 @@ impl AppState {
         )
         .await;
 
-        let (sync_engine, sync_scheduler) = {
-            let profile = crate::sync::profile::SyncProfile::default();
-            let engine = std::sync::Arc::new(crate::sync::engine::SyncEngine::new(
-                config_dir.clone(),
-                profile,
-            ));
-
-            // Load local version table (best-effort)
-            if let Err(e) = engine.load().await {
-                log::warn!("同步引擎加载本地版本表失败: {}", e);
-            }
-
-            // 创建 accessor 并注入到 engine
-            // accessor 持有各 store 的 Arc 引用，用于 push 时读值 / pull 时写值
-            let accessor = std::sync::Arc::new(crate::sync::accessor::SyncStoreAccessor::new(
-                config_dir.clone(),
-                settings_arc.clone(),
-                connection_store_arc.clone(),
-                quick_command_store_arc.clone(),
-                skill_store_arc.clone(),
-                mcp_store_arc.clone(),
-                mcp_manager.clone(),
-                conversation_db_arc.clone(),
-            ));
-            engine.set_accessor(accessor);
-
-            let server_url = crate::sync::keychain::get_server_url()
-                .ok()
-                .flatten()
-                .unwrap_or_default();
-
-            // 降级：即使 server_url 为空也创建一个 client，sync 操作会失败但不会 panic
-            let client_url = if server_url.is_empty() {
-                "http://localhost:0".to_string()
-            } else {
-                server_url
-            };
-            let client = match crate::sync::client::SyncClient::new(&client_url) {
-                Ok(c) => std::sync::Arc::new(c),
-                Err(e) => {
-                    log::warn!("同步客户端初始化失败: {}", e);
-                    return Self {
-                        ssh_manager: ssh_manager.clone(),
-                        agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        connection_store: connection_store_arc,
-                        settings: settings_arc,
-                        quick_command_store: quick_command_store_arc,
-                        conversation_db: conversation_db_arc,
-                        skill_store: skill_store_arc,
-                        mcp_store: mcp_store_arc,
-                        mcp_manager: mcp_manager.clone(),
-                        config_dir,
-                        agent_interaction: crate::agent::interaction::AgentInteractionManager::new(
-                        ),
-                        cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(
-                            HashMap::new(),
-                        )),
-                        command_exec: command_exec.clone(),
-                        sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-                        settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
-                        plugin_registry: crate::plugins::registry::new_shared(),
-                        sync_engine: Some(engine),
-                        sync_scheduler: None,
-                    };
-                }
-            };
-
-            let scheduler = std::sync::Arc::new(crate::sync::scheduler::SyncScheduler::new(
-                engine.clone(),
-                client,
-            ));
-
-            (Some(engine), Some(scheduler))
-        };
-
-        // 内置 skill 注入/更新产生的变更纳入同步（与 commands/skill.rs 写路径一致）。
-        // record_local_change 内部与 last_synced_values 比对，内容未变不会 bump。
-        if !builtin_skill_changes.is_empty() {
-            if let Some(ref engine) = sync_engine {
-                for skill in &builtin_skill_changes {
-                    let _ = engine.record_local_change(
-                        &format!("skills.{}", skill.id),
-                        &serde_json::to_string(skill).unwrap_or_default(),
-                    );
-                }
-                if let Some(ref scheduler) = sync_scheduler {
-                    scheduler.schedule_push();
-                }
-            }
-        }
-
         Self {
             ssh_manager,
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            session_models,
+            session_efforts,
             connection_store: connection_store_arc,
             settings: settings_arc,
             quick_command_store: quick_command_store_arc,
@@ -471,8 +466,6 @@ impl AppState {
             sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
-            sync_engine,
-            sync_scheduler,
         }
     }
 }
@@ -683,33 +676,11 @@ pub fn run() {
                 });
             }
 
-            // Background: start sync scheduler if sync was configured previously.
-            // Engine + client + scheduler were initialized in AppState::new;
-            // here we only start the background loops (push debounce + polling).
-            // 同时注入 AppHandle 给 scheduler + accessor，让它们能 emit 前端事件。
+            // 断连级联取消交互队列：注册 SshManager 断连观察者，无论主动 disconnect
+            // 还是远端超时/断网断连，都同步取消属于该 session 的 pending 交互。
             {
                 let state = app.state::<AppState>();
                 let app_handle = app.handle();
-                if let Some(scheduler) = state.sync_scheduler.clone() {
-                    scheduler.set_app_handle(app_handle.clone());
-                    if let Some(api_key) =
-                        crate::sync::keychain::get_device_api_key().ok().flatten()
-                    {
-                        scheduler.set_api_key(Some(api_key));
-                        let scheduler_clone = scheduler.clone();
-                        tauri::async_runtime::spawn(async move {
-                            scheduler_clone.start().await;
-                        });
-                    }
-                }
-                // 注入 AppHandle 给 accessor（通过 engine 转发），
-                // 让 pull 时 apply_value 能 emit "sync-data-applied" 通知前端刷新。
-                if let Some(ref engine) = state.sync_engine {
-                    engine.set_accessor_app_handle(app_handle.clone());
-                }
-
-                // 断连级联取消交互队列：注册 SshManager 断连观察者，无论主动 disconnect
-                // 还是远端超时/断网断连，都同步取消属于该 session 的 pending 交互。
                 let interaction_mgr = state.agent_interaction.clone();
                 let app_handle_for_disconnect = app_handle.clone();
                 let ssh_mgr = state.ssh_manager.clone();
@@ -754,7 +725,10 @@ pub fn run() {
             commands::agent_policy::agent_check_command,
             commands::agent_conversation::agent_create_conversation,
             commands::agent_conversation::agent_rename_conversation,
-            commands::agent_conversation::agent_set_conversation_model,
+            commands::agent_conversation::agent_set_session_model,
+            commands::agent_conversation::agent_get_session_model,
+            commands::agent_conversation::agent_set_session_effort,
+            commands::agent_conversation::agent_get_session_effort,
             commands::agent_conversation::agent_get_conversation,
             commands::agent_conversation::agent_list_conversations,
             commands::agent_conversation::agent_load_conversation,
@@ -870,23 +844,6 @@ pub fn run() {
             commands::plugin_fs::plugin_fs_write,
             commands::plugin_http::plugin_http_request,
             commands::plugin_notification::plugin_send_notification,
-            commands::sync::sync_get_summary,
-            commands::sync::sync_pair_first,
-            commands::sync::sync_pair_join,
-            commands::sync::sync_update_profile,
-            commands::sync::sync_push_now,
-            commands::sync::sync_pull_now,
-            commands::sync::sync_list_devices,
-            commands::sync::sync_get_quota,
-            commands::sync::sync_remove_device,
-            commands::sync::sync_reset_account,
-            commands::sync::sync_disable,
-            commands::sync::sync_get_pending_conflicts,
-            commands::sync::sync_resolve_conflict,
-            commands::sync::sync_resolve_all_conflicts,
-            commands::sync::sync_add_excluded_key,
-            commands::sync::sync_remove_excluded_key,
-            commands::sync::sync_get_excluded_keys,
         ])
         .build(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application")

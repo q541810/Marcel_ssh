@@ -13,6 +13,8 @@ import {
   compactionCheckpoint,
 } from './messageConversion';
 import { useTaskStore } from './taskStore';
+import { useSettingsStore } from './settingsStore';
+import { effectiveModelId } from '@/lib/llmRegistry';
 import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
 import { getStreamState, setStreamState } from './agentStreamHandlers';
 
@@ -37,8 +39,24 @@ export interface ConversationState {
   bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => void;
   unbindSessionConversation: (sessionId: string) => void;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
-  /** 设置会话级模型选择（llmRegistry 模型条目 id）。null = 回落全局默认。 */
+  /**
+   * 设置会话级模型（**仅内存**：后端 session_models + 本地 conv.modelId）。
+   * modelId 非空 = 固定本会话用该模型，**顺带更新全局「最近使用」并落盘**；
+   * null = 清除本会话记忆，回落全局最近使用。
+   */
   setConversationModel: (conversationId: string, modelId: string | null) => Promise<void>;
+  /**
+   * 设置会话级思考强度（内存 + 落盘：后端 session_efforts +
+   * conversations.efforts_json，**重启后记住**；本地 conv.reasoningEffort）。
+   * 档位按「会话 × 模型」双维记忆——归属当前生效模型（会话记忆 → 全局
+   * 最近使用 → 首个），切到别的模型各自记忆、互不污染。档位字符串须在该
+   * 模型 reasoningEfforts 声明内（UI 只列声明档位）；null = 清除该
+   * (会话, 模型) 记忆，回落模型自身默认。不更新全局设置。
+   */
+  setConversationEffort: (
+    conversationId: string,
+    reasoningEffort: string | null,
+  ) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   rollbackToMessage: (
     conversationId: string,
@@ -481,14 +499,66 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   setConversationModel: async (conversationId: string, modelId: string | null) => {
-    await tauri.agentSetConversationModel(conversationId, modelId);
+    // 1) 写后端内存会话记忆（不落盘；后端路由据此 + list/get 会 overlay 回读）
+    await tauri.agentSetSessionModel(conversationId, modelId);
+    // 2) 本地 conv.modelId 同步（UI 读取点；load 时后端 overlay 也会带回来）
+    //    切模型后显示**新模型自己**记的思考档位：读后端 (会话, 新模型)
+    //    记忆并同步到 conv.reasoningEffort，避免残留旧模型的档位显示。
+    const effModelId = effectiveModelId(
+      useSettingsStore.getState().settings.llmRegistry,
+      modelId,
+    );
+    const effort = effModelId
+      ? await tauri.agentGetSessionEffort(conversationId, effModelId).catch(() => null)
+      : null;
     set((state) => {
       const conv = state.conversations[conversationId];
       if (!conv) return state;
       return {
         conversations: {
           ...state.conversations,
-          [conversationId]: { ...conv, modelId: modelId ?? null },
+          [conversationId]: {
+            ...conv,
+            modelId: modelId ?? null,
+            reasoningEffort: effort,
+          },
+        },
+      };
+    });
+    // 3) 用户在某会话切换模型 = 顺带成为全局最近使用（实时落盘 + 参与 sync）。
+    //    复用 settingsStore.update 完整保存链路（校验/持久化/字段级同步）。
+    //    仅当切到具体模型时更新；清除记忆(null)不改变全局最近使用。
+    if (modelId) {
+      const settingsStore = useSettingsStore.getState();
+      const reg = settingsStore.settings.llmRegistry;
+      if (reg && reg.lastUsedModelId !== modelId) {
+        settingsStore
+          .update({ llmRegistry: { ...reg, lastUsedModelId: modelId } })
+          .catch((err) => {
+            console.error('[conversationStore] persist lastUsedModelId failed', err);
+          });
+      }
+    }
+  },
+
+  setConversationEffort: async (conversationId: string, reasoningEffort: string | null) => {
+    // 档位归属当前生效模型（会话记忆 → 全局最近使用 → 首个），按
+    // 「会话 × 模型」双维写入后端（内存 + efforts_json 落盘，重启记住；
+    // 任务启动时据此注入）
+    const effModelId = effectiveModelId(
+      useSettingsStore.getState().settings.llmRegistry,
+      get().conversations[conversationId]?.modelId,
+    );
+    if (!effModelId) return; // 无模型可归属：不记录（UI 无模型时也不会显示选择器）
+    await tauri.agentSetSessionEffort(conversationId, effModelId, reasoningEffort);
+    // 本地 conv.reasoningEffort 同步（UI 读取点；load 时后端 overlay 也会带回来）
+    set((state) => {
+      const conv = state.conversations[conversationId];
+      if (!conv) return state;
+      return {
+        conversations: {
+          ...state.conversations,
+          [conversationId]: { ...conv, reasoningEffort: reasoningEffort ?? null },
         },
       };
     });

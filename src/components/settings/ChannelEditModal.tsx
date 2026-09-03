@@ -150,6 +150,7 @@ export default function ChannelEditModal({
         vision: m.vision,
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,
+        reasoningEfforts: m.reasoningEfforts,
       };
       setLocalModels((prev) =>
         prev.map((x) => (x.id === updated.id ? updated : x)),
@@ -162,6 +163,7 @@ export default function ChannelEditModal({
         vision: m.vision,
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,
+        reasoningEfforts: m.reasoningEfforts,
       };
       setLocalModels((prev) => [...prev, full]);
     }
@@ -282,6 +284,11 @@ export default function ChannelEditModal({
                       {m.vision && (
                         <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-indigo-600/20 text-indigo-300">
                           视觉
+                        </span>
+                      )}
+                      {(m.reasoningEfforts?.length ?? 0) > 0 && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-300">
+                          思考{m.reasoningEfforts!.join('/')}
                         </span>
                       )}
                     </div>

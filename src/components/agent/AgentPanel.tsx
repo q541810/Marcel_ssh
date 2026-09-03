@@ -25,7 +25,7 @@ import { sessionConversationBindingManager } from "@/stores/sessionConversationB
 import { AGENT_MODES } from "@/lib/constants";
 import { isNearBottom } from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
-import { currentVision } from "@/lib/llmRegistry";
+import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import type { AgentMode, AgentMessage, QuestionAnswer } from "@/lib/types";
 import {
   type PendingImage,
@@ -55,6 +55,7 @@ import AgentCommandMenu, {
   type AgentCommandMenuHandle,
 } from "./AgentCommandMenu";
 import { ModelPicker } from "./ModelPicker";
+import { ReasoningEffortPicker } from "./ReasoningEffortPicker";
 
 // ── Plugin input-activity bridge ──────────────────────────────────────
 // Emits `ui://input-activity` (typing bool only — never the content) so
@@ -101,9 +102,6 @@ export default function AgentPanel() {
   const rollbackNoticeTimerRef = useRef<number | null>(null);
   const attachHintTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
-  const visionEnabled = useSettingsStore(
-    (s) => currentVision(s.settings.llmRegistry),
-  );
   const activeSession = useSessionStore((s) => {
     const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
     return session ?? null;
@@ -133,6 +131,7 @@ export default function AgentPanel() {
     renameConversation,
     deleteConversation,
     setConversationModel,
+    setConversationEffort,
     rollbackToMessage,
     taskTokenUsage,
     syncActiveToConnection,
@@ -160,6 +159,12 @@ export default function AgentPanel() {
     : null;
   const isSubConversation = !!activeConversation?.parentConversationId;
   const parentConversationId = activeConversation?.parentConversationId ?? null;
+
+  // 图片支持按「当前会话实际生效模型」判定（会话记忆 → 全局最近使用），
+  // 避免会话内切到非视觉模型时仍允许附图。普通派生值（随每次渲染重算，
+  // 不能用 zustand selector——会话切换时 selector 不重跑）。
+  const registry = useSettingsStore((s) => s.settings.llmRegistry);
+  const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
 
   const handleBackToParent = useCallback(() => {
     if (parentConversationId) {
@@ -1243,13 +1248,13 @@ export default function AgentPanel() {
                   />
                 </svg>
               </button>
-              {/* Mode selector */}
-              <div className="relative flex-shrink-0" ref={drawerRef}>
+              {/* Mode selector — 空间不足时可收缩，文案窄时优先让位 */}
+              <div className="relative min-w-0" ref={drawerRef}>
               <button
                 type="button"
                 onClick={() => setModeDrawerOpen((v) => !v)}
                 className={`
-                flex items-center gap-1 px-2 py-1.5 text-xs font-medium transition-colors rounded-full
+                flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs font-medium transition-colors rounded-full
                 ${
                   modeDrawerOpen
                     ? "bg-zinc-700 text-zinc-100"
@@ -1260,9 +1265,9 @@ export default function AgentPanel() {
                 aria-haspopup="listbox"
                 aria-expanded={modeDrawerOpen}
               >
-                <span>{currentModeInfo.label}</span>
+                <span className="truncate min-w-0">{currentModeInfo.label}</span>
                 <svg
-                  className={`w-3 h-3 transition-transform duration-200 ${
+                  className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${
                     modeDrawerOpen ? "rotate-180" : ""
                   }`}
                   fill="none"
@@ -1341,6 +1346,26 @@ export default function AgentPanel() {
               }}
               disabled={!canInteract}
             />
+
+            {/* 思考强度选择器 — 仅当前生效模型声明了档位时出现；选档实时
+                生效于本会话后续任务（任务启动时取最新值注入 reasoning_effort） */}
+            {(() => {
+              // 生效模型语义与 ModelPicker 一致：会话记忆 → 全局最近使用 → 首个
+              const effModel = effectiveModel(registry, activeConversation?.modelId);
+              const efforts = modelReasoningEfforts(effModel);
+              if (efforts.length === 0) return null;
+              return (
+                <ReasoningEffortPicker
+                  value={activeConversation?.reasoningEffort}
+                  efforts={efforts}
+                  onChange={(effort) => {
+                    if (!activeConversationId) return;
+                    void setConversationEffort(activeConversationId, effort);
+                  }}
+                  disabled={!canInteract}
+                />
+              );
+            })()}
 
             <div className="flex-1" />
 

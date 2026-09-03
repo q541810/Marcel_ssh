@@ -198,9 +198,8 @@ pub struct LlmConfig {
     /// (e.g. `thinking`, `top_p`, `max_tokens`, `seed`). Keys here override
     /// the typed fields above on conflict. Not used for model-approval calls.
     ///
-    /// NOTE: 不加 `skip_serializing_if = "Option::is_none"`，是为了让 sync 字段路径
-    /// 测试能读到默认值 `null`（见 `sync::settings_field::tests::test_roundtrip_app_settings`）。
-    /// 反序列化时 `null` 与 `None` 行为一致。
+    /// NOTE: 不加 `skip_serializing_if = "Option::is_none"`，保持序列化形状稳定，
+    /// 旧设置 JSON 反序列化时 `null` 与 `None` 行为一致。
     #[serde(default)]
     pub extra_body: Option<serde_json::Value>,
 }

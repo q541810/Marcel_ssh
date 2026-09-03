@@ -3,7 +3,7 @@ import { create } from 'zustand';
 /**
  * 设置页 category 跳转意图中转。
  *
- * 用途：当全局 UI（如 AppHeader 中的 SyncStatusIndicator）需要打开设置页并
+ * 用途：当全局 UI（如插件市场跳转）需要打开设置页并
  * 直接定位到某个 category 时，调用 `requestNavigate` 写入意图；Settings 组件
  * 通过 `subscribe` 或 `consume` 读取并应用，应用后立即清空。
  *

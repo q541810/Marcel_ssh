@@ -272,8 +272,7 @@ impl Default for NotificationSettings {
 ///
 /// 与桌面端 `NotificationSettings` 完全隔离：
 /// - 不包含 `notification_volume`（移动端不发提示音，走系统通知通道，无声）
-/// - 不参与云端 syncStore 同步（`syncStore` 的 field paths 不包含本字段）
-/// - 桌面端修改不影响移动端，反之亦然
+/// - 设备本地，桌面端修改不影响移动端，反之亦然
 ///
 /// Agent 事件通知由 Rust 侧 `send_notification` 在 `#[cfg(mobile)]` 分支下
 /// 通过 `window.AndroidBridge.sendAgentNotification` 发出，走 `marcel_agent` 通道。
@@ -306,7 +305,7 @@ impl Default for MobileNotificationSettings {
 /// 开启后 App 启动即启动 Android 前台服务（ForegroundService），切后台维持
 /// SSH 会话与 Agent 任务运行。常驻通知为 Android 系统硬性要求，无法去除。
 ///
-/// 不参与云端 syncStore 同步：保活是设备本地行为，跨设备同步无意义。
+/// 设备本地行为：保活每台设备独立设置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MobileBackgroundSettings {
@@ -467,11 +466,6 @@ pub struct AppSettings {
     /// Whether the user has completed the onboarding wizard.
     #[serde(default)]
     pub has_completed_onboarding: bool,
-    /// Whether the user has accepted the cross-device sync disclaimer
-    /// (shown once the first time they open the Sync settings page).
-    /// Local-only flag; not included in sync field paths.
-    #[serde(default)]
-    pub has_accepted_sync_disclaimer: bool,
     /// Disabled plugin IDs. Plugins listed here are scanned but not loaded.
     #[serde(default)]
     pub disabled_plugins: Vec<String>,
@@ -555,7 +549,6 @@ impl Default for AppSettings {
             custom_protected_paths: vec![],
             command_timeout_secs: default_command_timeout(),
             has_completed_onboarding: false,
-            has_accepted_sync_disclaimer: false,
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
@@ -783,23 +776,13 @@ mod tests {
         assert!(parsed.has_completed_onboarding);
     }
 
-    /// Missing hasAcceptedSyncDisclaimer in old configs defaults to false.
+    /// 旧配置里遗留的字段（如已废弃的 hasAcceptedSyncDisclaimer）应被忽略加载。
     #[test]
-    fn app_settings_loads_old_format_without_sync_disclaimer() {
-        let json = "{\"fontSize\": 14}";
+    fn app_settings_ignores_removed_legacy_fields() {
+        let json = "{\"fontSize\": 14, \"hasAcceptedSyncDisclaimer\": true}";
         let parsed: AppSettings =
-            serde_json::from_str(json).expect("missing hasAcceptedSyncDisclaimer should load");
-        assert!(!parsed.has_accepted_sync_disclaimer);
-    }
-
-    #[test]
-    fn app_settings_sync_disclaimer_roundtrip() {
-        let mut settings = AppSettings::default();
-        settings.has_accepted_sync_disclaimer = true;
-        let json = serde_json::to_string(&settings).expect("serialize");
-        assert!(json.contains("\"hasAcceptedSyncDisclaimer\":true"));
-        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
-        assert!(parsed.has_accepted_sync_disclaimer);
+            serde_json::from_str(json).expect("legacy fields should be ignored");
+        assert_eq!(parsed.font_size, 14);
     }
 
     #[test]

@@ -1,14 +1,11 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::commands::sync::SyncSummary;
 use crate::config::connections::SavedConnection;
 use crate::config::keychain;
 use crate::config::settings::AppSettings;
 use crate::error::AppError;
 use crate::skills::store::Skill;
-use crate::sync::profile::{Platform, SyncProfile};
-use crate::sync::scheduler::SyncState;
 use crate::AppState;
 
 /// 聚合启动快照数据包：在前端启动首帧一次性下发，消除多路 IPC 往返瀑布流。
@@ -31,8 +28,6 @@ pub struct AppBootstrapData {
     pub connections: Vec<SavedConnection>,
     /// 用户与内置 Skill 列表
     pub skills: Vec<Skill>,
-    /// 跨设备同步状态摘要
-    pub sync_summary: SyncSummary,
 }
 
 /// 获取聚合启动快照。
@@ -53,48 +48,6 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
     let connections = state.connection_store.read().await.get_all().to_vec();
     let skills = state.skill_store.read().await.list().to_vec();
 
-    // 组装同步摘要
-    let server_url = crate::sync::keychain::get_server_url()?;
-    let device_id = crate::sync::keychain::get_device_id()?;
-    let sync_api_key = crate::sync::keychain::get_device_api_key()?;
-    let configured = server_url.is_some() && device_id.is_some() && sync_api_key.is_some();
-
-    let profile = state
-        .sync_engine
-        .as_ref()
-        .map(|e| e.profile())
-        .unwrap_or_else(SyncProfile::default);
-
-    let (sync_state, last_error, progress) = match state.sync_scheduler.as_ref() {
-        Some(scheduler) => (
-            scheduler.state(),
-            scheduler.last_error(),
-            scheduler.last_progress(),
-        ),
-        None => (SyncState::NotConfigured, None, None),
-    };
-
-    let pending_count = state
-        .sync_engine
-        .as_ref()
-        .map(|e| e.pending_count())
-        .unwrap_or(0);
-
-    let version_block = state.sync_engine.as_ref().and_then(|e| e.version_block());
-
-    let sync_summary = SyncSummary {
-        configured,
-        server_url,
-        device_id,
-        platform: Platform::current().as_str().to_string(),
-        profile,
-        state: sync_state,
-        error: last_error,
-        progress,
-        pending_count,
-        version_block,
-    };
-
     Ok(AppBootstrapData {
         settings,
         has_api_key,
@@ -103,6 +56,5 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
         settings_warning,
         connections,
         skills,
-        sync_summary,
     })
 }

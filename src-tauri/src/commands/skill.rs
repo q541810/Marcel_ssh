@@ -68,17 +68,6 @@ pub async fn skill_add(
     *store = candidate;
     drop(store);
 
-    // 触发跨设备同步：skills 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_change(
-                &format!("skills.{}", cloned.id),
-                &serde_json::to_string(&cloned).unwrap_or_default(),
-            );
-            scheduler.schedule_push();
-        }
-    }
-
     Ok(cloned)
 }
 
@@ -106,30 +95,14 @@ pub async fn skill_update(
         }
     }
     let path = SkillStore::default_file(&state.config_dir);
-    let updated = {
+    {
         let mut store = state.skill_store.write().await;
         let mut candidate = store.clone();
         if !candidate.update(&id, name, description, prompt) {
             return Err(AppError::Config(format!("skill not found: {}", id)));
         }
-        let updated = candidate
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
         candidate.save_to_path(&path)?;
         *store = candidate;
-        updated
-    };
-
-    // 触发跨设备同步：skills 变更
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_change(
-                &format!("skills.{}", id),
-                &serde_json::to_string(&updated).unwrap_or_default(),
-            );
-            scheduler.schedule_push();
-        }
     }
 
     Ok(())
@@ -138,30 +111,14 @@ pub async fn skill_update(
 #[tauri::command]
 pub async fn skill_toggle(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     let path = SkillStore::default_file(&state.config_dir);
-    let updated = {
+    {
         let mut store = state.skill_store.write().await;
         let mut candidate = store.clone();
         if !candidate.toggle(&id) {
             return Err(AppError::Config(format!("skill not found: {}", id)));
         }
-        let updated = candidate
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| AppError::Config(format!("skill not found: {}", id)))?;
         candidate.save_to_path(&path)?;
         *store = candidate;
-        updated
-    };
-
-    // 触发跨设备同步：skills 变更（toggle 改变 enabled 状态）
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_change(
-                &format!("skills.{}", id),
-                &serde_json::to_string(&updated).unwrap_or_default(),
-            );
-            scheduler.schedule_push();
-        }
     }
 
     Ok(())
@@ -184,14 +141,6 @@ pub async fn skill_delete(state: State<'_, AppState>, id: String) -> Result<(), 
     *store = candidate;
     drop(store);
 
-    // 触发跨设备同步：skills 删除
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            let _ = engine.record_local_delete(&format!("skills.{}", id));
-            scheduler.schedule_push();
-        }
-    }
-
     Ok(())
 }
 
@@ -206,29 +155,13 @@ pub async fn skill_reorder(state: State<'_, AppState>, ids: Vec<String>) -> Resu
         return Err(AppError::Config("内置 Skill 不参与手动排序".into()));
     }
     let path = SkillStore::default_file(&state.config_dir);
-    let changed = {
+    {
         let mut store = state.skill_store.write().await;
         let mut candidate = store.clone();
         let changed = candidate.apply_user_order(&ids);
         if !changed.is_empty() {
             candidate.save_to_path(&path)?;
             *store = candidate;
-        }
-        changed
-    };
-
-    // 仅推送 position 真正变化的条目（与 last_synced_values 比对去重）
-    if !changed.is_empty() {
-        if let Some(ref scheduler) = state.sync_scheduler {
-            if let Some(ref engine) = state.sync_engine {
-                for skill in &changed {
-                    let _ = engine.record_local_change(
-                        &format!("skills.{}", skill.id),
-                        &serde_json::to_string(skill).unwrap_or_default(),
-                    );
-                }
-                scheduler.schedule_push();
-            }
         }
     }
 

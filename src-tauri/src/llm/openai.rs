@@ -319,7 +319,13 @@ fn process_chunk(
             }
         }
         if let Some(ref delta) = choice.delta {
-            if let Some(ref reasoning) = delta.reasoning_content {
+            // 思考字段兼容两种命名：OpenAI/DeepSeek 官方 `reasoning_content`，
+            // 部分网关（neopig 等）用 `reasoning`。两者不会同帧出现，优先官方名。
+            let reasoning_delta = delta
+                .reasoning_content
+                .as_ref()
+                .or(delta.reasoning.as_ref());
+            if let Some(reasoning) = reasoning_delta {
                 if !reasoning.is_empty() {
                     accumulated_reasoning.push_str(reasoning);
                     let _ = event_tx.send(StreamEvent::ThinkingDelta {
@@ -756,7 +762,13 @@ struct ChunkChoice {
 #[derive(Debug, Deserialize)]
 struct ChunkDelta {
     content: Option<String>,
+    /// OpenAI / DeepSeek 官方流式思考字段名（`delta.reasoning_content`）。
     reasoning_content: Option<String>,
+    /// 部分 OpenAI 兼容网关/转发（如 neopig → deepseek）把思考字段命名为
+    /// `delta.reasoning`（非流式响应里对应 `message.reasoning`）。serde 默认
+    /// 丢弃未知字段，不兼容会导致「模型实际在思考（usage 计费含
+    /// reasoning_tokens）但思考内容全部丢失、UI 永不显示」。
+    reasoning: Option<String>,
     tool_calls: Option<Vec<DeltaToolCall>>,
 }
 
@@ -855,6 +867,80 @@ mod build_request_body_tests {
             .and_then(|v| v.as_array())
             .expect("messages");
         assert!(messages[0].get("reasoning_content").is_none());
+    }
+
+    /// 流式思考字段兼容：官方 `delta.reasoning_content` 仍是主解析字段。
+    #[test]
+    fn process_chunk_reads_official_reasoning_content() {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls: Vec<PartialToolCall> = Vec::new();
+        let mut finish: Option<String> = None;
+        let (_tx, _rx) = mpsc::unbounded_channel();
+        let chunk: ChatChunk = serde_json::from_str(
+            r#"{"choices":[{"delta":{"content":"hi","reasoning_content":"官方思考"}}]}"#,
+        )
+        .expect("parse official");
+        process_chunk(
+            &chunk,
+            &mut text,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut finish,
+            &_tx,
+        );
+        assert_eq!(text, "hi");
+        assert_eq!(reasoning, "官方思考");
+    }
+
+    /// 流式思考字段兼容：部分网关（neopig → deepseek）发 `delta.reasoning`，
+    /// 没有官方 `reasoning_content`——思考也必须被解析（否则 usage 计费了
+    /// thinking tokens 但 UI 永不显示，表现为「有时思考有时不思考」）。
+    #[test]
+    fn process_chunk_reads_alias_reasoning_field() {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls: Vec<PartialToolCall> = Vec::new();
+        let mut finish: Option<String> = None;
+        let (_tx, _rx) = mpsc::unbounded_channel();
+        let chunk: ChatChunk = serde_json::from_str(
+            r#"{"choices":[{"delta":{"content":"hello","reasoning":"need answer step by step"}}]}"#,
+        )
+        .expect("parse alias");
+        process_chunk(
+            &chunk,
+            &mut text,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut finish,
+            &_tx,
+        );
+        assert_eq!(text, "hello");
+        assert_eq!(reasoning, "need answer step by step");
+    }
+
+    /// 官方字段优先：同帧出现 `reasoning_content` 与 `reasoning` 时用官方名
+    /// （正常 provider 不会同发，防御性取官方名避免重复拼接）。
+    #[test]
+    fn process_chunk_prefers_official_over_alias() {
+        let mut text = String::new();
+        let mut reasoning = String::new();
+        let mut tool_calls: Vec<PartialToolCall> = Vec::new();
+        let mut finish: Option<String> = None;
+        let (_tx, _rx) = mpsc::unbounded_channel();
+        let chunk: ChatChunk = serde_json::from_str(
+            r#"{"choices":[{"delta":{"content":"x","reasoning_content":"official","reasoning":"alias"}}]}"#,
+        )
+        .expect("parse both");
+        process_chunk(
+            &chunk,
+            &mut text,
+            &mut reasoning,
+            &mut tool_calls,
+            &mut finish,
+            &_tx,
+        );
+        assert_eq!(reasoning, "official");
     }
 
     #[test]

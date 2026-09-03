@@ -1,26 +1,5 @@
-use tauri::State;
-
 use crate::config::keychain;
 use crate::error::AppError;
-use crate::AppState;
-
-/// 通知同步引擎：secrets 变更（保存=record_local_change，删除=record_local_delete）。
-/// record_local_change 内部按当前 profile + platform 过滤，未开启「API Key」分类时自动跳过。
-fn notify_secret_sync(state: &State<'_, AppState>, key: &str, value: Option<&str>) {
-    if let Some(ref scheduler) = state.sync_scheduler {
-        if let Some(ref engine) = state.sync_engine {
-            match value {
-                Some(v) => {
-                    let _ = engine.record_local_change(key, v);
-                }
-                None => {
-                    let _ = engine.record_local_delete(key);
-                }
-            }
-            scheduler.schedule_push();
-        }
-    }
-}
 
 /// Save a password for a connection into the OS keychain.
 #[tauri::command]
@@ -127,16 +106,10 @@ pub async fn config_delete_jump_passphrase(connection_id: String) -> Result<(), 
 /// 多渠道模型服务：每个渠道独立密钥，account = `llm_channel_{channel_id}`。
 #[tauri::command]
 pub async fn config_save_llm_channel_api_key(
-    state: State<'_, AppState>,
     channel_id: String,
     api_key: String,
 ) -> Result<(), AppError> {
     keychain::save_llm_channel_key(&channel_id, &api_key)?;
-    notify_secret_sync(
-        &state,
-        &format!("secrets.llmChannel.{}", channel_id),
-        Some(&api_key),
-    );
     Ok(())
 }
 
@@ -145,34 +118,21 @@ pub async fn config_save_llm_channel_api_key(
 
 /// Remove a per-channel LLM API key from the system keychain.
 #[tauri::command]
-pub async fn config_delete_llm_channel_api_key(
-    state: State<'_, AppState>,
-    channel_id: String,
-) -> Result<(), AppError> {
+pub async fn config_delete_llm_channel_api_key(channel_id: String) -> Result<(), AppError> {
     keychain::delete_llm_channel_key(&channel_id)?;
-    notify_secret_sync(
-        &state,
-        &format!("secrets.llmChannel.{}", channel_id),
-        None,
-    );
     Ok(())
 }
 
 /// Save the web search API key to the system keychain.
 #[tauri::command]
-pub async fn config_save_web_search_api_key(
-    state: State<'_, AppState>,
-    api_key: String,
-) -> Result<(), AppError> {
+pub async fn config_save_web_search_api_key(api_key: String) -> Result<(), AppError> {
     keychain::save_web_search_api_key(&api_key)?;
-    notify_secret_sync(&state, "secrets.webSearchApiKey", Some(&api_key));
     Ok(())
 }
 
 /// Remove the web search API key from the system keychain.
 #[tauri::command]
-pub async fn config_delete_web_search_api_key(state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn config_delete_web_search_api_key() -> Result<(), AppError> {
     keychain::delete_web_search_api_key()?;
-    notify_secret_sync(&state, "secrets.webSearchApiKey", None);
     Ok(())
 }

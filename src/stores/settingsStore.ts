@@ -4,7 +4,7 @@ import type { AppSettings, AgentModeSettings, ExperimentalSettings, Notification
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { setNotificationVolume } from '@/lib/notificationSound';
-import { emptyRegistry, emptySlots, defaultNetPolicy } from '@/lib/llmRegistry';
+import { emptyRegistry, emptySlots, defaultNetPolicy, dedupeModelEntries } from '@/lib/llmRegistry';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
@@ -20,14 +20,30 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
 
 const DEFAULT_LLM_REGISTRY: LlmRegistry = emptyRegistry();
 
-/** 归一化注册表：缺字段补默认（兼容旧数据 / 字段缺失 = 保持原样 + 默认填充）。 */
+/** 归一化注册表：缺字段补默认（兼容旧数据 / 字段缺失 = 保持原样 + 默认填充）。
+ *  模型列表按 id 去重（保留最后出现者）：历史「保存渠道」合并 bug 会写出同
+ *  id 重复条目，这里在 hydrate/load 时兜底自愈，避免模型选择器出现同模型两次。
+ *  全局最近使用（lastUsedModelId）一并保留；指向已删模型的失效值清空
+ *  （与后端 resolve 的"失效回落第一个模型"语义一致，也避免 save 被后端
+ *  validate 拦下）。 */
 function normalizeRegistry(r: Partial<LlmRegistry> | null | undefined): LlmRegistry {
   if (!r) return DEFAULT_LLM_REGISTRY;
+  const models = Array.isArray(r.models) ? dedupeModelEntries(r.models) : [];
+  // 全局最近使用：须指向真实存在的模型才保留（以 dedupe 后的 models 为准），
+  // 否则视为失效清空（undefined = 回落第一个模型，语义与 emptyRegistry 一致）
+  const lastUsedModelId =
+    typeof r.lastUsedModelId === 'string' &&
+    r.lastUsedModelId.trim() !== '' &&
+    models.some((m) => m.id === r.lastUsedModelId)
+      ? r.lastUsedModelId
+      : undefined;
   return {
     channels: Array.isArray(r.channels) ? r.channels : [],
-    models: Array.isArray(r.models) ? r.models : [],
+    models,
     slots: r.slots ? { ...emptySlots(), ...r.slots } : emptySlots(),
     netPolicy: r.netPolicy ? { ...defaultNetPolicy(), ...r.netPolicy } : defaultNetPolicy(),
+    // 只在有有效值时设键：undefined 时与 emptyRegistry（无此键）形态一致
+    ...(lastUsedModelId ? { lastUsedModelId } : {}),
   };
 }
 
@@ -87,7 +103,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   customProtectedPaths: [],
   commandTimeoutSecs: 180,
   hasCompletedOnboarding: false,
-  hasAcceptedSyncDisclaimer: false,
   disabledPlugins: [],
   authorizedCapabilities: {},
   disableAllInjections: false,
@@ -107,7 +122,7 @@ interface SettingsState {
 
   /** Load settings from disk on app startup. Idempotent unless forced. */
   load: (force?: boolean) => Promise<void>;
-  /** 从启动快照同步 Hydrate 设置 */
+  /** 从启动快照批量 Hydrate 设置 */
   hydrateFromBootstrap: (data: {
     settings: AppSettings;
     hasApiKey: boolean;

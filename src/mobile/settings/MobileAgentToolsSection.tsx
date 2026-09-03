@@ -41,14 +41,14 @@ const ENDPOINT_OPTIONS: readonly { value: WebSearchEndpoint; label: string; desc
   { value: 'www', label: 'www.bing.com', desc: '国际节点' },
 ];
 
-/** 手机端搜索方式的 UI 归并：browser（桌面同步而来，本机不可用）在 UI 上视为裸抓。 */
+/** 手机端搜索方式的 UI 归并：browser（本机不可用的 CDP 模式，可能来自旧版桌面端配置）在 UI 上视为裸抓。 */
 export function resolveMobileSearchMode(
   stored: WebSearchMode | undefined,
 ): 'html' | 'api' {
   return stored === 'api' ? 'api' : 'html';
 }
 
-/** 原配置是否是从桌面同步来的本机浏览器模式（用于展示降级说明）。 */
+/** 原配置是否为手机端不可用的 browser 模式（用于展示降级说明）。 */
 export function isSyncedBrowserMode(stored: WebSearchMode | undefined): boolean {
   return stored === 'browser';
 }
@@ -57,7 +57,7 @@ export function isSyncedBrowserMode(stored: WebSearchMode | undefined): boolean 
  * 计算选择搜索方式后应写入的配置 patch：
  * - 选择「搜索 API」→ 直接写 api
  * - 选择「裸抓」→ 仅当原值是 api 时才写 html；
- *   原值是 browser（桌面同步而来）时保持原样，避免覆盖云端配置
+ *   原值是 browser（桌面端遗留，手机不可用）时保持原样，避免覆盖
  */
 export function selectMobileSearchMode(
   stored: WebSearchMode | undefined,
@@ -124,8 +124,8 @@ export function MobileAgentToolsSection() {
     update({ experimentalSettings: { ...experimental, ...patch } });
   };
 
-  // 手机端无本机浏览器（CDP）能力：设置值 browser（多来自桌面端同步）
-  // 在 UI 上归并为「裸抓」展示，但保持已保存的配置值不变，避免覆盖云端。
+  // 手机端无本机浏览器（CDP）能力：设置值 browser（桌面端遗留）
+  // 在 UI 上归并为「裸抓」展示，但保持已保存的配置值不变，避免覆盖。
   const storedMode: WebSearchMode = experimental.webSearchMode ?? 'browser';
   const isApiMode = resolveMobileSearchMode(storedMode) === 'api';
   const syncedBrowser = isSyncedBrowserMode(storedMode);
@@ -185,7 +185,7 @@ export function MobileAgentToolsSection() {
           />
           {syncedBrowser && (
             <p className="mt-2 rounded-lg bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
-              本机浏览器模式来自桌面端同步，手机端不可用，已自动降级为裸抓
+              本机浏览器模式在手机端不可用，已自动降级为裸抓
               Bing HTML；如搜索结果质量不佳，可切换为搜索 API。
             </p>
           )}

@@ -23,7 +23,6 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
       'agent-tools',
       'commands-skills',
       'notification-background',
-      'sync',
       'about',
     ]);
   });
