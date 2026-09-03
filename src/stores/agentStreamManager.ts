@@ -310,7 +310,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       }
 
       if (hasEventType(ev, 'toolCallStart')) {
-        handleToolCallStart(handler, taskId, conversationId, ev);
+        handleToolCallStart(handler, taskId, conversationId, ev, loadingAssistantId);
         return;
       }
 

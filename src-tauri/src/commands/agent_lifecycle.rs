@@ -101,10 +101,14 @@ pub async fn agent_stop_task(
         // bash 以 Agent task_id 注册到统一命令 manager；任务停止属级联
         // 取消 → Task，与界面直接取消（User）、Agent job_kill（Agent）
         // 区分，job_output 的终止来源文案据此渲染。
+        // 前台执行走 cancel_with_reason（注册表最后一条 exec）；
+        // 后台作业可能多条并存，cancel_task_jobs 逐个 kill + 释放
+        // 结算通知通道（让挂起的 agent loop 立即醒来以取消收场）。
         let _ = state
             .command_exec
             .cancel_with_reason(tid, crate::command_exec::CancelReason::Task)
             .await;
+        let _ = state.command_exec.cancel_task_jobs(tid).await;
     }
     if tasks_to_cancel.len() > 1 {
         log::info!(

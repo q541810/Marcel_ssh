@@ -38,7 +38,7 @@ const SUBAGENT_INSTRUCTION: &str = "\
 - 不得执行任何修改操作：不写文件、不编辑文件、不删除文件、不安装软件、不修改配置
 - bash 仅用于信息收集（查看状态、读取输出、运行只读查询），禁止用于修改系统
 - 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
-- 若用 bash(run_in_background: true) 派发了后台作业，必须在结束调研前处理完毕：用 job_output(wait=true) 等待其完成，或不再需要时用 job_kill 终止——不得留下仍在运行的作业
+- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。收到结算通知前不需要反复轮询，可继续其他调研。
 
 完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论、对主 Agent 行动的建议。不要复述调研过程细节。";
 

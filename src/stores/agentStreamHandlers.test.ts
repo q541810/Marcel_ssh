@@ -4,6 +4,7 @@ import {
   handleToolCallDelta,
   handleToolResult,
   handleTextDelta,
+  handleThinkingDelta,
   handleDone,
   handleError,
   handleRetrying,
@@ -189,6 +190,64 @@ describe('agentStreamHandlers', () => {
       const msgs = handler._messages[convId];
       expect(msgs.find((m) => m.isLoading)).toBeUndefined();
       expect(msgs.some((m) => m.role === 'tool')).toBe(true);
+    });
+
+    it('keeps buffered text tail when tool call starts in the same frame (regression: 半句截断)', () => {
+      const handler = mockHandler({ [convId]: [] });
+      const loadingId = 'loading-tail-1';
+
+      // 正文尾巴尚未被 rAF flush（模拟同帧内 ToolCallStart 先到）
+      handleTextDelta(handler, taskId, convId, loadingId, {
+        type: 'textDelta',
+        text: '确认 /adm_panel 是否被外部探测/爆破过——这是判定攻击面"是否被利用"的关键证据。',
+      });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-tail-1',
+        name: 'bash',
+      });
+
+      const msgs = handler._messages[convId];
+      const assistant = msgs.find((m) => m.role === 'assistant');
+      expect(assistant).toBeDefined();
+      // 正文尾巴必须保留，不能停在半句
+      expect(assistant?.content).toContain('是否被外部探测/爆破过');
+      // 工具卡紧随其后
+      const toolMsg = msgs.find((m) => m.role === 'tool');
+      expect(toolMsg).toBeDefined();
+      expect(msgs.indexOf(assistant!)).toBeLessThan(msgs.indexOf(toolMsg!));
+      // buffer 已清空，无悬挂 rAF
+      expect(getStreamState(taskId).pendingTextDelta).toBe('');
+      expect(getStreamState(taskId).flushRafId).toBeNull();
+    });
+
+    it('drops only thinking buffer, keeps text tail, when both arrive before flush', () => {
+      const handler = mockHandler({ [convId]: [] });
+      const loadingId = 'loading-mixed-1';
+
+      // 模拟：thinking 尾 + 正文尾 同帧未 flush，随后 ToolCallStart
+      handleThinkingDelta(handler, taskId, convId, loadingId, {
+        type: 'thinkingDelta',
+        text: '这是临时思考，不应显示',
+      });
+      handleTextDelta(handler, taskId, convId, loadingId, {
+        type: 'textDelta',
+        text: '现在执行命令',
+      });
+      handleToolCallStart(handler, taskId, convId, {
+        type: 'toolCallStart',
+        id: 'tc-mixed-1',
+        name: 'execute_command',
+      });
+
+      const msgs = handler._messages[convId];
+      const assistant = msgs.find((m) => m.role === 'assistant');
+      expect(assistant).toBeDefined();
+      // 正文保留
+      expect(assistant?.content).toBe('现在执行命令');
+      // thinking 不显示（设计意图保留：临时思考在 tool call 前不残留）
+      expect(assistant?.reasoningContent).toBeUndefined();
+      expect(assistant?.isThinking).toBe(false);
     });
   });
 

@@ -114,8 +114,8 @@ export default function QuestionPanel({
   );
 
   return (
-    <div className="p-3 border-t border-zinc-800 bg-zinc-900">
-      <div className="rounded-xl bg-zinc-800 border border-indigo-700/40 shadow-lg overflow-hidden">
+    <div className="p-3">
+      <div className="rounded-2xl bg-zinc-800 border border-indigo-500/30 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
           <div className="flex items-center gap-2 min-w-0">

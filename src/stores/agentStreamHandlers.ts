@@ -63,6 +63,7 @@ export function handleToolCallStart(
   taskId: string,
   conversationId: string,
   ev: { type: 'toolCallStart'; id: string; name: string },
+  loadingAssistantId = '',
 ) {
   const messageId = crypto.randomUUID();
   const toolMessage: AgentMessage = {
@@ -81,20 +82,26 @@ export function handleToolCallStart(
     },
   };
 
-  // Tool call starts: discard pending delta buffer.
-  // Thinking text before a tool call is ephemeral — the agent_loop
-  // does not persist it and handleToolCallStart clears reasoningContent
-  // from the last assistant message.  If deltas are still buffered
-  // (not yet flushed via rAF), they would otherwise survive as a
-  // stale isThinking=true message, auto-expanding every tool card
-  // mid-execution with "no output".  Clearing the buffer and
-  // cancelling the scheduled rAF prevents that.
+  // Tool call starts: flush any not-yet-rendered TEXT delta into the message
+  // list BEFORE discarding the ephemeral thinking buffer.
+  //
+  // Reasoning text before a tool call is ephemeral — the agent_loop does not
+  // persist it, and handleToolCallStart clears reasoningContent from the last
+  // assistant message below, so the thinking buffer can be dropped safely.
+  //
+  // The content (text) delta is REAL assistant output and must NOT be dropped:
+  // providers emit the final content chunk and the first tool-call chunk inside
+  // the SAME SSE chunk (openai.rs process_chunk sends TextDelta then
+  // ToolCallStart back-to-back), so ToolCallStart can arrive before the
+  // scheduled rAF flush runs.  Clearing pendingTextDelta here permanently
+  // discarded the sentence tail — the UI showed messages cut off mid-sentence
+  // right before the tool call card while the DB (and reload) kept the full
+  // text.  Flush text first (synchronous, also cancels the rAF handle), then
+  // only the thinking buffer is dropped.
   const state = getStreamState(taskId);
-  state.pendingTextDelta = '';
   state.pendingThinkingDelta = '';
-  if (state.flushRafId != null) {
-    cancelAnimationFrame(state.flushRafId);
-    state.flushRafId = null;
+  if (state.pendingTextDelta || state.flushRafId != null) {
+    flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
   }
 
   handler.updateMessages(conversationId, (convMsgs) => {

@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use parking_lot::Mutex as PlMutex;
+use parking_lot::RwLock as PlRwLock;
 use tauri::AppHandle;
 use tokio::sync::{watch, Mutex as TokioMutex};
 
@@ -115,6 +116,12 @@ struct ManagerInner {
     next_job_num: AtomicU64,
     /// 溢出文件目录（应用配置目录下的 jobs_temp）。
     temp_dir: PathBuf,
+    /// task_id -> 该任务名下后台作业的结算计数（单调递增，每次任一
+    /// 作业结算 +1）。agent 循环在「名下仍有运行中作业」时挂起等待
+    /// 这个计数变化，结算后 drain 已结算作业并注入通知。
+    /// 仅登记「带 task_id 且该任务可能还活着」的作业；task 结束后
+    /// 由清理路径移除，防泄漏。
+    task_settled_tx: PlRwLock<HashMap<String, watch::Sender<u64>>>,
 }
 
 impl ManagerInner {
@@ -210,6 +217,7 @@ impl CommandExecutionManager {
             jobs: PlMutex::new(HashMap::new()),
             next_job_num: AtomicU64::new(0),
             temp_dir,
+            task_settled_tx: PlRwLock::new(HashMap::new()),
         });
 
         // 断连级联取消：driver cleanup（真断连，含主动 disconnect）时，
@@ -247,6 +255,7 @@ impl CommandExecutionManager {
                 jobs: PlMutex::new(HashMap::new()),
                 next_job_num: AtomicU64::new(0),
                 temp_dir: std::env::temp_dir(),
+                task_settled_tx: PlRwLock::new(HashMap::new()),
             }),
         }
     }
@@ -442,6 +451,16 @@ impl CommandExecutionManager {
                 .lock()
                 .await
                 .insert(tid.clone(), exec_id);
+            // 后台作业的结算计数通道：agent loop 据此挂起等待/唤醒。
+            // 只登记一次（task 可能连续派发多个 job，共用一个通道）。
+            self.inner
+                .task_settled_tx
+                .write()
+                .entry(tid.clone())
+                .or_insert_with(|| {
+                    let (tx, _) = watch::channel(0u64);
+                    tx
+                });
         }
         self.inner
             .running
@@ -511,11 +530,23 @@ impl CommandExecutionManager {
         tokio::pin!(sleep);
         tokio::select! {
             _ = &mut sleep => {
-                let inst = instance.lock();
+                let mut inst = instance.lock();
+                // 等待超时：job 可能已结算（通知刚错过）——如实返回，
+                // 由调用方（模型 job_output）自行判断；若已结算则视为
+                // 已被看到，标记 notified 防系统重复注入。
+                if inst.info.status != JobStatus::Running {
+                    inst.settled_notified = true;
+                }
                 Ok(Self::job_output_snapshot(&inst, offset))
             }
             _ = notify_rx.changed() => {
-                let inst = instance.lock();
+                let mut inst = instance.lock();
+                // 新输出或结算到达。若已结算（模型主动 wait 等到结果），
+                // 标记 notified——等价 DSH reported：等待方已消费结算，
+                // 不再需要额外的「作业已完成」系统通知。
+                if inst.info.status != JobStatus::Running {
+                    inst.settled_notified = true;
+                }
                 Ok(Self::job_output_snapshot(&inst, offset))
             }
         }
@@ -530,6 +561,39 @@ impl CommandExecutionManager {
             status: inst.info.status,
             cancel_reason: inst.cancel_reason,
         }
+    }
+
+    /// 停止并清理某 task 的结算通知通道——任务被停止/取消时调用，
+    /// 让挂起中的 agent loop 立即醒来并以取消收场（而不是永久挂起）。
+    /// 同时取消该 task 名下所有运行中作业（任务停止的级联语义，与
+    /// `cancel_with_reason(.., Task)` 一致，但覆盖**全部**运行作业，
+    /// 而非仅注册表里最后一条 exec）。
+    pub async fn cancel_task_jobs(&self, task_id: &str) -> usize {
+        let mut killed = 0usize;
+        let job_ids: Vec<String> = {
+            let jobs = self.inner.jobs.lock();
+            jobs.iter()
+                .filter_map(|(jid, inst_lock)| {
+                    let inst = inst_lock.lock();
+                    if inst.info.task_id.as_deref() == Some(task_id)
+                        && inst.info.status == JobStatus::Running
+                    {
+                        Some(jid.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        for jid in job_ids {
+            if let Ok(info) = self.kill_job(&jid, CancelReason::Task).await {
+                if info.status == JobStatus::Killed {
+                    killed += 1;
+                }
+            }
+        }
+        self.remove_task_settlement_channel(task_id);
+        killed
     }
 
     /// 终止一个后台作业。经统一取消注册表发送终止信号，执行 worker
@@ -558,6 +622,14 @@ impl CommandExecutionManager {
 
         let mut inst = instance.lock();
         inst.finalize_with_reason(JobStatus::Killed, Some(reason));
+        let task_id = inst.info.task_id.clone();
+        drop(inst);
+        // kill 也是一种结算：唤醒正在挂起等待该任务的 agent loop，
+        // 让它看到 job 已被终止（注入 killed 通知）而不是无限等下去。
+        if let Some(tid) = task_id.as_deref() {
+            self.inner.bump_task_settled(tid);
+        }
+        let inst = instance.lock();
         Ok(inst.info.clone())
     }
 
@@ -606,6 +678,57 @@ impl CommandExecutionManager {
                 }
             })
             .collect()
+    }
+
+    /// 订阅某 task 名下后台作业的结算计数。agent loop 名下仍有运行中
+    /// 作业时挂起等待此通道变化；任一作业结算（完成/失败/被杀/断连）
+    /// 都会 bump，唤醒后调用 [`Self::take_settled_jobs_for_task`] 取明细。
+    ///
+    /// 返回的 receiver 已 clone（内部持有一份），调用方持有自己的副本；
+    /// 通道在 task 清理时移除，receiver 端将永久关闭——挂起方应同时
+    /// 监听取消信号并以通道关闭为退出条件之一。
+    pub fn subscribe_task_settlements(&self, task_id: &str) -> watch::Receiver<u64> {
+        self.inner
+            .task_settled_tx
+            .read()
+            .get(task_id)
+            .map(|tx| tx.subscribe())
+            .unwrap_or_else(|| {
+                // 通道不存在（任务从未派发过带 task_id 的作业）：返回一个
+                // 永不变化的 receiver，调用方应据 running_jobs 判断无作业。
+                let (tx, rx) = watch::channel(0u64);
+                std::mem::forget(tx);
+                rx
+            })
+    }
+
+    /// 取出某 task 名下**已结算、尚未通知过**的作业列表（取出即标记
+    /// notified）。agent loop 在结算信号到达后调用，把每个作业作为一条
+    /// 通知注入下一轮请求。返回按启动时间升序（先结算的先注入）。
+    pub fn take_settled_jobs_for_task(&self, task_id: &str) -> Vec<JobInfo> {
+        let jobs = self.inner.jobs.lock();
+        let mut settled: Vec<JobInfo> = Vec::new();
+        for inst_lock in jobs.values() {
+            let mut inst = inst_lock.lock();
+            if inst.info.task_id.as_deref() != Some(task_id) || inst.settled_notified {
+                continue;
+            }
+            if inst.info.status == JobStatus::Running {
+                continue;
+            }
+            inst.settled_notified = true;
+            settled.push(inst.info.clone());
+        }
+        drop(jobs);
+        settled.sort_by_key(|j| j.started_at_millis);
+        settled
+    }
+
+    /// 释放某 task 的结算通知通道（task 结束/取消时调用，防泄漏）。
+    /// 不取消任何作业——作业本身仍会正常结算并从 [`Self::list_jobs`]
+    /// 可见，只是不再有 agent loop 等待它。
+    pub fn remove_task_settlement_channel(&self, task_id: &str) {
+        self.inner.task_settled_tx.write().remove(task_id);
     }
 }
 
@@ -679,6 +802,27 @@ async fn run_background_worker(
         let info = instance.lock().info.clone();
         crate::emit_event(app, "job://updated", &info);
     }
+
+    // 结算通知：作业带 task_id 且未通知过 → bump 该任务的结算计数。
+    // agent loop 挂起时据此唤醒，drain 已结算作业注入通知。
+    if let Some(task_id) = ticket.task_id.as_deref() {
+        inner.bump_task_settled(task_id);
+    }
+}
+
+impl ManagerInner {
+    /// 把「某任务名下作业结算」广播给等待中的 agent loop。
+    fn bump_task_settled(&self, task_id: &str) {
+        let guard = self.task_settled_tx.read();
+        if let Some(tx) = guard.get(task_id) {
+            // 注意：不能 `tx.send(tx.borrow() + 1)`——borrow() 的 Ref 在
+            // send 执行时仍存活，tokio watch 的 send 要求无活跃 borrow，
+            // 会自死锁。先取旧值再 send。
+            let next = tx.borrow().wrapping_add(1);
+            let _ = tx.send(next);
+        }
+        drop(guard);
+    }
 }
 
 /// 保证后台作业在任何退出路径（含 panic）都完成结算的守卫，
@@ -717,6 +861,7 @@ impl Drop for JobFinalizeGuard {
             let inner = self.inner.clone();
             let exec_id = self.exec_id;
             let task_id = self.task_id.take();
+            let task_id_for_notify = task_id.clone();
             let instance = self.instance.clone();
             let temp_dir = self.temp_dir.clone();
             tokio::spawn(async move {
@@ -726,6 +871,9 @@ impl Drop for JobFinalizeGuard {
                 let mut inst = instance.lock();
                 inst.append_output(b"\n[Error: job worker panicked]", &temp_dir);
                 inst.finalize(JobStatus::Failed);
+                if let Some(tid) = task_id_for_notify.as_deref() {
+                    inner.bump_task_settled(tid);
+                }
             });
         }
     }
@@ -1154,5 +1302,155 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("nope"));
+    }
+
+    // ─────────────── 任务结算通知（job → agent loop 唤醒） ───────────────
+
+    #[tokio::test]
+    async fn settled_jobs_are_delivered_once_per_task() {
+        let mgr = manager(MockBehavior::Return("out", false));
+        // 不带 task_id：不注册结算通道，take 也取不到
+        let info_plain = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "plain", CommandSource::Agent),
+                None,
+            )
+            .await
+            .unwrap();
+        // 带 task_id：结算后 take 可取一次，再取为空（防重）
+        let info_task = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "tasked", CommandSource::Agent)
+                    .cancellable("agent-task-9", "取消"),
+                Some("带任务作业".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            wait_for_job_settlement(&mgr, &info_task.job_id, "s1").await,
+            JobStatus::Completed
+        );
+        // 等结算 bump 落地（worker 结算后 bump 与 list_jobs 更新几乎同步）
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // 无 task_id 的作业不进任何 task 的通知队列
+        let plain_settled = mgr.take_settled_jobs_for_task("nobody");
+        assert!(
+            plain_settled.iter().all(|j| j.job_id != info_plain.job_id),
+            "无 task_id 作业不应出现在任务通知里"
+        );
+
+        let first = mgr.take_settled_jobs_for_task("agent-task-9");
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].job_id, info_task.job_id);
+        assert_eq!(first[0].description, "带任务作业");
+
+        // 第二次 take：已被标记 notified，返回空
+        let second = mgr.take_settled_jobs_for_task("agent-task-9");
+        assert!(second.is_empty(), "结算通知应只投递一次");
+
+        // 清理
+        mgr.remove_task_settlement_channel("agent-task-9");
+    }
+
+    #[tokio::test]
+    async fn settlement_channel_bumps_on_kill_and_completion() {
+        let mgr = manager(MockBehavior::Hang);
+        let info = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "hang", CommandSource::Agent)
+                    .cancellable("agent-task-10", "取消"),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let mut rx = mgr.subscribe_task_settlements("agent-task-10");
+        assert_eq!(*rx.borrow(), 0);
+
+        // kill_job 结算 → bump 计数
+        mgr.kill_job(&info.job_id, CancelReason::Agent)
+            .await
+            .unwrap();
+        let mut rx_clone = rx.clone();
+        rx_clone.changed().await.expect("kill 应触发结算信号");
+        assert!(*rx_clone.borrow() >= 1);
+
+        // take 出 killed 作业
+        let settled = mgr.take_settled_jobs_for_task("agent-task-10");
+        assert_eq!(settled.len(), 1);
+        assert_eq!(settled[0].status, JobStatus::Killed);
+
+        mgr.remove_task_settlement_channel("agent-task-10");
+    }
+
+    #[tokio::test]
+    async fn cancel_task_jobs_kills_all_running_and_releases_channel() {
+        let mgr = manager(MockBehavior::Hang);
+        // 同名 task 派两个并行 hang 作业
+        let a = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "hang-a", CommandSource::Agent)
+                    .cancellable("agent-task-11", "取消"),
+                None,
+            )
+            .await
+            .unwrap();
+        let b = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "hang-b", CommandSource::Agent)
+                    .cancellable("agent-task-11", "取消"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            mgr.running_jobs_for_task("agent-task-11").await.len(),
+            2
+        );
+
+        let killed = mgr.cancel_task_jobs("agent-task-11").await;
+        assert_eq!(killed, 2);
+
+        // 通道已释放：订阅返回的 receiver 不再活跃（send 失败）
+        let rx = mgr.subscribe_task_settlements("agent-task-11");
+        // 两个作业都应结算为 Killed（cancel_task_jobs 同步 kill）
+        let sa = wait_for_job_settlement(&mgr, &a.job_id, "s1").await;
+        let sb = wait_for_job_settlement(&mgr, &b.job_id, "s1").await;
+        assert_eq!(sa, JobStatus::Killed);
+        assert_eq!(sb, JobStatus::Killed);
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn job_output_wait_marks_settled_notified() {
+        // 模型主动 job_output(wait=true) 等到结算 → 不再产生系统通知
+        let mgr = manager(MockBehavior::Return("done", false));
+        let info = mgr
+            .submit_background(
+                None,
+                CommandTicket::new("s1", "quick", CommandSource::Agent)
+                    .cancellable("agent-task-12", "取消"),
+                None,
+            )
+            .await
+            .unwrap();
+        let out = mgr
+            .job_output(&info.job_id, 0, true, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert_eq!(out.status, JobStatus::Completed);
+
+        let settled = mgr.take_settled_jobs_for_task("agent-task-12");
+        assert!(
+            settled.is_empty(),
+            "模型已 wait 等到结算，不应再产生系统通知"
+        );
+        mgr.remove_task_settlement_channel("agent-task-12");
     }
 }

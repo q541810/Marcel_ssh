@@ -109,6 +109,10 @@ pub(crate) struct JobInstance {
     pub(crate) cancel_reason: Option<CancelReason>,
     /// 新输出/状态迁移通知（值 = total_bytes_written）。
     pub notify_tx: watch::Sender<usize>,
+    /// 结算通知是否已投递给所属 agent（等价 DSH 的 reported）。
+    /// 置位后该作业不再产生新的「已完成」通知；`job_output(wait=true)`
+    /// 等到结算与 agent 循环挂起消费都会置位，防重复注入。
+    pub(crate) settled_notified: bool,
 }
 
 impl JobInstance {
@@ -145,6 +149,7 @@ impl JobInstance {
             spill_path: None,
             cancel_reason: None,
             notify_tx,
+            settled_notified: false,
         }
     }
 
