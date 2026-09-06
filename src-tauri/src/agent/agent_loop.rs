@@ -170,6 +170,7 @@ pub(crate) async fn run_agent_loop(
     mut messages: Vec<LlmMessage>,
     tools: Vec<ToolDefinition>,
     mode: AgentMode,
+    approval_mode: Option<AgentMode>,
     agent_settings: AgentModeSettings,
     approval_cfg: Option<LlmConfig>,
     ctx: LoopContext,
@@ -250,6 +251,7 @@ pub(crate) async fn run_agent_loop(
     // Create the dispatcher once and reuse it.
     let dispatcher = ToolDispatcher::new(
         mode.clone(),
+        approval_mode,
         agent_settings.clone(),
         task_id.clone(),
         app.clone(),

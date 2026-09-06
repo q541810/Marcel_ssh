@@ -78,6 +78,12 @@ pub struct AgentSpec {
     /// 追加到 system prompt 的角色约束段（子任务的调研约束）。
     /// 作为拼装组件传入，与基础段一样由模板拼装器统一拼接。
     pub prompt_extra: Vec<String>,
+    /// 审批语义覆盖：`None` = 跟随自身 `mode`（现状：Plan 模式子 agent 逐条
+    /// 人审）；`Some(Auto)` = 命令执行静默放行不弹人审（模型审批的
+    /// route_to_human 也不转人审），仅保留 sandbox 硬拦截。Auto 父任务派发的
+    /// 只读调研子 agent 用它，避免主任务在 Auto 全自主时子 agent 的每条
+    /// 只读命令仍弹 Plan 审批窗。
+    pub approval_mode: Option<AgentMode>,
 }
 
 /// [`AgentManager::spawn`] 返回的任务句柄。
@@ -337,6 +343,7 @@ impl AgentManager {
         let state_cleanup = self.state.clone();
         let task_id_owned = task_id.clone();
         let mode_owned = spec.mode.clone();
+        let approval_mode_owned = spec.approval_mode.clone();
         let join = tokio::spawn(async move {
             // catch_unwind：无论 run_agent_loop 内部是否 panic，终态更新与
             // 取消清理都保证执行（此前主任务丢弃 JoinHandle，panic 时泄漏）。
@@ -346,6 +353,7 @@ impl AgentManager {
                 messages,
                 tools,
                 mode_owned,
+                approval_mode_owned,
                 agent_settings,
                 approval_cfg,
                 loop_ctx,

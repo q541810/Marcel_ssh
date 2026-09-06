@@ -258,10 +258,24 @@ impl AgentTool for TaskTool {
             );
         }
 
+        // ── 审批语义：跟随父任务模式 ──
+        // 子 agent 自身固定 Plan（只读调研工具集），但命令确认语义要与父
+        // 任务一致：Auto 父任务派发的子 agent 是「全自主」的一部分——主用户
+        // 选 Auto 就是不希望中途被打断，若子 agent 每条只读命令仍弹 Plan
+        // 审批窗，Auto 就名存实亡。因此父任务为 Auto 时置 approval_mode =
+        // Some(Auto)（命令静默执行，仅保留 sandbox 硬拦截）；Plan/Agent
+        // 父任务保持 None（子 agent 走自身 Plan 的逐条审核现状）。
+        let approval_mode = state
+            .agent_tasks
+            .read()
+            .get(&parent_task_id)
+            .and_then(|t| (t.mode == AgentMode::Auto).then_some(AgentMode::Auto));
+
         // ── 组装 + spawn（子代理 = Plan 模式 + 只读约束段）──
         let spec = AgentSpec {
             task_id: sub_task_id.clone(),
             mode: AgentMode::Plan,
+            approval_mode,
             role: AgentRole::Sub { parent_task_id },
             session_id,
             conversation_id: sub_conversation_id.clone(),

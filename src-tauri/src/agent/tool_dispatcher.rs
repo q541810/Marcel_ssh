@@ -116,6 +116,11 @@ impl DispatchResult {
 /// Dispatches tool calls through the registry with mode-aware security policy.
 pub(crate) struct ToolDispatcher {
     mode: AgentMode,
+    /// 审批判定实际使用的模式：`Some(m)` 覆盖 `mode`，`None` = 跟随 `mode`。
+    /// Auto 父任务派发的只读调研子 agent 传 `Some(Auto)`：子 agent 自身是
+    /// Plan（只读工具集），但命令确认语义按父任务 Auto 静默放行（不弹人审，
+    /// 模型审批 route_to_human 也不转人审；sandbox 硬拦截仍保留）。
+    approval_mode: Option<AgentMode>,
     agent_settings: AgentModeSettings,
     task_id: String,
     state: AppState,
@@ -134,6 +139,7 @@ pub(crate) struct ToolDispatcher {
 impl ToolDispatcher {
     pub fn new(
         mode: AgentMode,
+        approval_mode: Option<AgentMode>,
         agent_settings: AgentModeSettings,
         task_id: String,
         app: tauri::AppHandle,
@@ -171,16 +177,22 @@ impl ToolDispatcher {
                     }
                 }
             };
+            // 审批提示词是否按「Plan 模式只读」渲染：取决于本任务实际工具
+            // 定位（自身 mode）。Auto 父派发的静默子 agent 自身仍是 Plan
+            // 只读工具集，这里自然为 true——plan 提示词约束"不得修改系统"
+            // 对只读调研场景更保守，与 approval_mode 静默放行互补。
+            let is_plan_mode = matches!(mode, AgentMode::Plan);
             Some(std::sync::Arc::new(ModelApprover::new(
                 approval_manager,
                 agent_settings.model_approval_prompt.clone(),
-                matches!(mode, AgentMode::Plan),
+                is_plan_mode,
             )))
         } else {
             None
         };
         Self {
             mode,
+            approval_mode,
             agent_settings,
             task_id,
             approval: ApprovalManager::new(app, state.agent_interaction.clone()),
@@ -264,7 +276,12 @@ impl ToolDispatcher {
         }
 
         // 1. Compute sandbox/mode-level need for human confirmation.
-        let sandbox_needs_confirm: Option<bool> = match &self.mode {
+        //    审批判定实际遵循 approval_mode（Auto 父任务派发的静默子 agent
+        //    为 Some(Auto)），否则跟随自身 mode。Auto 语义下只读调研命令
+        //    不再逐条弹窗，但 sandbox 硬拦截（bash 工具内）与外置工具的
+        //    requires_default_approval 仍保留。
+        let approval_mode = self.approval_mode.as_ref().unwrap_or(&self.mode);
+        let sandbox_needs_confirm: Option<bool> = match approval_mode {
             AgentMode::Plan | AgentMode::Agent => {
                 if tc.name == "bash" {
                     let cmd = tc
@@ -364,8 +381,10 @@ impl ToolDispatcher {
                                 reasons: rs.clone(),
                             },
                         );
-                        // Auto 模式下跳过人审，直接执行；Agent 模式弹窗
-                        if self.mode != AgentMode::Auto {
+                        // Auto 模式下跳过人审，直接执行；Agent/Plan 模式弹窗。
+                        // 判定同样遵循 approval_mode：Auto 父派发的只读子
+                        // agent（自身 Plan）在 route_to_human 时也不转人审。
+                        if *approval_mode != AgentMode::Auto {
                             final_needs_confirm = true;
                             model_reasons = if rs.is_empty() { None } else { Some(rs) };
                         }

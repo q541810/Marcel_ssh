@@ -27,6 +27,8 @@ pub async fn agent_start_task(
     let spec = AgentSpec {
         task_id: task_id.clone(),
         mode,
+        // 主任务无审批覆盖：命令确认语义跟随自身 mode。
+        approval_mode: None,
         role: AgentRole::Main,
         session_id,
         conversation_id,
