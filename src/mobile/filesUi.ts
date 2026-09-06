@@ -1,6 +1,7 @@
 import { BINARY_EXTENSIONS } from '@/lib/constants';
 import { getFileExtension, isPreviewableImage } from '@/lib/sftp-helpers';
 import type { Session, SftpFileEntry } from '@/lib/types';
+import type { StoredTransferItem } from '@/stores/transferStore';
 
 export type FilesEmptyStateReason =
   | 'no-session'
@@ -178,6 +179,38 @@ export function batchDeleteProgressText(
   quick: boolean,
 ): string {
   return `${quick ? '正在快速删除' : '正在删除'} ${current}/${total}…`;
+}
+
+// ──────────── 传输失败提示（移动端无传输中心，失败终态需就地可见） ────────────
+
+export interface TransferFailureInfo {
+  id: string;
+  fileName: string;
+  statusText: string;
+}
+
+/**
+ * 取当前 session 最近一次失败的传输任务（按 order 逆序扫描）。
+ * sysopen 任务（id 以 sysopen- 开头）由后端状态事件驱动、自带卡片语义，
+ * 不在这里提示。返回 null 表示当前没有失败任务。
+ */
+export function latestTransferFailure(
+  items: Record<string, StoredTransferItem>,
+  order: string[],
+  sessionId: string,
+): TransferFailureInfo | null {
+  for (let i = order.length - 1; i >= 0; i--) {
+    const item = items[order[i]];
+    if (!item || item.sessionId !== sessionId) continue;
+    if (item.id.startsWith('sysopen-')) continue;
+    if (item.status !== 'error') continue;
+    return {
+      id: item.id,
+      fileName: item.fileName,
+      statusText: item.statusText,
+    };
+  }
+  return null;
 }
 
 // ──────────── 压缩（mirrors desktop CompressModal.defaultTargetPath） ────────────

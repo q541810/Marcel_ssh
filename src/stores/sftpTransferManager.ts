@@ -48,7 +48,10 @@ function progressText(
   total: number,
 ): string {
   const pct = total > 0 ? Math.round((written * 100) / total) : 0;
-  return `${action} ${formatSize(written)} / ${formatSize(total)} (${pct}%)`;
+  // 防御：written 理论上不会超过 total（后端增长检测会提前终止），
+  // 但展示层仍 clamp，避免任何异常数据下出现 101% 之类的进度。
+  const clamped = Math.min(100, Math.max(0, pct));
+  return `${action} ${formatSize(written)} / ${formatSize(total)} (${clamped}%)`;
 }
 
 // ---------------------------------------------------------------------------

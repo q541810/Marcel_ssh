@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session, SftpFileEntry } from '@/lib/types';
+import type { StoredTransferItem } from '@/stores/transferStore';
 import {
   sortFileEntries,
   joinRemotePath,
@@ -18,6 +19,7 @@ import {
   canQuickDelete,
   batchDeleteProgressText,
   defaultArchiveTargetPath,
+  latestTransferFailure,
 } from './filesUi';
 
 function session(
@@ -373,5 +375,67 @@ describe('filesListLoadingMode', () => {
 
   it('uses overlay when refreshing with existing entries', () => {
     expect(filesListLoadingMode(true, 5)).toBe('overlay');
+  });
+});
+
+describe('latestTransferFailure', () => {
+  function item(
+    id: string,
+    patch: Partial<StoredTransferItem> = {},
+  ): StoredTransferItem {
+    return {
+      id,
+      kind: 'download',
+      sessionId: 's1',
+      fileName: `${id}.log`,
+      localPath: 'C:/tmp/x',
+      remotePath: `/srv/${id}.log`,
+      written: 0,
+      total: 100,
+      statusText: '',
+      createdAt: 1,
+      status: 'error',
+      ...patch,
+    };
+  }
+
+  it('returns null when no error items', () => {
+    const items: Record<string, StoredTransferItem> = {
+      a: item('a', { status: 'active' }),
+      b: item('b', { status: 'done' }),
+    };
+    expect(latestTransferFailure(items, ['a', 'b'], 's1')).toBeNull();
+  });
+
+  it('returns the most recent error item for the session', () => {
+    const items: Record<string, StoredTransferItem> = {
+      a: item('a', { status: 'error', statusText: '下载失败：网络' }),
+      b: item('b', { status: 'done' }),
+      c: item('c', { status: 'error', statusText: '下载失败：写入' }),
+    };
+    expect(latestTransferFailure(items, ['a', 'b', 'c'], 's1')).toEqual({
+      id: 'c',
+      fileName: 'c.log',
+      statusText: '下载失败：写入',
+    });
+  });
+
+  it('ignores sysopen tasks (driven by backend state events)', () => {
+    const items: Record<string, StoredTransferItem> = {
+      a: item('sysopen-dl-t1', { status: 'error', statusText: '下载失败' }),
+      b: item('b', { status: 'error', statusText: '下载失败：写入' }),
+    };
+    expect(latestTransferFailure(items, ['sysopen-dl-t1', 'b'], 's1')).toEqual({
+      id: 'b',
+      fileName: 'b.log',
+      statusText: '下载失败：写入',
+    });
+  });
+
+  it('ignores error items from other sessions', () => {
+    const items: Record<string, StoredTransferItem> = {
+      a: item('a', { sessionId: 's2', status: 'error', statusText: 'X' }),
+    };
+    expect(latestTransferFailure(items, ['a'], 's1')).toBeNull();
   });
 });

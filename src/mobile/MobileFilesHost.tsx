@@ -44,6 +44,7 @@ import {
   filesEmptyStateReason,
   filesListLoadingMode,
   joinRemotePath,
+  latestTransferFailure,
   openFileKind,
   parentPath,
   resolveFilesSessionIds,
@@ -245,6 +246,29 @@ export default function MobileFilesHost({
   // 传输中心接管进度管理；移动端保留顶部条显示当前活动传输
   const uploadItem = useTransferStore((s) => selectActiveOf(s, 'upload'));
   const downloadItem = useTransferStore((s) => selectActiveOf(s, 'download'));
+
+  // 移动端无传输中心面板：传输任务失败（error 终态）后顶部条消失，用户无从得知。
+  // 这里订阅当前 session 最近一次失败任务，若尚未提示过（去重 ref），就地展示错误条。
+  // items/order 引用在 store 变更时才替换，订阅它们不会在进度更新时触发重渲染。
+  const transferItems = useTransferStore((s) => s.items);
+  const transferOrder = useTransferStore((s) => s.order);
+  const transferFailure = useMemo(
+    () => latestTransferFailure(transferItems, transferOrder, sessionId),
+    [transferItems, transferOrder, sessionId],
+  );
+  const surfacedFailureRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!transferFailure) return;
+    if (surfacedFailureRef.current === transferFailure.id) return;
+    surfacedFailureRef.current = transferFailure.id;
+    // statusText 已含「下载失败：原因」等前缀，直接拼文件名即可，避免重复套前缀
+    setError(`${transferFailure.fileName}：${transferFailure.statusText}`);
+  }, [transferFailure]);
+
+  // 会话/绑定切换后旧 session 的失败不应再提示；重置去重标记
+  useEffect(() => {
+    surfacedFailureRef.current = null;
+  }, [bindingKey]);
 
   const isTransferring = uploadItem !== null || downloadItem !== null;
 

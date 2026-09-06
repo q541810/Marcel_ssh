@@ -827,6 +827,17 @@ async fn stream_remote_to_local_file(
 
         written += n as u64;
 
+        // 增长检测：实际写入一旦超过下载开始时的大小，说明源文件正在被
+        // 程序写入/追加（如活跃日志）。若继续读会一路追着增长的 EOF 下载
+        // 下去且无法收敛，故在此立即停止。检查放在进度事件之前，避免 UI
+        // 闪现超 100% 的进度。
+        if written > total {
+            return Err(AppError::Ssh(format!(
+                "下载后大小与预期不一致：预期 {} 字节，实际写入 {} 字节，可能有程序正在更改此文件",
+                total, written
+            )));
+        }
+
         emit_event(
             app,
             "sftp-download-progress",
@@ -921,7 +932,9 @@ pub async fn sftp_download_stream(
             }
         };
 
-        if written != total {
+        // 下载完整性收尾校验：写入少于下载开始时的大小才是中途真的断了
+        // （增长场景已在循环内拦截并报错，不会走到这里）。
+        if written < total {
             drop(local);
             truncate_content_target(&app, &local_path).await;
             return Err(AppError::Ssh(format!(
@@ -970,7 +983,9 @@ pub async fn sftp_download_stream(
         }
     };
 
-    if written != total {
+    // 下载完整性收尾校验：写入少于下载开始时的大小才是中途真的断了
+    // （增长场景已在循环内拦截并报错，不会走到这里）。
+    if written < total {
         let _ = tokio::fs::remove_file(&temp_local_path).await;
         return Err(AppError::Ssh(format!(
             "下载不完整：预期 {} 字节，实际写入 {} 字节",
@@ -2067,6 +2082,17 @@ pub async fn sftp_preview_image(
             .map_err(|e| AppError::Ssh(format!("写入本地文件失败: {}", e)))?;
         written += n as u64;
 
+        // 增长检测：实际写入一旦超过下载开始时的大小，说明源文件正在被
+        // 程序写入/追加，立即停止（否则会一路追着增长的 EOF 下不完）。
+        // 检查放在进度事件之前，避免 UI 闪现超 100% 的进度。
+        if written > total {
+            let _ = tokio::fs::remove_file(&temp_part_path).await;
+            return Err(AppError::Ssh(format!(
+                "下载后大小与预期不一致：预期 {} 字节，实际 {} 字节，可能有程序正在更改此文件",
+                total, written
+            )));
+        }
+
         emit_event(
             &app,
             "sftp-preview-progress",
@@ -2085,7 +2111,9 @@ pub async fn sftp_preview_image(
     drop(local);
     drop(remote);
 
-    if written != total {
+    // 下载完整性收尾校验：写入少于下载开始时的大小才是中途真的断了
+    // （增长场景已在循环内拦截并报错，不会走到这里）。
+    if written < total {
         let _ = tokio::fs::remove_file(&temp_part_path).await;
         return Err(AppError::Ssh(format!(
             "下载不完整：预期 {} 字节，实际 {} 字节",
@@ -2444,6 +2472,21 @@ async fn run_sysopen_task(
                             return;
                         }
                         written += n as u64;
+                        // 增长检测：实际写入一旦超过下载开始时的大小，说明源文件
+                        // 正在被程序写入/追加，立即停止（否则会一路追着增长的
+                        // EOF 下不完）。检查放在进度事件之前，避免 UI 超 100%。
+                        if written > total {
+                            let _ = tokio::fs::remove_file(&temp_part).await;
+                            emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
+                                SysopenPhase::Failed {
+                                    message: format!(
+                                        "下载后大小与预期不一致：预期 {} 字节，实际 {} 字节，可能有程序正在更改此文件",
+                                        total, written
+                                    ),
+                                });
+                            sysopen_teardown(&state, &task_id, &session_id, &remote_path, &local_path, None).await;
+                            return;
+                        }
                         emit_sysopen_state(&app, &task_id, &download_id, &upload_id,
                             SysopenPhase::Downloading { written, total });
                     }
@@ -2482,7 +2525,9 @@ async fn run_sysopen_task(
         .await;
         return;
     }
-    if written != total {
+    // 下载完整性收尾校验：写入少于下载开始时的大小才是中途真的断了
+    // （增长场景已在循环内拦截并报错，不会走到这里）。
+    if written < total {
         let _ = tokio::fs::remove_file(&temp_part).await;
         emit_sysopen_state(
             &app,
