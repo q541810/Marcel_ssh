@@ -42,7 +42,7 @@ use super::executor::{timeout_preview, ExecOutcome, ExecTransport, SshExecTransp
 use super::job::{JobInfo, JobInstance, JobOutputResult, JobStatus};
 use super::ticket::{
     truncate_display, CancelReason, CommandSource, CommandTicket, ExecutionSnapshot,
-    ExecutionStatus,
+    ExecutionStatus, DEFAULT_EXEC_TIMEOUT,
 };
 
 /// 保留的最近完成记录条数。
@@ -339,8 +339,8 @@ impl CommandExecutionManager {
         outcome
     }
 
-    /// 便捷入口：等价旧 `SshManager::exec_command`（120s 超时，
-    /// 超时错误文案一致），但会登记执行记录。适用于内部短命令
+    /// 便捷入口：等价旧 `SshManager::exec_command`（[`DEFAULT_EXEC_TIMEOUT`]
+    /// 即 120s 超时，超时错误文案一致），但会登记执行记录。适用于内部短命令
     /// （压缩前检查、解压探测等）。
     pub async fn exec_simple(
         &self,
@@ -349,15 +349,50 @@ impl CommandExecutionManager {
         command: &str,
         source: CommandSource,
     ) -> Result<String, AppError> {
-        let ticket = CommandTicket::new(session_id, command, source);
-        match self.submit(app, ticket).await {
+        self.exec_simple_with_timeout(app, session_id, command, source, DEFAULT_EXEC_TIMEOUT)
+            .await
+    }
+
+    /// 同 [`Self::exec_simple`]，但允许调用方显式指定超时。
+    ///
+    /// 长周期系统任务（远端压缩 / 解压 / 快速删除等）必须覆写默认 120s——
+    /// 大文件夹/大压缩包在慢服务器上的解压可能远超 120s，停留在默认值会
+    /// 让 UI 在任务中途误报「命令在 120 秒后超时」。参考
+    /// [`super::ticket::DEFAULT_EXEC_TIMEOUT`] 的约定。
+    pub async fn exec_simple_with_timeout(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        command: &str,
+        source: CommandSource,
+        timeout: Duration,
+    ) -> Result<String, AppError> {
+        self.exec_simple_with_timeout_opt(Some(app), session_id, command, source, timeout)
+            .await
+    }
+
+    /// 同 [`Self::exec_simple_with_timeout`]，但允许无 AppHandle（测试 /
+    /// 无流式输出场景），与 [`Self::submit_opt`] 对应。
+    pub(crate) async fn exec_simple_with_timeout_opt(
+        &self,
+        app: Option<&AppHandle>,
+        session_id: &str,
+        command: &str,
+        source: CommandSource,
+        timeout: Duration,
+    ) -> Result<String, AppError> {
+        let ticket = CommandTicket::new(session_id, command, source).timeout(timeout);
+        match self.submit_opt(app, ticket).await {
             SubmitOutcome::Completed { output } => Ok(output),
             SubmitOutcome::TimedOut { .. } => Err(AppError::Ssh(format!(
-                "命令在 120 秒后超时: {}",
+                "命令在 {} 秒后超时: {}",
+                timeout.as_secs(),
                 timeout_preview(command)
             ))),
-            // exec_simple 的 ticket 无 task_id，只有断连级联会走到这里。
-            SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
+            // ticket 无 task_id，只有断连级联会走到这里。
+            SubmitOutcome::Cancelled { .. } => {
+                Err(AppError::Ssh("命令已取消（会话断开）".into()))
+            }
             SubmitOutcome::Failed { error } => Err(error),
         }
     }
@@ -981,6 +1016,60 @@ mod tests {
             SubmitOutcome::TimedOut { output } => assert_eq!(output, "partial"),
             other => panic!("expected TimedOut, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn exec_simple_with_timeout_propagates_custom_timeout_in_error() {
+        // 回归测试：SFTP 解压路径用自定义长超时（1800s）走
+        // exec_simple_with_timeout，超时文案必须体现自定义秒数，
+        // 而不是写死的 120s（曾是「上传文件夹 120s 超时」误报根因）。
+        let mgr = manager(MockBehavior::Return("partial", true));
+        let err = mgr
+            .exec_simple_with_timeout_opt(
+                None,
+                "s1",
+                "unzip -q /tmp/a.zip -d /srv",
+                CommandSource::SystemTask,
+                Duration::from_secs(1800),
+            )
+            .await
+            .expect_err("TimedOut 应映射为 Err");
+        let msg = err.to_string();
+        assert!(msg.contains("1800 秒后超时"), "实际: {}", msg);
+        assert!(!msg.contains("120 秒"), "不应残留写死的 120s: {}", msg);
+        assert!(msg.contains("unzip"), "应包含命令预览: {}", msg);
+    }
+
+    #[tokio::test]
+    async fn exec_simple_with_timeout_completed_returns_output() {
+        let mgr = manager(MockBehavior::Return("OK\n", false));
+        let out = mgr
+            .exec_simple_with_timeout_opt(
+                None,
+                "s1",
+                "unzip -q /tmp/a.zip -d /srv",
+                CommandSource::SystemTask,
+                Duration::from_secs(1800),
+            )
+            .await
+            .expect("Completed 应返回输出");
+        assert_eq!(out, "OK\n");
+    }
+
+    #[tokio::test]
+    async fn exec_simple_with_timeout_failure_maps_to_failed() {
+        let mgr = manager(MockBehavior::Fail("boom"));
+        let err = mgr
+            .exec_simple_with_timeout_opt(
+                None,
+                "s1",
+                "unzip -q /tmp/a.zip -d /srv",
+                CommandSource::SystemTask,
+                Duration::from_secs(1800),
+            )
+            .await
+            .expect_err("Failed 应映射为 Err");
+        assert!(err.to_string().contains("boom"));
     }
 
     #[tokio::test]

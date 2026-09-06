@@ -20,6 +20,12 @@ const MAX_UPLOAD_BYTES: usize = 32 * 1024 * 1024;
 const MAX_STREAM_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
 
+/// 远端长任务（压缩 / 解压）的显式超时。
+/// 解压大文件夹/大压缩包可能远超命令执行默认的 120s（见
+/// [`crate::command_exec::ticket::DEFAULT_EXEC_TIMEOUT`]），停留在默认值
+/// 会让 UI 在任务中途误报「命令在 120 秒后超时」。与压缩路径共用同一上限。
+const REMOTE_TASK_TIMEOUT: Duration = Duration::from_secs(1800);
+
 const SYSOPEN_TEMP_DIR_PREFIX: &str = "marcel-sysopen";
 const SYSOPEN_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// 单个 SSH 会话同时「用系统方式打开」的文件数上限。超过则拒绝，
@@ -396,9 +402,17 @@ pub async fn sftp_extract_archive(
     }
 
     let cmd = crate::ssh::sftp_extract::build_extract_to_dir_cmd(&remote_path, &target_dir, kind);
+    // 解压大压缩包可能远超命令执行默认 120s，显式放宽到远端长任务超时
+    // （与压缩路径一致），避免中途误报超时。
     let output = state
         .command_exec
-        .exec_simple(&app, &session_id, &cmd, CommandSource::SystemTask)
+        .exec_simple_with_timeout(
+            &app,
+            &session_id,
+            &cmd,
+            CommandSource::SystemTask,
+            REMOTE_TASK_TIMEOUT,
+        )
         .await?;
 
     if !output.trim().contains("OK") {
@@ -544,7 +558,7 @@ pub async fn sftp_compress_archive(
     // 经 command_exec 统一管理器执行（30 分钟超时 + 取消注册 + 流式输出，
     // 事件用 task_id 路由）；本函数只映射回旧的 ssh-long-* 事件协议。
     let ticket = CommandTicket::new(&session_id, &cmd, CommandSource::SystemTask)
-        .timeout(std::time::Duration::from_secs(1800))
+        .timeout(REMOTE_TASK_TIMEOUT)
         .cancellable(task_id.clone(), "压缩已取消")
         .streaming("ssh-long-output", task_id.clone());
 
@@ -643,9 +657,17 @@ pub async fn sftp_upload_folder(
     drop(sftp);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_path, &remote_path);
+    // 解压大文件夹可能远超命令执行默认 120s，显式放宽到远端长任务超时
+    // （与压缩路径一致），避免中途误报超时。
     let output = state
         .command_exec
-        .exec_simple(&app, &session_id, &exec_cmd, CommandSource::SystemTask)
+        .exec_simple_with_timeout(
+            &app,
+            &session_id,
+            &exec_cmd,
+            CommandSource::SystemTask,
+            REMOTE_TASK_TIMEOUT,
+        )
         .await?;
 
     if output.trim().contains("OK") {
@@ -1781,9 +1803,17 @@ pub async fn sftp_upload_folder_stream(
     emit_folder_upload_status(&app, &upload_id, "extracting", 0, 1);
 
     let exec_cmd = crate::ssh::sftp_extract::build_extract_cmd(&tmp_remote, &remote_path);
+    // 解压大文件夹可能远超命令执行默认 120s，显式放宽到远端长任务超时
+    // （与压缩路径一致），避免上传完成后卡在解压阶段被误报超时。
     let output = state
         .command_exec
-        .exec_simple(&app, &session_id, &exec_cmd, CommandSource::SystemTask)
+        .exec_simple_with_timeout(
+            &app,
+            &session_id,
+            &exec_cmd,
+            CommandSource::SystemTask,
+            REMOTE_TASK_TIMEOUT,
+        )
         .await?;
 
     if !output.trim().contains("OK") {

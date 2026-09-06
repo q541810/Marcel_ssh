@@ -17,6 +17,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+/// 前台命令的默认超时（与旧 `SshManager::exec_command` 的 120s 一致）。
+/// 长周期系统任务（压缩 / 解压 / 快速删除等）必须用
+/// [`CommandTicket::timeout`] 显式覆写，不要停留在默认值。
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// 取消原因。决定 [`super::manager::SubmitOutcome::Cancelled`] 的语义与
 /// 调用方映射的错误/状态文案。变体必须穷尽「谁发起了终止」：
 /// 界面用户、Agent 自己、任务级联、断连——后台作业的终止来源文案
@@ -100,7 +105,7 @@ impl CommandTicket {
             command,
             session_id: session_id.into(),
             source,
-            timeout: Duration::from_secs(120),
+            timeout: DEFAULT_EXEC_TIMEOUT,
             task_id: None,
             streaming: None,
             cancelled_message: "命令已取消".to_string(),
@@ -174,7 +179,7 @@ mod tests {
     #[test]
     fn ticket_defaults_match_legacy_exec_command() {
         let t = CommandTicket::new("s1", "ls -la", CommandSource::User);
-        assert_eq!(t.timeout, Duration::from_secs(120));
+        assert_eq!(t.timeout, DEFAULT_EXEC_TIMEOUT);
         assert_eq!(t.display_command, "ls -la");
         assert!(t.task_id.is_none());
         assert!(t.streaming.is_none());
