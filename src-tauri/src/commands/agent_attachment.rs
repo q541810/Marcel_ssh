@@ -50,8 +50,7 @@ pub async fn agent_read_local_file(
     let name = local_file_name(&path).await?;
 
     let data = if is_content_uri(&path) {
-        let mut file =
-            open_content_uri_file(&app, path, ContentOpenMode::Read).await?;
+        let mut file = open_content_uri_file(&app, path, ContentOpenMode::Read).await?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)
             .await
@@ -116,7 +115,9 @@ mod tests {
 
     #[tokio::test]
     async fn windows_path_takes_basename() {
-        let name = local_file_name("C:\\Users\\me\\Downloads\\server.log").await.unwrap();
+        let name = local_file_name("C:\\Users\\me\\Downloads\\server.log")
+            .await
+            .unwrap();
         assert_eq!(name, "server.log");
     }
 

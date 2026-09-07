@@ -390,9 +390,7 @@ impl CommandExecutionManager {
                 timeout_preview(command)
             ))),
             // ticket 无 task_id，只有断连级联会走到这里。
-            SubmitOutcome::Cancelled { .. } => {
-                Err(AppError::Ssh("命令已取消（会话断开）".into()))
-            }
+            SubmitOutcome::Cancelled { .. } => Err(AppError::Ssh("命令已取消（会话断开）".into())),
             SubmitOutcome::Failed { error } => Err(error),
         }
     }
@@ -1498,10 +1496,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(
-            mgr.running_jobs_for_task("agent-task-11").await.len(),
-            2
-        );
+        assert_eq!(mgr.running_jobs_for_task("agent-task-11").await.len(), 2);
 
         let killed = mgr.cancel_task_jobs("agent-task-11").await;
         assert_eq!(killed, 2);

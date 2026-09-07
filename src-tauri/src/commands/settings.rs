@@ -7,8 +7,8 @@ use crate::config::settings::AppSettings;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
 use crate::llm::openai::ModelInfo;
-use crate::llm::registry::migrate_legacy_settings;
 use crate::llm::provider::LlmConfig;
+use crate::llm::registry::migrate_legacy_settings;
 use crate::AppState;
 
 /// 单个渠道的密钥链状态（仅布尔，绝不回传密钥本身）。

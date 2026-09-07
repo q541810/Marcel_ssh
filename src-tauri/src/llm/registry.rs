@@ -430,8 +430,7 @@ impl LlmRegistry {
                 last_seen.insert(m.id.as_str(), i);
             }
         }
-        let mut keep: std::collections::HashSet<usize> =
-            last_seen.values().copied().collect();
+        let mut keep: std::collections::HashSet<usize> = last_seen.values().copied().collect();
         for (i, m) in self.models.iter().enumerate() {
             if m.id.is_empty() {
                 keep.insert(i); // 无 id 条目不丢弃（保持原样，validate 会拦截）
@@ -541,8 +540,7 @@ impl LlmRegistry {
 
         let channel_ids: std::collections::HashSet<&str> =
             self.channels.iter().map(|c| c.id.as_str()).collect();
-        let mut seen_model_ids: std::collections::HashSet<&str> =
-            std::collections::HashSet::new();
+        let mut seen_model_ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for model in &self.models {
             if model.id.trim().is_empty() {
                 return Err(AppError::Config("模型 ID 不能为空".into()));
@@ -1147,7 +1145,10 @@ mod tests {
         let mut r = sample_registry();
         r.models[0].reasoning_efforts = vec!["low".into(), "high".into()];
         assert!(!r.normalize_reasoning_efforts());
-        assert_eq!(r.models[0].reasoning_efforts, vec!["low".to_string(), "high".to_string()]);
+        assert_eq!(
+            r.models[0].reasoning_efforts,
+            vec!["low".to_string(), "high".to_string()]
+        );
     }
 
     #[test]

@@ -34,12 +34,17 @@ pub struct AppBootstrapData {
 #[tauri::command]
 pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstrapData, AppError> {
     let settings = state.settings.read().await.clone();
-    let has_api_key = settings.llm_registry.channels.iter().any(|c| !c.api_key.is_empty())
-        || settings
-            .llm_registry
-            .channels
-            .iter()
-            .any(|c| keychain::get_llm_channel_key(&c.id).ok().flatten().is_some())
+    let has_api_key = settings
+        .llm_registry
+        .channels
+        .iter()
+        .any(|c| !c.api_key.is_empty())
+        || settings.llm_registry.channels.iter().any(|c| {
+            keychain::get_llm_channel_key(&c.id)
+                .ok()
+                .flatten()
+                .is_some()
+        })
         || keychain::get_llm_api_key().ok().flatten().is_some();
     let has_web_search_api_key = keychain::get_web_search_api_key().ok().flatten().is_some();
     let channel_key_status = crate::commands::settings::compute_channel_key_status(&settings);
