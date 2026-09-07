@@ -56,6 +56,7 @@ const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
   enableHtmlRender: true,
+  multiHostConnectionIds: [],
 };
 
 
@@ -95,6 +96,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   folderUploadCompressionLevel: 6,
   panelHeight: 256,
   hideThinkingDisplay: false,
+  /** 默认开启：只折叠「已完成且过程较长的回合」。 */
+  foldCompletedTurns: true,
   privacyMode: false,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   mobileNotificationSettings: DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
@@ -151,6 +154,27 @@ function toKeyStatusMap(list: ChannelKeyStatus[] | undefined): Record<string, bo
   return map;
 }
 
+/** 剥掉已删除/废弃的 experimental 字段（旧配置残留不落盘）。
+ *  显式 delete 而非解构：enableMultiHost 已从类型删除，解构会让未用变量
+ *  触发 lint；delete 对类型外键也安全（运行时旧配置可能仍带着它）。 */
+function stripLegacyExperimental(
+  es: Partial<ExperimentalSettings> | undefined,
+): Partial<ExperimentalSettings> {
+  if (!es) return {};
+  const copy = { ...es };
+  delete (copy as Record<string, unknown>).enableMultiHost;
+  return copy;
+}
+
+function hydrateExperimental(
+  es: Partial<ExperimentalSettings> | undefined,
+): ExperimentalSettings {
+  return {
+    ...DEFAULT_EXPERIMENTAL_SETTINGS,
+    ...stripLegacyExperimental(es),
+  };
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   loaded: false,
@@ -168,10 +192,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
       agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
       llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
-      experimentalSettings: {
-        ...DEFAULT_EXPERIMENTAL_SETTINGS,
-        ...(fromDisk.experimentalSettings ?? {}),
-      },
+      experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
       fileManagerPaths: fromDisk.fileManagerPaths ?? {},
       workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       mobileNotificationSettings: {

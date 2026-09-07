@@ -13,6 +13,7 @@ import {
   compactionCheckpoint,
 } from './messageConversion';
 import { useTaskStore } from './taskStore';
+import { useTurnFoldStore } from './turnFoldStore';
 import { useSettingsStore } from './settingsStore';
 import { effectiveModelId } from '@/lib/llmRegistry';
 import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
@@ -81,7 +82,7 @@ export interface ConversationState {
    */
   compactConversation: (conversationId: string) => Promise<AgentCompactResult>;
   /**
-   * 注册 task 工具派发的子agent对话：插入 conversation 条目 + 骨架消息
+   * 注册 subagent 工具派发的子agent对话：插入 conversation 条目 + 骨架消息
    * （user=prompt、assistant=loading 占位）。子agent流式 listener 挂上后
    * 会实时更新该对话；不改变当前 active 对话。
    * 返回骨架 loading 消息 id（供 attachStreamListener 使用）；已注册过时返回 null。
@@ -615,6 +616,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // 级联清理 taskStore 中这些 conversation 的 plans 和 tasks
     for (const id of ids) {
       useTaskStore.getState().clearPlansByConversation(id);
+      useTurnFoldStore.getState().clearConversation(id);
     }
   },
 

@@ -226,6 +226,9 @@ export default function MobileChatHistorySheet({
                 isThinking={false}
                 // 只读浏览：借 isRunning 将撤回按钮置为 disabled
                 isRunning
+                // 历史只读/检索视图：永不折叠回合（用户可能在翻找/搜索定位）
+                conversationId={selectedConvId ?? undefined}
+                foldTurns={false}
                 onCopy={(m) => void handleCopyMessage(m)}
                 highlightMessageId={highlightMessageId}
                 matchedMessageIds={activeMatchIds}

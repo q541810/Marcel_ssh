@@ -21,6 +21,19 @@ export function ConversationDisplaySection() {
         />
       </SettingItem>
       <SettingItem
+        id="fold-turns"
+        label="折叠已完成回合"
+        description="将已结束且步骤较多的回合收成一行“已执行 n 步 · 共 m 条消息”，点击展开过程"
+        sectionId="settings-display"
+        keywords={['fold', 'turn', 'compact', 'process', '折叠', '回合', '过程', '对话显示']}
+      >
+        <Toggle
+          checked={settings.foldCompletedTurns ?? true}
+          onChange={(checked) => update({ foldCompletedTurns: checked })}
+          label="开启后长回合默认折叠，短回合与正在进行的回合保持展开"
+        />
+      </SettingItem>
+      <SettingItem
         id="privacy-mode"
         label="隐私模式"
         description="开启后所有界面隐藏 IP 地址和端口（连接功能不受影响）"

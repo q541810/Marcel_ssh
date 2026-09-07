@@ -12,6 +12,9 @@ import {
 import type { AgentMessage } from "@/lib/types";
 import { isNearBottom } from "@/lib/agentScroll";
 import { useConversationStore } from "@/stores/conversationStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useTaskStore } from "@/stores/taskStore";
+import { segmentTurns, type TurnSegment } from "@/lib/agentTurnFold";
 import AgentMessageItem from "./AgentMessage";
 import ToolCallCard from "./ToolCallCard";
 import { getToolView } from "./toolViews";
@@ -20,6 +23,7 @@ import ExplorationGroup, {
   isPlanToolMessage,
   type ToolGroupKind,
 } from "./ExplorationGroup";
+import { TurnFoldGroup } from "./TurnFoldGroup";
 
 interface Props {
   messages: AgentMessage[];
@@ -36,9 +40,18 @@ interface Props {
   searchKeyword?: string;
   /** 触屏端无 hover：消息操作行常显（透传 AgentMessage） */
   alwaysShowActions?: boolean;
+  /** 本列表所属对话 id（缺省用全局 activeConversationId；历史浏览等
+   *  非活跃列表必须显式传，否则运行态判定会查错对话）。 */
+  conversationId?: string;
+  /** 是否启用回合折叠。false = 本列表永不折叠（历史只读/检索视图）。
+   *  缺省跟随全局设置 foldCompletedTurns。 */
+  foldTurns?: boolean;
 }
 
-type RenderItem = AgentMessage | { kind: ToolGroupKind; tools: AgentMessage[] };
+type RenderItem =
+  | AgentMessage
+  | { kind: ToolGroupKind; tools: AgentMessage[] }
+  | { kind: "turn-fold"; segment: TurnSegment };
 
 /** 探索类工具连续出现至少 4 条才折叠（高频、占空间大）。 */
 const EXPLORATION_MIN_COUNT = 4;
@@ -51,7 +64,28 @@ const PAGE_SIZE = 50;
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
-function buildRenderItems(messages: AgentMessage[]) {
+/**
+ * 计算分页窗口起点：从尾部取 count 条，若起点切在某个回合中间（非 user），
+ * 向前多取到该回合的 user，保证窗口内起始回合完整 —— 折叠判定跨翻页稳定，
+ * 避免“半截展开 → 补全后折叠”的突变。找不到 user（消息流本身以非 user
+ * 开头）则返回原始起点，由 segmentTurns 的 lone 分支兜底（不折叠）。
+ */
+export function alignedWindowStart(
+  messages: readonly AgentMessage[],
+  count: number,
+): number {
+  const n = messages.length;
+  if (n === 0) return 0;
+  let start = Math.max(0, n - count);
+  if (start === 0 || messages[start]?.role === "user") return start;
+  let p = start - 1;
+  while (p >= 0 && messages[p]?.role !== "user") p -= 1;
+  return p >= 0 ? p : start;
+}
+
+/** 对一段连续消息做「探索/plan 组折叠」的普通渲染 items（不含 turn 折叠）。
+ *  段边界在 user，探索组天然不会跨段，可独立对每段调用。 */
+function buildGroupedItems(messages: AgentMessage[]): RenderItem[] {
   const result: RenderItem[] = [];
   const visibleMessages = messages.filter((msg) => {
     if (msg.role !== "assistant") return true;
@@ -88,6 +122,26 @@ function buildRenderItems(messages: AgentMessage[]) {
   return result;
 }
 
+/** 把（已分页的）消息流切成「回合段」：可折叠长回合 → turn-fold item；
+ *  其余按段做探索/plan 组折叠后展开为普通 items。
+ *  @param tailActive 尾回合（最后 user 之后的回合）任务是否在跑 —— 在跑则
+ *   永不折叠（对齐 DSH「任务完成后才收起」，避免中途插话被误判成回合结束）。 */
+function buildTurnItems(
+  messages: AgentMessage[],
+  tailActive: boolean,
+): RenderItem[] {
+  const segs = segmentTurns(messages, { tailActive });
+  const result: RenderItem[] = [];
+  for (const seg of segs) {
+    if (seg.foldable) {
+      result.push({ kind: "turn-fold", segment: seg });
+    } else {
+      result.push(...buildGroupedItems(seg.messages as AgentMessage[]));
+    }
+  }
+  return result;
+}
+
 function AgentMessageList({
   messages,
   isThinking,
@@ -99,6 +153,8 @@ function AgentMessageList({
   matchedMessageIds,
   searchKeyword,
   alwaysShowActions = false,
+  conversationId: conversationIdProp,
+  foldTurns: foldTurnsProp,
 }: Props) {
   // 分页展示条数，默认展示最近 PAGE_SIZE 条
   const [visibleCount, setVisibleCount] = useState(() =>
@@ -172,15 +228,49 @@ function AgentMessageList({
     }
   }, [highlightMessageId, messages]);
 
-  // 截取尾部可见消息
+  // 截取尾部可见消息；窗口起点对齐到 user 边界（回合折叠的稳定性关键）：
+  // 若起点切在某个回合中间（首条非 user），该回合会被 segmentTurns 判成
+  // “半截”而展开；翻页后 user 补进窗口，同一回合又变完整 → 折叠，产生
+  // “下面的消息突然折叠”的突变。向前多取到该 user，让窗口内的起始回合
+  // 从第一次渲染起就是完整的，折叠判定跨翻页稳定。
   const effectiveVisibleCount = Math.min(messages.length, Math.max(PAGE_SIZE, visibleCount));
   const hasMore = messages.length > effectiveVisibleCount;
   const slicedMessages = useMemo(() => {
     if (!hasMore) return messages;
-    return messages.slice(messages.length - effectiveVisibleCount);
+    const start = alignedWindowStart(messages, effectiveVisibleCount);
+    return messages.slice(start);
   }, [messages, effectiveVisibleCount, hasMore]);
 
-  const renderItems = useMemo(() => buildRenderItems(slicedMessages), [slicedMessages]);
+  const activeConversationId = useConversationStore((s) => s.activeConversationId);
+  // 本列表所属对话：显式传入优先（历史浏览等非活跃列表必须传），否则活跃对话。
+  const listConversationId = conversationIdProp ?? activeConversationId ?? "";
+
+  // 设置：折叠已完成长回合（列表级 foldTurns=false（历史只读/检索）恒不折叠；
+  // 否则跟随全局设置，默认开）。
+  const globalFoldTurns = useSettingsStore(
+    (s) => s.settings.foldCompletedTurns ?? true,
+  );
+  const foldTurns = foldTurnsProp ?? globalFoldTurns;
+  // 尾回合「任务在跑」：本对话下是否有 running task（主 agent 或子 agent）。
+  // 正在跑的任务回合永不折叠 —— 模型可能在 tool 间继续输出，现在收起就是
+  // “干一半收起”。响应式：任务状态变化触发重算。
+  const tailActive = useTaskStore(
+    (s) => listConversationId !== ""
+      && Object.values(s.tasks).some(
+        (t) =>
+          t.conversationId === listConversationId &&
+          !!t.sessionId &&
+          (t.status === "planning"
+            || t.status === "executing"
+            || t.status === "waiting_approval"),
+      ),
+  );
+  const renderItems = useMemo(
+    () => (foldTurns
+      ? buildTurnItems(slicedMessages, tailActive)
+      : buildGroupedItems(slicedMessages)),
+    [slicedMessages, foldTurns, tailActive],
+  );
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const matchedSet = useMemo(
     () => new Set(matchedMessageIds ?? []),
@@ -188,7 +278,6 @@ function AgentMessageList({
   );
   const [flashId, setFlashId] = useState<string | null>(null);
 
-  const activeConversationId = useConversationStore((s) => s.activeConversationId);
   const hasEarlierMessages = useConversationStore((s) =>
     activeConversationId ? (s.hasEarlierMessages[activeConversationId] ?? false) : false,
   );
@@ -382,6 +471,62 @@ function AgentMessageList({
     );
   };
 
+  // 渲染单条消息（普通路径，含展开宽度/高亮；用于可见消息）。
+  const renderOne = useCallback(
+    (msg: AgentMessage): ReactNode => {
+      if (msg.role === "tool" && msg.toolResult) {
+        const ToolView = getToolView(msg.toolResult.toolName);
+        if (ToolView) {
+          return wrapMessage(
+            msg,
+            <div className="min-w-0 w-full">
+              <ToolView message={msg} />
+            </div>,
+          );
+        }
+      }
+      if (
+        (msg.role === "tool" && msg.toolResult) ||
+        (msg.role === "assistant" && msg.toolCall)
+      ) {
+        return wrapMessage(
+          msg,
+          <div className="flex min-w-0 justify-start">
+            <div
+              className={`min-w-0 ${expandedIds.has(msg.id) ? "w-full" : "max-w-[85%]"}`}
+            >
+              <ToolCallCard
+                message={msg}
+                autoExpand={isThinking}
+                messageId={msg.id}
+                onExpandChange={handleToolExpandChange}
+              />
+            </div>
+          </div>,
+        );
+      }
+      return wrapMessage(
+        msg,
+        <AgentMessageItem
+          message={msg}
+          autoExpand={!!msg.isThinking}
+          rollbackDisabled={isRunning}
+          onRollback={onRollback}
+          onCopy={onCopy}
+          searchKeyword={searchKeyword}
+          alwaysShowActions={alwaysShowActions}
+        />,
+      );
+    },
+    // wrapMessage 引用的 flashId/matchedSet 属父级状态；折叠区命中时由
+    // forceExpand 展开，故这里不需要它们进依赖（普通路径在父级每次渲染时
+    // 重建也无妨——它只影响可见行，不触发折叠区）。依赖保持最小：
+    // expandedIds/isThinking/isRunning 变化才重建。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [expandedIds, isThinking, isRunning, onRollback, onCopy, searchKeyword, alwaysShowActions],
+  );
+
+  const conversationId = activeConversationId ?? "";
   return (
     <div
       ref={contentWrapperRef}
@@ -398,68 +543,69 @@ function AgentMessageList({
           </div>
         </div>
       )}
-      {renderItems.map((item) =>
-        "kind" in item ? (
-          <ExplorationGroup
-            key={`${item.kind}-${item.tools[0].id}`}
-            kind={item.kind}
-            messages={item.tools}
-            autoExpand={isThinking}
-            forceExpand={item.tools.some(
-              (t) => matchedSet.has(t.id) || t.id === highlightMessageId,
-            )}
-            matchedIds={matchedSet}
-            flashId={flashId}
-          />
-        ) : (
-          (() => {
-            const msg = item as AgentMessage;
-            if (msg.role === "tool" && msg.toolResult) {
-              const ToolView = getToolView(msg.toolResult.toolName);
-              if (ToolView) {
-                return wrapMessage(
-                  msg,
-                  <div className="min-w-0 w-full">
-                    <ToolView message={msg} />
-                  </div>,
+      {renderItems.map((item) => {
+        if ("kind" in item && item.kind === "turn-fold") {
+          const seg = item.segment;
+          const forceExpand = seg.foldMembers.some(
+            (m) => matchedSet.has(m.id) || m.id === highlightMessageId,
+          );
+          // user / 答案恒定渲染（普通路径）；过程内容惰性构建：
+          // 先对 foldMembers 做探索/plan 组折叠，展开时才逐条渲染。
+          const userMsg = seg.messages[0];
+          const answerMsg = seg.answerIndex === null
+            ? null
+            : seg.messages[seg.answerIndex];
+          return (
+            <TurnFoldGroup
+              key={`turn-${seg.key}`}
+              conversationId={conversationId}
+              segment={seg}
+              renderUser={() => (userMsg ? renderOne(userMsg) : null)}
+              renderAnswer={() => (answerMsg ? renderOne(answerMsg) : null)}
+              renderExpanded={() => {
+                const inner = buildGroupedItems(
+                  seg.foldMembers as AgentMessage[],
                 );
-              }
-            }
-            if (
-              (msg.role === "tool" && msg.toolResult) ||
-              (msg.role === "assistant" && msg.toolCall)
-            ) {
-              return wrapMessage(
-                msg,
-                <div className="flex min-w-0 justify-start">
-                  <div
-                    className={`min-w-0 ${expandedIds.has(msg.id) ? "w-full" : "max-w-[85%]"}`}
-                  >
-                    <ToolCallCard
-                      message={msg}
-                      autoExpand={isThinking}
-                      messageId={msg.id}
-                      onExpandChange={handleToolExpandChange}
-                    />
-                  </div>
-                </div>,
-              );
-            }
-            return wrapMessage(
-              msg,
-              <AgentMessageItem
-                message={msg}
-                autoExpand={!!msg.isThinking}
-                rollbackDisabled={isRunning}
-                onRollback={onRollback}
-                onCopy={onCopy}
-                searchKeyword={searchKeyword}
-                alwaysShowActions={alwaysShowActions}
-              />,
-            );
-          })()
-        ),
-      )}
+                return inner.map((it) => {
+                  // buildGroupedItems 不会产出 turn-fold；此处按组/单条分派。
+                  if (it && typeof it === "object" && "kind" in it) {
+                    const group = it as Extract<RenderItem, { kind: ToolGroupKind }>;
+                    return (
+                      <ExplorationGroup
+                        key={`${group.kind}-${group.tools[0].id}`}
+                        kind={group.kind}
+                        messages={group.tools}
+                        autoExpand={false}
+                        matchedIds={matchedSet}
+                        flashId={flashId}
+                      />
+                    );
+                  }
+                  // 展开后即普通可见消息 → 走完整渲染（高亮/复制/回滚一致）。
+                  return renderOne(it as AgentMessage);
+                });
+              }}
+              forceExpand={forceExpand}
+            />
+          );
+        }
+        if ("kind" in item) {
+          return (
+            <ExplorationGroup
+              key={`${item.kind}-${item.tools[0].id}`}
+              kind={item.kind}
+              messages={item.tools}
+              autoExpand={isThinking}
+              forceExpand={item.tools.some(
+                (t) => matchedSet.has(t.id) || t.id === highlightMessageId,
+              )}
+              matchedIds={matchedSet}
+              flashId={flashId}
+            />
+          );
+        }
+        return renderOne(item);
+      })}
       <div ref={bottomSentinelRef} className="h-0 w-0 pointer-events-none" />
       {messagesEndRef && <div ref={messagesEndRef} />}
     </div>

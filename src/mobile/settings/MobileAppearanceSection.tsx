@@ -196,6 +196,16 @@ export function MobileAppearanceSection() {
           />
         }
       />
+      <MobileSettingRow
+        label="折叠已完成回合"
+        description="将已结束且步骤较多的回合收成一行“已执行 n 步”，点击展开过程"
+        trailing={
+          <Toggle
+            checked={settings.foldCompletedTurns ?? true}
+            onChange={(checked) => update({ foldCompletedTurns: checked })}
+          />
+        }
+      />
     </div>
   );
 }

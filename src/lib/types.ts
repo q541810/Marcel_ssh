@@ -362,7 +362,7 @@ export interface AgentTask {
   mode: AgentMode;
   status: AgentStatus;
   createdAt: string;
-  /** Parent task id — set when this task is a subagent dispatched via the `task` tool. */
+  /** Parent task id — set when this task is a subagent dispatched via the `subagent` tool. */
   parentTaskId?: string;
 }
 
@@ -622,6 +622,11 @@ export interface ExperimentalSettings {
   httpFetchMode?: HttpFetchMode;
   /** Allow Agent to render interactive HTML visualizations directly in chat */
   enableHtmlRender?: boolean;
+  /** 多机操控的「可跨机目标机器」集合（SavedConnection id 列表，空 = 仅
+   *  当前机器可执行）。桌面端多机操控恒开启（无开关）：bash / upload_file /
+   *  download_file / task 可携带 host；目标机器须在此集合内或为当前会话所在
+   *  机器。桌面 Agent 面板顶栏勾选维护；后端解析读取同一份做白名单。 */
+  multiHostConnectionIds?: string[];
 }
 
 
@@ -682,6 +687,10 @@ export interface AppSettings {
   panelHeight: number;
   /** Whether to hide thinking/reasoning content in the UI */
   hideThinkingDisplay: boolean;
+  /**
+   * Whether to fold completed long turns into a single process-control row
+   * ("已执行 n 步 · 共 m 条消息"). Off = always render full process. */
+  foldCompletedTurns: boolean;
   /** Privacy mode: mask IP addresses and ports in all UI surfaces (connection
    *  list, quick connect, host-key mismatch modal, chat history, session
    *  descriptions, etc.). The actual SSH connection still uses the real
@@ -781,11 +790,18 @@ export interface SubTaskStartPayload {
   prompt: string;
   /** Parent (main) conversation id — used for hiding, back button, cascade delete. */
   parentConversationId: string;
+  /** 子 agent 实际运行机器的 SavedConnection id（多机时 ≠ 父任务机器）。
+   *  前端以其注册子对话归属，避免 DB/store 归属漂移。旧事件缺省 = 空。 */
+  connectionId?: string;
+  /** 子 agent 实际运行所在的 SSH session id（多机时 ≠ 父任务 session）。 */
+  sessionId?: string;
+  /** 子 agent 运行模式："plan"（只读调研）| "agent"（读写执行）。缺省 plan。 */
+  mode?: 'plan' | 'agent';
 }
 
 /**
  * Structured sub-task result metadata attached to the parent's toolResult
- * (TaskTool output metadata): { subTaskId, subConversationId, status }.
+ * (subagent tool output metadata): { subTaskId, subConversationId, status }.
  */
 export interface SubTaskResultMetadata {
   subTaskId: string;
@@ -892,7 +908,7 @@ export interface AgentConversation {
   title: string;
   createdAt: string;
   updatedAt: string;
-  /** 子agent对话（task 工具创建）的父对话 id；主对话无此字段。 */
+  /** 子agent对话（subagent 工具创建）的父对话 id；主对话无此字段。 */
   parentConversationId?: string;
   /**
    * 会话级模型选择（llmRegistry 模型条目 id）。**仅作旧数据/快照遗留**：
