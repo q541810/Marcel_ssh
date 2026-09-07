@@ -29,6 +29,14 @@ export interface TransferItem {
   statusText: string;
   createdAt: number;
   finishedAt?: number;
+  /**
+   * 条目来源：'user'（SFTP 面板/拖拽，前端 transferScheduler 双道调度）
+   * | 'agent'（Agent 工具发起，后端互斥调度一次一个，前端只展示/取消、
+   *   不进 lane 调度）。缺省 'user'（旧数据兼容）。
+   */
+  source?: 'user' | 'agent';
+  /** Agent 发起传输的所属任务 id（source==='agent' 时有值；跳转/标识用） */
+  taskId?: string;
 }
 
 const FINISHED_STATUSES: ReadonlySet<TransferStatus> = new Set(['done', 'error', 'cancelled']);
@@ -130,20 +138,33 @@ export function selectByLane(state: TransferSnapshot, lane: TransferLane): Store
     .filter((item) => laneOf(item.kind) === lane);
 }
 
+/** user 来源的条目（前端双道调度只处理 user；agent 条目由后端互斥调度）。 */
+export function selectUserItems(state: TransferSnapshot): StoredTransferItem[] {
+  return state.order
+    .map((id) => state.items[id])
+    .filter((item) => item.source !== 'agent');
+}
+
 export function selectActiveOf(state: TransferSnapshot, lane: TransferLane): StoredTransferItem | null {
   return (
-    selectByLane(state, lane).find(
-      (item) =>
-        (item.status === 'active' || item.status === 'cancelling') &&
-        // sysopen 项由后端 sftp-sysopen-state 事件驱动状态，不进 pump 调度，
-        // 不能占用 lane（否则会挡住普通 upload/download 任务启动）。
-        !item.id.startsWith('sysopen-'),
-    ) ?? null
+    // 只调度 user 条目：agent 条目由后端互斥调度，不占 user lane，
+    // 否则会挡住用户面板的传输启动（selectActiveOf 被 pump 用于 lane 占用判断）。
+    selectUserItems(state)
+      .filter((item) => laneOf(item.kind) === lane)
+      .find(
+        (item) =>
+          (item.status === 'active' || item.status === 'cancelling') &&
+          // sysopen 项由后端 sftp-sysopen-state 事件驱动状态，不进 pump 调度，
+          // 不能占用 lane（否则会挡住普通 upload/download 任务启动）。
+          !item.id.startsWith('sysopen-'),
+      ) ?? null
   );
 }
 
 export function selectQueuedOf(state: TransferSnapshot, lane: TransferLane): StoredTransferItem[] {
-  return selectByLane(state, lane).filter((item) => item.status === 'queued');
+  return selectUserItems(state)
+    .filter((item) => laneOf(item.kind) === lane)
+    .filter((item) => item.status === 'queued');
 }
 
 export function selectBadgeCount(state: TransferSnapshot): number {

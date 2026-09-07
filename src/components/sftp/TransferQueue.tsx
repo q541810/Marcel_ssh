@@ -83,6 +83,14 @@ function TransferRow({
     <div className="flex flex-col gap-1 px-3 py-2 border-b border-zinc-800/60 last:border-b-0">
       <div className="flex items-center gap-2 min-w-0">
         <KindIcon item={item} />
+        {item.source === 'agent' && (
+          <span
+            className="flex-shrink-0 text-[9px] px-1 py-px rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-medium leading-tight"
+            title="Agent 发起"
+          >
+            AI
+          </span>
+        )}
         <span className="flex-1 min-w-0 truncate text-xs text-zinc-200" title={item.fileName}>
           {item.fileName}
         </span>

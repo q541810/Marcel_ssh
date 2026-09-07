@@ -19,6 +19,8 @@ let folderStatusUnlisten: UnlistenFn | null = null;
 let downloadProgressUnlisten: UnlistenFn | null = null;
 let downloadDoneUnlisten: UnlistenFn | null = null;
 let sysopenStateUnlisten: UnlistenFn | null = null;
+let agentStartUnlisten: UnlistenFn | null = null;
+let agentFinishedUnlisten: UnlistenFn | null = null;
 
 let attached = false;
 
@@ -40,6 +42,19 @@ interface DownloadProgressPayload {
 
 interface DownloadDonePayload {
   downloadId: string;
+}
+
+/** agent-transfer-start 事件载荷（后端 agent/transfer.rs emit_start）。 */
+interface AgentTransferStartPayload {
+  transferId: string;
+  kind: 'upload' | 'download';
+  sessionId: string;
+  fileName: string;
+  localPath: string;
+  remotePath: string;
+  total: number;
+  taskId: string;
+  targetHostLabel?: string | null;
 }
 
 function progressText(
@@ -252,6 +267,68 @@ export async function attachTransferListeners() {
         }
       },
     );
+    // Agent 传输开始事件：后端 agent 工具发起传输时通知前端建传输中心条目。
+    // 条目 source='agent'——只展示/可取消，不进 user 双道调度（后端互斥
+    // 保证 agent 传输一次一个）。后续 progress/done 事件按同一 id 更新。
+    agentStartUnlisten = await listen<AgentTransferStartPayload>(
+      "agent-transfer-start",
+      (event) => {
+        const p = event.payload;
+        const store = useTransferStore.getState();
+        // 幂等：同 id 已存在（重放/重复事件）不覆盖。
+        if (store.items[p.transferId]) return;
+        const isDownload = p.kind === "download";
+        store.addItem({
+          id: p.transferId,
+          kind: isDownload ? "download" : "upload",
+          sessionId: p.sessionId,
+          fileName: p.fileName,
+          localPath: p.localPath,
+          remotePath: p.remotePath,
+          written: 0,
+          total: p.total,
+          statusText: isDownload ? `正在下载 ${p.fileName} ...` : `正在上传 ${p.fileName} ...`,
+          createdAt: Date.now(),
+          source: "agent",
+          taskId: p.taskId,
+        });
+        // 直接置 active：agent 传输后端已开始，不走前端 pump 调度。
+        store.updateItem(p.transferId, { status: "active" });
+        flyToTransferCenter(isDownload ? "download" : "upload");
+      },
+    );
+    // Agent 传输终态事件：条目置 done/error/cancelled（agent 条目不经前端
+    // scheduler，终态由后端显式通知；否则会永久停在 active/cancelling）。
+    agentFinishedUnlisten = await listen<{
+      transferId: string;
+      status: "done" | "error" | "cancelled";
+      message?: string | null;
+    }>("agent-transfer-finished", (event) => {
+      const { transferId, status, message } = event.payload;
+      const store = useTransferStore.getState();
+      const item = store.items[transferId];
+      if (!item || item.source !== "agent") return;
+      if (status === "done") {
+        store.updateItem(transferId, {
+          status: "done",
+          written: item.total,
+          statusText: `${item.fileName} 传输完成`,
+          finishedAt: Date.now(),
+        });
+      } else if (status === "cancelled") {
+        store.updateItem(transferId, {
+          status: "cancelled",
+          statusText: message ? `已取消：${message}` : "已取消",
+          finishedAt: Date.now(),
+        });
+      } else {
+        store.updateItem(transferId, {
+          status: "error",
+          statusText: message ? `传输失败：${message}` : "传输失败",
+          finishedAt: Date.now(),
+        });
+      }
+    });
     attached = true;
   } catch (err) {
     detachTransferListeners();
@@ -267,11 +344,15 @@ export function detachTransferListeners() {
   downloadProgressUnlisten?.();
   downloadDoneUnlisten?.();
   sysopenStateUnlisten?.();
+  agentStartUnlisten?.();
+  agentFinishedUnlisten?.();
   progressUnlisten = null;
   doneUnlisten = null;
   folderStatusUnlisten = null;
   downloadProgressUnlisten = null;
   downloadDoneUnlisten = null;
   sysopenStateUnlisten = null;
+  agentStartUnlisten = null;
+  agentFinishedUnlisten = null;
   attached = false;
 }
