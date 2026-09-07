@@ -20,24 +20,28 @@ describe('getCommandPreview', () => {
     })).toBe('https://example.com/a +2 more');
   });
 
-  it('shows task description preview', () => {
-    expect(getCommandPreview('task', { description: 'explore nginx config' })).toBe(
+  it('shows subagent description preview', () => {
+    expect(getCommandPreview('subagent', { description: 'explore nginx config' })).toBe(
       'explore nginx config',
     );
   });
 
-  it('falls back to prompt when task has no description', () => {
-    expect(getCommandPreview('task', { prompt: 'look at /etc/nginx/nginx.conf' })).toBe(
+  it('falls back to prompt when subagent has no description', () => {
+    expect(getCommandPreview('subagent', { prompt: 'look at /etc/nginx/nginx.conf' })).toBe(
       'look at /etc/nginx/nginx.conf',
     );
   });
 
-  it('truncates long task descriptions', () => {
+  it('truncates long subagent descriptions', () => {
     const long = 'a'.repeat(100);
-    expect(getCommandPreview('task', { description: long })).toBe('a'.repeat(40) + '...');
+    expect(getCommandPreview('subagent', { description: long })).toBe('a'.repeat(40) + '...');
   });
 
-  it('returns empty preview for task without arguments', () => {
-    expect(getCommandPreview('task', {})).toBe('');
+  it('returns empty preview for subagent without arguments', () => {
+    expect(getCommandPreview('subagent', {})).toBe('');
+  });
+
+  it('still previews legacy task tool name (history compatibility)', () => {
+    expect(getCommandPreview('task', { description: 'legacy' })).toBe('legacy');
   });
 });

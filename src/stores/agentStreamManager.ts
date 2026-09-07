@@ -83,6 +83,8 @@ export function registerSubTaskContext(
   status: AgentTask['status'],
   parentConversationId = '',
   explicitConnectionId?: string,
+  subSessionId?: string,
+  subMode?: AgentTask['mode'],
 ): string | null {
   const taskStore = useTaskStore.getState();
   if (taskStore.tasks[subTaskId]) return null;
@@ -93,7 +95,10 @@ export function registerSubTaskContext(
     : undefined;
   // 重启恢复兜底路径（toolResult 触发）父任务不在内存，用 agentGetConversation
   // 返回的 connectionId 补齐，避免子对话条目 connectionId 落空。
+  // 多机：live 路径显式传子 agent 真实运行机器的 connectionId（≠ 父推断值）。
   const connectionId = explicitConnectionId ?? parentConv?.connectionId ?? '';
+  // 多机：子 agent 运行在目标机器 session（≠ 父 session）；缺省时继承父。
+  const sessionId = subSessionId || parent?.sessionId || '';
 
   const loadingId = useConversationStore.getState().registerSubConversation(
     subConversationId,
@@ -109,10 +114,10 @@ export function registerSubTaskContext(
       ...s.tasks,
       [subTaskId]: {
         id: subTaskId,
-        sessionId: parent?.sessionId ?? '',
+        sessionId,
         conversationId: subConversationId,
         prompt,
-        mode: 'plan',
+        mode: subMode ?? 'plan',
         status,
         createdAt: new Date().toISOString(),
         parentTaskId,
@@ -133,12 +138,15 @@ export function handleSubTaskStart(parentTaskId: string, ev: SubTaskStartPayload
     ev.prompt,
     'planning',
     ev.parentConversationId,
+    ev.connectionId,
+    ev.sessionId,
+    ev.mode,
   );
   if (loadingId) {
     // 子agent仍在运行：挂 listener 消费实时流事件。
     void attachStreamListener(ev.subTaskId, ev.subConversationId, loadingId);
   }
-  // 把子对话 id 挂到主对话的 task 工具卡片上：运行中即可"查看"实时过程
+  // 把子对话 id 挂到主对话的 subagent 工具卡片上：运行中即可"查看"实时过程
   // （toolResult 完成后会被后端 metadata 覆盖，无冲突）。
   const parentTask = useTaskStore.getState().tasks[parentTaskId];
   if (parentTask) {
@@ -167,7 +175,7 @@ export function handleSubTaskStart(parentTaskId: string, ev: SubTaskStartPayload
 }
 
 /**
- * toolResult 兜底：子agent（task 工具）必然已终态（后端同步等待），
+ * toolResult 兜底：子agent（subagent 工具）必然已终态（后端同步等待），
  * 若此前未注册（应用重启 / subTaskStart 事件丢失），从 DB 加载完整消息，
  * 并补齐对话元数据（parentConversationId / connectionId）保证"返回主对话"可用。
  * 已注册（live 路径）时也收敛任务终态：防 done 事件在 listener 挂载前
@@ -255,7 +263,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       const ev = event.payload;
 
       if (isToolResultPayload(ev)) {
-        // 子agent（task 工具）结果：若此前从未注册（重启/事件丢失），
+        // 子agent（subagent 工具）结果：若此前从未注册（重启/事件丢失），
         // 兜底注册子对话并从 DB 加载终态消息。
         const subMeta = extractSubTaskMeta(ev);
         if (subMeta) {

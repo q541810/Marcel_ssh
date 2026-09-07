@@ -60,7 +60,7 @@ function makeToolResult(overrides: Partial<ToolResultPayload> = {}): ToolResultP
   return {
     type: 'toolResult',
     toolCallId: 'call-1',
-    toolName: 'task',
+    toolName: 'subagent',
     summary: '子agent完成：x',
     result: 'done',
     success: true,
@@ -181,7 +181,7 @@ describe('subagent wiring', () => {
             timestamp: new Date().toISOString(),
             isExecuting: true,
             toolResult: {
-              toolName: 'task',
+              toolName: 'subagent',
               summary: '',
               result: '',
               success: true,

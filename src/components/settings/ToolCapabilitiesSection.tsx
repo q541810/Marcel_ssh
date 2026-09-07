@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type {
   ExperimentalSettings,
   HttpFetchMode,
@@ -12,7 +12,81 @@ import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import * as tauri from '@/lib/tauri';
+
+/** 多机操控的机器集合复选。数据源 = 已保存连接；勾选结果直接进
+ *  `experimentalSettings.multiHostConnectionIds`（与后端白名单同一份）。 */
+function MachinePicker({
+  checkedIds,
+  onChange,
+}: {
+  checkedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const connections = useConnectionStore((s) => s.connections);
+  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+
+  // 挂载时拉取一次连接列表（渲染期不触发副作用——空列表时确保有数据可勾选）。
+  useEffect(() => {
+    if (connections.length === 0) void fetchConnections();
+  }, [connections.length, fetchConnections]);
+
+  const toggle = (id: string) => {
+    if (checkedIds.includes(id)) {
+      onChange(checkedIds.filter((x) => x !== id));
+    } else {
+      onChange([...checkedIds, id]);
+    }
+  };
+
+  const sorted = [...connections].sort((a, b) =>
+    (a.group || '').localeCompare(b.group || '') || a.name.localeCompare(b.name),
+  );
+
+  return (
+    <div className="flex flex-col gap-1.5 w-full max-h-56 overflow-y-auto">
+      {connections.length === 0 && (
+        <div className="text-xs text-zinc-500 py-2">
+          暂无已保存的连接。请先在连接列表添加机器。
+        </div>
+      )}
+      {sorted.map((conn) => {
+        const active = checkedIds.includes(conn.id);
+        return (
+          <button
+            key={conn.id}
+            type="button"
+            onClick={() => toggle(conn.id)}
+            className={`flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition-colors ${
+              active
+                ? 'border-indigo-500 bg-indigo-500/10 text-indigo-100'
+                : 'border-zinc-700 bg-zinc-800/40 text-zinc-300 hover:border-zinc-600'
+            }`}
+          >
+            <span
+              className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
+                active ? 'border-indigo-400 bg-indigo-500' : 'border-zinc-600 bg-transparent'
+              }`}
+            >
+              {active && (
+                <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{conn.name}</span>
+              <span className="block truncate text-[11px] text-zinc-500">
+                {conn.group || '未分组'} · {conn.username}@{conn.host}:{conn.port}
+              </span>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   enableWebSearch: true,
@@ -23,6 +97,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
   enableHtmlRender: true,
+  multiHostConnectionIds: [],
 };
 
 export function ToolCapabilitiesSection() {
@@ -227,6 +302,19 @@ export function ToolCapabilitiesSection() {
         <Toggle
           checked={experimental.enableHtmlRender ?? true}
           onChange={(checked) => updateExperimental({ enableHtmlRender: checked })}
+        />
+      </SettingItem>
+
+      <SettingItem
+        id="exp-multihost-set"
+        label="可跨机目标机器"
+        description="勾选后 Agent 可携带 host 跨机执行 bash / 传输 / 子agent；未勾选的机器不会被 host 指定（当前会话所在机器始终可执行，无需勾选）。多机操控桌面端恒开启"
+        sectionId="settings-experimental"
+        keywords={['multi', 'host', '机器', '集合', '勾选', '跨机', '目标']}
+      >
+        <MachinePicker
+          checkedIds={experimental.multiHostConnectionIds ?? []}
+          onChange={(ids) => updateExperimental({ multiHostConnectionIds: ids })}
         />
       </SettingItem>
       <SettingItem

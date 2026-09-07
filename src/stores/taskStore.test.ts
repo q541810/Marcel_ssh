@@ -343,7 +343,7 @@ describe('taskStore', () => {
         timestamp: new Date().toISOString(),
         isExecuting: true,
         toolResult: {
-          toolName: 'task',
+          toolName: 'subagent',
           summary: '',
           result: '',
           success: true,
@@ -391,7 +391,7 @@ describe('taskStore', () => {
         timestamp: new Date().toISOString(),
         isExecuting: true,
         toolResult: {
-          toolName: 'task',
+          toolName: 'subagent',
           summary: '',
           result: '',
           success: true,
@@ -458,7 +458,7 @@ describe('taskStore', () => {
 
     it('does not overwrite terminal subtask status when stopping parent', async () => {
       agentStopTask.mockResolvedValue(undefined);
-      // 子任务已自然完成、主任务仍在等 task 工具结果 → 停止主任务时
+      // 子任务已自然完成、主任务仍在等 subagent 工具结果 → 停止主任务时
       // 子任务保持 completed，不能被误标成 cancelled。
       useTaskStore.setState({
         tasks: {

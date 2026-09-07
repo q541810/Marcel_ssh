@@ -47,6 +47,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import * as tauri from "@/lib/tauri";
 import { bus } from "@/plugins/injection/bus";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
+import MultiHostPicker from "./MultiHostPicker";
 import AgentMessageList from "./AgentMessageList";
 import ApprovalDialog from "./ApprovalDialog";
 import QuestionPanel from "./QuestionPanel";
@@ -153,7 +154,7 @@ export default function AgentPanel() {
 
   const canInteract = activeSession?.status === "connected";
 
-  // 当前对话是否为子agent对话（task 工具派发）：输入区替换为"返回主对话"条
+  // 当前对话是否为子agent对话（subagent 工具派发）：输入区替换为"返回主对话"条
   const activeConversation = activeConversationId
     ? (conversations[activeConversationId] ?? null)
     : null;
@@ -972,6 +973,8 @@ export default function AgentPanel() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {/* 多机操控：目标机器选择器（当前机锁定置顶 + 可跨机目标；桌面恒渲染） */}
+          <MultiHostPicker />
           <button
             type="button"
             onClick={handleNewConversation}

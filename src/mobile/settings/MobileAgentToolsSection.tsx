@@ -20,6 +20,7 @@ const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
   webSearchEndpoint: 'cn',
   httpFetchMode: 'browser',
   enableHtmlRender: true,
+  multiHostConnectionIds: [],
 };
 
 const SEARCH_MODE_OPTIONS: readonly {

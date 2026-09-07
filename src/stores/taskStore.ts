@@ -268,7 +268,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       // (or StreamEvent::Done) would arrive, so we synchronously mark the card here
       // with wasAborted + an interruption note. The backend persists the same note
       // separately, keeping the LLM history chain complete.
-      // 级联：收集该任务及其全部后代子agent（task 工具派发）。停止主任务会
+      // 级联：收集该任务及其全部后代子agent（subagent 工具派发）。停止主任务会
       // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
       // 子任务收到 Done 会被 handleDone 误标为 completed（实际是被取消的）。
       const ids = [taskId];

@@ -1,4 +1,4 @@
-import { memo, useState, useEffect, useRef } from 'react';
+import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
 import { useConversationStore } from '@/stores/conversationStore';
@@ -59,6 +59,12 @@ const TOOL_ICONS: Record<string, JSX.Element> = {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
   ),
+  // subagent（派发子agent）工具图标；task 键保留作历史消息兼容
+  subagent: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4" />
+    </svg>
+  ),
   task: (
     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4" />
@@ -102,18 +108,23 @@ export function isPlanTool(toolName: string): boolean {
   return toolName in PLAN_TOOL_LABELS;
 }
 
+/** 子agent派发工具（现名 subagent；兼容旧历史消息的 task）。 */
+function isSubagentTool(toolName: string): boolean {
+  return toolName === 'subagent' || toolName === 'task';
+}
+
 /** Extract a short command preview from tool arguments */
 function formatToolName(toolName: string): { display: string; isSkill: boolean } {
   if (toolName.startsWith('skill_')) {
     return { display: `SKILL ${toolName.slice(6)}`, isSkill: true };
   }
-  if (toolName === 'task') {
+  if (isSubagentTool(toolName)) {
     return { display: '子agent', isSkill: false };
   }
   return { display: toolName, isSkill: false };
 }
 
-/** 打开 task 工具对应的子agent对话（查看完整调研过程）。 */
+/** 打开 subagent 工具对应的子agent对话（查看完整调研过程）。 */
 function openSubConversation(metadata: Record<string, unknown> | undefined) {
   const convId = metadata?.subConversationId;
   if (typeof convId === 'string' && convId) {
@@ -171,7 +182,7 @@ export function getCommandPreview(toolName: string, args: Record<string, unknown
       return `${first} +${urls.length - 1} more`;
     }
   }
-  if (toolName === 'task') {
+  if (isSubagentTool(toolName)) {
     const description = asStr(args.description);
     const prompt = asStr(args.prompt);
     const preview = description || prompt || '';
@@ -189,6 +200,33 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   const expandNotifyId = messageId ?? message.id;
   // 真实命令超时来自用户设置（后端 command_timeout_secs），不是模型传参。
   const commandTimeoutSecs = useSettingsStore((s) => s.settings.commandTimeoutSecs);
+  // 多机操控：可操作机器集合大小（勾选的服务器数量）。目标机器指示器的
+  // 名字截断上限随集合增大而收紧——服务器越多，单条指示器占的宽度预算越小，
+  // 避免名字/徽标把卡片标题行顶满。
+  const multiHostCount = useSettingsStore(
+    (s) => s.settings.experimentalSettings?.multiHostConnectionIds?.length ?? 0,
+  );
+  // 卡片实际宽度（ResizeObserver 观察卡片根容器）：Agent 面板可拖拽，面板窄
+  // → 卡片窄 → 目标机器指示器截断上限进一步收紧，避免在窄面板里顶掉标题行。
+  // 用 callback ref 而非 useContainerWidth——ToolCallCard 的 toolResult 分支
+  // 是条件渲染，静态 ref 首次为空时 observer 不会建立。
+  // React 18 语义：callback ref 返回 cleanup 不生效；卸载时 React 以 null 再调
+  // 一次 callback ref，故在 null 分支 disconnect（React 19 兼容同样成立）。
+  const [cardWidth, setCardWidth] = useState(0);
+  const cardObserverRef = useRef<ResizeObserver | null>(null);
+  const cardRefCb = useCallback((node: HTMLDivElement | null) => {
+    if (!node) {
+      cardObserverRef.current?.disconnect();
+      cardObserverRef.current = null;
+      return;
+    }
+    const update = () => setCardWidth(node.clientWidth);
+    update();
+    cardObserverRef.current?.disconnect();
+    const ro = new ResizeObserver(update);
+    cardObserverRef.current = ro;
+    ro.observe(node);
+  }, []);
 
   onExpandChangeRef.current = onExpandChange;
 
@@ -254,9 +292,53 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     const isExecuting = message.isExecuting;
     const hasOutput = !!tr.result;
     const showOutput = (isExecuting && hasOutput) || expanded;
+    // 多机操控：目标机器归属。优先用结果 metadata 的权威 targetHostLabel
+    // （后端解析 host→会话后回填，含消歧后缀）；执行中 metadata 尚未回填，
+    // 从工具调用参数 `host` 读取——发起调用时模型已带上目标机器，执行中
+    // 卡片即显示将/正在运行在哪台机器（并发派发多机 subagent 时可区分）。
+    const metaHost =
+      tr.metadata && typeof (tr.metadata as Record<string, unknown>).targetHostLabel === 'string'
+        ? ((tr.metadata as Record<string, unknown>).targetHostLabel as string)
+        : '';
+    // host 参数仅对支持多机目标的工具（bash/execute_command/upload_file/
+    // download_file/subagent/task）有意义；其他工具即使误传也忽略。
+    const argHost = asStr((tr.arguments as Record<string, unknown> | undefined)?.host) ?? '';
+    const targetHost = metaHost || argHost;
+    // 截断上限 = min(绝对上限 10, 机器集合因子, 卡片宽度因子)，且不低于下限。
+    // - 集合因子：勾选服务器越多越收紧（120/count：5 台=24 但被 10 封顶，
+    //   13 台=9、15+ 台=8）——服务器多时单条指示器宽度预算小；
+    // - 宽度因子：Agent 面板可拖拽，卡片窄时进一步收紧（cardWidth/60：
+    //   600px=10、360px=6、240px=4）——窄面板里不能顶掉标题行；
+    // - 下限 4：极窄也保留可辨识前缀（hover 有全名）。
+    const MAX_HOST_CHARS_BASE = 10;
+    const MIN_HOST_CHARS = 4;
+    // cardWidth===0 表示尚未测量（首次渲染 RO 未回调）：宽度因子不限制，
+    // 避免首帧按 0 宽过度收紧后闪跳回正常长度。
+    const widthFactor =
+      cardWidth > 0 ? Math.floor(cardWidth / 60) : MAX_HOST_CHARS_BASE;
+    const collectionFactor = multiHostCount > 0 ? Math.floor(120 / multiHostCount) : MAX_HOST_CHARS_BASE;
+    const hostCharLimit = Math.max(
+      MIN_HOST_CHARS,
+      Math.min(MAX_HOST_CHARS_BASE, widthFactor, collectionFactor),
+    );
+    // 按码点截断（机器名可能含中文/emoji——slice 会切坏代理对）。
+    const hostChars = Array.from(targetHost);
+    const displayHost =
+      hostChars.length > hostCharLimit
+        ? `${hostChars.slice(0, hostCharLimit).join('')}…`
+        : targetHost;
+    // 子 agent 读写模式标注（subagent metadata.mode === "agent"）
+    const subMode =
+      isSubagentTool(tr.toolName) && tr.metadata &&
+      (tr.metadata as Record<string, unknown>).mode === 'agent'
+        ? '读写'
+        : '';
 
     return (
-      <div className={`min-w-0 max-w-full rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : (tr.wasTimeout || tr.wasAborted) ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}>
+      <div
+        ref={cardRefCb}
+        className={`min-w-0 max-w-full rounded-md border ${tr.blocked ? 'border-red-800/60 bg-red-950/30' : (tr.wasTimeout || tr.wasAborted) ? 'border-amber-700/60 bg-amber-950/20' : 'border-zinc-700/60 bg-zinc-800/50'}`}
+      >
         <button
           onClick={() => !isExecuting && setExpanded((v) => !v)}
           className="group w-full min-w-0 text-left"
@@ -267,6 +349,22 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                 {icon}
                 <span>{displayName}</span>
               </span>
+              {targetHost && (
+                <span
+                  className="flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md bg-zinc-600/60 text-zinc-200 font-medium flex items-center gap-1 max-w-[160px]"
+                  title={`目标机器：${targetHost}`}
+                >
+                  <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                  <span className="truncate">{displayHost}</span>
+                </span>
+              )}
+              {subMode && (
+                <span className="flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md bg-zinc-600/60 text-zinc-200 font-medium">
+                  读写子agent
+                </span>
+              )}
               {preview && (
                 <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
               )}
@@ -299,8 +397,8 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             </div>
           </div>
         </button>
-        {/* 运行中的 task 卡片：提供"查看"入口跳转子对话（实时调研过程） */}
-        {tr.toolName === 'task' && isExecuting && (
+        {/* 运行中的 subagent 卡片：提供"查看"入口跳转子对话（实时调研过程） */}
+        {isSubagentTool(tr.toolName) && isExecuting && (
           (() => {
             const meta = tr.metadata as Record<string, unknown> | undefined;
             const subConvId = meta?.subConversationId;
@@ -369,7 +467,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
             <div className="min-w-0 border-t border-zinc-700/50 px-3 py-1.5">
-              {tr.toolName === 'task' && tr.success && (
+              {isSubagentTool(tr.toolName) && tr.success && (
                 <button
                   onClick={() => openSubConversation(tr.metadata)}
                   className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-sky-400 hover:text-sky-300 transition-colors"
@@ -418,6 +516,13 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
     const preview = getCommandPreview(tc.name, tc.arguments);
     const timeoutSecs = tc.name === 'bash' || tc.name === 'execute_command' ? commandTimeoutSecs : 0;
+    // 多机操控：发起瞬间即显示目标机器（参数 host）。此分支无结果 metadata，
+    // 只能从参数读；真正执行/完成后由 toolResult 分支的权威 label 接管。
+    const tcHost = asStr((tc.arguments as Record<string, unknown> | undefined)?.host) ?? '';
+    // 按码点截断（机器名可能含中文/emoji）；tooltip 给全名。
+    const tcHostChars = Array.from(tcHost);
+    const tcDisplayHost =
+      tcHostChars.length > 12 ? `${tcHostChars.slice(0, 12).join('')}…` : tcHost;
 
     return (
       <div className="rounded-md border border-zinc-700/60 bg-zinc-800/50">
@@ -427,6 +532,17 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               {icon}
               <span>{displayName}</span>
             </span>
+            {tcHost && (
+              <span
+                className="flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md bg-zinc-600/60 text-zinc-200 font-medium flex items-center gap-1 max-w-[160px]"
+                title={`目标机器：${tcHost}`}
+              >
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+                <span className="truncate">{tcDisplayHost}</span>
+              </span>
+            )}
             {preview && (
               <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
             )}
