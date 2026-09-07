@@ -66,7 +66,7 @@ mod tests {
         assert!(!prompt.contains("skill_"));
         assert!(!prompt.contains("插件扩展指令"));
         assert!(!prompt.contains("Plan 模式"));
-        assert!(!prompt.contains("子agent调研"));
+        assert!(!prompt.contains("子agent 派发"));
     }
 
     #[test]
@@ -75,7 +75,7 @@ mod tests {
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(prompt.contains("skill_"));
-        assert!(prompt.contains("子agent调研"));
+        assert!(prompt.contains("子agent 派发"));
     }
 
     #[test]
@@ -92,10 +92,10 @@ mod tests {
     }
 
     #[test]
-    fn prompt_task_section_when_task_tool_present() {
+    fn prompt_subagent_section_when_subagent_tool_present() {
         let prompt = build(false, false, false, "", &[], false, true);
-        assert!(prompt.contains("子agent调研"));
-        assert!(prompt.contains("task"));
+        assert!(prompt.contains("子agent 派发"));
+        assert!(prompt.contains("subagent"));
     }
 
     #[test]

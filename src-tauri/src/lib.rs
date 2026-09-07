@@ -5,6 +5,7 @@ pub mod config;
 pub mod error;
 pub mod llm;
 pub mod mcp;
+pub mod multi_host;
 pub mod notification;
 pub mod plugins;
 pub mod skills;
@@ -67,8 +68,7 @@ pub struct AppState {
     /// 默认），切回原模型原档位仍在——互不污染、切走不丢。
     /// 空串 = 无记忆。与 `session_models` 同生命周期（启动装载、会话删除
     /// 级联清理），但独立维度：仅当档位在当前生效模型声明内才生效。
-    pub session_efforts:
-        std::sync::Arc<PlRwLock<HashMap<String, HashMap<String, String>>>>,
+    pub session_efforts: std::sync::Arc<PlRwLock<HashMap<String, HashMap<String, String>>>>,
     pub connection_store: std::sync::Arc<TokioRwLock<ConnectionStore>>,
     pub settings: std::sync::Arc<TokioRwLock<AppSettings>>,
     pub quick_command_store: std::sync::Arc<TokioRwLock<QuickCommandStore>>,
@@ -115,6 +115,19 @@ pub struct AppState {
     /// Reloads on startup and whenever settings change (enable/disable plugin,
     /// authorized capabilities). Emits `plugin-registry-changed` after reload.
     pub plugin_registry: crate::plugins::registry::SharedPluginRegistry,
+    /// 多机操控记账：task_id → 该任务自动拉起的会话 id 集合（见
+    /// `multi_host` 模块）。任务终态时经 `cleanup_task_targets` 关闭这些
+    /// 会话；**用户手动打开的会话不在集合内，绝不被自动关闭**。
+    pub multi_host_targets:
+        std::sync::Arc<TokioRwLock<HashMap<String, std::collections::HashSet<String>>>>,
+    /// Agent 传输互斥：**同一时刻只跑一个 Agent 传输**（多 agent 任务的
+    /// 上传/下载串行）。用户 SFTP 面板传输不受此锁限制（那是前端双道
+    /// transferScheduler 调度，与 Agent 传输相互独立——见传输中心语义）。
+    pub agent_transfer_mutex: std::sync::Arc<tokio::sync::Mutex<()>>,
+    /// Agent 传输记账：task_id → 该任务发起的 Agent 传输 id 集合。
+    /// 任务终态/停止时级联取消这些传输（只取消传输本身，不动任务）。
+    pub agent_transfer_by_task:
+        std::sync::Arc<TokioRwLock<HashMap<String, std::collections::HashSet<String>>>>,
 }
 
 impl AppState {
@@ -321,9 +334,8 @@ impl AppState {
         // 会话级思考强度：按「会话 × 模型」双维记忆，**重启后记住**——
         // 存量从 `conversations.efforts_json` 列装载（每会话一张
         // {model_id → effort} JSON 映射），之后每次变更经 set 命令回写。
-        let session_efforts: std::sync::Arc<
-            PlRwLock<HashMap<String, HashMap<String, String>>>,
-        > = std::sync::Arc::new(PlRwLock::new(HashMap::new()));
+        let session_efforts: std::sync::Arc<PlRwLock<HashMap<String, HashMap<String, String>>>> =
+            std::sync::Arc::new(PlRwLock::new(HashMap::new()));
         match conversation_db.load_all_conversation_efforts() {
             Ok(rows) if !rows.is_empty() => {
                 let mut loaded = 0usize;
@@ -466,6 +478,9 @@ impl AppState {
             sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
+            multi_host_targets: std::sync::Arc::new(TokioRwLock::new(HashMap::new())),
+            agent_transfer_mutex: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            agent_transfer_by_task: std::sync::Arc::new(TokioRwLock::new(HashMap::new())),
         }
     }
 }

@@ -72,6 +72,11 @@ pub struct SshManager {
     /// 断连观察者：会话真正断开（driver cleanup 的 dominated 分支）时回调，
     /// 参数为 session_id。command_exec 管理器用它实现级联取消。
     disconnect_observers: Arc<RwLock<Vec<Arc<dyn Fn(&str) + Send + Sync>>>>,
+    /// 会话激活顺序（新激活在队尾）。用于「同一 SavedConnection 多开时，
+    /// 取最近激活的在线 session」——多机操控的目标解析需要。清理在
+    /// [`Self::latest_active_session_for_connection`] 读取时惰性进行
+    /// （不在线/已断开的条目留在队里但会被跳过，条目数受连接数上界约束）。
+    activation_order: Arc<RwLock<std::collections::VecDeque<String>>>,
 }
 
 impl SshManager {
@@ -83,6 +88,7 @@ impl SshManager {
             generations: Arc::new(RwLock::new(HashMap::new())),
             known_hosts,
             disconnect_observers: Arc::new(RwLock::new(Vec::new())),
+            activation_order: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         }
     }
 
@@ -307,6 +313,14 @@ impl SshManager {
             .write()
             .await
             .insert(session_id.clone(), connection);
+
+        // 记录激活顺序（队尾 = 最近激活）。多机目标解析「取最近激活在线会话」
+        // 依赖它；重复激活同一会话不重复入队（保持队内唯一）。
+        {
+            let mut order = self.activation_order.write().await;
+            order.retain(|sid| sid != &session_id);
+            order.push_back(session_id.clone());
+        }
 
         emit_event(
             &app,
@@ -577,6 +591,41 @@ impl SshManager {
     /// Used by the command_exec executor to open dedicated exec channels.
     pub async fn get_connection(&self, session_id: &str) -> Option<Arc<SshConnection>> {
         self.connections.read().await.get(session_id).cloned()
+    }
+
+    /// 列出某 SavedConnection（config_id）当前**在线**的全部 session id。
+    /// 多机操控按机器定位目标会话用；同机多开时由
+    /// [`Self::latest_active_session_for_connection`] 决定取哪一个。
+    pub async fn sessions_for_connection(&self, connection_id: &str) -> Vec<String> {
+        let guard = self.connections.read().await;
+        let mut ids: Vec<String> = guard
+            .iter()
+            .filter(|(_, c)| c.connection_id.as_deref() == Some(connection_id))
+            .map(|(sid, _)| sid.clone())
+            .collect();
+        drop(guard);
+        // 稳定顺序：按激活先后（早激活在前）。
+        let order = self.activation_order.read().await;
+        ids.sort_by_key(|sid| order.iter().position(|s| s == sid).unwrap_or(usize::MAX));
+        ids
+    }
+
+    /// 取某 SavedConnection 最近激活的**在线** session（队尾方向第一个在线）。
+    /// 全部离线/不存在 → None。断开的条目（不在 connections 里）被跳过。
+    pub async fn latest_active_session_for_connection(
+        &self,
+        connection_id: &str,
+    ) -> Option<String> {
+        let conns = self.connections.read().await;
+        let order = self.activation_order.read().await;
+        for sid in order.iter().rev() {
+            if let Some(c) = conns.get(sid) {
+                if c.connection_id.as_deref() == Some(connection_id) {
+                    return Some(sid.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Whether `session_id` currently has a connection of the given

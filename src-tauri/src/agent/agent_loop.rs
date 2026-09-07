@@ -79,10 +79,7 @@ fn build_job_settlement_notice(jobs: &[crate::command_exec::JobInfo]) -> String 
         } else {
             j.description.clone()
         };
-        lines.push(format!(
-            "后台作业 {}（{}）{}",
-            j.job_id, desc, status
-        ));
+        lines.push(format!("后台作业 {}（{}）{}", j.job_id, desc, status));
     }
     lines.push(
         "用 job_output(job_id=...) 读取其输出并纳入结论；\
@@ -152,7 +149,7 @@ pub(crate) struct LoopContext {
     /// Application config dir. Passed to `ToolContext` so plugin local handlers
     /// (fs.read/fs.write/fs.append) can resolve plugin-relative paths.
     pub config_dir: std::path::PathBuf,
-    /// 子agent（task 工具派发的调研任务）标记：跳过系统通知，
+    /// 子agent（subagent 工具派发的调研任务）标记：跳过系统通知，
     /// 避免子agent完成/失败与主任务的通知叠加打扰用户。
     pub is_subtask: bool,
 }
@@ -163,7 +160,7 @@ pub(crate) struct LoopContext {
 /// Returns the final assistant text when the loop ended with a natural
 /// (no-tool-call) response; `None` when it stopped for any other reason
 /// (cancelled, LLM error, max rounds). Main tasks ignore the return value;
-/// the `task` tool uses it as the subagent's research result.
+/// the `subagent` tool uses it as the subagent's research result.
 pub(crate) async fn run_agent_loop(
     task_id: String,
     llm_manager: LlmManager,
@@ -544,7 +541,10 @@ pub(crate) async fn run_agent_loop(
 
                 // (c) 有 running job 且无新结算 → 挂起等结算信号 / 取消 / 提醒。
                 if is_task_cancelled(&state, &task_id) {
-                    log::info!("Agent {} cancelled while waiting for jobs, exiting", task_id);
+                    log::info!(
+                        "Agent {} cancelled while waiting for jobs, exiting",
+                        task_id
+                    );
                     return None;
                 }
 
@@ -680,7 +680,7 @@ pub(crate) async fn run_agent_loop(
         messages.push(assistant_msg);
 
         // 4. Execute tool calls via the dispatcher.
-        //    Concurrent-safe tools (like `TaskTool`) are batched and run in parallel using
+        //    Concurrent-safe tools (like `SubagentTool`) are batched and run in parallel using
         //    `futures::future::join_all`. Sequential tools are run one by one to preserve
         //    causal order, security policies (read-before-edit), and approval flows.
         let batches = group_tool_calls_into_batches(&tool_calls, &registry);
@@ -1080,7 +1080,7 @@ mod tests {
     fn group_tool_calls_batches_adjacent_concurrent_tools() {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(DummyTool {
-            name: "task".into(),
+            name: "subagent".into(),
             concurrent: true,
         }));
         registry.register(Arc::new(DummyTool {
@@ -1095,12 +1095,12 @@ mod tests {
         let calls = vec![
             ToolCall {
                 id: "c1".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 1"}),
             },
             ToolCall {
                 id: "c2".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 2"}),
             },
             ToolCall {
@@ -1110,7 +1110,7 @@ mod tests {
             },
             ToolCall {
                 id: "c4".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 3"}),
             },
             ToolCall {
@@ -1154,24 +1154,24 @@ mod tests {
     fn group_tool_calls_all_concurrent() {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(DummyTool {
-            name: "task".into(),
+            name: "subagent".into(),
             concurrent: true,
         }));
 
         let calls = vec![
             ToolCall {
                 id: "c1".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 1"}),
             },
             ToolCall {
                 id: "c2".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 2"}),
             },
             ToolCall {
                 id: "c3".into(),
-                name: "task".into(),
+                name: "subagent".into(),
                 arguments: json!({"prompt": "subtask 3"}),
             },
         ];
@@ -1299,8 +1299,18 @@ mod tests {
     #[test]
     fn job_settlement_notice_lists_completed_jobs_and_collection_hint() {
         let jobs = vec![
-            job_info("job_1", "编译 release", "cargo build --release", crate::command_exec::JobStatus::Completed),
-            job_info("job_2", "下载模型", "wget big.bin", crate::command_exec::JobStatus::Killed),
+            job_info(
+                "job_1",
+                "编译 release",
+                "cargo build --release",
+                crate::command_exec::JobStatus::Completed,
+            ),
+            job_info(
+                "job_2",
+                "下载模型",
+                "wget big.bin",
+                crate::command_exec::JobStatus::Killed,
+            ),
         ];
         let notice = build_job_settlement_notice(&jobs);
         assert!(notice.contains("job_1"));

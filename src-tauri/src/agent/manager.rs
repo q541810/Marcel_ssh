@@ -7,7 +7,7 @@
 //! - **生命周期**：注册 [`AgentTask`]、spawn [`run_agent_loop`]、统一终态
 //!   更新、取消信号清理与 panic 兜底。
 //!
-//! 主任务与子任务（`task` 工具派发）共用同一个 [`AgentManager::spawn`]
+//! 主任务与子任务（`subagent` 工具派发）共用同一个 [`AgentManager::spawn`]
 //! 入口，子代理只是 [`AgentSpec`] 叠加了角色约束，不再复制组装逻辑。
 //!
 //! 调用方（`commands/agent_lifecycle`、`agent/tools/subagent`）负责「决定要
@@ -24,7 +24,8 @@ use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
-    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent::TaskTool, ToolRegistry,
+    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent::SubagentTool,
+    ToolRegistry,
 };
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
@@ -44,7 +45,7 @@ const PLUGIN_SECTION_MAX_CHARS: usize = 2000;
 pub enum AgentRole {
     /// 主任务：由用户直接发起。
     Main,
-    /// 子任务：由 `task` 工具派发的调研子 agent。
+    /// 子任务：由 `subagent` 工具派发的调研子 agent。
     Sub { parent_task_id: String },
 }
 
@@ -166,8 +167,9 @@ impl AgentManager {
         // ── 2. 模型路由（主模型语义 = 会话级 → 全局最近使用 → 第一个） ──
         // - 主任务：`spec.model_override` 为空时，先查本会话内存模型记忆；
         //   无记忆 → 全局最近使用（resolve_default = last_used/首个）。
-        // - 子任务：model_override 由 `task` 工具显式传入或继承父任务模型，
-        //   空时同样回落到会话记忆/最近使用（与主任务同源语义）。
+        // - 子任务：model_override 恒为父任务 model_id（`subagent` 工具继承，
+        //   不向 LLM 暴露 model 参数），空时同样回落到会话记忆/最近使用
+        //   （与主任务同源语义）。
         // registry 解析会兜底补读 keychain（渠道密钥），无需再手动预取。
         let session_override = if spec.model_override.is_none() && spec.role == AgentRole::Main {
             self.state
@@ -285,6 +287,17 @@ impl AgentManager {
         .await;
         drop(plugin_registry_guard);
 
+        // ── 4.5 多机操控：主任务注入机器清单段（子任务不注入——它们的
+        //     目标机器由父任务经 subagent(host=...) 显式指定，系统提示已含约束）──
+        let mut prompt_extra = spec.prompt_extra.clone();
+        if spec.role == AgentRole::Main {
+            if let Some(section) =
+                crate::multi_host::build_prompt_section(&self.state, &spec.session_id).await
+            {
+                prompt_extra.push(section);
+            }
+        }
+
         // ── 5. 组装 messages（含角色约束段统一拼装） ──
         let messages = build_agent_messages(
             &TemplateManager,
@@ -295,7 +308,7 @@ impl AgentManager {
             &agent_settings.system_prompt,
             &plugin_sections,
             matches!(spec.mode, AgentMode::Plan),
-            &spec.prompt_extra,
+            &prompt_extra,
         )?;
 
         // 所有可能失败的组装步骤完成后再提交运行态。spawn 返回 Err 时，
@@ -395,29 +408,51 @@ impl AgentManager {
             AgentMode::Agent | AgentMode::Auto => {
                 let mut registry =
                     ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
-                let manifests = plugin_registry.enabled_manifests();
-                for m in &manifests {
-                    register_plugin_tools(&mut registry, &m.id, &m.capabilities, &m.agent_tools);
-                }
-                let mut set = tokio::task::JoinSet::new();
-                for server in enabled_mcp_servers {
-                    let mgr = self.state.mcp_manager.clone();
-                    let server = server.clone();
-                    set.spawn(async move {
-                        let result = mgr.refresh_tools(&server).await;
-                        (server, result)
-                    });
-                }
-                while let Some(result) = set.join_next().await {
-                    match result {
-                        Ok((server, Ok(tools))) => {
-                            register_mcp_tools(&mut registry, &server, tools)
-                        }
-                        Ok((server, Err(err))) => {
-                            log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err)
-                        }
-                        Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
+                // ── 子 agent 工具集收敛（mode="agent" 读写执行子 agent）──
+                // 与只读 Plan 子 agent（build_plan_registry：Sub 不注册 subagent/plan、
+                // 不加载插件/MCP）对齐：子 agent 是「单任务执行者」，不是编排者——
+                //   - `subagent`：子 agent 不能再派发子 agent（运行时 parent_task_id
+                //     防御仍保留作纵深，工具集层面先杜绝）；
+                //   - plan 三件套：子 agent 不规划 todolist（其 plan 事件前端无
+                //     listener、PlanList 也不跟随子对话，建了无处消费）；
+                //   - 插件 / MCP 工具：子 agent 只携带核心读写工具，不加载插件
+                //     生态，也不去刷新 MCP server（省一次无谓连接），与只读
+                //     子 agent 一致，提示词工具列表不会说谎。
+                // 主任务（role=Main）不受影响：subagent 派发、plan 编排、插件/MCP
+                // 全套保留。
+                let is_subtask = role.is_subtask();
+                if !is_subtask {
+                    let manifests = plugin_registry.enabled_manifests();
+                    for m in &manifests {
+                        register_plugin_tools(
+                            &mut registry,
+                            &m.id,
+                            &m.capabilities,
+                            &m.agent_tools,
+                        );
                     }
+                    let mut set = tokio::task::JoinSet::new();
+                    for server in enabled_mcp_servers {
+                        let mgr = self.state.mcp_manager.clone();
+                        let server = server.clone();
+                        set.spawn(async move {
+                            let result = mgr.refresh_tools(&server).await;
+                            (server, result)
+                        });
+                    }
+                    while let Some(result) = set.join_next().await {
+                        match result {
+                            Ok((server, Ok(tools))) => {
+                                register_mcp_tools(&mut registry, &server, tools)
+                            }
+                            Ok((server, Err(err))) => {
+                                log::warn!("刷新 MCP tools 失败 [{}]: {}", server.name, err)
+                            }
+                            Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
+                        }
+                    }
+                } else {
+                    converge_subagent_registry(&mut registry);
                 }
                 Arc::new(registry)
             }
@@ -471,9 +506,9 @@ impl AgentManager {
 
 /// 按角色构建 Plan 模式工具集。
 ///
-/// 顶层 Plan agent（`AgentRole::Main`）额外注册 `task` 子agent 工具，
+/// 顶层 Plan agent（`AgentRole::Main`）额外注册 `subagent` 子agent 工具，
 /// 以便派发只读调研子agent；子agent（`AgentRole::Sub`）是 Plan 只读模式，
-/// 不注册 `task`，从而保证「子agent 没有子agent」。运行时 `parent_task_id`
+/// 不注册 `subagent`，从而保证「子agent 没有子agent」。运行时 `parent_task_id`
 /// 二次防御（`tools/subagent.rs`）仍保留作纵深防御。
 ///
 /// 抽成自由函数便于单测，避免为 `build_registry` 私有方法构造整个 `AppState`。
@@ -484,7 +519,7 @@ fn build_plan_registry(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
     if !role.is_subtask() {
-        registry.register(Arc::new(TaskTool));
+        registry.register(Arc::new(SubagentTool));
     }
     registry
 }
@@ -500,6 +535,24 @@ fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<Tool
                 parameters: d.parameters,
             })
             .collect(),
+    }
+}
+
+/// 收敛 **读写执行子 agent**（`mode="agent"`）的工具集：去掉主 agent 的
+/// 编排工具。
+///
+/// 与只读 Plan 子 agent（`build_plan_registry`：Sub 不注册 subagent/plan、不加载
+/// 插件/MCP）对齐——子 agent 是「单任务执行者」不是编排者：
+/// - `subagent`：子 agent 不能再派发子 agent（运行时 parent_task_id 防御仍保留
+///   作纵深，工具集层面先杜绝，LLM 不会尝试调用注定失败的 tool）；
+/// - `create_plan` / `update_plan_item` / `edit_plan`：子 agent 不规划
+///   todolist（其 plan 事件前端无 listener、PlanList 不跟随子对话）。
+///
+/// 抽成纯函数便于单测（`build_registry` 的 Agent/Auto 分支在
+/// `role.is_subtask()` 时调用；主任务 role=Main 不调用，全套保留）。
+fn converge_subagent_registry(registry: &mut crate::agent::tools::ToolRegistry) {
+    for name in ["subagent", "create_plan", "update_plan_item", "edit_plan"] {
+        registry.remove(name);
     }
 }
 
@@ -635,7 +688,7 @@ fn build_agent_messages(
         agent_system_prompt,
         plugin_sections,
         plan_mode,
-        has_tool("task"),
+        has_tool("subagent"),
         extra_sections,
     )?;
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
@@ -672,6 +725,17 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
     // 释放该 task 的作业结算通知通道（挂起中的 agent loop 若因取消/失败
     // 退出，此处确保通道不泄漏；正常路径 loop 已自行 break，这里幂等）。
     state.command_exec.remove_task_settlement_channel(task_id);
+    // 多机操控：任务终态关闭该任务自动拉起的全部目标会话（只在任务记账
+    // 集合内，用户手动打开的会话绝不受影响）。异步 fire-and-forget——
+    // 清理不阻塞任务收尾，且 spawn 里 catch_unwind 之外安全。
+    let mh_state = state.clone();
+    let mh_task = task_id.to_string();
+    tokio::spawn(async move {
+        crate::multi_host::cleanup_task_targets(&mh_state, &mh_task).await;
+        // Agent 传输级联取消：任务终态取消其名下仍进行的传输（只取消
+        // 传输本身；进行中的传输收到 cancel 后自行清理 .part/sidecar）。
+        crate::agent::transfer::cancel_task_transfers(&mh_state, &mh_task).await;
+    });
 }
 
 fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
@@ -719,8 +783,8 @@ mod tests {
     fn plan_main_agent_gets_task_tool() {
         let registry = build_plan_registry(&AgentRole::Main, &[], &exp());
         assert!(
-            registry.get("task").is_some(),
-            "顶层 Plan agent 应注册 task 子agent 工具"
+            registry.get("subagent").is_some(),
+            "顶层 Plan agent 应注册 subagent 子agent 工具"
         );
     }
 
@@ -734,8 +798,8 @@ mod tests {
             &exp(),
         );
         assert!(
-            registry.get("task").is_none(),
-            "子agent（Plan 只读）不应注册 task 工具，保证子agent 不派发子agent"
+            registry.get("subagent").is_none(),
+            "子agent（Plan 只读）不应注册 subagent 工具，保证子agent 不派发子agent"
         );
     }
 
@@ -750,6 +814,34 @@ mod tests {
         assert!(registry.get("edit_file").is_none());
     }
 
+    #[test]
+    fn converge_subagent_registry_strips_orchestration_tools() {
+        use crate::agent::tools::ToolRegistry;
+        let mut registry = ToolRegistry::with_core_tools();
+        // 前置：读写执行子 agent 会拿到全套核心工具（含 subagent/plan 编排工具）。
+        for name in ["subagent", "create_plan", "update_plan_item", "edit_plan", "bash", "write_file"] {
+            assert!(registry.get(name).is_some(), "前置缺失: {}", name);
+        }
+        converge_subagent_registry(&mut registry);
+        // subagent 与 plan 编排工具被收敛
+        for name in ["subagent", "create_plan", "update_plan_item", "edit_plan"] {
+            assert!(registry.get(name).is_none(), "读写子agent 不应有 {}", name);
+        }
+        // 读写核心工具保留
+        for name in ["bash", "write_file", "edit_file", "read_file", "upload_file", "download_file"] {
+            assert!(registry.get(name).is_some(), "读写子agent 应保留 {}", name);
+        }
+    }
+
+    #[test]
+    fn converge_subagent_registry_keeps_main_registry_untouched() {
+        // 主任务（role=Main）不经收敛：subagent/plan 编排工具保留。
+        let r = ToolRegistry::with_core_tools();
+        for name in ["subagent", "create_plan", "bash", "write_file"] {
+            assert!(r.get(name).is_some(), "主任务应保留 {}", name);
+        }
+    }
+
     fn base_cfg() -> LlmConfig {
         let mut c = LlmConfig::default();
         c.extra_body = None;
@@ -762,7 +854,8 @@ mod tests {
 
     #[test]
     fn apply_effort_injects_top_level_when_declared() {
-        let cfg = apply_reasoning_effort(base_cfg(), "ds", &declared(&["low", "high", "max"]), "high");
+        let cfg =
+            apply_reasoning_effort(base_cfg(), "ds", &declared(&["low", "high", "max"]), "high");
         let extra = cfg.extra_body.expect("extra_body set");
         assert_eq!(
             extra.get("reasoning_effort").and_then(|v| v.as_str()),
@@ -809,9 +902,6 @@ mod tests {
         c.extra_body = Some(serde_json::json!([1, 2, 3]));
         let cfg = apply_reasoning_effort(c, "odd", &declared(&["low"]), "low");
         // 异常数据不注入也不破坏
-        assert_eq!(
-            cfg.extra_body,
-            Some(serde_json::json!([1, 2, 3]))
-        );
+        assert_eq!(cfg.extra_body, Some(serde_json::json!([1, 2, 3])));
     }
 }

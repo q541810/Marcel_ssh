@@ -1,14 +1,16 @@
-//! `task` 工具 — 派发一个强制 Plan 模式的调研子 agent。
+//! `subagent` 工具 — 派发一个隔离的调研/执行子 agent。
 //!
 //! 主 agent（Agent/Auto 模式）调用此工具时，后端会：
 //! 1. 创建一个新的子agent（`AgentMode::Plan` + plan 模式只读工具集）
 //! 2. 为子agent创建独立的 conversation（标题为任务描述），子agent的完整过程
 //!    实时流式输出到子对话，用户可随时点开查看
 //! 3. 同步等待子agent结束（串行模型：同一时刻只跑一个子agent）
-//! 4. 把子agent最终的调研文本作为工具结果返回给主 agent
+//! 4. 把子agent最终的报告文本作为工具结果返回给主 agent
 //!
-//! 子agent不可再派发子agent（嵌套防御：plan 模式工具集本身不注册 task 工具，
-//! 这里再做一次 parent_task_id 检查兜底）。
+//! 子agent不可再派发子agent：**任何模式**的子 agent 工具集都不注册 subagent
+//! （Plan 只读子 agent 见 build_plan_registry；mode="agent" 读写子 agent 见
+//! AgentManager::build_registry 的 role 收敛），这里再做一次 parent_task_id
+//! 检查作纵深防御。
 //!
 //! 子 agent 的组装与生命周期统一由 [`crate::agent::manager::AgentManager`]
 //! 负责——本工具只声明「要跑什么」（AgentSpec），不再复制组装逻辑。
@@ -29,7 +31,7 @@ use crate::AppState;
 /// 子agent结果回传给主 agent 的最大字符数（完整过程保留在子对话中）。
 const MAX_TASK_OUTPUT_CHARS: usize = 8000;
 
-/// 追加到子agent系统提示的调研指令。
+/// 追加到子agent系统提示的调研指令（只读版，现状保持）。
 const SUBAGENT_INSTRUCTION: &str = "\
 你是被主 Agent 派发的调研子agent（subagent）。你的唯一目标：只读调研并回答主 Agent 交给你的调研问题。
 
@@ -41,6 +43,23 @@ const SUBAGENT_INSTRUCTION: &str = "\
 - 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。收到结算通知前不需要反复轮询，可继续其他调研。
 
 完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论、对主 Agent 行动的建议。不要复述调研过程细节。";
+
+/// 追加到子agent系统提示的**读写执行版**指令（多机操控：subagent mode="agent" 时）。
+/// 与只读版的核心差异：允许真正执行修改类操作，但仍受 Agent 沙箱与
+/// 父任务审批语义约束——子 agent 不是放养的，破坏性命令照常拦截。
+const SUBAGENT_EXEC_INSTRUCTION: &str = "\
+你是被主 Agent 派发的执行子agent（subagent）。你的目标是：在指定机器上实际完成任务并回报结果——不只是调研，可以真正执行修改类操作。
+
+硬性约束：
+- 你可以使用读写工具：read_file / write_file / edit_file / list_directory / search_files / system_info / connection_info / bash / upload_file / download_file / web_search / http_get / ask_user / 技能
+- 可以执行修改操作（写文件、编辑、安装软件、改配置、运行部署脚本等），但必须谨慎：
+  - 破坏性/删除类命令（rm、drop、shutdown 等）必须先解释意图，能避免则避免
+  - 非平凡的 bash 命令先说明它在做什么与为什么
+  - 你的执行与主 Agent 同级的沙箱审查；高风险命令按父任务模式要求审批
+- 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
+- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。
+
+完成任务后，用简洁清晰的中文输出结果：做了什么、关键输出/证据、遗留风险或后续建议。不要复述过程细节。";
 
 /// 子agent启动事件：发到**主任务**的 stream 通道，前端据此注册子对话
 /// 并挂载子agent的流式 listener（运行中过程实时可见）。
@@ -57,17 +76,30 @@ pub(crate) struct SubTaskStartEvent {
     /// 主对话 id：前端注册子对话时记录，用于会话列表隐藏、
     /// 子对话内"返回主对话"、删除主对话级联删除。
     pub parent_conversation_id: String,
+    /// 子 agent 实际运行机器的 SavedConnection id（多机操控时可能 ≠ 父任务
+    /// 所在机器）。前端以其注册子对话归属，避免 DB/store 归属漂移。
+    pub connection_id: String,
+    /// 子 agent 实际运行所在的 SSH session id（多机时 ≠ 父任务 session）。
+    /// 前端子任务记录据此做占用检测/跨 Tab 跳转。
+    pub session_id: String,
+    /// 子 agent 运行模式的展示提示："plan"（只读调研）| "agent"（读写执行）。
+    #[serde(default = "default_sub_mode")]
+    pub mode: String,
 }
 
-pub struct TaskTool;
+fn default_sub_mode() -> String {
+    "plan".to_string()
+}
 
-impl TaskTool {
+pub struct SubagentTool;
+
+impl SubagentTool {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for TaskTool {
+impl Default for SubagentTool {
     fn default() -> Self {
         Self::new()
     }
@@ -82,32 +114,61 @@ fn truncate_chars(s: &str, max: usize) -> String {
 }
 
 #[async_trait]
-impl AgentTool for TaskTool {
+impl AgentTool for SubagentTool {
     fn name(&self) -> &str {
-        "task"
+        "subagent"
     }
 
     fn description(&self) -> &str {
-        "Delegate a focused research task to a subagent. The subagent runs in \
-         Plan mode (read-only research tools only), explores independently in its \
-         own conversation, and returns a research report. Use this to offload \
-         parallel-able research (codebase exploration, log analysis, config \
-         auditing) instead of doing it inline. You can invoke multiple task tools \
-         concurrently in one turn to explore different areas in parallel. Provide a \
-         complete self-contained prompt with all necessary context — the subagent \
-         does NOT see your conversation history. The subagent never writes or modifies anything.\n\
+        "Spawn an isolated subagent to do a self-contained piece of work for you — \
+         research, investigation, auditing, or (in execution mode) an actual job on \
+         another machine. The subagent runs in its OWN conversation with its own \
+         context window, does the work end-to-end there, and returns only its final \
+         report to you — its intermediate steps never consume your context, so the \
+         main conversation stays short and the session lasts far longer.\n\
          \n\
-         When NOT to use the task tool:\n\
+         WHY delegate instead of doing it inline? Independent, bulky work would \
+         otherwise flood your own context with raw tool output and leave less room \
+         for the user's actual goal. A subagent keeps that noise out of your window \
+         and hands you a distilled conclusion.\n\
+         \n\
+         Especially use `subagent` for any web research that would need `web_search`: \
+         web_search returns raw, noisy results that are costly to read; a subagent can \
+         run searches in its own conversation, filter, cross-check and summarize, and \
+         only hand back the useful conclusion. The same applies to multi-step \
+         investigations across many files/directories (codebase exploration, log \
+         analysis, config audit, system state forensics) and to parallel exploration \
+         of several independent angles at once.\n\
+         \n\
+         HOW to delegate: give a COMPLETE, self-contained prompt (targets, questions \
+         to answer, expected output format) — the subagent does NOT see your \
+         conversation history. You can invoke several `subagent` tools concurrently in \
+         one turn to explore different areas in parallel; each runs in its own \
+         conversation. You receive only the report — integrate the conclusions into \
+         your reply, do not echo the process. The subagent's full process stays \
+         viewable in its own conversation (open it from the subagent card).\n\
+         \n\
+         When NOT to use `subagent`:\n\
          - Reading a single file or doing a small-scope search → use read_file / \
-         search_files / list_directory directly, do not dispatch a subagent\n\
+         search_files / list_directory directly, do not spawn a subagent\n\
          - A decision that needs user confirmation → ask_user directly\n\
-         - Anything that requires modification → the subagent is read-only; you \
-         must perform the change yourself\n\
          - A short verification question → answer directly or run one command\n\
          \n\
-         The subagent's full process lives in its own conversation (viewable from \
-         the task card); you receive only its research report — integrate the \
-         conclusions into your reply, do not echo the process."
+         Multi-host / execution mode (desktop):\n\
+         - `host`: run the subagent on a specific machine: the current machine or \
+         one from the selected set (by its readable name). When omitted, the \
+         subagent runs on the current session's machine.\n\
+         - `mode`: \"plan\" (default) = read-only research subagent as described \
+         above; \"agent\" = a read-write execution subagent that can actually \
+         modify files / run installs / deploy on its machine (still sandboxed and \
+         subject to the parent task's approval semantics). Use mode=\"agent\" when \
+         the work on another machine genuinely needs write access. Mobile is \
+         always read-only.\n\
+         IMPORTANT: the `host` value must match the machine name in the multi-host \
+         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
+         any character (no extra spaces, no lowercase/uppercase changes, no \
+         punctuation changes). A name that differs by even one character is \
+         rejected, never silently redirected."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -116,15 +177,20 @@ impl AgentTool for TaskTool {
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "The research task for the subagent. Must be self-contained: include the target paths, questions to answer, and expected output format. The subagent has no access to your conversation history."
+                    "description": "The COMPLETE, self-contained task for the subagent: what to do, target paths / queries, questions to answer, expected output format. The subagent has NO access to your conversation history, so everything it needs must be in this prompt."
                 },
                 "description": {
                     "type": "string",
                     "description": "A short (3-5 words) description of the subagent, used as the subagent's conversation title shown in the chat list (e.g. 'explore nginx config', 'audit disk usage')."
                 },
-                "model": {
+                "host": {
                     "type": "string",
-                    "description": "Optional model override for the subagent. When omitted, the main agent's model is used."
+                    "description": "Optional (multi-host). Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, the subagent runs on the current session's machine. Desktop only. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["plan", "agent"],
+                    "description": "Optional (multi-host). 'plan' (default) = read-only research subagent; 'agent' = read-write execution subagent that can modify files / run installs / deploy. When omitted, defaults to 'plan' (unchanged legacy behavior)."
                 }
             },
             "required": ["prompt"]
@@ -151,7 +217,7 @@ impl AgentTool for TaskTool {
             .trim()
             .to_string();
         if prompt.is_empty() {
-            return Ok(ToolOutput::fail("task: prompt 不能为空", ""));
+            return Ok(ToolOutput::fail("subagent: prompt 不能为空", ""));
         }
         let description = params
             .get("description")
@@ -160,32 +226,22 @@ impl AgentTool for TaskTool {
             .filter(|s| !s.is_empty())
             .map(String::from)
             .unwrap_or_else(|| truncate_chars(&prompt, 50));
-        let model_override = params
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(String::from);
 
         let state = ctx.app_handle.state::<AppState>();
         let state: AppState = state.inner().clone();
 
-        // ── 子 agent 模型继承：LLM 未显式指定 model 参数时，继承父任务的模型 ──
-        // 保证「父任务用 A 模型 → 派发的子 agent 默认也用 A」（会话级模型切换的
-        // 直觉语义）。父任务 model_id 为 None（极端情况）时回落全局默认。
-        let model_override = match model_override {
-            Some(m) => Some(m),
-            None => {
-                if let Some(pid) = ctx.task_id.clone() {
-                    state
-                        .agent_tasks
-                        .read()
-                        .get(&pid)
-                        .and_then(|t| t.model_id.clone())
-                } else {
-                    None
-                }
-            }
+        // ── 子 agent 模型继承：恒继承父任务模型 ──
+        // 保证「父任务用 A 模型 → 派发的子 agent 也用 A」。父任务 model_id
+        // 为 None（极端情况）时回落全局默认（spawn 内 resolve_override 处理）。
+        // 不再向 LLM 暴露 model 参数：子 agent 模型不可由模型自行指定。
+        let model_override = if let Some(pid) = ctx.task_id.clone() {
+            state
+                .agent_tasks
+                .read()
+                .get(&pid)
+                .and_then(|t| t.model_id.clone())
+        } else {
+            None
         };
 
         // ── 嵌套防御：子agent不能再派发子agent ──
@@ -200,18 +256,65 @@ impl AgentTool for TaskTool {
                 .and_then(|t| t.parent_task_id.clone())
                 .is_some()
         {
-            log::warn!("task tool blocked: {} is itself a subagent", parent_task_id);
+            log::warn!("subagent tool blocked: {} is itself a subagent", parent_task_id);
             return Ok(ToolOutput::fail(
-                "task: 子agent不能再派发子agent",
+                "subagent: 子agent不能再派发子agent",
                 "当前任务本身是子agent，不允许再派发子agent。",
             ));
         }
 
+        // ── 多机操控：host 参数 → 目标机器会话；mode → 读写/只读 ──
+        // host 存在但不在「勾选集合 ∪ 当前机」/无凭证 → 明确错误（绝不落回
+        // 当前会话假装在目标机）。mode="agent"（读写）仅桌面端可用（多机
+        // 操控桌面恒开启；移动端恒只读——见 multi_host 模块门控）。
+        let mut exec_session_id = ctx.session_id.clone();
+        let mut target_host_label: Option<String> = None;
+        let mode = params
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("plan");
+
+        // 多机操控桌面恒开启：mode="agent" 桌面接受（读写子 agent）；移动端
+        // 恒只读（Plan），杜绝意外获得写权限。
+        let mh_enabled = crate::multi_host::multi_host_enabled(&state).await;
+        let exec_mode = match mode {
+            "agent" if mh_enabled => AgentMode::Agent,
+            _ => AgentMode::Plan, // 移动端或未知值一律只读（历史行为）
+        };
+
+        // host 解析（仅桌面恒开时有意义；移动端 host 非空 → 明确错误）。
+        if let Some(host) = crate::multi_host::optional_host(&params) {
+            if !mh_enabled {
+                return Ok(ToolOutput::fail(
+                    "subagent: 多机操控不可用",
+                    "多机操控仅桌面端可用。移动端不能指定 host；请去掉 host 参数在当前机器上运行。",
+                ));
+            }
+            let task_id = ctx.task_id.clone().unwrap_or_default();
+            if task_id.is_empty() {
+                return Ok(ToolOutput::fail(
+                    "subagent: 缺少任务上下文",
+                    "多机派发需要任务上下文（缺少 task_id）。",
+                ));
+            }
+            let resolved = crate::multi_host::resolve_target(
+                &ctx.app_handle,
+                &host,
+                &task_id,
+                &ctx.session_id,
+            )
+            .await?;
+            exec_session_id = resolved.session_id;
+            target_host_label = Some(resolved.host_label);
+        }
+
         // ── 创建子agent conversation（独立对话线程，parent 指向主对话）──
-        let session_id = ctx.session_id.clone();
-        let Some(connection_id) = state.ssh_manager.get_connection_id(&session_id).await else {
+        // 子对话归属 = 子 agent **实际运行机器**的 connection（多机时 ≠ 父机器），
+        // 保证 DB 归属与前端注册一致。
+        let Some(connection_id) = state.ssh_manager.get_connection_id(&exec_session_id).await
+        else {
             return Ok(ToolOutput::fail(
-                "task: SSH 会话不存在",
+                "subagent: SSH 会话不存在",
                 "SSH 会话不存在，无法派发子agent。",
             ));
         };
@@ -230,7 +333,7 @@ impl AgentTool for TaskTool {
             Ok(c) => c,
             Err(e) => {
                 return Ok(ToolOutput::fail(
-                    "task: 创建子agent会话失败",
+                    "subagent: 创建子agent会话失败",
                     format!("创建子agent会话失败: {}", e),
                 ));
             }
@@ -254,42 +357,60 @@ impl AgentTool for TaskTool {
                     description: description.clone(),
                     prompt: prompt.clone(),
                     parent_conversation_id,
+                    connection_id: connection_id.clone(),
+                    session_id: exec_session_id.clone(),
+                    mode: if exec_mode == AgentMode::Agent {
+                        "agent".to_string()
+                    } else {
+                        "plan".to_string()
+                    },
                 },
             );
         }
 
         // ── 审批语义：跟随父任务模式 ──
-        // 子 agent 自身固定 Plan（只读调研工具集），但命令确认语义要与父
-        // 任务一致：Auto 父任务派发的子 agent 是「全自主」的一部分——主用户
-        // 选 Auto 就是不希望中途被打断，若子 agent 每条只读命令仍弹 Plan
-        // 审批窗，Auto 就名存实亡。因此父任务为 Auto 时置 approval_mode =
-        // Some(Auto)（命令静默执行，仅保留 sandbox 硬拦截）；Plan/Agent
-        // 父任务保持 None（子 agent 走自身 Plan 的逐条审核现状）。
+        // Auto 父任务派发的子 agent 是「全自主」的一部分——主用户选 Auto 即
+        // 接受全程不打扰，因此 **任何模式** 的子 agent（含 mode="agent" 读写
+        // 执行子 agent）都继承 Some(Auto)：命令静默执行，仅保留 sandbox 硬
+        // 拦截与工具默认审批（requires_default_approval）。
+        // Plan/Agent 父任务保持 None：子 agent 走自身 mode 的审批语义——
+        //   - Plan 子 agent：只读工具集，命令逐条人审；
+        //   - mode="agent" 读写子 agent：破坏性命令人审（安全护栏，不能因
+        //     换机/读写而放养；Auto 父除外——见上）。
         let approval_mode = state
             .agent_tasks
             .read()
             .get(&parent_task_id)
             .and_then(|t| (t.mode == AgentMode::Auto).then_some(AgentMode::Auto));
 
-        // ── 组装 + spawn（子代理 = Plan 模式 + 只读约束段）──
+        // ── 组装 + spawn（子 agent = exec_mode + 对应约束段）──
+        // 只读调研子 agent 用 SUBAGENT_INSTRUCTION（现状）；读写执行子 agent
+        // 用 SUBAGENT_EXEC_INSTRUCTION。工具集由 AgentManager::build_registry
+        // 按 spec.mode 自动派生（plan 无写工具，agent 有——见 plan 模式
+        // 工具集收敛逻辑），这里不再硬编码只读。
+        let sub_instruction = if exec_mode == AgentMode::Agent {
+            SUBAGENT_EXEC_INSTRUCTION
+        } else {
+            SUBAGENT_INSTRUCTION
+        };
         let spec = AgentSpec {
             task_id: sub_task_id.clone(),
-            mode: AgentMode::Plan,
+            mode: exec_mode.clone(),
             approval_mode,
             role: AgentRole::Sub { parent_task_id },
-            session_id,
+            session_id: exec_session_id.clone(),
             conversation_id: sub_conversation_id.clone(),
             prompt,
             history: Vec::new(),
             model_override,
-            prompt_extra: vec![SUBAGENT_INSTRUCTION.to_string()],
+            prompt_extra: vec![sub_instruction.to_string()],
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {
             Ok(h) => h,
             Err(e) => {
                 return Ok(ToolOutput::fail(
-                    "task: 子agent启动失败",
+                    "subagent: 子agent启动失败",
                     format!("子agent启动失败: {}", e),
                 ));
             }
@@ -304,6 +425,23 @@ impl AgentTool for TaskTool {
             .map(|t| t.status.clone())
             .unwrap_or(AgentStatus::Failed);
 
+        // 结果归属元数据（多机 badge / 子 agent 模式）——三处共用。
+        let result_meta = |mut base: serde_json::Value| -> serde_json::Value {
+            let obj = base.as_object_mut().expect("metadata is object");
+            if let Some(label) = &target_host_label {
+                obj.insert("targetHostLabel".to_string(), json!(label));
+            }
+            obj.insert(
+                "mode".to_string(),
+                json!(if exec_mode == AgentMode::Agent {
+                    "agent"
+                } else {
+                    "plan"
+                }),
+            );
+            base
+        };
+
         match result {
             Some(text) => {
                 let output = truncate_chars(&text, MAX_TASK_OUTPUT_CHARS);
@@ -314,11 +452,11 @@ impl AgentTool for TaskTool {
                 );
                 Ok(
                     ToolOutput::ok(format!("子agent完成：{}", description), output).with_metadata(
-                        json!({
+                        result_meta(json!({
                             "subTaskId": sub_task_id,
                             "subConversationId": sub_conversation_id,
                             "status": "completed",
-                        }),
+                        })),
                     ),
                 )
             }
@@ -329,22 +467,22 @@ impl AgentTool for TaskTool {
                         format!("子agent已取消：{}", description),
                         "子agent已被取消，未返回调研结果。",
                     )
-                    .with_metadata(json!({
+                    .with_metadata(result_meta(json!({
                         "subTaskId": sub_task_id,
                         "subConversationId": sub_conversation_id,
                         "status": "cancelled",
-                    })))
+                    }))))
                 } else {
                     log::warn!("Subtask {} failed (no result)", sub_task_id);
                     Ok(ToolOutput::fail(
                         format!("子agent失败：{}", description),
                         "子agent执行失败（LLM 错误或达到最大轮数），未返回调研结果。",
                     )
-                    .with_metadata(json!({
+                    .with_metadata(result_meta(json!({
                         "subTaskId": sub_task_id,
                         "subConversationId": sub_conversation_id,
                         "status": "failed",
-                    })))
+                    }))))
                 }
             }
         }
@@ -391,6 +529,9 @@ mod tests {
             description: "explore nginx".into(),
             prompt: "look at /etc/nginx".into(),
             parent_conversation_id: "conv-1".into(),
+            connection_id: "conn-b".into(),
+            session_id: "sess-b".into(),
+            mode: "plan".into(),
         };
         let json = serde_json::to_value(ev).unwrap();
         assert_eq!(json["type"], "subTaskStart");
@@ -398,5 +539,8 @@ mod tests {
         assert_eq!(json["subTaskId"], "task-2");
         assert_eq!(json["subConversationId"], "conv-2");
         assert_eq!(json["parentConversationId"], "conv-1");
+        assert_eq!(json["connectionId"], "conn-b");
+        assert_eq!(json["sessionId"], "sess-b");
+        assert_eq!(json["mode"], "plan");
     }
 }

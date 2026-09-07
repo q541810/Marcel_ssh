@@ -137,7 +137,7 @@ pub struct ToolContext {
     pub tool_call_id: Option<String>,
     pub event_name: Option<String>,
     /// 当前所属的 agent task id（agent_loop 构造时注入）。
-    /// `task` 工具用它做子agent嵌套检查与子agent注册。
+    /// `subagent` 工具用它做子agent嵌套检查与子agent注册。
     pub task_id: Option<String>,
     /// Optional security policy. When set, tools that run a sandbox
     /// (e.g. `bash`) should honour it instead of falling back
@@ -150,6 +150,10 @@ pub struct ToolContext {
     /// 方法优先经它执行（登记记录 + 断连级联取消 + 后台作业）。仅测试
     /// 场景为 None（回退到 SshManager 兼容 shim，行为一致但不登记）。
     pub command_exec: Option<crate::command_exec::CommandExecutionManager>,
+    /// 多机操控：本工具调用的**目标机器**展示名（host 参数解析后由
+    /// `fork_for` 设置；None = 当前会话机器）。用于传输中心条目与结果
+    /// metadata 的归属展示，工具执行无需再自行解析 host。
+    pub target_host_label: Option<String>,
 }
 
 impl ToolContext {
@@ -165,6 +169,7 @@ impl ToolContext {
             policy: None,
             local_handlers: Arc::new(HashMap::new()),
             command_exec: None,
+            target_host_label: None,
         }
     }
 
@@ -215,6 +220,25 @@ impl ToolContext {
     pub fn with_command_exec(mut self, mgr: crate::command_exec::CommandExecutionManager) -> Self {
         self.command_exec = Some(mgr);
         self
+    }
+
+    /// 派生一个「执行目标」不同的工具上下文（多机操控换机执行）。
+    /// 事件通道 / 工具调用 id / 任务 id / 安全策略 / 本地处理器全部保留，
+    /// 仅替换 SSH 会话——工具换机执行时，审批与流式输出仍回到原任务的
+    /// 事件通道，沙箱策略与取消归属也不变。
+    pub fn fork_for(&self, session_id: impl Into<String>) -> Self {
+        let mut next = self.clone();
+        next.session_id = session_id.into();
+        next
+    }
+
+    /// 多机跨机执行：换目标会话并记录目标机器展示名（传输中心条目 /
+    /// 结果 metadata 归属展示用）。
+    pub fn fork_to(&self, session_id: impl Into<String>, host_label: impl Into<String>) -> Self {
+        let mut next = self.clone();
+        next.session_id = session_id.into();
+        next.target_host_label = Some(host_label.into());
+        next
     }
 
     /// 把管理器结果映射回旧 `(output, was_timeout)` 形状。
@@ -398,7 +422,7 @@ pub trait AgentTool: Send + Sync {
 
     /// Whether this tool is safe to execute concurrently with adjacent concurrent-safe tools.
     /// Default is `false` (strictly sequential execution to preserve causal dependencies).
-    /// Pure, read-only isolated subagents (`TaskTool`) override this to `true`.
+    /// Pure, read-only isolated subagents (`SubagentTool`) override this to `true`.
     fn is_concurrent_safe(&self) -> bool {
         false
     }
@@ -474,6 +498,13 @@ impl ToolRegistry {
     /// Register a tool. The last registration wins on name collision.
     pub fn register(&mut self, tool: Arc<dyn AgentTool>) {
         self.tools.insert(tool.name().to_string(), tool);
+    }
+
+    /// Remove a tool by name. Used to converge a registry for a sub-agent
+    /// role (e.g. strip `subagent`/plan orchestration tools from execution
+    /// sub-agents). Missing name is a no-op.
+    pub fn remove(&mut self, name: &str) {
+        self.tools.remove(name);
     }
 
     /// Register a local handler by name. Plugins reference handlers by name
@@ -667,10 +698,20 @@ impl ToolRegistry {
         r.register(Arc::new(plan::UpdatePlanItemTool::new()));
         r.register(Arc::new(plan::EditPlanTool::new()));
         r.register(Arc::new(question::QuestionTool::new(false)));
-        r.register(Arc::new(subagent::TaskTool));
+        r.register(Arc::new(subagent::SubagentTool));
         r.register(Arc::new(job_ops::JobOutputTool::new()));
         r.register(Arc::new(job_ops::JobKillTool::new()));
         r.register(Arc::new(job_ops::JobListTool::new()));
+        // upload_file / download_file：桌面专属。它们读写「本机文件系统」——
+        // 本地路径用 dirs::download_dir/home_dir 解析（download 缺省落系统下载
+        // 目录、upload 读本机文件）；移动端这些目录解析为 None、也无文件系统
+        // 语义（Android 走 SAF），工具不可用。与 render_html 同款门控：移动端
+        // 不注册，避免 LLM 反复调用必失败的 tool。
+        #[cfg(desktop)]
+        {
+            r.register(Arc::new(sftp_transfer::UploadFileTool::new()));
+            r.register(Arc::new(sftp_transfer::DownloadFileTool::new()));
+        }
         r
     }
 
@@ -708,8 +749,8 @@ mod tests {
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
         assert_eq!(
             names.len(),
-            19,
-            "expected 19 built-in tools, got {:?}",
+            21,
+            "expected 21 built-in tools, got {:?}",
             names
         );
         for expected in [
@@ -728,10 +769,12 @@ mod tests {
             "create_plan",
             "update_plan_item",
             "edit_plan",
-            "task",
+            "subagent",
             "job_output",
             "job_kill",
             "job_list",
+            "upload_file",
+            "download_file",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
@@ -752,6 +795,7 @@ mod tests {
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
+            multi_host_connection_ids: Vec::new(),
         };
         let r = ToolRegistry::build_for_mode(&[], &disabled);
         let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
@@ -778,6 +822,7 @@ mod tests {
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
+            multi_host_connection_ids: Vec::new(),
         };
 
         let r = ToolRegistry::build_for_mode(&[], &enabled);
@@ -800,6 +845,7 @@ mod tests {
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Html,
+            multi_host_connection_ids: Vec::new(),
         };
         let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_search)
             .definitions()
@@ -818,6 +864,7 @@ mod tests {
             web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
             web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
             http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
+            multi_host_connection_ids: Vec::new(),
         };
         let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_http)
             .definitions()

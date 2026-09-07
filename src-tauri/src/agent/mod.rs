@@ -16,5 +16,6 @@ pub mod templates;
 pub mod thinking_filter;
 pub mod tool_dispatcher;
 pub mod tools;
+pub mod transfer;
 
 pub use risk::RiskLevel;

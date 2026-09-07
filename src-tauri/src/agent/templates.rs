@@ -46,6 +46,8 @@ impl TemplateManager {
             "插件指令",
             include_str!("../../templates/agent/插件指令.hbs"),
         );
+        let _ =
+            reg.register_template_string("多机", include_str!("../../templates/agent/多机.hbs"));
         reg
     }
 
@@ -136,6 +138,24 @@ impl TemplateManager {
             .render("审批规划", &json!({}))
             .unwrap_or_default()
     }
+
+    /// Render the multi-host control section（动态机器清单 + 操作策略）。
+    /// `machines` = [{label: 展示名(含消歧后缀), status: "在线"|"离线，将自动连接"|"当前会话"}]
+    /// 由调用方（multi_host）收集数据；模板文本外置于 templates/agent/多机.hbs。
+    pub fn render_multi_host(&self, current_host: &str, machines: &[serde_json::Value]) -> String {
+        let reg = Self::build_agent_registry();
+        reg.render(
+            "多机",
+            &json!({
+                "current_host": current_host,
+                "machines": machines,
+            }),
+        )
+        .unwrap_or_else(|e| {
+            log::warn!("模板 [多机] 渲染失败: {}", e);
+            String::new()
+        })
+    }
 }
 
 #[cfg(test)]
@@ -169,7 +189,7 @@ mod tests {
         assert!(!prompt.contains("skill_"));
         assert!(!prompt.contains("插件扩展指令"));
         assert!(!prompt.contains("Plan 模式"));
-        assert!(!prompt.contains("子agent调研"));
+        assert!(!prompt.contains("子agent 派发"));
     }
 
     #[test]
@@ -184,7 +204,7 @@ mod tests {
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
         assert!(prompt.contains("skill_"));
-        assert!(prompt.contains("子agent调研"));
+        assert!(prompt.contains("子agent 派发"));
     }
 
     #[test]
@@ -211,29 +231,29 @@ mod tests {
     }
 
     #[test]
-    fn prompt_task_section_when_task_tool_present() {
+    fn prompt_subagent_section_when_subagent_tool_present() {
         let vars = AgentPromptVars {
             session_id: "s1".into(),
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
         let prompt = build(&vars, false, false, false, false, true);
-        assert!(prompt.contains("子agent调研"));
-        assert!(prompt.contains("task"));
-        // 联网调研优先派发子agent 的引导（token 消耗/会话时长）
-        assert!(prompt.contains("联网调研"));
+        assert!(prompt.contains("子agent 派发"));
+        assert!(prompt.contains("subagent"));
+        // 联网搜集信息默认派发子agent 的引导（web_search 质量低/token 消耗/会话时长）
+        assert!(prompt.contains("联网搜集信息"));
         assert!(prompt.contains("token"));
     }
 
     #[test]
-    fn prompt_task_section_omitted_when_task_tool_absent() {
+    fn prompt_subagent_section_omitted_when_subagent_tool_absent() {
         let vars = AgentPromptVars {
             session_id: "s1".into(),
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
         let prompt = build(&vars, false, false, false, false, false);
-        assert!(!prompt.contains("子agent调研"));
+        assert!(!prompt.contains("子agent 派发"));
     }
 
     #[test]
@@ -306,5 +326,27 @@ mod tests {
 
         let plan = TemplateManager.render_approval_plan();
         assert!(plan.contains("Plan 模式"));
+    }
+
+    #[test]
+    fn render_multi_host_lists_machines_with_status() {
+        let machines = serde_json::json!([
+            { "label": "web:0", "status": "在线" },
+            { "label": "db", "status": "离线，将自动连接" },
+        ]);
+        let out = TemplateManager.render_multi_host("web", machines.as_array().unwrap());
+        assert!(out.contains("当前机器：web"));
+        assert!(out.contains("- web:0（在线）"));
+        assert!(out.contains("- db（离线，将自动连接）"));
+        // 策略文案在模板内（不是硬编码在 Rust 侧）。
+        assert!(out.contains("批量操作"));
+        assert!(out.contains("生成任务指派代理执行"));
+    }
+
+    #[test]
+    fn render_multi_host_empty_machines_produces_header_only() {
+        let out = TemplateManager.render_multi_host("web", &[]);
+        assert!(out.contains("当前机器：web"));
+        assert!(!out.contains("可操作机器"));
     }
 }

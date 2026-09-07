@@ -793,7 +793,8 @@ pub async fn sftp_write_file(
 
 /// 远程 → 本地文件的分块拷贝循环（含取消、进度事件、结尾 flush）。
 /// 返回实际写入字节数；上层负责对目标文件做失败清理。
-async fn stream_remote_to_local_file(
+/// `pub(crate)`：Agent 传输工具（下载）复用同一流式实现。
+pub(crate) async fn stream_remote_to_local_file(
     app: &AppHandle,
     remote: &mut russh_sftp::client::fs::File,
     local: &mut tokio::fs::File,
@@ -958,6 +959,37 @@ pub async fn sftp_download_stream(
         return Ok(());
     }
 
+    // 普通路径：流式下载逻辑与 Agent 传输工具共用同一实现
+    // （stream_download_single_file，含 .part/.backup + 取消 + 完整性 + done 事件）。
+    stream_download_single_file(
+        &app,
+        &mut remote,
+        total,
+        &local_path,
+        &download_id,
+        &mut cancel_rx,
+        true,
+    )
+    .await
+}
+
+/// 单文件流式下载的**共享实现**：远端 → 本地 .part 临时文件 → 原子替换。
+/// 用户 SFTP 面板（sftp_download_stream）与 Agent 传输工具共用，避免两套实现。
+///
+/// 事件协议：进度发 `sftp-download-progress{downloadId,written,total}`，完成发
+/// `sftp-download-done{downloadId}`——`download_id` 由调用方给定（Agent 用
+/// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
+/// 取消：`cancel_rx` 被置位即中止并清理 .part；调用方负责把 sender 注册进
+/// `AppState::download_cancel_senders`（前端 `sftp_cancel_download` 按 id 触发）。
+pub(crate) async fn stream_download_single_file(
+    app: &AppHandle,
+    remote: &mut russh_sftp::client::fs::File,
+    total: u64,
+    local_path: &str,
+    download_id: &str,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+    allow_replace: bool,
+) -> Result<(), AppError> {
     let temp_local_path = format!("{}.marcel-download-{}.part", local_path, download_id);
     let backup_local_path = format!("{}.marcel-download-{}.backup", local_path, download_id);
 
@@ -965,15 +997,8 @@ pub async fn sftp_download_stream(
         .await
         .map_err(|e| AppError::Ssh(format!("创建本地文件失败: {}", e)))?;
 
-    let result = stream_remote_to_local_file(
-        &app,
-        &mut remote,
-        &mut local,
-        &mut cancel_rx,
-        &download_id,
-        total,
-    )
-    .await;
+    let result =
+        stream_remote_to_local_file(app, remote, &mut local, cancel_rx, download_id, total).await;
 
     let written = match result {
         Ok(written) => written,
@@ -993,16 +1018,20 @@ pub async fn sftp_download_stream(
         )));
     }
 
-    if let Err(e) = check_cancelled(&cancel_rx, "下载已取消") {
+    if let Err(e) = check_cancelled(cancel_rx, "下载已取消") {
         let _ = tokio::fs::remove_file(&temp_local_path).await;
         return Err(e);
     }
 
-    let had_existing = match tokio::fs::metadata(&local_path).await {
+    let had_existing = match tokio::fs::metadata(local_path).await {
         Ok(meta) => {
             if meta.is_dir() {
                 let _ = tokio::fs::remove_file(&temp_local_path).await;
                 return Err(AppError::Ssh("保存路径已存在同名目录".into()));
+            }
+            if !allow_replace {
+                let _ = tokio::fs::remove_file(&temp_local_path).await;
+                return Err(AppError::Ssh("本地文件已存在（未允许覆盖）".into()));
             }
             true
         }
@@ -1011,15 +1040,15 @@ pub async fn sftp_download_stream(
 
     if had_existing {
         let _ = tokio::fs::remove_file(&backup_local_path).await;
-        if let Err(e) = tokio::fs::rename(&local_path, &backup_local_path).await {
+        if let Err(e) = tokio::fs::rename(local_path, &backup_local_path).await {
             let _ = tokio::fs::remove_file(&temp_local_path).await;
             return Err(AppError::Ssh(format!("备份已有文件失败: {}", e)));
         }
     }
 
-    if let Err(e) = tokio::fs::rename(&temp_local_path, &local_path).await {
+    if let Err(e) = tokio::fs::rename(&temp_local_path, local_path).await {
         if had_existing {
-            let _ = tokio::fs::rename(&backup_local_path, &local_path).await;
+            let _ = tokio::fs::rename(&backup_local_path, local_path).await;
         }
         let _ = tokio::fs::remove_file(&temp_local_path).await;
         return Err(AppError::Ssh(format!("保存下载文件失败: {}", e)));
@@ -1030,9 +1059,9 @@ pub async fn sftp_download_stream(
     }
 
     emit_event(
-        &app,
+        app,
         "sftp-download-done",
-        json!({ "downloadId": &download_id }),
+        json!({ "downloadId": download_id }),
     );
 
     Ok(())
@@ -1072,6 +1101,49 @@ impl Drop for TransferCancelGuard {
     fn drop(&mut self) {
         self.senders.write().remove(&self.transfer_id);
     }
+}
+
+/// 注册一个上传取消 watch 到统一表，返回 drop 时自动清理的 guard。
+/// Agent 传输工具复用（id 以 `agent-transfer-` 前缀，前端取消按钮按 id 触发）。
+pub(crate) fn register_upload_cancel(
+    state: &AppState,
+    transfer_id: &str,
+) -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::sync::watch::Receiver<bool>,
+    TransferCancelGuard,
+) {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    state
+        .upload_cancel_senders
+        .write()
+        .insert(transfer_id.to_string(), tx.clone());
+    let guard = TransferCancelGuard {
+        transfer_id: transfer_id.to_string(),
+        senders: state.upload_cancel_senders.clone(),
+    };
+    (tx, rx, guard)
+}
+
+/// 注册一个下载取消 watch 到统一表，返回 drop 时自动清理的 guard。
+pub(crate) fn register_download_cancel(
+    state: &AppState,
+    transfer_id: &str,
+) -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::sync::watch::Receiver<bool>,
+    TransferCancelGuard,
+) {
+    let (tx, rx) = tokio::sync::watch::channel(false);
+    state
+        .download_cancel_senders
+        .write()
+        .insert(transfer_id.to_string(), tx.clone());
+    let guard = TransferCancelGuard {
+        transfer_id: transfer_id.to_string(),
+        senders: state.download_cancel_senders.clone(),
+    };
+    (tx, rx, guard)
 }
 
 /// content:// URI 的打开模式（Android SAF）。
@@ -1145,7 +1217,9 @@ pub async fn sftp_local_file_name(path: String) -> Result<String, AppError> {
         .ok_or_else(|| AppError::Ssh("无法从路径解析文件名".into()))
 }
 
-fn check_cancelled(
+/// 取消检查：watch 已被置位则返回取消错误。
+/// `pub(crate)`：Agent 传输工具（agent/tools/sftp_transfer.rs）复用统一取消协议。
+pub(crate) fn check_cancelled(
     cancel_rx: &tokio::sync::watch::Receiver<bool>,
     message: &str,
 ) -> Result<(), AppError> {
@@ -1156,7 +1230,9 @@ fn check_cancelled(
     }
 }
 
-fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
+/// 为远程路径生成隐藏 sidecar 临时路径（同目录，`.name.marcel-{label}-{uuid}`）。
+/// `pub(crate)`：Agent 传输工具复用（上传/下载走临时文件 + 原子提交）。
+pub(crate) fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
     let normalized = path.trim_end_matches('/');
     let Some(idx) = normalized.rfind('/') else {
         return Err(AppError::Ssh("远程路径无效".into()));
@@ -1174,7 +1250,9 @@ fn remote_sidecar_path(path: &str, label: &str) -> Result<String, AppError> {
     })
 }
 
-async fn commit_remote_temp_file(
+/// 把临时远端文件原子提交到目标路径（可覆盖或拒绝覆盖已有）。
+/// `pub(crate)`：Agent 传输工具复用（上传走临时文件 + 原子提交）。
+pub(crate) async fn commit_remote_temp_file(
     sftp: &russh_sftp::client::SftpSession,
     temp_path: &str,
     target_path: &str,
@@ -1273,7 +1351,40 @@ pub async fn sftp_upload_stream(
         )));
     }
 
-    let temp_remote_path = remote_sidecar_path(&remote_path, "upload")?;
+    // 普通路径：流式上传逻辑与 Agent 传输工具共用同一实现
+    // （stream_upload_single_file，含 sidecar + 取消 + 完整性校验 + done 事件）。
+    stream_upload_single_file(
+        &app,
+        &sftp,
+        &mut local_file,
+        total,
+        size_known,
+        &remote_path,
+        &upload_id,
+        &mut cancel_rx,
+    )
+    .await
+}
+
+/// 单文件流式上传的**共享实现**：本地文件 → 远端 sidecar 临时文件 → 原子提交。
+/// 用户 SFTP 面板（sftp_upload_stream）与 Agent 传输工具共用，避免两套实现。
+///
+/// 事件协议：进度发 `sftp-upload-progress{uploadId,written,total}`，完成发
+/// `sftp-upload-done{uploadId}`——`upload_id` 由调用方给定（Agent 用
+/// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
+/// 取消：`cancel_rx` 被置位即中止并清理 sidecar（调用方负责把 sender 注册进
+/// `AppState::upload_cancel_senders`，前端 `sftp_cancel_upload` 按 id 触发）。
+pub(crate) async fn stream_upload_single_file(
+    app: &AppHandle,
+    sftp: &russh_sftp::client::SftpSession,
+    local_file: &mut tokio::fs::File,
+    total: u64,
+    size_known: bool,
+    remote_path: &str,
+    upload_id: &str,
+    cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
+) -> Result<(), AppError> {
+    let temp_remote_path = remote_sidecar_path(remote_path, "upload")?;
 
     let mut remote_file = sftp
         .open_with_flags(
@@ -1288,7 +1399,7 @@ pub async fn sftp_upload_stream(
 
     let result: Result<(), AppError> = async {
         loop {
-            check_cancelled(&cancel_rx, "上传已取消")?;
+            check_cancelled(cancel_rx, "上传已取消")?;
 
             let n = tokio::select! {
                 result = local_file.read(&mut buf) => {
@@ -1311,9 +1422,9 @@ pub async fn sftp_upload_stream(
             written += n as u64;
 
             emit_event(
-                &app,
+                app,
                 "sftp-upload-progress",
-                json!({ "uploadId": &upload_id, "written": written, "total": total }),
+                json!({ "uploadId": upload_id, "written": written, "total": total }),
             );
         }
 
@@ -1341,13 +1452,13 @@ pub async fn sftp_upload_stream(
         )));
     }
 
-    if let Err(e) = check_cancelled(&cancel_rx, "上传已取消") {
+    if let Err(e) = check_cancelled(cancel_rx, "上传已取消") {
         let _ = sftp.remove_file(&temp_remote_path).await;
         return Err(e);
     }
-    commit_remote_temp_file(&sftp, &temp_remote_path, &remote_path, false).await?;
+    commit_remote_temp_file(sftp, &temp_remote_path, remote_path, false).await?;
 
-    emit_event(&app, "sftp-upload-done", json!({ "uploadId": &upload_id }));
+    emit_event(app, "sftp-upload-done", json!({ "uploadId": upload_id }));
 
     Ok(())
 }

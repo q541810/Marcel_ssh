@@ -9,6 +9,13 @@
 //! Sudo auto-fill:
 //! - When a command starts with `sudo` and a password is available in the keychain,
 //!   the command is rewritten to pipe the password via stdin (`sudo -S`).
+//!
+//! Multi-host:
+//! - Optional `host` param (only meaningful when multi-host control is enabled)
+//!   resolves to a target machine's session and executes there; all execution
+//!   still goes through the unified `command_exec` manager. When the target is
+//!   the current session no fork happens; when it differs, a forked
+//!   [`ToolContext`] (same event channel / task id / policy) is used.
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -29,65 +36,16 @@ impl BashTool {
     pub fn new() -> Self {
         Self
     }
-}
 
-impl Default for BashTool {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl AgentTool for BashTool {
-    fn name(&self) -> &str {
-        "bash"
-    }
-
-    fn description(&self) -> &str {
-        "Execute a shell command on the remote server via the user's login shell \
-         (usually bash). Returns combined stdout+stderr. Long output is truncated. \
-         The command is statically analyzed by a security sandbox before execution; \
-         some patterns (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) \
-         are always rejected. Timeout is configured by the user (default 120s).\n\
-         Set `run_in_background: true` for long-running commands (compilations, \
-         large downloads, servers/daemons, ongoing tasks) to receive a `job_id` \
-         immediately and manage it via `job_output`, `job_kill`, and `job_list`."
-    }
-
-    fn parameters_schema(&self) -> serde_json::Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command line to execute (run via the user's login shell)."
-                },
-                "run_in_background": {
-                    "type": "boolean",
-                    "description": "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). Defaults to false."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in UI). Example: 'Build release binary' or 'Run database migration'."
-                },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Optional timeout in milliseconds for foreground execution. Ignored when run_in_background is true."
-                }
-            },
-            "required": ["command"]
-        })
-    }
-
-    fn risk_level(&self) -> RiskLevel {
-        // Baseline. Real risk is computed per-invocation via [`sandbox::assess_risk`].
-        RiskLevel::Moderate
-    }
-
-    async fn execute(
-        &self,
+    /// 执行主体（无 host 的直接路径与有 host 的换机路径共用）。
+    ///
+    /// `ctx` 决定目标会话（换机时由 [`AgentTool::execute`] 传入 fork 后的
+    /// 上下文）；`target_label` = 多机换机时的目标机器可读名（None = 当前
+    /// 会话），附加到结果 metadata 供前端卡片展示归属。
+    async fn execute_inner(
         params: serde_json::Value,
         ctx: &ToolContext,
+        target_label: Option<String>,
     ) -> Result<ToolOutput, AppError> {
         let command = params
             .get("command")
@@ -111,6 +69,18 @@ impl AgentTool for BashTool {
 
         let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
 
+        // 多机归属：target_label 非空时附加到结果 metadata（前端卡片 badge）。
+        let attach_target = |meta: serde_json::Value| -> serde_json::Value {
+            match &target_label {
+                Some(label) => {
+                    let mut m = meta.as_object().cloned().unwrap_or_default();
+                    m.insert("targetHostLabel".to_string(), json!(label));
+                    serde_json::Value::Object(m)
+                }
+                None => meta,
+            }
+        };
+
         // Static safety check. Higher-level policy (allow/deny lists, user
         // approval) is applied by `commands/agent.rs`.
         let sandbox = match ctx.policy.as_ref() {
@@ -122,10 +92,10 @@ impl AgentTool for BashTool {
                 format!("$ {}", command),
                 format!("BLOCKED by sandbox: {}", e),
             )
-            .with_metadata(json!({
+            .with_metadata(attach_target(json!({
                 "blocked": true,
                 "reason": e.to_string(),
-            })));
+            }))));
         }
 
         let risk = sandbox::assess_risk(command);
@@ -192,12 +162,14 @@ impl AgentTool for BashTool {
                 job_info.job_id, job_info.status, job_info.job_id, job_info.job_id
             );
 
-            return Ok(ToolOutput::ok(summary, output).with_metadata(json!({
-                "job_id": job_info.job_id,
-                "status": job_info.status.to_string(),
-                "description": job_info.description,
-                "run_in_background": true,
-            })));
+            return Ok(
+                ToolOutput::ok(summary, output).with_metadata(attach_target(json!({
+                    "job_id": job_info.job_id,
+                    "status": job_info.status.to_string(),
+                    "description": job_info.description,
+                    "run_in_background": true,
+                }))),
+            );
         }
 
         let timeout_secs = timeout_ms.map(|ms| (ms / 1000).max(1)).unwrap_or_else(|| {
@@ -241,15 +213,120 @@ impl AgentTool for BashTool {
                 }
                 Ok(
                     ToolOutput::ok(format!("$ {}", command), truncated).with_metadata(
-                        json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout }),
+                        attach_target(
+                            json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout }),
+                        ),
                     ),
                 )
             }
             Err(e) => Ok(ToolOutput::fail(
                 format!("$ {}", command),
                 format!("execution failed: {}", e),
-            )),
+            )
+            .with_metadata(attach_target(json!({ "failed": true })))),
         }
+    }
+}
+
+impl Default for BashTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl AgentTool for BashTool {
+    fn name(&self) -> &str {
+        "bash"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a shell command on the remote server via the user's login shell \
+         (usually bash). Returns combined stdout+stderr. Long output is truncated. \
+         The command is statically analyzed by a security sandbox before execution; \
+         some patterns (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) \
+         are always rejected. Timeout is configured by the user (default 120s).\n\
+         Set `run_in_background: true` for long-running commands (compilations, \
+         large downloads, servers/daemons, ongoing tasks) to receive a `job_id` \
+         immediately and manage it via `job_output`, `job_kill`, and `job_list`.\n\
+         Multi-host: you may pass an optional `host` (the current machine or a \
+         machine from the selected set, by its readable name) to run the command \
+         on that machine instead of the current one. Desktop only.\n\
+         IMPORTANT: the `host` value must match the machine name in the multi-host \
+         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
+         any character (no extra spaces, no lowercase/uppercase changes, no \
+         punctuation changes). A name that differs by even one character is \
+         rejected, never silently redirected."
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Shell command line to execute (run via the user's login shell)."
+                },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Run in the background and return a job id immediately (collect with job_output, stop with job_kill). Defaults to false."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in UI). Example: 'Build release binary' or 'Run database migration'."
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Optional timeout in milliseconds for foreground execution. Ignored when run_in_background is true."
+                },
+                "host": {
+                    "type": "string",
+                    "description": "Optional. Target machine's readable name: the current machine or one from the multi-host selected set (e.g. 'web-prod-01'). When omitted, runs on the current session's machine. Desktop only; on mobile passing host returns an error. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
+                }
+            },
+            "required": ["command"]
+        })
+    }
+
+    fn risk_level(&self) -> RiskLevel {
+        // Baseline. Real risk is computed per-invocation via [`sandbox::assess_risk`].
+        RiskLevel::Moderate
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<ToolOutput, AppError> {
+        // ── 多机操控：host 参数 → 目标机器会话 ──
+        // 门控语义：host 非空 → 解析目标（集合内或当前机，见 multi_host 模块）；
+        // 解析失败/不在集合 → 明确错误，绝不落回当前会话执行（防止模型以为
+        // 在 A 却打在 B）。
+        if let Some(host) = crate::multi_host::optional_host(&params) {
+            // 当前 ctx 的 session_id 由任务绑定，换机需要 task_id 记账。
+            let task_id = ctx.task_id.clone().unwrap_or_default();
+            if task_id.is_empty() {
+                return Ok(ToolOutput::fail(
+                    "bash",
+                    "多机执行需要任务上下文（缺少 task_id）",
+                ));
+            }
+            let resolved = crate::multi_host::resolve_target(
+                &ctx.app_handle,
+                &host,
+                &task_id,
+                &ctx.session_id,
+            )
+            .await?;
+            let target_label = Some(resolved.host_label.clone());
+            if resolved.session_id == ctx.session_id {
+                // 目标就是当前会话：无需 fork，直接执行（host_label 附到结果）。
+                return Self::execute_inner(params, ctx, target_label).await;
+            }
+            let target_ctx = ctx.fork_for(&resolved.session_id);
+            return Self::execute_inner(params, &target_ctx, target_label).await;
+        }
+        Self::execute_inner(params, ctx, None).await
     }
 }
 

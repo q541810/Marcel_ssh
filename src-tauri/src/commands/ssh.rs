@@ -23,7 +23,8 @@ fn jump_passphrase_account(connection_id: &str) -> String {
 
 /// Build runtime jump config from a saved connection + keychain secrets.
 /// Returns `Ok(None)` when jump is not enabled.
-fn build_jump_config(
+/// `pub(crate)`：多机操控（multi_host）静默拉起复用同一构建逻辑。
+pub(crate) fn build_jump_config(
     saved: &SavedConnection,
     connection_id: &str,
     target_auth: &AuthMethod,
@@ -93,6 +94,32 @@ fn clone_auth_method(auth: &AuthMethod) -> AuthMethod {
             key_path: key_path.clone(),
             passphrase: passphrase.clone(),
         },
+    }
+}
+
+/// 从 SavedConnection 的认证方式 + keychain 组装运行时 AuthMethod。
+/// 密码 / 私钥 passphrase 在 Rust 侧读取，绝不进 WebView。
+/// `pub(crate)`：多机操控静默拉起复用（`multi_host::spawn_connection`）。
+pub(crate) fn build_connect_auth_method(saved: &SavedConnection) -> Result<AuthMethod, AppError> {
+    match saved.auth_method.as_str() {
+        "Password" => {
+            let password = keychain::get_password(&saved.id)?
+                .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+            Ok(AuthMethod::Password { password })
+        }
+        "PrivateKey" => {
+            let key_path = saved
+                .key_path
+                .clone()
+                .filter(|p| !p.is_empty())
+                .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
+            let passphrase = keychain::get_password(&format!("pk:{}", saved.id))?;
+            Ok(AuthMethod::PrivateKey {
+                key_path,
+                passphrase,
+            })
+        }
+        other => Err(AppError::Config(format!("不支持的认证方式: {}", other))),
     }
 }
 

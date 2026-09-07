@@ -215,6 +215,14 @@ pub struct ExperimentalSettings {
     /// Which backend `http_get` uses. Independent of search mode.
     #[serde(default)]
     pub http_fetch_mode: HttpFetchMode,
+    /// 多机操控的「可跨机目标机器」集合（SavedConnection id 列表，空 = 仅
+    /// 当前机器可执行）。桌面端多机操控恒开启（无开关），Agent 工具（bash /
+    /// upload_file / download_file / task）可携带 `host` 参数；目标机器必须
+    /// 在此集合内（或为当前会话所在机器），否则拒绝。由用户在桌面 Agent
+    /// 面板顶栏勾选维护；后端任务/工具解析时读取同一份做白名单。
+    /// 移动端不提供该能力（按 `cfg!(desktop)` 门控，见 multi_host 模块）。
+    #[serde(default)]
+    pub multi_host_connection_ids: Vec<String>,
 }
 
 impl Default for ExperimentalSettings {
@@ -228,6 +236,7 @@ impl Default for ExperimentalSettings {
             web_search_api_provider: WebSearchApiProvider::Brave,
             web_search_endpoint: WebSearchEndpoint::Cn,
             http_fetch_mode: HttpFetchMode::Browser,
+            multi_host_connection_ids: Vec::new(),
         }
     }
 }
@@ -655,6 +664,18 @@ mod tests {
         assert_eq!(parsed.web_search_api_provider, WebSearchApiProvider::Brave);
         assert_eq!(parsed.web_search_endpoint, WebSearchEndpoint::Cn);
         assert_eq!(parsed.http_fetch_mode, HttpFetchMode::Browser);
+        // 多机操控：旧数据无集合字段 → 空集合（不报错、不改写）。
+        assert!(parsed.multi_host_connection_ids.is_empty());
+    }
+
+    #[test]
+    fn experimental_settings_multi_host_fields_roundtrip() {
+        let mut s = ExperimentalSettings::default();
+        s.multi_host_connection_ids = vec!["c1".to_string(), "c2".to_string()];
+        let json = serde_json::to_string(&s).expect("serialize");
+        assert!(json.contains("\"multiHostConnectionIds\":[\"c1\",\"c2\"]"));
+        let parsed: ExperimentalSettings = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.multi_host_connection_ids, vec!["c1", "c2"]);
     }
 
     #[test]

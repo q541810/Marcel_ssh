@@ -159,7 +159,7 @@ pub async fn agent_get_conversation(
     Ok(overlay_session_model(&state, conv).await)
 }
 
-/// 过滤掉子agent对话（task 工具创建，parent_conversation_id 非空）：
+/// 过滤掉子agent对话（subagent 工具创建，parent_conversation_id 非空）：
 /// 子对话不出现在会话列表/历史/搜索中，只通过主对话的 task 卡片进入。
 fn filter_sub_conversations(convs: Vec<Conversation>) -> Vec<Conversation> {
     convs
@@ -184,11 +184,7 @@ pub async fn agent_list_conversations(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(overlay_session_models(
-        &state,
-        filter_sub_conversations(conversations),
-    )
-    .await)
+    Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
 }
 
 /// Load all messages for a conversation.
@@ -658,11 +654,7 @@ pub async fn agent_list_conversations_by_connection(
         .conversation_db
         .list_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
-    Ok(overlay_session_models(
-        &state,
-        filter_sub_conversations(conversations),
-    )
-    .await)
+    Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
 }
 
 /// 全文搜索聊天历史（消息 content），按会话聚合。

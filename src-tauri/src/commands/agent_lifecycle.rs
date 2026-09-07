@@ -42,8 +42,8 @@ pub async fn agent_start_task(
     Ok(handle.task_id)
 }
 
-/// 收集 task_id 及其全部后代子任务（task 工具派发的子agent）。
-/// 子agent不能再派发子agent（plan 工具集无 task 工具 + 工具内嵌套防御），
+/// 收集 task_id 及其全部后代子任务（subagent 工具派发的子agent）。
+/// 子agent不能再派发子agent（plan 工具集无 subagent 工具 + 工具内嵌套防御），
 /// 一层即可覆盖全部后代，BFS 遍历防御任何残留的多层结构。
 fn collect_descendant_tasks(
     tasks: &std::collections::HashMap<String, AgentTask>,

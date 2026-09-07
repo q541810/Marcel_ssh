@@ -30,7 +30,7 @@ pub struct Conversation {
     pub title: String,
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
-    /// 子agent对话（task 工具创建）的父对话 id；主对话为 None。
+    /// 子agent对话（subagent 工具创建）的父对话 id；主对话为 None。
     /// 用于：会话列表隐藏子对话、子对话内"返回主对话"、删除主对话级联删除。
     #[serde(default)]
     pub parent_conversation_id: Option<String>,
@@ -217,7 +217,7 @@ impl ConversationDb {
             log::info!("Migration complete: image_paths_json column added");
         }
 
-        // Migration: add parent_conversation_id for subagent (task tool) conversations.
+        // Migration: add parent_conversation_id for subagent (subagent tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
             log::info!("Migrating conversation database: adding parent_conversation_id column");
@@ -248,11 +248,8 @@ impl ConversationDb {
         // 无档位记忆（跟随模型默认，兼容旧数据）。
         if !column_exists(&conn, "conversations", "efforts_json") {
             log::info!("Migrating conversation database: adding efforts_json column");
-            conn.execute(
-                "ALTER TABLE conversations ADD COLUMN efforts_json TEXT",
-                [],
-            )
-            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            conn.execute("ALTER TABLE conversations ADD COLUMN efforts_json TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete: efforts_json column added");
         }
 
@@ -288,7 +285,7 @@ impl ConversationDb {
         self.insert_conversation(connection_id, title, None)
     }
 
-    /// 创建子agent对话（task 工具派发的子 agent 专属）。
+    /// 创建子agent对话（subagent 工具派发的子 agent 专属）。
     /// parent_conversation_id 记录主对话 id：会话列表据此隐藏子对话，
     /// 子对话内提供"返回主对话"，删除主对话时级联删除子对话。
     pub fn create_sub_conversation(
@@ -787,9 +784,9 @@ impl ConversationDb {
         Ok(())
     }
 
-    /// 级联删除：删除该对话及其全部子agent对话（task 工具创建）。
+    /// 级联删除：删除该对话及其全部子agent对话（subagent 工具创建）。
     /// 返回被删除的对话 id 列表（含自身）。
-    /// 子agent不能再派发子agent（plan 工具集无 task 工具 + 工具内嵌套防御），
+    /// 子agent不能再派发子agent（plan 工具集无 subagent 工具 + 工具内嵌套防御），
     /// 这里用 BFS 遍历防御任何残留的多层结构。
     pub fn delete_conversation_cascade(
         &self,
@@ -1046,9 +1043,7 @@ impl ConversationDb {
     /// 读出全部会话的思考档位映射（`efforts_json` 列），用于启动时装载进
     /// 内存 `session_efforts`。每行 `efforts_json` 为 `{"model_id":"effort"}`
     /// JSON 对象（可能为空对象/损坏——损坏行由调用方容忍跳过）。
-    pub fn load_all_conversation_efforts(
-        &self,
-    ) -> RusqliteResult<Vec<(String, Option<String>)>> {
+    pub fn load_all_conversation_efforts(&self) -> RusqliteResult<Vec<(String, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, efforts_json FROM conversations WHERE efforts_json IS NOT NULL AND efforts_json != ''",
@@ -1058,7 +1053,10 @@ impl ConversationDb {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
-        Ok(rows.into_iter().map(|(id, json)| (id, Some(json))).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(id, json)| (id, Some(json)))
+            .collect())
     }
 
     /// 写回某个会话的整张 (model → effort) 思考档位映射（JSON 对象串）。
@@ -2069,26 +2067,23 @@ mod tests {
         assert!(db.load_all_conversation_efforts().unwrap().is_empty());
 
         // 写回整张映射
-        db.save_conversation_efforts(
-            &conv.id,
-            Some(r#"{"model-x":"high","model-y":"low"}"#),
-        )
-        .expect("save");
+        db.save_conversation_efforts(&conv.id, Some(r#"{"model-x":"high","model-y":"low"}"#))
+            .expect("save");
         let rows = db.load_all_conversation_efforts().unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, conv.id);
-        assert_eq!(rows[0].1.as_deref(), Some(r#"{"model-x":"high","model-y":"low"}"#));
+        assert_eq!(
+            rows[0].1.as_deref(),
+            Some(r#"{"model-x":"high","model-y":"low"}"#)
+        );
 
         // 清空（None → 列置 NULL，重新装载为空）
         db.save_conversation_efforts(&conv.id, None).expect("clear");
         assert!(db.load_all_conversation_efforts().unwrap().is_empty());
 
         // 删除会话 → 持久化档位随行删除（无悬挂）
-        db.save_conversation_efforts(
-            &conv.id,
-            Some(r#"{"model-x":"high"}"#),
-        )
-        .expect("save2");
+        db.save_conversation_efforts(&conv.id, Some(r#"{"model-x":"high"}"#))
+            .expect("save2");
         db.delete_conversation(&conv.id).expect("delete");
         assert!(db.load_all_conversation_efforts().unwrap().is_empty());
     }
@@ -2106,11 +2101,8 @@ mod tests {
         let conv_id = {
             let db = ConversationDb::new(&db_path).expect("open1");
             let conv = db.create_conversation("conn_1", "C1").expect("c1");
-            db.save_conversation_efforts(
-                &conv.id,
-                Some(r#"{"model-x":"max"}"#),
-            )
-            .expect("save");
+            db.save_conversation_efforts(&conv.id, Some(r#"{"model-x":"max"}"#))
+                .expect("save");
             conv.id
         };
 
