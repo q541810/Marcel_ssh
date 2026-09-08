@@ -679,15 +679,8 @@ export default function MobileAgentHost({
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void handleSend();
-    }
-  };
-
   // ── `/` 命令面板（与桌面同款组件）：输入以 "/" 开头时在输入框上方弹出，
-  // 手机端以触摸点选为主；软键盘回车/发送语义不变（handleKeyDown 不拦截）。
+  // 手机端以触摸点选为主；软键盘回车/发送语义不变。
   // 任务运行中不唤出（与桌面一致）：手动压缩与运行中任务并发会造成替换竞态。
   const commandMenuOpen =
     inputDraft.startsWith("/") &&
@@ -1127,12 +1120,14 @@ export default function MobileAgentHost({
             </div>
           )}
           <div className="agent-input rounded-2xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
+            {/* 移动端不拦截回车：软键盘/IME 的「换行」键走 textarea 原生行为插入换行
+                （含拼音组合中确认候选词的回车，不会误发）；发送只走右侧按钮——
+                手机上没有 shift+Enter，若拦截回车则多行输入无法换行。桌面端语义不受影响。 */}
             <textarea
               ref={inputRef}
               rows={1}
               value={inputDraft}
               onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
               placeholder={
                 !canInteract
                   ? "请先连接服务器…"
