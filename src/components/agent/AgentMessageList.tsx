@@ -61,6 +61,11 @@ const PLAN_MIN_COUNT = 2;
 /** 初始渲染及每批向上加载的消息条数 */
 const PAGE_SIZE = 50;
 
+/** 顶部哨兵检测带高度。必须与哨兵 IntersectionObserver 的 rootMargin
+ *  顶部一致：一批新消息若全被回合折叠成矮行，哨兵不会离开该带，
+ *  IO 也就不会再产生 crossing 回调——由布局后复查自动续载兜底。 */
+const TOP_SENTINEL_MARGIN = 160;
+
 const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
@@ -348,6 +353,37 @@ function AgentMessageList({
 
   const canLoadEarlier = hasMore || hasEarlierMessages;
 
+  // 顶部哨兵自动续载（死锁兜底）：向上翻页靠哨兵 IO 的 crossing 触发，
+  // 但一批新消息若全是已完成回合折叠出的矮行（几十 px），滚动锚定后哨兵
+  // 仍停在容器顶部检测带内，IO 不会再有 crossing → “加载更早消息...”永久
+  // 空转、怎么等都不加载。这里在每次布局后复查：哨兵还在检测带内且仍有
+  // 更早内容 → 让出浏览器一帧（rAF，避免同帧同步循环）续下一批，直到哨兵
+  // 被顶出检测带或没有更早消息可载为止；批高正常时哨兵一次即被顶出，
+  // 行为与原来完全一致。
+  const topLoadPendingRef = useRef(false);
+  const latestLoadMoreRef = useRef(loadMoreEarlierMessages);
+  latestLoadMoreRef.current = loadMoreEarlierMessages;
+  const latestCanLoadEarlierRef = useRef(canLoadEarlier);
+  latestCanLoadEarlierRef.current = canLoadEarlier;
+
+  useIsomorphicLayoutEffect(() => {
+    if (!latestCanLoadEarlierRef.current || topLoadPendingRef.current) return;
+    const container = getScrollContainer();
+    const sentinel = topSentinelRef.current;
+    if (!container || !sentinel) return;
+    const containerRect = container.getBoundingClientRect();
+    const sentinelRect = sentinel.getBoundingClientRect();
+    // 哨兵底边仍在容器顶部检测带内（可见或贴邻上方）才视为“停驻待续载”
+    if (sentinelRect.bottom < containerRect.top - TOP_SENTINEL_MARGIN) return;
+
+    topLoadPendingRef.current = true;
+    requestAnimationFrame(() => {
+      topLoadPendingRef.current = false;
+      if (!latestCanLoadEarlierRef.current) return;
+      latestLoadMoreRef.current();
+    });
+  }, [slicedMessages, canLoadEarlier, getScrollContainer]);
+
   // 监听顶部哨兵元素进行触顶自动加载
   useEffect(() => {
     if (!canLoadEarlier) return;
@@ -364,7 +400,7 @@ function AgentMessageList({
       },
       {
         root: container,
-        rootMargin: "160px 0px 0px 0px", // 提前 160px 预加载，保证无缝滚动
+        rootMargin: `${TOP_SENTINEL_MARGIN}px 0px 0px 0px`, // 提前 160px 预加载，保证无缝滚动
         threshold: 0.01,
       },
     );
