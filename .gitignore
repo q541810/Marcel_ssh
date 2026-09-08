@@ -10,6 +10,7 @@ src-tauri/target/
 
 # IDE
 AGENTS.md
+.agents/
 .vscode/
 .idea/
 .workbuddy/
