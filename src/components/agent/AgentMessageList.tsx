@@ -10,7 +10,7 @@ import {
   type RefObject,
 } from "react";
 import type { AgentMessage } from "@/lib/types";
-import { isNearBottom } from "@/lib/agentScroll";
+import { isNearBottom, NEAR_BOTTOM_THRESHOLD_PX } from "@/lib/agentScroll";
 import { useConversationStore } from "@/stores/conversationStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTaskStore } from "@/stores/taskStore";
@@ -46,6 +46,13 @@ interface Props {
   /** 是否启用回合折叠。false = 本列表永不折叠（历史只读/检索视图）。
    *  缺省跟随全局设置 foldCompletedTurns。 */
   foldTurns?: boolean;
+  /**
+   * 内容持续增长时由本列表贴底跟随。
+   * 活跃对话宿主（AgentPanel / MobileAgentHost）自行管理滚动时必须传 false，
+   * 避免与宿主层双写 scrollTop 互相抢夺（用户上翻会被另一套阈值拽回）。
+   * 会话切换时的一次性贴底不受此开关影响。默认 false。
+   */
+  enableStickyFollow?: boolean;
 }
 
 type RenderItem =
@@ -160,6 +167,7 @@ function AgentMessageList({
   alwaysShowActions = false,
   conversationId: conversationIdProp,
   foldTurns: foldTurnsProp,
+  enableStickyFollow = false,
 }: Props) {
   // 分页展示条数，默认展示最近 PAGE_SIZE 条
   const [visibleCount, setVisibleCount] = useState(() =>
@@ -183,6 +191,8 @@ function AgentMessageList({
 
   // 标记是否处于贴底锁定状态（会话初次进入或用户位于底部时为 true）
   const isPinnedToBottomRef = useRef(true);
+  /** 上一次因贴底写过 scrollTop 的会话 key —— sticky 关闭时仅在会话切换时贴底一次。 */
+  const stickyPinConversationKeyRef = useRef<string | null>(null);
 
   // 辅助获取最近的滚动父容器
   const getScrollContainer = useCallback(() => {
@@ -321,16 +331,27 @@ function AgentMessageList({
     scrollSnapshotRef.current = null;
   }, [slicedMessages, getScrollContainer]);
 
-  // 会话切换/首次渲染时的即时贴底（在 DOM 变更后绘制前同步校准）
+  // 会话切换/首次渲染时的即时贴底（在 DOM 变更后绘制前同步校准）。
+  // enableStickyFollow=false 时仅在会话切换（conversationKey 变化）贴底一次；
+  // 流式内容增长的持续跟随交给宿主层，避免双写 scrollTop。
   useIsomorphicLayoutEffect(() => {
     if (highlightMessageId) return;
-    if (isPinnedToBottomRef.current) {
-      const container = getScrollContainer();
-      if (container) {
-        container.scrollTop = container.scrollHeight;
-      }
+    if (!isPinnedToBottomRef.current) return;
+    const isConversationChange =
+      stickyPinConversationKeyRef.current !== conversationKey;
+    if (!enableStickyFollow && !isConversationChange) return;
+    stickyPinConversationKeyRef.current = conversationKey;
+    const container = getScrollContainer();
+    if (container) {
+      container.scrollTop = container.scrollHeight;
     }
-  }, [conversationKey, slicedMessages, highlightMessageId, getScrollContainer]);
+  }, [
+    conversationKey,
+    slicedMessages,
+    highlightMessageId,
+    getScrollContainer,
+    enableStickyFollow,
+  ]);
 
   // 监听容器滚动事件：用户离开底部时解除贴底锁定，滑回底部时重新锁定
   useEffect(() => {
@@ -342,7 +363,7 @@ function AgentMessageList({
         container.scrollTop,
         container.clientHeight,
         container.scrollHeight,
-        120,
+        NEAR_BOTTOM_THRESHOLD_PX,
       );
       isPinnedToBottomRef.current = near;
     };
@@ -411,6 +432,7 @@ function AgentMessageList({
 
   // 监听内容尺寸变化（例如 iframe 异步测高撑开、图片加载等）：若用户处于贴底锁定区，则自动保持贴底
   useEffect(() => {
+    if (!enableStickyFollow) return;
     const wrapper = contentWrapperRef.current;
     if (!wrapper || typeof ResizeObserver === "undefined") return;
 
@@ -434,7 +456,7 @@ function AgentMessageList({
       if (rafId != null) cancelAnimationFrame(rafId);
       ro.disconnect();
     };
-  }, [getScrollContainer, highlightMessageId]);
+  }, [getScrollContainer, highlightMessageId, enableStickyFollow]);
 
   const handleToolExpandChange = useCallback(
     (messageId: string, expanded: boolean) => {

@@ -43,6 +43,7 @@ import {
   isNearBottom,
   shouldAutoScroll,
   shouldShowScrollToBottomFab,
+  NEAR_BOTTOM_THRESHOLD_PX,
 } from "./agentScroll";
 import { resolveSessionDisplayName, sessionStatusLabel } from "./sessionUi";
 import {
@@ -59,8 +60,6 @@ import {
   readLocalAttachment,
   MAX_TEXT_FILE_BYTES,
 } from "@/lib/attachmentAttach";
-
-const NEAR_BOTTOM_THRESHOLD_PX = 80;
 
 interface MobileAgentHostProps {
   /** When false, host stays mounted but hidden (tab keep-alive). */
@@ -849,6 +848,8 @@ export default function MobileAgentHost({
               onRollback={(m) => void handleRollbackMessage(m)}
               onCopy={(m) => void handleCopyMessage(m)}
               alwaysShowActions
+              // 宿主层已管贴底跟随；列表层不再二次写 scrollTop
+              enableStickyFollow={false}
             />
           )}
         </div>

@@ -153,8 +153,23 @@ describe('AgentMessage thinking display', () => {
     );
 
     expect(html).toContain('思考中');
-    // 折叠逻辑照旧：默认收起，思考内容不直接展开
+    // 未传 autoExpand：默认收起，思考内容不直接展开
     expect(html).not.toContain('正在思考...');
+  });
+
+  it('expands thinking content when autoExpand is true (live stream)', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage
+        autoExpand
+        message={makeAssistantMessage({ isThinking: true, reasoningContent: '正在思考...' })}
+      />,
+    );
+
+    expect(html).toContain('思考中');
+    expect(html).toContain('正在思考...');
+    // 长思考限制高度，内部滚动，避免撑飞整页
+    expect(html).toContain('max-h-[40vh]');
+    expect(html).toContain('overflow-y-auto');
   });
 
   it('hides thinking once the reply completes (isThinking cleared, reasoning kept)', () => {

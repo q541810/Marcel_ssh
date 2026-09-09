@@ -189,11 +189,48 @@ function AgentMessage({
   const hideThinkingDisplay = useSettingsStore(
     (s) => s.settings.hideThinkingDisplay,
   );
-  const [thinkingExpanded, setThinkingExpanded] = useState(autoExpand ?? false);
+  /** 用户手动展开/收起覆盖；null = 跟随 autoExpand。仅在思考进行中有意义。 */
+  const [thinkingUserToggle, setThinkingUserToggle] = useState<boolean | null>(
+    null,
+  );
+  const thinkingBodyRef = useRef<HTMLDivElement>(null);
+  /** 思考区内滚：用户上翻后暂停跟随，滑回底部附近再恢复。 */
+  const thinkingUserScrolledRef = useRef(false);
   const [copied, setCopied] = useState(false);
+  // 思考结束（autoExpand 变 false）时清空手动状态；进行中尊重用户点击
   useEffect(() => {
-    setThinkingExpanded(!!autoExpand);
+    if (!autoExpand) {
+      setThinkingUserToggle(null);
+      thinkingUserScrolledRef.current = false;
+    }
   }, [autoExpand]);
+  const thinkingExpanded = thinkingUserToggle ?? !!autoExpand;
+
+  const handleToggleThinking = () => {
+    const next = !thinkingExpanded;
+    setThinkingUserToggle(next);
+    // 重新展开时恢复跟随底部
+    if (next) thinkingUserScrolledRef.current = false;
+  };
+
+  // 流式思考：用户未上翻时，思考区内滚跟随最新内容（不带动外层对话滚动）
+  useEffect(() => {
+    const el = thinkingBodyRef.current;
+    if (!el || !thinkingExpanded || !message.isThinking) return;
+    if (thinkingUserScrolledRef.current) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  }, [message.reasoningContent, thinkingExpanded, message.isThinking]);
+
+  const handleThinkingBodyScroll = () => {
+    const el = thinkingBodyRef.current;
+    if (!el || !message.isThinking) {
+      thinkingUserScrolledRef.current = false;
+      return;
+    }
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    thinkingUserScrolledRef.current = !atBottom;
+  };
 
   const handleCopy = () => {
     onCopy?.(message);
@@ -357,7 +394,7 @@ function AgentMessage({
           <div className="mb-0.5">
             <button
               type="button"
-              onClick={() => setThinkingExpanded((v) => !v)}
+              onClick={handleToggleThinking}
               className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
             >
               <svg
@@ -398,7 +435,11 @@ function AgentMessage({
               )}
             </button>
             {thinkingExpanded && (
-              <div className="mt-1.5 pl-4 border-l-2 border-zinc-700 text-xs text-zinc-400 whitespace-pre-wrap break-words">
+              <div
+                ref={thinkingBodyRef}
+                onScroll={handleThinkingBodyScroll}
+                className="mt-1.5 max-h-[40vh] overflow-y-auto overscroll-contain pl-4 border-l-2 border-zinc-700 text-xs text-zinc-400 whitespace-pre-wrap break-words"
+              >
                 {message.reasoningContent}
               </div>
             )}

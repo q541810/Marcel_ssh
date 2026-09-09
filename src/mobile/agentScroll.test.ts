@@ -3,7 +3,14 @@ import {
   isNearBottom,
   shouldAutoScroll,
   shouldShowScrollToBottomFab,
+  NEAR_BOTTOM_THRESHOLD_PX,
 } from './agentScroll';
+
+describe('NEAR_BOTTOM_THRESHOLD_PX', () => {
+  it('is the shared sticky zone size (desktop + mobile)', () => {
+    expect(NEAR_BOTTOM_THRESHOLD_PX).toBe(80);
+  });
+});
 
 describe('isNearBottom', () => {
   it('is true when distance to bottom is within threshold', () => {
@@ -29,6 +36,12 @@ describe('isNearBottom', () => {
   it('treats overscroll past bottom as near bottom', () => {
     // scrollTop + clientHeight > scrollHeight
     expect(isNearBottom(610, 400, 1000, 0)).toBe(true);
+  });
+
+  it('defaults to NEAR_BOTTOM_THRESHOLD_PX', () => {
+    // remaining 80 → pinned; remaining 81 → not
+    expect(isNearBottom(520, 400, 1000)).toBe(true);
+    expect(isNearBottom(519, 400, 1000)).toBe(false);
   });
 });
 

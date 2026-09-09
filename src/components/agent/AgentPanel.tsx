@@ -23,7 +23,12 @@ import {
 } from "@/stores/conversationStore";
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { AGENT_MODES } from "@/lib/constants";
-import { isNearBottom } from "@/lib/agentScroll";
+import {
+  isNearBottom,
+  NEAR_BOTTOM_THRESHOLD_PX,
+  shouldAutoScroll,
+  shouldShowScrollToBottomFab,
+} from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
 import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import type { AgentMode, AgentMessage, QuestionAnswer } from "@/lib/types";
@@ -97,6 +102,10 @@ export default function AgentPanel() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const lastScrolledMessageRef = useRef<string | null>(null);
+  /** 用户主动发送后允许一次强制贴底；流式更新只跟随近底区。 */
+  const userJustSentRef = useRef(false);
+  const [nearBottom, setNearBottom] = useState(true);
+  const nearBottomRef = useRef(true);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<AgentCommandMenuHandle>(null);
@@ -188,12 +197,22 @@ export default function AgentPanel() {
     (lastMessage?.content.length ?? 0) +
     (lastMessage?.reasoningContent?.length ?? 0);
 
+  // Stream: only pin when sticky zone or user just sent — never yank while reading up.
   useEffect(() => {
     if (!lastMessage || !canInteract) return;
+    const container = messagesContainerRef.current;
+    const nearBottom = container
+      ? isNearBottom(
+          container.scrollTop,
+          container.clientHeight,
+          container.scrollHeight,
+          NEAR_BOTTOM_THRESHOLD_PX,
+        )
+      : true;
+    if (!shouldAutoScroll(nearBottom, userJustSentRef.current)) return;
     const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
     lastScrolledMessageRef.current = lastMessage.id;
-    const container = messagesContainerRef.current;
-    if (container && isNearBottom(container.scrollTop, container.clientHeight, container.scrollHeight, 120)) {
+    if (container) {
       container.scrollTop = container.scrollHeight;
     } else {
       messagesEndRef.current?.scrollIntoView({
@@ -201,7 +220,34 @@ export default function AgentPanel() {
         block: "end",
       });
     }
+    nearBottomRef.current = true;
+    setNearBottom(true);
+    userJustSentRef.current = false;
   }, [lastMessage, lastMessageSize, canInteract]);
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const near = isNearBottom(
+      el.scrollTop,
+      el.clientHeight,
+      el.scrollHeight,
+      NEAR_BOTTOM_THRESHOLD_PX,
+    );
+    nearBottomRef.current = near;
+    setNearBottom(near);
+  }, []);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
+    }
+    nearBottomRef.current = true;
+    setNearBottom(true);
+  }, []);
 
   useEffect(() => {
     if (!modeDrawerOpen) return;
@@ -538,6 +584,7 @@ export default function AgentPanel() {
       return;
     }
     sendingRef.current = true;
+    userJustSentRef.current = true;
     const snapshotImages = images;
     const dataUrls = images.map((i) => i.dataUrl);
     const oldPersisted = images
@@ -570,6 +617,7 @@ export default function AgentPanel() {
       // save 失败或其它：恢复输入与预览，旧落盘图保留
       setInput(prompt);
       setPendingImages(snapshotImages);
+      userJustSentRef.current = false;
       requestAnimationFrame(() => {
         resizeInput();
         inputRef.current?.focus();
@@ -1026,53 +1074,81 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div
-        ref={messagesContainerRef}
-        className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-3 space-y-1"
-      >
-        {!activeSession && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>请先连接 SSH 服务器。</p>
-            <p className="mt-1">连接成功后即可使用智能助手。</p>
-          </div>
-        )}
-        {activeSession?.status === "connecting" && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>正在连接 SSH 服务器...</p>
-            <p className="mt-1">连接完成后将加载智能助手会话。</p>
-          </div>
-        )}
-        {activeSession?.status === "error" && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>连接失败，请在标签栏重新连接。</p>
-          </div>
-        )}
-        {activeSession?.status === "disconnected" && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>连接已断开，请在标签栏重新连接。</p>
-          </div>
-        )}
-        {canInteract && messages.length === 0 && !activeConversationId && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>暂无会话。</p>
-            <p className="mt-1">点击左上角 + 新建会话。</p>
-          </div>
-        )}
-        {canInteract && messages.length === 0 && activeConversationId && (
-          <div className="text-center text-zinc-500 text-sm mt-8">
-            <p>暂无消息。</p>
-            <p className="mt-1">描述您想要做的事情，智能助手将为您提供帮助。</p>
-          </div>
-        )}
-        {canInteract && (
-          <AgentMessageList
-            messages={messages}
-            isThinking={isThinking}
-            isRunning={isRunning}
-            onRollback={handleRollbackMessage}
-            onCopy={handleCopyMessage}
-            messagesEndRef={messagesEndRef}
-          />
+      <div className="relative flex-1 min-h-0 min-w-0">
+        <div
+          ref={messagesContainerRef}
+          onScroll={handleMessagesScroll}
+          className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-1"
+        >
+          {!activeSession && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>请先连接 SSH 服务器。</p>
+              <p className="mt-1">连接成功后即可使用智能助手。</p>
+            </div>
+          )}
+          {activeSession?.status === "connecting" && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>正在连接 SSH 服务器...</p>
+              <p className="mt-1">连接完成后将加载智能助手会话。</p>
+            </div>
+          )}
+          {activeSession?.status === "error" && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>连接失败，请在标签栏重新连接。</p>
+            </div>
+          )}
+          {activeSession?.status === "disconnected" && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>连接已断开，请在标签栏重新连接。</p>
+            </div>
+          )}
+          {canInteract && messages.length === 0 && !activeConversationId && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>暂无会话。</p>
+              <p className="mt-1">点击左上角 + 新建会话。</p>
+            </div>
+          )}
+          {canInteract && messages.length === 0 && activeConversationId && (
+            <div className="text-center text-zinc-500 text-sm mt-8">
+              <p>暂无消息。</p>
+              <p className="mt-1">描述您想要做的事情，智能助手将为您提供帮助。</p>
+            </div>
+          )}
+          {canInteract && (
+            <AgentMessageList
+              messages={messages}
+              isThinking={isThinking}
+              isRunning={isRunning}
+              onRollback={handleRollbackMessage}
+              onCopy={handleCopyMessage}
+              messagesEndRef={messagesEndRef}
+              // 宿主层已管贴底跟随；列表层不再二次写 scrollTop
+              enableStickyFollow={false}
+            />
+          )}
+        </div>
+        {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
+          <button
+            type="button"
+            onClick={() => scrollToBottom("smooth")}
+            title="回到底部"
+            aria-label="回到底部"
+            className="absolute bottom-3 right-3 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-zinc-700"
+          >
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 14l-7 7m0 0l-7-7m7 7V3"
+              />
+            </svg>
+          </button>
         )}
       </div>
 

@@ -1,9 +1,12 @@
+/** Shared sticky-follow zone: distance from bottom <= this is "still pinned". */
+export const NEAR_BOTTOM_THRESHOLD_PX = 80;
+
 /** Distance from bottom <= threshold counts as sticky-follow zone. */
 export function isNearBottom(
   scrollTop: number,
   clientHeight: number,
   scrollHeight: number,
-  thresholdPx = 80,
+  thresholdPx = NEAR_BOTTOM_THRESHOLD_PX,
 ): boolean {
   return scrollHeight - scrollTop - clientHeight <= thresholdPx;
 }
