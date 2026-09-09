@@ -81,7 +81,7 @@ impl OpenAiProvider {
         let mut accumulated_reasoning = String::new();
         let mut tool_calls: Vec<PartialToolCall> = Vec::new();
         let mut finish_reason: Option<String> = None;
-        let mut buffer = String::new();
+        let mut buffer = Vec::<u8>::new();
         let mut consecutive_parse_errors: u32 = 0;
         let mut stream = response.bytes_stream();
         let first_byte_timeout =
@@ -125,13 +125,10 @@ impl OpenAiProvider {
 
             // 收到首个流数据分块后，正式转入 Streaming 阶段
             phase = RequestPhase::Streaming;
-            let text = String::from_utf8_lossy(&chunk);
-            buffer.push_str(&text);
-
-            while let Some(idx) = buffer.find('\n') {
-                let line = buffer[..idx].trim_end_matches('\r').to_owned();
-                buffer.drain(..=idx);
-
+            // 字节级缓冲：chunk 边界可能切开多字节 UTF-8（中文等），
+            // 禁止 from_utf8_lossy 逐 chunk 解码（会把半截字符打成 U+FFFD）。
+            let lines = take_sse_lines(&mut buffer, &chunk);
+            for line in lines {
                 let payload = match line.strip_prefix("data:") {
                     Some(rest) => rest.trim(),
                     None => continue,
@@ -301,6 +298,65 @@ async fn read_error_body(response: reqwest::Response) -> String {
             }
         }
         Err(e) => format!("<无法读取响应体: {}>", e),
+    }
+}
+
+/// 把流式原始字节追加进缓冲，取出所有**完整** SSE 行（不含行尾 `\r?\n`）。
+///
+/// chunk 边界可能落在多字节 UTF-8 字符中间；这里按字节找 `\n`
+/// （UTF-8 多字节序列的续字节均 ≥ 0x80，不可能含 `0x0A`），
+/// 只对完整行做解码，尾部半截字符留到下一 chunk。
+fn take_sse_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
+    buffer.extend_from_slice(chunk);
+    let mut lines = Vec::new();
+    while let Some(idx) = buffer.iter().position(|&b| b == b'\n') {
+        let mut line_bytes: Vec<u8> = buffer.drain(..=idx).collect();
+        line_bytes.pop(); // 去掉 \n
+        if line_bytes.last() == Some(&b'\r') {
+            line_bytes.pop();
+        }
+        // 完整行在 `\n` 处闭合，不可能切开多字节字符；lossy 仅作异常兜底
+        lines.push(String::from_utf8_lossy(&line_bytes).into_owned());
+    }
+    lines
+}
+
+#[cfg(test)]
+mod sse_line_buffer_tests {
+    use super::take_sse_lines;
+
+    #[test]
+    fn holds_partial_utf8_until_next_chunk() {
+        // 「帮」= E5 B8 AE；在 0xB8 后切开
+        let full = "data: {\"content\":\"我来帮你处理\"}\n".as_bytes();
+        let split_at = full.iter().position(|&b| b == 0xB8).unwrap() + 1;
+        let (a, b) = full.split_at(split_at);
+
+        let mut buf = Vec::new();
+        let lines1 = take_sse_lines(&mut buf, a);
+        assert!(lines1.is_empty(), "半截 UTF-8 不得产出半截行");
+        assert!(!buf.is_empty(), "半截字节应留在缓冲");
+
+        let lines2 = take_sse_lines(&mut buf, b);
+        assert_eq!(lines2.len(), 1);
+        assert_eq!(lines2[0], "data: {\"content\":\"我来帮你处理\"}");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn strips_crlf_and_yields_multiple_lines() {
+        let mut buf = Vec::new();
+        let lines = take_sse_lines(&mut buf, b"data: a\r\ndata: b\n");
+        assert_eq!(lines, vec!["data: a".to_string(), "data: b".to_string()]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn keeps_incomplete_line_without_newline() {
+        let mut buf = Vec::new();
+        let lines = take_sse_lines(&mut buf, b"data: partial");
+        assert!(lines.is_empty());
+        assert_eq!(buf, b"data: partial");
     }
 }
 
