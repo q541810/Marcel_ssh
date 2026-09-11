@@ -23,7 +23,12 @@ use crate::ssh::connection::SshManager;
 use crate::AppState;
 
 /// 最大并发执行的 tool 调用数量（超出则排队等待 permit 释放）。
+/// 移动端收紧：单 WebView + 电池/内存约束下，10 路并发 tool（含多机
+/// subagent 各自拉起 SSH + LLM 流）容易导致 UI 卡顿与系统杀进程。
+#[cfg(desktop)]
 const MAX_CONCURRENT_TOOL_EXECUTIONS: usize = 10;
+#[cfg(not(desktop))]
+const MAX_CONCURRENT_TOOL_EXECUTIONS: usize = 2;
 
 /// 持久化的工具执行结果元数据（存入 role=tool 的 tool_calls_json）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
