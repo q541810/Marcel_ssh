@@ -216,11 +216,11 @@ pub struct ExperimentalSettings {
     #[serde(default)]
     pub http_fetch_mode: HttpFetchMode,
     /// 多机操控的「可跨机目标机器」集合（SavedConnection id 列表，空 = 仅
-    /// 当前机器可执行）。桌面端多机操控恒开启（无开关），Agent 工具（bash /
-    /// upload_file / download_file / task）可携带 `host` 参数；目标机器必须
-    /// 在此集合内（或为当前会话所在机器），否则拒绝。由用户在桌面 Agent
-    /// 面板顶栏勾选维护；后端任务/工具解析时读取同一份做白名单。
-    /// 移动端不提供该能力（按 `cfg!(desktop)` 门控，见 multi_host 模块）。
+    /// 当前机器可执行）。双端多机操控恒开启（无开关），Agent 工具（bash /
+    /// upload_file / download_file / subagent）可携带 `host` 参数；目标机器
+    /// 必须在此集合内（或为当前会话所在机器），否则拒绝。由用户在 Agent
+    /// 面板（桌面顶栏 / 移动 Sheet）勾选维护；后端任务/工具解析时读取同一
+    /// 份做白名单。upload/download 仍为桌面专属工具（本机文件系统语义）。
     #[serde(default)]
     pub multi_host_connection_ids: Vec<String>,
 }

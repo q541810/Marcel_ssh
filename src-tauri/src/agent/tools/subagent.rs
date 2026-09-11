@@ -12,6 +12,9 @@
 //! AgentManager::build_registry 的 role 收敛），这里再做一次 parent_task_id
 //! 检查作纵深防御。
 //!
+//! Plan 父任务不能派发 mode="agent" 读写子 agent（避免只读主任务经子 agent
+//! 间接获得写权限）；执行时在 execute 内按父任务 mode 硬拦。
+//!
 //! 子 agent 的组装与生命周期统一由 [`crate::agent::manager::AgentManager`]
 //! 负责——本工具只声明「要跑什么」（AgentSpec），不再复制组装逻辑。
 
@@ -42,16 +45,36 @@ const SUBAGENT_INSTRUCTION: &str = "\
 - 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
 - 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。收到结算通知前不需要反复轮询，可继续其他调研。
 
-完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论、对主 Agent 行动的建议。不要复述调研过程细节。";
+完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论。不要复述调研过程细节。";
 
 /// 追加到子agent系统提示的**读写执行版**指令（多机操控：subagent mode="agent" 时）。
 /// 与只读版的核心差异：允许真正执行修改类操作，但仍受 Agent 沙箱与
 /// 父任务审批语义约束——子 agent 不是放养的，破坏性命令照常拦截。
+///
+/// 工具列表按平台拆分：`upload_file`/`download_file` 读写「本机文件系统」
+/// （桌面路径语义），移动端不注册——提示词不得列出模型调用必败的工具。
+#[cfg(desktop)]
 const SUBAGENT_EXEC_INSTRUCTION: &str = "\
 你是被主 Agent 派发的执行子agent（subagent）。你的目标是：在指定机器上实际完成任务并回报结果——不只是调研，可以真正执行修改类操作。
 
 硬性约束：
 - 你可以使用读写工具：read_file / write_file / edit_file / list_directory / search_files / system_info / connection_info / bash / upload_file / download_file / web_search / http_get / ask_user / 技能
+- 可以执行修改操作（写文件、编辑、安装软件、改配置、运行部署脚本等），但必须谨慎：
+  - 破坏性/删除类命令（rm、drop、shutdown 等）必须先解释意图，能避免则避免
+  - 非平凡的 bash 命令先说明它在做什么与为什么
+  - 你的执行与主 Agent 同级的沙箱审查；高风险命令按父任务模式要求审批
+- 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
+- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。
+
+完成任务后，用简洁清晰的中文输出结果：做了什么、关键输出/证据、遗留风险或后续建议。不要复述过程细节。";
+
+#[cfg(not(desktop))]
+const SUBAGENT_EXEC_INSTRUCTION: &str = "\
+你是被主 Agent 派发的执行子agent（subagent）。你的目标是：在指定机器上实际完成任务并回报结果——不只是调研，可以真正执行修改类操作。
+
+硬性约束：
+- 你可以使用读写工具：read_file / write_file / edit_file / list_directory / search_files / system_info / connection_info / bash / web_search / http_get / ask_user / 技能
+- 不要调用 upload_file / download_file（当前平台未提供本机文件中转工具）
 - 可以执行修改操作（写文件、编辑、安装软件、改配置、运行部署脚本等），但必须谨慎：
   - 破坏性/删除类命令（rm、drop、shutdown 等）必须先解释意图，能避免则避免
   - 非平凡的 bash 命令先说明它在做什么与为什么
@@ -113,6 +136,15 @@ fn truncate_chars(s: &str, max: usize) -> String {
     out
 }
 
+/// Plan 父任务禁止派发 mode="agent" 读写子 agent（纯函数便于单测）。
+fn is_plan_parent_write_subagent_blocked(
+    mode: &str,
+    mh_enabled: bool,
+    parent_mode: Option<AgentMode>,
+) -> bool {
+    mode == "agent" && mh_enabled && parent_mode == Some(AgentMode::Plan)
+}
+
 #[async_trait]
 impl AgentTool for SubagentTool {
     fn name(&self) -> &str {
@@ -154,16 +186,16 @@ impl AgentTool for SubagentTool {
          - A decision that needs user confirmation → ask_user directly\n\
          - A short verification question → answer directly or run one command\n\
          \n\
-         Multi-host / execution mode (desktop):\n\
+         Multi-host / execution mode:\n\
          - `host`: run the subagent on a specific machine: the current machine or \
          one from the selected set (by its readable name). When omitted, the \
          subagent runs on the current session's machine.\n\
          - `mode`: \"plan\" (default) = read-only research subagent as described \
          above; \"agent\" = a read-write execution subagent that can actually \
          modify files / run installs / deploy on its machine (still sandboxed and \
-         subject to the parent task's approval semantics). Use mode=\"agent\" when \
-         the work on another machine genuinely needs write access. Mobile is \
-         always read-only.\n\
+         subject to the parent task's approval semantics). mode=\"agent\" is only \
+         allowed when the CURRENT parent task is in Agent/Auto mode — Plan-mode \
+         parents can only spawn read-only research subagents (use \"plan\").\n\
          IMPORTANT: the `host` value must match the machine name in the multi-host \
          list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
          any character (no extra spaces, no lowercase/uppercase changes, no \
@@ -185,12 +217,12 @@ impl AgentTool for SubagentTool {
                 },
                 "host": {
                     "type": "string",
-                    "description": "Optional (multi-host). Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, the subagent runs on the current session's machine. Desktop only. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
+                    "description": "Optional (multi-host). Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, the subagent runs on the current session's machine. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
                 },
                 "mode": {
                     "type": "string",
                     "enum": ["plan", "agent"],
-                    "description": "Optional (multi-host). 'plan' (default) = read-only research subagent; 'agent' = read-write execution subagent that can modify files / run installs / deploy. When omitted, defaults to 'plan' (unchanged legacy behavior)."
+                    "description": "Optional (multi-host). 'plan' (default) = read-only research subagent; 'agent' = read-write execution subagent that can modify files / run installs / deploy — only when the current parent task is Agent/Auto mode (Plan-mode parents are rejected). When omitted, defaults to 'plan' (unchanged legacy behavior)."
                 }
             },
             "required": ["prompt"]
@@ -265,8 +297,9 @@ impl AgentTool for SubagentTool {
 
         // ── 多机操控：host 参数 → 目标机器会话；mode → 读写/只读 ──
         // host 存在但不在「勾选集合 ∪ 当前机」/无凭证 → 明确错误（绝不落回
-        // 当前会话假装在目标机）。mode="agent"（读写）仅桌面端可用（多机
-        // 操控桌面恒开启；移动端恒只读——见 multi_host 模块门控）。
+        // 当前会话假装在目标机）。mode="agent"（读写）双端可用（多机操控
+        // 双端恒开启），且仅 Agent/Auto 父任务可派——Plan 父任务自身只读，
+        // 不得经子 agent 间接获得写权限。未来若按设置收紧，此处统一降级只读。
         let mut exec_session_id = ctx.session_id.clone();
         let mut target_host_label: Option<String> = None;
         let mode = params
@@ -274,20 +307,39 @@ impl AgentTool for SubagentTool {
             .and_then(|v| v.as_str())
             .unwrap_or("plan");
 
-        // 多机操控桌面恒开启：mode="agent" 桌面接受（读写子 agent）；移动端
-        // 恒只读（Plan），杜绝意外获得写权限。
+        // 多机操控双端恒开启：mode="agent" 接受（读写子 agent）；未知值
+        // 一律只读（历史行为）。
         let mh_enabled = crate::multi_host::multi_host_enabled(&state).await;
+        let parent_mode = if parent_task_id.is_empty() {
+            None
+        } else {
+            state
+                .agent_tasks
+                .read()
+                .get(&parent_task_id)
+                .map(|t| t.mode.clone())
+        };
+        if is_plan_parent_write_subagent_blocked(mode, mh_enabled, parent_mode.clone()) {
+            log::warn!(
+                "subagent mode=agent blocked: parent {} is Plan mode",
+                parent_task_id
+            );
+            return Ok(ToolOutput::fail(
+                "subagent: Plan 模式不能派发读写子agent",
+                "当前处于 Plan 模式，不能使用 mode=\"agent\" 派发可修改系统的子agent。请只使用默认只读调研，或请用户切换到 AGENT/AUTO 后再派发。",
+            ));
+        }
         let exec_mode = match mode {
             "agent" if mh_enabled => AgentMode::Agent,
-            _ => AgentMode::Plan, // 移动端或未知值一律只读（历史行为）
+            _ => AgentMode::Plan,
         };
 
-        // host 解析（仅桌面恒开时有意义；移动端 host 非空 → 明确错误）。
+        // host 解析（多机恒开时有意义；门控关闭则 host 非空 → 明确错误）。
         if let Some(host) = crate::multi_host::optional_host(&params) {
             if !mh_enabled {
                 return Ok(ToolOutput::fail(
                     "subagent: 多机操控不可用",
-                    "多机操控仅桌面端可用。移动端不能指定 host；请去掉 host 参数在当前机器上运行。",
+                    "多机操控当前不可用。请去掉 host 参数在当前机器上运行。",
                 ));
             }
             let task_id = ctx.task_id.clone().unwrap_or_default();
@@ -517,6 +569,40 @@ mod tests {
         let s = "中文中文中文中文";
         let out = truncate_chars(s, 3);
         assert_eq!(out, "中文中…");
+    }
+
+    #[test]
+    fn plan_parent_write_subagent_blocked() {
+        assert!(is_plan_parent_write_subagent_blocked(
+            "agent",
+            true,
+            Some(AgentMode::Plan)
+        ));
+        assert!(!is_plan_parent_write_subagent_blocked(
+            "agent",
+            true,
+            Some(AgentMode::Agent)
+        ));
+        assert!(!is_plan_parent_write_subagent_blocked(
+            "agent",
+            true,
+            Some(AgentMode::Auto)
+        ));
+        assert!(!is_plan_parent_write_subagent_blocked(
+            "plan",
+            true,
+            Some(AgentMode::Plan)
+        ));
+        assert!(!is_plan_parent_write_subagent_blocked(
+            "agent",
+            false,
+            Some(AgentMode::Plan)
+        ));
+        assert!(!is_plan_parent_write_subagent_blocked(
+            "agent",
+            true,
+            None
+        ));
     }
 
     #[test]

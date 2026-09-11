@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   ExperimentalSettings,
   WebSearchApiProvider,
@@ -8,6 +8,7 @@ import type {
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import * as tauri from '@/lib/tauri';
 import { MobileSettingRow } from './MobileSettingRow';
 
@@ -110,11 +111,16 @@ function ChoiceGroup<T extends string>({
   );
 }
 
-/** Agent 工具能力（联网搜索 / 网页抓取）——与桌面 ToolCapabilitiesSection 对齐的移动端版。 */
+/** Agent 工具能力（联网搜索 / 网页抓取 / 多机目标）——与桌面 ToolCapabilitiesSection 对齐的移动端版。 */
 export function MobileAgentToolsSection() {
   const { settings, update } = useSettingsActions();
   const hasWebSearchApiKey = useSettingsStore((s) => s.hasWebSearchApiKey);
   const [searchKeyDraft, setSearchKeyDraft] = useState('');
+  const connections = useConnectionStore((s) => s.connections);
+  const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  useEffect(() => {
+    if (connections.length === 0) void fetchConnections();
+  }, [connections.length, fetchConnections]);
 
   const experimental: ExperimentalSettings = {
     ...DEFAULT_EXPERIMENTAL,
@@ -161,6 +167,15 @@ export function MobileAgentToolsSection() {
   const inputClass =
     'flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
 
+  // 多机白名单（与桌面 / Agent 顶栏 Sheet 同一份数据）
+  const multiHostIds = experimental.multiHostConnectionIds ?? [];
+  const toggleMultiHost = (id: string) => {
+    const next = multiHostIds.includes(id)
+      ? multiHostIds.filter((x) => x !== id)
+      : [...multiHostIds, id];
+    updateExperimental({ multiHostConnectionIds: next });
+  };
+
   return (
     <div className="flex flex-col gap-2">
       <MobileSettingRow
@@ -177,7 +192,7 @@ export function MobileAgentToolsSection() {
       {experimental.enableWebSearch && (
         <MobileSettingRow
           label="搜索方式"
-          description="手机端无法启动本机浏览器，仅支持裸抓与搜索 API"
+          description="手机端无法启动本机浏览器，仅支持裸抓与搜索 API。桌面端若本机浏览器失败，会自动重试后降级为裸抓，并在结果中标注「已降级」"
         >
           <ChoiceGroup
             options={SEARCH_MODE_OPTIONS}
@@ -260,6 +275,82 @@ export function MobileAgentToolsSection() {
           />
         }
       />
+
+      <MobileSettingRow
+        label="多机操控目标"
+        description="勾选后 Agent 可携带 host 跨机执行 bash / 子agent；未勾选的机器不会被 host 指定。当前会话所在机器始终可执行，无需勾选。"
+      >
+        {connections.length === 0 ? (
+          <button
+            type="button"
+            onClick={() => void fetchConnections()}
+            className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-900/50 px-3 py-3 text-xs text-zinc-400 active:bg-zinc-800"
+          >
+            加载已保存连接
+          </button>
+        ) : (
+          <div className="mt-2 space-y-1">
+            {connections
+              .slice()
+              .sort(
+                (a, b) =>
+                  (a.group || '').localeCompare(b.group || '') ||
+                  a.name.localeCompare(b.name),
+              )
+              .map((conn) => {
+                const active = multiHostIds.includes(conn.id);
+                return (
+                  <button
+                    key={conn.id}
+                    type="button"
+                    onClick={() => toggleMultiHost(conn.id)}
+                    className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-colors active:scale-[0.99] ${
+                      active
+                        ? 'bg-indigo-500/10 text-indigo-100'
+                        : 'bg-zinc-900/50 text-zinc-300'
+                    }`}
+                  >
+                    <span
+                      className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border ${
+                        active
+                          ? 'border-indigo-400 bg-indigo-500'
+                          : 'border-zinc-600 bg-transparent'
+                      }`}
+                    >
+                      {active && (
+                        <svg
+                          className="h-2.5 w-2.5 text-white"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={3.5}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">
+                        {conn.name}
+                      </span>
+                      <span className="block truncate text-[10px] text-zinc-500">
+                        {conn.group || '未分组'} · {conn.username}@{conn.host}:
+                        {conn.port}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+        )}
+        <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+          集合为空 = 仅当前机可执行。upload/download 本机中转工具在手机端不可用。
+        </p>
+      </MobileSettingRow>
     </div>
   );
 }

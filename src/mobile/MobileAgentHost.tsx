@@ -32,6 +32,7 @@ import { registerBackHandler } from "./backHandler";
 import MobileApprovalSheet from "./MobileApprovalSheet";
 import MobileQuestionSheet from "./MobileQuestionSheet";
 import MobileChatHistorySheet from "./MobileChatHistorySheet";
+import MobileMultiHostPicker from "./MobileMultiHostPicker";
 import MobileSheet from "./ui/MobileSheet";
 import {
   agentEmptyStateReason,
@@ -177,6 +178,14 @@ export default function MobileAgentHost({
   const unreadCompletedConversations = useTaskStore(
     (s) => s.unreadCompletedConversations,
   );
+  /** 子 agent 运行模式（plan 只读调研 / agent 读写执行）：驱动输入区文案。 */
+  const subAgentMode = useMemo(() => {
+    if (!activeConversationId) return "plan" as const;
+    const subTask = Object.values(tasks).find(
+      (t) => t.conversationId === activeConversationId && t.parentTaskId,
+    );
+    return (subTask?.mode === "agent" ? "agent" : "plan") as "plan" | "agent";
+  }, [activeConversationId, tasks]);
   const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
   // 后台作业（跨会话）：header 胶囊与任务/作业中心的显示入口依赖它——
   // 即使没有任何运行中任务，只要本会话仍有后台作业在跑，入口就必须可见
@@ -756,6 +765,7 @@ export default function MobileAgentHost({
             {isRunning ? " · 运行中" : ""}
           </div>
         </div>
+        <MobileMultiHostPicker disabled={!canInteract || !ids} />
         {(runningTasks.length > 1 ||
           (runningTasks.length === 1 &&
             runningTasks[0].conversationId !== activeConversationId) ||
@@ -1066,10 +1076,13 @@ export default function MobileAgentHost({
             </button>
             <div className="min-w-0 flex-1 border-l border-zinc-700/50 pl-3">
               <div className="truncate text-xs text-zinc-400">
-                子agent调研 · {activeConversation?.title ?? "子agent对话"}
+                {subAgentMode === "agent" ? "子agent执行" : "子agent调研"} ·{" "}
+                {activeConversation?.title ?? "子agent对话"}
               </div>
               <div className="mt-0.5 text-[11px] text-zinc-600">
-                由主 Agent 派发的只读调研，不支持输入
+                {subAgentMode === "agent"
+                  ? "由主 Agent 派发的读写执行，不支持输入"
+                  : "由主 Agent 派发的只读调研，不支持输入"}
               </div>
             </div>
           </div>

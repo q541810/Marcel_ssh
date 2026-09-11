@@ -37,8 +37,24 @@ export default function MobileActiveAgentsSheet({
 
   const getSessionLabel = (sessionId: string) => {
     const session = sessions[sessionId];
-    if (!session) return '未知会话';
-    const conn = session.configId ? connections.find((c) => c.id === session.configId) : null;
+    if (!session) {
+      // 多机自动拉起的「幽灵会话」不在前端 sessionStore：用对话归属的
+      // connectionId 反查可读名，避免落成「未知会话」。
+      const viaConv = Object.values(conversations).find((c) => {
+        const task = Object.values(tasks).find(
+          (t) => t.sessionId === sessionId && t.conversationId === c.id,
+        );
+        return !!task;
+      });
+      const connFromConv = viaConv?.connectionId
+        ? connections.find((c) => c.id === viaConv.connectionId)
+        : null;
+      if (connFromConv) return `${connFromConv.name}（自动连接）`;
+      return "自动连接的目标机";
+    }
+    const conn = session.configId
+      ? connections.find((c) => c.id === session.configId)
+      : null;
     return conn?.name || session.connectionId || sessionId;
   };
 
@@ -47,18 +63,30 @@ export default function MobileActiveAgentsSheet({
   const getJobSessionLabel = (sessionId: string) => {
     const session = sessions[sessionId];
     if (!session) return `${sessionId}（该任务对应会话已关闭）`;
-    const conn = session.configId ? connections.find((c) => c.id === session.configId) : null;
+    const conn = session.configId
+      ? connections.find((c) => c.id === session.configId)
+      : null;
     return conn?.name || session.connectionId || sessionId;
   };
 
   const getConversationTitle = (task: AgentTask) => {
     const conv = conversations[task.conversationId];
     if (conv?.title) return conv.title;
-    return task.prompt ? (task.prompt.length > 20 ? `${task.prompt.slice(0, 20)}...` : task.prompt) : 'Agent 任务';
+    return task.prompt
+      ? task.prompt.length > 20
+        ? `${task.prompt.slice(0, 20)}...`
+        : task.prompt
+      : "Agent 任务";
   };
 
   const handleJumpToTask = async (task: AgentTask) => {
-    if (task.sessionId && task.sessionId !== activeSessionId) {
+    // 幽灵会话（多机自动拉起）不在 sessionStore：只切对话，不切终端会话，
+    // 避免 setActiveSession 指向不存在的 id。
+    if (
+      task.sessionId &&
+      task.sessionId !== activeSessionId &&
+      sessions[task.sessionId]
+    ) {
       setActiveSession(task.sessionId);
     }
     if (task.conversationId && task.conversationId !== activeConversationId) {
@@ -133,7 +161,7 @@ export default function MobileActiveAgentsSheet({
                     <div className="flex items-center gap-1.5 min-w-0">
                       {isSubTask ? (
                         <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded flex-shrink-0">
-                          子任务 · 调研
+                          {task.mode === "agent" ? "子任务 · 执行" : "子任务 · 调研"}
                         </span>
                       ) : (
                         <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 rounded flex-shrink-0">

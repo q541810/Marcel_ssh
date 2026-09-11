@@ -169,6 +169,14 @@ export default function AgentPanel() {
     : null;
   const isSubConversation = !!activeConversation?.parentConversationId;
   const parentConversationId = activeConversation?.parentConversationId ?? null;
+  /** 子 agent 运行模式（plan 只读调研 / agent 读写执行）：驱动输入区文案。 */
+  const subAgentMode = (() => {
+    if (!activeConversationId) return "plan" as const;
+    const subTask = Object.values(tasks).find(
+      (t) => t.conversationId === activeConversationId && t.parentTaskId,
+    );
+    return (subTask?.mode === "agent" ? "agent" : "plan") as "plan" | "agent";
+  })();
 
   // 图片支持按「当前会话实际生效模型」判定（会话记忆 → 全局最近使用），
   // 避免会话内切到非视觉模型时仍允许附图。普通派生值（随每次渲染重算，
@@ -1224,10 +1232,13 @@ export default function AgentPanel() {
             </button>
             <div className="flex-1 min-w-0 border-l border-zinc-700/50 pl-3">
               <div className="text-xs text-zinc-400 truncate">
-                子agent调研 · {activeConversation?.title ?? "子agent对话"}
+                {subAgentMode === "agent" ? "子agent执行" : "子agent调研"} ·{" "}
+                {activeConversation?.title ?? "子agent对话"}
               </div>
               <div className="text-[11px] text-zinc-600 mt-0.5">
-                此对话由主 Agent 派发，仅用于只读调研，不支持输入
+                {subAgentMode === "agent"
+                  ? "此对话由主 Agent 派发，用于读写执行，不支持输入"
+                  : "此对话由主 Agent 派发，仅用于只读调研，不支持输入"}
               </div>
             </div>
           </div>

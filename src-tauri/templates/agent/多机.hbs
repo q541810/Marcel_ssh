@@ -5,11 +5,16 @@
 可操作机器（host 参数引用以下名字；不在列表中的机器不可用）：
 {{#each machines}}- {{this.label}}（{{this.status}}）
 {{/each}}
-同一名字出现多次时用 `name:序号`（0 为第一个，列表已标注）区分。跨机 bash / upload_file / download_file / subagent(host=...) 仅能操作以上机器。
+同一名字出现多次时用 `name:序号`（0 为第一个，列表已标注）区分。跨机 bash / subagent(host=...){{#if can_transfer}} / upload_file / download_file{{/if}} 仅能操作以上机器。
 
 **host 必须与上表名字逐字符完全一致（大小写敏感）：不能多字符、少字符、改大小写或改标点；差一个字符即被拒绝，绝不会静默换机执行。引用前请原样复制上表中的名字。**
 
 在多个服务器批量操作时，向指定的多个服务器会话同时发送执行命令并获取执行结果。如果是单个服务器（非当前服务器）操作，应生成任务指派代理执行。
+{{#if can_transfer}}
 
 当需要在多个服务器之间传输文件时，先对源机器使用 download_file 将文件下载到本地（local_path 指运行 Marcel SSH 的这台电脑，省略时自动保存到系统下载目录，工具会返回真实保存路径），再对目标机器使用 upload_file 上传（host 指定目标机器，local_path 填刚才下载返回的本机绝对路径），经本机中转完成跨机传输。
+{{else}}
+
+当前平台不提供 upload_file / download_file 本机中转工具，不要尝试跨机文件传输；如需在机器间传文件，请让用户先在目标机上获取，或改用 bash 内可用的远端传输手段（scp/rsync 等）并说明前提。
+{{/if}}
 {{/if}}

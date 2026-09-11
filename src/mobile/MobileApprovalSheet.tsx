@@ -47,6 +47,11 @@ export default function MobileApprovalSheet({
     typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
   const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;
   const riskTone = RISK_TONE[toolCall.riskLevel] ?? RISK_TONE.Moderate;
+  // 多机操控：命令带 host = 跨机执行，审批必须醒目提示目标机器（安全护栏）。
+  const targetHost =
+    typeof toolCall.arguments?.host === 'string' && toolCall.arguments.host.trim()
+      ? toolCall.arguments.host.trim()
+      : '';
 
   return (
     <MobileSheet
@@ -127,6 +132,20 @@ export default function MobileApprovalSheet({
                 跳转
               </button>
             )}
+          </div>
+        )}
+
+        {/* 多机操控：跨机执行的目标机器警示（安全不可协商：批准打在别机的
+            命令必须能看到目标） */}
+        {targetHost && (
+          <div className="rounded-xl border border-amber-600/70 bg-amber-950/50 px-3 py-2.5 flex items-center gap-2.5">
+            <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9m0 0h2.5M12 9h-2.5" />
+            </svg>
+            <div className="text-xs text-amber-200 min-w-0">
+              <span className="font-semibold text-amber-300">目标机器：{targetHost}</span>
+              <span className="text-amber-200/80"> · 此操作将在该机器上执行（非当前会话）</span>
+            </div>
           </div>
         )}
 

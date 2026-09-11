@@ -142,13 +142,20 @@ impl TemplateManager {
     /// Render the multi-host control section（动态机器清单 + 操作策略）。
     /// `machines` = [{label: 展示名(含消歧后缀), status: "在线"|"离线，将自动连接"|"当前会话"}]
     /// 由调用方（multi_host）收集数据；模板文本外置于 templates/agent/多机.hbs。
-    pub fn render_multi_host(&self, current_host: &str, machines: &[serde_json::Value]) -> String {
+    /// `can_transfer`：是否注入跨机文件中转说明（upload/download 桌面专属）。
+    pub fn render_multi_host(
+        &self,
+        current_host: &str,
+        machines: &[serde_json::Value],
+        can_transfer: bool,
+    ) -> String {
         let reg = Self::build_agent_registry();
         reg.render(
             "多机",
             &json!({
                 "current_host": current_host,
                 "machines": machines,
+                "can_transfer": can_transfer,
             }),
         )
         .unwrap_or_else(|e| {
@@ -334,18 +341,32 @@ mod tests {
             { "label": "web:0", "status": "在线" },
             { "label": "db", "status": "离线，将自动连接" },
         ]);
-        let out = TemplateManager.render_multi_host("web", machines.as_array().unwrap());
+        let out = TemplateManager.render_multi_host("web", machines.as_array().unwrap(), true);
         assert!(out.contains("当前机器：web"));
         assert!(out.contains("- web:0（在线）"));
         assert!(out.contains("- db（离线，将自动连接）"));
         // 策略文案在模板内（不是硬编码在 Rust 侧）。
         assert!(out.contains("批量操作"));
         assert!(out.contains("生成任务指派代理执行"));
+        assert!(out.contains("upload_file"));
+    }
+
+    #[test]
+    fn render_multi_host_without_transfer_omits_upload_download() {
+        let machines = serde_json::json!([{ "label": "web", "status": "在线" }]);
+        let out = TemplateManager.render_multi_host("web", machines.as_array().unwrap(), false);
+        assert!(out.contains("当前机器：web"));
+        assert!(out.contains("跨机 bash / subagent"));
+        // 不注入本机中转说明；给出明确禁用指引（文案中可出现工具名）。
+        assert!(!out.contains("经本机中转完成跨机传输"));
+        assert!(!out.contains("local_path 指运行"));
+        assert!(out.contains("不提供 upload_file"));
+        assert!(out.contains("不要尝试跨机文件传输"));
     }
 
     #[test]
     fn render_multi_host_empty_machines_produces_header_only() {
-        let out = TemplateManager.render_multi_host("web", &[]);
+        let out = TemplateManager.render_multi_host("web", &[], true);
         assert!(out.contains("当前机器：web"));
         assert!(!out.contains("可操作机器"));
     }

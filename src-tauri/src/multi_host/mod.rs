@@ -9,8 +9,8 @@
 //!   指向未授权主机）。多机操控桌面端**恒开启**（无开关）。
 //! - **自动拉起会话记账**：自动拉起的会话归属到发起任务，任务/对话终态时
 //!   级联关闭（用户已在线打开的会话绝不被关闭）。
-//! - **门控**：功能仅桌面端可用（`multi_host_enabled` 在移动端恒 false，
-//!   工具 host 参数在移动端被明确拒绝）；模块本身双端均可编译。
+//! - **门控**：双端恒开启（与桌面语义一致：无总开关，范围由白名单控制）。
+//!   移动端 `multiHostConnectionIds` 默认空 → 仅当前机可执行；勾选后可跨机。
 //!
 //! 安全约定：
 //! - 凭证（密码/私钥 passphrase）只在 Rust 侧从 keychain 读取，绝不进入
@@ -40,20 +40,13 @@ pub struct ResolvedTarget {
     pub host_label: String,
 }
 
-/// 多机功能是否可用（桌面恒开启；移动端恒 false）。
-/// 与 `html_render_enabled` 同构的门控辅助。多机操控是桌面专属能力：移动端
-/// 不注册跨机工具参数语义、提示词不注入，host 参数被明确拒绝。
+/// 多机功能是否可用（双端恒开启）。
+/// 与桌面语义一致：无总开关；可跨机范围由 `multi_host_connection_ids`
+/// 白名单控制（空集合 = 仅当前机）。保留此辅助以便未来按设置收紧，
+/// 当前所有调用点共用同一策略，避免双端门控再次分叉。
 pub(crate) async fn multi_host_enabled(state: &AppState) -> bool {
-    #[cfg(desktop)]
-    {
-        let _ = state;
-        true
-    }
-    #[cfg(not(desktop))]
-    {
-        let _ = state;
-        false
-    }
+    let _ = state;
+    true
 }
 
 /// 解析一个机器引用为可操作的会话。
@@ -79,11 +72,10 @@ pub async fn resolve_target(
     let state = app.state::<AppState>();
     let state: AppState = state.inner().clone();
 
-    // 平台闸：多机操控桌面恒开启、移动端恒关闭（即便 settings 同步来了
-    // 桌面端的机器集合，移动端也绝不允许跨机解析/静默拉起）。
+    // 门控闸：双端恒开启；若未来按设置收紧，此处统一拒绝。
     if !multi_host_enabled(&state).await {
         return Err(AppError::Agent(
-            "多机操控仅桌面端可用，移动端不能指定目标机器".into(),
+            "多机操控当前不可用，不能指定目标机器".into(),
         ));
     }
 
@@ -459,7 +451,13 @@ pub async fn build_prompt_section(state: &AppState, session_id: &str) -> Option<
         })
         .collect();
 
-    let rendered = crate::agent::templates::TemplateManager.render_multi_host(&current, &machines);
+    let rendered = crate::agent::templates::TemplateManager.render_multi_host(
+        &current,
+        &machines,
+        // upload/download 仅桌面注册（本机文件系统语义）；移动端提示词
+        // 不得引导模型调用必败工具。
+        cfg!(desktop),
+    );
     if rendered.trim().is_empty() {
         None
     } else {

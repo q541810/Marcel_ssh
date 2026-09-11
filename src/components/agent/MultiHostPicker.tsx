@@ -8,7 +8,7 @@ import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 /**
  * 多机操控「目标机器」选择器（Agent 面板顶栏，新建会话按钮左侧）。
  *
- * 语义（桌面端多机操控恒开启，无开关）：
+ * 语义（双端多机操控恒开启，无开关）：
  * - **当前机器**：顶部锁定区显示当前 SSH 会话所在机器，恒可被 Agent 执行
  *   （不传 host 或 host=当前机都打在这台）；随会话切换自动跟随，不可取消。
  * - **可跨机目标**：分割线下多选，数据 = experimentalSettings.multiHostConnectionIds

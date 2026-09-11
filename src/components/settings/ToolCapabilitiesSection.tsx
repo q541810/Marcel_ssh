@@ -308,7 +308,7 @@ export function ToolCapabilitiesSection() {
       <SettingItem
         id="exp-multihost-set"
         label="可跨机目标机器"
-        description="勾选后 Agent 可携带 host 跨机执行 bash / 传输 / 子agent；未勾选的机器不会被 host 指定（当前会话所在机器始终可执行，无需勾选）。多机操控桌面端恒开启"
+        description="勾选后 Agent 可携带 host 跨机执行 bash / 传输 / 子agent；未勾选的机器不会被 host 指定（当前会话所在机器始终可执行，无需勾选）。多机操控双端恒开启"
         sectionId="settings-experimental"
         keywords={['multi', 'host', '机器', '集合', '勾选', '跨机', '目标']}
       >

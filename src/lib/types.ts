@@ -623,9 +623,10 @@ export interface ExperimentalSettings {
   /** Allow Agent to render interactive HTML visualizations directly in chat */
   enableHtmlRender?: boolean;
   /** 多机操控的「可跨机目标机器」集合（SavedConnection id 列表，空 = 仅
-   *  当前机器可执行）。桌面端多机操控恒开启（无开关）：bash / upload_file /
-   *  download_file / task 可携带 host；目标机器须在此集合内或为当前会话所在
-   *  机器。桌面 Agent 面板顶栏勾选维护；后端解析读取同一份做白名单。 */
+   *  当前机器可执行）。双端多机操控恒开启（无开关）：bash / upload_file /
+   *  download_file / subagent 可携带 host；目标机器须在此集合内或为当前会话
+   *  所在机器。Agent 面板（桌面顶栏 / 移动 Sheet）勾选维护；后端解析读取
+   *  同一份做白名单。upload/download 仍为桌面专属工具。 */
   multiHostConnectionIds?: string[];
 }
 
