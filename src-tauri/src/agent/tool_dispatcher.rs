@@ -318,8 +318,8 @@ impl ToolDispatcher {
             Some(v) => v,
         };
 
-        // 2. Model-based approval — runs for execute_command when an approver
-        //    is configured, regardless of whether the sandbox requires human
+        // 2. Model-based approval — runs for `bash` when an approver is
+        //    configured, regardless of whether the sandbox requires human
         //    approval. The model can only judge; it cannot rewrite the command.
         //    Reuses the agent's normal model + retry path; failure after retries
         //    is surfaced as a blocked tool result.

@@ -572,15 +572,21 @@ impl ToolRegistry {
     // There are three agent modes (Plan / Agent / Auto), each registering a
     // different set of tools:
     //
-    //   Plan  — Read-oriented tools only: ask_user, connection_info,
-    //           execute_command, read_file, list_directory, search_files,
-    //           system_info, plus skills, web_search, http_get.  No
-    //           write/edit/create tools.  No plugin tools, no MCP tools.
+    //   Plan  — Read-oriented only: ask_user, connection_info, bash,
+    //           read_file, list_directory, search_files, system_info,
+    //           job_output/job_kill/job_list, plus skills / experimental
+    //           tools (web_search, http_get, render_html).  Main role
+    //           additionally registers `subagent`; sub role does not.
+    //           No write/edit/plan tools, no plugin tools, no MCP tools,
+    //           no upload_file/download_file.
     //           Intended for research & planning before execution.
     //
-    //   Agent — All 12 core tools, skills, experimental tools, plugin
-    //           tools, MCP tools.  Command execution is gated by
-    //           allow/deny lists.
+    //   Agent — Full core set from `with_core_tools` (bash, file ops,
+    //           plan tools, subagent, job ops, desktop upload/download),
+    //           skills, experimental tools, plugin tools, MCP tools.
+    //           Command execution is gated by allow/deny lists.
+    //           Subtasks strip orchestration tools via
+    //           `converge_subagent_registry`.
     //
     //   Auto  — Same tool set as Agent, but all commands execute without
     //           confirmation.
