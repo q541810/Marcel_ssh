@@ -3,12 +3,12 @@
 use reqwest::Client;
 use std::time::Duration;
 
+use crate::agent::tools::browser_cdp::bing_search_url;
 use crate::config::settings::WebSearchEndpoint;
 use crate::error::AppError;
 
-use super::parse::{looks_like_challenge_page, parse_bing_results};
-use super::types::{SearchOutcome, SearchResult};
-use super::urlencoding;
+use super::types::SearchOutcome;
+use super::{classify_empty_results, parse, HTML_PROVIDER};
 
 const TIMEOUT_SECS: u64 = 15;
 
@@ -22,10 +22,8 @@ pub async fn search(
         .build()
         .map_err(|e| AppError::Agent(format!("failed to create HTTP client: {}", e)))?;
 
-    let url = search_url(endpoint, query);
-
     let resp = client
-        .get(&url)
+        .get(bing_search_url(endpoint, query))
         .header(
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
@@ -56,80 +54,99 @@ pub async fn search(
         .await
         .map_err(|e| AppError::Agent(format!("failed to read response: {}", e)))?;
 
-    outcome_from_html(&html, max_results)
-}
-
-/// Build the Bing SERP URL for the configured endpoint.
-pub fn search_url(endpoint: WebSearchEndpoint, query: &str) -> String {
-    let host = match endpoint {
-        WebSearchEndpoint::Cn => "https://cn.bing.com",
-        WebSearchEndpoint::Www => "https://www.bing.com",
-    };
-    format!("{}/search?q={}", host, urlencoding::encode(query))
+    Ok(outcome_from_html(&html, max_results))
 }
 
 /// Shared HTML → SearchOutcome path used by the html mode (and unit tests).
-pub fn outcome_from_html(html: &str, max_results: usize) -> Result<SearchOutcome, AppError> {
-    if looks_like_challenge_page(html) {
-        return Err(AppError::Agent(
-            "Bing returned a challenge page to the HTML scraper; switch search mode to browser or API"
-                .into(),
-        ));
-    }
+pub fn outcome_from_html(html: &str, max_results: usize) -> SearchOutcome {
+    let results = parse::parse_bing_results(html, max_results);
+    let title = parse::extract_title(html);
+    let interception = classify_empty_results(
+        &results,
+        html,
+        title.as_deref(),
+        parse::looks_like_results_page(html),
+        || {
+            format!(
+                "title={:?} bytes={} (scraped without a browser)",
+                title.as_deref().unwrap_or("(no title)"),
+                html.len()
+            )
+        },
+    );
 
-    let results: Vec<SearchResult> = parse_bing_results(html, max_results);
-    Ok(SearchOutcome {
-        provider: "html",
+    SearchOutcome {
+        provider: HTML_PROVIDER,
         results,
-    })
+        interception,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::tools::web_search::types::Interception;
     use crate::config::settings::WebSearchEndpoint;
 
     #[test]
     fn search_url_uses_configured_endpoint() {
-        let url = search_url(WebSearchEndpoint::Cn, "绝区零 hello");
         assert_eq!(
-            url,
+            bing_search_url(WebSearchEndpoint::Cn, "绝区零 hello"),
             "https://cn.bing.com/search?q=%E7%BB%9D%E5%8C%BA%E9%9B%B6%20hello"
         );
-
-        let url = search_url(WebSearchEndpoint::Www, "tokio");
-        assert_eq!(url, "https://www.bing.com/search?q=tokio");
+        assert_eq!(
+            bing_search_url(WebSearchEndpoint::Www, "tokio"),
+            "https://www.bing.com/search?q=tokio"
+        );
     }
 
     #[test]
     fn html_mode_parses_fixture_serp() {
         let html = r#"
         <html><body>
+          <ol id="b_results">
           <li class="b_algo">
             <h2><a href="https://tokio.rs/">Tokio</a></h2>
             <div class="b_caption"><p>Async runtime</p></div>
           </li>
+          </ol>
         </body></html>
         "#;
-        let out = outcome_from_html(html, 8).expect("parse");
+        let out = outcome_from_html(html, 8);
         assert_eq!(out.provider, "html");
         assert_eq!(out.results.len(), 1);
         assert_eq!(out.results[0].title, "Tokio");
         assert_eq!(out.results[0].url, "https://tokio.rs/");
+        assert!(out.interception.is_none());
     }
 
     #[test]
-    fn html_mode_rejects_challenge_page() {
-        let html =
-            r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
-        let err = outcome_from_html(html, 5).expect_err("challenge");
-        assert!(err.to_string().contains("challenge"));
+    fn html_mode_reports_a_challenge_instead_of_silence() {
+        let html = r#"<html><head><title>百度安全验证</title></head><body></body></html>"#;
+        let out = outcome_from_html(html, 5);
+        match out.interception {
+            Some(Interception::Challenge { vendor }) => assert_eq!(vendor, "百度安全验证"),
+            other => panic!("expected a challenge, got {:?}", other),
+        }
     }
 
     #[test]
-    fn html_mode_empty_results_is_ok() {
-        let out = outcome_from_html("<html><body>no hits</body></html>", 5).expect("ok");
+    fn html_mode_empty_results_is_not_an_interception_when_the_serp_rendered() {
+        let out = outcome_from_html(r#"<html><body><ol id="b_results"></ol></body></html>"#, 5);
         assert_eq!(out.provider, "html");
         assert!(out.results.is_empty());
+        assert!(
+            out.interception.is_none(),
+            "a rendered SERP with no hits is a real zero-result answer"
+        );
+    }
+
+    #[test]
+    fn html_mode_flags_a_document_that_is_not_a_results_page() {
+        let out = outcome_from_html("<html><body>no hits</body></html>", 5);
+        match out.interception {
+            Some(Interception::NotAResultsPage { .. }) => {}
+            other => panic!("expected not-a-results-page, got {:?}", other),
+        }
     }
 }

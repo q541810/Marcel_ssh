@@ -6,13 +6,26 @@
 //! - `html`: bare Bing HTML scrape
 //!
 //! Does NOT return full page content — use `http_get` for that.
+//!
+//! Two rules keep a failed search diagnosable, because both were previously
+//! invisible:
+//!
+//! - **An empty result list is not automatically "no results".** A verification
+//!   interstitial or an unrelated document is reported as an
+//!   [`Interception`] and fails the tool, instead of silently claiming the query
+//!   had no hits.
+//! - **A failed browser attempt is retried once, then served by the HTML
+//!   backend**, with the degradation stated in the summary and metadata so it is
+//!   never mistaken for the requested path.
+
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::json;
 use tauri::Manager;
 
 use crate::agent::sandbox::RiskLevel;
-
+use crate::agent::tools::web_result::{detect_challenge, FallbackNote};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;
 use crate::config::settings::{WebSearchApiProvider, WebSearchEndpoint, WebSearchMode};
@@ -48,12 +61,26 @@ pub mod urlencoding {
     }
 }
 
-use types::{SearchOutcome, SearchResult};
+use types::{Interception, SearchOutcome, SearchResult};
+
+pub(crate) const BROWSER_PROVIDER: &str = "browser";
+pub(crate) const HTML_PROVIDER: &str = "html";
 
 const MAX_RESULTS: usize = 8;
 const MAX_OUTPUT_BYTES: usize = 16_000;
 const SEARCH_TIP: &str =
     "\nTip: Use the `http_get` tool with any URL above to read the full page content.";
+
+/// Hard cap on a single browser attempt.
+///
+/// The per-step timeouts inside `browser_cdp` bound a *healthy* session, but a
+/// wedged Chromium could otherwise keep the agent waiting through every step in
+/// sequence. Capping the attempt guarantees the retry and the fallback get a
+/// turn in bounded time.
+const BROWSER_ATTEMPT_BUDGET: Duration = Duration::from_secs(45);
+/// Cap on the fallback attempt. The HTML backend already has a 15s HTTP timeout.
+const HTML_ATTEMPT_BUDGET: Duration = Duration::from_secs(25);
+const RETRY_BACKOFF: Duration = Duration::from_millis(300);
 
 pub struct WebSearchTool;
 
@@ -79,6 +106,7 @@ impl AgentTool for WebSearchTool {
         "搜索互联网。每次调用只能传入一个 `query`。 \
          返回该查询的结果标题、简短片段和 URL。 \
          搜索后端由应用设置中的「联网搜索方式」决定（本机浏览器 / 搜索 API / 裸抓 HTML）。 \
+         本机浏览器方式失败时会自动重试一次，仍失败则降级为裸抓 HTML，降级情况会在结果中明确说明。 \
          可以在同一轮中多次调用 web_search，但每次调用只搜索一个 query。 \
          要阅读任何结果页面的完整内容，请使用 `http_get` 工具并传入返回的 URL。"
     }
@@ -136,17 +164,33 @@ impl AgentTool for WebSearchTool {
 
         let (mode, api_provider, endpoint) = resolve_search_config(ctx).await;
 
-        let outcome = match run_search(mode, api_provider, endpoint, &query, max_results).await {
-            Ok(o) => o,
-            Err(e) => {
-                return Ok(ToolOutput::fail(
-                    format!("web_search '{}'", query),
-                    format!("search failed (mode={:?}): {}", mode, e),
-                ));
-            }
-        };
+        match run_search(mode, api_provider, endpoint, &query, max_results).await {
+            Ok(attempt) => Ok(format_outcome(&query, mode, attempt)),
+            Err(message) => Ok(ToolOutput::fail(
+                format!("web_search '{}'", query),
+                format!("search failed (mode={:?}): {}", mode, message),
+            )),
+        }
+    }
+}
 
-        Ok(format_outcome(&query, outcome))
+/// One search that produced an answer, plus how it was obtained.
+#[derive(Debug)]
+struct SearchAttempt {
+    outcome: SearchOutcome,
+    /// Set when the configured backend failed and another one answered.
+    fallback: Option<FallbackNote>,
+    /// What was tried, in order — the trail that makes a failure diagnosable.
+    attempts: Vec<String>,
+}
+
+impl SearchAttempt {
+    fn direct(outcome: SearchOutcome) -> Self {
+        Self {
+            outcome,
+            fallback: None,
+            attempts: Vec::new(),
+        }
     }
 }
 
@@ -200,55 +244,268 @@ async fn run_search(
     endpoint: WebSearchEndpoint,
     query: &str,
     max_results: usize,
-) -> Result<SearchOutcome, AppError> {
+) -> Result<SearchAttempt, String> {
     match mode {
-        WebSearchMode::Browser => browser::search(endpoint, query, max_results).await,
-        WebSearchMode::Html => html::search(endpoint, query, max_results).await,
+        WebSearchMode::Browser => run_browser_search(endpoint, query, max_results).await,
+        WebSearchMode::Html => html::search(endpoint, query, max_results)
+            .await
+            .map(SearchAttempt::direct)
+            .map_err(|e| e.to_string()),
         WebSearchMode::Api => {
-            let key = keychain::get_web_search_api_key()?.unwrap_or_default();
-            api::search(api_provider, &key, query, max_results).await
+            let key = keychain::get_web_search_api_key()
+                .map_err(|e| e.to_string())?
+                .unwrap_or_default();
+            api::search(api_provider, &key, query, max_results)
+                .await
+                .map(SearchAttempt::direct)
+                .map_err(|e| e.to_string())
         }
     }
 }
 
-fn format_outcome(query: &str, outcome: SearchOutcome) -> ToolOutput {
-    let SearchOutcome { provider, results } = outcome;
+/// Browser search with one bounded retry, then an HTML fallback.
+///
+/// The order of preference is deliberate: the browser is the highest-quality
+/// backend, so it gets a second chance after a transient infrastructure fault,
+/// and only then does the cheap stateless scraper take over.
+async fn run_browser_search(
+    endpoint: WebSearchEndpoint,
+    query: &str,
+    max_results: usize,
+) -> Result<SearchAttempt, String> {
+    let mut attempts: Vec<String> = Vec::new();
+    let mut last_failure: Option<String> = None;
+
+    for attempt in 1..=2usize {
+        let result = tokio::time::timeout(
+            BROWSER_ATTEMPT_BUDGET,
+            browser::search(endpoint, query, max_results),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(outcome)) => {
+                return Ok(SearchAttempt {
+                    outcome,
+                    fallback: None,
+                    attempts,
+                })
+            }
+            Ok(Err(failure)) => {
+                attempts.push(format!(
+                    "browser attempt {} failed ({}) : {}",
+                    attempt,
+                    failure.stage.label(),
+                    failure.message
+                ));
+                let retryable = failure.retryable();
+                last_failure = Some(failure.to_string());
+                if !retryable {
+                    // A navigation that failed did so for a reason; a different
+                    // backend is a better use of the remaining time than a
+                    // repeat of the same request.
+                    break;
+                }
+            }
+            Err(_elapsed) => {
+                attempts.push(format!(
+                    "browser attempt {} exceeded its {:.0}s budget",
+                    attempt,
+                    BROWSER_ATTEMPT_BUDGET.as_secs_f32()
+                ));
+                last_failure = Some("browser attempt exceeded its time budget".to_string());
+                // The budget is already spent; retrying would only double it.
+                break;
+            }
+        }
+
+        if attempt == 1 {
+            tokio::time::sleep(RETRY_BACKOFF).await;
+        }
+    }
+
+    let reason = last_failure.unwrap_or_else(|| "browser search failed".to_string());
+
+    match tokio::time::timeout(
+        HTML_ATTEMPT_BUDGET,
+        html::search(endpoint, query, max_results),
+    )
+    .await
+    {
+        Ok(Ok(outcome)) => {
+            attempts.push("fell back to the html backend".to_string());
+            Ok(SearchAttempt {
+                outcome,
+                fallback: Some(FallbackNote::new(BROWSER_PROVIDER, HTML_PROVIDER, reason)),
+                attempts,
+            })
+        }
+        Ok(Err(e)) => {
+            attempts.push(format!("html fallback failed: {}", e));
+            Err(join_attempts(&attempts))
+        }
+        Err(_) => {
+            attempts.push(format!(
+                "html fallback exceeded its {:.0}s budget",
+                HTML_ATTEMPT_BUDGET.as_secs_f32()
+            ));
+            Err(join_attempts(&attempts))
+        }
+    }
+}
+
+fn join_attempts(attempts: &[String]) -> String {
+    if attempts.is_empty() {
+        "no backend produced a result".to_string()
+    } else {
+        attempts.join("; ")
+    }
+}
+
+/// Decide whether an empty result list means "no hits" or "not a results page".
+///
+/// Parsed results always win. Otherwise the page is checked for a verification
+/// interstitial, and only a page carrying a real results-page marker is accepted
+/// as a genuine zero-hit answer — anything else is reported as an interception
+/// rather than dressed up as "no results found".
+pub(crate) fn classify_empty_results(
+    results: &[SearchResult],
+    html: &str,
+    title: Option<&str>,
+    looks_like_serp: bool,
+    describe_page: impl FnOnce() -> String,
+) -> Option<Interception> {
+    if !results.is_empty() {
+        return None;
+    }
+    if let Some(challenge) = detect_challenge(html, title) {
+        return Some(Interception::Challenge {
+            vendor: challenge.vendor,
+        });
+    }
+    if looks_like_serp {
+        return None;
+    }
+    Some(Interception::NotAResultsPage {
+        detail: describe_page(),
+    })
+}
+
+fn format_outcome(
+    query: &str,
+    requested_mode: WebSearchMode,
+    attempt: SearchAttempt,
+) -> ToolOutput {
+    let SearchAttempt {
+        outcome,
+        fallback,
+        attempts,
+    } = attempt;
+    let SearchOutcome {
+        provider,
+        results,
+        interception,
+    } = outcome;
+
+    let fallback_suffix = fallback
+        .as_ref()
+        .map(FallbackNote::summary_suffix)
+        .unwrap_or_default();
+    let mut metadata = json!({
+        "provider": provider,
+        "requested_mode": mode_label(requested_mode),
+        "queries": 1,
+        "total_results": results.len(),
+        "results": search_result_metadata(query, &results),
+    });
+    let map = metadata.as_object_mut().expect("object literal");
+
+    if let Some(note) = &fallback {
+        map.insert("fallback".to_string(), note.to_json());
+    }
+    if let Some(interception) = &interception {
+        map.insert("interception".to_string(), interception.to_json());
+    }
+    if !attempts.is_empty() {
+        map.insert("attempts".to_string(), json!(attempts));
+    }
+
+    // An interception is a failed search: reporting it as success is what made
+    // a blocked query look like "no results found".
+    if let Some(interception) = &interception {
+        map.insert("success".to_string(), json!(0));
+        map.insert("failed".to_string(), json!(1));
+        let detail = interception.describe();
+        let hint = match interception {
+            Interception::Challenge { .. } => {
+                "The search engine blocked this request. Retrying the same query usually \
+                 does not help — switch Settings → 联网搜索方式 to the search API mode, or \
+                 try again later."
+            }
+            Interception::NotAResultsPage { .. } => {
+                "The request did not reach a Bing results page. Check the network or proxy \
+                 settings, then retry; the search API mode is unaffected by this."
+            }
+        };
+        return ToolOutput::fail(
+            format!(
+                "web_search '{}' blocked via {}{}",
+                query, provider, fallback_suffix
+            ),
+            format!(
+                "## Query: {}\n\n⚠ {}\n\n{}\n\nAttempts: {}",
+                query,
+                detail,
+                hint,
+                join_attempts(&attempts)
+            ),
+        )
+        .with_metadata(metadata);
+    }
+
+    map.insert(
+        "success".to_string(),
+        json!(if results.is_empty() { 0 } else { 1 }),
+    );
+    map.insert("failed".to_string(), json!(0));
 
     if results.is_empty() {
         return ToolOutput::ok(
-            format!("web_search '{}' (0 results via {})", query, provider),
-            format!("## Query: {}\n\nNo results found\n{}", query, SEARCH_TIP),
+            format!(
+                "web_search '{}' (0 results via {}){}",
+                query, provider, fallback_suffix
+            ),
+            format!(
+                "## Query: {}\n\nNo results found — the search engine returned a results \
+                 page with no hits for this query.\n{}",
+                query, SEARCH_TIP
+            ),
         )
-        .with_metadata(json!({
-            "provider": provider,
-            "queries": 1,
-            "success": 0,
-            "failed": 1,
-            "total_results": 0,
-            "results": []
-        }));
+        .with_metadata(metadata);
     }
 
     let section = format_results_for_query(query, &results);
     let output = truncate_output(format!("{}{}", section, SEARCH_TIP), MAX_OUTPUT_BYTES);
-    let metadata_results = search_result_metadata(query, &results);
-    let total = results.len();
 
     ToolOutput::ok(
         format!(
-            "web_search '{}' ({} results via {})",
-            query, total, provider
+            "web_search '{}' ({} results via {}){}",
+            query,
+            results.len(),
+            provider,
+            fallback_suffix
         ),
         output,
     )
-    .with_metadata(json!({
-        "provider": provider,
-        "queries": 1,
-        "success": 1,
-        "failed": 0,
-        "total_results": total,
-        "results": metadata_results
-    }))
+    .with_metadata(metadata)
+}
+
+fn mode_label(mode: WebSearchMode) -> &'static str {
+    match mode {
+        WebSearchMode::Browser => BROWSER_PROVIDER,
+        WebSearchMode::Html => HTML_PROVIDER,
+        WebSearchMode::Api => "api",
+    }
 }
 
 fn normalize_query(query: &str) -> String {
@@ -319,6 +576,18 @@ mod tests {
     use super::*;
     use crate::config::settings::WebSearchEndpoint;
 
+    fn result(title: &str) -> SearchResult {
+        SearchResult {
+            title: title.to_string(),
+            url: "https://example.com/".to_string(),
+            snippet: "s".to_string(),
+        }
+    }
+
+    fn attempt(outcome: SearchOutcome) -> SearchAttempt {
+        SearchAttempt::direct(outcome)
+    }
+
     #[test]
     fn urlencoding_spaces() {
         let encoded = urlencoding::encode("hello world");
@@ -386,30 +655,33 @@ mod tests {
     fn format_outcome_includes_provider_metadata() {
         let out = format_outcome(
             "test",
-            SearchOutcome {
-                provider: "browser",
-                results: vec![SearchResult {
-                    title: "T".into(),
-                    url: "https://example.com".into(),
-                    snippet: "S".into(),
-                }],
-            },
+            WebSearchMode::Browser,
+            attempt(SearchOutcome {
+                provider: BROWSER_PROVIDER,
+                results: vec![result("T")],
+                interception: None,
+            }),
         );
         assert!(out.success);
         assert!(out.summary.contains("browser"));
         let meta = out.metadata.unwrap();
         assert_eq!(meta["provider"], "browser");
+        assert_eq!(meta["requested_mode"], "browser");
         assert_eq!(meta["total_results"], 1);
+        assert!(meta.get("fallback").is_none());
     }
 
+    /// A genuine zero-hit SERP still reads as a successful search.
     #[test]
-    fn format_outcome_empty_results_still_ok_with_provider() {
+    fn format_outcome_reports_a_real_zero_result_search_as_success() {
         let out = format_outcome(
             "empty",
-            SearchOutcome {
-                provider: "html",
+            WebSearchMode::Html,
+            attempt(SearchOutcome {
+                provider: HTML_PROVIDER,
                 results: vec![],
-            },
+                interception: None,
+            }),
         );
         assert!(out.success);
         assert!(out.summary.contains("0 results"));
@@ -417,7 +689,117 @@ mod tests {
         let meta = out.metadata.unwrap();
         assert_eq!(meta["provider"], "html");
         assert_eq!(meta["total_results"], 0);
+        assert_eq!(meta["success"], 0);
+        assert_eq!(meta["failed"], 0);
+    }
+
+    /// The regression that started this: a blocked search must not read as
+    /// "No results found".
+    #[test]
+    fn format_outcome_fails_and_explains_an_intercepted_search() {
+        let out = format_outcome(
+            "绝区零",
+            WebSearchMode::Browser,
+            attempt(SearchOutcome {
+                provider: BROWSER_PROVIDER,
+                results: vec![],
+                interception: Some(Interception::Challenge {
+                    vendor: "百度安全验证",
+                }),
+            }),
+        );
+
+        assert!(
+            !out.success,
+            "an interception must not be reported as success"
+        );
+        assert!(out.summary.contains("blocked"), "{}", out.summary);
+        assert!(out.output.contains("百度安全验证"), "{}", out.output);
+        assert!(
+            !out.output.contains("No results found"),
+            "a blocked search must not claim the query had no hits: {}",
+            out.output
+        );
+        assert!(
+            out.output.contains("联网搜索方式"),
+            "the hint must point at the actual setting: {}",
+            out.output
+        );
+        let meta = out.metadata.unwrap();
+        assert_eq!(meta["interception"]["kind"], "challenge");
+        assert_eq!(meta["interception"]["vendor"], "百度安全验证");
         assert_eq!(meta["failed"], 1);
+    }
+
+    #[test]
+    fn format_outcome_reports_a_not_a_results_page_interception() {
+        let out = format_outcome(
+            "x",
+            WebSearchMode::Html,
+            attempt(SearchOutcome {
+                provider: HTML_PROVIDER,
+                results: vec![],
+                interception: Some(Interception::NotAResultsPage {
+                    detail: "title=\"Oops\" bytes=12".to_string(),
+                }),
+            }),
+        );
+        assert!(!out.success);
+        assert!(out.output.contains("not a results page"), "{}", out.output);
+        let meta = out.metadata.unwrap();
+        assert_eq!(meta["interception"]["kind"], "not-a-results-page");
+    }
+
+    /// A degraded result must announce itself, in both the summary and metadata.
+    #[test]
+    fn format_outcome_states_a_fallback_loudly() {
+        let out = format_outcome(
+            "q",
+            WebSearchMode::Browser,
+            SearchAttempt {
+                outcome: SearchOutcome {
+                    provider: HTML_PROVIDER,
+                    results: vec![result("T")],
+                    interception: None,
+                },
+                fallback: Some(FallbackNote::new(
+                    BROWSER_PROVIDER,
+                    HTML_PROVIDER,
+                    "browser boot: CDP endpoint did not become ready within 12s",
+                )),
+                attempts: vec!["browser attempt 1 failed (boot): timed out".to_string()],
+            },
+        );
+
+        assert!(out.success, "a degraded-but-served search still succeeds");
+        assert!(out.summary.contains("fell back to html"), "{}", out.summary);
+        assert!(out.summary.contains("browser failed"), "{}", out.summary);
+        let meta = out.metadata.unwrap();
+        assert_eq!(meta["provider"], "html");
+        assert_eq!(meta["requested_mode"], "browser");
+        assert_eq!(meta["fallback"]["from"], "browser");
+        assert_eq!(meta["fallback"]["to"], "html");
+        assert!(meta["fallback"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("boot"));
+        assert_eq!(meta["attempts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn classify_empty_accepts_a_real_serp_with_no_hits() {
+        let html =
+            r#"<html><body><ol id="b_results"><li class="b_no">没有结果</li></ol></body></html>"#;
+        assert!(classify_empty_results(&[], html, Some("zzz"), true, || "d".into()).is_none());
+    }
+
+    #[test]
+    fn classify_empty_prefers_results_over_markers() {
+        let html = r#"<html><body>captcha</body></html>"#;
+        assert!(
+            classify_empty_results(&[result("T")], html, None, false, || "d".into()).is_none(),
+            "parsed results must win over a stray marker"
+        );
     }
 
     #[test]
@@ -429,7 +811,6 @@ mod tests {
 
     #[test]
     fn web_search_mode_dispatch_labels() {
-        // Ensure mode enum variants used by run_search stay stable for settings.
         assert_eq!(
             format!("{:?}", WebSearchMode::Browser).to_ascii_lowercase(),
             "browser"
@@ -448,45 +829,43 @@ mod tests {
     fn every_web_search_mode_produces_distinct_provider_label() {
         let fixture = r#"
         <html><body>
+          <ol id="b_results">
           <li class="b_algo">
             <h2><a href="https://example.com/x">X</a></h2>
             <div class="b_caption"><p>snippet</p></div>
           </li>
+          </ol>
         </body></html>
         "#;
 
-        let html = html::outcome_from_html(fixture, 5).expect("html mode");
-        assert_eq!(html.provider, "html");
-        assert_eq!(html.results.len(), 1);
+        let html_outcome = html::outcome_from_html(fixture, 5);
+        assert_eq!(html_outcome.provider, "html");
+        assert_eq!(html_outcome.results.len(), 1);
 
-        let browser = browser::outcome_from_browser_html(fixture, 5).expect("browser mode");
-        assert_eq!(browser.provider, "browser");
-        assert_eq!(browser.results.len(), 1);
+        let serp = crate::agent::tools::browser_cdp::BingSerp {
+            html: fixture.to_string(),
+            facts: crate::agent::tools::browser_cdp::PageFacts {
+                href: "https://cn.bing.com/search?q=x".into(),
+                ready_state: "complete".into(),
+                response_status: Some(200),
+                title: Some("x".into()),
+            },
+            found_result_container: true,
+        };
+        let browser_outcome = browser::outcome_from_serp(&serp, 5);
+        assert_eq!(browser_outcome.provider, "browser");
+        assert_eq!(browser_outcome.results.len(), 1);
 
         // API modes: mapping layer produces api:brave / api:tavily labels.
-        let brave = SearchOutcome {
-            provider: "api:brave",
-            results: html.results.clone(),
-        };
-        let tavily = SearchOutcome {
-            provider: "api:tavily",
-            results: browser.results.clone(),
-        };
-        assert_eq!(brave.provider, "api:brave");
-        assert_eq!(tavily.provider, "api:tavily");
-
-        // format_outcome surfaces provider for each mode label.
-        for provider in ["html", "browser", "api:brave", "api:tavily"] {
+        for provider in ["browser", "html", "api:brave", "api:tavily"] {
             let out = format_outcome(
                 "q",
-                SearchOutcome {
+                WebSearchMode::Api,
+                attempt(SearchOutcome {
                     provider,
-                    results: vec![SearchResult {
-                        title: "T".into(),
-                        url: "https://t.example".into(),
-                        snippet: "s".into(),
-                    }],
-                },
+                    results: vec![result("T")],
+                    interception: None,
+                }),
             );
             assert!(out.success, "{provider}");
             assert!(
@@ -496,6 +875,24 @@ mod tests {
             );
             assert_eq!(out.metadata.as_ref().unwrap()["provider"], provider);
         }
+    }
+
+    /// Providers must stay distinguishable so a degraded result is never
+    /// mistaken for the requested mode.
+    #[test]
+    fn requested_mode_is_recorded_separately_from_the_serving_provider() {
+        let out = format_outcome(
+            "q",
+            WebSearchMode::Api,
+            attempt(SearchOutcome {
+                provider: HTML_PROVIDER,
+                results: vec![result("T")],
+                interception: None,
+            }),
+        );
+        let meta = out.metadata.unwrap();
+        assert_eq!(meta["requested_mode"], "api");
+        assert_eq!(meta["provider"], "html");
     }
 
     #[tokio::test]
@@ -510,7 +907,7 @@ mod tests {
         )
         .await
         .expect_err("no key");
-        let msg = err.to_string().to_ascii_lowercase();
+        let msg = err.to_ascii_lowercase();
         assert!(msg.contains("key"), "{msg}");
     }
 }

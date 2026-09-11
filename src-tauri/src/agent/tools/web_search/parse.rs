@@ -4,6 +4,11 @@ use scraper::{Html, Selector};
 
 use super::types::SearchResult;
 
+/// Containers that prove Bing actually served a results page. `b_results` wraps
+/// the result list; `b_no` is Bing's explicit "no results" block. Seeing either
+/// means an empty parse is a genuine zero-hit answer rather than a wrong page.
+const RESULTS_PAGE_MARKERS: &[&str] = &["b_results", "b_no", "b_context"];
+
 pub fn parse_bing_results(html: &str, max: usize) -> Vec<SearchResult> {
     let mut results = Vec::new();
     let document = Html::parse_document(html);
@@ -55,11 +60,20 @@ pub fn parse_bing_results(html: &str, max: usize) -> Vec<SearchResult> {
     results
 }
 
-pub fn looks_like_challenge_page(html: &str) -> bool {
+/// Whether the HTML carries a marker proving it is a real Bing results page.
+pub fn looks_like_results_page(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    (lower.contains("captcha") || lower.contains("powchallenge") || lower.contains("arkoselabs"))
-        && !lower.contains("li class=\"b_algo\"")
-        && !lower.contains("class=\"b_algo\"")
+    RESULTS_PAGE_MARKERS.iter().any(|m| lower.contains(m))
+}
+
+/// Document title, for classifying an unexpected page in diagnostics.
+pub fn extract_title(html: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("title").ok()?;
+    let element = document.select(&selector).next()?;
+    let text: String = element.text().collect::<Vec<_>>().join(" ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]
@@ -108,20 +122,24 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_challenge_without_results() {
-        let html =
-            r#"<html><body><div class="captcha">PoWChallenge arkoselabs</div></body></html>"#;
-        assert!(looks_like_challenge_page(html));
+    fn results_page_markers_distinguish_a_serp_from_an_interstitial() {
+        assert!(looks_like_results_page(
+            r#"<html><body><ol id="b_results"></ol></body></html>"#
+        ));
+        assert!(looks_like_results_page(
+            r#"<html><body><li class="b_no">没有与此相关的结果</li></body></html>"#
+        ));
+        assert!(!looks_like_results_page(
+            r#"<html><head><title>百度安全验证</title></head><body></body></html>"#
+        ));
     }
 
     #[test]
-    fn real_results_not_flagged_as_challenge() {
-        let html = r#"
-        <html><body>
-          <script>PoWChallenge</script>
-          <li class="b_algo"><h2><a href="https://example.com">Ok</a></h2></li>
-        </body></html>
-        "#;
-        assert!(!looks_like_challenge_page(html));
+    fn title_extraction_collapses_whitespace() {
+        assert_eq!(
+            extract_title("<html><head><title>  tokio\n rust  </title></head></html>").as_deref(),
+            Some("tokio rust")
+        );
+        assert_eq!(extract_title("<html><body>none</body></html>"), None);
     }
 }

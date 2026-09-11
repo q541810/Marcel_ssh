@@ -96,6 +96,9 @@ async fn search_brave(
     Ok(SearchOutcome {
         provider: "api:brave",
         results,
+        // A search API either answers with results or fails outright; it never
+        // hands back a verification interstitial.
+        interception: None,
     })
 }
 
@@ -165,6 +168,7 @@ async fn search_tavily(
     Ok(SearchOutcome {
         provider: "api:tavily",
         results,
+        interception: None,
     })
 }
 
@@ -303,6 +307,7 @@ mod tests {
         let outcome = SearchOutcome {
             provider: "api:brave",
             results,
+            interception: None,
         };
         assert_eq!(outcome.provider, "api:brave");
         assert_eq!(outcome.results[0].title, "X");
@@ -321,6 +326,7 @@ mod tests {
         let outcome = SearchOutcome {
             provider: "api:tavily",
             results,
+            interception: None,
         };
         assert_eq!(outcome.provider, "api:tavily");
         assert_eq!(outcome.results[0].snippet, "sy");

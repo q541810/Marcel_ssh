@@ -161,9 +161,9 @@ export function ToolCapabilitiesSection() {
           <SettingItem
             id="exp-websearch-mode"
             label="搜索方式"
-            description="本机浏览器效果最好；搜索 API 需自备 Key；裸抓零配置但质量一般"
+            description="本机浏览器效果最好；搜索 API 需自备 Key；裸抓零配置但质量一般。本机浏览器失败时会自动重试一次，仍失败则降级为裸抓，并在结果中标注「已降级」"
             sectionId="settings-experimental"
-            keywords={['web', 'search', 'browser', 'api', 'bing', '搜索方式', '浏览器']}
+            keywords={['web', 'search', 'browser', 'api', 'bing', '搜索方式', '浏览器', '降级']}
           >
             <Select
               value={searchMode}
@@ -264,9 +264,9 @@ export function ToolCapabilitiesSection() {
         <SettingItem
           id="exp-httpfetch-mode"
           label="获取方式"
-          description="本机浏览器渲染 DOM（推荐）；裸 HTTP 更快但易被站点拦截"
+          description="本机浏览器渲染 DOM（推荐）；裸 HTTP 更快但易被站点拦截。本机浏览器失败时会自动降级为裸 HTTP GET，并在结果中标注「已降级」"
           sectionId="settings-experimental"
-          keywords={['http', 'fetch', 'browser', 'html', '网页获取', '浏览器']}
+          keywords={['http', 'fetch', 'browser', 'html', '网页获取', '浏览器', '降级']}
         >
           <Select
             value={httpFetchMode}

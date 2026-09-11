@@ -3,6 +3,15 @@ import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { readWebToolStatus, webToolChips, webToolNotice } from '@/lib/webToolStatus';
+import type { ChipTone } from '@/lib/webToolStatus';
+
+/** 状态小标记的配色：中性=后端标识，warning=降级/被网站拦截。 */
+const CHIP_TONE_CLASS: Record<ChipTone, string> = {
+  neutral: 'bg-zinc-600/60 text-zinc-200',
+  warning: 'bg-amber-500/10 text-amber-300',
+  danger: 'bg-red-500/10 text-red-300',
+};
 
 interface Props {
   message: AgentMessage;
@@ -47,6 +56,23 @@ const TOOL_ICONS: Record<string, JSX.Element> = {
   search_files: (
     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  ),
+  // 联网搜索：放大镜 + 地球经纬（与 read_file/search_files 区分开）
+  web_search: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.65 16.65A7.5 7.5 0 105.35 5.35a7.5 7.5 0 0011.3 11.3z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 11.5h11M13 5.6a13 13 0 013.3 5.9 13 13 0 01-3.3 5.9 13 13 0 01-3.3-5.9 13 13 0 013.3-5.9z" />
+    </svg>
+  ),
+  // 网页获取：地球 + 向下取回
+  http_get: (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a9 9 0 100 18 9 9 0 000-18z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.6 9h16.8M3.6 15h16.8" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a15.3 15.3 0 014 9 15.3 15.3 0 01-4 9 15.3 15.3 0 01-4-9 15.3 15.3 0 014-9z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 21v4" />
     </svg>
   ),
   system_info: (
@@ -333,6 +359,11 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       (tr.metadata as Record<string, unknown>).mode === 'agent'
         ? '读写'
         : '';
+    // 联网工具（web_search / http_get）：本次用的是哪个后端、有没有降级、页面
+    // 是否被网站的人机验证拦下。旧会话没有这些字段 → status 为 null，界面不变。
+    const webStatus = readWebToolStatus(tr.toolName, tr.metadata);
+    const webChips = webStatus ? webToolChips(webStatus) : [];
+    const webNotice = webStatus ? webToolNotice(webStatus) : null;
 
     return (
       <div
@@ -365,6 +396,15 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                   读写子agent
                 </span>
               )}
+              {webChips.map((chip) => (
+                <span
+                  key={chip.key}
+                  className={`flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md font-medium ${CHIP_TONE_CLASS[chip.tone]}`}
+                  title={chip.title}
+                >
+                  {chip.label}
+                </span>
+              ))}
               {preview && (
                 <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
               )}
@@ -450,6 +490,37 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                 {message.modelApproval.reasons.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
             )}
+          </div>
+        )}
+        {/* 联网工具的异常说明：降级 / 被网站拦截 / 无正文。
+            放在正文之前，先解释「发生了什么」再看内容，避免用户把验证页正文
+            当成真实页面。正常情况不渲染，不占版面。 */}
+        {webNotice && !isExecuting && (
+          <div className="border-t border-zinc-700/50 px-3 py-2">
+            <div
+              className={`rounded-lg border px-3 py-2 ${
+                webNotice.tone === 'danger'
+                  ? 'border-red-700/60 bg-red-950/40'
+                  : 'border-amber-700/60 bg-amber-950/40'
+              }`}
+            >
+              <div
+                className={`text-xs font-medium mb-0.5 ${
+                  webNotice.tone === 'danger' ? 'text-red-300' : 'text-amber-300'
+                }`}
+              >
+                {webNotice.title}
+              </div>
+              <ul
+                className={`text-xs space-y-0.5 list-disc list-inside ${
+                  webNotice.tone === 'danger' ? 'text-red-200/90' : 'text-amber-200/90'
+                }`}
+              >
+                {webNotice.lines.map((line, i) => (
+                  <li key={i} className="break-all">{line}</li>
+                ))}
+              </ul>
+            </div>
           </div>
         )}
         {showOutput && (

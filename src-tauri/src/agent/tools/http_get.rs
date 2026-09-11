@@ -18,10 +18,14 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use serde_json::json;
+use std::time::Duration;
 use tauri::Manager;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::tools::browser_cdp;
+use crate::agent::tools::web_result::{
+    detect_challenge, is_blank_content, FallbackNote, WebBackend,
+};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::HttpFetchMode;
 use crate::error::AppError;
@@ -38,7 +42,10 @@ enum OutputFormat {
 struct FetchedPage {
     requested_url: String,
     final_url: String,
-    status: u16,
+    /// Real HTTP status. `None` in browser mode when the navigation produced no
+    /// HTTP response at all (blocked, refused, DNS failure, error interstitial);
+    /// inventing a `200` here is what once made a verification page look fine.
+    status: Option<u16>,
     status_text: String,
     content_type: String,
     title: Option<String>,
@@ -47,6 +54,13 @@ struct FetchedPage {
     markdown_bytes: usize,
     redirected: bool,
     http_error: bool,
+    /// Backend that actually served this page.
+    provider: &'static str,
+    /// Set when the page is a bot-verification interstitial rather than the
+    /// document that was requested.
+    challenge: Option<&'static str>,
+    /// Whether the converted content carries nothing a reader could use.
+    blank_content: bool,
 }
 
 struct PageChunk {
@@ -196,8 +210,8 @@ impl AgentTool for HttpGetTool {
 
         let mode = resolve_fetch_mode(ctx).await;
         let provider = match mode {
-            HttpFetchMode::Browser => "browser",
-            HttpFetchMode::Html => "html",
+            HttpFetchMode::Browser => WebBackend::Browser.label(),
+            HttpFetchMode::Html => WebBackend::Html.label(),
         };
 
         // Batch mode treats chunk_size as a per-page limit. The final combined
@@ -206,23 +220,28 @@ impl AgentTool for HttpGetTool {
             .saturating_mul(urls_to_fetch.len().max(1))
             .min(96_000);
 
-        let results: Vec<Result<FetchedPage, AppError>> = match mode {
-            HttpFetchMode::Browser => {
-                let owned: Vec<String> = urls_to_fetch.iter().map(|u| (*u).to_string()).collect();
-                browser_cdp::fetch_html_many(&owned)
-                    .await
-                    .into_iter()
-                    .map(|r| r.map(|page| browser_page_to_fetched(page, format)))
-                    .collect()
-            }
-            HttpFetchMode::Html => {
-                let fetches: Vec<_> = urls_to_fetch
-                    .iter()
-                    .map(|u| fetch_page_http(u, format))
-                    .collect();
-                join_all(fetches).await
-            }
+        let owned: Vec<String> = urls_to_fetch.iter().map(|u| (*u).to_string()).collect();
+        let (results, provider, fallback) = match mode {
+            HttpFetchMode::Browser => match fetch_all_browser(&owned, format).await {
+                BrowserBatch::Served { results, fallback } => {
+                    (results, WebBackend::Browser.label(), fallback)
+                }
+                BrowserBatch::Failed { failures, note } => {
+                    // The browser could not serve anything. Fall back to the
+                    // stateless HTTP fetcher so the agent still gets content,
+                    // and say so instead of pretending the browser worked.
+                    log::warn!(
+                        "http_get browser mode failed for {} URL(s): {}",
+                        failures,
+                        note.reason
+                    );
+                    let results = fetch_all_html(&urls_to_fetch, format).await;
+                    (results, WebBackend::Html.label(), Some(note))
+                }
+            },
+            HttpFetchMode::Html => (fetch_all_html(&urls_to_fetch, format).await, provider, None),
         };
+        let provider = fallback.as_ref().map(|note| note.to).unwrap_or(provider);
 
         // Build combined output
         let mut sections = Vec::new();
@@ -230,14 +249,19 @@ impl AgentTool for HttpGetTool {
         let mut total_content_bytes = 0;
         let mut success_count = 0;
         let mut fail_count = 0;
+        let mut blocked_count = 0;
         let mut pages_metadata = Vec::new();
 
         for (i, (url, result)) in urls_to_fetch.iter().zip(results.iter()).enumerate() {
             let domain = extract_domain(url);
             match result {
                 Ok(page) => {
-                    if page.http_error {
+                    // A verification interstitial is a failed fetch, not a page.
+                    if page.http_error || page.challenge.is_some() {
                         fail_count += 1;
+                        if page.challenge.is_some() {
+                            blocked_count += 1;
+                        }
                     } else {
                         success_count += 1;
                     }
@@ -247,16 +271,17 @@ impl AgentTool for HttpGetTool {
                     let page_chunk_size = chunk_size;
                     let chunk = make_chunk(&page.content, page_offset, page_chunk_size);
                     pages_metadata.push(page_metadata(page, &chunk));
+                    let rendered = format_page_output(page, &chunk, include_metadata);
                     if urls_to_fetch.len() > 1 {
                         sections.push(format!(
                             "## Page {}/{}: {}\n\n{}",
                             i + 1,
                             urls_to_fetch.len(),
                             domain,
-                            format_page_output(page, &chunk, include_metadata)
+                            rendered
                         ));
                     } else {
-                        sections.push(format_page_output(page, &chunk, include_metadata));
+                        sections.push(rendered);
                     }
                 }
                 Err(e) => {
@@ -285,29 +310,41 @@ impl AgentTool for HttpGetTool {
         let hint = "\n\n---\nTip: This page may contain links. Use `http_get` again with any URL to get its full content.";
         let final_output = format!("{}{}", output, hint);
 
+        let fallback_suffix = fallback
+            .as_ref()
+            .map(FallbackNote::summary_suffix)
+            .unwrap_or_default();
+
         let summary = if urls_to_fetch.len() == 1 {
             format!(
-                "http_get {} ({} via {})",
+                "http_get {} ({} via {}){}",
                 extract_domain(urls_to_fetch[0]),
                 format_bytes(total_content_bytes),
-                provider
+                provider,
+                fallback_suffix
             )
         } else {
             format!(
-                "http_get ({} pages: {} ok, {} failed, {} via {})",
+                "http_get ({} pages: {} ok, {} failed, {} via {}){}",
                 urls_to_fetch.len(),
                 success_count,
                 fail_count,
                 format_bytes(total_content_bytes),
-                provider
+                provider,
+                fallback_suffix
             )
         };
 
-        let metadata = json!({
+        let mut metadata = json!({
             "provider": provider,
+            "requested_mode": match mode {
+                HttpFetchMode::Browser => WebBackend::Browser.label(),
+                HttpFetchMode::Html => WebBackend::Html.label(),
+            },
             "urls_fetched": urls_to_fetch.len(),
             "success": success_count,
             "failed": fail_count,
+            "blocked": blocked_count,
             "source_bytes": total_source_bytes,
             "content_bytes": total_content_bytes,
             "format": match format {
@@ -316,12 +353,176 @@ impl AgentTool for HttpGetTool {
             },
             "pages": pages_metadata
         });
-
-        if success_count == 0 && fail_count > 0 {
-            Ok(ToolOutput::fail(summary, final_output).with_metadata(metadata))
-        } else {
-            Ok(ToolOutput::ok(summary, final_output).with_metadata(metadata))
+        if let (Some(note), Some(map)) = (&fallback, metadata.as_object_mut()) {
+            map.insert("fallback".to_string(), note.to_json());
         }
+
+        // Nothing usable came back: a failure, even though some pages may have
+        // "succeeded" with an empty body.
+        let nothing_usable = success_count == 0 && fail_count > 0;
+        let all_blank = success_count > 0
+            && pages_metadata
+                .iter()
+                .filter(|page| page["http_error"] != json!(true))
+                .all(|page| page["blank_content"] == json!(true));
+
+        if nothing_usable || all_blank {
+            let reason = if blocked_count > 0 {
+                format!(
+                    "{} of {} page(s) were intercepted by a bot-verification page",
+                    blocked_count,
+                    urls_to_fetch.len()
+                )
+            } else if all_blank {
+                "the page(s) loaded but contained no readable content".to_string()
+            } else {
+                format!("all {} page(s) failed", urls_to_fetch.len())
+            };
+            return Ok(ToolOutput::fail(
+                summary,
+                format!("{}{}\n\n{}", final_output, fallback_suffix, reason),
+            )
+            .with_metadata(metadata));
+        }
+
+        Ok(ToolOutput::ok(summary, final_output).with_metadata(metadata))
+    }
+}
+
+/// Outcome of driving the browser backend for a whole batch.
+enum BrowserBatch {
+    /// At least one page came back; per-page failures are inside `results`.
+    Served {
+        results: Vec<Result<FetchedPage, AppError>>,
+        fallback: Option<FallbackNote>,
+    },
+    /// The session could not serve anything; the caller should use another backend.
+    Failed { failures: usize, note: FallbackNote },
+}
+
+/// Cap on one browser pass over a batch.
+///
+/// Per-step timeouts inside `browser_cdp` bound a healthy session, but a wedged
+/// Chromium could otherwise hold the tool through every step in sequence. The
+/// cap guarantees the fallback gets a turn in bounded time.
+const BROWSER_BATCH_BUDGET: Duration = Duration::from_secs(75);
+const BROWSER_SINGLE_BUDGET: Duration = Duration::from_secs(45);
+/// Cap on the fallback pass; each HTTP request already has its own timeout.
+const HTML_BATCH_BUDGET: Duration = Duration::from_secs(45);
+
+/// Fetch a batch over plain HTTP under one overall cap, so a slow site cannot
+/// hold the tool past its budget. Per-request timeouts still apply underneath.
+async fn fetch_all_html(urls: &[&str], format: OutputFormat) -> Vec<Result<FetchedPage, AppError>> {
+    let fetches: Vec<_> = urls.iter().map(|u| fetch_page_http(u, format)).collect();
+    match tokio::time::timeout(HTML_BATCH_BUDGET, join_all(fetches)).await {
+        Ok(results) => results,
+        Err(_) => urls
+            .iter()
+            .map(|u| {
+                Err(AppError::Agent(format!(
+                    "HTTP fetch exceeded its {:.0}s budget for {}",
+                    HTML_BATCH_BUDGET.as_secs_f32(),
+                    extract_domain(u)
+                )))
+            })
+            .collect(),
+    }
+}
+
+/// Drive the browser backend, then decide whether a fallback is warranted.
+async fn fetch_all_browser(urls: &[String], format: OutputFormat) -> BrowserBatch {
+    let budget = if urls.len() == 1 {
+        BROWSER_SINGLE_BUDGET
+    } else {
+        BROWSER_BATCH_BUDGET
+    };
+
+    let attempt = tokio::time::timeout(budget, browser_cdp::fetch_html_many(urls)).await;
+    let raw = match attempt {
+        Ok(results) => results,
+        Err(_elapsed) => {
+            return BrowserBatch::Failed {
+                failures: urls.len(),
+                note: FallbackNote::new(
+                    WebBackend::Browser.label(),
+                    WebBackend::Html.label(),
+                    format!(
+                        "browser session exceeded its {:.0}s budget",
+                        budget.as_secs_f32()
+                    ),
+                ),
+            }
+        }
+    };
+
+    let results: Vec<Result<FetchedPage, AppError>> = raw
+        .into_iter()
+        .map(|r| {
+            r.map(|page| browser_page_to_fetched(page, format))
+                .map_err(AppError::from)
+        })
+        .collect();
+
+    let ok_count = results.iter().filter(|r| r.is_ok()).count();
+    if ok_count == 0 {
+        let reason = results
+            .iter()
+            .find_map(|r| r.as_ref().err())
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "browser returned no pages".to_string());
+        return BrowserBatch::Failed {
+            failures: urls.len(),
+            note: FallbackNote::new(
+                WebBackend::Browser.label(),
+                WebBackend::Html.label(),
+                reason,
+            ),
+        };
+    }
+
+    // Some pages succeeded. Anything the browser could not deliver is retried on
+    // the cheap stateless backend, so one broken page does not cost the rest.
+    if ok_count < urls.len() {
+        let failed = urls.len() - ok_count;
+        let reason = results
+            .iter()
+            .find_map(|r| r.as_ref().err())
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown browser failure".to_string());
+        let retries: Vec<_> = urls
+            .iter()
+            .zip(results)
+            .map(|(url, result)| async move {
+                match result {
+                    Ok(page) => Ok(page),
+                    Err(_) => fetch_page_http(url, format).await,
+                }
+            })
+            .collect();
+        let merged: Vec<Result<FetchedPage, AppError>> = join_all(retries).await;
+        let served = merged.iter().filter(|r| r.is_ok()).count();
+        // Only claim a degradation if the retry actually salvaged something.
+        let note = (served > ok_count).then(|| {
+            FallbackNote::new(
+                WebBackend::Browser.label(),
+                WebBackend::Html.label(),
+                format!(
+                    "{} of {} page(s) failed in the browser: {}",
+                    failed,
+                    urls.len(),
+                    reason
+                ),
+            )
+        });
+        return BrowserBatch::Served {
+            results: merged,
+            fallback: note,
+        };
+    }
+
+    BrowserBatch::Served {
+        results,
+        fallback: None,
     }
 }
 
@@ -346,7 +547,7 @@ async fn resolve_fetch_mode(ctx: &ToolContext) -> HttpFetchMode {
 
 fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat) -> FetchedPage {
     let source_bytes = page.html.len();
-    let title = page.title.or_else(|| extract_title(&page.html));
+    let title = page.title.clone().or_else(|| extract_title(&page.html));
     let content = {
         let readable_html = extract_readable_html(&page.html);
         match format {
@@ -359,18 +560,46 @@ fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat)
     let redirected = normalize_url_for_compare(&page.requested_url)
         != normalize_url_for_compare(&page.final_url);
 
+    // A browser only tells us the real status when the navigation produced an
+    // HTTP response; anything else (blocked, refused, error interstitial) stays
+    // `None` rather than being reported as a 200.
+    let http_error = page.status.is_some_and(|code| !(200..300).contains(&code));
+    let challenge =
+        detect_challenge(&page.html, title.as_deref()).map(|challenge| challenge.vendor);
+    let blank_content = is_blank_content(&content);
+
     FetchedPage {
         requested_url: page.requested_url,
         final_url: page.final_url,
-        status: 200,
-        status_text: "OK (browser)".to_string(),
+        status: page.status,
+        status_text: status_text_for(page.status, WebBackend::Browser),
         content_type: "text/html; charset=utf-8".to_string(),
         title,
         content,
         source_bytes,
         markdown_bytes,
         redirected,
-        http_error: false,
+        http_error,
+        provider: WebBackend::Browser.label(),
+        challenge,
+        blank_content,
+    }
+}
+
+/// Honest status text: a real code gets its canonical reason, an unknown code
+/// says so, and no response at all is described as such.
+fn status_text_for(status: Option<u16>, backend: WebBackend) -> String {
+    match status {
+        Some(200) => match backend {
+            WebBackend::Browser => "OK (browser)".to_string(),
+            _ => "OK".to_string(),
+        },
+        Some(code) => reqwest::StatusCode::from_u16(code)
+            .ok()
+            .and_then(|s| s.canonical_reason())
+            .map(str::to_string)
+            .unwrap_or_else(|| "Unknown status".to_string()),
+        None => "no HTTP response (browser)".to_string(),
     }
 }
 
@@ -392,7 +621,6 @@ async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage,
         .map_err(|e| AppError::Agent(format!("HTTP request failed: {}", e)))?;
 
     let status = resp.status();
-    let status_text = status.canonical_reason().unwrap_or("").to_string();
     let final_url = resp.url().to_string();
     let content_type = resp
         .headers()
@@ -415,18 +643,20 @@ async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage,
             OutputFormat::Text => strip_html(&readable_html, usize::MAX),
         }
     } else {
-        body
+        body.clone()
     };
     let content = cleanup_markdown(&content);
     let markdown_bytes = content.len();
     let redirected = normalize_url_for_compare(url) != normalize_url_for_compare(&final_url);
     let http_error = !status.is_success();
+    let challenge = detect_challenge(&body, title.as_deref()).map(|c| c.vendor);
+    let blank_content = is_blank_content(&content);
 
     Ok(FetchedPage {
         requested_url: url.to_string(),
         final_url,
-        status: status.as_u16(),
-        status_text,
+        status: Some(status.as_u16()),
+        status_text: status_text_for(Some(status.as_u16()), WebBackend::Html),
         content_type,
         title,
         content,
@@ -434,6 +664,9 @@ async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage,
         markdown_bytes,
         redirected,
         http_error,
+        provider: WebBackend::Html.label(),
+        challenge,
+        blank_content,
     })
 }
 
@@ -605,7 +838,10 @@ fn format_page_output(page: &FetchedPage, chunk: &PageChunk, include_metadata: b
                 "Warning: HTTP status is not successful; showing returned error page content.\n",
             );
         }
-        out.push_str(&format!("Status: {} {}\n", page.status, page.status_text));
+        match page.status {
+            Some(code) => out.push_str(&format!("Status: {} {}\n", code, page.status_text)),
+            None => out.push_str(&format!("Status: unknown — {}\n", page.status_text)),
+        }
         if !page.content_type.is_empty() {
             out.push_str(&format!("Content-Type: {}\n", page.content_type));
         }
@@ -622,8 +858,29 @@ fn format_page_output(page: &FetchedPage, chunk: &PageChunk, include_metadata: b
         ));
     }
 
+    // A verification interstitial is the single most misleading thing this tool
+    // can return, so it is called out before the (useless) body.
+    if let Some(vendor) = page.challenge {
+        out.push_str(&format!(
+            "⚠ BLOCKED: this URL returned a bot-verification page ({}) instead of the \
+             requested content. The page below is the verification interstitial, not the \
+             article. Retrying may not help; try another source or a different URL.\n\n",
+            vendor
+        ));
+    }
+
     if chunk.content.is_empty() {
-        out.push_str("[empty chunk: offset is at or beyond the converted content length]");
+        if page.blank_content && page.source_bytes > 0 {
+            // Previously this was a neutral note, which read like a paging quirk
+            // even when the real cause was a blocked or JS-only page.
+            out.push_str(&format!(
+                "[no readable content: the page returned {} of HTML but converted to \
+                 nothing — it may require JavaScript, or be a placeholder/empty document]",
+                format_bytes(page.source_bytes)
+            ));
+        } else {
+            out.push_str("[empty chunk: offset is at or beyond the converted content length]");
+        }
     } else {
         out.push_str(&chunk.content);
     }
@@ -646,6 +903,9 @@ fn page_metadata(page: &FetchedPage, chunk: &PageChunk) -> serde_json::Value {
         "status_text": &page.status_text,
         "content_type": &page.content_type,
         "title": &page.title,
+        "provider": page.provider,
+        "challenge": page.challenge,
+        "blank_content": page.blank_content,
         "source_bytes": page.source_bytes,
         "markdown_bytes": page.markdown_bytes,
         "redirected": page.redirected,
@@ -798,6 +1058,37 @@ fn normalize_url_for_compare(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A successful plain-HTTP page, for tests that only care about one field.
+    fn fetched(content: &str) -> FetchedPage {
+        FetchedPage {
+            requested_url: "https://example.com/".to_string(),
+            final_url: "https://example.com/".to_string(),
+            status: Some(200),
+            status_text: status_text_for(Some(200), WebBackend::Html),
+            content_type: "text/html; charset=utf-8".to_string(),
+            title: None,
+            content: content.to_string(),
+            source_bytes: content.len(),
+            markdown_bytes: content.len(),
+            redirected: false,
+            http_error: false,
+            provider: WebBackend::Html.label(),
+            challenge: None,
+            blank_content: is_blank_content(content),
+        }
+    }
+
+    /// A browser page result, for tests that care about status/title only.
+    fn browser_page(url: &str, html: &str, status: Option<u16>) -> browser_cdp::BrowserPage {
+        browser_cdp::BrowserPage {
+            requested_url: url.to_string(),
+            final_url: url.to_string(),
+            title: None,
+            html: html.to_string(),
+            status,
+        }
+    }
+
     #[test]
     fn extract_domain_works() {
         assert_eq!(extract_domain("https://example.com/page"), "example.com");
@@ -887,15 +1178,12 @@ mod tests {
         let page = FetchedPage {
             requested_url: "https://example.com/docs".to_string(),
             final_url: "https://example.com/docs/".to_string(),
-            status: 200,
-            status_text: "OK".to_string(),
-            content_type: "text/html; charset=utf-8".to_string(),
             title: Some("Docs".to_string()),
             content: "abcdef".to_string(),
             source_bytes: 100,
             markdown_bytes: 6,
             redirected: true,
-            http_error: false,
+            ..fetched("abcdef")
         };
         let chunk = make_chunk(&page.content, 0, 3);
         let output = format_page_output(&page, &chunk, true);
@@ -913,15 +1201,15 @@ mod tests {
         let page = FetchedPage {
             requested_url: "https://example.com/missing".to_string(),
             final_url: "https://example.com/missing".to_string(),
-            status: 404,
-            status_text: "Not Found".to_string(),
+            status: Some(404),
+            status_text: status_text_for(Some(404), WebBackend::Html),
             content_type: "text/html".to_string(),
             title: Some("Not Found".to_string()),
             content: "# Not Found\n\nThe page is missing.".to_string(),
             source_bytes: 128,
             markdown_bytes: 32,
-            redirected: false,
             http_error: true,
+            ..fetched("")
         };
         let chunk = make_chunk(&page.content, 0, 2000);
         let output = format_page_output(&page, &chunk, true);
@@ -1015,36 +1303,111 @@ mod tests {
 
     #[test]
     fn browser_page_to_fetched_converts_html_and_detects_redirect() {
+        let html = r#"
+                <html><head><title>Ignored</title></head>
+                <body><main><h1>Title</h1><p>Readable body with enough text for extraction path.</p></main></body></html>
+            "#;
         let page = browser_cdp::BrowserPage {
             requested_url: "https://example.com/a".into(),
             final_url: "https://example.com/b".into(),
             title: Some("Hello".into()),
-            html: r#"
-                <html><head><title>Ignored</title></head>
-                <body><main><h1>Title</h1><p>Readable body with enough text for extraction path.</p></main></body></html>
-            "#
-            .into(),
+            ..browser_page("https://example.com/a", html, Some(200))
         };
         let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
         assert!(fetched.redirected);
         assert_eq!(fetched.title.as_deref(), Some("Hello"));
-        assert_eq!(fetched.status, 200);
+        assert_eq!(fetched.status, Some(200));
         assert!(fetched.content.contains("Title") || fetched.content.contains("Readable"));
         assert!(!fetched.http_error);
         assert_eq!(fetched.content_type, "text/html; charset=utf-8");
+        assert_eq!(fetched.provider, "browser");
     }
 
     #[test]
     fn browser_page_to_fetched_falls_back_to_html_title() {
-        let page = browser_cdp::BrowserPage {
-            requested_url: "https://example.com/".into(),
-            final_url: "https://example.com/".into(),
-            title: None,
-            html: "<html><head><title>From HTML</title></head><body><main><p>Body text long enough here.</p></main></body></html>".into(),
-        };
+        let page = browser_page(
+            "https://example.com/",
+            "<html><head><title>From HTML</title></head><body><main><p>Body text long enough here.</p></main></body></html>",
+            Some(200),
+        );
         let fetched = browser_page_to_fetched(page, OutputFormat::Text);
         assert_eq!(fetched.title.as_deref(), Some("From HTML"));
         assert!(!fetched.redirected);
+    }
+
+    /// The regression that produced "Status: 200 OK (browser)" on a blocked page:
+    /// a browser navigation with no HTTP response must not be reported as 200.
+    #[test]
+    fn browser_page_without_an_http_response_reports_an_unknown_status() {
+        let html = r#"<html><head><title>百度安全验证</title></head>
+            <body><div>请完成安全验证</div></body></html>"#;
+        let fetched = browser_page_to_fetched(
+            browser_page("https://baike.baidu.com/item/绝区零", html, None),
+            OutputFormat::Markdown,
+        );
+
+        assert_eq!(
+            fetched.status, None,
+            "no HTTP response must not become a fabricated 200"
+        );
+        assert_eq!(fetched.status_text, "no HTTP response (browser)");
+        assert_eq!(fetched.challenge, Some("百度安全验证"));
+
+        let chunk = make_chunk(&fetched.content, 0, 20_000);
+        let rendered = format_page_output(&fetched, &chunk, true);
+        assert!(rendered.contains("Status: unknown"), "{rendered}");
+        assert!(!rendered.contains("Status: 200"), "{rendered}");
+        assert!(rendered.contains("BLOCKED"), "{rendered}");
+        assert!(
+            rendered.contains("百度安全验证"),
+            "the interstitial must name itself: {rendered}"
+        );
+
+        let meta = page_metadata(&fetched, &chunk);
+        assert!(meta["status"].is_null(), "{meta}");
+        assert_eq!(meta["challenge"], "百度安全验证");
+    }
+
+    /// A non-2xx browser response must be flagged instead of reporting success.
+    #[test]
+    fn browser_page_with_an_error_status_is_marked_as_an_http_error() {
+        let fetched = browser_page_to_fetched(
+            browser_page(
+                "https://example.com/",
+                "<html><body>gone</body></html>",
+                Some(404),
+            ),
+            OutputFormat::Markdown,
+        );
+        assert!(fetched.http_error);
+        assert_eq!(fetched.status, Some(404));
+        assert!(
+            fetched.status_text.contains("Not Found"),
+            "{}",
+            fetched.status_text
+        );
+    }
+
+    /// A page that returns real HTML but converts to no readable text is the
+    /// other half of the reported failure and must say so.
+    #[test]
+    fn blank_browser_page_explains_itself_instead_of_paging_metadata() {
+        let fetched = browser_page_to_fetched(
+            browser_page(
+                "https://example.com/",
+                "<html><head><script>var x=1;</script></head><body></body></html>",
+                Some(200),
+            ),
+            OutputFormat::Markdown,
+        );
+        assert!(fetched.blank_content);
+        let chunk = make_chunk(&fetched.content, 0, 20_000);
+        let rendered = format_page_output(&fetched, &chunk, true);
+        assert!(rendered.contains("no readable content"), "{rendered}");
+        assert!(
+            !rendered.contains("offset is at or beyond"),
+            "the cause is not the offset: {rendered}"
+        );
     }
 
     #[test]
@@ -1081,7 +1444,7 @@ mod tests {
         let page = fetch_page_http(&url, OutputFormat::Markdown)
             .await
             .expect("fetch local");
-        assert_eq!(page.status, 200);
+        assert_eq!(page.status, Some(200));
         assert!(!page.http_error);
         assert!(page.content.contains("Hello Local") || page.title.as_deref() == Some("Local"));
         handle.join().expect("server thread");
@@ -1112,7 +1475,7 @@ mod tests {
         let page = fetch_page_http(&url, OutputFormat::Markdown)
             .await
             .expect("fetch 404 body");
-        assert_eq!(page.status, 404);
+        assert_eq!(page.status, Some(404));
         assert!(page.http_error);
         assert!(page.content.contains("Not Found") || page.title.is_some());
         handle.join().expect("server thread");
@@ -1127,20 +1490,19 @@ mod tests {
         let page = FetchedPage {
             requested_url: "https://example.com/doc".into(),
             final_url: "https://example.com/doc".into(),
-            status: 200,
-            status_text: "OK".into(),
             content_type: "text/html".into(),
             title: Some("Doc".into()),
             content: "# Doc\n\nBody".into(),
             source_bytes: 100,
             markdown_bytes: 12,
-            redirected: false,
-            http_error: false,
+            ..fetched("# Doc\n\nBody")
         };
         let chunk = make_chunk(&page.content, 0, 2000);
         let meta = page_metadata(&page, &chunk);
         assert_eq!(meta["status"], 200);
         assert_eq!(meta["http_error"], false);
+        assert_eq!(meta["provider"], "html");
+        assert_eq!(meta["blank_content"], false);
         let out = format_page_output(&page, &chunk, true);
         assert!(out.contains("Doc"));
         assert!(out.contains("Status: 200"));
@@ -1149,23 +1511,22 @@ mod tests {
     #[test]
     fn http_mode_browser_pipeline_provider_and_status() {
         // Browser mode: BrowserPage → browser_page_to_fetched → metadata path.
-        let page = browser_cdp::BrowserPage {
-            requested_url: "https://example.com/a".into(),
-            final_url: "https://example.com/a".into(),
-            title: Some("Browser Page".into()),
-            html: r#"
+        let html = r#"
                 <html><head><title>Browser Page</title></head>
                 <body><main><h1>Rendered</h1><p>SPA content long enough for readable extract.</p></main></body></html>
-            "#
-            .into(),
+            "#;
+        let page = browser_cdp::BrowserPage {
+            title: Some("Browser Page".into()),
+            ..browser_page("https://example.com/a", html, Some(200))
         };
         let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
         assert_eq!(fetched.status_text, "OK (browser)");
-        assert_eq!(fetched.status, 200);
+        assert_eq!(fetched.status, Some(200));
         assert!(!fetched.http_error);
         let chunk = make_chunk(&fetched.content, 0, 4000);
         let meta = page_metadata(&fetched, &chunk);
         assert_eq!(meta["status"], 200);
+        assert_eq!(meta["provider"], "browser");
         assert!(
             fetched.content.contains("Rendered")
                 || fetched.title.as_deref() == Some("Browser Page")
@@ -1174,46 +1535,31 @@ mod tests {
 
     #[test]
     fn http_fetch_mode_labels_for_tool_metadata() {
-        // Tool metadata provider strings must match mode enum.
+        // Tool metadata provider strings must match the shared backend labels.
         for (mode, expected) in [
-            (HttpFetchMode::Browser, "browser"),
-            (HttpFetchMode::Html, "html"),
+            (HttpFetchMode::Browser, WebBackend::Browser.label()),
+            (HttpFetchMode::Html, WebBackend::Html.label()),
         ] {
-            let provider = match mode {
-                HttpFetchMode::Browser => "browser",
-                HttpFetchMode::Html => "html",
-            };
-            assert_eq!(provider, expected);
             assert_eq!(format!("{:?}", mode).to_ascii_lowercase(), expected);
         }
+        assert_eq!(WebBackend::Browser.label(), "browser");
+        assert_eq!(WebBackend::Html.label(), "html");
     }
 
     #[test]
     fn http_mode_html_and_browser_produce_different_status_text() {
-        let html_page = FetchedPage {
-            requested_url: "https://e.com".into(),
-            final_url: "https://e.com".into(),
-            status: 200,
-            status_text: "OK".into(),
-            content_type: "text/html".into(),
-            title: None,
-            content: "x".into(),
-            source_bytes: 1,
-            markdown_bytes: 1,
-            redirected: false,
-            http_error: false,
-        };
-        let browser_page = browser_page_to_fetched(
-            browser_cdp::BrowserPage {
-                requested_url: "https://e.com".into(),
-                final_url: "https://e.com".into(),
-                title: None,
-                html: "<html><body><main><p>Enough text for the readable html extractor path here.</p></main></body></html>".into(),
-            },
+        let html_page = fetched("x");
+        let browser_result = browser_page_to_fetched(
+            browser_page(
+                "https://e.com",
+                "<html><body><main><p>Enough text for the readable html extractor path here.</p></main></body></html>",
+                Some(200),
+            ),
             OutputFormat::Text,
         );
         assert_eq!(html_page.status_text, "OK");
-        assert_eq!(browser_page.status_text, "OK (browser)");
+        assert_eq!(browser_result.status_text, "OK (browser)");
+        assert_ne!(html_page.provider, browser_result.provider);
     }
 
     #[tokio::test]
@@ -1258,7 +1604,64 @@ mod tests {
         assert_eq!(pages.len(), 1);
         let page = pages.into_iter().next().unwrap().expect("browser fetch");
         let fetched = browser_page_to_fetched(page, OutputFormat::Markdown);
-        assert_eq!(fetched.status_text, "OK (browser)");
         assert!(!fetched.content.is_empty() || fetched.title.is_some());
+    }
+
+    // ── Fallback decisions, driven without a browser ────────────────────
+
+    /// With no browser available the batch must fall back rather than fail, and
+    /// the note must name both backends and the reason.
+    #[tokio::test]
+    async fn browser_batch_reports_a_fallback_note_when_nothing_is_served() {
+        // A reserved-for-documentation TLD cannot resolve, and a loopback port
+        // with nothing listening refuses immediately; either way the browser
+        // cannot serve the batch.
+        let urls = vec!["https://nope.invalid/".to_string()];
+        match fetch_all_browser(&urls, OutputFormat::Markdown).await {
+            BrowserBatch::Failed { failures, note } => {
+                assert_eq!(failures, 1);
+                assert_eq!(note.from, "browser");
+                assert_eq!(note.to, "html");
+                assert!(!note.reason.is_empty());
+                assert!(note.summary_suffix().contains("fell back to html"));
+            }
+            BrowserBatch::Served { .. } => {
+                // A machine with a working browser and a DNS wildcard could
+                // legitimately serve this; that is not a failure of the logic.
+            }
+        }
+    }
+
+    /// A fully blank page must be reported as a failure, not as a successful
+    /// fetch of zero bytes.
+    #[test]
+    fn blank_pages_make_the_result_a_failure() {
+        let page = browser_page_to_fetched(
+            browser_page(
+                "https://example.com/",
+                "<html><head><style>p{color:red}</style></head><body></body></html>",
+                Some(200),
+            ),
+            OutputFormat::Markdown,
+        );
+        assert!(page.blank_content, "nothing readable was produced");
+        // The decision inputs the tool keys off, asserted directly.
+        let all_blank = [page].iter().all(|p| p.blank_content);
+        assert!(all_blank);
+    }
+
+    /// A block page must never count as a success.
+    #[test]
+    fn an_intercepted_page_is_not_counted_as_success() {
+        let intercepted = browser_page_to_fetched(
+            browser_page(
+                "https://baike.baidu.com/item/绝区零",
+                "<html><head><title>百度安全验证</title></head><body></body></html>",
+                None,
+            ),
+            OutputFormat::Markdown,
+        );
+        let is_failure = intercepted.http_error || intercepted.challenge.is_some();
+        assert!(is_failure, "a verification page is a failed fetch");
     }
 }

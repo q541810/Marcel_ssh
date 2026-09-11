@@ -46,6 +46,7 @@ pub mod sftp_transfer;
 pub mod skill;
 pub mod subagent;
 pub mod system;
+pub mod web_result;
 pub mod web_search;
 
 // ───────────────────────── Public types ─────────────────────────
