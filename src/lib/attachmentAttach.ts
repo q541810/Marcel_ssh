@@ -8,7 +8,7 @@
  *  - 粘贴/拖拽里的文本文件（Web 侧 File 对象）直接 file.text() 读取
  */
 
-import { agentReadLocalFile } from "./tauri";
+import { agentGetLocalFileName, agentReadLocalFile } from "./tauri";
 import { BINARY_EXTENSIONS } from "./constants";
 
 /** 文本单文件大小上限（前端先拦，后端还有 10MB 兜底）。 */
@@ -184,4 +184,27 @@ export async function readLocalAttachment(
   path: string,
 ): Promise<{ name: string; base64: string; size: number }> {
   return agentReadLocalFile(path);
+}
+
+/**
+ * 解析本地路径对应的展示文件名（不读内容）。
+ *
+ * 桌面：直接取 basename。
+ * Android SAF content:// URI：走后端 agent_get_local_file_name
+ * （ContentResolver 查 DISPLAY_NAME，失败回退到 URI 段解码）。
+ *
+ * 文件选择器返回的路径在桌面是绝对路径、在 Android 是 content:// URI。
+ * 如果用 `path.split('/').pop()` 这种简单做法取名，在 Android 上只能拿到
+ * document id（如 `12345`）而非 `Screenshot_2026-...jpg`，导致 classifyAttachment
+ * 看不到扩展名、退路误判为文本 → 整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
+ *
+ * 调用方应在分类（图片 vs 文本）之前 await 拿到真实文件名。
+ */
+export async function resolveAttachmentName(path: string): Promise<string> {
+  try {
+    return await agentGetLocalFileName(path);
+  } catch {
+    // 后端失败（如非 Android、不支持的 scheme）兜底用最后一段
+    return path.split(/[/\\]/).pop() || path;
+  }
 }

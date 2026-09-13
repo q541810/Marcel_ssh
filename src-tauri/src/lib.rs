@@ -731,6 +731,7 @@ pub fn run() {
             commands::agent_lifecycle::agent_start_task,
             commands::agent_lifecycle::agent_stop_task,
             commands::agent_attachment::agent_read_local_file,
+            commands::agent_attachment::agent_get_local_file_name,
             commands::job::job_list,
             commands::job::job_kill,
             commands::agent_lifecycle::agent_approve_operation,

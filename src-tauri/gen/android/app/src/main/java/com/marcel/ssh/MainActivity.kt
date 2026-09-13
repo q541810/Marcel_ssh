@@ -8,7 +8,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.Display
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
@@ -29,6 +31,12 @@ class MainActivity : TauriActivity() {
   companion object {
     const val REQUEST_NOTIFICATION_PERMISSION = 1001
     private const val TAG = "MarcelMainActivity"
+    /**
+     * 目标帧率（Hz）。Android 11+ 用 Window.setFrameRate 请求；
+     * 低版本用 preferredDisplayModeId 在同分辨率下挑刷新率最高的 mode。
+     * 系统只会在电池/温度允许时满足请求，请求 ≠ 强制。
+     */
+    private const val TARGET_REFRESH_RATE_HZ = 120f
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,6 +47,11 @@ class MainActivity : TauriActivity() {
     // 保证 splash → WebView → React 全程深色无白屏。
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    // 申请高刷新率显示模式（120Hz 及以上），让 WebView 跟着跑满。
+    // 必须在 super.onCreate 之后、setContentView 之前调用，参数才生效。
+    // 仅当设备实际支持时才设置，避免无效日志骚扰。
+    requestHighRefreshRate()
 
     // 提前创建通知通道：即使前台服务未启动，Agent 事件通知也需要通道已存在。
     // 直接内联在 MainActivity，避免依赖 MarcelForegroundService.kt 是否被编译。
@@ -245,5 +258,59 @@ class MainActivity : TauriActivity() {
       "window.__marcelNotificationPermissionResult && window.__marcelNotificationPermissionResult($granted)",
       null
     )
+  }
+
+  /**
+   * 申请最高可用刷新率（120Hz），让 WebView 也跑满。
+   *
+   * - API 31+（Android 12+）：用 Window.setFrameRate，是官方推荐方式，行为最干净：
+   *   系统在电池/温度允许时会提升到 120Hz，不需要时回落，不锁死。
+   * - API 23-30：setFrameRate 不可用，退回 WindowManager.LayoutParams.preferredDisplayModeId，
+   *   在同物理分辨率下挑刷新率最高的 mode（避免被切到低分辨率的 Hi-Fi 模式）。
+   * - 设备/系统不支持目标刷新率：直接 return，不报错也不影响默认行为。
+   * - 必须先于 onCreate 完成前的窗口附加阶段调用一次，且在 WebView 首次绘制时仍然有效
+   *   （系统按窗口 frame rate 决定 display 模式，与 WebView 内部 setRenderPriority 无关）。
+   */
+  private fun requestHighRefreshRate() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      try {
+        // FRAME_RATE_COMPATIBILITY_DEFAULT：请求但不强制（系统会按需降级）
+        window.setFrameRate(
+          TARGET_REFRESH_RATE_HZ,
+          WindowManager.LayoutParams.FRAME_RATE_COMPATIBILITY_DEFAULT,
+        )
+        Log.i(TAG, "requestHighRefreshRate: setFrameRate(${TARGET_REFRESH_RATE_HZ}Hz)")
+      } catch (e: Throwable) {
+        Log.w(TAG, "requestHighRefreshRate: setFrameRate failed: ${e.message}")
+      }
+      return
+    }
+
+    // API 23-30：preferredDisplayModeId 路径
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+    try {
+      val display: Display = windowManager.defaultDisplay ?: return
+      val current = display.mode
+      var best: Display.Mode? = null
+      for (mode in display.supportedModes) {
+        // 只在同物理分辨率下挑刷新率最高的，避免被切到低分辨率的「流畅」模式
+        if (mode.physicalWidth != current.physicalWidth) continue
+        if (mode.physicalHeight != current.physicalHeight) continue
+        if (best == null || mode.refreshRate > best.refreshRate) best = mode
+      }
+      if (best != null && best.refreshRate > current.refreshRate + 0.5f) {
+        val params = window.attributes
+        params.preferredDisplayModeId = best.modeId
+        window.attributes = params
+        Log.i(
+          TAG,
+          "requestHighRefreshRate: ${current.refreshRate}Hz → ${best.refreshRate}Hz (modeId=${best.modeId})",
+        )
+      } else {
+        Log.i(TAG, "requestHighRefreshRate: no higher refresh rate mode available (current=${current.refreshRate}Hz)")
+      }
+    } catch (e: Throwable) {
+      Log.w(TAG, "requestHighRefreshRate: preferredDisplayModeId failed: ${e.message}")
+    }
   }
 }

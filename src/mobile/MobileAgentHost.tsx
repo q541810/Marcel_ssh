@@ -59,6 +59,7 @@ import {
   wrapTextAttachment,
   base64ToBlob,
   readLocalAttachment,
+  resolveAttachmentName,
   MAX_TEXT_FILE_BYTES,
 } from "@/lib/attachmentAttach";
 
@@ -491,9 +492,17 @@ export default function MobileAgentHost({
       const imagePaths: string[] = [];
       const textPaths: string[] = [];
       const unsupported: string[] = [];
-      for (const p of paths) {
-        const name = p.split(/[/\\]/).pop() || p;
-        const kind = classifyAttachment(name);
+      // 先把每条路径的展示名解析出来（content:// URI 必须经后端 ContentResolver
+      // 查 DISPLAY_NAME，不能用 split('/').pop() 拿 document id），再按真实扩展名分拣。
+      // 否则 Android 上 .jpg 会被误判为文本，整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
+      const resolved: { path: string; name: string; kind: ReturnType<typeof classifyAttachment> }[] =
+        await Promise.all(
+          paths.map(async (p) => {
+            const name = await resolveAttachmentName(p);
+            return { path: p, name, kind: classifyAttachment(name) };
+          }),
+        );
+      for (const { path: p, name, kind } of resolved) {
         if (kind === "image") imagePaths.push(p);
         else if (kind === "text") textPaths.push(p);
         else unsupported.push(name);

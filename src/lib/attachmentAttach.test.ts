@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   isImageFileName,
   isTextFileName,
@@ -6,8 +6,16 @@ import {
   base64ToBlob,
   decodeTextBytes,
   wrapTextAttachment,
+  resolveAttachmentName,
   MAX_TEXT_FILE_BYTES,
 } from "./attachmentAttach";
+
+// resolveAttachmentName 走 invoke("agent_get_local_file_name")，单测里 mock 掉
+// 桌面绝对路径和 Android SAF content:// URI 两种场景。
+const invokeMock = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: { path: string }) => invokeMock(cmd, args),
+}));
 
 describe("isImageFileName", () => {
   it("detects common image extensions case-insensitively", () => {
@@ -116,5 +124,47 @@ describe("wrapTextAttachment", () => {
 describe("MAX_TEXT_FILE_BYTES", () => {
   it("is 5MB", () => {
     expect(MAX_TEXT_FILE_BYTES).toBe(5 * 1024 * 1024);
+  });
+});
+
+describe("resolveAttachmentName", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("asks backend for desktop absolute path basename", async () => {
+    invokeMock.mockResolvedValueOnce("server.log");
+    const name = await resolveAttachmentName("/home/me/docs/server.log");
+    expect(name).toBe("server.log");
+    expect(invokeMock).toHaveBeenCalledWith("agent_get_local_file_name", {
+      path: "/home/me/docs/server.log",
+    });
+  });
+
+  it("asks backend for Android SAF content:// URI (the bug fix)", async () => {
+    // 真实的 Android DocumentsProvider 经常把最后一个路径段编码成 document id（如 `12345`），
+    // 没有 .jpg 扩展名。之前用 split('/').pop() 在这种 URI 上只能拿到 `12345`，
+    // classifyAttachment 没有扩展名 → 不是图片也不是已知文本 → 按未知扩展名走文本兜底
+    // → 整张 JPEG 二进制当 UTF-8 塞进输入框 → 乱码。
+    const contentUri =
+      "content://com.android.externalstorage.documents/document/image%3A12345";
+    invokeMock.mockResolvedValueOnce("Screenshot_2026-09-12.jpg");
+    const name = await resolveAttachmentName(contentUri);
+    expect(name).toBe("Screenshot_2026-09-12.jpg");
+    expect(invokeMock).toHaveBeenCalledWith("agent_get_local_file_name", {
+      path: contentUri,
+    });
+    // 关键：分类器拿到正确扩展名后是 image
+    expect(classifyAttachment(name)).toBe("image");
+    // 同样的 URI 用旧 split('/').pop() 只能拿到 `image%3A12345`（含百分号编码的
+    // document id），没有已知扩展名 → 误判为 text
+    const oldStyleName = contentUri.split(/[/\\]/).pop() || contentUri;
+    expect(classifyAttachment(oldStyleName)).not.toBe("image");
+  });
+
+  it("falls back to last path segment when backend throws", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("unsupported on this platform"));
+    const name = await resolveAttachmentName("/var/log/app.log");
+    expect(name).toBe("app.log");
   });
 });

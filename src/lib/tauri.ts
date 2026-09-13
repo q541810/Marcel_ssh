@@ -239,6 +239,18 @@ export async function agentReadLocalFile(
   return invoke<LocalFilePayload>("agent_read_local_file", { path });
 }
 
+/**
+ * 仅查询本地文件展示名（不读内容）。
+ *
+ * 用途：前端在「按扩展名/文件名分拣图片/文本附件」之前调用，拿到真实文件名。
+ * Android SAF content:// URI 必须经 ContentResolver 查 DISPLAY_NAME，
+ * 简单按 `/` 切最后一段只能拿到 document id（无扩展名），会把 .jpg 当成文本塞进输入框 → 乱码。
+ * 桌面普通路径走 Path::file_name 兜底，行为不变。
+ */
+export async function agentGetLocalFileName(path: string): Promise<string> {
+  return invoke<string>("agent_get_local_file_name", { path });
+}
+
 export async function agentStopTask(taskId: string): Promise<void> {
   return invoke("agent_stop_task", { taskId });
 }
