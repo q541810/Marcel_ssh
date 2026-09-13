@@ -68,6 +68,9 @@ Release notes 的素材是 commit，但不是 commit 的转述。写每一条之
       `node scripts/update-test-source.mjs`（或双击根目录 `update_test.cmd`）会起一个假更新源，
       配合 `MARCEL_LATEST_JSON_URL` 让客户端以为有新版；加 `--no-assets` 测「仅提示跳浏览器」降级、
       `--break-hash` 测校验失败提示、`--payload <真exe>` 测真实静默安装。
+      **该钩子只在 debug 构建里编译进去**：客户端要用 `pnpm tauri dev`（桌面）/
+      `pnpm tauri android dev`（安卓，且 `--android` 必须指向与已装客户端同一签名
+      —— 即 debug keystore —— 签出的 APK，否则系统安装器会因签名不一致拒绝）。
       脚本会把客户端启动命令和观察点直接打出来。
 
 ## 步骤

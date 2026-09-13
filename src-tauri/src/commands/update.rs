@@ -216,12 +216,21 @@ pub async fn check_for_update() -> Result<LatestRelease, AppError> {
         .build()
         .map_err(|e| AppError::Update(format!("无法创建 HTTP 客户端: {}", e)))?;
 
-    // 测试钩子：本地模拟更新源时用环境变量覆盖检查地址（仅开发者本机
-    // 生效，不构成攻击面；正常发布环境不设置该变量）。
+    // 测试钩子：本地模拟更新源时用环境变量覆盖检查地址，配合
+    // `scripts/update-test-source.mjs` 在开发机上跑通整条更新链路。
+    //
+    // 只在 debug 构建里编译进去：正式版不留任何「替换更新源」的入口 ——
+    // 环境变量的值不设限（任何 http(s) 地址），能改本机环境变量的程序就能借它
+    // 把客户端指到伪造的 latest.json（Windows 侧安装包仍有 minisign 验签兜底、
+    // 安卓侧系统安装器强制校验签名，但没必要留着这个面）。测试请用
+    // `pnpm tauri dev` / `pnpm tauri android dev`。
+    #[cfg(debug_assertions)]
     let check_urls: Vec<String> = match std::env::var("MARCEL_LATEST_JSON_URL") {
         Ok(url) if url.starts_with("http://") || url.starts_with("https://") => vec![url],
         _ => CHECK_URLS.iter().map(|s| s.to_string()).collect(),
     };
+    #[cfg(not(debug_assertions))]
+    let check_urls: Vec<String> = CHECK_URLS.iter().map(|s| s.to_string()).collect();
 
     let mut last_err: Option<AppError> = None;
     for url in &check_urls {

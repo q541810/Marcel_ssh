@@ -17,11 +17,15 @@
  *   $env:MARCEL_LATEST_JSON_URL="http://127.0.0.1:8765/latest.json"; pnpm tauri dev
  *
  * 说明：
+ * - 客户端必须是 **debug 构建**（`pnpm tauri dev` / `pnpm tauri android dev`）：读取
+ *   `MARCEL_LATEST_JSON_URL` 的测试钩子只在 debug 下编译进去（见
+ *   `src-tauri/src/commands/update.rs`），release 构建会忽略该变量、照常走官方更新源。
  * - Windows 的更新包**必须有 minisign 签名**（客户端用内置公钥验签），所以默认会调用
  *   项目自带的 `tauri signer sign` 用 `~/.tauri/marcel-update.key` 签名；私钥不在本机
  *   时会明确报错并提示怎么办，不会静默出一份永远验不过的 latest.json。
  * - 安卓的 APK **不需要**签名（系统安装器强制校验签名一致），只需要 sha256 + size；
- *   但版本号必须递增（versionCode 单调），否则系统拒绝覆盖安装。
+ *   但版本号必须递增（versionCode 单调），否则系统拒绝覆盖安装 —— debug 客户端要真机
+ *   验证安装时，`--android` 得指向同一 debug keystore 签出的 APK，否则签名不一致被拒。
  * - 默认哑负载不是合法安装器：若客户端正常退出，那次静默安装会立刻失败（日志一行
  *   warn），不会改动本机任何已安装的程序 —— 这正好用来测「下载/校验/就绪」而不真装。
  *   要测真实安装，用 `--payload` 指向真安装包（会真的替换你装的应用）。
