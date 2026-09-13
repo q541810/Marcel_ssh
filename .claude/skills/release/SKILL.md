@@ -64,6 +64,11 @@ Release notes 的素材是 commit，但不是 commit 的转述。写每一条之
 - [ ] 所有代码已合入 `main` 分支
 - [ ] 自测通过（`cargo test` + `pnpm tsc --noEmit`）
 - [ ] **注意**：`pnpm tsc --noEmit` 会扫描 `*.test.ts` 文件。如果测试夹具的类型定义落后于 `src/lib/types.ts`，构建会失败。必须先修正测试文件的类型错误，不要跳过类型检查。
+- [ ] 发布桌面时：用本地测试源把无感链路先跑一遍，别拿正式 release 当第一次真机验证 ——
+      `node scripts/update-test-source.mjs`（或双击根目录 `update_test.cmd`）会起一个假更新源，
+      配合 `MARCEL_LATEST_JSON_URL` 让客户端以为有新版；加 `--no-assets` 测「仅提示跳浏览器」降级、
+      `--break-hash` 测校验失败提示、`--payload <真exe>` 测真实静默安装。
+      脚本会把客户端启动命令和观察点直接打出来。
 
 ## 步骤
 
@@ -98,11 +103,18 @@ gh release list
 
 ```json
 {
-  "version": "0.8.1",
-  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v0.8.1",
+  "version": "1.5.0",
+  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.5.0",
+  "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.5.0/Marcel+SSH_1.5.0_x64-setup.exe",
+  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkuLi4=",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "size": 15467892,
   "android": {
-    "version": "0.8.0",
-    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v0.8.0"
+    "version": "1.5.0",
+    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.5.0",
+    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.5.0/Marcel-SSH_1.5.0_arm64.apk",
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "size": 45678901
   }
 }
 ```
@@ -113,6 +125,20 @@ gh release list
 - **不要顺手把未发布平台的字段也改成新版本**——那会让该平台用户收到“有更新”提示但实际没有新包
 - 客户端检查逻辑：桌面只对比顶层，安卓只对比 `android` 字段（`src-tauri/src/commands/update.rs` 的 `pick_latest`）；`android` 字段缺失时安卓回退读顶层（旧结构兼容，历史版本都是两端同步发布的）
 - 首次引入 `android` 字段时（平台分离后的第一次发布），其值写当前已发布的最新安卓版本即可，不必两端同发
+- **桌面无感更新扩展字段（写在顶层，仅发布桌面时更新）**：
+  - `installer_url`：GitHub release 资产直链。注意资产文件名里的空格要转成 `+`（`Marcel SSH_1.5.0_x64-setup.exe` → `Marcel+SSH_1.5.0_x64-setup.exe`），浏览器地址栏复制到的就是转义后的形式
+  - `signature`：第 4.5 步签名产出的 `.sig` 文件**完整内容**（一整行 base64）
+  - `sha256`：`(Get-FileHash -Algorithm SHA256 "<exe>").Hash`（转小写或原样均可，客户端大小写不敏感）
+  - `size`：`(Get-Item "<exe>").Length`
+  - 这四个字段齐全时客户端才会走「后台静默下载 → 退出时自动安装」；任一缺失自动降级为旧的「提示跳浏览器」路径，旧版本客户端完全不受影响
+  - `installer_mirrors`（可选数组）：安装包镜像直链，国内网络 fallback。客户端从 `installer_url` 开始逐个尝试，网络失败自动换下一个；**镜像不需要被信任**——内容由 sha256+签名校验兜底。有自建镜像（Cloudflare Workers 反代 / 对象存储）时填入，没有则省略
+- **安卓无感更新扩展字段（写在 `android` 对象内，仅发布安卓时更新）**：
+  - 字段：`installer_url`（APK 直链，同样把空格转成 `+`）、`sha256`、`size`，可选 `installer_mirrors`
+  - **必须写在 `android` 对象内，不要写到顶层**：顶层的资产字段只属于桌面 NSIS 包。客户端严格按平台取（安卓只读 `android` 对象内的资产字段，绝不回退顶层），写错位置只会让安卓用户拿不到自动更新——不会装错包，但也修不好
+  - **安卓不需要 `signature`**：系统安装器强制校验「新 APK 签名 == 已装版本签名」，签名不符根本装不上，比自校验更硬；`sha256` 只负责下载完整性
+  - 三个字段（`installer_url`/`sha256`/`size`）齐全时才走「后台下载 → 一键安装」；缺任一自动降级为「提示跳浏览器」
+  - 客户端只在**非计量网络**（Wi-Fi/以太网）下自动后台下载；移动数据下不自动下载（用户可在提示里点「后台下载」主动走流量）
+- **检查源**：客户端依次尝试 GitHub raw 和 jsDelivr（`cdn.jsdelivr.net/gh/q541810/Marcel_ssh@main/latest.json`），raw 不通时 jsDelivr 兜底。jsDelivr 对 main 分支有数小时缓存，发布 latest.json 后可主动刷新缓存：`curl https://purge.jsdelivr.net/gh/q541810/Marcel_ssh@main/latest.json`
 
 #### 版本号规则（语义化版本）
 
@@ -133,6 +159,22 @@ pnpm tauri build
 
 > Windows 默认只发布 NSIS 安装包，不发布 MSI，以控制安装包体积。
 
+### 4.5 签名 Windows 安装包（仅本版发布桌面时执行；无感更新必需）
+
+桌面无感更新要求安装包带 minisign 签名：客户端后台下载后先验签再静默安装，验签不过的包直接丢弃并降级为手动下载。
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY_PATH="$env:USERPROFILE\.tauri\marcel-update.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+pnpm tauri signer sign "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe"
+```
+
+- 同目录产出 `Marcel SSH_{version}_x64-setup.exe.sig`，其完整内容写入 `latest.json` 的 `signature` 字段（签名不改动 exe 本体，上传资产时仍是同一个 exe）
+- 签名密钥 `~/.tauri/marcel-update.key`（空密码）**必须备份**：丢失后无法再签出可被现有客户端接受的更新，只能换公钥发新版
+- 公钥硬编码在 `src-tauri/src/updater/mod.rs` 的 `UPDATE_PUBKEY_B64`；换密钥就必须换公钥并发布带新公钥的版本
+- 密钥本机也不存在时，先 `pnpm tauri signer generate -w "$env:USERPROFILE\.tauri\marcel-update.key" --password "" --ci` 生成，并把 `.pub` 的 base64 内容更新进 `UPDATE_PUBKEY_B64`（换钥发版场景：公钥要等下一次带新公钥的版本普及后才能启用对应私钥）
+- 抄公钥时别抄错：`cargo test --lib updater::` 里的 `production_pubkey_parses` 会解析内置公钥，抄错直接测试失败（比线上全员静默更新失败好得多）
+
 ### 5. 构建 Android APK（仅本版发布安卓时执行）
 
 ```powershell
@@ -145,6 +187,14 @@ pnpm tauri android build --apk --target aarch64
 
 - `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`（**已自动用正式 keystore 签名**）
 
+写入 `latest.json` 的安卓资产字段：
+
+```powershell
+$apk = "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk"
+(Get-FileHash -Algorithm SHA256 $apk).Hash   # → android.sha256
+(Get-Item $apk).Length                       # → android.size
+```
+
 签名说明：
 
 - keystore 在 `~/.android/marcel-ssh-release.keystore`（仓库外），密码在 `src-tauri/gen/android/app/key.properties`（已 gitignore）。两个文件都必须备份，丢了无法再对同一 app 签发更新。
@@ -152,6 +202,8 @@ pnpm tauri android build --apk --target aarch64
 - 首次构建前需 `pnpm tauri android init` 生成 `gen/android` 工程（已提交进仓库，无需重复跑）。
 - Gradle wrapper 走腾讯镜像（`gradle-wrapper.properties`），避免官方源证书问题。
 - Android 的 versionName/versionCode（`tauri.properties`）由 tauri CLI 从 `tauri.conf.json` 的 `version` 自动生成，版本号递增保证 versionCode 单调递增，侧载升级不受影响。
+- 应用内更新依赖 manifest 里的 `REQUEST_INSTALL_PACKAGES`（已在 `gen/android/app/src/main/AndroidManifest.xml` 声明）与 `FileProvider`（`cache-path "."` 覆盖 cacheDir，更新包就落在 `cacheDir/update/`）。**不要删这两项**：删了系统连「安装未知应用」开关都不会列出来，应用内安装直接失败。
+- 用户在系统安装界面确认安装时，系统会顺手校验「签名一致 + versionCode 递增」，这两个前提由上面的 keystore 与版本号规则共同保证。
 
 ### 6. 拟定release描述
 
@@ -221,4 +273,8 @@ gh release upload v{version} "src-tauri\gen\android\app\build\outputs\apk\univer
 - [ ] `gh release view v{version}`：资产清单只包含本版实际发布的平台产物
 - [ ] `gh release list`：最新 release 的 tag 与 `latest.json` 各字段对应
 - [ ] `latest.json` 已 push 到 main 且内容正确：发布桌面的版本顶层字段 = 新版本；发布安卓的 `android.version` = 新版本；**未发布平台的字段保持原值，未被顺手改动**
+- [ ] 发布桌面时：`installer_url` 可直接下载（HTTP 200），`sha256` 与实际 exe 的 `Get-FileHash` 一致，`size` 与 exe 字节数一致
+- [ ] 发布安卓时：`android.installer_url` 可直接下载（HTTP 200），`android.sha256` / `android.size` 与 APK 一致；**不是**写到了顶层
+- [ ] 发布桌面时：真机验证无感链路——上一个版本客户端等检查（或设置页手动「检查更新」→「后台下载」）→ 标题栏药丸出现并显示进度 → 下载完成后正常退出应用 → 安装器静默运行（**自然退出不自动重启应用**，手动打开后版本号 = 新版本）；再验证药丸气泡「立即安装」→ 退出安装后**自动重启**到新版本；顺带确认药丸「稍后」文案说明了「退出时仍会自动安装」
+- [ ] 发布安卓时：真机验证无感链路——上一个版本客户端在 Wi-Fi 下等自动检查（或设置页「检查更新」→「后台下载」）→ 顶部出现细进度条 → 下载完成后弹出「新版本已就绪」浮层 → 点「立即安装」→ 系统安装界面确认 → 重启后版本号 = 新版本；再验证移动数据下**不**自动下载、点「后台下载」可以手动下载；首次安装前应出现「安装未知应用」授权引导
 - [ ] 在桌面端和安卓真机上分别验证：各手动点一次“检查更新”，确认只有发布了新版的平台提示有更新
