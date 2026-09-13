@@ -11,6 +11,9 @@ pub mod plugins;
 pub mod skills;
 pub mod ssh;
 pub mod util;
+// 无感更新器：桌面 Windows 走 NSIS「退出即静默安装」，Android 走 APK
+// 「后台下载 + 一键拉起系统安装器」，其他桌面平台只检查提示。
+pub mod updater;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -711,6 +714,10 @@ pub fn run() {
                 });
             }
 
+            // 无感更新器：启动清理 + 恢复未装上的安装包 + 后台检查循环。
+            // 全平台启动；退出时静默安装只在 Windows 有意义（见下方 RunEvent::Exit）。
+            crate::updater::init(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -806,6 +813,10 @@ pub fn run() {
             commands::mcp::mcp_call_tool,
             commands::update::check_update,
             commands::update::open_external_url,
+            commands::update::get_update_state,
+            commands::update::install_update_now,
+            commands::update::start_update_download,
+            commands::update::update_capabilities,
             commands::sftp::sftp_list_dir,
             commands::sftp::sftp_upload,
             commands::sftp::sftp_download,
@@ -864,6 +875,14 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Fatal: failed to start Tauri application")
         .run(|app, event| {
+            // 应用完全退出且有待装更新包时，延迟静默运行 NSIS 安装器
+            // （/S 静默 /UPDATE 更新模式 /R 装完自动重启应用）。用户正常
+            // 关闭应用即完成无感升级；「立即安装」也走这一路径。
+            // 仅 Windows：Android 的系统安装器必须由用户确认，没有「退出即装」。
+            #[cfg(windows)]
+            if let tauri::RunEvent::Exit = event {
+                crate::updater::install_on_exit(app);
+            }
             // 移动端生命周期兜底：Android 切前台时 Tauri 抛出 Resumed。
             // 桌面端此事件通常不触发，emit 出去前端也只在移动端监听，无副作用。
             // 前端 (src/mobile/App.tsx) 用 visibilitychange 作为主信号，本事件作兜底，

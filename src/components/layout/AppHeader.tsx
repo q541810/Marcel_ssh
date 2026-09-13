@@ -1,6 +1,9 @@
+import { useEffect } from 'react';
 import { APP_NAME } from '@/lib/constants';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import WindowControls from '@/components/layout/WindowControls';
+import UpdatePill from '@/components/layout/UpdatePill';
+import { useUpdateStore } from '@/stores/updateStore';
 
 interface Props {
   onToggleSidebar: () => void;
@@ -9,6 +12,11 @@ interface Props {
 }
 
 export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, className }: Props) {
+  // 无感更新（桌面 Windows）：挂载时订阅 update://state + 拉取当前状态
+  useEffect(() => {
+    useUpdateStore.getState().init().catch(() => {});
+  }, []);
+
   return (
     <header className={`flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8 ${className ?? ''}`}>
       <div
@@ -38,6 +46,7 @@ export default function AppHeader({ onToggleSidebar, onToggleAgentPanel, classNa
         <h1 className="text-xs font-bold tracking-wide text-zinc-200" data-tauri-drag-region>
           {APP_NAME}
         </h1>
+        <UpdatePill />
         <div className="flex-1" data-tauri-drag-region />
         <button
           onClick={onToggleAgentPanel}

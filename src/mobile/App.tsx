@@ -7,10 +7,12 @@ import MobileFilesHost from './MobileFilesHost';
 import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
 import MobileUpdateToast from './MobileUpdateToast';
+import MobileUpdateProgress from './MobileUpdateProgress';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
 import { useJobStore } from '@/stores/jobStore';
+import { useUpdateStore } from '@/stores/updateStore';
 import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
@@ -21,10 +23,6 @@ import { isMobileSettingsCategoryId } from './mobileSettingsModel';
 
 export default function MobileApp() {
   const [activeTab, setActiveTab] = useState<MobileTabId>(DEFAULT_MOBILE_TAB);
-  const [updateToast, setUpdateToast] = useState<{
-    version: string;
-    url: string;
-  } | null>(null);
   // Dismissed-this-session guard so finishing onboarding hides it immediately
   // even before the settings write lands.
   const [onboardingDone, setOnboardingDone] = useState(false);
@@ -38,9 +36,10 @@ export default function MobileApp() {
     settingsLoaded && !hasCompletedOnboarding && !onboardingDone;
 
   useEffect(() => {
-    void bootstrapMobileApp({
-      onUpdateAvailable: (version, url) => setUpdateToast({ version, url }),
-    }).catch(() => {});
+    void bootstrapMobileApp().catch(() => {});
+    // 更新状态：订阅后端 update://state + 拉取本机能力（与桌面 AppHeader 同一入口，
+    // 幂等）。移动端的更新浮层/进度条都由这份状态驱动，不再各自做一次性检查。
+    void useUpdateStore.getState().init().catch(() => {});
     void initInteractionListener();
     const detachJobs = useJobStore.getState().initEventListener();
     // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
@@ -191,13 +190,9 @@ export default function MobileApp() {
         <MobileTabBar activeTab={activeTab} onTabChange={setActiveTab} />
       </div>
 
-      {updateToast && !showOnboarding && (
-        <MobileUpdateToast
-          version={updateToast.version}
-          url={updateToast.url}
-          onDismiss={() => setUpdateToast(null)}
-        />
-      )}
+      <MobileUpdateProgress />
+
+      {!showOnboarding && <MobileUpdateToast />}
 
       {showOnboarding && (
         <MobileOnboarding onComplete={handleOnboardingComplete} />

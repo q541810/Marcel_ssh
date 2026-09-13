@@ -14,7 +14,6 @@ import TabBar from '@/components/terminal/TabBar';
 import AppHeader from '@/components/layout/AppHeader';
 import HostKeyWarningToast from '@/components/layout/HostKeyWarningToast';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
-import UpdateToast from '@/components/UpdateToast';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import StarPromptModal from '@/components/star/StarPromptModal';
 import GlobalInteractionOverlay from '@/components/agent/GlobalInteractionOverlay';
@@ -27,7 +26,7 @@ import { useMarketStore } from '@/stores/marketStore';
 import { useJobStore } from '@/stores/jobStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
-import { appReady, checkUpdate, sftpPreviewCleanup } from '@/lib/tauri';
+import { appReady, sftpPreviewCleanup } from '@/lib/tauri';
 import { playNotificationSound } from '@/lib/notificationSound';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
@@ -64,7 +63,6 @@ export default function App() {
   const activeId = useViewStore((s) => s.activeId);
   const setActiveId = useViewStore((s) => s.setActiveId);
   const providers = useViewStore((s) => s.providers);
-  const [updateToast, setUpdateToast] = useState<{ version: string; url: string } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   // 标记引导是否已结束：仅引导结束时触发主行滑出动画，
   // 避免首次加载 showOnboarding 由 false→true 时产生无效淡出
@@ -340,9 +338,6 @@ export default function App() {
     });
     ensurePluginRegistryListener();
     initRegionBridge();
-    checkUpdate().then(res => {
-      if (res.hasUpdate) setUpdateToast({ version: res.latestVersion, url: res.releaseUrl });
-    }).catch(() => {});
     // 插件市场后台检查更新（不阻塞启动）
     void useMarketStore.getState().fetch().catch(() => {});
   }, []);
@@ -511,14 +506,6 @@ export default function App() {
           </div>
         </div>
       </div>
-
-      {updateToast && (
-        <UpdateToast
-          version={updateToast.version}
-          url={updateToast.url}
-          onDismiss={() => setUpdateToast(null)}
-        />
-      )}
 
       <SettingsWarningToast />
       <HostKeyWarningToast />

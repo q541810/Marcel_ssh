@@ -722,6 +722,9 @@ export interface AppSettings {
    *  startup. Used to recover from a plugin whose injected JS hangs the
    *  main window. */
   disableAllInjections: boolean;
+  /** 自动下载并安装更新（桌面专属，默认开启）。关闭后仅检查并提示，
+   *  点击提示跳浏览器手动下载。 */
+  autoUpdate: boolean;
 }
 
 // LLM token usage — returned by the LLM provider in its API response
@@ -965,6 +968,33 @@ export interface UpdateCheckResult {
   hasUpdate: boolean;
   latestVersion: string;
   releaseUrl: string;
+  /** 本平台安装包直链（Windows = NSIS exe，Android = APK）；缺失时降级为跳浏览器手动下载 */
+  installerUrl?: string;
+  /** minisign 签名（tauri signer sign 输出）。仅 Windows 有值 */
+  signature?: string;
+  /** 安装包 sha256（hex） */
+  sha256?: string;
+  /** 安装包字节数 */
+  size?: number;
+}
+
+// 后端 updater 的 UpdateState（update://state 事件载荷）。
+// 字段名与 Rust 侧 rename_all_fields = "camelCase" 一一对应。
+export type UpdateState =
+  | { status: 'idle' }
+  | { status: 'available'; version: string; releaseUrl: string }
+  | { status: 'downloading'; version: string; downloaded: number; total: number }
+  | { status: 'ready'; version: string }
+  | { status: 'failed'; message: string };
+
+/** 本机平台的安装包类型：Windows = NSIS exe，Android = APK，其他桌面平台无。 */
+export type InstallKind = 'exe' | 'apk' | 'none';
+
+/** 本机平台支持的更新能力（后端 update_capabilities）。 */
+export interface UpdateCapabilities {
+  installKind: InstallKind;
+  /** 是否支持「后台下载 + 就绪安装」；false 时 UI 不展示自动更新开关与后台下载入口 */
+  silentDownload: boolean;
 }
 
 export interface CommandCheckResult {

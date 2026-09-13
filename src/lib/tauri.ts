@@ -18,6 +18,8 @@ import type {
   McpServerListResponse,
   McpTool,
   UpdateCheckResult,
+  UpdateState,
+  UpdateCapabilities,
   ParsedSkill,
   CommandCheckResult,
   SftpFileEntry,
@@ -743,6 +745,30 @@ export async function appReady(): Promise<void> {
 
 export async function checkUpdate(): Promise<UpdateCheckResult> {
   return invoke<UpdateCheckResult>("check_update");
+}
+
+// Silent updater（桌面 Windows + Android 共用同一套状态机与 command）
+
+/** 本机平台支持的更新能力（Windows exe / Android apk / 其他桌面平台 none）。 */
+export async function updateCapabilities(): Promise<UpdateCapabilities> {
+  return invoke<UpdateCapabilities>("update_capabilities");
+}
+
+export async function getUpdateState(): Promise<UpdateState> {
+  return invoke<UpdateState>("get_update_state");
+}
+
+/**
+ * 立即安装已就绪的更新。
+ * Windows：退出应用并静默安装（装完自动重启）；Android：拉起系统安装器（系统界面确认）。
+ */
+export async function installUpdateNow(): Promise<void> {
+  return invoke("install_update_now");
+}
+
+/** 手动触发后台下载（设置页/药丸「后台下载」；手机端绕过「仅非计量网络」限制）。 */
+export async function startUpdateDownload(): Promise<void> {
+  return invoke("start_update_download");
 }
 
 // SFTP commands

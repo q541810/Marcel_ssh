@@ -52,6 +52,11 @@ handlebars = "6"
 notify = "6"
 # sysopen 用系统默认应用打开文件（tauri 官方插件，替代已 deprecated 的 shell().open）
 tauri-plugin-opener = "^2"
+# 无感更新器（updater/）：桌面 Windows 走 NSIS「退出即静默安装」，Android 走
+# APK「后台下载 + 一键拉起系统安装器」，两端都要 sha256 校验安装包完整性与
+# 磁盘剩余空间预检（minisign 验签仅 Windows 需要，见下方 target 段）。
+sha2 = "0.10"
+fs4 = "0.8"
 
 
 
@@ -68,6 +73,10 @@ keyring = { version = "^4", default-features = false, features = [
     "apple-native-keyring-store",
     "zbus-secret-service-keyring-store",
 ] }
+# 仅 Windows 无感更新需要：NSIS 安装包在执行前用 minisign 验签（Android 的
+# APK 由系统安装器强制校验签名一致，故不引入该依赖）。
+[target.'cfg(windows)'.dependencies]
+minisign-verify = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "gzip", "brotli", "deflate"] }

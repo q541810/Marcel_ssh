@@ -11,6 +11,13 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 保持 CPU 唤醒，防止 Doze 冻结导致 SSH keepalive 发不出去 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 应用内更新：允许本应用把下载好的 APK 交给系统安装器。Android 8+
+         必须声明此权限，「安装未知应用」开关才会出现在系统设置里；没有它
+         installUpdateApk 会失败（系统也不会列出本应用供授权）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 应用内更新：判断当前网络是否计量（移动数据），计量网络下不自动下载
+         安装包，避免静默消耗用户流量。isActiveNetworkMetered 需要此权限。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />

@@ -488,6 +488,11 @@ pub struct AppSettings {
     /// main window.
     #[serde(default)]
     pub disable_all_injections: bool,
+    /// 自动下载并安装更新（桌面专属；默认开启）。关闭后仅检查并提示新
+    /// 版本，不自动下载，点击提示跳浏览器手动下载。移动端无此功能，
+    /// 字段不参与移动端 UI。
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 fn default_file_manager_path() -> String {
@@ -561,6 +566,7 @@ impl Default for AppSettings {
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
+            auto_update: true,
         }
     }
 }
@@ -851,5 +857,23 @@ mod tests {
         assert!(json.contains("\"disableAllInjections\":true"));
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(parsed.disable_all_injections);
+    }
+
+    /// autoUpdate 旧配置缺失 → 默认开启（serde default），不改动用户现状。
+    #[test]
+    fn auto_update_defaults_true_for_old_configs() {
+        let json = "{\"fontSize\": 14}";
+        let parsed: AppSettings = serde_json::from_str(json).expect("old config should load");
+        assert!(parsed.auto_update);
+    }
+
+    #[test]
+    fn auto_update_roundtrip() {
+        let mut settings = AppSettings::default();
+        settings.auto_update = false;
+        let json = serde_json::to_string(&settings).expect("serialize");
+        assert!(json.contains("\"autoUpdate\":false"));
+        let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+        assert!(!parsed.auto_update);
     }
 }

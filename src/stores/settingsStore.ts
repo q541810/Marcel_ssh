@@ -88,6 +88,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   llmRegistry: DEFAULT_LLM_REGISTRY,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
+  autoUpdate: true,
   fileManagerShowHidden: false,
   fileManagerPath: '/',
   fileManagerPaths: {},

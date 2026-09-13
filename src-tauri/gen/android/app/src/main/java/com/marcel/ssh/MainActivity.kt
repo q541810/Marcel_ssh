@@ -4,9 +4,15 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.Display
 import android.view.ViewGroup
@@ -15,8 +21,10 @@ import android.webkit.WebView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import java.io.File
 
 class MainActivity : TauriActivity() {
   private var webViewRef: WebView? = null
@@ -311,6 +319,98 @@ class MainActivity : TauriActivity() {
       }
     } catch (e: Throwable) {
       Log.w(TAG, "requestHighRefreshRate: preferredDisplayModeId failed: ${e.message}")
+    }
+  }
+
+  // ---------- 应用内更新（由 Rust 侧 JNI 调用） ----------
+  //
+  // 调用方：src-tauri/src/updater/install.rs 的 `call_activity`
+  // （方法签名固定为 `()Ljava/lang/String;` 或
+  // `(Ljava/lang/String;)Ljava/lang/String;`）。返回字符串而不是抛异常 ——
+  // JNI 里抛出的异常会成为 pending exception，让后续 JNI 调用处于非法状态；
+  // Rust 侧只按返回值分支。
+
+  /**
+   * 是否已允许本应用安装未知来源的应用（Android 8+ 需用户手动授权；
+   * 低版本默认允许）。
+   */
+  private fun canInstallPackages(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      packageManager.canRequestPackageInstalls()
+    } else {
+      true
+    }
+  }
+
+  /**
+   * 当前网络是否为计量网络（移动数据/计费热点）。
+   *
+   * Rust 侧据此决定要不要自动后台下载几十 MB 的安装包：非 "unmetered"
+   * （含查询失败 "unknown"）一律按计量网络处理，不自动下载，用户仍可在
+   * 设置页手动触发。
+   */
+  fun networkMetered(): String {
+    return try {
+      val cm = getSystemService(ConnectivityManager::class.java) ?: return "unknown"
+      if (cm.isActiveNetworkMetered) "metered" else "unmetered"
+    } catch (e: Exception) {
+      Log.w(TAG, "networkMetered 查询失败: ${e.message}")
+      "unknown"
+    }
+  }
+
+  /**
+   * 把已下载的 APK 交给系统安装器（用户在系统界面确认安装，装完由系统
+   * 重启应用）。系统会强制校验「新包签名 == 已装版本签名」与版本号递增。
+   *
+   * 返回值：
+   * - `started`：已拉起系统安装界面；
+   * - `need_permission`：尚未允许「安装未知应用」，此处顺带打开授权页；
+   * - `error:...`：失败原因。
+   *
+   * 传入路径必须是本应用私有 cacheDir 下的文件：由 FileProvider 转成
+   * content:// URI 授权给系统安装器读取（`res/xml/file_paths.xml` 的
+   * `cache-path "."` 已覆盖整个 cacheDir，含更新器使用的 update/ 子目录）。
+   */
+  fun installUpdateApk(path: String): String {
+    return try {
+      val apk = File(path)
+      if (!apk.exists()) return "error:安装包不存在（可能已被系统清理）"
+      if (!canInstallPackages()) {
+        openUnknownSourcesSettings()
+        return "need_permission"
+      }
+      val uri: Uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", apk)
+      val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "application/vnd.android.package-archive")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      // startActivity 必须在主线程执行，而 JNI 调用来自 Rust 的后台线程。
+      Handler(Looper.getMainLooper()).post {
+        try {
+          startActivity(intent)
+        } catch (e: Exception) {
+          Log.e(TAG, "拉起系统安装器失败: ${e.message}")
+        }
+      }
+      "started"
+    } catch (e: Exception) {
+      Log.e(TAG, "installUpdateApk 失败: ${e.message}")
+      "error:${e.message ?: "未知错误"}"
+    }
+  }
+
+  /** 打开「安装未知应用」授权页；用户授权后返回应用再点一次「立即安装」。 */
+  private fun openUnknownSourcesSettings() {
+    try {
+      val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+        data = Uri.parse("package:$packageName")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      Handler(Looper.getMainLooper()).post { startActivity(intent) }
+    } catch (e: Exception) {
+      Log.w(TAG, "打开未知来源授权页失败: ${e.message}")
     }
   }
 }

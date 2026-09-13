@@ -1,5 +1,5 @@
 import type { AgentMode } from '@/lib/types';
-import { appReady, checkUpdate } from '@/lib/tauri';
+import { appReady } from '@/lib/tauri';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useTaskStore } from '@/stores/taskStore';
 import { useSkillStore } from '@/stores/skillStore';
@@ -36,12 +36,6 @@ export interface MobileBootstrapDeps {
    * 非 Android 环境（桌面 / 浏览器预览）应安全 no-op。
    */
   startForegroundServiceIfEnabled: () => void;
-  checkUpdate: () => Promise<{
-    hasUpdate: boolean;
-    latestVersion: string;
-    releaseUrl: string;
-  }>;
-  onUpdateAvailable: (version: string, url: string) => void;
 }
 
 export async function runMobileBootstrap(
@@ -73,26 +67,20 @@ export async function runMobileBootstrap(
     /* best-effort */
   }
   await deps.attachTransferListeners();
-  // Update check last and silent-on-failure: never blocks interaction.
-  try {
-    const result = await deps.checkUpdate();
-    if (result.hasUpdate) {
-      deps.onUpdateAvailable(result.latestVersion, result.releaseUrl);
-    }
-  } catch {
-    /* offline / server unreachable — stay silent */
-  }
+  // 更新检查不在这里做：后端 updater 启动 30 秒后自查并 emit update://state，
+  // 前端由 useUpdateStore 统一镜像（桌面与移动端同一份状态、同一套 UI 判定），
+  // 避免两端各写一遍「检查 + 提示」逻辑。
 }
 
 let bootstrapStarted = false;
 
-export interface MobileBootstrapCallbacks {
-  onUpdateAvailable: (version: string, url: string) => void;
-}
-
-export async function bootstrapMobileApp(
-  callbacks: MobileBootstrapCallbacks,
-): Promise<void> {
+/**
+ * 移动端启动。
+ *
+ * 更新入口不在此处：见 `MobileApp` 里 `useUpdateStore.init()`（订阅后端
+ * `update://state`），浮层由 `MobileUpdateToast` 呈现。
+ */
+export async function bootstrapMobileApp(): Promise<void> {
   if (bootstrapStarted) return;
   bootstrapStarted = true;
   try {
@@ -119,8 +107,6 @@ export async function bootstrapMobileApp(
         }
         startForegroundService('Marcel SSH', '运行中');
       },
-      checkUpdate: () => checkUpdate(),
-      onUpdateAvailable: callbacks.onUpdateAvailable,
     });
   } catch (err) {
     bootstrapStarted = false;

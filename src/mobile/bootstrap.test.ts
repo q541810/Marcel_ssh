@@ -46,12 +46,6 @@ describe('runMobileBootstrap', () => {
       fetchSkills: vi.fn().mockResolvedValue(undefined),
       attachTransferListeners: vi.fn().mockResolvedValue(undefined),
       startForegroundServiceIfEnabled: vi.fn(),
-      checkUpdate: vi.fn().mockResolvedValue({
-        hasUpdate: false,
-        latestVersion: '',
-        releaseUrl: '',
-      }),
-      onUpdateAvailable: vi.fn(),
     };
   });
 
@@ -99,25 +93,7 @@ describe('runMobileBootstrap', () => {
     expect(deps.attachTransferListeners).toHaveBeenCalledOnce();
   });
 
-  it('notifies when an update is available', async () => {
-    deps.checkUpdate = vi.fn().mockResolvedValue({
-      hasUpdate: true,
-      latestVersion: '9.9.9',
-      releaseUrl: 'https://example.com/releases',
-    });
-    await runMobileBootstrap(deps);
-    expect(deps.onUpdateAvailable).toHaveBeenCalledWith(
-      '9.9.9',
-      'https://example.com/releases',
-    );
-  });
-
-  it('stays silent when no update or the check fails', async () => {
-    await runMobileBootstrap(deps);
-    expect(deps.onUpdateAvailable).not.toHaveBeenCalled();
-
-    deps.checkUpdate = vi.fn().mockRejectedValue(new Error('offline'));
-    await runMobileBootstrap(deps);
-    expect(deps.onUpdateAvailable).not.toHaveBeenCalled();
-  });
+  // 更新提示的职责已移出 bootstrap：后端 updater 自查并 emit `update://state`，
+  // 前端由 useUpdateStore 统一镜像（两端同一判定），判定逻辑的测试见
+  // src/stores/updateStore.test.ts。
 });
