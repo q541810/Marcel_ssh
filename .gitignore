@@ -5,6 +5,9 @@ pnpm-lock.yaml
 # Build outputs
 dist/
 
+# 日志（构建与调试产物，不入仓库）
+*.log
+
 # Rust
 src-tauri/target/
 
