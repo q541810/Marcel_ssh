@@ -80,7 +80,7 @@ pub async fn agent_read_local_file(
 
 /// 解析本地文件的展示名：content:// URI 查 ContentResolver DISPLAY_NAME
 /// （失败退化为 URI 最后一段解码），普通路径取 basename。
-async fn local_file_name(path: &str) -> Result<String, AppError> {
+pub(crate) async fn local_file_name(path: &str) -> Result<String, AppError> {
     if is_content_uri(path) {
         #[cfg(target_os = "android")]
         {
@@ -101,6 +101,18 @@ async fn local_file_name(path: &str) -> Result<String, AppError> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .ok_or_else(|| AppError::Agent("无法从路径解析文件名".into()))
+}
+
+/// 仅返回本地文件的展示名，不读内容。
+///
+/// 用途：前端在「按扩展名/文件名分拣图片/文本附件」之前调用，拿到真实文件名。
+/// Android SAF content:// URI 不能用 `split('/').pop()` 拿名（拿到的是 document id），
+/// 必须经 ContentResolver 查 DISPLAY_NAME；这里把后端已有的 local_file_name
+/// 单独暴露成命令，避免前端读整个文件只为分类。
+#[tauri::command]
+pub async fn agent_get_local_file_name(path: String) -> Result<String, AppError> {
+    let path = validate_local_path(&path)?;
+    local_file_name(&path).await
 }
 
 #[cfg(test)]
@@ -145,5 +157,34 @@ mod tests {
     #[test]
     fn null_byte_rejected() {
         assert!(validate_local_path("/tmp/a\0b.txt").is_err());
+    }
+
+    /// `agent_get_local_file_name` 必须把 content:// URI 的真实 DISPLAY_NAME
+    /// 透出给前端（这里只能验非 Android 路径：验证 `local_file_name` 暴露成命令
+    /// 后能正确走普通路径的 basename 逻辑）。
+    #[tokio::test]
+    async fn get_local_file_name_passes_through_for_plain_paths() {
+        let n = agent_get_local_file_name("/home/u/d/report.md".into())
+            .await
+            .unwrap();
+        assert_eq!(n, "report.md");
+        let n = agent_get_local_file_name("C:\\Users\\me\\Downloads\\data.json".into())
+            .await
+            .unwrap();
+        assert_eq!(n, "data.json");
+    }
+
+    /// 兜底：content:// URI 在非 Android 目标（CI / 桌面构建）也必须能解析出
+    /// 最后一段（percent-decode 后），不能返回 None 让前端炸掉。
+    #[tokio::test]
+    async fn get_local_file_name_falls_back_for_content_uri_off_android() {
+        let n = agent_get_local_file_name(
+            "content://com.android.externalstorage.documents/document/primary%3APictures%2Fphoto.jpg".into(),
+        )
+        .await
+        .unwrap();
+        // 非 Android 不调 ContentResolver，但 content_uri_fallback_name
+        // 能从最后一段 percent-decode 出 "photo.jpg"
+        assert_eq!(n, "photo.jpg");
     }
 }
