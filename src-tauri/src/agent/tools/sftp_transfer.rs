@@ -452,12 +452,7 @@ impl AgentTool for UploadFileTool {
          file_name.\n\
          Multi-host: you may pass an optional `host` (the current machine or a \
          machine from the selected set, by its readable name) to upload to that \
-         machine instead of the current one. Desktop only.\n\
-         IMPORTANT: the `host` value must match the machine name in the multi-host \
-         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
-         any character (no extra spaces, no lowercase/uppercase changes, no \
-         punctuation changes). A name that differs by even one character is \
-         rejected, never silently redirected."
+         machine instead of the current one. Desktop only."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -467,7 +462,7 @@ impl AgentTool for UploadFileTool {
                 "local_path": { "type": "string", "description": "Required. Absolute path of the file to upload ON THIS COMPUTER (not the server). System/secret paths are rejected." },
                 "remote_path": { "type": "string", "description": "Required. Destination ON THE SERVER: an existing directory, a directory ending with '/', or the full target file path. Existing directories get the local file name appended; otherwise the path is used as-is as the target file." },
                 "file_name": { "type": "string", "description": "Optional. Rename the uploaded file on the server. When given, remote_path is treated as a directory and file_name is appended." },
-                "host": { "type": "string", "description": "Optional. Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, uploads to the current session's machine. Desktop only. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected." }
+                "host": { "type": "string", "description": format!("Optional. Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, uploads to the current session's machine. Desktop only. {}", super::HOST_MATCH_RULE) }
             },
             "required": ["local_path", "remote_path"]
         })
@@ -787,12 +782,7 @@ impl AgentTool for DownloadFileTool {
          Limit: 32 MB.\n\
          Multi-host: you may pass an optional `host` (the current machine or a \
          machine from the selected set, by its readable name) to download from \
-         that machine instead of the current one. Desktop only.\n\
-         IMPORTANT: the `host` value must match the machine name in the multi-host \
-         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
-         any character (no extra spaces, no lowercase/uppercase changes, no \
-         punctuation changes). A name that differs by even one character is \
-         rejected, never silently redirected."
+         that machine instead of the current one. Desktop only."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -802,7 +792,7 @@ impl AgentTool for DownloadFileTool {
                 "remote_path": { "type": "string", "description": "Required. Absolute path of the remote file on the server to download" },
                 "local_path":  { "type": "string", "description": "Optional. Absolute save path ON THIS COMPUTER (not the server). Omit to save to the system Downloads folder with the remote file name. System/secret paths are rejected." },
                 "overwrite": { "type": "boolean", "description": "If true, overwrite an existing regular file. Symlinks and directories are never overwritten. Default: false.", "default": false },
-                "host": { "type": "string", "description": "Optional. Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, downloads from the current session's machine. Desktop only. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected." }
+                "host": { "type": "string", "description": format!("Optional. Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, downloads from the current session's machine. Desktop only. {}", super::HOST_MATCH_RULE) }
             },
             "required": ["remote_path"]
         })

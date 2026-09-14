@@ -26,6 +26,7 @@ use tauri::Manager;
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::task::{AgentMode, AgentStatus};
+use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::emit_event;
 use crate::error::AppError;
@@ -33,56 +34,6 @@ use crate::AppState;
 
 /// 子agent结果回传给主 agent 的最大字符数（完整过程保留在子对话中）。
 const MAX_TASK_OUTPUT_CHARS: usize = 8000;
-
-/// 追加到子agent系统提示的调研指令（只读版，现状保持）。
-const SUBAGENT_INSTRUCTION: &str = "\
-你是被主 Agent 派发的调研子agent（subagent）。你的唯一目标：只读调研并回答主 Agent 交给你的调研问题。
-
-硬性约束：
-- 你处于 Plan 模式：只能使用只读调研工具（read_file / list_directory / search_files / system_info / connection_info / bash / web_search / http_get / ask_user / 技能）
-- 不得执行任何修改操作：不写文件、不编辑文件、不删除文件、不安装软件、不修改配置
-- bash 仅用于信息收集（查看状态、读取输出、运行只读查询），禁止用于修改系统
-- 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
-- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。收到结算通知前不需要反复轮询，可继续其他调研。
-
-完成调研后，用简洁清晰的中文输出调研结论：发现的事实（附证据）、关键结论。不要复述调研过程细节。";
-
-/// 追加到子agent系统提示的**读写执行版**指令（多机操控：subagent mode="agent" 时）。
-/// 与只读版的核心差异：允许真正执行修改类操作，但仍受 Agent 沙箱与
-/// 父任务审批语义约束——子 agent 不是放养的，破坏性命令照常拦截。
-///
-/// 工具列表按平台拆分：`upload_file`/`download_file` 读写「本机文件系统」
-/// （桌面路径语义），移动端不注册——提示词不得列出模型调用必败的工具。
-#[cfg(desktop)]
-const SUBAGENT_EXEC_INSTRUCTION: &str = "\
-你是被主 Agent 派发的执行子agent（subagent）。你的目标是：在指定机器上实际完成任务并回报结果——不只是调研，可以真正执行修改类操作。
-
-硬性约束：
-- 你可以使用读写工具：read_file / write_file / edit_file / list_directory / search_files / system_info / connection_info / bash / upload_file / download_file / web_search / http_get / ask_user / 技能
-- 可以执行修改操作（写文件、编辑、安装软件、改配置、运行部署脚本等），但必须谨慎：
-  - 破坏性/删除类命令（rm、drop、shutdown 等）必须先解释意图，能避免则避免
-  - 非平凡的 bash 命令先说明它在做什么与为什么
-  - 你的执行与主 Agent 同级的沙箱审查；高风险命令按父任务模式要求审批
-- 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
-- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。
-
-完成任务后，用简洁清晰的中文输出结果：做了什么、关键输出/证据、遗留风险或后续建议。不要复述过程细节。";
-
-#[cfg(not(desktop))]
-const SUBAGENT_EXEC_INSTRUCTION: &str = "\
-你是被主 Agent 派发的执行子agent（subagent）。你的目标是：在指定机器上实际完成任务并回报结果——不只是调研，可以真正执行修改类操作。
-
-硬性约束：
-- 你可以使用读写工具：read_file / write_file / edit_file / list_directory / search_files / system_info / connection_info / bash / web_search / http_get / ask_user / 技能
-- 不要调用 upload_file / download_file（当前平台未提供本机文件中转工具）
-- 可以执行修改操作（写文件、编辑、安装软件、改配置、运行部署脚本等），但必须谨慎：
-  - 破坏性/删除类命令（rm、drop、shutdown 等）必须先解释意图，能避免则避免
-  - 非平凡的 bash 命令先说明它在做什么与为什么
-  - 你的执行与主 Agent 同级的沙箱审查；高风险命令按父任务模式要求审批
-- 不要调用计划工具（create_plan / update_plan_item / edit_plan 不存在于你的工具集）
-- 若用 bash(run_in_background: true) 派发了后台作业：**不要**输出结束语后带着未完成作业离开——系统会在作业结算后自动把「作业已完成」通知发回给你，届时用 job_output(job_id=..., wait=true) 读取其输出并纳入结论；作业若不再需要，用 job_kill 终止。
-
-完成任务后，用简洁清晰的中文输出结果：做了什么、关键输出/证据、遗留风险或后续建议。不要复述过程细节。";
 
 /// 子agent启动事件：发到**主任务**的 stream 通道，前端据此注册子对话
 /// 并挂载子agent的流式 listener（运行中过程实时可见）。
@@ -195,12 +146,7 @@ impl AgentTool for SubagentTool {
          modify files / run installs / deploy on its machine (still sandboxed and \
          subject to the parent task's approval semantics). mode=\"agent\" is only \
          allowed when the CURRENT parent task is in Agent/Auto mode — Plan-mode \
-         parents can only spawn read-only research subagents (use \"plan\").\n\
-         IMPORTANT: the `host` value must match the machine name in the multi-host \
-         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
-         any character (no extra spaces, no lowercase/uppercase changes, no \
-         punctuation changes). A name that differs by even one character is \
-         rejected, never silently redirected."
+         parents can only spawn read-only research subagents (use \"plan\")."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -217,7 +163,7 @@ impl AgentTool for SubagentTool {
                 },
                 "host": {
                     "type": "string",
-                    "description": "Optional (multi-host). Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, the subagent runs on the current session's machine. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
+                    "description": format!("Optional (multi-host). Target machine's readable name: the current machine or one from the multi-host selected set. When omitted, the subagent runs on the current session's machine. {}", super::HOST_MATCH_RULE)
                 },
                 "mode": {
                     "type": "string",
@@ -436,14 +382,12 @@ impl AgentTool for SubagentTool {
             .and_then(|t| (t.mode == AgentMode::Auto).then_some(AgentMode::Auto));
 
         // ── 组装 + spawn（子 agent = exec_mode + 对应约束段）──
-        // 只读调研子 agent 用 SUBAGENT_INSTRUCTION（现状）；读写执行子 agent
-        // 用 SUBAGENT_EXEC_INSTRUCTION。工具集由 AgentManager::build_registry
-        // 按 spec.mode 自动派生（plan 无写工具，agent 有——见 plan 模式
-        // 工具集收敛逻辑），这里不再硬编码只读。
+        // 约束段的文本在 templates/agent/子agent_只读.hbs、子agent_执行.hbs：
+        // 桌面/移动的工具清单差异用 can_transfer 分支，避免两份 cfg 副本各自漂移。
         let sub_instruction = if exec_mode == AgentMode::Agent {
-            SUBAGENT_EXEC_INSTRUCTION
+            TemplateManager.render_fragment("子agent_执行", &json!({ "can_transfer": cfg!(desktop) }))
         } else {
-            SUBAGENT_INSTRUCTION
+            TemplateManager.render_fragment("子agent_只读", &json!({}))
         };
         let spec = AgentSpec {
             task_id: sub_task_id.clone(),
@@ -455,7 +399,7 @@ impl AgentTool for SubagentTool {
             prompt,
             history: Vec::new(),
             model_override,
-            prompt_extra: vec![sub_instruction.to_string()],
+            prompt_extra: vec![sub_instruction],
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {

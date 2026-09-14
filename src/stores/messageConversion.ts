@@ -331,7 +331,11 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
 
 // ───────────────────────── 压缩视图重建（id 指针定位 + 重启重建） ─────────────────────────
 
-/** 镜像 summarizer.rs 的 CHECKPOINT_PREAMBLE（保持逐字节一致；改后端时同步这里）。 */
+/**
+ * 镜像 `templates/context/压缩前言.hbs`（保持逐字节一致；改后端模板时同步这里）。
+ * Rust 侧有 `checkpoint_preamble_matches_frontend_copy` 钉住模板渲染结果，
+ * 但跨语言无法自动比对，所以两边都要手改。
+ */
 export const CHECKPOINT_PREAMBLE =
   'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.';
 

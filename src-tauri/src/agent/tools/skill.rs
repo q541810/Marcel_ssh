@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::agent::sandbox::RiskLevel;
+use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::skills::store::Skill;
@@ -59,18 +60,16 @@ impl SkillTool {
 }
 
 /// 内置教学 skill 调用时追加的平台说明。
-/// 桌面与 Android 是分别构建的二进制，编译期判定即可，无需运行时探测；
-/// 存储层（skills.json）始终保存纯净内容，注入只发生在工具调用时。
-fn builtin_platform_section() -> &'static str {
-    // 两个 cfg 块恰好编译其一
-    #[cfg(mobile)]
-    {
-        "\n\n---\n\n## 用户当前平台\n\n用户当前正在使用 Marcel SSH 的**移动版（Android）**。指导操作时只使用该端的界面路径；内容区分桌面端与移动端时，以该端为准。若不确定用户当前所在界面，先询问再指导。\n"
-    }
-    #[cfg(desktop)]
-    {
-        "\n\n---\n\n## 用户当前平台\n\n用户当前正在使用 Marcel SSH 的**桌面版**。指导操作时只使用该端的界面路径；内容区分桌面端与移动端时，以该端为准。若不确定用户当前所在界面，先询问再指导。\n"
-    }
+///
+/// 文本在 `templates/skill/平台说明.hbs`，桌面/移动走 `is_mobile` 分支——同一份
+/// 模板的两个分支都能在桌面构建的测试里跑到（`#[cfg]` 两份副本做不到）。前面的
+/// `\n\n` 分隔符由这里补，模板文件只放正文。存储层（skills.json）始终保存纯净
+/// 内容，注入只发生在工具调用时。
+fn builtin_platform_section() -> String {
+    format!(
+        "\n\n{}",
+        TemplateManager.render_fragment("平台说明", &json!({ "is_mobile": cfg!(mobile) }))
+    )
 }
 
 #[async_trait]

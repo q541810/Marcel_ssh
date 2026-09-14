@@ -4,6 +4,7 @@
 
 use std::sync::Mutex;
 
+use crate::agent::templates::TemplateManager;
 use crate::llm::manager::LlmManager;
 use crate::llm::openai::TextSink;
 use crate::llm::provider::LlmMessage;
@@ -13,43 +14,27 @@ pub const SUMMARY_OPEN_TAG: &str = "<compacted-summary>";
 pub const SUMMARY_CLOSE_TAG: &str = "</compacted-summary>";
 
 /// 替换节点前置说明（照搬 DSH）：让模型把摘要视为既有背景，不再复述。
-pub const CHECKPOINT_PREAMBLE: &str = "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.";
+///
+/// 文本在 `templates/context/压缩前言.hbs`。注意前端 `messageConversion.ts`
+/// 有一份逐字节相同的副本（`compactionPlan.test.ts` 在断言跨端一致），改这里
+/// 必须同步改那边。
+pub fn checkpoint_preamble() -> String {
+    TemplateManager
+        .render_fragment("压缩前言", &serde_json::json!({}))
+        .trim()
+        .to_string()
+}
 
 /// 摘要指令（照搬 DSH 八段结构 + 保真规则 + 旧摘要合并规则）。
-pub const COMPACTION_INSTRUCTION: &str = "You are now acting as a compaction engine for this AI coding assistant. Condense the conversation ABOVE into a structured checkpoint that lets another model resume the work with no loss of essential context.
-
-Output EXACTLY the Markdown structure below: keep every section, in order. Use terse bullets, not prose paragraphs. Write \"(none)\" for an empty section — never drop a section.
-
-## Primary Request and Intent
-- [the user's original and evolving goals; quote verbatim where the exact wording matters]
-
-## Key Technical Concepts
-- [technologies, frameworks, patterns, and conventions in play]
-
-## Files and Code
-- [exact path: why it matters, key changes or snippets]
-
-## Errors and Fixes
-- [error: how it was resolved, plus any related user feedback]
-
-## Pending Jobs
-- [explicitly requested work not yet completed]
-
-## Current Work
-- [precisely what was in progress at this checkpoint]
-
-## Next Step
-- [the single next action, directly in line with the most recent request, or \"(none)\"]
-
-## Critical Context
-- [decisions and their rationale, constraints, user preferences, open questions, data needed to continue]
-
-Rules:
-- Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.
-- Capture user feedback and explicit instructions faithfully, especially corrections.
-- Do NOT mention this summarization request or that the context was compacted.
-- Output only the checkpoint text: do not call any tool or take any other action.
-- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.";
+///
+/// 文本在 `templates/context/压缩指令.hbs`。八个小节标题与下面的
+/// `REQUIRED_SECTIONS` 硬校验一一对应——改标题会让模型输出被判为不合规。
+pub fn compaction_instruction() -> String {
+    TemplateManager
+        .render_fragment("压缩指令", &serde_json::json!({}))
+        .trim()
+        .to_string()
+}
 
 /// 摘要调用的输入：会话自己的 system（若有）+ 被压区间原始消息。
 /// 注意：**不传工具 schema**——模型看到工具列表会倾向于模仿历史里的
@@ -111,7 +96,7 @@ pub async fn summarize_with_llm(
         }
     }
     messages.extend(input.region.iter().cloned());
-    messages.push(LlmMessage::user(COMPACTION_INSTRUCTION));
+    messages.push(LlmMessage::user(compaction_instruction()));
 
     let resp = match progress {
         Some(progress) => {
@@ -190,7 +175,7 @@ mod tests {
             "## Critical Context",
         ] {
             assert!(
-                COMPACTION_INSTRUCTION.contains(section),
+                compaction_instruction().contains(section),
                 "missing {section}"
             );
         }
@@ -198,12 +183,22 @@ mod tests {
 
     #[test]
     fn instruction_contains_prior_checkpoint_merge_rule() {
-        assert!(COMPACTION_INSTRUCTION.contains("PRIOR checkpoint"));
+        assert!(compaction_instruction().contains("PRIOR checkpoint"));
     }
 
     #[test]
     fn instruction_forbids_tool_calls() {
-        assert!(COMPACTION_INSTRUCTION.contains("do not call any tool"));
+        assert!(compaction_instruction().contains("do not call any tool"));
+    }
+
+    /// 压缩前言在前端 `messageConversion.ts` 有一份逐字节副本（跨语言无法自动
+    /// 比对），这里钉死渲染结果，防止模板被误改后两边悄悄分叉。
+    #[test]
+    fn checkpoint_preamble_matches_frontend_copy() {
+        assert_eq!(
+            checkpoint_preamble(),
+            "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint."
+        );
     }
 
     #[test]

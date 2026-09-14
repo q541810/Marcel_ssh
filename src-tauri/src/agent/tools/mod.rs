@@ -746,9 +746,48 @@ impl Default for ToolRegistry {
 /// Safe for `sh`, `bash`, `zsh`, `dash`.
 pub(crate) use crate::util::{shell_escape, truncate_output};
 
+/// `host` 参数“机器名必须逐字符一致”的权威短提示。四个带 host 的工具
+/// （bash / subagent / upload_file / download_file）共用这一份，改这里就够。
+/// 完整说明只在系统提示词的多机段（`templates/agent/多机.hbs`）——工具侧不得
+/// 再复述一遍，`host_rule_is_single_sourced` 会拦下顺手抄的那一份。
+pub(crate) const HOST_MATCH_RULE: &str = "IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// host 规则只允许出现在两处：系统提示词的多机段（完整说明）与本文件的
+    /// `HOST_MATCH_RULE`（工具侧短提示）。
+    #[test]
+    fn host_rule_is_single_sourced() {
+        let r = ToolRegistry::with_builtins();
+        let mut host_params = 0;
+        for def in r.definitions() {
+            assert!(
+                !def.description.to_lowercase().contains("character-for-character"),
+                "{} 的工具描述里又抄了一份 host 规则；完整说明在多机段，工具侧用 HOST_MATCH_RULE",
+                def.name
+            );
+            let Some(host) = def
+                .parameters
+                .get("properties")
+                .and_then(|p| p.get("host"))
+                .and_then(|h| h.get("description"))
+                .and_then(|d| d.as_str())
+            else {
+                continue;
+            };
+            assert!(
+                host.ends_with(HOST_MATCH_RULE),
+                "{} 的 host 参数没有复用 HOST_MATCH_RULE：{}",
+                def.name,
+                host
+            );
+            host_params += 1;
+        }
+        // 桌面构建下应有 bash / subagent / upload_file / download_file 四个。
+        assert!(host_params >= 2, "带 host 参数的工具数异常：{}", host_params);
+    }
 
     #[test]
     fn registry_with_builtins_has_all_tools() {

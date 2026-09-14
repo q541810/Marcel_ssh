@@ -251,12 +251,7 @@ impl AgentTool for BashTool {
          immediately and manage it via `job_output`, `job_kill`, and `job_list`.\n\
          Multi-host: you may pass an optional `host` (the current machine or a \
          machine from the selected set, by its readable name) to run the command \
-         on that machine instead of the current one. Desktop only.\n\
-         IMPORTANT: the `host` value must match the machine name in the multi-host \
-         list CHARACTER-FOR-CHARACTER, case-sensitive — do not add, drop, or alter \
-         any character (no extra spaces, no lowercase/uppercase changes, no \
-         punctuation changes). A name that differs by even one character is \
-         rejected, never silently redirected."
+         on that machine instead of the current one. Desktop only."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -281,7 +276,7 @@ impl AgentTool for BashTool {
                 },
                 "host": {
                     "type": "string",
-                    "description": "Optional. Target machine's readable name: the current machine or one from the multi-host selected set (e.g. 'web-prod-01'). When omitted, runs on the current session's machine. Desktop only; on mobile passing host returns an error. IMPORTANT: must match the machine name in the multi-host list character-for-character, case-sensitive — any single-character difference (case, space, punctuation) is rejected, never silently redirected."
+                    "description": format!("Optional. Target machine's readable name: the current machine or one from the multi-host selected set (e.g. 'web-prod-01'). When omitted, runs on the current session's machine. Desktop only; on mobile passing host returns an error. {}", super::HOST_MATCH_RULE)
                 }
             },
             "required": ["command"]

@@ -9,7 +9,11 @@ fn default_true() -> bool {
 }
 
 /// A user-defined AI behavior instruction.
-/// When enabled, its prompt is appended to every Agent system prompt.
+///
+/// Delivery is progressive disclosure: an enabled skill becomes a `skill_<name>`
+/// tool, and `prompt` is returned as that tool's result only when the model calls
+/// it. Nothing here is appended to the system prompt — the prompt only announces
+/// that skill tools exist (`templates/agent/技能.hbs`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Skill {
@@ -139,17 +143,6 @@ impl SkillStore {
             }
         }
         changed
-    }
-
-    /// Return the concatenated prompts of all enabled skills.
-    /// Each prompt is wrapped in a section header so the LLM can distinguish them.
-    pub fn enabled_prompts(&self) -> String {
-        self.skills
-            .iter()
-            .filter(|s| s.enabled)
-            .map(|s| format!("[Skill: {}]\n{}\n", s.name, s.prompt))
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 }
 

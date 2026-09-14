@@ -34,7 +34,7 @@ use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmMessage, ToolDefinition};
 
 use meter::estimate_total;
-use summarizer::{CHECKPOINT_PREAMBLE, SUMMARY_CLOSE_TAG, SUMMARY_OPEN_TAG};
+use summarizer::{checkpoint_preamble, SUMMARY_CLOSE_TAG, SUMMARY_OPEN_TAG};
 
 /// 压力触发阈值比例（对齐 DSH `DEFAULT_THRESHOLD_RATIO`）。
 pub const DEFAULT_THRESHOLD_RATIO: f64 = 0.8;
@@ -45,7 +45,7 @@ pub const DEFAULT_COMPACTION_RETRIES: usize = 1;
 /// context-overflow 恢复预算（对齐 DSH `maxOverflowRetries`）。
 pub const DEFAULT_MAX_OVERFLOW_RETRIES: usize = 1;
 /// 最小压缩收益门槛（msl 对 DSH 的补充防御）：
-/// 被压区间必须 ≥ 此 token 数才值得压。framing（CHECKPOINT_PREAMBLE +
+/// 被压区间必须 ≥ 此 token 数才值得压。framing（`checkpoint_preamble()` +
 /// 标签）固定开销约 90+ tokens（chars/4）、摘要正文至少 ~200 tokens，
 /// 压一个 100 tokens 的小区间时摘要物理上不可能比原文小，shrink 必然失败
 /// （小窗口下实测踩中）。区间不足此门槛 → 未开始就跳过，不留痕。
@@ -555,8 +555,10 @@ async fn compact_region(
     };
 
     // framing + shrink 校验：摘要（含 framing）必须比被压内容小，否则拒绝
-    let framed =
-        format!("{CHECKPOINT_PREAMBLE}\n\n{SUMMARY_OPEN_TAG}\n{summary_text}\n{SUMMARY_CLOSE_TAG}");
+    let framed = format!(
+        "{}\n\n{SUMMARY_OPEN_TAG}\n{summary_text}\n{SUMMARY_CLOSE_TAG}",
+        checkpoint_preamble()
+    );
     let framed_msg = LlmMessage::user(framed);
     let framed_tokens = meter::estimate_message(&framed_msg);
     if framed_tokens >= shadowed_tokens {
