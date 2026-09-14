@@ -2,6 +2,9 @@ pub mod agent;
 pub mod command_exec;
 pub mod commands;
 pub mod config;
+// 分段并发下载器（HTTP Range）：GitHub 这类线路按单连接限速，安装包下载
+// 靠把一条流拆成多条连接才能跑满带宽（见模块内实测数据）。
+pub mod download;
 pub mod error;
 pub mod llm;
 pub mod mcp;

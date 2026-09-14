@@ -21,7 +21,6 @@
 //! 手动清理。Android 侧该目录位于应用私有 cacheDir 内，已被 FileProvider
 //! （`cache-path "."`）覆盖，可直接把 content:// URI 交给系统安装器。
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -53,8 +52,6 @@ const UPDATE_PUBKEY_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyB
 const FIRST_CHECK_DELAY_SECS: u64 = 30;
 /// 之后每 4 小时检查一次。
 const CHECK_INTERVAL_SECS: u64 = 4 * 60 * 60;
-/// 下载单个 chunk 的读超时（秒）——防止下载中途流卡死。
-const CHUNK_READ_TIMEOUT_SECS: u64 = 60;
 /// 磁盘预检时在安装包大小之外额外保留的空间（MB）。
 const DISK_HEADROOM_MB: u64 = 64;
 
@@ -411,16 +408,25 @@ fn is_downloading(app: &AppHandle) -> bool {
 
 /// 下载循环每读到一个 chunk 调一次：返回 true 表示「停止下载」已被请求。
 ///
-/// 取走标志（take）而不是只读：取消请求只对「当下这次下载」有效，留着会让
-/// 下一次下载在第一个 chunk 就被自己上一次的请求掐死。
-fn take_cancel_request(app: &AppHandle) -> bool {
+/// 只读不消费：分段下载有多条连接同时在跑，若某一段把标志「取走」，其余段就
+/// 看不到取消请求了。标志由调用方在收尾时用 [`clear_cancel_request`] 清掉。
+fn is_cancel_requested(app: &AppHandle) -> bool {
     let Some(state) = app.try_state::<UpdaterState>() else {
         return false;
     };
-    let Ok(mut inner) = state.0.lock() else {
+    let Ok(inner) = state.0.lock() else {
         return false;
     };
-    std::mem::take(&mut inner.cancel_requested)
+    inner.cancel_requested
+}
+
+/// 清掉取消请求（一次下载收尾后调用，避免影响下一次下载）。
+fn clear_cancel_request(app: &AppHandle) {
+    if let Some(state) = app.try_state::<UpdaterState>() {
+        if let Ok(mut inner) = state.0.lock() {
+            inner.cancel_requested = false;
+        }
+    }
 }
 
 /// 更新方式变化后的即时反应（保存设置时调用；`tick` 里另有一层兜底）。
@@ -644,12 +650,6 @@ async fn run_download(
     let part_path = dir.join(format!("{}.part", file_name));
     let final_path = dir.join(&file_name);
 
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .user_agent(concat!("Marcel-SSH/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("无法创建下载客户端: {}", e))?;
-
     // 下载候选：GitHub 直链优先，installer_mirrors 逐个 fallback。
     // 镜像只需网络可达即可——内容安全由 sha256（+ Windows 签名）校验兜底，
     // 镜像无需被信任。
@@ -662,69 +662,34 @@ async fn run_download(
         return Err("更新包直链缺失".into());
     }
 
-    let mut last_resp_err = "所有下载源均不可达".to_string();
-    let mut resp = None;
-    for url in &candidates {
-        match client.get(url).send().await {
-            Ok(r) if r.status().is_success() => {
-                resp = Some(r);
-                break;
-            }
-            Ok(r) => {
-                log::warn!("下载源返回 {} {}，尝试下一个", r.status(), url);
-                last_resp_err = format!("下载服务器返回 {}", r.status());
-            }
-            Err(e) => {
-                log::warn!("下载源不可达 {}：{}，尝试下一个", url, e);
-                last_resp_err = format!("下载请求失败: {}", e);
-            }
-        }
-    }
-    let resp = resp.ok_or(last_resp_err)?;
-    let total = resp.content_length().unwrap_or(expected_size);
-
-    let mut file =
-        std::fs::File::create(&part_path).map_err(|e| format!("无法写入临时文件: {}", e))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded: u64 = 0;
-    let mut last_emit = tokio::time::Instant::now() - Duration::from_secs(1);
-    let mut stream = resp;
-
-    loop {
-        // 「关闭」模式切换会置位取消请求：立刻收手并删掉半成品（.part 留着只
-        // 占空间，下次下载也会覆盖它）。返回 Cancelled 而不是 Err —— 这不是
-        // 失败，调用方不该给用户弹一个红色「自动更新失败」。
-        if take_cancel_request(app) {
-            file.flush().ok();
-            drop(file);
-            let _ = std::fs::remove_file(&part_path);
+    // 分段并发下载：GitHub 这类线路按单连接限速（实测单连接 0.02MB/s、16 连接
+    // 0.25MB/s），单连接顺序流只能跑到浏览器的水平。模块内部会先探测 Range
+    // 支持情况，不支持时自动退回单连接顺序流。
+    let version_for_progress = offer.version.clone();
+    let download = crate::download::SegmentedDownload {
+        urls: candidates,
+        part_path: part_path.clone(),
+        expected_size,
+        cancel: &|| is_cancel_requested(app),
+        progress: &|done, total| {
+            emit_progress(app, version_for_progress.clone(), done, total);
+        },
+    };
+    match download.run().await? {
+        crate::download::DownloadOutcome::Cancelled => {
+            clear_cancel_request(app);
             return Ok(DownloadOutcome::Cancelled);
         }
-        let chunk =
-            tokio::time::timeout(Duration::from_secs(CHUNK_READ_TIMEOUT_SECS), stream.chunk())
-                .await
-                .map_err(|_| "下载超时（连接停滞）".to_string())?
-                .map_err(|e| format!("下载中断: {}", e))?;
-        let Some(bytes) = chunk else { break };
-        file.write_all(&bytes)
-            .map_err(|e| format!("写入失败（磁盘空间不足？）: {}", e))?;
-        hasher.update(&bytes);
-        downloaded += bytes.len() as u64;
-
-        // 进度节流：每 500ms 或完成时 emit 一次
-        if last_emit.elapsed() >= Duration::from_millis(500) {
-            last_emit = tokio::time::Instant::now();
-            let (d, t, v) = (downloaded, total, offer.version.clone());
-            emit_progress(app, v, d, t);
-        }
+        crate::download::DownloadOutcome::Done => {}
     }
-    file.flush().ok();
-    drop(file);
 
     // 完整性校验：sha256 两端都做（防传输损坏/被替换）；来源可信校验 Windows
     // 另加 minisign 验签（Android 的 APK 由系统安装器强制校验签名与已装版本
     // 一致，签名不符装不上）。
-    let actual_hash = format!("{:x}", hasher.finalize());
+    //
+    // 分段下载无法边下边算整体哈希，所以这里对落盘文件读一遍：多一次读盘换
+    // 十几倍下载速度，划算。
+    let actual_hash = hash_file(&part_path)?;
     let expected_hash = offer.assets.sha256.clone().unwrap_or_default();
     if !hash_equal(&actual_hash, &expected_hash) {
         let _ = std::fs::remove_file(&part_path);
@@ -755,9 +720,30 @@ async fn run_download(
     std::fs::write(dir.join(PENDING_FILE_NAME), meta_json)
         .map_err(|e| format!("无法写入更新元数据: {}", e))?;
 
-    // 完成时推一次最终进度
-    emit_progress(app, offer.version.clone(), downloaded, total);
+    // 最终进度由下载模块按真实总大小推过一次，这里不再重复 emit
     Ok(DownloadOutcome::Done(final_path))
+}
+
+/// 对落盘文件算 sha256（hex）。
+///
+/// 分段并发下载没法边下边算整体哈希，只能下完读一遍。分块读，避免为了算哈希
+/// 把整个安装包读进内存。
+fn hash_file(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).map_err(|e| format!("无法读取下载文件: {}", e))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("读取下载文件失败: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// 本平台安装包的本地文件名（latest.json 的直链指向同一份资产，文件名只用于
