@@ -3,12 +3,14 @@ import { Trash2, ChevronDown } from 'lucide-react';
 import type { CommandCheckResult, CommandListMode, LlmRegistry } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { SYSTEM_PROMPT_MAX_CHARS } from '@/lib/constants';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import {
-  DEFAULT_APPROVAL_PROMPT,
+  DEFAULT_APPROVAL_PROMPT_FALLBACK,
   preCheckCustomPath,
 } from '@/components/settings/AgentPolicySection';
+import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
 import { modelFullLabel, modelLabel } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -32,6 +34,8 @@ export function MobileAgentPolicySection() {
   const updateAgent = (patch: Partial<typeof agent>) => {
     update({ agentModeSettings: { ...agent, ...patch } });
   };
+
+  const defaultApprovalPrompt = useDefaultApprovalPrompt();
 
   const [newCommand, setNewCommand] = useState('');
   const [testCommand, setTestCommand] = useState('');
@@ -183,14 +187,15 @@ export function MobileAgentPolicySection() {
               </button>
             </div>
             <textarea
-              value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
+              value={agent.modelApprovalPrompt || defaultApprovalPrompt}
               onChange={(e) => {
                 const v = e.target.value;
                 updateAgent({
-                  modelApprovalPrompt: v === DEFAULT_APPROVAL_PROMPT ? '' : v,
+                  modelApprovalPrompt: v === defaultApprovalPrompt ? '' : v,
                 });
               }}
               rows={6}
+              placeholder={DEFAULT_APPROVAL_PROMPT_FALLBACK}
               className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
             />
           </div>
@@ -472,12 +477,16 @@ export function MobileAgentPolicySection() {
           value={agent.systemPrompt ?? ''}
           onChange={(e) => updateAgent({ systemPrompt: e.target.value })}
           rows={5}
+          maxLength={SYSTEM_PROMPT_MAX_CHARS}
           placeholder="在此输入需要附加到系统提示词中的内容，将在每次 Agent 任务调用 LLM 时生效"
           autoCapitalize="off"
           autoCorrect="off"
           spellCheck={false}
           className="mt-2 w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
         />
+        <div className="mt-1 text-right text-xs text-zinc-500">
+          {(agent.systemPrompt ?? '').length} / {SYSTEM_PROMPT_MAX_CHARS}
+        </div>
       </MobileSettingRow>
 
       {/* 审批模型选择 */}

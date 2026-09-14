@@ -23,6 +23,9 @@ export const BINARY_EXTENSIONS = new Set([
 /** 图片预览支持的最大字节数（与后端 MAX_PREVIEW_IMAGE_BYTES 保持一致）。 */
 export const MAX_PREVIEW_IMAGE_SIZE = 50 * 1024 * 1024;
 
+/** 用户附加指令的字符上限（与后端 USER_PROMPT_MAX_CHARS 保持一致）。 */
+export const SYSTEM_PROMPT_MAX_CHARS = 2000;
+
 /**
  * 支持预览的图片扩展名（浏览器原生支持，不含 TIFF/SVG）。
  * 即使在 BINARY_EXTENSIONS 中，命中此集合的文件也会走图片预览而非"无法编辑"提示。

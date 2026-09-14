@@ -749,6 +749,7 @@ pub fn run() {
             commands::agent_lifecycle::agent_answer_question,
             commands::agent_compact::agent_compact_conversation,
             commands::agent_policy::agent_check_command,
+            commands::agent_policy::agent_default_approval_prompt,
             commands::agent_conversation::agent_create_conversation,
             commands::agent_conversation::agent_rename_conversation,
             commands::agent_conversation::agent_set_session_model,

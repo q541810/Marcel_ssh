@@ -10,18 +10,10 @@ import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { ValidatedInput } from './ValidatedInput';
 import { modelOptionsByChannel } from '@/lib/llmRegistry';
+import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
 
-export const DEFAULT_APPROVAL_PROMPT = `你是一个命令执行审批助手。Agent 即将在远程服务器上执行一条 shell 命令，你需要结合上下文判断这条命令是否可以安全放行。
-
-判断原则：
-- 你只能判定，不能改写命令。
-- 如果你对agent执行的命令有异议，那么请你阻止agent的命令执行，因为系统会自动插入"如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。"到结果中，agent按理说会解释后再执行一遍
-
-输出严格的 JSON，不要添加任何额外文字：
-{"decision": "approve" 或 "route_to_human" 或 "block", "reasons": ["问题点1", "问题点2"]}
-- approve：放行，reasons 可为空数组。
-- route_to_human：需要人工审批，reasons 写明需要人审的原因。
-- block：应当阻止，reasons 写明阻止原因。`;
+export const DEFAULT_APPROVAL_PROMPT_FALLBACK =
+  '（未能从后端读取内置审批提示词；留空即使用内置提示词。）';
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
   { path: '/etc', reason: '系统配置' },
@@ -94,6 +86,7 @@ export function AgentPolicySection() {
   const [testCommand, setTestCommand] = useState('');
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
+  const defaultApprovalPrompt = useDefaultApprovalPrompt();
   // 「命令超时」和「执行前模型审批」是偶尔调整的高级项，折叠收纳避免主面板太长。
   // 跟 ModelServiceSection 的「高级：自定义请求参数」折叠风格一致。
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -578,15 +571,16 @@ export function AgentPolicySection() {
                         </button>
                       </div>
                       <textarea
-                        value={agent.modelApprovalPrompt || DEFAULT_APPROVAL_PROMPT}
+                        value={agent.modelApprovalPrompt || defaultApprovalPrompt}
                         onChange={(e) => {
                           const v = e.target.value;
                           updateAgent({
                             modelApprovalPrompt:
-                              v === DEFAULT_APPROVAL_PROMPT ? '' : v,
+                              v === defaultApprovalPrompt ? '' : v,
                           });
                         }}
                         rows={6}
+                        placeholder={DEFAULT_APPROVAL_PROMPT_FALLBACK}
                         className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
                       />
                     </div>

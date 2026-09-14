@@ -1,6 +1,12 @@
 use crate::agent::templates::{AgentPromptVars, TemplateManager};
 use crate::error::AppError;
 
+/// 用户附加指令的字符上限。与插件 `systemPromptSection` 的
+/// `PLUGIN_SECTION_MAX_CHARS` 对齐：两者都是用户/第三方往系统提示词里塞的
+/// 自由文本，没道理一个有限制一个能无限膨胀。设置页输入框有同样的上限，
+/// 这里兜的是手改 settings.json 的情况。
+const USER_PROMPT_MAX_CHARS: usize = 2000;
+
 /// Build the agent system prompt by composing template fragments.
 pub(crate) fn build_system_prompt(
     template_manager: &TemplateManager,
@@ -14,9 +20,22 @@ pub(crate) fn build_system_prompt(
     has_task: bool,
     extra_sections: &[String],
 ) -> Result<String, AppError> {
+    let user_prompt = if user_prompt.chars().count() > USER_PROMPT_MAX_CHARS {
+        log::warn!(
+            "用户附加指令超过 {} 字，本次只取前 {} 字",
+            USER_PROMPT_MAX_CHARS,
+            USER_PROMPT_MAX_CHARS
+        );
+        user_prompt
+            .chars()
+            .take(USER_PROMPT_MAX_CHARS)
+            .collect::<String>()
+    } else {
+        user_prompt.to_string()
+    };
     let vars = AgentPromptVars {
         session_id: session_id.to_string(),
-        user_prompt: user_prompt.to_string(),
+        user_prompt,
         plugin_sections: plugin_sections.to_vec(),
     };
     template_manager.render_agent_prompt(
@@ -133,5 +152,18 @@ mod tests {
         let sections = vec!["".to_string()];
         let prompt = build(false, false, false, "", &sections, false, false);
         assert!(prompt.contains("插件扩展指令"));
+    }
+
+    #[test]
+    fn user_prompt_is_capped_at_the_configured_limit() {
+        let long = "字".repeat(USER_PROMPT_MAX_CHARS + 500);
+        let prompt = build(false, false, false, &long, &[], false, false);
+        assert!(!prompt.contains(&"字".repeat(USER_PROMPT_MAX_CHARS + 1)));
+        assert!(prompt.contains(&"字".repeat(USER_PROMPT_MAX_CHARS)));
+
+        // 未超限时原样保留。
+        let short = "记住用中文回复".to_string();
+        let prompt = build(false, false, false, &short, &[], false, false);
+        assert!(prompt.contains("记住用中文回复"));
     }
 }

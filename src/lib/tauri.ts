@@ -428,6 +428,11 @@ export async function agentCheckCommand(
   return invoke<CommandCheckResult>("agent_check_command", { command, mode });
 }
 
+/** 内置的命令审批系统提示词（设置页默认值展示 / 「恢复默认」用，不在前端自带副本）。 */
+export async function agentDefaultApprovalPrompt(): Promise<string> {
+  return invoke<string>("agent_default_approval_prompt");
+}
+
 // Config commands
 
 export async function getConnections(): Promise<SavedConnection[]> {
