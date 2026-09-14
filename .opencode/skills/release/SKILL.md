@@ -167,9 +167,12 @@ pnpm tauri build
 桌面无感更新要求安装包带 minisign 签名：客户端后台下载后先验签再静默安装，验签不过的包直接丢弃并降级为手动下载。
 
 ```powershell
+# 密码必须用 --password= 显式传空串：PowerShell 里 $env:XXX="" 等于「删掉这个环境变量」，
+# CLI 会当成没给密码，对加密密钥转去读控制台做交互输入（rpassword 读的是 CONIN$，管道与
+# 重定向都喂不进去）→ 非交互 shell 里会静默卡死：只打印 "Signing without password." 之后
+# 长时间无输出、CPU 也不动，看起来像签名挂了。所以别写 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""。
 $env:TAURI_SIGNING_PRIVATE_KEY_PATH="$env:USERPROFILE\.tauri\marcel-update.key"
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-pnpm tauri signer sign "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe"
+pnpm tauri signer sign --password= "src-tauri\target\release\bundle\nsis\Marcel SSH_{version}_x64-setup.exe"
 ```
 
 - 同目录产出 `Marcel SSH_{version}_x64-setup.exe.sig`，其完整内容写入 `latest.json` 的 `signature` 字段（签名不改动 exe 本体，上传资产时仍是同一个 exe）
@@ -268,6 +271,8 @@ gh release upload v{version} "src-tauri\gen\android\app\build\outputs\apk\univer
 ```
 
 未发布平台的资产**不要上传**（与 `latest.json` 字段保持一致，避免用户跳转到该 release 却找不到对应平台的包）。
+
+> **上传后必须核对真实资产名**：`gh release upload` 的 `路径#目标名` 重命名在部分 shell 下**不会生效**（实测 PowerShell 里会静默按原文件名上传，APK 就叫 `app-universal-release.apk`）。上传完立刻 `gh release view v{version} --json assets` 看实际名字，`latest.json` 的 `installer_url` **按核对后的真实文件名**拼；名字对不上 = 客户端下载 404、更新直接失败。Windows 安装包经 gh 上传后空格会变成点（`Marcel.SSH_{version}_x64-setup.exe`），照实写进 URL 即可；要保留 `Marcel-SSH_...apk` 这种名字，就先把文件本地复制成目标名再上传。
 
 ### 10. 发布后强制验证
 
