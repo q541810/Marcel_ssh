@@ -668,6 +668,9 @@ export interface WorkspaceLayoutSettings {
   agentOpen: boolean;
 }
 
+/** 更新方式三态（与后端 `UpdateMode` 的线上取值一一对应）。 */
+export type UpdateMode = 'auto' | 'notify' | 'off';
+
 export interface AppSettings {
   terminalColors: TerminalColors;
   fontSize: number;
@@ -722,8 +725,14 @@ export interface AppSettings {
    *  startup. Used to recover from a plugin whose injected JS hangs the
    *  main window. */
   disableAllInjections: boolean;
-  /** 自动下载并安装更新（桌面专属，默认开启）。关闭后仅检查并提示，
-   *  点击提示跳浏览器手动下载。 */
+  /** 更新方式（三态）：
+   *  - `auto` 自动更新：检查 + 自动后台下载 + 就绪后自动安装；
+   *  - `notify` 仅提醒：只检查并提示，下载/安装手动发起；
+   *  - `off` 关闭：不检查新版本，也不自动下载/安装（设置页的手动检查仍可用）。
+   *  旧配置没有这个字段时按 `autoUpdate` 推导（见 `lib/updateMode.ts`）。 */
+  updateMode: UpdateMode;
+  /** **旧字段（只读镜像）**：由后端从 `updateMode` 派生，只为旧版本客户端
+   *  读取兼容；前端一律读写 `updateMode`。 */
   autoUpdate: boolean;
 }
 

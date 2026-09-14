@@ -405,6 +405,91 @@ impl Default for WorkspaceLayoutSettings {
     }
 }
 
+/// 更新方式（三态）：自动更新 / 仅提醒 / 关闭。
+///
+/// 取代此前的单一 `auto_update` 布尔开关 —— 那个开关只切「要不要自动下载」，
+/// 新版本检查永远在跑，用户想「彻底不查新版本」时没有任何入口。三态把两种
+/// 语义分开：
+///
+/// - `Auto`：检查 + 自动后台下载 + 就绪后自动安装（桌面退出即静默装）；
+/// - `Notify`：只检查并在药丸/浮层提示，下载与安装都由用户手动发起；
+/// - `Off`：不检查新版本，也不自动下载/安装（设置页的手动「检查更新」仍可用，
+///   「手动检查是你主动发起的」不该被自己的开关锁死）。
+///
+/// 线上格式是与 TS 侧共享的三个小写字符串（`"auto"` / `"notify"` / `"off"`），
+/// 手写 Serialize/Deserialize 而不用 derive：**未知取值不能炸掉整个
+/// settings.json**（未来版本加了第四种模式后用户回退到本版本时，派生实现会
+/// 让整个配置文件解析失败 → 用户设置被备份并重置）。未知值按最保守的
+/// 「仅提醒」处理并记日志。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UpdateMode {
+    #[default]
+    Auto,
+    Notify,
+    Off,
+}
+
+impl UpdateMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UpdateMode::Auto => "auto",
+            UpdateMode::Notify => "notify",
+            UpdateMode::Off => "off",
+        }
+    }
+
+    /// 未知取值（更高版本写入的模式）→ 仅提醒：不自动下载、不自动安装，
+    /// 但保留新版本提示，是三者里最保守且不丢信息的选择。
+    fn from_wire(raw: &str) -> Self {
+        match raw {
+            "auto" => UpdateMode::Auto,
+            "notify" => UpdateMode::Notify,
+            "off" => UpdateMode::Off,
+            other => {
+                log::warn!("未知的更新方式 {:?}（可能来自更高版本），按「仅提醒」处理", other);
+                UpdateMode::Notify
+            }
+        }
+    }
+
+    /// 是否要自动检查新版本（关闭模式下连检查都不做）。
+    pub fn checks_for_updates(self) -> bool {
+        !matches!(self, UpdateMode::Off)
+    }
+
+    /// 是否允许自动后台下载（只有自动更新模式会下载，其余等用户手动发起）。
+    pub fn auto_downloads(self) -> bool {
+        matches!(self, UpdateMode::Auto)
+    }
+}
+
+impl Serialize for UpdateMode {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for UpdateMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // 反序列化成 Value 再取字符串：字段缺失不会走到这里（serde default 兜底），
+        // 类型不对（数字/对象）也退回上面的保守取值，而不是让整个配置文件解析失败。
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            Some(s) => Self::from_wire(s),
+            None => {
+                log::warn!("更新方式字段类型异常（{:?}），按「仅提醒」处理", value);
+                UpdateMode::Notify
+            }
+        })
+    }
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -488,9 +573,13 @@ pub struct AppSettings {
     /// main window.
     #[serde(default)]
     pub disable_all_injections: bool,
-    /// 自动下载并安装更新（桌面专属；默认开启）。关闭后仅检查并提示新
-    /// 版本，不自动下载，点击提示跳浏览器手动下载。移动端无此功能，
-    /// 字段不参与移动端 UI。
+    /// 更新方式（三态）：自动更新 / 仅提醒 / 关闭。旧配置（1.4.0 及更早）没有
+    /// 这个字段，由下面的 `auto_update` 推导 —— 见 `migrate_update_mode_from_legacy`。
+    #[serde(default)]
+    pub update_mode: UpdateMode,
+    /// **旧字段（只读镜像）**：给还在用它的旧版本客户端读的兼容字段，一律由
+    /// `update_mode` 派生（自动更新 = true，其余 = false），前端不再直接写它。
+    /// 保持镜像一致，是为了让用户回退到旧版本时至少不会「关了更新却开始自动下载」。
     #[serde(default = "default_true")]
     pub auto_update: bool,
 }
@@ -566,14 +655,61 @@ impl Default for AppSettings {
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
+            update_mode: UpdateMode::Auto,
             auto_update: true,
         }
+    }
+}
+
+impl AppSettings {
+    /// 把旧字段镜像同步到当前模式（幂等）：`auto_update` 只是给旧版本客户端读的
+    /// 兼容字段，真实语义以 `update_mode` 为准。保存设置与加载配置时都调用，
+    /// 保证落盘的配置不会出现「模式说关闭、镜像说开着」这种自相矛盾的状态。
+    pub fn sync_update_mode_mirror(&mut self) {
+        self.auto_update = self.update_mode.auto_downloads();
+    }
+
+    /// 旧配置迁移 + 镜像同步（幂等）：
+    ///
+    /// 1. 配置文件里**没有** `updateMode` 键（1.4.0 及更早写出的配置）→ 按旧的
+    ///    `autoUpdate` 推导：`true` → 自动更新，`false` → 仅提醒。旧语义下
+    ///    「关掉开关」就是「不自动下载、仍然提示」，迁移后行为逐字保持不变；
+    ///    `autoUpdate` 也缺失时用默认（自动更新，与 serde default 一致）。
+    /// 2. 同步旧的 `auto_update` 镜像字段。
+    ///
+    /// 之所以要带原始文本：`updateMode` **缺失**才是迁移信号，而 serde 的
+    /// 字段默认值会把「缺失」和「显式写了 auto」压成同一个值，解析结果里
+    /// 分不出来。
+    pub fn migrate_update_mode_from_legacy(&mut self, raw: &str) {
+        let explicit = serde_json::from_str::<serde_json::Value>(raw)
+            .ok()
+            .and_then(|v| v.get("updateMode").map(|_| ()))
+            .is_some();
+        if !explicit {
+            self.update_mode = if self.auto_update {
+                UpdateMode::Auto
+            } else {
+                UpdateMode::Notify
+            };
+        }
+        self.sync_update_mode_mirror();
     }
 }
 
 impl JsonPersistable for AppSettings {
     fn default_filename() -> &'static str {
         "settings.json"
+    }
+
+    /// 覆盖默认加载：解析后补一次三态更新方式的迁移（见
+    /// `migrate_update_mode_from_legacy`）。原始文本读不到时跳过迁移 ——
+    /// 此时保持 serde 的默认值（自动更新），与旧版本行为一致。
+    fn load_from_path(path: &std::path::Path) -> Result<Self, crate::error::AppError> {
+        let mut parsed = Self::load_parsed(path)?;
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            parsed.migrate_update_mode_from_legacy(&raw);
+        }
+        Ok(parsed)
     }
 }
 
@@ -875,5 +1011,93 @@ mod tests {
         assert!(json.contains("\"autoUpdate\":false"));
         let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(!parsed.auto_update);
+    }
+
+    // ── 更新方式三态（updateMode） ──────────────────────────────
+
+    /// 新装/无此字段且无旧字段 → 自动更新（与三态引入前的默认行为一致）。
+    #[test]
+    fn update_mode_defaults_to_auto() {
+        assert_eq!(AppSettings::default().update_mode, UpdateMode::Auto);
+        let mut s = AppSettings::default();
+        s.migrate_update_mode_from_legacy("{\"fontSize\":14}");
+        assert_eq!(s.update_mode, UpdateMode::Auto);
+        assert!(s.auto_update);
+    }
+
+    /// 旧配置 `autoUpdate:false`（旧语义 = 仅提醒）→ 迁移成「仅提醒」，
+    /// 行为逐字不变：仍然检查并提示，只是不自动下载。
+    #[test]
+    fn legacy_auto_update_false_migrates_to_notify() {
+        let json = "{\"autoUpdate\":false}";
+        let mut parsed: AppSettings = serde_json::from_str(json).expect("old config should load");
+        parsed.migrate_update_mode_from_legacy(json);
+        assert_eq!(parsed.update_mode, UpdateMode::Notify);
+        assert!(!parsed.auto_update, "镜像字段应保持 false");
+    }
+
+    /// 旧配置 `autoUpdate:true` → 自动更新。
+    #[test]
+    fn legacy_auto_update_true_migrates_to_auto() {
+        let json = "{\"autoUpdate\":true}";
+        let mut parsed: AppSettings = serde_json::from_str(json).expect("old config should load");
+        parsed.migrate_update_mode_from_legacy(json);
+        assert_eq!(parsed.update_mode, UpdateMode::Auto);
+    }
+
+    /// 显式写了 updateMode 时不被旧字段覆盖，且旧字段镜像被同步成一致值
+    /// （否则用户回退旧版本会看到「关了更新却仍开着自动下载」的矛盾配置）。
+    #[test]
+    fn explicit_update_mode_wins_over_legacy_flag() {
+        let json = "{\"autoUpdate\":true,\"updateMode\":\"off\"}";
+        let mut parsed: AppSettings = serde_json::from_str(json).expect("config should load");
+        parsed.migrate_update_mode_from_legacy(json);
+        assert_eq!(parsed.update_mode, UpdateMode::Off);
+        assert!(!parsed.auto_update, "镜像需同步为 false");
+    }
+
+    /// 未知取值（更高版本写入的第四种模式）不能让整个 settings.json 解析失败，
+    /// 按最保守的「仅提醒」处理。
+    #[test]
+    fn unknown_update_mode_degrades_to_notify_without_failing() {
+        let json = "{\"fontSize\":15,\"updateMode\":\"quiet\"}";
+        let parsed: AppSettings = serde_json::from_str(json).expect("unknown mode should load");
+        assert_eq!(parsed.update_mode, UpdateMode::Notify);
+        assert_eq!(parsed.font_size, 15, "同文件其他字段照常生效");
+    }
+
+    /// 类型异常（数字）同样退化为「仅提醒」，不炸整个配置。
+    #[test]
+    fn malformed_update_mode_type_degrades_to_notify() {
+        let parsed: AppSettings =
+            serde_json::from_str("{\"updateMode\":3}").expect("malformed mode should load");
+        assert_eq!(parsed.update_mode, UpdateMode::Notify);
+    }
+
+    #[test]
+    fn update_mode_roundtrips_as_camel_case() {
+        for (mode, wire) in [
+            (UpdateMode::Auto, "\"updateMode\":\"auto\""),
+            (UpdateMode::Notify, "\"updateMode\":\"notify\""),
+            (UpdateMode::Off, "\"updateMode\":\"off\""),
+        ] {
+            let mut settings = AppSettings::default();
+            settings.update_mode = mode;
+            let json = serde_json::to_string(&settings).expect("serialize");
+            assert!(json.contains(wire), "{} 应含 {}", json, wire);
+            let parsed: AppSettings = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(parsed.update_mode, mode);
+        }
+    }
+
+    /// 三态的能力划分：只有「自动更新」自动下载；只有「关闭」不检查。
+    #[test]
+    fn update_mode_capabilities() {
+        assert!(UpdateMode::Auto.checks_for_updates());
+        assert!(UpdateMode::Auto.auto_downloads());
+        assert!(UpdateMode::Notify.checks_for_updates());
+        assert!(!UpdateMode::Notify.auto_downloads());
+        assert!(!UpdateMode::Off.checks_for_updates());
+        assert!(!UpdateMode::Off.auto_downloads());
     }
 }

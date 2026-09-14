@@ -9,7 +9,11 @@ pub trait JsonPersistable: Sized + Serialize + for<'de> Deserialize<'de> + Defau
         config_dir.join(Self::default_filename())
     }
 
-    fn load_from_path(path: &Path) -> Result<Self, AppError> {
+    /// 只做「读文件 + serde 解析」，**不含任何迁移/归一化**。
+    ///
+    /// 需要按原始内容迁移的配置（例如要区分「字段缺失」与「字段显式等于默认值」）
+    /// 覆盖 `load_from_path` 时先调用它，再拿原始文本做迁移。
+    fn load_parsed(path: &Path) -> Result<Self, AppError> {
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -20,6 +24,10 @@ pub trait JsonPersistable: Sized + Serialize + for<'de> Deserialize<'de> + Defau
         }
         serde_json::from_str(&content)
             .map_err(|e| AppError::Config(format!("解析配置文件失败: {}", e)))
+    }
+
+    fn load_from_path(path: &Path) -> Result<Self, AppError> {
+        Self::load_parsed(path)
     }
 
     fn save_to_path(&self, path: &Path) -> Result<(), AppError> {

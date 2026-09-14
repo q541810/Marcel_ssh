@@ -104,6 +104,12 @@ pub async fn config_save_settings(
     let mut candidate = settings;
     migrate_legacy_settings(&mut candidate);
 
+    // 更新方式三态（auto / notify / off）：`autoUpdate` 只是给旧版本客户端读的
+    // 兼容镜像，真值以 `updateMode` 为准，保存前统一派生，避免落盘出现
+    // 「模式说关闭、镜像说开着」的矛盾配置。
+    candidate.sync_update_mode_mirror();
+    let previous_update_mode = state.settings.read().await.update_mode;
+
     // 自愈兜底：去重同 id 重复模型（历史「保存渠道」合并 bug 可能仍让前端
     // 内存里带重复条目；先去重再校验，避免合法保存被重复数据拦住）
     if candidate.llm_registry.dedupe_duplicate_models() {
@@ -161,6 +167,13 @@ pub async fn config_save_settings(
     *store = candidate.clone();
     let snapshot = candidate;
     drop(store);
+
+    // 更新方式变了 → 让更新器立刻按新模式行事：切到「关闭」要停掉进行中的
+    // 下载并收回提示，从「关闭」切回来要马上检查一次（否则用户刚打开开关还要
+    // 等最多 4 小时，看起来像没生效）。
+    if snapshot.update_mode != previous_update_mode {
+        crate::updater::on_update_mode_changed(&app, previous_update_mode, snapshot.update_mode);
+    }
 
     // Settings changes (enable/disable plugin, authorized capabilities) may
     // affect the plugin registry. Reload and emit so the frontend can

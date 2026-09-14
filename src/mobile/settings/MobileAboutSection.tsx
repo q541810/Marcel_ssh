@@ -7,7 +7,14 @@ import { getErrorMessage } from '@/lib/errors';
 import { openExternalLink, SUPPORT_URL } from '@/lib/externalLinks';
 import { updatePercent } from '@/lib/updateProgress';
 import { APP_LOGO, APP_NAME } from '@/lib/constants';
-import Toggle from '@/components/ui/Toggle';
+import {
+  availableUpdateModes,
+  displayUpdateMode,
+  UPDATE_MODE_HINTS,
+  UPDATE_MODE_LABELS,
+  updateModeDescription,
+} from '@/lib/updateMode';
+import { MobileChoiceGroup } from '@/mobile/ui/MobileChoiceGroup';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -22,10 +29,19 @@ export function MobileAboutSection() {
   const [result, setResult] = useState<UpdateCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const update = useSettingsStore((s) => s.update);
-  const autoUpdate = useSettingsStore((s) => s.settings?.autoUpdate ?? true);
+  const updateMode = useSettingsStore((s) => s.settings?.updateMode ?? 'auto');
   // 本机能力：Android 支持「后台下载 + 一键安装」，其他平台只提示；
-  // 不支持时连开关都不展示（避免出现点了必然失败的入口）
+  // 不支持时「自动更新」这一档不给（避免出现点了必然失败的入口）
   const capabilities = useUpdateStore((s) => s.capabilities);
+  const supportsSilentDownload = capabilities?.silentDownload === true;
+  const isApk = capabilities?.installKind === 'apk';
+  // 展示用的模式：平台不支持后台下载时，已存的 auto 按等价的 notify 显示
+  const shownMode = displayUpdateMode(updateMode, supportsSilentDownload);
+  const modeOptions = availableUpdateModes(supportsSilentDownload).map((m) => ({
+    value: m,
+    label: UPDATE_MODE_LABELS[m],
+    desc: UPDATE_MODE_HINTS[m],
+  }));
   const downloadInBackground = useUpdateStore((s) => s.download);
   const installNowUpdate = useUpdateStore((s) => s.installNow);
   // 后端实时状态：下载中/已就绪时换成对应的动作（后端对这两种情况是幂等 no-op，
@@ -163,10 +179,12 @@ export function MobileAboutSection() {
                 <p className="text-center text-[11px] leading-relaxed text-zinc-500">
                   {capabilities?.installKind === 'apk'
                     ? '安装包已下载完成，点击后在系统安装界面确认即可。'
-                    : '安装包已下载完成；不点也会在你退出应用时自动安装。'}
+                    : updateMode === 'off'
+                      ? '安装包已下载完成。当前更新方式是「关闭」，不会自动安装 —— 点「立即安装」才会装上。'
+                      : '安装包已下载完成；不点也会在你退出应用时自动安装。'}
                 </p>
               </>
-            ) : capabilities?.silentDownload && result.installerUrl ? (
+            ) : supportsSilentDownload && updateMode !== 'off' && result.installerUrl ? (
               <>
                 <button
                   type="button"
@@ -182,40 +200,45 @@ export function MobileAboutSection() {
                   后台下载
                 </button>
                 <p className="text-center text-[11px] leading-relaxed text-zinc-500">
-                  下载完成后会提示你安装；也可以在下方打开自动下载。
+                  下载完成后会提示你安装；也可以在下面把更新方式设为「自动更新」。
                 </p>
               </>
             ) : (
-              <button
-                type="button"
-                onClick={() => openExternalLink(result.releaseUrl)}
-                className="w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
-              >
-                去下载
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => openExternalLink(result.releaseUrl)}
+                  className="w-full rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-medium text-white active:bg-indigo-500"
+                >
+                  去下载
+                </button>
+                {updateMode === 'off' && (
+                  <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+                    当前更新方式是「关闭」，本机不下载也不缓存安装包；想在这里直接后台下载，把下面的更新方式改成「自动更新」或「仅提醒」。
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
       </MobileSettingRow>
 
-      {/* 自动更新（仅平台支持后台安装时展示） */}
-      {capabilities?.silentDownload && (
-        <MobileSettingRow
-          label="自动下载并安装更新"
-          description="发现新版本后在非计量网络下自动后台下载，下载完成提示你安装；关闭后仅提示，需手动下载"
-          trailing={
-            <Toggle
-              checked={autoUpdate}
-              onChange={(checked) => {
-                setError(null);
-                update({ autoUpdate: checked }).catch((e) =>
-                  setError(getErrorMessage(e)),
-                );
-              }}
-            />
-          }
+      {/* 更新方式三态（自动更新 / 仅提醒 / 关闭）：两端同一语义，移动端用竖排选项 */}
+      <MobileSettingRow
+        label="更新方式"
+        description={updateModeDescription(shownMode, isApk)}
+      >
+        <MobileChoiceGroup
+          ariaLabel="更新方式"
+          options={modeOptions}
+          value={shownMode}
+          columns={1}
+          onChange={(mode) => {
+            setError(null);
+            update({ updateMode: mode }).catch((e) => setError(getErrorMessage(e)));
+          }}
         />
-      )}
+      </MobileSettingRow>
 
       {/* Re-run onboarding */}
       <MobileSettingRow label="重新引导" description="重新运行初次使用引导流程">

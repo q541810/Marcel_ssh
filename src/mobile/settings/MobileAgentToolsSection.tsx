@@ -10,6 +10,7 @@ import { useSettingsActions } from '@/components/settings/SettingsActionsContext
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import * as tauri from '@/lib/tauri';
+import { MobileChoiceGroup as ChoiceGroup } from '@/mobile/ui/MobileChoiceGroup';
 import { MobileSettingRow } from './MobileSettingRow';
 
 const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
@@ -68,47 +69,6 @@ export function selectMobileSearchMode(
   if (next === 'api') return { webSearchMode: 'api' };
   if (stored === 'api') return { webSearchMode: 'html' };
   return {};
-}
-
-function ChoiceGroup<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: readonly { value: T; label: string; desc?: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div className="mt-2 grid grid-cols-2 gap-2">
-      {options.map((o) => {
-        const active = value === o.value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            onClick={() => onChange(o.value)}
-            className={`rounded-xl border px-3 py-2.5 text-left transition-colors duration-100 active:scale-[0.99] ${
-              active
-                ? 'border-indigo-500 bg-indigo-500/10'
-                : 'border-zinc-700 bg-zinc-800/60'
-            }`}
-          >
-            <div
-              className={`text-sm font-medium ${
-                active ? 'text-indigo-200' : 'text-zinc-300'
-              }`}
-            >
-              {o.label}
-            </div>
-            {o.desc && (
-              <div className="mt-0.5 text-[11px] text-zinc-500">{o.desc}</div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
 }
 
 /** Agent 工具能力（联网搜索 / 网页抓取 / 多机目标）——与桌面 ToolCapabilitiesSection 对齐的移动端版。 */

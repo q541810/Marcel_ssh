@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useUpdateStore, isUpdateVisible } from '@/stores/updateStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { openExternalLink } from '@/lib/externalLinks';
 import { formatMb, updatePercent } from '@/lib/updateProgress';
 import Modal from '@/components/ui/Modal';
@@ -23,6 +24,8 @@ const mb = formatMb;
 export default function UpdatePill() {
   const state = useUpdateStore((s) => s.state);
   const capabilities = useUpdateStore((s) => s.capabilities);
+  // 更新方式：决定药丸是否出现（「关闭」模式下不展示任何更新提示）。
+  const updateMode = useSettingsStore((s) => s.settings?.updateMode ?? 'auto');
   const dismissedVersion = useUpdateStore((s) => s.dismissedVersion);
   const failureDismissed = useUpdateStore((s) => s.failureDismissed);
   const installNow = useUpdateStore((s) => s.installNow);
@@ -52,7 +55,7 @@ export default function UpdatePill() {
     ),
   );
 
-  const active = isUpdateVisible(state, dismissedVersion, failureDismissed);
+  const active = isUpdateVisible(state, dismissedVersion, failureDismissed, updateMode);
   const status = state.status;
 
   useEffect(() => {

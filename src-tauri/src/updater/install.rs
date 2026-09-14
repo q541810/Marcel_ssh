@@ -30,6 +30,10 @@ use crate::error::AppError;
 /// `CheckIfAppIsRunning` 不会撞上退出中的进程（该宏在 silent 模式下会直接
 /// kill 残留进程，属于兜底而非正常路径）。`/R` 让安装器装完自动启动应用，
 /// 实现「立即重启更新」的自动重开。
+///
+/// **更新方式门控**：「关闭」模式下不做自动安装 —— 用户明确表示不要自动更新，
+/// 退出瞬间静默装上是最让人措手不及的一种。用户点过「立即安装」的手动请求
+/// （`manual_install_requested`）照装。
 #[cfg(windows)]
 pub(super) fn install_on_exit(app: &AppHandle) {
     let Some(state) = app.try_state::<UpdaterState>() else {
@@ -39,6 +43,18 @@ pub(super) fn install_on_exit(app: &AppHandle) {
         let Ok(mut inner) = state.0.lock() else {
             return;
         };
+        // 先判定该不该装、再 take pending：跳过安装时必须把 pending 留着，
+        // 下次启动 `cleanup_update_dir` 才能把包恢复成「已就绪」，用户仍可
+        // 在设置页手动装（take 走了就变成包白下载一场空）。
+        if !inner.manual_install_requested && !auto_install_allowed(app) {
+            if let Some(p) = &inner.pending {
+                log::info!(
+                    "更新方式为「关闭」，跳过退出时自动安装 v{}（安装包保留，可在设置页手动安装）",
+                    p.version
+                );
+            }
+            return;
+        }
         let Some(pending) = inner.pending.take() else {
             return;
         };
@@ -51,6 +67,23 @@ pub(super) fn install_on_exit(app: &AppHandle) {
         pending.installer_path.display()
     );
     spawn_installer(&pending.installer_path, restart);
+}
+
+/// 退出时是否允许自动安装。读不到设置时按「允许」处理：这是门控引入前的
+/// 行为，宁可照旧也不要静默吞掉用户期待的更新（此时 pending 来自一次
+/// 正常完成的自动下载）。
+#[cfg(windows)]
+fn auto_install_allowed(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return true;
+    };
+    // 先落到局部变量：直接把 match 当尾表达式会让读锁守卫活到函数末尾，
+    // 与 `state` 的析构顺序冲突（E0597）。
+    let mode = match state.settings.try_read() {
+        Ok(settings) => settings.update_mode,
+        Err(_) => return true,
+    };
+    mode != crate::config::settings::UpdateMode::Off
 }
 
 /// 「立即安装」：Windows 记录重启标记后退出应用（真正安装由退出钩子完成）；

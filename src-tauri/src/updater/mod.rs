@@ -35,6 +35,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::update::{check_for_update, LatestRelease};
+use crate::config::settings::UpdateMode;
 use crate::error::AppError;
 
 pub mod install;
@@ -120,6 +121,14 @@ struct UpdaterInner {
     /// 最近一次检查到的更新（「立即下载」手动触发用）。
     last_offer: Option<LatestRelease>,
     downloading: bool,
+    /// 「停止当前下载」请求：切换到「关闭」模式时置位，下载循环每个 chunk 检查
+    /// 一次后自行收尾（删 .part、复位 downloading，且**不**写 Failed/Ready ——
+    /// 状态已由 `retract_for_off` 收回 Idle）。用标志而不是直接改状态：下载任务
+    /// 才是唯一能安全清理临时文件的人。
+    cancel_requested: bool,
+    /// 用户点过「立即安装」（手动请求）。**关闭模式**下退出钩子靠它区分
+    /// 「用户点名要装」与「自动装的」：前者照装，后者跳过。
+    manual_install_requested: bool,
     /// 用户点过「立即安装」→ 装完自动重开；自然退出则只静默安装不重启
     /// （窗口自己弹出来反而打扰）。仅 Windows 读取：Android 的安装由系统
     /// 接管并自行重启应用。
@@ -136,6 +145,8 @@ impl UpdaterState {
             pending,
             last_offer: None,
             downloading: false,
+            cancel_requested: false,
+            manual_install_requested: false,
             restart_after_install: false,
         }))
     }
@@ -240,6 +251,20 @@ fn apply_state(app: &AppHandle, f: impl FnOnce(&mut UpdaterInner) -> Option<Upda
 
 /// 单次检查 + 决策 + 执行。检查失败静默（log），不打扰用户。
 async fn tick(app: &AppHandle) {
+    let mode = {
+        let app_state = app.state::<crate::AppState>();
+        let settings = app_state.settings.read().await;
+        settings.update_mode
+    };
+    // 「关闭」模式：连检查都不做，进行中的下载也停掉。这里再兜一次底（正常
+    // 路径是保存设置时即时生效，见 `on_update_mode_changed`），因为配置也可能
+    // 被手工改盘。**必须排在「下载中早退」之前** —— 否则「下载中时把配置改成
+    // 关闭」会因为早退而永远收不回来。
+    if !mode.checks_for_updates() {
+        retract_for_off(app);
+        return;
+    }
+
     {
         let state = app.state::<UpdaterState>();
         let Ok(inner) = state.0.lock() else { return };
@@ -248,15 +273,10 @@ async fn tick(app: &AppHandle) {
         }
     }
 
-    let auto_update = {
-        let app_state = app.state::<crate::AppState>();
-        let settings = app_state.settings.read().await;
-        settings.auto_update
-    };
-    // 自动下载的三个前提：用户开着开关、平台支持后台下载、当前网络允许。
+    // 自动下载的三个前提：模式是「自动更新」、平台支持后台下载、当前网络允许。
     // Android 只在非计量网络下自动下载（移动数据上静默消耗几十 MB 是用户
-    // 无法预料的代价）；手动触发（start_update_download）不受网络限制。
-    let auto_download = auto_update
+    // 无法预料的代价）；手动触发（start_update_download）不受这些限制。
+    let auto_download = mode.auto_downloads()
         && crate::commands::update::install_kind() != crate::commands::update::InstallKind::None
         && install::is_unmetered_network();
     let current_version = app.package_info().version.to_string();
@@ -352,9 +372,100 @@ fn decide_tick(
     }
 }
 
+// ── 更新方式（三态）切换的即时反应 ────────────────────────────────
+
+/// 「关闭」模式生效：停止一切**自动**行为。
+///
+/// - 请求取消进行中的下载（下载任务自己删 `.part` 并复位 `downloading`）；
+/// - 把「过程类」状态收回 Idle：`Downloading` 是被取消的那次下载（不回退就会
+///   永远停在一条不动的进度上），`Available` / `Failed` 是提示类。药丸与移动端
+///   浮层随之消失（前端不再展示，也不用手动清 dismissedVersion）；
+/// - **不动 Ready**：包已经下载好躺在缓存里，删掉是破坏性的（用户切回「自动
+///   更新」还得再下一遍）。它保持为「已就绪」，但前端在关闭模式下一律不展示
+///   更新提示，用户可以在设置页手动「检查更新」看到并手动装；退出时也不会自动
+///   安装（见 `install::install_on_exit`）。
+fn retract_for_off(app: &AppHandle) {
+    apply_state(app, |inner| {
+        if inner.downloading {
+            inner.cancel_requested = true;
+        }
+        match inner.state {
+            UpdateState::Available { .. }
+            | UpdateState::Failed { .. }
+            | UpdateState::Downloading { .. } => Some(UpdateState::Idle),
+            _ => None,
+        }
+    });
+}
+
+/// 是否有下载任务在跑（刚被取消的任务要等它自己复位标志）。
+fn is_downloading(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<UpdaterState>() else {
+        return false;
+    };
+    let Ok(inner) = state.0.lock() else {
+        return false;
+    };
+    inner.downloading
+}
+
+/// 下载循环每读到一个 chunk 调一次：返回 true 表示「停止下载」已被请求。
+///
+/// 取走标志（take）而不是只读：取消请求只对「当下这次下载」有效，留着会让
+/// 下一次下载在第一个 chunk 就被自己上一次的请求掐死。
+fn take_cancel_request(app: &AppHandle) -> bool {
+    let Some(state) = app.try_state::<UpdaterState>() else {
+        return false;
+    };
+    let Ok(mut inner) = state.0.lock() else {
+        return false;
+    };
+    std::mem::take(&mut inner.cancel_requested)
+}
+
+/// 更新方式变化后的即时反应（保存设置时调用；`tick` 里另有一层兜底）。
+///
+/// - 切到「关闭」：立刻停掉进行中的下载并收回提示，不等下一个 4 小时周期。
+/// - 从「关闭」切回会检查的模式：立刻跑一次检查 —— 否则用户刚打开开关还要
+///   等最多 4 小时才可能看到新版本，看起来像「没生效」。
+/// - 其余切换（自动更新 ↔ 仅提醒）：不动状态、不额外发请求，下一周期自然生效；
+///   正在进行的下载也不打断（它已经是被授权过的动作，半路掐掉只会让人困惑）。
+pub fn on_update_mode_changed(app: &AppHandle, previous: UpdateMode, next: UpdateMode) {
+    if !next.checks_for_updates() {
+        log::info!("更新方式切换为「关闭」：不再检查新版本，停止进行中的下载");
+        retract_for_off(app);
+        return;
+    }
+    if previous.checks_for_updates() {
+        return;
+    }
+    log::info!("更新方式已打开，立即检查一次新版本");
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // 上一次下载（可能就是刚刚被「关闭」掐掉的那次）还在收尾时
+        // `downloading` 尚未复位，tick 会直接跳过 —— 短暂等它结束再查，
+        // 否则「刚把开关打开却什么都没发生」，正是要避免的那种观感。
+        for _ in 0..10 {
+            if !is_downloading(&handle) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        // 与首查同样的 panic 兜底：一次检查炸掉不能带走后台循环。
+        let result = std::panic::AssertUnwindSafe(tick(&handle))
+            .catch_unwind()
+            .await;
+        if result.is_err() {
+            log::error!("切换更新方式后的检查异常（已捕获）");
+        }
+    });
+}
+
 /// 手动触发下载（设置页「检查更新」有结果后的「后台下载」按钮；手机端
 /// 也用于用户明确要求在移动数据下下载）。
 /// 重新检查一次 latest.json 以取得直链等字段，避免跨 command 传大状态。
+/// 注意：**不受更新方式限制** —— 这是用户当面点的动作，更新方式管的是
+/// 「自动行为」（是否自动检查、自动下载、退出自动安装）。
 pub async fn start_update_download_impl(app: &AppHandle) -> Result<(), AppError> {
     {
         let state = app.state::<UpdaterState>();
@@ -418,10 +529,23 @@ pub async fn install_update_now_impl(app: &AppHandle) -> Result<(), AppError> {
             .clone()
             .ok_or_else(|| AppError::Other("暂无已就绪的更新".into()))?
     };
+    // 标记「用户点名要装」：关闭模式下退出钩子靠它放行 —— 否则用户切到
+    // 「关闭」后点「立即安装」会被自己的模式门控挡下，点了没反应。
+    if let Some(state) = app.try_state::<UpdaterState>() {
+        if let Ok(mut inner) = state.0.lock() {
+            inner.manual_install_requested = true;
+        }
+    }
     install::launch_now(app, &pending, true)
 }
 
 // ── 下载与校验 ───────────────────────────────────────────────────
+
+/// 下载结果：完成（拿到安装包路径）或按用户要求中途停止。
+enum DownloadOutcome {
+    Done(PathBuf),
+    Cancelled,
+}
 
 fn start_download(app: &AppHandle, offer: LatestRelease) {
     // 闭包只改辅助字段（downloading），状态通过返回值表达 —— 见 apply_state 说明。
@@ -430,6 +554,9 @@ fn start_download(app: &AppHandle, offer: LatestRelease) {
             return None;
         }
         inner.downloading = true;
+        // 上一次遗留的取消请求不能影响这次下载（正常路径已被下载循环取走，
+        // 这里是防御性复位）。
+        inner.cancel_requested = false;
         Some(UpdateState::Downloading {
             version: offer.version.clone(),
             downloaded: 0,
@@ -441,7 +568,7 @@ fn start_download(app: &AppHandle, offer: LatestRelease) {
     tauri::async_runtime::spawn(async move {
         let version_for_state = offer.version.clone();
         match run_download(&handle, &offer).await {
-            Ok(path) => {
+            Ok(DownloadOutcome::Done(path)) => {
                 log::info!("更新包就绪: {}", path.display());
                 let version = version_for_state;
                 apply_state(&handle, |inner| {
@@ -449,8 +576,19 @@ fn start_download(app: &AppHandle, offer: LatestRelease) {
                         version: version.clone(),
                         installer_path: path.clone(),
                     });
+                    // 清掉可能刚落下的取消请求：包已经完整下好并校验通过，
+                    // 留着会把下一次下载掐死在第一个 chunk。
+                    inner.cancel_requested = false;
                     Some(UpdateState::Ready { version })
                 });
+            }
+            Ok(DownloadOutcome::Cancelled) => {
+                // 用户把更新方式切成了「关闭」：run_download 已删掉 .part，
+                // 状态也已由 retract_for_off 收回 Idle —— 这里只复位下载标志，
+                // **不写 Failed**（没出错，别拿红色提示吓人）。
+                log::info!("更新下载已按用户要求停止（更新方式切为关闭）");
+                reset_downloading(&handle);
+                return;
             }
             Err(msg) => {
                 log::warn!("自动更新下载失败: {}", msg);
@@ -461,21 +599,30 @@ fn start_download(app: &AppHandle, offer: LatestRelease) {
                 }
                 apply_state(&handle, |inner| {
                     inner.downloading = false;
+                    inner.cancel_requested = false;
                     Some(UpdateState::Failed { message: msg })
                 });
                 return;
             }
         }
         // 成功路径的 downloading 复位
-        if let Some(state) = handle.try_state::<UpdaterState>() {
-            if let Ok(mut inner) = state.0.lock() {
-                inner.downloading = false;
-            }
-        }
+        reset_downloading(&handle);
     });
 }
 
-async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<PathBuf, String> {
+/// 复位下载标志（不动状态）。
+fn reset_downloading(app: &AppHandle) {
+    if let Some(state) = app.try_state::<UpdaterState>() {
+        if let Ok(mut inner) = state.0.lock() {
+            inner.downloading = false;
+        }
+    }
+}
+
+async fn run_download(
+    app: &AppHandle,
+    offer: &LatestRelease,
+) -> Result<DownloadOutcome, String> {
     let dir = update_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建更新缓存目录: {}", e))?;
 
@@ -544,6 +691,15 @@ async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<PathBuf,
     let mut stream = resp;
 
     loop {
+        // 「关闭」模式切换会置位取消请求：立刻收手并删掉半成品（.part 留着只
+        // 占空间，下次下载也会覆盖它）。返回 Cancelled 而不是 Err —— 这不是
+        // 失败，调用方不该给用户弹一个红色「自动更新失败」。
+        if take_cancel_request(app) {
+            file.flush().ok();
+            drop(file);
+            let _ = std::fs::remove_file(&part_path);
+            return Ok(DownloadOutcome::Cancelled);
+        }
         let chunk =
             tokio::time::timeout(Duration::from_secs(CHUNK_READ_TIMEOUT_SECS), stream.chunk())
                 .await
@@ -601,7 +757,7 @@ async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<PathBuf,
 
     // 完成时推一次最终进度
     emit_progress(app, offer.version.clone(), downloaded, total);
-    Ok(final_path)
+    Ok(DownloadOutcome::Done(final_path))
 }
 
 /// 本平台安装包的本地文件名（latest.json 的直链指向同一份资产，文件名只用于

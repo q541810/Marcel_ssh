@@ -5,6 +5,7 @@ import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { DEFAULT_WORKSPACE_LAYOUT, normalizeWorkspaceLayout } from '@/lib/workspaceLayout';
 import { setNotificationVolume } from '@/lib/notificationSound';
 import { emptyRegistry, emptySlots, defaultNetPolicy, dedupeModelEntries } from '@/lib/llmRegistry';
+import { normalizeUpdateMode } from '@/lib/updateMode';
 
 const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
@@ -88,6 +89,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   llmRegistry: DEFAULT_LLM_REGISTRY,
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
+  updateMode: 'auto',
   autoUpdate: true,
   fileManagerShowHidden: false,
   fileManagerPath: '/',
@@ -204,6 +206,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...DEFAULT_MOBILE_BACKGROUND_SETTINGS,
         ...(fromDisk.mobileBackgroundSettings ?? {}),
       },
+      // 更新方式三态：旧后端/旧配置没有该字段时按旧的 autoUpdate 推导，
+      // 保持用户现状（旧语义下 autoUpdate=false = 仅提醒），不清空也不报错。
+      updateMode: normalizeUpdateMode(fromDisk),
     };
     set({
       settings: merged,
@@ -242,6 +247,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           ...DEFAULT_MOBILE_BACKGROUND_SETTINGS,
           ...(fromDisk.mobileBackgroundSettings ?? {}),
         },
+        updateMode: normalizeUpdateMode(fromDisk),
       };
       set({
         settings: merged,

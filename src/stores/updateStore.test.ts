@@ -58,6 +58,21 @@ describe('isUpdateVisible', () => {
     expect(isUpdateVisible(failed, null, false)).toBe(true);
     expect(isUpdateVisible(failed, null, true)).toBe(false);
   });
+
+  it('「关闭」模式下一切提示都不出现（含已就绪的包）', () => {
+    // 用户关掉更新多半就是因为不想再被打扰；关掉后药丸还挂着会让人觉得
+    // 开关没生效。包不删，去设置页仍可手动装。
+    expect(isUpdateVisible(available, null, false, 'off')).toBe(false);
+    expect(isUpdateVisible(ready, null, false, 'off')).toBe(false);
+    expect(isUpdateVisible(downloading, null, false, 'off')).toBe(false);
+    expect(
+      isUpdateVisible({ status: 'failed', message: 'x' }, null, false, 'off'),
+    ).toBe(false);
+  });
+
+  it('「仅提醒」模式下提示照常展示（只是不自动下载）', () => {
+    expect(isUpdateVisible(available, null, false, 'notify')).toBe(true);
+  });
 });
 
 describe('updateStore', () => {

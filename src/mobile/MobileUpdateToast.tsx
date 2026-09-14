@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowUpCircle, DownloadCloud, Loader2, TriangleAlert } from 'lucide-react';
 import { openExternalLink } from '@/lib/externalLinks';
 import { useUpdateStore, isUpdateVisible } from '@/stores/updateStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import MobileSheet from './ui/MobileSheet';
 
 /**
@@ -20,6 +21,8 @@ import MobileSheet from './ui/MobileSheet';
 export default function MobileUpdateToast() {
   const state = useUpdateStore((s) => s.state);
   const capabilities = useUpdateStore((s) => s.capabilities);
+  // 更新方式：决定浮层是否出现（「关闭」模式下不展示任何更新提示）。
+  const updateMode = useSettingsStore((s) => s.settings?.updateMode ?? 'auto');
   const dismissedVersion = useUpdateStore((s) => s.dismissedVersion);
   const failureDismissed = useUpdateStore((s) => s.failureDismissed);
   const installNow = useUpdateStore((s) => s.installNow);
@@ -32,7 +35,7 @@ export default function MobileUpdateToast() {
 
   const status = state.status;
   const visible =
-    isUpdateVisible(state, dismissedVersion, failureDismissed) &&
+    isUpdateVisible(state, dismissedVersion, failureDismissed, updateMode) &&
     status !== 'downloading';
 
   useEffect(() => {

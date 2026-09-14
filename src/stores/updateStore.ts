@@ -7,7 +7,7 @@ import {
   updateCapabilities,
 } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
-import type { UpdateCapabilities, UpdateState } from '@/lib/types';
+import type { UpdateCapabilities, UpdateMode, UpdateState } from '@/lib/types';
 
 const UPDATE_STATE_EVENT = 'update://state';
 
@@ -44,12 +44,21 @@ function isDismissed(state: UpdateState, dismissedVersion: string | null): boole
   return 'version' in state && state.version === dismissedVersion;
 }
 
-/** 当前是否应展示更新提示（药丸 / 移动端浮层 / 设置页共用同一判定）。 */
+/**
+ * 当前是否应展示更新提示（药丸 / 移动端浮层共用同一判定）。
+ *
+ * `mode` = 设置里的更新方式。**「关闭」模式下一切更新提示都不出现**，包括
+ * 已下载就绪的包：用户把更新关掉，多半正是因为刚被那个「已就绪」药丸打扰；
+ * 关掉之后它还挂在标题栏上，会让人觉得开关没生效。已下载的包不删除，仍然
+ * 可以在设置页「检查更新」里看到并手动安装。
+ */
 export function isUpdateVisible(
   state: UpdateState,
   dismissedVersion: string | null,
   failureDismissed: boolean,
+  mode: UpdateMode = 'auto',
 ): boolean {
+  if (mode === 'off') return false;
   if (state.status === 'idle') return false;
   if (state.status === 'failed') return !failureDismissed;
   // 下载中始终可见：用户需要知道流量/进度正在发生

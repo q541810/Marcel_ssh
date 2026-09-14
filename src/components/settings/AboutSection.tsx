@@ -7,8 +7,15 @@ import { openExternalLink, SUPPORT_URL } from '@/lib/externalLinks';
 import { updatePercent } from '@/lib/updateProgress';
 import { APP_NAME, APP_LOGO } from '@/lib/constants';
 import Button from '@/components/ui/Button';
-import Toggle from '@/components/ui/Toggle';
+import SegmentedControl from '@/components/ui/SegmentedControl';
 import { Card, SettingItem } from './helpers';
+import {
+  availableUpdateModes,
+  displayUpdateMode,
+  UPDATE_MODE_HINTS,
+  UPDATE_MODE_LABELS,
+  updateModeDescription,
+} from '@/lib/updateMode';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import ChatHistoryModal from './ChatHistoryModal';
@@ -22,10 +29,19 @@ export default function AboutSection() {
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const update = useSettingsStore((s) => s.update);
-  const autoUpdate = useSettingsStore((s) => s.settings?.autoUpdate ?? true);
-  // 本机平台能力：决定是否展示「自动下载并安装更新」开关与后台下载入口
+  const updateMode = useSettingsStore((s) => s.settings?.updateMode ?? 'auto');
+  // 本机平台能力：决定「自动更新」这一档是否可选、以及结果区给不给「后台下载」
   // （macOS/Linux 没有可静默安装的包，展示出来只会让用户点了必然失败）
   const capabilities = useUpdateStore((s) => s.capabilities);
+  const supportsSilentDownload = capabilities?.silentDownload === true;
+  const isApk = capabilities?.installKind === 'apk';
+  // 展示用的模式：平台不支持后台下载时，已存的 auto 按等价的 notify 显示
+  const shownMode = displayUpdateMode(updateMode, supportsSilentDownload);
+  const modeOptions = availableUpdateModes(supportsSilentDownload).map((m) => ({
+    value: m,
+    label: UPDATE_MODE_LABELS[m],
+    title: UPDATE_MODE_HINTS[m],
+  }));
   const downloadInBackground = useUpdateStore((s) => s.download);
   const installNowUpdate = useUpdateStore((s) => s.installNow);
   // 后端实时更新状态：决定「检查更新」结果区该给哪个动作。
@@ -154,10 +170,12 @@ export default function AboutSection() {
                   <p className="text-xs text-zinc-500">
                     {capabilities?.installKind === 'apk'
                       ? '安装包已下载完成，点击后在系统安装界面确认即可。'
-                      : '安装包已下载完成；不点也会在你退出应用时自动安装。'}
+                      : updateMode === 'off'
+                        ? '安装包已下载完成。当前更新方式是「关闭」，不会自动安装 —— 点「立即安装」才会装上。'
+                        : '安装包已下载完成；不点也会在你退出应用时自动安装。'}
                   </p>
                 </>
-              ) : capabilities?.silentDownload && result.installerUrl ? (
+              ) : supportsSilentDownload && updateMode !== 'off' && result.installerUrl ? (
                 <>
                   <Button
                     variant="primary"
@@ -168,39 +186,51 @@ export default function AboutSection() {
                   </Button>
                   <p className="text-xs text-zinc-500">
                     {capabilities.installKind === 'apk'
-                      ? '下载完成后在提示里点「立即安装」即可；也可以在下面打开自动下载。'
+                      ? '下载完成后在提示里点「立即安装」即可；也可以在下面把更新方式设为「自动更新」。'
                       : '下载完成后可留意标题栏进度；应用退出时会自动安装新版本。'}
                   </p>
                 </>
               ) : (
-                <Button variant="primary" onClick={() => openExternalLink(result.releaseUrl)}>
-                  去下载
-                </Button>
+                <>
+                  <Button variant="primary" onClick={() => openExternalLink(result.releaseUrl)}>
+                    去下载
+                  </Button>
+                  {updateMode === 'off' && (
+                    <p className="mt-3 text-xs text-zinc-500">
+                      当前更新方式是「关闭」，本机不下载也不缓存安装包；想在这里直接后台下载，把下面的更新方式改成「自动更新」或「仅提醒」。
+                    </p>
+                  )}
+                </>
               )}
             </div>
           )}
         </SettingItem>
-        {capabilities?.silentDownload && (
-          <SettingItem
-            id="about-auto-update"
-            label="自动下载并安装更新"
-            description={
-              capabilities.installKind === 'apk'
-                ? '发现新版本后在非计量网络下自动后台下载，下载完成提示你安装；关闭后仅提示，需手动下载'
-                : '发现新版本后自动在后台下载，退出应用时静默安装；关闭后仅提示，需手动前往下载'
-            }
-            sectionId="settings-about"
-            keywords={['auto', 'update', '自动更新', '无感更新', '升级']}
-          >
-            <Toggle
-              checked={autoUpdate}
-              onChange={(v) => {
-                setError(null);
-                update({ autoUpdate: v }).catch((e) => setError(getErrorMessage(e)));
-              }}
-            />
-          </SettingItem>
-        )}
+        <SettingItem
+          id="about-update-mode"
+          label="更新方式"
+          description={updateModeDescription(shownMode, isApk)}
+          sectionId="settings-about"
+          keywords={[
+            'auto',
+            'update',
+            '自动更新',
+            '无感更新',
+            '升级',
+            '仅提醒',
+            '关闭更新',
+            '不检查更新',
+          ]}
+        >
+          <SegmentedControl
+            ariaLabel="更新方式"
+            options={modeOptions}
+            value={shownMode}
+            onChange={(mode) => {
+              setError(null);
+              update({ updateMode: mode }).catch((e) => setError(getErrorMessage(e)));
+            }}
+          />
+        </SettingItem>
         <SettingItem
           id="about-onboarding"
           label="重新引导"
