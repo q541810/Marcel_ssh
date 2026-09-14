@@ -324,6 +324,11 @@ class MainActivity : TauriActivity() {
   // `(Ljava/lang/String;)Ljava/lang/String;`）。返回字符串而不是抛异常 ——
   // JNI 里抛出的异常会成为 pending exception，让后续 JNI 调用处于非法状态；
   // Rust 侧只按返回值分支。
+  //
+  // ⚠️ release 构建会 R8 裁剪：这些方法在 app/proguard-rules.pro 里有对应的
+  // keep 规则（按上面两种签名整类保留）。改名或改签名必须同步改那边的规则，
+  // 否则 release 包里方法被整个删掉，运行时 NoSuchMethodError，
+  // 而 debug 包（isMinifyEnabled = false）看不出任何问题。
 
   /**
    * 是否已允许本应用安装未知来源的应用（Android 8+ 需用户手动授权；

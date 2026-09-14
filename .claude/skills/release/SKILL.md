@@ -193,6 +193,15 @@ pnpm tauri android build --apk --target aarch64
 
 - `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`（**已自动用正式 keystore 签名**）
 
+构建完先核对 R8 没把 JNI 入口点裁掉（release 开着 `isMinifyEnabled`，这个问题只有 release 产物看得见）：
+
+```powershell
+$m = "src-tauri\gen\android\app\build\outputs\mapping\universalRelease\mapping.txt"
+Select-String -Path $m -Pattern "installUpdateApk|networkMetered" | % { $_.Line.Trim() }
+```
+
+期望打出两行方法名；**输出为空 = 方法被 R8 删了**，这种包发出去点「立即安装」只会报 `Java exception was thrown`（v1.4.1 踩过）。保留规则在 `src-tauri/gen/android/app/proguard-rules.pro`。
+
 写入 `latest.json` 的安卓资产字段：
 
 ```powershell
@@ -207,8 +216,9 @@ $apk = "src-tauri\gen\android\app\build\outputs\apk\universal\release\app-univer
 - Gradle 侧 signingConfig 读 `key.properties`；文件缺失时 release 构建退化为未签名 APK，方便 CI 或新机器先跑通。
 - 首次构建前需 `pnpm tauri android init` 生成 `gen/android` 工程（已提交进仓库，无需重复跑）。
 - Gradle wrapper 走腾讯镜像（`gradle-wrapper.properties`），避免官方源证书问题。
-- Android 的 versionName/versionCode（`tauri.properties`）由 tauri CLI 从 `tauri.conf.json` 的 `version` 自动生成，版本号递增保证 versionCode 单调递增，侧载升级不受影响。
+- Android 的 versionName/versionCode（`tauri.properties`）由 tauri CLI 从 `tauri.conf.json` 的 `version` 自动生成，版本号递增保证 versionCode 单调递增，侧载升级不受影响。**顺序必须是先 bump 再构建**：v1.4.1 那次是先构建后 bump，同一份 APK 就当 1.4.1 发出去了，包内其实还是 versionName 1.4.0 / versionCode 1004000（核对 `app/build/outputs/apk/universal/release/output-metadata.json`）。
 - 应用内更新依赖 manifest 里的 `REQUEST_INSTALL_PACKAGES`（已在 `gen/android/app/src/main/AndroidManifest.xml` 声明）与 `FileProvider`（`cache-path "."` 覆盖 cacheDir，更新包就落在 `cacheDir/update/`）。**不要删这两项**：删了系统连「安装未知应用」开关都不会列出来，应用内安装直接失败。
+- 还有一条 keep 规则不能删：`MainActivity.installUpdateApk` / `networkMetered` 是被 Rust 用 JNI 按「名字 + 签名」反射调用的，靠 `gen/android/app/proguard-rules.pro` 里的 `-keep` 规则保留。release 构建会把没有 keep 规则的非 native 方法整个删掉（不是改名）：release 包点「立即安装」直接失败、Wi-Fi 下也不再自动后台下载，而 debug 包复现不出来——本步构建后那条 `mapping.txt` 检查就是查它。
 - 用户在系统安装界面确认安装时，系统会顺手校验「签名一致 + versionCode 递增」，这两个前提由上面的 keystore 与版本号规则共同保证。
 
 ### 6. 拟定release描述

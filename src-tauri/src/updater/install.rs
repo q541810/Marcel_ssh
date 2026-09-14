@@ -233,10 +233,45 @@ mod android {
         match call(env) {
             Ok(value) => Ok(value),
             Err(e) => {
+                // 先取异常详情再清除：异常内容（类名 + message）是定位「方法不
+                // 存在」这类问题的唯一线索，直接丢掉就只剩 jni crate 那句笼统的
+                // "Java exception was thrown"（v1.4.1 的 release 包「立即安装」
+                // 失败就是这么被挡住的 —— 真因是 R8 把方法整个裁掉了）。
+                let detail = take_pending_exception(env);
+                // 兜底：上面提前返回（拿不到 throwable）时异常可能还挂着，
+                // pending exception 必须清掉，否则后续 JNI 调用处于非法状态。
                 let _ = env.exception_clear();
-                Err(format!("调用原生方法 {} 失败: {}", method, e))
+                Err(match detail {
+                    Some(text) => format!("调用原生方法 {} 失败: {}（{}）", method, text, e),
+                    None => format!("调用原生方法 {} 失败: {}", method, e),
+                })
             }
         }
+    }
+
+    /// 读取 pending exception 的 `toString()`，形如
+    /// `java.lang.NoSuchMethodError: no non-static method
+    /// "Lcom/marcel/ssh/MainActivity;.installUpdateApk(Ljava/lang/String;)Ljava/lang/String;"`。
+    ///
+    /// 顺序不能颠倒：存在 pending exception 时 JNI 只允许调用极少数函数（取异常、
+    /// 清异常等），所以必须先用 `exception_occurred()` 拿到 throwable 引用、再
+    /// `exception_clear()` 清掉异常，之后才能安全地对它调 `toString()`。
+    /// 取不到（本来就没有异常 / 中途失败）时返回 None，由调用方回落到原错误文本。
+    fn take_pending_exception(env: &mut JNIEnv) -> Option<String> {
+        let throwable = env.exception_occurred().ok()?;
+        if throwable.is_null() {
+            return None;
+        }
+        env.exception_clear().ok()?;
+        let text = env
+            .call_method(&throwable, "toString", "()Ljava/lang/String;", &[])
+            .ok()?
+            .l()
+            .ok()?;
+        let text = JString::from(text);
+        env.get_string(&text)
+            .ok()
+            .map(|s| s.to_string_lossy().into_owned())
     }
 
     /// 把已下载的 APK 交给系统安装器。
