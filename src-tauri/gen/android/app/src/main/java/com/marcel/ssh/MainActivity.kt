@@ -40,9 +40,9 @@ class MainActivity : TauriActivity() {
     const val REQUEST_NOTIFICATION_PERMISSION = 1001
     private const val TAG = "MarcelMainActivity"
     /**
-     * 目标帧率（Hz）。Android 11+ 用 Window.setFrameRate 请求；
-     * 低版本用 preferredDisplayModeId 在同分辨率下挑刷新率最高的 mode。
-     * 系统只会在电池/温度允许时满足请求，请求 ≠ 强制。
+     * 目标帧率（Hz）：作为 `preferredRefreshRate` 的软提示值，实际落点由
+     * `preferredDisplayModeId` 指向「同分辨率下刷新率最高的 mode」决定。
+     * 系统只会在设备/电池/温度允许时满足，请求 ≠ 强制。
      */
     private const val TARGET_REFRESH_RATE_HZ = 120f
   }
@@ -271,30 +271,20 @@ class MainActivity : TauriActivity() {
   /**
    * 申请最高可用刷新率（120Hz），让 WebView 也跑满。
    *
-   * - API 31+（Android 12+）：用 Window.setFrameRate，是官方推荐方式，行为最干净：
-   *   系统在电池/温度允许时会提升到 120Hz，不需要时回落，不锁死。
-   * - API 23-30：setFrameRate 不可用，退回 WindowManager.LayoutParams.preferredDisplayModeId，
-   *   在同物理分辨率下挑刷新率最高的 mode（避免被切到低分辨率的 Hi-Fi 模式）。
-   * - 设备/系统不支持目标刷新率：直接 return，不报错也不影响默认行为。
-   * - 必须先于 onCreate 完成前的窗口附加阶段调用一次，且在 WebView 首次绘制时仍然有效
-   *   （系统按窗口 frame rate 决定 display 模式，与 WebView 内部 setRenderPriority 无关）。
+   * 只用公开 SDK 能表达的机制：`preferredRefreshRate`（软提示）+ 
+   * `preferredDisplayModeId`（明确落到同物理分辨率下刷新率最高的 display mode）。
+   *
+   * **为什么不用 `Window.setFrameRate`**：它不在公开 SDK 里。android-34 / 36 的
+   * `android.jar` 中 `Window` 没有这个方法，`WindowManager.LayoutParams.FRAME_RATE_COMPATIBILITY_*`
+   * 同样不存在（那是 @hide/@SystemApi；公开的只有 `Surface.setFrameRate`，而
+   * WebView 的 Surface 不由我们持有）。按 setFrameRate 写会让 release 的 Kotlin
+   * 编译直接失败（`Unresolved reference`），整个安卓包编不出来。
+   *
+   * 代价：`preferredDisplayModeId` 是把窗口钉在某个 mode 上，系统不会像 frame-rate
+   * vote 那样按电量/温度动态降档；设备没有更高刷的同分辨率 mode 时什么都不做，
+   * 保持系统默认行为。
    */
   private fun requestHighRefreshRate() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      try {
-        // FRAME_RATE_COMPATIBILITY_DEFAULT：请求但不强制（系统会按需降级）
-        window.setFrameRate(
-          TARGET_REFRESH_RATE_HZ,
-          WindowManager.LayoutParams.FRAME_RATE_COMPATIBILITY_DEFAULT,
-        )
-        Log.i(TAG, "requestHighRefreshRate: setFrameRate(${TARGET_REFRESH_RATE_HZ}Hz)")
-      } catch (e: Throwable) {
-        Log.w(TAG, "requestHighRefreshRate: setFrameRate failed: ${e.message}")
-      }
-      return
-    }
-
-    // API 23-30：preferredDisplayModeId 路径
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
     try {
       val display: Display = windowManager.defaultDisplay ?: return
@@ -306,19 +296,24 @@ class MainActivity : TauriActivity() {
         if (mode.physicalHeight != current.physicalHeight) continue
         if (best == null || mode.refreshRate > best.refreshRate) best = mode
       }
-      if (best != null && best.refreshRate > current.refreshRate + 0.5f) {
-        val params = window.attributes
-        params.preferredDisplayModeId = best.modeId
-        window.attributes = params
+      if (best == null || best.refreshRate <= current.refreshRate + 0.5f) {
         Log.i(
           TAG,
-          "requestHighRefreshRate: ${current.refreshRate}Hz → ${best.refreshRate}Hz (modeId=${best.modeId})",
+          "requestHighRefreshRate: no higher refresh rate mode available (current=${current.refreshRate}Hz)",
         )
-      } else {
-        Log.i(TAG, "requestHighRefreshRate: no higher refresh rate mode available (current=${current.refreshRate}Hz)")
+        return
       }
+      val params = window.attributes
+      // 软提示 + 明确落点：前者给会按偏好值挑 mode 的设备，后者保证真的切过去
+      params.preferredRefreshRate = TARGET_REFRESH_RATE_HZ
+      params.preferredDisplayModeId = best.modeId
+      window.attributes = params
+      Log.i(
+        TAG,
+        "requestHighRefreshRate: ${current.refreshRate}Hz → ${best.refreshRate}Hz (modeId=${best.modeId})",
+      )
     } catch (e: Throwable) {
-      Log.w(TAG, "requestHighRefreshRate: preferredDisplayModeId failed: ${e.message}")
+      Log.w(TAG, "requestHighRefreshRate failed: ${e.message}")
     }
   }
 
