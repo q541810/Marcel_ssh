@@ -6,10 +6,10 @@
   "sha256": "393fa6718bf3121349d1ade0e4d1e9446dbd0acb1e148d2653df562381c63a45",
   "size": 9764879,
   "android": {
-    "version": "1.4.1",
-    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.1",
-    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.4.1/Marcel-SSH_1.4.1_arm64.apk",
-    "sha256": "73dd74ec01a4af4f5954c19eff5bbde1f2be54ec40edbdaf3512673a06f36935",
-    "size": 26360023
+    "version": "1.4.2",
+    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.2",
+    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.4.2/Marcel-SSH_1.4.2_arm64.apk",
+    "sha256": "df42c95b7daa96e34dfe18076713012a2192b02002d734535b186394b0e99b1d",
+    "size": 26370863
   }
 }
