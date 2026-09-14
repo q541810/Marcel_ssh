@@ -3495,7 +3495,7 @@ dependencies = [
 
 [[package]]
 name = "marcel-ssh"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "android-native-keyring-store",
  "async-trait",
