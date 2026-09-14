@@ -1,8 +1,15 @@
 {
-  "version": "1.4.0",
-  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.0",
+  "version": "1.4.1",
+  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.1",
+  "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.4.1/Marcel.SSH_1.4.1_x64-setup.exe",
+  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZWg2MTZZZFhKRVJRaWh5Z0gzWTlrSE52TGZiYk92VE9SYStxKzFVM0lZajRwSGdMOHA2MzFRR1lGN3Bxc3VaYVhMTUZsTzduMXVaaVhXYVJpelE0bmdzUE83UHNlTndZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5Mzg5MDI4CWZpbGU6TWFyY2VsIFNTSF8xLjQuMV94NjQtc2V0dXAuZXhlCm9qK3c5Rml6TGRPT29nYndPak9hWmFWWERKVzdZU1N6R0JRRjFNb2hKbDA0dktqLzRBOXJtUmsxOVhMZmFKeXFPK1IyS2dUYVZ4Z2ZSMFplMklQSEN3PT0K",
+  "sha256": "764c683e7a28de9667138260cf4c0f9030b95f4d9ae9f452e23a163a93874d1e",
+  "size": 9748248,
   "android": {
-    "version": "1.4.0",
-    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.0"
+    "version": "1.4.1",
+    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.4.1",
+    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.4.1/Marcel-SSH_1.4.1_arm64.apk",
+    "sha256": "069350bc9c7ffdb904476a8719fd2115c7ae7281386f452dff1102e8c0d8874b",
+    "size": 26337407
   }
 }
