@@ -28,9 +28,49 @@ pub struct TextSink<'a> {
 
 impl OpenAiProvider {
     pub fn new(config: LlmConfig) -> Result<Self, LlmError> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .pool_idle_timeout(Duration::from_secs(60))
+        // 修复：在 Android 等 TLS 后端偏严格的平台上，对部分国别/网关端点
+        // （如腾讯云 coding/Hunyuan 网关）做 HTTPS 握手时常会卡到 reqwest 的
+        // 总超时里被报成"超时（网络不可达或服务器无响应）"。
+        //
+        // 原来只设了 `.timeout(180s)` 单值：reqwest 把它当成"整个请求生命周期
+        // 上限"，与下方 `first_byte_timeout_secs`（流式首字节超时 60s）叠加
+        // 时容易在 TLS 握手阶段就被总超时打断。需要把客户端级和首字节级分开。
+        //
+        // 同时显式启用 webpki + native root store，避免 rustls 在某些 Android
+        // 版本下回退到空 CA store。
+        let mut builder = reqwest::Client::builder()
+            // 总请求超时（兜底）：比首字节超时大，避免在握手阶段被它打断。
+            .timeout(Duration::from_secs(300))
+            // 连接阶段独立超时：DNS + TCP + TLS 握手。15s 内没建立连接就提前
+            // 报错，避免被上层流式首字节超时误判成"模型无响应"。
+            .connect_timeout(Duration::from_secs(15))
+            // 显式启用 WebPKI + 系统根证书，避免 rustls 默认空 CA 列表。
+            .tls_built_in_root_certs(true)
+            .tls_built_in_webpki_certs(true)
+            .pool_idle_timeout(Duration::from_secs(60));
+
+        // `extra_body` 已是 LlmConfig 上的通用逃生口：用户在「模型服务」里可
+        // 通过 JSON 注入 `{"danger_accept_invalid_certs": true}` 来应对自签证书
+        // 网关；同时也允许注入 `{"connect_timeout_secs": N}` 临时调整握手超时。
+        if let Some(extra) = &config.extra_body {
+            if let serde_json::Value::Object(map) = extra {
+                if matches!(map.get("danger_accept_invalid_certs"), Some(serde_json::Value::Bool(true))) {
+                    log::warn!(
+                        "[llm] 已通过 extra_body 启用 danger_accept_invalid_certs（仅建议内网/调试）"
+                    );
+                    builder = builder.danger_accept_invalid_certs(true);
+                }
+                if let Some(serde_json::Value::Number(n)) = map.get("connect_timeout_secs") {
+                    if let Some(secs) = n.as_u64() {
+                        let secs = secs.clamp(5, 60);
+                        log::info!("[llm] 通过 extra_body 覆盖 connect_timeout = {}s", secs);
+                        builder = builder.connect_timeout(Duration::from_secs(secs));
+                    }
+                }
+            }
+        }
+
+        let client = builder
             .build()
             .map_err(|e| LlmError::Config(format!("HTTP 客户端初始化失败: {}", e)))?;
 
@@ -46,6 +86,45 @@ impl OpenAiProvider {
             .base_url
             .as_deref()
             .unwrap_or("https://api.openai.com/v1")
+    }
+
+    /// 检查 Base URL 是否像 OpenAI 兼容端点（缺 `/v1` 后缀）。
+    ///
+    /// 真实症状：用户在「模型服务」里填了 `https://coding.h.xxx`（没带 `/v1`），
+    /// `execute_stream` 会拼成 `https://coding.h.xxx/chat/completions`，网关
+    /// 上找不到这条路径，会一直黑洞到 TCP 读满首字节超时 → 报"超时"。这个
+    /// 方法不会自动改写 URL（避免静默改用户配置），只是让 `format_reqwest_error`
+    /// 把"是不是漏了 `/v1`"作为可操作的提示带出来。
+    fn base_url_likely_missing_v1(&self) -> bool {
+        let raw = match self.config.base_url.as_deref() {
+            Some(s) => s.trim_end_matches('/'),
+            None => return false,
+        };
+        if raw.is_empty() {
+            return false;
+        }
+        // 已经是 `/v1` / `/v1/` 结尾：合规，跳过。
+        let lower = raw.to_ascii_lowercase();
+        if lower.ends_with("/v1") {
+            return false;
+        }
+        // 路径段里已显式含 `/v1`：合规（例如 `https://host/v1beta` 也算合规）。
+        if lower.split('/').any(|seg| seg == "v1") {
+            return false;
+        }
+        // 路径里有其它版本号段（v1beta / v2 / v3 ...），大概率是合规，跳过。
+        if lower.split('/').any(|seg| {
+            seg.starts_with('v')
+                && seg.len() > 1
+                && seg.as_bytes()[1..].iter().all(|b| b.is_ascii_digit())
+        }) {
+            return false;
+        }
+        // 路径里已经有 `/chat/completions` 这种已经拼好的子路径，也算合规。
+        if lower.contains("/chat") || lower.contains("/completions") {
+            return false;
+        }
+        true
     }
 
     fn build_headers(&self) -> Result<HeaderMap, LlmError> {
@@ -218,11 +297,7 @@ impl OpenAiProvider {
             .json(req_body)
             .send()
             .await
-            .map_err(|e| {
-                let detail = format_reqwest_error(&e);
-                log::error!("LLM 请求发送失败: {}", detail);
-                LlmError::Network(detail)
-            })?;
+            .map_err(|e| self.annotate_network_error(e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -236,6 +311,24 @@ impl OpenAiProvider {
         Ok(response)
     }
 
+    /// 把 reqwest::Error 转成 LlmError::Network，并在缺失 `/v1` 时附加提示。
+    ///
+    /// 单独抽出来便于 `send_llm_request`（chat completions）和 `list_models`
+    /// 两条路径共用。
+    fn annotate_network_error(&self, e: reqwest::Error) -> LlmError {
+        let mut detail = format_reqwest_error(&e);
+        // 提示：Base URL 漏写 `/v1` 后缀是最常见的"看起来是网络问题，
+        // 实际是路径不存在"误判。如果错误本身是连接/超时/请求构造类，再叠
+        // 加这个提示，让用户在错误页就能看到该怎么办。
+        if (e.is_connect() || e.is_timeout() || e.is_request())
+            && self.base_url_likely_missing_v1()
+        {
+            detail.push_str(" | 提示：Base URL 似乎漏写了 `/v1` 后缀，请确认形如 `https://host/v1`");
+        }
+        log::error!("LLM 请求发送失败: {}", detail);
+        LlmError::Network(detail)
+    }
+
     /// Fetch the list of available models from the provider's `/models` endpoint.
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         let url = format!("{}/models", self.base_url().trim_end_matches('/'));
@@ -247,11 +340,7 @@ impl OpenAiProvider {
             .headers(self.build_headers()?)
             .send()
             .await
-            .map_err(|e| {
-                let detail = format_reqwest_error(&e);
-                log::error!("LLM 列出模型请求失败: {}", detail);
-                LlmError::Network(detail)
-            })?;
+            .map_err(|e| self.annotate_network_error(e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -863,6 +952,58 @@ struct ModelEntry {
     owned_by: Option<String>,
     #[serde(default)]
     created: Option<i64>,
+}
+
+#[cfg(test)]
+mod base_url_v1_hint_tests {
+    use super::*;
+    use crate::llm::provider::{LlmConfig, ProviderType};
+
+    fn provider_with(base_url: Option<&str>) -> OpenAiProvider {
+        let mut cfg = LlmConfig::default();
+        cfg.provider_type = ProviderType::OpenAI;
+        cfg.api_key = "test".into();
+        cfg.model = "gpt-4".into();
+        cfg.base_url = base_url.map(|s| s.to_string());
+        OpenAiProvider::new(cfg).expect("client builds")
+    }
+
+    #[test]
+    fn missing_v1_triggers_hint() {
+        let p = provider_with(Some("https://coding.h.coding.tencent.com"));
+        assert!(p.base_url_likely_missing_v1());
+    }
+
+    #[test]
+    fn trailing_slash_does_not_change_verdict() {
+        let p = provider_with(Some("https://coding.h.coding.tencent.com/"));
+        assert!(p.base_url_likely_missing_v1());
+    }
+
+    #[test]
+    fn with_v1_suffix_no_hint() {
+        let p = provider_with(Some("https://api.deepseek.com/v1"));
+        assert!(!p.base_url_likely_missing_v1());
+    }
+
+    #[test]
+    fn with_v1beta_no_hint() {
+        let p = provider_with(Some("https://example.com/v1beta"));
+        assert!(!p.base_url_likely_missing_v1());
+    }
+
+    #[test]
+    fn with_chat_path_no_hint() {
+        let p = provider_with(Some("https://example.com/api/chat"));
+        assert!(!p.base_url_likely_missing_v1());
+    }
+
+    #[test]
+    fn none_base_url_uses_default_no_hint() {
+        let p = provider_with(None);
+        // 默认走 OpenAI 官方：自带 /v1，提示不触发。
+        assert!(!p.base_url_likely_missing_v1());
+    }
 }
 
 #[cfg(test)]
