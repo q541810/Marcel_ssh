@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
@@ -126,10 +126,7 @@ export default function MultiHostPicker() {
     // 保证即使旧配置缺省也能构造完整对象落盘。
     void update({
       experimentalSettings: {
-        enableWebSearch: true,
-        enableHttpFetch: true,
-        enableCloudPage: false,
-        enableHtmlRender: true,
+        ...DEFAULT_EXPERIMENTAL_SETTINGS,
         ...experimental,
         multiHostConnectionIds: next,
       },

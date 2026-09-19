@@ -48,7 +48,7 @@ function normalizeRegistry(r: Partial<LlmRegistry> | null | undefined): LlmRegis
   };
 }
 
-const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
+export const DEFAULT_EXPERIMENTAL_SETTINGS: ExperimentalSettings = {
   enableWebSearch: true,
   enableHttpFetch: true,
   enableCloudPage: false,
@@ -232,10 +232,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
         agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
         llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
-        experimentalSettings: {
-          ...DEFAULT_EXPERIMENTAL_SETTINGS,
-          ...(fromDisk.experimentalSettings ?? {}),
-        },
+        experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
         // 移动端独立设置：旧数据无此字段时用默认值兜底（兼容旧数据 = 保持原样 + 默认值填充）

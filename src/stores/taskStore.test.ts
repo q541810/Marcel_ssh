@@ -24,7 +24,6 @@ describe('taskStore', () => {
       tasks: {},
       activeTaskId: null,
       mode: 'agent',
-      pendingApproval: null,
       plans: {},
       plansDirty: false,
     });
@@ -40,7 +39,6 @@ describe('taskStore', () => {
     const state = useTaskStore.getState();
     expect(state.mode).toBe('agent');
     expect(state.activeTaskId).toBeNull();
-    expect(state.pendingApproval).toBeNull();
     expect(Object.keys(state.tasks)).toHaveLength(0);
   });
 
@@ -75,21 +73,6 @@ describe('taskStore', () => {
     useTaskStore.getState().updateTaskStatus('nonexistent', 'executing');
     // No crash, no state change for non-existent
     expect(useTaskStore.getState().tasks['nonexistent']).toBeUndefined();
-  });
-
-  it('setPendingApproval updates approval', () => {
-    const approval = {
-      type: 'approvalRequest' as const,
-      toolCallId: 'op1',
-      toolName: 'execute_command',
-      arguments: { command: 'ls' },
-      riskLevel: 'LowRisk' as const,
-    };
-    useTaskStore.getState().setPendingApproval(approval);
-    expect(useTaskStore.getState().pendingApproval).toEqual(approval);
-
-    useTaskStore.getState().setPendingApproval(null);
-    expect(useTaskStore.getState().pendingApproval).toBeNull();
   });
 
   it('setPlan stores plan', () => {

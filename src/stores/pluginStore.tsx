@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Plug } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import { getVersion } from '@tauri-apps/api/app';
 import type { PluginManifest, PluginViewDef, ReloadDiff, ViewProvider } from '@/lib/types';
 import { useViewStore } from '@/stores/viewStore';
@@ -329,17 +329,23 @@ export const usePluginStore = create<PluginState>((set, get) => ({
 // Subscribed once at module load; safe to call during tests (the listener is
 // idempotent and the store starts empty so the first event just populates it).
 
-let registryListenerRegistered = false;
+let detachRegistryListener: (() => void) | null = null;
 
-export function ensurePluginRegistryListener(): void {
-  if (registryListenerRegistered) return;
-  registryListenerRegistered = true;
-  listen<ReloadDiff>('plugin-registry-changed', () => {
+/** 订阅插件注册表变化（幂等）。
+ *
+ *  守卫同步生效：`subscribeTauriEvent` 同步返回取消函数，StrictMode 的双挂载
+ *  不会重复注册。返回退订函数，供应用层 effect 的 cleanup 使用。 */
+export function ensurePluginRegistryListener(): () => void {
+  if (detachRegistryListener) return detachRegistryListener;
+  const off = subscribeTauriEvent<ReloadDiff>('plugin-registry-changed', () => {
     // Fire-and-forget: the diff refresh handles incremental destroy/recreate.
     usePluginStore.getState().fetchPlugins().catch((err) => {
       console.error('[pluginStore] fetchPlugins after registry-changed failed:', err);
     });
-  }).catch((err) => {
-    console.error('[pluginStore] failed to listen for plugin-registry-changed:', err);
   });
+  detachRegistryListener = () => {
+    detachRegistryListener = null;
+    off();
+  };
+  return detachRegistryListener;
 }

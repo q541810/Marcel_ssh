@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import type { ActiveInteractionPayload, QuestionAnswer } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { useTaskStore } from '@/stores/taskStore';
@@ -62,20 +62,35 @@ export const useInteractionStore = create<InteractionState>((set, get) => ({
   },
 }));
 
-let globalUnlistenActive: UnlistenFn | null = null;
-let globalUnlistenCleared: UnlistenFn | null = null;
+let detachInteractionListeners: (() => void) | null = null;
 
-export async function initInteractionListener() {
-  if (globalUnlistenActive && globalUnlistenCleared) return;
+/**
+ * 订阅全局交互事件（幂等）。
+ *
+ * 旧实现是 `async`，幂等守卫写在两个 `await` 之前：两次并发调用都能通过守卫，
+ * 后完成的那次覆盖前一次的 unlisten，前一条监听就泄漏了；而且当时没有任何退订
+ * 入口。`subscribeTauriEvent` 同步返回取消函数，守卫因此在第一次调用返回前就已
+ * 生效，StrictMode 的双挂载也拦得住。
+ *
+ * 返回值是退订函数，供 React effect 的 cleanup 使用。
+ */
+export function initInteractionListener(): () => void {
+  if (detachInteractionListeners) return detachInteractionListeners;
 
-  globalUnlistenActive = await listen<ActiveInteractionPayload>(
+  const offActive = subscribeTauriEvent<ActiveInteractionPayload>(
     'agent://interaction-active',
-    (event) => {
-      useInteractionStore.getState().setCurrentInteraction(event.payload);
+    (payload) => {
+      useInteractionStore.getState().setCurrentInteraction(payload);
     },
   );
-
-  globalUnlistenCleared = await listen('agent://interaction-cleared', () => {
+  const offCleared = subscribeTauriEvent('agent://interaction-cleared', () => {
     useInteractionStore.getState().setCurrentInteraction(null);
   });
+
+  detachInteractionListeners = () => {
+    detachInteractionListeners = null;
+    offActive();
+    offCleared();
+  };
+  return detachInteractionListeners;
 }

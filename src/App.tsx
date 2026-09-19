@@ -28,6 +28,7 @@ import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
 import { appReady, sftpPreviewCleanup } from '@/lib/tauri';
 import { playNotificationSound } from '@/lib/notificationSound';
+import { useTauriEvent } from '@/hooks/useTauriEvent';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
@@ -119,13 +120,14 @@ export default function App() {
 
   useEffect(() => {
     attachTransferListeners();
-    void initInteractionListener();
+    const detachInteractions = initInteractionListener();
     const detachJobs = useJobStore.getState().initEventListener();
     // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
     // 作业靠这次全量拉取回到 UI；只 upsert 合并，不覆盖事件实时状态）
     void useJobStore.getState().fetchJobs();
     return () => {
       detachTransferListeners();
+      detachInteractions();
       detachJobs();
     };
   }, []);
@@ -136,15 +138,11 @@ export default function App() {
     }
   }, [providers, activeId]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    import('@tauri-apps/api/event').then(({ listen }) => {
-      listen<string>('notification-sound', (event) => {
-        playNotificationSound(event.payload);
-      }).then((fn) => { unlisten = fn; });
-    });
-    return () => { unlisten?.(); };
-  }, []);
+  // 提示音：声明式订阅，卸载即退订（旧写法是「动态 import 之后再 listen，
+  // 把 unlisten 存进外面的变量」，卸载早于两层 Promise resolve 时必然泄漏）。
+  useTauriEvent<string>('notification-sound', (payload) => {
+    playNotificationSound(payload);
+  });
 
   useEffect(() => {
     if (agentPanelUnmountTimeoutRef.current) {
@@ -336,10 +334,12 @@ export default function App() {
     initPluginIpc().catch(err => {
       console.error('Failed to init plugin IPC:', err);
     });
-    ensurePluginRegistryListener();
     initRegionBridge();
     // 插件市场后台检查更新（不阻塞启动）
     void useMarketStore.getState().fetch().catch(() => {});
+    // 订阅是同步幂等的（守卫同步生效），返回值必须接：卸载时退订，
+    // StrictMode 第二轮挂载会重新注册。
+    return ensurePluginRegistryListener();
   }, []);
 
   // 设置加载完成、或 disabledPlugins 变化时再拉插件并对齐 viewStore。

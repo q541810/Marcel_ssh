@@ -1,15 +1,15 @@
 import { memo, useState, useEffect, useMemo } from 'react';
 import type { AgentMessage } from '@/lib/types';
-import ToolCallCard, { isPlanTool } from './ToolCallCard';
+import ToolCallCard from './ToolCallCard';
+import { isExplorationTool as isExplorationToolName, isPlanTool } from '@/lib/toolCatalog';
 import { summarizeWebToolGroup } from '@/lib/webToolStatus';
 
 export type ToolGroupKind = 'exploration' | 'plan';
 
-export const EXPLORATION_TOOLS = ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory', 'system_info'];
-
+/** 归入「已探索 N 次读取」分组的工具（成员在 `@/lib/toolCatalog` 里声明）。 */
 export function isExplorationTool(msg: AgentMessage): boolean {
   if (msg.role === 'tool' && msg.toolResult) {
-    return EXPLORATION_TOOLS.includes(msg.toolResult.toolName);
+    return isExplorationToolName(msg.toolResult.toolName);
   }
   return false;
 }

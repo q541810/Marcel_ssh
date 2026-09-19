@@ -556,7 +556,10 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
             </pre>
           ) : (
             <span className="text-xs italic text-zinc-500">
-              正在生成摘要…
+              {/* 摘要分两段：模型先写 <analysis> 梳理对话（后端不推那段文本，所以
+                  这段时间卡片一直是空的），再写八段正文。文案要同时成立"还没吐
+                  第一个字"和"正在梳理"两种情形 */}
+              正在梳理对话内容…
             </span>
           )}
         </div>

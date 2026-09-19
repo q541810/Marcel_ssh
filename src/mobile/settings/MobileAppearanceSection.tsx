@@ -206,6 +206,16 @@ export function MobileAppearanceSection() {
           />
         }
       />
+      <MobileSettingRow
+        label="隐私模式"
+        description="开启后所有界面隐藏 IP 地址和端口（连接功能不受影响）"
+        trailing={
+          <Toggle
+            checked={settings.privacyMode ?? false}
+            onChange={(checked) => update({ privacyMode: checked })}
+          />
+        }
+      />
     </div>
   );
 }

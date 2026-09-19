@@ -6,6 +6,7 @@ import {
   handleSubTaskFallback,
   extractSubTaskMeta,
 } from '@/stores/agentStreamManager';
+import { createDefaultStreamHandler } from '@/stores/storeStreamAdapter';
 import type { ToolResultPayload } from '@/lib/types';
 
 const { agentLoadConversation, agentGetConversation } = vi.hoisted(() => ({
@@ -32,21 +33,12 @@ vi.mock('@/stores/agentStreamHandlers', () => ({
   handleToolCallDelta: vi.fn(),
   handleModelApprovalStart: vi.fn(),
   handleModelApprovalDone: vi.fn(),
-  handleQuestionRequest: vi.fn(),
   cleanupStreamState: vi.fn(),
 }));
-vi.mock('@/stores/storeStreamAdapter', () => ({
-  createDefaultStreamHandler: vi.fn(() => ({
-    updateMessages: vi.fn(),
-    updateTaskStatus: vi.fn(),
-    setPendingApproval: vi.fn(),
-    setPendingQuestion: vi.fn(),
-    getTaskStatus: vi.fn(),
-    getMessages: vi.fn(() => []),
-    clearActiveTaskIf: vi.fn(),
-    setPlan: vi.fn(),
-  })),
-}));
+// 这里**不再 mock `storeStreamAdapter`**：handler 现在是一等依赖（`getTask` /
+// `getConversation` / `registerSubConversation` / `accumulateTokenUsage` 都由它
+// 提供），用假 handler 会让这些测试测不到真实装配。改成走生产 adapter、断言真实
+// store 状态 —— 与 `seedParentTask()` 播种真实 store 的前提也一致。
 // attachStreamListener 在 handleSubTaskStart 里被调用：mock 掉避免真的 listen
 vi.mock('@/stores/agentStreamManager', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/stores/agentStreamManager')>();
@@ -127,8 +119,9 @@ describe('subagent wiring', () => {
   });
 
   it('subTaskStart registers conversation skeleton, task record and returns loading id', () => {
+    const handler = createDefaultStreamHandler();
     seedParentTask();
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-1',
@@ -161,6 +154,7 @@ describe('subagent wiring', () => {
   });
 
   it('subTaskStart attaches sub-conversation link to the running task tool card', () => {
+    const handler = createDefaultStreamHandler();
     seedParentTask();
     useConversationStore.setState({
       conversations: {
@@ -194,7 +188,7 @@ describe('subagent wiring', () => {
       activeConversationId: 'main-conv',
     });
 
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-1',
@@ -232,7 +226,7 @@ describe('subagent wiring', () => {
         ],
       },
     });
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-9',
@@ -246,8 +240,9 @@ describe('subagent wiring', () => {
   });
 
   it('subTaskStart is idempotent for already registered subtask', () => {
+    const handler = createDefaultStreamHandler();
     seedParentTask();
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-1',
@@ -256,7 +251,7 @@ describe('subagent wiring', () => {
       prompt: 'look at /etc/nginx',
       parentConversationId: 'main-conv',
     });
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-1',
@@ -272,6 +267,7 @@ describe('subagent wiring', () => {
 
   it('toolResult fallback loads full messages from DB when subtask was never registered', async () => {
     seedParentTask();
+    const handler = createDefaultStreamHandler();
     agentGetConversation.mockResolvedValue({
       id: 'sub-conv-2',
       connectionId: 'conn-1',
@@ -300,6 +296,7 @@ describe('subagent wiring', () => {
     ]);
 
     await handleSubTaskFallback(
+      handler,
       'parent-1',
       { subTaskId: 'sub-2', subConversationId: 'sub-conv-2', status: 'completed' },
       'explore nginx',
@@ -322,9 +319,11 @@ describe('subagent wiring', () => {
 
   it('toolResult fallback maps cancelled status', async () => {
     seedParentTask();
+    const handler = createDefaultStreamHandler();
     agentLoadConversation.mockResolvedValue([]);
 
     await handleSubTaskFallback(
+      handler,
       'parent-1',
       { subTaskId: 'sub-3', subConversationId: 'sub-conv-3', status: 'cancelled' },
       'x',
@@ -335,10 +334,11 @@ describe('subagent wiring', () => {
   });
 
   it('toolResult fallback converges terminal status for already-registered subtask', async () => {
+    const handler = createDefaultStreamHandler();
     // 子任务已由 subTaskStart 注册（planning）但 done 事件在 listener 挂载前
     // 丢失：fallback 必须把状态收敛为终态，而不是因为「已注册」直接跳过。
     seedParentTask();
-    handleSubTaskStart('parent-1', {
+    handleSubTaskStart(handler, 'parent-1', {
       type: 'subTaskStart',
       toolCallId: 'call-1',
       subTaskId: 'sub-4',
@@ -375,6 +375,7 @@ describe('subagent wiring', () => {
     ]);
 
     await handleSubTaskFallback(
+      handler,
       'parent-1',
       { subTaskId: 'sub-4', subConversationId: 'sub-conv-4', status: 'completed' },
       'explore nginx',
@@ -393,6 +394,7 @@ describe('subagent wiring', () => {
     // 正常 live 路径：骨架已被流事件消费（无 isLoading），fallback 不应覆盖
     // 已有的实时消息（工具结果到达时子任务已终态，但避免无谓的全量重载）。
     seedParentTask();
+    const handler = createDefaultStreamHandler();
     useConversationStore.setState({
       conversations: {
         'sub-conv-5': {
@@ -447,6 +449,7 @@ describe('subagent wiring', () => {
     ]);
 
     await handleSubTaskFallback(
+      handler,
       'parent-1',
       { subTaskId: 'sub-5', subConversationId: 'sub-conv-5', status: 'failed' },
       'x',
@@ -462,6 +465,7 @@ describe('subagent wiring', () => {
   it('toolResult fallback fills connectionId from conversation meta when parent task is missing', async () => {
     // 重启恢复场景：父任务不在前端内存（tasks 为空），connectionId 从
     // agentGetConversation 补齐，子对话条目不落空。
+    const handler = createDefaultStreamHandler();
     agentGetConversation.mockResolvedValue({
       id: 'sub-conv-6',
       connectionId: 'conn-9',
@@ -473,6 +477,7 @@ describe('subagent wiring', () => {
     agentLoadConversation.mockResolvedValue([]);
 
     await handleSubTaskFallback(
+      handler,
       'parent-1',
       { subTaskId: 'sub-6', subConversationId: 'sub-conv-6', status: 'completed' },
       'x',

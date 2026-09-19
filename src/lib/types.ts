@@ -345,8 +345,17 @@ export interface McpServerListResponse {
 
 export type AgentMode = 'plan' | 'agent' | 'auto';
 
+/** 后端 `agent/task.rs` 的 `AgentStatus` 镜像：**变体名一一对应**。
+ *
+ *  但别误以为有强制约束 —— `AgentStatus` 没有 `#[serde(rename_all)]`（Rust 侧
+ *  是 PascalCase），而且 `AgentTask` 从不跨边界交给前端（没有 `agent_list_tasks`
+ *  这类命令，前端的状态来自流事件 + 本地乐观更新）。所以这里改了、Rust 那边没
+ *  改，不会有任何自动检查发现；唯一的护栏是 `src/lib/agentStatus.ts` 的穷尽
+ *  `switch`（往这份联合加成员 → tsc 会逼你回答新状态属于哪一类）。
+ *
+ *  也别和 `AgentVisualStatus` 的 `'idle'` 搞混：那个是前端派生出来的「当前没有
+ *  活动任务」，后端枚举里从来没有这个状态位（`Idle` 已于 2026-09-19 删除）。 */
 export type AgentStatus =
-  | 'idle'
   | 'planning'
   | 'executing'
   | 'waiting_approval'
@@ -361,9 +370,13 @@ export interface AgentTask {
   prompt: string;
   mode: AgentMode;
   status: AgentStatus;
+  /** Whether this task produced a plan (`create_plan` / `edit_plan` were called). */
+  hasPlan?: boolean;
   createdAt: string;
   /** Parent task id — set when this task is a subagent dispatched via the `subagent` tool. */
   parentTaskId?: string;
+  /** 本任务实际使用的模型（llmRegistry 模型条目 id）。子 agent 继承父任务该值。 */
+  modelId?: string;
 }
 
 export interface AgentMessage {
@@ -766,13 +779,9 @@ export type LlmStreamEvent =
   | { type: 'compactionSkipped'; reason: string; attempted: boolean }
   // Tool result — emitted as a separate event on the same channel
   | { type: 'toolResult' } & ToolResultPayload
-  // Approval request — emitted when user confirmation is needed
-  | ApprovalRequestPayload
   // Model approval progress — shows a distinct step on the tool card
   | ModelApprovalStartPayload
-  | ModelApprovalDonePayload
-  // Question request — agent asks user for input
-  | QuestionRequestPayload;
+  | ModelApprovalDonePayload;
 
 export interface ToolResultPayload {
   type: 'toolResult';
@@ -822,25 +831,6 @@ export interface SubTaskResultMetadata {
   status: 'completed' | 'failed' | 'cancelled';
 }
 
-export interface ApprovalRequestPayload {
-  type: 'approvalRequest';
-  toolCallId: string;
-  toolName: string;
-  arguments: Record<string, unknown>;
-  riskLevel: RiskLevel;
-  /** Reasons from the model approval step (when it routed to human). */
-  reasons?: string[];
-  /** Preview metadata (e.g. edit_file file_content / line_position). */
-  metadata?: Record<string, unknown>;
-  /** Originating task id */
-  taskId?: string;
-  sessionId?: string;
-  conversationId?: string;
-  sessionName?: string;
-  conversationTitle?: string;
-  queueLength?: number;
-}
-
 export interface ModelApprovalStartPayload {
   type: 'modelApprovalStart';
   toolCallId: string;
@@ -865,19 +855,6 @@ export interface QuestionItem {
   header: string;
   options?: QuestionOption[];
   multiple: boolean;
-}
-
-export interface QuestionRequestPayload {
-  type: 'questionRequest';
-  questionId: string;
-  questions: QuestionItem[];
-  /** Originating task id */
-  taskId?: string;
-  sessionId?: string;
-  conversationId?: string;
-  sessionName?: string;
-  conversationTitle?: string;
-  queueLength?: number;
 }
 
 export type InteractionKind = 'approval' | 'question';

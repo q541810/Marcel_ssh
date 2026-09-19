@@ -5,6 +5,7 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import FileChangeView from './FileChangeView';
 import { cleanExecuteCommandArgs } from './argumentFormat';
+import { toolSpec } from '@/lib/toolCatalog';
 
 interface Props {
   toolCall: ToolCallInfo;
@@ -64,8 +65,8 @@ export default function ApprovalDialog({
 
   if (!open) return null;
 
-  const isEditFile = toolCall.name === 'edit_file';
-  const isExecuteCommand = toolCall.name === 'bash' || toolCall.name === 'execute_command';
+  const isEditFile = toolSpec(toolCall.name)?.approvalView === 'diff';
+  const isExecuteCommand = toolSpec(toolCall.name)?.payload === 'command';
   const path = typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
   const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;
   // 多机操控：命令带 host = 跨机执行，审批必须醒目提示目标机器（安全护栏）。

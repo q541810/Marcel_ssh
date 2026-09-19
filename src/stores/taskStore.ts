@@ -3,10 +3,7 @@ import type {
   AgentTask,
   AgentMessage,
   AgentMode,
-  ApprovalRequestPayload,
   AgentTaskPlan,
-  QuestionRequestPayload,
-  QuestionAnswer,
   TokenUsage,
 } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
@@ -18,6 +15,7 @@ import {
   cleanupTaskListeners,
 } from "./agentStreamManager";
 import { useConversationStore } from "./conversationStore";
+import { isTaskBusy } from "@/lib/agentStatus";
 import { useSettingsStore } from "./settingsStore";
 
 export interface TaskState {
@@ -25,8 +23,6 @@ export interface TaskState {
   activeTaskId: string | null;
   mode: AgentMode;
   inputDraft: string;
-  pendingApproval: ApprovalRequestPayload | null;
-  pendingQuestion: QuestionRequestPayload | null;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
   taskTokenUsage: TokenUsage | null;
@@ -41,19 +37,10 @@ export interface TaskState {
     replaceImagePaths?: string[],
   ) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
-  approveOperation: (taskId: string, operationId: string) => Promise<void>;
-  rejectOperation: (taskId: string, operationId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
   /** 支持函数式更新（追加文本附件用 `(prev) => ...`）。 */
   setInputDraft: (text: string | ((prev: string) => string)) => void;
   updateTaskStatus: (taskId: string, status: AgentTask["status"]) => void;
-  setPendingApproval: (approval: ApprovalRequestPayload | null) => void;
-  setPendingQuestion: (question: QuestionRequestPayload | null) => void;
-  answerQuestion: (
-    taskId: string,
-    questionId: string,
-    answers: QuestionAnswer[],
-  ) => Promise<void>;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
   getActivePlan: () => AgentTaskPlan | null;
   loadPersistedPlans: (
@@ -82,8 +69,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   activeTaskId: null,
   mode: "agent",
   inputDraft: "",
-  pendingApproval: null,
-  pendingQuestion: null,
   plans: {},
   plansDirty: false,
   taskTokenUsage: null,
@@ -188,6 +173,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       prompt,
       mode,
       status: "planning",
+      hasPlan: false,
       createdAt: new Date().toISOString(),
     };
     set((state) => ({
@@ -260,14 +246,18 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     try {
       await tauri.agentStopTask(taskId);
     } finally {
-      // Mark in-flight tool cards as aborted before unlistening. The backend only
-      // sends a cancel signal — exec_streamed does not watch it, so the in-progress
-      // tool keeps running until it finishes or times out; only then does the agent
-      // loop hit its post-exec cancellation checkpoint and stop. Meanwhile the
-      // listener cleanup below closes the channel before the late toolResult event
-      // (or StreamEvent::Done) would arrive, so we synchronously mark the card here
-      // with wasAborted + an interruption note. The backend persists the same note
-      // separately, keeping the LLM history chain complete.
+      // 先同步标记在飞的工具卡片，再拆 listener。**不能等事件**：下面的
+      // cleanupTaskListeners 会把通道关掉，晚到的 toolResult（以及那几条取消退出
+      // 才发的 StreamEvent::Done）都到不了，所以卡片状态只能在这里同步写。
+      //
+      // 两条收尾时机（都要求这里同步标记，理由不同）：
+      // - 走 command_exec 的命令（agent bash）：后端会**立刻**打断 ——
+      //   agent_stop_task → cancel_with_reason(Task) → executor 的 select! 是
+      //   `biased`，取消优先于数据与超时，工具以「命令已取消」返回。
+      // - 其他工具（读文件 / 联网 / 子 agent / 插件…）：无法在飞途中打断，要等它
+      //   返回后循环才在收尾检查点停下。
+      //
+      // 后端也会把同样的中断说明持久化进 LLM 历史，保证对话链完整。
       // 级联：收集该任务及其全部后代子agent（subagent 工具派发）。停止主任务会
       // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
       // 子任务收到 Done 会被 handleDone 误标为 completed（实际是被取消的）。
@@ -284,11 +274,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const runningIds: string[] = [];
       for (const id of ids) {
         const t = get().tasks[id];
-        if (
-          !t ||
-          !["planning", "executing", "waiting_approval"].includes(t.status)
-        )
-          continue;
+        if (!t || !isTaskBusy(t.status)) continue;
         runningIds.push(id);
         useConversationStore.getState().markAbortedToolFlags(t.conversationId);
         cleanupTaskListeners(id);
@@ -311,20 +297,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         return {
           tasks,
           activeTaskId: nextActive,
-          pendingApproval: null,
-          pendingQuestion: null,
         };
       });
     }
   },
 
-  approveOperation: async (taskId: string, operationId: string) => {
-    await tauri.agentApproveOperation(taskId, operationId);
-  },
 
-  rejectOperation: async (taskId: string, operationId: string) => {
-    await tauri.agentRejectOperation(taskId, operationId);
-  },
 
   setMode: (mode: AgentMode) => {
     set({ mode });
@@ -356,22 +334,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
   },
 
-  setPendingApproval: (approval: ApprovalRequestPayload | null) => {
-    set({ pendingApproval: approval });
-  },
 
-  setPendingQuestion: (question: QuestionRequestPayload | null) => {
-    set({ pendingQuestion: question });
-  },
 
-  answerQuestion: async (
-    taskId: string,
-    questionId: string,
-    answers: QuestionAnswer[],
-  ) => {
-    set({ pendingQuestion: null });
-    await tauri.agentAnswerQuestion(taskId, questionId, answers);
-  },
 
   setPlan: (taskId: string, plan: AgentTaskPlan) => {
     set((state) => ({

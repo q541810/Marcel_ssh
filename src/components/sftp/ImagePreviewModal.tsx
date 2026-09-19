@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import {
+  subscribeTauriEventReady,
+  type Unsubscribe,
+} from '@/lib/tauriEvent';
 import { sftpPreviewImage, sftpPreviewCleanup } from '@/lib/tauri';
 import { formatSize, getErrorMessage } from '@/lib/sftp-helpers';
 import { MAX_PREVIEW_IMAGE_SIZE } from '@/lib/constants';
@@ -69,7 +72,6 @@ export default function ImagePreviewModal({
 
   const previewIdRef = useRef<string | null>(null);
   const localPathRef = useRef<string | null>(null);
-  const cancelledRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const {
     closing,
@@ -102,7 +104,6 @@ export default function ImagePreviewModal({
     setIsDragging(false);
     previewIdRef.current = null;
     localPathRef.current = null;
-    cancelledRef.current = false;
     dragStartRef.current = null;
   }, []);
 
@@ -276,25 +277,35 @@ export default function ImagePreviewModal({
     }
 
     reset();
-    cancelledRef.current = false;
+    // 每次 run 一个**局部**标志。原来用共享 ref：每个 run 开头把它重置为
+    // false，于是 deps 变化（点开另一张图）时旧 run 的检查会失效，旧图的
+    // 结果仍会写进来，覆盖新图。局部标志的语义才是「这次 run 是否已被取代」。
+    let cancelled = false;
     const previewId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     previewIdRef.current = previewId;
     setLoading(true);
 
-    let unlistenProgress: UnlistenFn | null = null;
+    let unsubscribeProgress: Unsubscribe | null = null;
 
     (async () => {
-      unlistenProgress = await listen<PreviewProgress>(
+      // 顺序契约：必须先等监听就绪再发起预览，否则最早的进度事件会丢。
+      unsubscribeProgress = await subscribeTauriEventReady<PreviewProgress>(
         'sftp-preview-progress',
-        (e) => {
-          if (e.payload.previewId !== previewId) return;
-          setProgress({ written: e.payload.written, total: e.payload.total });
+        (payload) => {
+          if (payload.previewId !== previewId) return;
+          setProgress({ written: payload.written, total: payload.total });
         },
       );
+      if (cancelled) {
+        // 卸载发生在 await 期间：立刻退订，否则监听器留在事件总线上。
+        unsubscribeProgress();
+        unsubscribeProgress = null;
+        return;
+      }
 
       try {
         const result = await sftpPreviewImage(sessionId, filePath, previewId);
-        if (cancelledRef.current) {
+        if (cancelled) {
           localPathRef.current = result.localPath;
           await cleanupLocal();
           return;
@@ -302,16 +313,17 @@ export default function ImagePreviewModal({
         localPathRef.current = result.localPath;
         setImageSrc(convertFileSrc(result.localPath));
       } catch (err) {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         setError(getErrorMessage(err));
       } finally {
-        if (!cancelledRef.current) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
 
     return () => {
-      cancelledRef.current = true;
-      if (unlistenProgress) unlistenProgress();
+      cancelled = true;
+      unsubscribeProgress?.();
+      unsubscribeProgress = null;
       cleanupLocal();
     };
   }, [open, sessionId, filePath, sizeExceeded, fileSize, reset, cleanupLocal]);

@@ -2,11 +2,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   LlmStreamEvent,
   ToolResultPayload,
-  ApprovalRequestPayload,
   PlanStreamEvent,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
-  QuestionRequestPayload,
   TokenUsage,
   SubTaskStartPayload,
   SubTaskResultMetadata,
@@ -24,7 +22,6 @@ import {
   handleToolCallDelta,
   handleModelApprovalStart,
   handleModelApprovalDone,
-  handleQuestionRequest,
   handleCompactionStart,
   handleCompactionProgress,
   handleCompactionDone,
@@ -33,8 +30,6 @@ import {
   cleanupStreamState,
 } from './agentStreamHandlers';
 import { createDefaultStreamHandler } from './storeStreamAdapter';
-import { useTaskStore } from './taskStore';
-import { useConversationStore } from './conversationStore';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import * as tauri from '@/lib/tauri';
 
@@ -75,6 +70,7 @@ function subTaskTerminalStatus(status: SubTaskResultMetadata['status']): AgentTa
 
 /** 注册子agent上下文（对话条目 + 骨架消息 + 子agent task 记录）。 */
 export function registerSubTaskContext(
+  handler: StreamHandler,
   parentTaskId: string,
   subTaskId: string,
   subConversationId: string,
@@ -86,13 +82,10 @@ export function registerSubTaskContext(
   subSessionId?: string,
   subMode?: AgentTask['mode'],
 ): string | null {
-  const taskStore = useTaskStore.getState();
-  if (taskStore.tasks[subTaskId]) return null;
+  if (handler.getTask(subTaskId)) return null;
 
-  const parent = taskStore.tasks[parentTaskId];
-  const parentConv = parent
-    ? useConversationStore.getState().conversations[parent.conversationId]
-    : undefined;
+  const parent = handler.getTask(parentTaskId);
+  const parentConv = parent ? handler.getConversation(parent.conversationId) : undefined;
   // 重启恢复兜底路径（toolResult 触发）父任务不在内存，用 agentGetConversation
   // 返回的 connectionId 补齐，避免子对话条目 connectionId 落空。
   // 多机：live 路径显式传子 agent 真实运行机器的 connectionId（≠ 父推断值）。
@@ -100,37 +93,34 @@ export function registerSubTaskContext(
   // 多机：子 agent 运行在目标机器 session（≠ 父 session）；缺省时继承父。
   const sessionId = subSessionId || parent?.sessionId || '';
 
-  const loadingId = useConversationStore.getState().registerSubConversation(
-    subConversationId,
+  const loadingId = handler.registerSubConversation({
+    conversationId: subConversationId,
     connectionId,
-    `${description}（子agent）`,
+    title: `${description}（子agent）`,
     subTaskId,
     prompt,
     parentConversationId,
-  );
+  });
 
-  useTaskStore.setState((s) => ({
-    tasks: {
-      ...s.tasks,
-      [subTaskId]: {
-        id: subTaskId,
-        sessionId,
-        conversationId: subConversationId,
-        prompt,
-        mode: subMode ?? 'plan',
-        status,
-        createdAt: new Date().toISOString(),
-        parentTaskId,
-      },
-    },
-  }));
+  // 把子任务登记进 taskStore —— 子任务是流编排创建的（不走 `taskStore.startTask`
+  // 那条主任务路径），所以经 handler 的 `registerSubTask` 写入，manager 不直接碰 store。
+  handler.registerSubTask({
+    id: subTaskId,
+    sessionId,
+    conversationId: subConversationId,
+    prompt,
+    mode: subMode ?? 'plan',
+    status,
+    parentTaskId,
+  });
 
   return loadingId;
 }
 
 /** subTaskStart 事件：注册子对话并挂载子agent实时流 listener。 */
-export function handleSubTaskStart(parentTaskId: string, ev: SubTaskStartPayload) {
+export function handleSubTaskStart(handler: StreamHandler, parentTaskId: string, ev: SubTaskStartPayload) {
   const loadingId = registerSubTaskContext(
+    handler,
     parentTaskId,
     ev.subTaskId,
     ev.subConversationId,
@@ -148,14 +138,12 @@ export function handleSubTaskStart(parentTaskId: string, ev: SubTaskStartPayload
   }
   // 把子对话 id 挂到主对话的 subagent 工具卡片上：运行中即可"查看"实时过程
   // （toolResult 完成后会被后端 metadata 覆盖，无冲突）。
-  const parentTask = useTaskStore.getState().tasks[parentTaskId];
+  const parentTask = handler.getTask(parentTaskId);
   if (parentTask) {
-    useConversationStore.getState().updateConversationMessages(
-      parentTask.conversationId,
-      (msgs) =>
-        msgs.map((m) =>
-          m.role === 'tool' && m.isExecuting && m.toolResult?.toolCallId === ev.toolCallId
-            ? {
+    handler.updateMessages(parentTask.conversationId, (msgs) =>
+      msgs.map((m) =>
+        m.role === 'tool' && m.isExecuting && m.toolResult?.toolCallId === ev.toolCallId
+          ? {
                 ...m,
                 toolResult: m.toolResult
                   ? {
@@ -182,6 +170,7 @@ export function handleSubTaskStart(parentTaskId: string, ev: SubTaskStartPayload
  * 丢失导致子任务永久停留在 planning + 骨架 loading 转圈。
  */
 export async function handleSubTaskFallback(
+  handler: StreamHandler,
   parentTaskId: string,
   meta: SubTaskResultMetadata,
   description: string,
@@ -191,6 +180,7 @@ export async function handleSubTaskFallback(
     .agentGetConversation(meta.subConversationId)
     .catch(() => null);
   registerSubTaskContext(
+    handler,
     parentTaskId,
     meta.subTaskId,
     meta.subConversationId,
@@ -201,16 +191,18 @@ export async function handleSubTaskFallback(
     conv?.connectionId ?? undefined,
   );
   // 无论是否新注册，都把任务状态收敛为 toolResult 携带的终态（幂等）。
-  const existing = useTaskStore.getState().tasks[meta.subTaskId];
+  // 走 handler：`updateTaskStatus` 本来就是 StreamHandler 的成员（它转发到
+  // taskStore），manager 没有理由绕过它直接读 store。
+  const existing = handler.getTask(meta.subTaskId);
   if (existing && existing.status !== subTaskTerminalStatus(meta.status)) {
-    useTaskStore.getState().updateTaskStatus(meta.subTaskId, subTaskTerminalStatus(meta.status));
+    handler.updateTaskStatus(meta.subTaskId, subTaskTerminalStatus(meta.status));
   }
   // 骨架残留防御：仅当骨架 loading 消息还在时从 DB 全量替换
   // （toolResult 到达 = 子任务已终态；实时流已消费骨架的正常路径不覆盖）。
   try {
     const stored = await tauri.agentLoadConversation(meta.subConversationId);
     const msgs = clearIntermediateReasoning(stored.map(storedMessageToAgentMessage));
-    useConversationStore.getState().updateConversationMessages(meta.subConversationId, (cur) => {
+    handler.updateMessages(meta.subConversationId, (cur) => {
       if (!msgs.length || !cur.some((m) => m.isLoading)) return cur;
       return msgs;
     });
@@ -257,7 +249,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
   const handler = createDefaultStreamHandler();
   streamHandlers.set(taskId, handler);
 
-  const unlisten = await listen<LlmStreamEvent | ToolResultPayload | ApprovalRequestPayload>(
+  const unlisten = await listen<LlmStreamEvent | ToolResultPayload>(
     `agent://stream/${taskId}`,
     (event) => {
       const ev = event.payload;
@@ -270,30 +262,14 @@ export async function attachStreamListener(taskId: string, conversationId: strin
           const description =
             typeof ev.arguments?.description === 'string' ? ev.arguments.description : '';
           const prompt = typeof ev.arguments?.prompt === 'string' ? ev.arguments.prompt : '';
-          void handleSubTaskFallback(taskId, subMeta, description, prompt);
+          void handleSubTaskFallback(handler, taskId, subMeta, description, prompt);
         }
         handleToolResult(handler, taskId, conversationId, loadingAssistantId, ev);
         return;
       }
 
       if (hasEventType(ev, 'subTaskStart')) {
-        handleSubTaskStart(taskId, ev as unknown as SubTaskStartPayload);
-        return;
-      }
-
-      if (hasEventType(ev, 'approvalRequest')) {
-        handler.setPendingApproval({
-          ...(ev as unknown as ApprovalRequestPayload),
-          taskId,
-        });
-        return;
-      }
-
-      if (hasEventType(ev, 'questionRequest')) {
-        handleQuestionRequest(handler, {
-          ...(ev as unknown as QuestionRequestPayload),
-          taskId,
-        } as QuestionRequestPayload);
+        handleSubTaskStart(handler, taskId, ev as unknown as SubTaskStartPayload);
         return;
       }
 
@@ -379,7 +355,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'usage')) {
         const usageEv = ev as unknown as { type: 'usage'; usage: TokenUsage };
-        useTaskStore.getState().accumulateTokenUsage(usageEv.usage);
+        handler.accumulateTokenUsage(usageEv.usage);
         return;
       }
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import MobileSheet from './ui/MobileSheet';
@@ -58,10 +58,7 @@ export default function MobileMultiHostPicker({
       : [...selected, id];
     void update({
       experimentalSettings: {
-        enableWebSearch: true,
-        enableHttpFetch: true,
-        enableCloudPage: false,
-        enableHtmlRender: true,
+        ...DEFAULT_EXPERIMENTAL_SETTINGS,
         ...experimental,
         multiHostConnectionIds: next,
       },

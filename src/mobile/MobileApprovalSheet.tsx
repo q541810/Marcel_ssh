@@ -3,6 +3,7 @@ import { RISK_LEVEL_LABELS } from '@/lib/constants';
 import FileChangeView from '@/components/agent/FileChangeView';
 import MobileSheet from './ui/MobileSheet';
 import { cleanExecuteCommandArgs } from '@/components/agent/argumentFormat';
+import { toolSpec } from '@/lib/toolCatalog';
 
 interface MobileApprovalSheetProps {
   toolCall: ToolCallInfo;
@@ -41,8 +42,8 @@ export default function MobileApprovalSheet({
   queueLength = 1,
   onMinimize,
 }: MobileApprovalSheetProps) {
-  const isEditFile = toolCall.name === 'edit_file';
-  const isExecuteCommand = toolCall.name === 'bash' || toolCall.name === 'execute_command';
+  const isEditFile = toolSpec(toolCall.name)?.approvalView === 'diff';
+  const isExecuteCommand = toolSpec(toolCall.name)?.payload === 'command';
   const path =
     typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
   const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;

@@ -1,6 +1,7 @@
 import type { AgentTask } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
 import { useConversationStore } from '@/stores/conversationStore';
+import { isTaskActive, isTaskBusy } from '@/lib/agentStatus';
 
 /**
  * 计算单个 Agent Task 的视觉状态
@@ -8,7 +9,7 @@ import { useConversationStore } from '@/stores/conversationStore';
 export function getTaskVisualStatus(task?: AgentTask | null): AgentVisualStatus {
   if (!task) return 'idle';
   if (task.status === 'waiting_approval') return 'waiting_approval';
-  if (task.status === 'planning' || task.status === 'executing') return 'running';
+  if (isTaskActive(task.status)) return 'running';
   return 'idle';
 }
 
@@ -39,7 +40,7 @@ export function getConversationAgentStatus(
   }
 
   // 2. 如果有正在运行的任务（planning 或 executing）
-  if (convTasks.some((t) => t.status === 'planning' || t.status === 'executing')) {
+  if (convTasks.some((t) => isTaskActive(t.status))) {
     return 'running';
   }
 
@@ -67,7 +68,7 @@ export function getSessionAgentStatus(
     return 'waiting_approval';
   }
 
-  if (sessionTasks.some((t) => t.status === 'planning' || t.status === 'executing')) {
+  if (sessionTasks.some((t) => isTaskActive(t.status))) {
     return 'running';
   }
 
@@ -86,9 +87,5 @@ export function getSessionAgentStatus(
  * 获取全局所有运行中的任务（用于多 Agent 抽屉与计数胶囊）
  */
 export function getActiveRunningTasks(tasks: Record<string, AgentTask>): AgentTask[] {
-  return Object.values(tasks).filter(
-    (t) =>
-      !!t.sessionId &&
-      (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
-  );
+  return Object.values(tasks).filter((t) => !!t.sessionId && isTaskBusy(t.status));
 }

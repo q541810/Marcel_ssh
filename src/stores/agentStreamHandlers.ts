@@ -1,14 +1,14 @@
 import type {
   AgentMessage,
   ToolResultPayload,
-  ApprovalRequestPayload,
   AgentTaskPlan,
+  TokenUsage,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
-  QuestionRequestPayload,
 } from '@/lib/types';
 import { applyCompactionSplice } from './messageConversion';
 import { extractPartialStringField } from '@/lib/partialJson';
+import { toolPartialPreview } from '@/lib/toolCatalog';
 import { useConversationStore } from './conversationStore';
 import { useTaskStore } from './taskStore';
 
@@ -19,12 +19,37 @@ import { useTaskStore } from './taskStore';
 export interface StreamHandler {
   updateMessages(conversationId: string, updater: (msgs: AgentMessage[]) => AgentMessage[]): void;
   updateTaskStatus(taskId: string, status: string): void;
-  setPendingApproval(approval: ApprovalRequestPayload | null): void;
-  setPendingQuestion(question: QuestionRequestPayload | null): void;
   getTaskStatus(taskId: string): string | undefined;
   getMessages(conversationId: string): AgentMessage[];
   clearActiveTaskIf(taskId: string): void;
   setPlan(taskId: string, plan: AgentTaskPlan): void;
+  /** 查一条 task 的关键字段（子 agent 需要父任务的 session/conversation 才能继承）。
+   *  返回 undefined 表示内存里没有这条任务（常见于重启后只读到部分历史）。 */
+  getTask(taskId: string): { conversationId: string; sessionId: string; status: string } | undefined;
+  /** 查一条 conversation 的归属信息（子对话注册时需要 connectionId）。 */
+  getConversation(conversationId: string): { connectionId?: string; id: string } | undefined;
+  /** 登记一条子任务。子任务是流编排创建的（不是 `taskStore.startTask` 那条主任务路径），
+   *  所以由这里单独暴露一个写入口，而不是让 manager 直接 setState。 */
+  registerSubTask(task: {
+    id: string;
+    sessionId: string;
+    conversationId: string;
+    prompt: string;
+    mode: string;
+    status: string;
+    parentTaskId: string;
+  }): void;
+  /** 注册一个子对话条目（流开始时显示骨架）。参数顺序对齐 `conversationStore.registerSubConversation`。 */
+  registerSubConversation(args: {
+    conversationId: string;
+    connectionId: string;
+    title: string;
+    subTaskId: string;
+    prompt: string;
+    parentConversationId: string;
+  }): string | null;
+  /** 累加 token 用量（usage 事件触发的累计写）。 */
+  accumulateTokenUsage(usage: TokenUsage): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +188,7 @@ export function handleToolCallDelta(
   // 节流 ~120ms：delta 高速到达时避免每个 delta 都触发全量消息列表渲染
   //（最终完整参数由 parse 成功分支 / toolResult 兜底，不怕丢尾巴）。
   if (parsed === null) {
-    const preview = PARTIAL_PREVIEW_TOOLS.get(
+    const preview = toolPartialPreview(
       getPendingToolName(handler, conversationId, pendingMsgId) ?? '',
     );
     if (!preview) return;
@@ -203,17 +228,6 @@ export function handleToolCallDelta(
     return newMsgs;
   });
 }
-
-/**
- * 支持流式部分参数预览的工具 → 要提取的字段。
- *
- * `primary` 是驱动预览的长字符串字段：提取不到就不发预览。
- * `companions` 是顺带提取的短字段（标题、模式等），缺失时直接省略。
- * 字段名跟着工具登记在这里，提取逻辑本身不认识任何具体工具。
- */
-const PARTIAL_PREVIEW_TOOLS: Map<string, { primary: string; companions: string[] }> = new Map([
-  ['render_html', { primary: 'fragment', companions: ['title', 'mode'] }],
-]);
 
 /** toolCallId → 上次 partial 提取刷新的时间戳（节流用）。 */
 const partialFlushAt: Map<string, number> = new Map();
@@ -590,7 +604,6 @@ export function handleDone(
   // 不在此处清空 activeTaskId：保留它让 PlanList 能继续展示已完成的计划。
   // activeTaskId 会在用户发新消息（agentStartTask 生成新 taskId）或切换会话
   // （conversationStore.switchConversation → clearActiveTask）时自然更新。
-  handler.setPendingApproval(null);
 }
 
 export function handleError(
@@ -633,7 +646,6 @@ export function handleError(
   });
 
   // 不在此处清空 activeTaskId（同 handleDone 的理由）
-  handler.setPendingApproval(null);
 }
 
 export function handleRetrying(
@@ -913,13 +925,3 @@ export function handleModelApprovalDone(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Question request handler
-// ---------------------------------------------------------------------------
-
-export function handleQuestionRequest(
-  handler: StreamHandler,
-  ev: QuestionRequestPayload,
-) {
-  handler.setPendingQuestion(ev);
-}

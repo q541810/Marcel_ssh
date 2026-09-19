@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { useTauriEvent } from '@/hooks/useTauriEvent';
 import { sftpCompressArchive, sshExecLongCancel } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/sftp-helpers';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
@@ -56,13 +56,30 @@ export default function CompressModal({
   const [showOutput, setShowOutput] = useState(false);
 
   const taskIdRef = useRef<string | null>(null);
+  // 镜像 phase，供「打开时初始化默认值」那个 effect 判断有没有在途压缩。
+  // 写在 effect 里而不是渲染期：并发渲染下渲染期写 ref 会留下「从未 commit 的值」，
+  // 被丢弃的渲染可能让后续读到过期的 phase。
+  const phaseRef = useRef<Phase>('idle');
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
   const startTimeRef = useRef<number | null>(null);
-  const unlistenRefs = useRef<UnlistenFn[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 打开时初始化默认值
+  // 打开时初始化默认值。
+  //
+  // 本 effect 的依赖含 `remoteDir`：压缩途中目录一变就会重跑，此时**整段都要
+  // 跳过**。只保住 taskId 是不够的 —— 那样虽然事件还能到达，但 `setPhase('idle')`
+  // 会让 `isRunning` 变 false、关闭保护（`phase === 'compressing'`）失效，用户既
+  // 看不到进度、又能关掉窗口，甚至再点一次「开始压缩」起第二个后端任务，而第一个
+  // 任务的 id 已被覆盖、再也取消不掉。
+  //
+  // 当前 UI 下压缩中改不了目录（覆盖层是 fixed inset-0，挡住了面包屑/文件树/标签
+  // 栏，也没有全局快捷键），所以这条守卫是把「压缩不被目录变化打断」这个不变量
+  // 落在本组件内，而不是依赖远端 UI 结构继续成立。
   useEffect(() => {
     if (!open) return;
+    if (phaseRef.current === 'compressing') return;
     setFormat('tar.gz');
     setTargetPath(defaultTargetPath(remoteDir, 'tar.gz'));
     setOverwrite(false);
@@ -88,64 +105,52 @@ export default function CompressModal({
     [remoteDir, format, targetPath],
   );
 
-  // 清理事件监听 + 计时器
-  const cleanup = useCallback(() => {
-    unlistenRefs.current.forEach((fn) => fn());
-    unlistenRefs.current = [];
+  // 停止计时器（终态事件都用到）。
+  const stopTimer = useCallback(() => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
   }, []);
 
-  useEffect(() => {
-    return () => cleanup();
-  }, [cleanup]);
+  // 长命令事件：**挂载期就按稳定的事件名订阅**，用 taskIdRef 过滤出本次任务。
+  //
+  // 原来的写法是「用户点开始 → await 4 个 listen → 再发起压缩」，两头都埋着坑：
+  // 一是必须等监听就绪才能发起（否则最早的几条输出会丢），二是这 4 个 await 之间
+  // 若组件卸载，cleanup 已经跑完，后拿到的 unlisten 就再也没人回收。改成挂载期
+  // 订阅后，顺序问题与泄漏问题同时消失 —— 订阅早就绪，退订随组件生命周期走。
+  // 别的长命令事件会被 taskId 过滤掉，行为与之前一致。
+  useTauriEvent<LongOutputEvent>('ssh-long-output', (payload) => {
+    if (payload.toolCallId !== taskIdRef.current) return;
+    setOutputChunks((prev) => {
+      const next = [...prev, payload.chunk];
+      // 限制累积 200 条，避免内存炸
+      return next.length > 200 ? next.slice(-200) : next;
+    });
+  });
 
-  // 监听长命令事件
-  const startListening = useCallback(
-    async (taskId: string) => {
-      const unlistenOutput = await listen<LongOutputEvent>('ssh-long-output', (e) => {
-        if (e.payload.toolCallId !== taskId) return;
-        setOutputChunks((prev) => {
-          const next = [...prev, e.payload.chunk];
-          // 限制累积 200 条，避免内存炸
-          return next.length > 200 ? next.slice(-200) : next;
-        });
-      });
-      const unlistenDone = await listen<TaskEvent>('ssh-long-done', (e) => {
-        if (e.payload.taskId !== taskId) return;
-        setPhase('done');
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        // 通知父组件刷新
-        setTimeout(() => {
-          onCompressed();
-        }, 0);
-      });
-      const unlistenError = await listen<TaskEvent>('ssh-long-error', (e) => {
-        if (e.payload.taskId !== taskId) return;
-        setPhase('error');
-        setError(e.payload.message ?? '压缩失败');
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-      });
-      const unlistenCancelled = await listen<TaskEvent>('ssh-long-cancelled', (e) => {
-        if (e.payload.taskId !== taskId) return;
-        setPhase('cancelled');
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-      });
-      unlistenRefs.current = [unlistenOutput, unlistenDone, unlistenError, unlistenCancelled];
-    },
-    [onCompressed],
-  );
+  useTauriEvent<TaskEvent>('ssh-long-done', (payload) => {
+    if (payload.taskId !== taskIdRef.current) return;
+    setPhase('done');
+    stopTimer();
+    // 通知父组件刷新
+    setTimeout(() => {
+      onCompressed();
+    }, 0);
+  });
+
+  useTauriEvent<TaskEvent>('ssh-long-error', (payload) => {
+    if (payload.taskId !== taskIdRef.current) return;
+    setPhase('error');
+    setError(payload.message ?? '压缩失败');
+    stopTimer();
+  });
+
+  useTauriEvent<TaskEvent>('ssh-long-cancelled', (payload) => {
+    if (payload.taskId !== taskIdRef.current) return;
+    setPhase('cancelled');
+    stopTimer();
+  });
 
   const handleStart = useCallback(async () => {
     if (!targetPath.trim()) {
@@ -168,8 +173,6 @@ export default function CompressModal({
       }
     }, 1000);
 
-    await startListening(taskId);
-
     try {
       await sftpCompressArchive(sessionId, remoteDir, format, targetPath.trim(), overwrite, taskId);
       // 成功：done 事件已经处理 phase，这里不重复设置
@@ -188,7 +191,7 @@ export default function CompressModal({
         timerRef.current = null;
       }
     }
-  }, [targetPath, sessionId, remoteDir, format, overwrite, startListening]);
+  }, [targetPath, sessionId, remoteDir, format, overwrite]);
 
   const handleCancel = useCallback(async () => {
     const tid = taskIdRef.current;
@@ -209,9 +212,9 @@ export default function CompressModal({
   const handleClose = useCallback(() => {
     // 压缩中不允许直接关闭，必须先取消
     if (phase === 'compressing') return;
-    cleanup();
+    stopTimer();
     requestClose();
-  }, [phase, cleanup, requestClose]);
+  }, [phase, stopTimer, requestClose]);
 
   if (!open) return null;
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2, ArrowUpCircle } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauriEventReady } from '@/lib/tauriEvent';
 import { getPluginDir, openPluginDir, pluginUninstall, pluginUpdate, pluginInstallCancel } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useMarketStore } from '@/stores/marketStore';
@@ -202,27 +202,41 @@ function PluginCard({ manifest, appVersion, injectionStatus, updateInfo, onResta
     setOverlayOpen(true);
     setUpdating(true);
 
+    // 顺序契约：必须先等监听注册完成，再发起会引发这些事件的更新命令，否则
+    // 更新开始得比监听就绪早，前几条进度事件会丢。用 Ready 变体既保住这个顺序，
+    // 又不必自己维护「Promise resolve 之后才有值」的 unlisten 变量。
     const [unlistenProgress, unlistenDone, unlistenCancelled] = await Promise.all([
-      listen<{ installId: string; phase: string; received: number; total: number }>(
-        'plugin-install-progress',
-        (e) => {
-          if (e.payload.installId !== id) return;
-          setOverlayProgress({ received: e.payload.received, total: e.payload.total });
+      subscribeTauriEventReady<{
+        installId: string;
+        phase: string;
+        received: number;
+        total: number;
+      }>('plugin-install-progress', (payload) => {
+        if (payload.installId !== id) return;
+        setOverlayProgress({ received: payload.received, total: payload.total });
+      }),
+      subscribeTauriEventReady<{ installId: string }>(
+        'plugin-install-done',
+        (payload) => {
+          if (payload.installId !== id) return;
+          setOverlayStatus({ kind: 'done' });
+          setUpdateDone(true);
+          setUpdating(false);
+          // 回填新版本号（不触发全量 fetch，避免其它插件闪烁）
+          if (updateInfo)
+            usePluginStore.getState().patchManifest(manifest.id, {
+              version: updateInfo.marketVersion,
+            } as Partial<PluginManifest>);
         },
       ),
-      listen<{ installId: string }>('plugin-install-done', (e) => {
-        if (e.payload.installId !== id) return;
-        setOverlayStatus({ kind: 'done' });
-        setUpdateDone(true);
-        setUpdating(false);
-        // 回填新版本号（不触发全量 fetch，避免其它插件闪烁）
-        if (updateInfo) usePluginStore.getState().patchManifest(manifest.id, { version: updateInfo.marketVersion } as Partial<PluginManifest>);
-      }),
-      listen<{ installId: string }>('plugin-install-cancelled', (e) => {
-        if (e.payload.installId !== id) return;
-        setOverlayStatus({ kind: 'cancelled' });
-        setUpdating(false);
-      }),
+      subscribeTauriEventReady<{ installId: string }>(
+        'plugin-install-cancelled',
+        (payload) => {
+          if (payload.installId !== id) return;
+          setOverlayStatus({ kind: 'cancelled' });
+          setUpdating(false);
+        },
+      ),
     ]);
 
     try {

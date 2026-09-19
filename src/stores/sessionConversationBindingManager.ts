@@ -1,6 +1,7 @@
 import { useSessionStore } from './sessionStore';
 import { useConversationStore } from './conversationStore';
 import { useTaskStore } from './taskStore';
+import { isTaskBusy } from '@/lib/agentStatus';
 import type { Session } from '@/lib/types';
 
 /**
@@ -26,7 +27,7 @@ class SessionConversationBindingManager {
         !!t.sessionId &&
         liveSessions[t.sessionId] &&
         liveSessions[t.sessionId].status === 'connected' &&
-        (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
+        isTaskBusy(t.status),
     );
     if (runningTask && runningTask.sessionId) {
       const sess = liveSessions[runningTask.sessionId];
@@ -69,7 +70,7 @@ class SessionConversationBindingManager {
         t.sessionId !== excludeSessionId &&
         liveSessions[t.sessionId] &&
         liveSessions[t.sessionId].status === 'connected' &&
-        (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval')
+        isTaskBusy(t.status)
       ) {
         occupied.add(t.conversationId);
       }
@@ -187,7 +188,7 @@ class SessionConversationBindingManager {
     let hasChanged = false;
     const updatedTasks = { ...tasks };
     for (const [tid, task] of Object.entries(tasks)) {
-      if (task.sessionId === sessionId && (task.status === 'planning' || task.status === 'executing' || task.status === 'waiting_approval')) {
+      if (task.sessionId === sessionId && isTaskBusy(task.status)) {
         updatedTasks[tid] = { ...task, status: 'cancelled' };
         hasChanged = true;
       }
@@ -196,8 +197,6 @@ class SessionConversationBindingManager {
       useTaskStore.setState({
         tasks: updatedTasks,
         activeTaskId: taskStore.activeTaskId && updatedTasks[taskStore.activeTaskId]?.status === 'cancelled' ? null : taskStore.activeTaskId,
-        pendingApproval: null,
-        pendingQuestion: null,
       });
     }
   }

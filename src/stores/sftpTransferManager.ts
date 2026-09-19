@@ -1,4 +1,4 @@
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeTauriEvent } from "@/lib/tauriEvent";
 import { formatSize } from "@/lib/sftp-helpers";
 import {
   formatFolderUploadStatus,
@@ -13,16 +13,6 @@ import type { SysopenStateEvent } from "@/lib/tauri";
 // Listener handles (module-level, persist across component unmounts)
 // ---------------------------------------------------------------------------
 
-let progressUnlisten: UnlistenFn | null = null;
-let doneUnlisten: UnlistenFn | null = null;
-let folderStatusUnlisten: UnlistenFn | null = null;
-let downloadProgressUnlisten: UnlistenFn | null = null;
-let downloadDoneUnlisten: UnlistenFn | null = null;
-let sysopenStateUnlisten: UnlistenFn | null = null;
-let agentStartUnlisten: UnlistenFn | null = null;
-let agentFinishedUnlisten: UnlistenFn | null = null;
-
-let attached = false;
 
 interface ProgressPayload {
   uploadId: string;
@@ -73,18 +63,39 @@ function progressText(
 // Public API
 // ---------------------------------------------------------------------------
 
+let detachTransferSubscriptions: (() => void) | null = null;
+
 /** Attach module-level listeners for SFTP upload/download progress events.
- *  Idempotent: subsequent calls are no-ops. */
-export async function attachTransferListeners() {
-  if (attached) return;
+ *
+ *  Idempotent: subsequent calls are no-ops —— 守卫是**同步**的，因为
+ *  `subscribeTauriEvent` 同步返回取消函数。旧实现把 `attached = true` 写在 8 个
+ *  `await listen` 之后，StrictMode 的两次并发调用都能通过守卫，于是 8 条监听变成
+ *  16 条，且先到的那批永远没人回收。
+ *
+ *  同步化之后 `detachTransferListeners` 也不会再「在订阅就绪前被调用」，
+ *  模块级的 8 个 unlisten 变量随之消失。 */
+export function attachTransferListeners() {
+  let progressUnlisten: (() => void) | null = null;
+  let doneUnlisten: (() => void) | null = null;
+  let folderStatusUnlisten: (() => void) | null = null;
+  let downloadProgressUnlisten: (() => void) | null = null;
+  let downloadDoneUnlisten: (() => void) | null = null;
+  let sysopenStateUnlisten: (() => void) | null = null;
+  let agentStartUnlisten: (() => void) | null = null;
+  let agentFinishedUnlisten: (() => void) | null = null;
+
+  if (detachTransferSubscriptions) return;
 
   initTransferScheduler();
 
-  try {
-    progressUnlisten = await listen<ProgressPayload>(
-      "sftp-upload-progress",
-      (event) => {
-        const { uploadId, written, total } = event.payload;
+  // 订阅区。原来是 `try { 8 个 await listen } catch { detach; throw }`：任一条订阅
+  // 失败就整段放弃并把异常抛给调用方（App 的 effect 没有 catch，会变成未捕获
+  // 异常）。现在每条订阅各自容错（失败只记日志，其余照常生效），所以不再需要
+  // catch；这个作用域块只是把订阅声明收在一起。
+  {
+    progressUnlisten = subscribeTauriEvent<ProgressPayload>(
+        "sftp-upload-progress", (payload) => {
+        const { uploadId, written, total } = payload;
         const state = useTransferStore.getState();
         const item = state.items[uploadId];
         if (!item || (item.status !== "active" && item.status !== "cancelling"))
@@ -111,8 +122,9 @@ export async function attachTransferListeners() {
       },
     );
 
-    doneUnlisten = await listen<DonePayload>("sftp-upload-done", (event) => {
-      const { uploadId } = event.payload;
+    doneUnlisten = subscribeTauriEvent<DonePayload>(
+         "sftp-upload-done", (payload) => {
+      const { uploadId } = payload;
       const state = useTransferStore.getState();
       const item = state.items[uploadId];
       // folder-upload 以命令 resolve 为完成信号（done 事件只代表压缩包上传完毕）
@@ -125,25 +137,23 @@ export async function attachTransferListeners() {
       });
     });
 
-    folderStatusUnlisten = await listen<FolderStatusPayload>(
-      "sftp-folder-upload-status",
-      (event) => {
-        const { uploadId, phase } = event.payload;
+    folderStatusUnlisten = subscribeTauriEvent<FolderStatusPayload>(
+         "sftp-folder-upload-status", (payload) => {
+        const { uploadId, phase } = payload;
         const state = useTransferStore.getState();
         const item = state.items[uploadId];
         if (!item || item.kind !== "folder-upload") return;
         if (item.status !== "active" && item.status !== "cancelling") return;
         state.updateItem(uploadId, {
           phase,
-          statusText: formatFolderUploadStatus(event.payload),
+          statusText: formatFolderUploadStatus(payload),
         });
       },
     );
 
-    downloadProgressUnlisten = await listen<DownloadProgressPayload>(
-      "sftp-download-progress",
-      (event) => {
-        const { downloadId, written, total } = event.payload;
+    downloadProgressUnlisten = subscribeTauriEvent<DownloadProgressPayload>(
+         "sftp-download-progress", (payload) => {
+        const { downloadId, written, total } = payload;
         const state = useTransferStore.getState();
         const item = state.items[downloadId];
         if (!item || item.kind !== "download") return;
@@ -156,10 +166,9 @@ export async function attachTransferListeners() {
       },
     );
 
-    downloadDoneUnlisten = await listen<DownloadDonePayload>(
-      "sftp-download-done",
-      (event) => {
-        const { downloadId } = event.payload;
+    downloadDoneUnlisten = subscribeTauriEvent<DownloadDonePayload>(
+         "sftp-download-done", (payload) => {
+        const { downloadId } = payload;
         const state = useTransferStore.getState();
         const item = state.items[downloadId];
         if (!item || item.kind !== "download" || item.status !== "active")
@@ -175,10 +184,9 @@ export async function attachTransferListeners() {
 
     // sysopen 状态：统一驱动「下载」与「监视回传」两张卡片。
     // 不复用标准 progress/done 事件——那些会强制把文案覆盖为「下载完成/上传完成」，丢失 sysopen 语义。
-    sysopenStateUnlisten = await listen<SysopenStateEvent>(
-      "sftp-sysopen-state",
-      (event) => {
-        const { downloadId, uploadId, phase } = event.payload;
+    sysopenStateUnlisten = subscribeTauriEvent<SysopenStateEvent>(
+        "sftp-sysopen-state", (payload) => {
+        const { downloadId, uploadId, phase } = payload;
         const state = useTransferStore.getState();
         const dl = state.items[downloadId];
         const ul = state.items[uploadId];
@@ -270,10 +278,9 @@ export async function attachTransferListeners() {
     // Agent 传输开始事件：后端 agent 工具发起传输时通知前端建传输中心条目。
     // 条目 source='agent'——只展示/可取消，不进 user 双道调度（后端互斥
     // 保证 agent 传输一次一个）。后续 progress/done 事件按同一 id 更新。
-    agentStartUnlisten = await listen<AgentTransferStartPayload>(
-      "agent-transfer-start",
-      (event) => {
-        const p = event.payload;
+    agentStartUnlisten = subscribeTauriEvent<AgentTransferStartPayload>(
+        "agent-transfer-start", (payload) => {
+        const p = payload;
         const store = useTransferStore.getState();
         // 幂等：同 id 已存在（重放/重复事件）不覆盖。
         if (store.items[p.transferId]) return;
@@ -299,12 +306,13 @@ export async function attachTransferListeners() {
     );
     // Agent 传输终态事件：条目置 done/error/cancelled（agent 条目不经前端
     // scheduler，终态由后端显式通知；否则会永久停在 active/cancelling）。
-    agentFinishedUnlisten = await listen<{
+    agentFinishedUnlisten = subscribeTauriEvent<{
       transferId: string;
       status: "done" | "error" | "cancelled";
       message?: string | null;
-    }>("agent-transfer-finished", (event) => {
-      const { transferId, status, message } = event.payload;
+    }>(
+        "agent-transfer-finished", (payload) => {
+      const { transferId, status, message } = payload;
       const store = useTransferStore.getState();
       const item = store.items[transferId];
       if (!item || item.source !== "agent") return;
@@ -329,30 +337,31 @@ export async function attachTransferListeners() {
         });
       }
     });
-    attached = true;
-  } catch (err) {
-    detachTransferListeners();
-    throw err;
   }
+
+  const offs = [
+    progressUnlisten,
+    doneUnlisten,
+    folderStatusUnlisten,
+    downloadProgressUnlisten,
+    downloadDoneUnlisten,
+    sysopenStateUnlisten,
+    agentStartUnlisten,
+    agentFinishedUnlisten,
+  ].filter((off): off is () => void => typeof off === 'function');
+
+  // 守卫一旦设上就不再自动重试：订阅原语对每条事件各自容错（失败只记日志），
+  // 所以某条 `listen` 失败时这个模块会认为自己已 attach。已知代价 —— 那种情况下
+  // 该事件在本次进程内收不到（直到重启）。这与改造前一致（旧的 listen 失败同样
+  // 静默无事件），只是少抛了一条未捕获异常。实践里 listen 失败基本只发生在
+  // 浏览器预览（没有 Tauri 上下文）。
+  detachTransferSubscriptions = () => {
+    detachTransferSubscriptions = null;
+    offs.forEach((off) => off());
+  };
 }
 
 /** Detach all module-level listeners. Call only on app teardown. */
 export function detachTransferListeners() {
-  progressUnlisten?.();
-  doneUnlisten?.();
-  folderStatusUnlisten?.();
-  downloadProgressUnlisten?.();
-  downloadDoneUnlisten?.();
-  sysopenStateUnlisten?.();
-  agentStartUnlisten?.();
-  agentFinishedUnlisten?.();
-  progressUnlisten = null;
-  doneUnlisten = null;
-  folderStatusUnlisten = null;
-  downloadProgressUnlisten = null;
-  downloadDoneUnlisten = null;
-  sysopenStateUnlisten = null;
-  agentStartUnlisten = null;
-  agentFinishedUnlisten = null;
-  attached = false;
+  detachTransferSubscriptions?.();
 }

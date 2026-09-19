@@ -31,7 +31,7 @@ import {
 } from "@/lib/agentScroll";
 import { groupConversationsByDate } from "@/lib/dateGrouping";
 import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
-import type { AgentMode, AgentMessage, QuestionAnswer } from "@/lib/types";
+import type { AgentMode, AgentMessage } from "@/lib/types";
 import {
   type PendingImage,
   revokePendingImages,
@@ -55,8 +55,6 @@ import { bus } from "@/plugins/injection/bus";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
 import MultiHostPicker from "./MultiHostPicker";
 import AgentMessageList from "./AgentMessageList";
-import ApprovalDialog from "./ApprovalDialog";
-import QuestionPanel from "./QuestionPanel";
 import PlanList from "./PlanList";
 import AgentCommandMenu, {
   type AgentCommandMenuHandle,
@@ -129,11 +127,6 @@ export default function AgentPanel() {
     inputDraft: input,
     setInputDraft: setInput,
     isRunning,
-    pendingApproval,
-    pendingQuestion,
-    approveCurrent,
-    rejectCurrent,
-    submitAnswer,
     conversations,
     activeConversationId,
     newConversation,
@@ -778,35 +771,6 @@ export default function AgentPanel() {
 
   const handleStop = () => {
     stopActiveTask();
-  };
-
-  const handleApprove = async () => {
-    if (pendingApproval) {
-      await approveCurrent(pendingApproval.toolCallId);
-    }
-  };
-
-  const handleReject = async () => {
-    if (pendingApproval) {
-      await rejectCurrent(pendingApproval.toolCallId);
-    }
-  };
-
-  const handleSubmitQuestion = async (
-    questionId: string,
-    answers: QuestionAnswer[],
-  ) => {
-    await submitAnswer(questionId, answers);
-  };
-
-  const handleCancelQuestion = async () => {
-    const answers: QuestionAnswer[] = (pendingQuestion?.questions ?? []).map(
-      () => ({
-        selected: [],
-        custom: "",
-      }),
-    );
-    await submitAnswer(pendingQuestion!.questionId, answers);
   };
 
   const handleNewConversation = async () => {

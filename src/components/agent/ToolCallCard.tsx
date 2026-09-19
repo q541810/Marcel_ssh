@@ -5,6 +5,17 @@ import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { readWebToolStatus, webToolChips, webToolNotice } from '@/lib/webToolStatus';
 import type { ChipTone } from '@/lib/webToolStatus';
+import {
+  asArgString,
+  fileChangeToolName,
+  isPlanTool,
+  isSubagentTool,
+  toolDisplayName,
+  toolIconPaths,
+  toolLabel,
+  toolPreview,
+  toolSpec,
+} from '@/lib/toolCatalog';
 
 /** 状态小标记的配色：中性=后端标识，warning=降级/被网站拦截。 */
 const CHIP_TONE_CLASS: Record<ChipTone, string> = {
@@ -21,133 +32,19 @@ interface Props {
   onExpandChange?: (messageId: string, expanded: boolean) => void;
 }
 
-const TOOL_ICONS: Record<string, JSX.Element> = {
-  connection_info: (
+/**
+ * 工具标题图标。路径表在 `@/lib/toolCatalog`（一个工具一行），这里只负责用
+ * 统一的描边 svg 包起来 —— 13 个图标原本各抄一遍 `<svg className="w-3.5 h-3.5"
+ * fill="none" stroke="currentColor" viewBox="0 0 24 24">`，改尺寸要改 13 处。
+ */
+function ToolIcon({ toolName }: { toolName: string }) {
+  return (
     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+      {toolIconPaths(toolName).map((d, i) => (
+        <path key={i} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={d} />
+      ))}
     </svg>
-  ),
-  bash: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-    </svg>
-  ),
-  // 兼容历史消息（旧工具名 execute_command）
-  execute_command: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-    </svg>
-  ),
-  read_file: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
-  ),
-  write_file: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-    </svg>
-  ),
-  list_directory: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-    </svg>
-  ),
-  search_files: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
-  ),
-  // 联网搜索：放大镜 + 地球经纬（与 read_file/search_files 区分开）
-  web_search: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.65 16.65A7.5 7.5 0 105.35 5.35a7.5 7.5 0 0011.3 11.3z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7.5 11.5h11M13 5.6a13 13 0 013.3 5.9 13 13 0 01-3.3 5.9 13 13 0 01-3.3-5.9 13 13 0 013.3-5.9z" />
-    </svg>
-  ),
-  // 网页获取：地球 + 向下取回
-  http_get: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a9 9 0 100 18 9 9 0 000-18z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.6 9h16.8M3.6 15h16.8" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3a15.3 15.3 0 014 9 15.3 15.3 0 01-4 9 15.3 15.3 0 01-4-9 15.3 15.3 0 014-9z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 21v4" />
-    </svg>
-  ),
-  system_info: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-    </svg>
-  ),
-  ask_user: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-    </svg>
-  ),
-  // subagent（派发子agent）工具图标；task 键保留作历史消息兼容
-  subagent: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4" />
-    </svg>
-  ),
-  task: (
-    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4" />
-    </svg>
-  ),
-};
-
-const DEFAULT_ICON = (
-  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-  </svg>
-);
-
-/** Safely extract a string value from a JSON value (handles both direct strings and {value: "..."}) */
-function asStr(v: unknown): string | undefined {
-  if (typeof v === 'string') return v;
-  if (v && typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    if (typeof o.value === 'string') return o.value;
-    if (typeof o.text === 'string') return o.text;
-  }
-  return undefined;
-}
-
-function asStrArray(v: unknown): string[] | undefined {
-  if (Array.isArray(v)) {
-    const arr = v.map((item) => asStr(item)).filter(Boolean) as string[];
-    if (arr.length > 0) return arr;
-  }
-  return undefined;
-}
-
-export const PLAN_TOOL_LABELS: Record<string, string> = {
-  create_plan: '创建plan',
-  update_plan_item: '更新plan步骤',
-  edit_plan: '编辑plan',
-};
-
-export function isPlanTool(toolName: string): boolean {
-  return toolName in PLAN_TOOL_LABELS;
-}
-
-/** 子agent派发工具（现名 subagent；兼容旧历史消息的 task）。 */
-function isSubagentTool(toolName: string): boolean {
-  return toolName === 'subagent' || toolName === 'task';
-}
-
-/** Extract a short command preview from tool arguments */
-function formatToolName(toolName: string): { display: string; isSkill: boolean } {
-  if (toolName.startsWith('skill_')) {
-    return { display: `SKILL ${toolName.slice(6)}`, isSkill: true };
-  }
-  if (isSubagentTool(toolName)) {
-    return { display: '子agent', isSkill: false };
-  }
-  return { display: toolName, isSkill: false };
+  );
 }
 
 /** 打开 subagent 工具对应的子agent对话（查看完整调研过程）。 */
@@ -156,65 +53,6 @@ function openSubConversation(metadata: Record<string, unknown> | undefined) {
   if (typeof convId === 'string' && convId) {
     void useConversationStore.getState().switchConversation(convId);
   }
-}
-
-export function getCommandPreview(toolName: string, args: Record<string, unknown> | undefined): string {
-  if (!args) return '';
-
-  if (toolName.startsWith('skill_')) return '';
-  if (toolName === 'bash' || toolName === 'execute_command') {
-    const cmd = asStr(args.command);
-    if (cmd) {
-      const preview = cmd.length > 40 ? cmd.slice(0, 40) + '...' : cmd;
-      return `$ ${preview}`;
-    }
-  }
-  if (toolName === 'read_file' || toolName === 'write_file' || toolName === 'edit_file') {
-    const path = asStr(args.path);
-    if (path) return path;
-  }
-  if (toolName === 'list_directory') {
-    const path = asStr(args.path);
-    if (path) return path;
-    return '/';
-  }
-  if (toolName === 'search_files') {
-    const pattern = asStr(args.pattern);
-    const path = asStr(args.path);
-    const preview = `${pattern || ''} ${path || ''}`.trim();
-    if (preview) return preview;
-  }
-  if (toolName === 'web_search') {
-    const query = asStr(args.query);
-    if (query) return query;
-  }
-  if (toolName === 'ask_user') {
-    const questions = args.questions;
-    if (Array.isArray(questions) && questions.length > 0) {
-      const firstQ = questions[0] as Record<string, unknown> | undefined;
-      const header = asStr(firstQ?.header) ?? asStr(firstQ?.question);
-      const preview = header ? (header.length > 40 ? header.slice(0, 40) + '...' : header) : '';
-      const count = questions.length > 1 ? ` +${questions.length - 1} 题` : '';
-      return `? ${preview}${count}`;
-    }
-  }
-  if (toolName === 'http_get') {
-    const url = asStr(args.url);
-    if (url) return url;
-    const urls = asStrArray(args.urls);
-    if (urls) {
-      if (urls.length === 1) return urls[0];
-      const first = urls[0].length > 40 ? urls[0].slice(0, 40) + '...' : urls[0];
-      return `${first} +${urls.length - 1} more`;
-    }
-  }
-  if (isSubagentTool(toolName)) {
-    const description = asStr(args.description);
-    const prompt = asStr(args.prompt);
-    const preview = description || prompt || '';
-    return preview.length > 40 ? preview.slice(0, 40) + '...' : preview;
-  }
-  return '';
 }
 
 function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props) {
@@ -292,7 +130,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {
     const tr = message.toolResult;
-    const { display: displayName, isSkill } = formatToolName(tr.toolName);
+    const { display: displayName, isSkill } = toolDisplayName(tr.toolName);
     // Skill tools render as thinking-style text, not as cards
     if (isSkill) {
       return (
@@ -308,13 +146,14 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       return (
         <div className="flex justify-start my-1">
           <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{PLAN_TOOL_LABELS[tr.toolName]}</span>
+            <span>{toolLabel(tr.toolName)}</span>
           </div>
         </div>
       );
     }
-    const icon = TOOL_ICONS[tr.toolName] ?? DEFAULT_ICON;
-    const preview = getCommandPreview(tr.toolName, tr.arguments);
+    const preview = toolPreview(tr.toolName, tr.arguments);
+    // 参数主体是文件改动的工具展开后渲染 diff；不认识的工具回退原始输出。
+    const fileChangeTool = fileChangeToolName(tr.toolName);
     const isExecuting = message.isExecuting;
     const hasOutput = !!tr.result;
     const showOutput = (isExecuting && hasOutput) || expanded;
@@ -328,7 +167,8 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         : '';
     // host 参数仅对支持多机目标的工具（bash/execute_command/upload_file/
     // download_file/subagent/task）有意义；其他工具即使误传也忽略。
-    const argHost = asStr((tr.arguments as Record<string, unknown> | undefined)?.host) ?? '';
+    const argHost =
+      asArgString((tr.arguments as Record<string, unknown> | undefined)?.host) ?? '';
     const targetHost = metaHost || argHost;
     // 截断上限 = min(绝对上限 10, 机器集合因子, 卡片宽度因子)，且不低于下限。
     // - 集合因子：勾选服务器越多越收紧（120/count：5 台=24 但被 10 封顶，
@@ -377,7 +217,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           <div className="flex items-center justify-between px-3 py-1.5 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
-                {icon}
+                <ToolIcon toolName={tr.toolName} />
                 <span>{displayName}</span>
               </span>
               {targetHost && (
@@ -534,8 +374,8 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </div>
         )}
         {expanded && !isExecuting && (
-          tr.success && (tr.toolName === 'write_file' || tr.toolName === 'edit_file') ? (
-            <FileChangeView toolName={tr.toolName} arguments={tr.arguments || {}} metadata={tr.metadata} />
+          tr.success && fileChangeTool ? (
+            <FileChangeView toolName={fileChangeTool} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
             <div className="min-w-0 border-t border-zinc-700/50 px-3 py-1.5">
               {isSubagentTool(tr.toolName) && tr.success && (
@@ -563,7 +403,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   // Handle assistant messages with toolCall (live streaming tool call info)
   if (message.toolCall) {
     const tc = message.toolCall;
-    const { display: displayName, isSkill } = formatToolName(tc.name);
+    const { display: displayName, isSkill } = toolDisplayName(tc.name);
     // Skill tools render as thinking-style text, not as cards
     if (isSkill) {
       return (
@@ -579,17 +419,17 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       return (
         <div className="flex justify-start my-1">
           <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{PLAN_TOOL_LABELS[tc.name]}</span>
+            <span>{toolLabel(tc.name)}</span>
           </div>
         </div>
       );
     }
-    const icon = TOOL_ICONS[tc.name] ?? DEFAULT_ICON;
-    const preview = getCommandPreview(tc.name, tc.arguments);
-    const timeoutSecs = tc.name === 'bash' || tc.name === 'execute_command' ? commandTimeoutSecs : 0;
+    const preview = toolPreview(tc.name, tc.arguments);
+    const timeoutSecs = toolSpec(tc.name)?.payload === 'command' ? commandTimeoutSecs : 0;
     // 多机操控：发起瞬间即显示目标机器（参数 host）。此分支无结果 metadata，
     // 只能从参数读；真正执行/完成后由 toolResult 分支的权威 label 接管。
-    const tcHost = asStr((tc.arguments as Record<string, unknown> | undefined)?.host) ?? '';
+    const tcHost =
+      asArgString((tc.arguments as Record<string, unknown> | undefined)?.host) ?? '';
     // 按码点截断（机器名可能含中文/emoji）；tooltip 给全名。
     const tcHostChars = Array.from(tcHost);
     const tcDisplayHost =
@@ -600,7 +440,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         <div className="flex items-center justify-between px-3 py-1.5">
           <div className="flex items-center gap-2 min-w-0">
             <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
-              {icon}
+              <ToolIcon toolName={tc.name} />
               <span>{displayName}</span>
             </span>
             {tcHost && (

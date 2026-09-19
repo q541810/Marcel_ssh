@@ -11,6 +11,10 @@ import MobileUpdateProgress from './MobileUpdateProgress';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
+import {
+  attachTransferListeners,
+  detachTransferListeners,
+} from '@/stores/sftpTransferManager';
 import { useJobStore } from '@/stores/jobStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import { mobileSetAppForeground } from '@/lib/tauri';
@@ -40,13 +44,20 @@ export default function MobileApp() {
     // 更新状态：订阅后端 update://state + 拉取本机能力（与桌面 AppHeader 同一入口，
     // 幂等）。移动端的更新浮层/进度条都由这份状态驱动，不再各自做一次性检查。
     void useUpdateStore.getState().init().catch(() => {});
-    void initInteractionListener();
+    const detachInteractions = initInteractionListener();
     const detachJobs = useJobStore.getState().initEventListener();
+    // 传输监听器：**在这里 attach 而不是只依赖 bootstrap**。
+    // bootstrap 里仍会调一次（幂等，保留启动序列的完整性），但它是
+    // `bootstrapStarted` 一次性守卫的，一旦本组件真的卸载再挂载就没法再 attach。
+    // attach/detach 写在同一个 effect 里，两者才对称。
+    attachTransferListeners();
     // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
     // 作业靠这次全量拉取回到 UI；只 upsert 合并，不覆盖事件实时状态）
     void useJobStore.getState().fetchJobs();
     return () => {
+      detachInteractions();
       detachJobs();
+      detachTransferListeners();
     };
   }, []);
 

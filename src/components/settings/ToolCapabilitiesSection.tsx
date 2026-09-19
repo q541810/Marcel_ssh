@@ -11,7 +11,7 @@ import Toggle from '@/components/ui/Toggle';
 import Select from '@/components/ui/Select';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import * as tauri from '@/lib/tauri';
 
@@ -88,25 +88,13 @@ function MachinePicker({
   );
 }
 
-const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
-  enableWebSearch: true,
-  enableHttpFetch: true,
-  enableCloudPage: false,
-  webSearchMode: 'browser',
-  webSearchApiProvider: 'brave',
-  webSearchEndpoint: 'cn',
-  httpFetchMode: 'browser',
-  enableHtmlRender: true,
-  multiHostConnectionIds: [],
-};
-
 export function ToolCapabilitiesSection() {
   const { settings, update } = useSettingsActions();
   const hasWebSearchApiKey = useSettingsStore((s) => s.hasWebSearchApiKey);
   const [searchKeyDraft, setSearchKeyDraft] = useState('');
 
   const experimental: ExperimentalSettings = {
-    ...DEFAULT_EXPERIMENTAL,
+    ...DEFAULT_EXPERIMENTAL_SETTINGS,
     ...(settings.experimentalSettings ?? {}),
   };
 

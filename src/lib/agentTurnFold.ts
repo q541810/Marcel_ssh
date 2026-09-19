@@ -18,6 +18,7 @@
  */
 
 import type { AgentMessage } from "@/lib/types";
+import { isSubagentTool } from "@/lib/toolCatalog";
 
 /** 过程 tool 消息达到该条数才把回合收成折叠（默认折叠阈值，对齐
  *  ExplorationGroup 探索工具 4 条 / plan 2 条的同类“组折叠”直觉）。 */
@@ -66,11 +67,7 @@ export interface TurnSegment {
 }
 
 function isSubagentToolResult(msg: AgentMessage): boolean {
-  return (
-    msg.role === 'tool' &&
-    !!msg.toolResult &&
-    (msg.toolResult.toolName === 'subagent' || msg.toolResult.toolName === 'task')
-  );
+  return msg.role === 'tool' && !!msg.toolResult && isSubagentTool(msg.toolResult.toolName);
 }
 
 /** 回合内所有消息（含开头的 user）。 */

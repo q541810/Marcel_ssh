@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import { pluginWebviewSetBounds } from '@/lib/tauri';
 import { getElementRect } from './rectSync';
 import { acquire, hide, destroy } from './pluginWebviewPool';
@@ -28,8 +28,6 @@ export default function PluginWebviewSlot({ provider }: Props) {
 
     let rafId = 0;
     let animRafId = 0;
-    let unlistenLoad: UnlistenFn | null = null;
-    let unlistenEvent: UnlistenFn | null = null;
     let didFinishLoad = false;
 
     const measureRect = () => getElementRect(el);
@@ -58,26 +56,27 @@ export default function PluginWebviewSlot({ provider }: Props) {
     window.addEventListener('resize', onWinResize);
 
     // Subscribe to backend webview events for this label.
-    void listen<{ pluginId: string; phase: string; url?: string }>(
+    // 订阅原语同步返回取消函数：这个 effect 在 label / retryKey 变化时会重跑，
+    // 旧写法把 unlisten 存在局部变量里、在 `.then` 之后才赋值，重跑时若上一个
+    // 订阅尚未就绪就会漏掉退订。
+    const offPageLoad = subscribeTauriEvent<{ pluginId: string; phase: string; url?: string }>(
       `webview://page-load/${label}`,
-      (e) => {
-        if (e.payload?.phase === 'finished') {
+      (payload) => {
+        if (payload?.phase === 'finished') {
           didFinishLoad = true;
           // A successful load clears any prior transient error.
           setError(null);
           setErrorPhase(null);
-        } else if (e.payload?.phase === 'started' && !didFinishLoad) {
+        } else if (payload?.phase === 'started' && !didFinishLoad) {
           // Don't show error during a new navigation that hasn't finished yet.
         }
       },
-    ).then((fn) => {
-      unlistenLoad = fn;
-    });
+    );
 
-    void listen<{ pluginId: string; event: string }>(
+    const offWebviewEvent = subscribeTauriEvent<{ pluginId: string; event: string }>(
       `webview://event/${label}`,
-      (e) => {
-        const kind = e.payload?.event ?? '';
+      (payload) => {
+        const kind = payload?.event ?? '';
         // WebviewEvent::Crashed / Failed / unresponsive → runtime error.
         if (
           kind.includes('Crashed') ||
@@ -89,9 +88,7 @@ export default function PluginWebviewSlot({ provider }: Props) {
           setErrorPhase('runtime');
         }
       },
-    ).then((fn) => {
-      unlistenEvent = fn;
-    });
+    );
 
     const rect = measureRect();
     const entry = provider.webviewEntry ?? 'index.html';
@@ -121,8 +118,8 @@ export default function PluginWebviewSlot({ provider }: Props) {
       if (animRafId) cancelAnimationFrame(animRafId);
       ro.disconnect();
       window.removeEventListener('resize', onWinResize);
-      unlistenLoad?.();
-      unlistenEvent?.();
+      offPageLoad();
+      offWebviewEvent();
       hide(label).catch(() => {});
     };
   }, [label, provider.pluginId, provider.webviewEntry, retryKey]);

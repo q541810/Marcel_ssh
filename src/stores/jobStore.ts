@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { JobInfo } from '@/lib/types';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import { getErrorMessage } from '@/lib/errors';
 import * as tauri from '@/lib/tauri';
 
@@ -75,22 +75,26 @@ export const useJobStore = create<JobState>((set, get) => ({
   },
 
   initEventListener: () => {
-    const unlisteners: Array<() => void> = [];
-
     const handleJobEvent = (raw: Record<string, unknown>) => {
+      if (!raw) return;
       get().upsertJob(mapJob(raw));
     };
 
-    listen<Record<string, unknown>>('job://started', (e) => {
-      if (e.payload) handleJobEvent(e.payload);
-    }).then((unlisten) => unlisteners.push(unlisten));
-
-    listen<Record<string, unknown>>('job://updated', (e) => {
-      if (e.payload) handleJobEvent(e.payload);
-    }).then((unlisten) => unlisteners.push(unlisten));
+    // 同一事件名共享一条底层监听；取消订阅是同步返回的，所以 StrictMode 的
+    // 「挂载 → 卸载 → 再挂载」不会重复注册（旧写法把 unlisten 推进数组、在
+    // Promise resolve 之后才 push，先 detach 后 resolve 就会漏掉两个监听器）。
+    const offStarted = subscribeTauriEvent<Record<string, unknown>>(
+      'job://started',
+      handleJobEvent,
+    );
+    const offUpdated = subscribeTauriEvent<Record<string, unknown>>(
+      'job://updated',
+      handleJobEvent,
+    );
 
     return () => {
-      unlisteners.forEach((fn) => fn());
+      offStarted();
+      offUpdated();
     };
   },
 }));

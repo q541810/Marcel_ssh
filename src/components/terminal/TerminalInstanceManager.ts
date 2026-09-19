@@ -2,7 +2,7 @@ import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { subscribeTauriEvent, type Unsubscribe } from '@/lib/tauriEvent';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
@@ -16,7 +16,7 @@ export interface TerminalInstance {
   fitAddon: FitAddon;
   container: HTMLDivElement;
   lastResize?: { cols: number; rows: number };
-  unlistenOutput?: UnlistenFn;
+  unlistenOutput?: Unsubscribe;
   onDataDisposable?: { dispose: () => void };
   webglAddon?: WebglAddon;
   webglContextLossDisposable?: { dispose: () => void };
@@ -160,13 +160,15 @@ class TerminalInstanceManager {
       container.removeEventListener('contextmenu', handleContextMenu),
     );
 
-    // SSH output listener
-    void (async () => {
-      const unlistenOutput = await listen<string>(`ssh://output/${sessionId}`, (event) => {
-        terminal.write(event.payload);
-      });
-      instance.unlistenOutput = unlistenOutput;
-    })();
+    // SSH output listener。订阅原语的取消函数是**同步**返回的，所以 destroy()
+    // 一定拿得到它；旧写法在 `await listen` 之后才赋值给 instance，destroy 早于
+    // resolve（切标签页切得够快就会发生）时这条监听就没人生效回收。
+    instance.unlistenOutput = subscribeTauriEvent<string>(
+      `ssh://output/${sessionId}`,
+      (payload) => {
+        terminal.write(payload);
+      },
+    );
 
     // Focus on click
     const handleClick = () => terminal.focus();

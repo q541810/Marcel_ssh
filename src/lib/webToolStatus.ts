@@ -11,7 +11,12 @@
  * 为什么需要它：这两个工具的结果里"用的是哪个后端、有没有降级、页面是不是被
  * 风控拦了"过去完全不展示，用户只能看到一段正文或一个空的 pre，于是只能得出
  * "网页获取失败"这种无法定位的描述。
+ *
+ * 「哪些工具算联网工具」不在这里判断 —— 那是工具呈现规格，以
+ * `@/lib/toolCatalog` 的表为准（本模块只消费它）。
  */
+
+import { toolSpec } from '@/lib/toolCatalog';
 
 /** 已知后端标签（后端 `web_result::WebBackend` / `web_search` 的 provider 取值）。 */
 export type WebBackendName = 'browser' | 'html' | 'api' | 'mixed' | string;
@@ -122,9 +127,13 @@ function readPages(v: unknown): WebPageSummary[] {
   return pages;
 }
 
-/** 这两个工具才有后端/降级语义；其他工具返回 `null`，界面不显示任何额外信息。 */
+/**
+ * 只有带 `web` 声明的工具（catalog 里是 `web_search` / `http_get`）才有后端/降级
+ * 语义；其他工具返回 `null`，界面不显示任何额外信息。**「哪些工具算联网工具」不在
+ * 这里复述** —— 那边加减工具时这行文字不会跟着变，以 catalog 的表为准。
+ */
 export function isWebTool(toolName: string): boolean {
-  return toolName === 'web_search' || toolName === 'http_get';
+  return toolSpec(toolName)?.web === true;
 }
 
 function readStatus(metadata: unknown): WebToolStatus {

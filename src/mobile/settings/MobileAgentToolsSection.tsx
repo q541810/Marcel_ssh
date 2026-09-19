@@ -7,23 +7,11 @@ import type {
 } from '@/lib/types';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import * as tauri from '@/lib/tauri';
 import { MobileChoiceGroup as ChoiceGroup } from '@/mobile/ui/MobileChoiceGroup';
 import { MobileSettingRow } from './MobileSettingRow';
-
-const DEFAULT_EXPERIMENTAL: ExperimentalSettings = {
-  enableWebSearch: true,
-  enableHttpFetch: true,
-  enableCloudPage: false,
-  webSearchMode: 'browser',
-  webSearchApiProvider: 'brave',
-  webSearchEndpoint: 'cn',
-  httpFetchMode: 'browser',
-  enableHtmlRender: true,
-  multiHostConnectionIds: [],
-};
 
 const SEARCH_MODE_OPTIONS: readonly {
   value: 'html' | 'api';
@@ -83,7 +71,7 @@ export function MobileAgentToolsSection() {
   }, [connections.length, fetchConnections]);
 
   const experimental: ExperimentalSettings = {
-    ...DEFAULT_EXPERIMENTAL,
+    ...DEFAULT_EXPERIMENTAL_SETTINGS,
     ...(settings.experimentalSettings ?? {}),
   };
 

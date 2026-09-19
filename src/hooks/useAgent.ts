@@ -1,7 +1,8 @@
 import { useCallback, useEffect } from 'react';
 import { useAgentStore } from '@/stores/agentStore';
 import { bus } from '@/plugins/injection/bus';
-import type { AgentMode, QuestionAnswer } from '@/lib/types';
+import { isTaskBusy } from '@/lib/agentStatus';
+import type { AgentMode } from '@/lib/types';
 
 export function useAgent() {
   const store = useAgentStore((s) => ({
@@ -12,18 +13,11 @@ export function useAgent() {
     activeTaskId: s.activeTaskId,
     mode: s.mode,
     inputDraft: s.inputDraft,
-    pendingApproval: s.pendingApproval,
-    pendingQuestion: s.pendingQuestion,
     taskTokenUsage: s.taskTokenUsage,
     startTask: s.startTask,
     stopTask: s.stopTask,
-    approveOperation: s.approveOperation,
-    rejectOperation: s.rejectOperation,
     setMode: s.setMode,
     setInputDraft: s.setInputDraft,
-    setPendingApproval: s.setPendingApproval,
-    setPendingQuestion: s.setPendingQuestion,
-    answerQuestion: s.answerQuestion,
     newConversation: s.newConversation,
     switchConversation: s.switchConversation,
     loadConversation: s.loadConversation,
@@ -43,10 +37,7 @@ export function useAgent() {
     ? (store.messagesMap[store.activeConversationId] ?? [])
     : [];
 
-  const isRunning =
-    activeTask?.status === 'planning' ||
-    activeTask?.status === 'executing' ||
-    activeTask?.status === 'waiting_approval';
+  const isRunning = activeTask ? isTaskBusy(activeTask.status) : false;
 
   // ── Plugin agent-activity bridge ─────────────────────────────────────
   // Emits `ui://agent-activity` (running bool only — never task content) so
@@ -76,40 +67,6 @@ export function useAgent() {
       return store.stopTask(activeTask.id);
     }
   }, [activeTask, store.stopTask]);
-
-  const approveCurrent = useCallback(
-    async (operationId: string) => {
-      store.setPendingApproval(null);
-      // 优先用事件来源 taskId（子agent在独立通道上运行，activeTaskId 可能仍是父任务）
-      const taskId = store.pendingApproval?.taskId ?? activeTask?.id;
-      if (taskId) {
-        return store.approveOperation(taskId, operationId);
-      }
-    },
-    [activeTask?.id, store.approveOperation, store.setPendingApproval, store.pendingApproval],
-  );
-
-  const rejectCurrent = useCallback(
-    async (operationId: string) => {
-      store.setPendingApproval(null);
-      const taskId = store.pendingApproval?.taskId ?? activeTask?.id;
-      if (taskId) {
-        return store.rejectOperation(taskId, operationId);
-      }
-    },
-    [activeTask?.id, store.rejectOperation, store.setPendingApproval, store.pendingApproval],
-  );
-
-  const submitAnswer = useCallback(
-    async (questionId: string, answers: QuestionAnswer[]) => {
-      store.setPendingQuestion(null);
-      const taskId = store.pendingQuestion?.taskId ?? activeTask?.id;
-      if (taskId) {
-        return store.answerQuestion(taskId, questionId, answers);
-      }
-    },
-    [activeTask?.id, store.answerQuestion, store.setPendingQuestion, store.pendingQuestion],
-  );
 
   const setMode = useCallback(
     (newMode: AgentMode) => {
@@ -185,8 +142,6 @@ export function useAgent() {
     messages,
     activeTask,
     isRunning,
-    pendingApproval: store.pendingApproval,
-    pendingQuestion: store.pendingQuestion,
     mode: store.mode,
     inputDraft: store.inputDraft,
     taskTokenUsage: store.taskTokenUsage,
@@ -194,9 +149,6 @@ export function useAgent() {
     activeConversationId: store.activeConversationId,
     sendPrompt,
     stopActiveTask,
-    approveCurrent,
-    rejectCurrent,
-    submitAnswer,
     setMode,
     setInputDraft: store.setInputDraft,
     newConversation,

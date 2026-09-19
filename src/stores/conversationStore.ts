@@ -16,6 +16,8 @@ import { useTaskStore } from './taskStore';
 import { useTurnFoldStore } from './turnFoldStore';
 import { useSettingsStore } from './settingsStore';
 import { effectiveModelId } from '@/lib/llmRegistry';
+import { isStreamingTool } from '@/lib/toolCatalog';
+import { isTaskBusy } from '@/lib/agentStatus';
 import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
 import { getStreamState, setStreamState } from './agentStreamHandlers';
 
@@ -254,9 +256,7 @@ let syncActiveGeneration = 0;
 export function conversationHasRunningTask(conversationId: string): boolean {
   return Object.values(useTaskStore.getState().tasks).some(
     (t) =>
-      t.conversationId === conversationId &&
-      !!t.sessionId &&
-      (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
+      t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
   );
 }
 
@@ -270,9 +270,7 @@ function restoreRunningTaskForConversation(conversationId: string) {
   taskStore.clearActiveTask();
   const running = Object.values(taskStore.tasks).find(
     (t) =>
-      t.conversationId === conversationId &&
-      !!t.sessionId &&
-      (t.status === 'planning' || t.status === 'executing' || t.status === 'waiting_approval'),
+      t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
   );
   if (running) {
     useTaskStore.setState({ activeTaskId: running.id });
@@ -1281,7 +1279,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           !conversationId || convId === conversationId
             ? msgs.map((m) => {
                 if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
-                const isStreaming = m.toolResult?.toolName === 'bash' || m.toolResult?.toolName === 'execute_command';
+                const isStreaming = isStreamingTool(m.toolResult?.toolName ?? '');
                 const STREAMING_SUFFIX = '\n\n[用户中断：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]';
                 const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
                 const existing = m.toolResult?.result ?? '';

@@ -30,7 +30,7 @@ export interface MobileBootstrapDeps {
   getDefaultAgentMode: () => string | undefined | null;
   setMode: (mode: AgentMode) => void;
   fetchSkills: () => Promise<void>;
-  attachTransferListeners: () => void | Promise<void>;
+  attachTransferListeners: () => void;
   /**
    * 按 mobileBackgroundSettings.keepAliveEnabled 启动 Android 前台保活服务。
    * 非 Android 环境（桌面 / 浏览器预览）应安全 no-op。
@@ -66,7 +66,7 @@ export async function runMobileBootstrap(
   } catch {
     /* best-effort */
   }
-  await deps.attachTransferListeners();
+  deps.attachTransferListeners();
   // 更新检查不在这里做：后端 updater 启动 30 秒后自查并 emit update://state，
   // 前端由 useUpdateStore 统一镜像（桌面与移动端同一份状态、同一套 UI 判定），
   // 避免两端各写一遍「检查 + 提示」逻辑。

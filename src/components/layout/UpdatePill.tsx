@@ -4,6 +4,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { openExternalLink } from '@/lib/externalLinks';
+import { isTaskBusy } from '@/lib/agentStatus';
 import { formatMb, updatePercent } from '@/lib/updateProgress';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -43,11 +44,7 @@ export default function UpdatePill() {
   // Agent 任务运行中 / 有活跃 SSH 会话 → 安装（会退出应用 / 重启）前必须确认
   const agentBusy = useAgentStore((s) => {
     const t = s.activeTaskId ? s.tasks[s.activeTaskId] : null;
-    return (
-      t?.status === 'planning' ||
-      t?.status === 'executing' ||
-      t?.status === 'waiting_approval'
-    );
+    return t ? isTaskBusy(t.status) : false;
   });
   const sshBusy = useSessionStore((s) =>
     Object.values(s.sessions).some(

@@ -12,6 +12,7 @@ import {
 import type { AgentMessage } from "@/lib/types";
 import { isNearBottom, NEAR_BOTTOM_THRESHOLD_PX } from "@/lib/agentScroll";
 import { useConversationStore } from "@/stores/conversationStore";
+import { isTaskBusy } from "@/lib/agentStatus";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { segmentTurns, type TurnSegment } from "@/lib/agentTurnFold";
@@ -88,7 +89,7 @@ export function alignedWindowStart(
 ): number {
   const n = messages.length;
   if (n === 0) return 0;
-  let start = Math.max(0, n - count);
+  const start = Math.max(0, n - count);
   if (start === 0 || messages[start]?.role === "user") return start;
   let p = start - 1;
   while (p >= 0 && messages[p]?.role !== "user") p -= 1;
@@ -275,9 +276,7 @@ function AgentMessageList({
         (t) =>
           t.conversationId === listConversationId &&
           !!t.sessionId &&
-          (t.status === "planning"
-            || t.status === "executing"
-            || t.status === "waiting_approval"),
+          isTaskBusy(t.status),
       ),
   );
   const renderItems = useMemo(

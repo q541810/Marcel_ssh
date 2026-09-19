@@ -14,7 +14,7 @@ import {
   Trash2,
   RotateCw,
 } from 'lucide-react';
-import { listen } from '@tauri-apps/api/event';
+import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Button from '@/components/ui/Button';
@@ -167,35 +167,36 @@ function useInstallActions(plugin: MarketPlugin) {
   const [confirmUninstall, setConfirmUninstall] = useState(false);
 
   // 订阅本次安装任务的进度/完成/取消事件。installId 非空时挂载监听，
-  // 关闭覆盖层时解除。
+  // 关闭覆盖层时解除。竞态与 StrictMode 双挂载由 subscribeTauriEvent 处理，
+  // 这里不再自己维护 disposed / unlistenFns。
   useEffect(() => {
     if (!installId) return;
-    let disposed = false;
-    let unlistenFns: Array<() => void> = [];
-    Promise.all([
-      listen<PluginInstallProgress>('plugin-install-progress', (e) => {
-        if (e.payload.installId !== installId) return;
-        setProgress({ received: e.payload.received, total: e.payload.total });
-      }),
-      listen<{ installId: string }>('plugin-install-done', (e) => {
-        if (e.payload.installId !== installId) return;
+    const offProgress = subscribeTauriEvent<PluginInstallProgress>(
+      'plugin-install-progress',
+      (payload) => {
+        if (payload.installId !== installId) return;
+        setProgress({ received: payload.received, total: payload.total });
+      },
+    );
+    const offDone = subscribeTauriEvent<{ installId: string }>(
+      'plugin-install-done',
+      (payload) => {
+        if (payload.installId !== installId) return;
         markInstalled(plugin.id);
         setStatus({ kind: 'done' });
-      }),
-      listen<{ installId: string }>('plugin-install-cancelled', (e) => {
-        if (e.payload.installId !== installId) return;
+      },
+    );
+    const offCancelled = subscribeTauriEvent<{ installId: string }>(
+      'plugin-install-cancelled',
+      (payload) => {
+        if (payload.installId !== installId) return;
         setStatus({ kind: 'cancelled' });
-      }),
-    ]).then((fns) => {
-      if (disposed) {
-        fns.forEach((fn) => fn());
-      } else {
-        unlistenFns = fns;
-      }
-    });
+      },
+    );
     return () => {
-      disposed = true;
-      unlistenFns.forEach((fn) => fn());
+      offProgress();
+      offDone();
+      offCancelled();
     };
   }, [installId, plugin.id, markInstalled]);
 

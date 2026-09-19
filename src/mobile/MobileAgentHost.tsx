@@ -21,7 +21,7 @@ import { groupConversationsByDate } from "@/lib/dateGrouping";
 import { AGENT_MODES } from "@/lib/constants";
 import { currentVision } from "@/lib/llmRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
-import type { AgentMessage, AgentMode, QuestionAnswer } from "@/lib/types";
+import type { AgentMessage, AgentMode } from "@/lib/types";
 import AgentMessageList from "@/components/agent/AgentMessageList";
 import PlanList from "@/components/agent/PlanList";
 import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
@@ -116,11 +116,6 @@ export default function MobileAgentHost({
     inputDraft,
     setInputDraft,
     isRunning,
-    pendingApproval,
-    pendingQuestion,
-    approveCurrent,
-    rejectCurrent,
-    submitAnswer,
     conversations,
     activeConversationId,
     newConversation,
@@ -327,36 +322,6 @@ export default function MobileAgentHost({
   const handleStop = useCallback(() => {
     void stopActiveTask();
   }, [stopActiveTask]);
-
-  const handleApprove = useCallback(async () => {
-    if (pendingApproval) {
-      await approveCurrent(pendingApproval.toolCallId);
-    }
-  }, [approveCurrent, pendingApproval]);
-
-  const handleReject = useCallback(async () => {
-    if (pendingApproval) {
-      await rejectCurrent(pendingApproval.toolCallId);
-    }
-  }, [pendingApproval, rejectCurrent]);
-
-  const handleSubmitQuestion = useCallback(
-    async (questionId: string, answers: QuestionAnswer[]) => {
-      await submitAnswer(questionId, answers);
-    },
-    [submitAnswer],
-  );
-
-  const handleCancelQuestion = useCallback(async () => {
-    if (!pendingQuestion) return;
-    const answers: QuestionAnswer[] = (pendingQuestion.questions ?? []).map(
-      () => ({
-        selected: [],
-        custom: "",
-      }),
-    );
-    await submitAnswer(pendingQuestion.questionId, answers);
-  }, [pendingQuestion, submitAnswer]);
 
   // 子agent对话：输入区替换为"返回主对话"条（子agent由主 Agent 停止，停止主 Agent 级联停止）
   // （activeConversation / isSubConversation / parentConversationId 已在顶部派生）
@@ -821,11 +786,6 @@ export default function MobileAgentHost({
         </button>
       </header>
 
-      {pendingApproval && (
-        <div className="flex-shrink-0 border-b border-amber-700/50 bg-amber-950/50 px-3 py-2 text-xs text-amber-100">
-          需要批准操作：{pendingApproval.toolName}
-        </div>
-      )}
       {rollbackHint && (
         <div className="flex-shrink-0 border-b border-zinc-700 bg-zinc-900 px-3 py-1.5 text-center text-xs text-zinc-300">
           {rollbackHint}
