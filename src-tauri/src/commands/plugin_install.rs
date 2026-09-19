@@ -21,7 +21,6 @@
 //! `plugin_uninstall` removes the plugin directory and cleans up settings
 //! residue (`disabled_plugins` / `authorized_capabilities`).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -526,19 +525,6 @@ fn update_from_archive_with_progress(
     result
 }
 
-/// Drop guard that removes the cancel sender from AppState on drop. Mirrors
-/// `commands::sftp::TransferCancelGuard`.
-struct InstallCancelGuard {
-    install_id: String,
-    senders: std::sync::Arc<parking_lot::RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-}
-
-impl Drop for InstallCancelGuard {
-    fn drop(&mut self) {
-        self.senders.write().remove(&self.install_id);
-    }
-}
-
 /// Download a plugin's source archive (mirror-first) and install it into the
 /// plugins directory. Rejects if a plugin with the same id already exists.
 ///
@@ -558,15 +544,8 @@ pub async fn plugin_install(
         return Err(AppError::Other("非 GitHub 仓库无法自动安装".into()));
     };
 
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .plugin_install_cancel_senders
-        .write()
-        .insert(install_id.clone(), cancel_tx);
-    let _guard = InstallCancelGuard {
-        install_id: install_id.clone(),
-        senders: state.plugin_install_cancel_senders.clone(),
-    };
+    let _cancel_registration = state.plugin_install_cancel.register(&install_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     let urls = zip_urls(&owner, &repo, mirror.as_deref());
     let bytes = {
@@ -684,15 +663,8 @@ pub async fn plugin_update(
         return Err(AppError::Other("非 GitHub 仓库无法自动更新".into()));
     };
 
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .plugin_install_cancel_senders
-        .write()
-        .insert(install_id.clone(), cancel_tx);
-    let _guard = InstallCancelGuard {
-        install_id: install_id.clone(),
-        senders: state.plugin_install_cancel_senders.clone(),
-    };
+    let _cancel_registration = state.plugin_install_cancel.register(&install_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     let urls = zip_urls(&owner, &repo, mirror.as_deref());
     let bytes = {
@@ -801,13 +773,7 @@ pub async fn plugin_install_cancel(
     state: State<'_, AppState>,
     install_id: String,
 ) -> Result<(), AppError> {
-    if let Some(sender) = state
-        .plugin_install_cancel_senders
-        .write()
-        .remove(&install_id)
-    {
-        let _ = sender.send(true);
-    }
+    state.plugin_install_cancel.cancel(&install_id);
     Ok(())
 }
 

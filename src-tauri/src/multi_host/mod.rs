@@ -34,8 +34,6 @@ pub struct ResolvedTarget {
     pub session_id: String,
     /// 对应 SavedConnection id。
     pub config_id: String,
-    /// 是否本次自动拉起的会话（任务终态时据此关闭）。
-    pub auto_spawned: bool,
     /// 展示用主机名（用户可读，审批/卡片 badge 用；脱敏由前端做）。
     pub host_label: String,
 }
@@ -60,7 +58,7 @@ pub(crate) async fn multi_host_enabled(state: &AppState) -> bool {
 ///   当前会话（不换机、不拉起）；
 /// - 其他白名单机器已有在线会话 → 取**最近激活**的一条（同机多开时的确定
 ///   性选择）；
-/// - 无在线会话 → 若集合内且 keychain 有凭证 → 静默拉起（`auto_spawned=true`），
+/// - 无在线会话 → 若集合内且 keychain 有凭证 → 静默拉起（记账进 `ChildResources`，
 ///   由调用方在任务收尾时经 [`Self::cleanup_task_targets`] 关闭；
 /// - 无凭证 / 拉取失败 → 明确错误。
 pub async fn resolve_target(
@@ -95,7 +93,6 @@ pub async fn resolve_target(
         return Ok(ResolvedTarget {
             session_id: current_session_id.to_string(),
             config_id: conn.id.clone(),
-            auto_spawned: false,
             host_label: conn.name.clone(),
         });
     }
@@ -109,31 +106,26 @@ pub async fn resolve_target(
         return Ok(ResolvedTarget {
             session_id: sid,
             config_id: conn.id.clone(),
-            auto_spawned: false,
             host_label: conn.name.clone(),
         });
     }
 
     // ── 3. 离线 → 静默拉起 ──
     let session_id = spawn_connection(&state, &conn, &app).await?;
-    // 注册竞态防御：spawn 期间任务可能已被终态化（用户取消/失败/超时收尾）。
-    // 此时 cleanup_task_targets 已跑过（或即将跑），我们此刻注册的条目将无人
-    // 清理 → 刚拉起的会话泄漏。因此注册前检查任务是否仍存活；已终态则
-    // 立即关闭刚拉起的会话，不注册（避免留给已结束的清理轮次去清）。
-    let task_alive = state
-        .agent_tasks
-        .read()
-        .get(task_id)
-        .map(|t| {
-            matches!(
-                t.status,
-                crate::agent::task::AgentStatus::Planning
-                    | crate::agent::task::AgentStatus::Executing
-                    | crate::agent::task::AgentStatus::WaitingApproval
-            )
-        })
-        .unwrap_or(false);
-    if !task_alive {
+    // 竞态防御：spawn 期间任务可能已被终态化（用户取消/失败/超时收尾），于是
+    // `cleanup_task_targets` 已经跑过 —— 此刻记账的条目将无人清理，刚拉起的会话
+    // 泄漏到应用退出。
+    //
+    // 这里靠 `ChildResources::register` 的返回值判定，而不是「记账前查一次任务
+    // 是否存活」：查完到记账之间还有一个 await 点，窗口只是变窄。register 的
+    // 「查收尾标记 + 落表」与清理的「取走 + 打标记」在同一次加锁里互斥，所以只有
+    // 两种结局 —— 记账在先（清理随后会取走它），或清理在先（register 返回
+    // false，我们当场回收）。
+    if !state
+        .multi_host_targets
+        .register(task_id, &session_id)
+        .await
+    {
         log::info!(
             "multi_host: 任务 {} 已在拉起期间结束，关闭刚拉起的会话 {}",
             task_id,
@@ -145,13 +137,10 @@ pub async fn resolve_target(
             conn.name
         )));
     }
-    // 记账：task_id → 自动拉起会话（任务终态由 cleanup 关闭）。
-    register_task_target(&state, task_id, &session_id).await;
 
     Ok(ResolvedTarget {
         session_id,
         config_id: conn.id.clone(),
-        auto_spawned: true,
         host_label: conn.name.clone(),
     })
 }
@@ -311,28 +300,11 @@ async fn spawn_connection(
     state.ssh_manager.connect(config, app.clone()).await
 }
 
-/// 记账：task_id → 自动拉起的会话。同一会话被多个任务引用时引用计数。
-async fn register_task_target(state: &AppState, task_id: &str, session_id: &str) {
-    state
-        .multi_host_targets
-        .write()
-        .await
-        .entry(task_id.to_string())
-        .or_insert_with(std::collections::HashSet::new)
-        .insert(session_id.to_string());
-}
-
 /// 清理某任务自动拉起的全部会话（任务终态调用）。
 /// **只关自动拉起的**：用户手动打开的在线会话绝不受影响（判断依据 =
 /// 记账集合里的 session_id 当前仍在线）。
 pub async fn cleanup_task_targets(state: &AppState, task_id: &str) {
-    let session_ids: Vec<String> = state
-        .multi_host_targets
-        .write()
-        .await
-        .remove(task_id)
-        .map(|s| s.into_iter().collect())
-        .unwrap_or_default();
+    let session_ids = state.multi_host_targets.take_all(task_id).await;
     for sid in session_ids {
         // 若该会话仍由 manager 持有（未被别处主动断开），关闭它。
         if state.ssh_manager.is_connected(&sid).await {
@@ -344,16 +316,6 @@ pub async fn cleanup_task_targets(state: &AppState, task_id: &str) {
             let _ = state.ssh_manager.disconnect(&sid).await;
         }
     }
-}
-
-/// 该 task 是否注册过任何自动拉起会话（供 agent_loop 收尾判定是否需要清理）。
-pub async fn has_task_targets(state: &AppState, task_id: &str) -> bool {
-    state
-        .multi_host_targets
-        .read()
-        .await
-        .get(task_id)
-        .map_or(false, |s| !s.is_empty())
 }
 
 // ── 审批/卡片归属辅助 ────────────────────────────────────────────────

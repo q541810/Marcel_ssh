@@ -1063,6 +1063,23 @@ mod build_request_body_tests {
         assert_eq!(body.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
     }
 
+    /// 摘要调用不设输出上限：`max_tokens` 为 `None` 时请求体里**不出现**该键，
+    /// 由 provider / 模型自己的默认上限决定。写死一个值会把"被压区间很大、
+    /// 摘要中等长度"这类合法压缩误判成截断失败（真正有原则的闸门是 shrink 校验）。
+    #[test]
+    fn omitted_max_tokens_leaves_key_absent() {
+        let cfg = base_config();
+        let msgs = [LlmMessage::user("hi")];
+        let body = build_request_body_with_max_tokens(&cfg, &msgs, &[], true, None);
+        assert!(
+            body.get("max_tokens").is_none(),
+            "不设上限时请求体不应出现 max_tokens"
+        );
+        // 配对用例：显式传值的调用（如审批）照旧落到请求体
+        let body = build_request_body_with_max_tokens(&cfg, &msgs, &[], true, Some(4096));
+        assert_eq!(body.get("max_tokens").and_then(|v| v.as_u64()), Some(4096));
+    }
+
     #[test]
     fn extra_body_non_object_is_ignored() {
         let mut cfg = base_config();

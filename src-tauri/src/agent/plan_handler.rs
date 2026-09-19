@@ -148,14 +148,11 @@ pub(crate) fn emit_plan_loaded(app: &AppHandle, task_id: &str, plan: &AgentTaskP
 /// 判断 task 是否正在运行（agent 还在跑）。
 /// 用于决定向前端发送 plan 时是否需要把 in_progress 降级为 pending。
 pub(crate) fn is_task_running_for_load(state: &AppState, task_id: &str) -> bool {
-    state.agent_tasks.read().get(task_id).map_or(false, |t| {
-        matches!(
-            t.status,
-            crate::agent::task::AgentStatus::Planning
-                | crate::agent::task::AgentStatus::Executing
-                | crate::agent::task::AgentStatus::WaitingApproval
-        )
-    })
+    state
+        .agent_tasks
+        .read()
+        .get(task_id)
+        .is_some_and(|t| t.status.is_running())
 }
 
 /// 把 plan 的 in_progress item 转为 pending（agent 没跑时的降级）。

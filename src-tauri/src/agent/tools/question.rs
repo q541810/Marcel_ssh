@@ -2,13 +2,10 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::Manager;
-use tokio::sync::oneshot;
 
 use crate::agent::sandbox::RiskLevel;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
-use crate::emit_event;
 use crate::error::AppError;
-use crate::notification::{send_notification, NotificationKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,15 +23,6 @@ pub struct QuestionItem {
     pub options: Option<Vec<QuestionOption>>,
     #[serde(default)]
     pub multiple: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct QuestionRequestEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub question_id: String,
-    pub questions: Vec<QuestionItem>,
 }
 
 const MODE_SWITCH_OVERRIDE_PARAM: &str = "is_mode_switch_request";

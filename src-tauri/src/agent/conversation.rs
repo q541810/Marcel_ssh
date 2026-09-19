@@ -6,6 +6,64 @@ use rusqlite::{Connection, OptionalExtension, Result as RusqliteResult};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// `messages` 表的**全部列**，顺序 = `map_stored_message` 里 `row.get(N)` 的顺序。
+///
+/// 这里是唯一的列清单：SELECT 列、INSERT 列与占位符、UPSERT 的 SET 子句都由它拼
+/// 出来。此前这份清单在 SELECT 里抄了 4 遍、INSERT 里 3 遍、UPSERT SET 里 1 遍
+/// —— 加一列要改约 10 处，而漏一处是**静默**的：
+/// - 漏在某个 SELECT → 那条路径列数少一 → `row.get(N)` 返 `Err` → 被 `.ok()`
+///   吞掉 → 字段静默变 `None`（例如图片附件在某条读取路径上消失）；
+/// - 列插在**中间**而不是末尾 → 位置整体错位 → 静默读错字段，SQLite 不报错。
+///
+/// 注意：加列时除了这里，还要在建表语句或迁移块里 `ALTER TABLE ... ADD COLUMN`。
+/// `messages_columns_const_matches_the_live_schema` 会盯着两边是否一致。
+const MESSAGES_COLUMNS: &[&str] = &[
+    "id",
+    "conversation_id",
+    "role",
+    "content",
+    "timestamp",
+    "created_at",
+    "tool_calls_json",
+    "reasoning_content",
+    "image_paths_json",
+];
+
+/// `SELECT <全部列> FROM messages` 用的列清单（拼一次复用，别每处各写一遍）。
+fn messages_select_columns() -> &'static str {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| MESSAGES_COLUMNS.join(", "))
+}
+
+/// `INSERT INTO messages <这一段>`：列清单 + `VALUES (?1 … ?N)` 占位符。
+/// 占位符编号由列数生成，不会与列序错配。
+fn messages_insert_clause() -> &'static str {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let cols = MESSAGES_COLUMNS.join(", ");
+        let placeholders = (1..=MESSAGES_COLUMNS.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("({cols}) VALUES ({placeholders})")
+    })
+}
+
+/// UPSERT 的 `DO UPDATE SET` 子句：除主键 `id` 外的每一列都取 `excluded.*`。
+/// 同样由列清单生成 —— 手写这份清单的下场是「加了列却忘了同步 SET，于是更新
+/// 时那一列永远保留旧值」。
+fn messages_upsert_set_clause() -> &'static str {
+    static CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        MESSAGES_COLUMNS
+            .iter()
+            .filter(|c| **c != "id")
+            .map(|c| format!("{c} = excluded.{c}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConversationError {
     #[error("Failed to open database at '{path}': {source}")]
@@ -524,12 +582,14 @@ impl ConversationDb {
 
                 // 查询从 Checkpoint 开始（含 Checkpoint 本身）到末尾的所有活跃消息
                 let mut msg_stmt = conn.prepare(
-                    "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
-                     FROM messages
-                     WHERE conversation_id = ?1 
-                       AND (created_at > ?2 OR (created_at = ?2 AND rowid >= ?3))
-                     ORDER BY created_at ASC, rowid ASC",
-                )?;
+                    &format!(
+                        "SELECT {}
+                        FROM messages
+                        WHERE conversation_id = ?1 
+                        AND (created_at > ?2 OR (created_at = ?2 AND rowid >= ?3))
+                        ORDER BY created_at ASC, rowid ASC",
+                        messages_select_columns()
+                    ))?;
                 let messages = msg_stmt
                     .query_map(
                         rusqlite::params![conversation_id, cp_created_at, cp_rowid],
@@ -577,12 +637,14 @@ impl ConversationDb {
         };
 
         let mut stmt = conn.prepare(
-            "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
-             FROM messages
-             WHERE conversation_id = ?1 
-               AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
-             ORDER BY created_at ASC, rowid ASC",
-        )?;
+            &format!(
+                "SELECT {}
+                FROM messages
+                WHERE conversation_id = ?1 
+                AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
+                ORDER BY created_at ASC, rowid ASC",
+                messages_select_columns()
+            ))?;
 
         let messages = stmt
             .query_map(
@@ -618,17 +680,23 @@ impl ConversationDb {
     ) -> RusqliteResult<Vec<StoredMessage>> {
         let sql = match limit {
             Some(_) => {
-                "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
-                 FROM messages
-                 WHERE conversation_id = ?1
-                 ORDER BY created_at ASC, rowid ASC
-                 LIMIT ?2"
+                &format!(
+                    "SELECT {}
+                    FROM messages
+                    WHERE conversation_id = ?1
+                    ORDER BY created_at ASC, rowid ASC
+                    LIMIT ?2",
+                    messages_select_columns()
+                )
             }
             None => {
-                "SELECT id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json
-                 FROM messages
-                 WHERE conversation_id = ?1
-                 ORDER BY created_at ASC, rowid ASC"
+                &format!(
+                    "SELECT {}
+                    FROM messages
+                    WHERE conversation_id = ?1
+                    ORDER BY created_at ASC, rowid ASC",
+                    messages_select_columns()
+                )
             }
         };
 
@@ -681,8 +749,10 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
 
         conn.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            &format!(
+                "INSERT INTO messages {}",
+                messages_insert_clause()
+            ),
             (
                 &id,
                 conversation_id,
@@ -743,8 +813,10 @@ impl ConversationDb {
         }
 
         tx.execute(
-            "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            &format!(
+                "INSERT INTO messages {}",
+                messages_insert_clause()
+            ),
             (
                 &id,
                 conversation_id,
@@ -1089,17 +1161,11 @@ impl ConversationDb {
         )?;
         for m in messages {
             tx.execute(
-                "INSERT INTO messages (id, conversation_id, role, content, timestamp, created_at, tool_calls_json, reasoning_content, image_paths_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                 ON CONFLICT(id) DO UPDATE SET
-                    conversation_id = excluded.conversation_id,
-                    role = excluded.role,
-                    content = excluded.content,
-                    timestamp = excluded.timestamp,
-                    created_at = excluded.created_at,
-                    tool_calls_json = excluded.tool_calls_json,
-                    reasoning_content = excluded.reasoning_content,
-                    image_paths_json = excluded.image_paths_json",
+                &format!(
+                    "INSERT INTO messages {} ON CONFLICT(id) DO UPDATE SET {}",
+                    messages_insert_clause(),
+                    messages_upsert_set_clause()
+                ),
                 (
                     &m.id,
                     &m.conversation_id,
@@ -2370,5 +2436,221 @@ mod tests {
         assert_eq!(earlier[0].content, "u1");
         assert_eq!(earlier[1].content, "a1");
         assert_eq!(earlier[2].content, "t1");
+    }
+
+    /// `MESSAGES_COLUMNS` 必须与**实际 schema**（建表 + 迁移跑完后的表）逐列一致、且顺序相同。
+    ///
+    /// 这条守的是「加了列却忘了更新列清单」：`MESSAGES_COLUMNS` 是 SELECT/INSERT 的
+    /// 唯一来源，它少一列 → 每条读取路径都少一列 → `row.get(N)` 返 `Err` → 被
+    /// `.ok()` 吞掉 → 字段静默变 `None`。顺序也要管：`map_stored_message` 用的是
+    /// 位置下标，顺序错了就是静默读错字段。
+    #[test]
+    fn messages_columns_const_matches_the_live_schema() {
+        let db = create_test_db();
+        let conn = db.conn.lock().unwrap();
+        let live: Vec<String> = conn
+            .prepare("PRAGMA table_info(messages)")
+            .expect("prepare table_info")
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table_info")
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let expected: Vec<String> = MESSAGES_COLUMNS.iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            live, expected,
+            "messages 表列与 MESSAGES_COLUMNS 不一致（加列时两边都要改）"
+        );
+    }
+
+    /// 同一条消息里的每个可选字段都用**互不相同**的值写进去，再把每条读取路径都读
+    /// 一遍 —— 任一路径**漏了列**（列数少一 → `row.get(N)` 返 `Err` → 被 `.ok()`
+    /// 吞掉 → 字段静默变 `None`），这里的断言就会失败。
+    ///
+    /// 注意它**拦不住列序错位**：读写共用同一份 `MESSAGES_COLUMNS`，顺序错了也是一致地
+    /// 错（值被写进"错"的库列，读回来却对得上），两个错误互相抵消。顺序由
+    /// `messages_columns_const_matches_the_live_schema` 与真实 schema 比对来守 ——
+    /// 实测：把 `reasoning_content` 挪到 `tool_calls_json` 前面，只有那条会红。
+    /// 一遍 —— 任一路径漏了列或列序错位，这里的断言就会失败。
+    ///
+    /// 覆盖的读取路径（4 处 SELECT 各一条）：
+    /// - `query_stored_messages`（全量 / 带 limit 两个分支）
+    /// - `load_active_messages`：有压缩卡片 → 只取卡片之后的消息（内联 SELECT）
+    /// - `load_active_messages`：无卡片 → 回落到 `query_stored_messages`
+    /// - `load_earlier_messages`：翻页取更早的消息（内联 SELECT）
+    #[test]
+    fn every_optional_message_field_survives_all_read_paths() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "roundtrip").expect("conv");
+        let tools = r#"[{"id":"call_1","name":"bash"}]"#;
+        let reasoning = "先看目录再看文件";
+        let images = r#"["/tmp/one.png","/tmp/two.png"]"#;
+
+        let early = db
+            .save_message_with_images(
+                &conv.id,
+                "assistant",
+                "早的消息",
+                "2026-01-01T00:00:00Z",
+                Some(tools),
+                Some(reasoning),
+                Some(images),
+            )
+            .expect("early");
+
+        // 压缩卡片：触发 load_active_messages 的 checkpoint 分支
+        db.save_message(
+            &conv.id,
+            "system",
+            "【上下文已压缩】测试卡片",
+            "2026-01-01T00:00:30Z",
+            None,
+            None,
+        )
+        .expect("checkpoint");
+
+        let late = db
+            .save_message_with_images(
+                &conv.id,
+                "assistant",
+                "晚的消息",
+                "2026-01-01T00:01:00Z",
+                Some(tools),
+                Some(reasoning),
+                Some(images),
+            )
+            .expect("late");
+
+        let assert_rich = |m: &StoredMessage, what: &str| {
+            assert_eq!(m.tool_calls_json.as_deref(), Some(tools), "{what}: tool_calls");
+            assert_eq!(
+                m.reasoning_content.as_deref(),
+                Some(reasoning),
+                "{what}: reasoning"
+            );
+            assert_eq!(m.image_paths_json.as_deref(), Some(images), "{what}: images");
+            assert!(
+                m.content == "早的消息" || m.content == "晚的消息" || m.content == "唯一一条",
+                "{what}: content 被别的列顶掉了（列序错位？）: {}",
+                m.content
+            );
+        };
+
+        // ① 全量（query_stored_messages 无 limit 分支）
+        {
+            let conn = db.conn.lock().unwrap();
+            let all = ConversationDb::query_stored_messages(&conn, &conv.id, None).expect("all");
+            assert_eq!(all.len(), 3);
+            assert_rich(&all[0], "query_stored_messages(无 limit)");
+            assert_rich(&all[2], "query_stored_messages(无 limit)");
+        }
+        // ② 带 limit（query_stored_messages 的另一个分支）
+        {
+            let conn = db.conn.lock().unwrap();
+            let limited =
+                ConversationDb::query_stored_messages(&conn, &conv.id, Some(1)).expect("limited");
+            assert_eq!(limited.len(), 1, "limit 分支应只取最后一条");
+            assert_rich(&limited[0], "query_stored_messages(limit)");
+        }
+        // ③ 压缩卡片之后（load_active_messages 的 checkpoint 内联 SELECT）
+        {
+            let active = db.load_active_messages(&conv.id).expect("active");
+            // 该分支的 SQL 是 `rowid >= 卡片 rowid` —— 卡片本身也在返回集里
+            assert_eq!(active.messages.len(), 2, "卡片 + 卡片之后的消息");
+            assert_eq!(active.messages[1].id, late.id);
+            assert_rich(active.messages.last().expect("last"), "load_active_messages(checkpoint)");
+        }
+        // ④ 翻页取更早（load_earlier_messages 的内联 SELECT）
+        {
+            let earlier = db
+                .load_earlier_messages(&conv.id, &late.id)
+                .expect("earlier");
+            let first = earlier.first().expect("应取到更早的消息");
+            assert_eq!(first.id, early.id);
+            assert_rich(first, "load_earlier_messages");
+        }
+        // ⑤ 没有卡片时回落到全量路径
+        {
+            let plain = db.create_conversation("conn_2", "no-checkpoint").expect("conv2");
+            db.save_message_with_images(
+                &plain.id,
+                "assistant",
+                "唯一一条",
+                "2026-01-01T00:00:00Z",
+                Some(tools),
+                Some(reasoning),
+                Some(images),
+            )
+            .expect("plain msg");
+            let active = db.load_active_messages(&plain.id).expect("active plain");
+            assert_eq!(active.messages.len(), 1);
+            assert_rich(&active.messages[0], "load_active_messages(无卡片)");
+        }
+    }
+
+    /// 列清单不许再被**整份抄回** SQL 字面量里。
+    ///
+    /// `MESSAGES_COLUMNS` 的意义是「一份清单」：SELECT 列、INSERT 列与占位符、UPSERT
+    /// 的 SET 子句都由它拼出来。有人把完整清单粘回某条语句，就等于又开了第二份 ——
+    /// 它当下仍是对的，但下一次加列必然漏掉那一处，而且是静默的。
+    ///
+    /// 实现是**整份源码的裸子串检查**，不是逐行扫：本文件的 SQL 都是多行字面量
+    /// （`SELECT` 的列清单与 `FROM messages` 不在同一行），逐行看会恰好漏掉它要拦的
+    /// 那种写法 —— 上一版就是逐行的，探针实测全绿。要匹配的模式由 `MESSAGES_COLUMNS`
+    /// **派生**（拼一份手写清单来对比，等于又在维护第二份）。
+    ///
+    /// **它拦不住什么**（别当万能）：手写的**子集**列清单不报 —— 那可能是合法的
+    /// （本文件就有 `SELECT id, created_at, rowid FROM messages`），探针实测注入
+    /// 前 6 列不会变红。「某条路径漏了列」由
+    /// `every_optional_message_field_survives_all_read_paths` 守，不靠这条。
+    #[test]
+    fn no_literal_message_column_list_in_sql() {
+        // 只看**生产代码**：测试里有一处 fixture 故意手建旧 schema 表、并插一条
+        // 只有 7 列的旧版行（`test_...old_schema...`），那不是"抄清单"而是"造旧数据"，
+        // 拿它当违规会把这条护栏变成误报机器。
+        //
+        // 切分点用 `#[cfg(test)]` + 紧跟的 `mod tests`（而不是光看 `#[cfg(test)]`）：
+        // 后者在本文件出现 **3 次** —— 真属性、本函数的文档注释、以及下面这行 split
+        // 自己。取首个匹配虽然碰巧是生产那个，但那是**巧合**（只要有人在文件更前面
+        // 的注释里写到这个词，扫描就会被截断而静默失效）。
+        let source = include_str!("conversation.rs");
+        let production = source
+            .split("
+#[cfg(test)]
+mod tests")
+            .next()
+            .expect("include_str 至少有一段");
+
+        // 空白归一化后再比对：否则「把清单换行排版」就能绕过（实测放行过）。
+        // 归一化不会误伤本文件的 const 定义 —— 那里每个列名带引号，归一化后是
+        // `"id", "conversation_id"`，与不带引号的清单串不同。
+        fn squeeze(text: &str) -> String {
+            text.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
+        let haystack = squeeze(production);
+
+        let literal_columns = MESSAGES_COLUMNS.join(", ");
+        assert!(
+            !haystack.contains(&squeeze(&literal_columns)),
+            "源码里出现了 messages 列清单的字面量拷贝（应改用 messages_select_columns() \
+             或 messages_insert_clause() 插值）：{literal_columns}"
+        );
+
+        let literal_placeholders = (1..=MESSAGES_COLUMNS.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(
+            !haystack.contains(&squeeze(&format!("VALUES ({literal_placeholders})"))),
+            "源码里出现了手写的占位符清单（应由 messages_insert_clause() 生成）"
+        );
+
+        // needle 在运行时拼出来：`include_str!` 会把**本测试自己**也扫进去，把字面量
+        // 直接写在这条断言里，它就会命中自己。
+        let insert_needle = format!("INSERT INTO messages ({}, conversation_id", MESSAGES_COLUMNS[0]);
+        assert!(
+            !haystack.contains(&squeeze(&insert_needle)),
+            "源码里出现了手写的 INSERT 列清单（应由 messages_insert_clause() 生成）"
+        );
     }
 }

@@ -878,15 +878,10 @@ pub async fn sftp_download_stream(
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
 
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .download_cancel_senders
-        .write()
-        .insert(download_id.clone(), cancel_tx);
-    let _guard = TransferCancelGuard {
-        transfer_id: download_id.clone(),
-        senders: state.download_cancel_senders.clone(),
-    };
+    // 注册取消通道；guard 随本函数存活，函数返回即自动注销（原来靠
+    // TransferCancelGuard 手写这件事，现在由 Registration 在 Drop 里做）。
+    let _cancel_registration = state.download_cancel.register(&download_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
@@ -980,7 +975,7 @@ pub async fn sftp_download_stream(
 /// `sftp-download-done{downloadId}`——`download_id` 由调用方给定（Agent 用
 /// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
 /// 取消：`cancel_rx` 被置位即中止并清理 .part；调用方负责把 sender 注册进
-/// `AppState::download_cancel_senders`（前端 `sftp_cancel_download` 按 id 触发）。
+/// `AppState::download_cancel`（前端 `sftp_cancel_download` 按 id 触发）。
 pub(crate) async fn stream_download_single_file(
     app: &AppHandle,
     remote: &mut russh_sftp::client::fs::File,
@@ -1072,9 +1067,7 @@ pub async fn sftp_cancel_upload(
     state: State<'_, AppState>,
     upload_id: String,
 ) -> Result<(), AppError> {
-    if let Some(sender) = state.upload_cancel_senders.write().remove(&upload_id) {
-        let _ = sender.send(true);
-    }
+    state.upload_cancel.cancel(&upload_id);
     Ok(())
 }
 
@@ -1083,67 +1076,8 @@ pub async fn sftp_cancel_download(
     state: State<'_, AppState>,
     download_id: String,
 ) -> Result<(), AppError> {
-    if let Some(sender) = state.download_cancel_senders.write().remove(&download_id) {
-        let _ = sender.send(true);
-    }
+    state.download_cancel.cancel(&download_id);
     Ok(())
-}
-
-/// Drop guard that removes the cancel sender from AppState on drop.
-pub(crate) struct TransferCancelGuard {
-    transfer_id: String,
-    senders: std::sync::Arc<
-        parking_lot::RwLock<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
-    >,
-}
-
-impl Drop for TransferCancelGuard {
-    fn drop(&mut self) {
-        self.senders.write().remove(&self.transfer_id);
-    }
-}
-
-/// 注册一个上传取消 watch 到统一表，返回 drop 时自动清理的 guard。
-/// Agent 传输工具复用（id 以 `agent-transfer-` 前缀，前端取消按钮按 id 触发）。
-pub(crate) fn register_upload_cancel(
-    state: &AppState,
-    transfer_id: &str,
-) -> (
-    tokio::sync::watch::Sender<bool>,
-    tokio::sync::watch::Receiver<bool>,
-    TransferCancelGuard,
-) {
-    let (tx, rx) = tokio::sync::watch::channel(false);
-    state
-        .upload_cancel_senders
-        .write()
-        .insert(transfer_id.to_string(), tx.clone());
-    let guard = TransferCancelGuard {
-        transfer_id: transfer_id.to_string(),
-        senders: state.upload_cancel_senders.clone(),
-    };
-    (tx, rx, guard)
-}
-
-/// 注册一个下载取消 watch 到统一表，返回 drop 时自动清理的 guard。
-pub(crate) fn register_download_cancel(
-    state: &AppState,
-    transfer_id: &str,
-) -> (
-    tokio::sync::watch::Sender<bool>,
-    tokio::sync::watch::Receiver<bool>,
-    TransferCancelGuard,
-) {
-    let (tx, rx) = tokio::sync::watch::channel(false);
-    state
-        .download_cancel_senders
-        .write()
-        .insert(transfer_id.to_string(), tx.clone());
-    let guard = TransferCancelGuard {
-        transfer_id: transfer_id.to_string(),
-        senders: state.download_cancel_senders.clone(),
-    };
-    (tx, rx, guard)
 }
 
 /// content:// URI 的打开模式（Android SAF）。
@@ -1307,15 +1241,8 @@ pub async fn sftp_upload_stream(
     let remote_path = validate_sftp_remote_path(&remote_path)?;
     let local_path = validate_local_path(&local_path)?;
 
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .upload_cancel_senders
-        .write()
-        .insert(upload_id.clone(), cancel_tx);
-    let _guard = TransferCancelGuard {
-        transfer_id: upload_id.clone(),
-        senders: state.upload_cancel_senders.clone(),
-    };
+    let _cancel_registration = state.upload_cancel.register(&upload_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     let sftp = state.ssh_manager.open_sftp(&session_id).await?;
 
@@ -1373,7 +1300,7 @@ pub async fn sftp_upload_stream(
 /// `sftp-upload-done{uploadId}`——`upload_id` 由调用方给定（Agent 用
 /// `agent-transfer-*` 前缀即可复用前端传输中心的监听与取消按钮）。
 /// 取消：`cancel_rx` 被置位即中止并清理 sidecar（调用方负责把 sender 注册进
-/// `AppState::upload_cancel_senders`，前端 `sftp_cancel_upload` 按 id 触发）。
+/// `AppState::upload_cancel`，前端 `sftp_cancel_upload` 按 id 触发）。
 pub(crate) async fn stream_upload_single_file(
     app: &AppHandle,
     sftp: &russh_sftp::client::SftpSession,
@@ -1721,15 +1648,8 @@ pub async fn sftp_upload_folder_stream(
     let local_path = validate_local_path(&local_path)?;
     let remote_path = validate_sftp_remote_path(&remote_path)?;
 
-    let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
-    state
-        .upload_cancel_senders
-        .write()
-        .insert(upload_id.clone(), cancel_tx);
-    let _guard = TransferCancelGuard {
-        transfer_id: upload_id.clone(),
-        senders: state.upload_cancel_senders.clone(),
-    };
+    let _cancel_registration = state.upload_cancel.register(&upload_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     let local = Path::new(&local_path);
     if !local.is_dir() {

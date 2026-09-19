@@ -11,15 +11,13 @@
 //!   传输中心创建条目（source=agent）；进度/完成复用 sftp 的
 //!   `sftp-upload-progress`/`sftp-upload-done`/`sftp-download-progress`/
 //!   `sftp-download-done` 事件。取消 watch 注册进
-//!   AppState::upload_cancel_senders / download_cancel_senders（id 以
+//!   AppState::upload_cancel / download_cancel（id 以
 //!   `agent-transfer-` 为前缀），前端「取消」按钮按 id 调
 //!   sftp_cancel_upload/download 即生效。
 //!
 //! 复用原则：本模块**不**实现传输字节拷贝——流式核心在
 //! `commands::sftp::{stream_upload_single_file, stream_download_single_file}`，
 //! 用户面板与 Agent 共用同一套。
-
-use std::collections::HashSet;
 
 use tauri::{AppHandle, Emitter};
 
@@ -58,14 +56,19 @@ pub async fn acquire_mutex(state: &AppState) -> tokio::sync::MutexGuard<'_, ()> 
 }
 
 /// 记账：task_id → 传输 id（级联取消用）。
-pub async fn register_transfer(state: &AppState, task_id: &str, transfer_id: &str) {
+///
+/// 返回 `false` = **这个 task_id 已经被收尾过**（`cancel_task_transfers` 先跑了）：
+/// 表里刻意没有落这一条，调用方必须当场放弃这次传输 —— 之后没有任何人会取消它。
+///
+/// 什么时候真会碰上：`run_agent_loop` 用 `join_all` 等工具返回、而 `take_all`
+/// 只在 `finalize_task`（loop 返回之后）里跑，所以**同一个任务正常执行期间不会**
+/// 走到这里；真实触发是「同一个 task_id 被并发 spawn 两次」（前端重发/重试）或
+/// 工具 panic 跳过了收尾清理。属于防御分支，不是热路径。
+pub async fn register_transfer(state: &AppState, task_id: &str, transfer_id: &str) -> bool {
     state
         .agent_transfer_by_task
-        .write()
+        .register(task_id, transfer_id)
         .await
-        .entry(task_id.to_string())
-        .or_insert_with(HashSet::new)
-        .insert(transfer_id.to_string());
 }
 
 /// 传输开始事件（前端建传输中心条目）。
@@ -92,23 +95,16 @@ pub fn emit_finished(app: &AppHandle, payload: &AgentTransferFinishedPayload) {
 /// 任务终态/停止：级联取消该任务名下全部 Agent 传输（只取消传输本身）。
 /// 置位 AppState 里该传输 id 的取消 watch（upload/download 表），传输本体
 /// 收到后自行清理 .part/sidecar 并结束。
+///
+/// 注意 `take_all` 会**粘性关闭**这个 task_id：此后 `register_transfer` 一律返回
+/// false。标记的生命周期 = 任务记录的生命周期（记录被剪枝时才由 `forget_owner`
+/// 解除）。今天不可达 —— task_id 是 uuid、不存在复用；将来若真出现同 id 复用，
+/// 新任务的传输会被静默放弃。
 pub async fn cancel_task_transfers(state: &AppState, task_id: &str) -> usize {
-    let ids: Vec<String> = state
-        .agent_transfer_by_task
-        .write()
-        .await
-        .remove(task_id)
-        .map(|s| s.into_iter().collect())
-        .unwrap_or_default();
+    let ids = state.agent_transfer_by_task.take_all(task_id).await;
     for id in &ids {
-        let removed_up = state.upload_cancel_senders.write().remove(id.as_str());
-        let removed_dl = state.download_cancel_senders.write().remove(id.as_str());
-        if let Some(tx) = removed_up {
-            let _ = tx.send(true);
-        }
-        if let Some(tx) = removed_dl {
-            let _ = tx.send(true);
-        }
+        state.upload_cancel.cancel(id);
+        state.download_cancel.cancel(id);
     }
     if !ids.is_empty() {
         log::info!(
@@ -123,18 +119,7 @@ pub async fn cancel_task_transfers(state: &AppState, task_id: &str) -> usize {
 /// 用户从传输中心取消单个 Agent 传输：前端实际调 sftp_cancel_upload/download
 /// 按 id 触发 watch（工具执行时已注册）。这里仅清理记账，幂等。
 pub async fn cancel_transfer_record(state: &AppState, transfer_id: &str) {
-    let mut found = false;
-    {
-        let mut by_task = state.agent_transfer_by_task.write().await;
-        for ids in by_task.values_mut() {
-            if ids.remove(transfer_id) {
-                found = true;
-            }
-        }
-        if found {
-            by_task.retain(|_, ids| !ids.is_empty());
-        }
-    }
+    let found = state.agent_transfer_by_task.remove_child(transfer_id).await;
     if found {
         log::info!("agent_transfer: 清理传输记账 {}", transfer_id);
     }

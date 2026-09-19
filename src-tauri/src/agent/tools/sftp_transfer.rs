@@ -594,12 +594,24 @@ async fn upload_execute(
         };
 
     // 取消 watch 注册进统一取消表（前端传输中心「取消」按钮按 id 触发）。
-    let (_cancel_tx, mut cancel_rx, _guard) =
-        crate::commands::sftp::register_upload_cancel(&state, &transfer_id);
+    let _cancel_registration = state.upload_cancel.register(&transfer_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     // 记账（任务终态级联取消用）+ 互斥锁（多 agent 传输一次一个）。
-    if !task_id.is_empty() {
-        crate::agent::transfer::register_transfer(&state, &task_id, &transfer_id).await;
+    //
+    // `register_transfer` 返回 false = 任务已经收尾（级联取消跑在了记账前面）：
+    // 表里没有这一条，没人会替我们取消这次传输 —— 任务已停止，传输却继续跑。
+    // 此刻还没 emit_start（传输中心条目尚未创建），直接放弃最干净；返回时
+    // `_cancel_registration` 随之 Drop，取消通道也一并注销。
+    if !task_id.is_empty()
+        && !crate::agent::transfer::register_transfer(&state, &task_id, &transfer_id).await
+    {
+        log::info!(
+            "agent_transfer: 任务 {} 已结束，放弃本次传输 {}",
+            task_id,
+            transfer_id
+        );
+        return Ok(ToolOutput::fail("upload_file", "任务已结束，未开始传输。"));
     }
     let _mutex = crate::agent::transfer::acquire_mutex(&state).await;
 
@@ -945,12 +957,24 @@ async fn download_execute(
         .unwrap_or_else(|| "download".to_string());
 
     // 取消 watch 注册进统一取消表（前端传输中心「取消」按钮按 id 触发）。
-    let (_cancel_tx, mut cancel_rx, _guard) =
-        crate::commands::sftp::register_download_cancel(&state, &transfer_id);
+    let _cancel_registration = state.download_cancel.register(&transfer_id);
+    let mut cancel_rx = _cancel_registration.receiver();
 
     // 记账（任务终态级联取消用）+ 互斥锁（多 agent 传输一次一个）。
-    if !task_id.is_empty() {
-        crate::agent::transfer::register_transfer(&state, &task_id, &transfer_id).await;
+    //
+    // `register_transfer` 返回 false = 任务已经收尾（级联取消跑在了记账前面）：
+    // 表里没有这一条，没人会替我们取消这次传输 —— 任务已停止，传输却继续跑。
+    // 此刻还没 emit_start（传输中心条目尚未创建），直接放弃最干净；返回时
+    // `_cancel_registration` 随之 Drop，取消通道也一并注销。
+    if !task_id.is_empty()
+        && !crate::agent::transfer::register_transfer(&state, &task_id, &transfer_id).await
+    {
+        log::info!(
+            "agent_transfer: 任务 {} 已结束，放弃本次传输 {}",
+            task_id,
+            transfer_id
+        );
+        return Ok(ToolOutput::fail("download_file", "任务已结束，未开始传输。"));
     }
     let _mutex = crate::agent::transfer::acquire_mutex(&state).await;
 

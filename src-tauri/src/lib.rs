@@ -1,4 +1,10 @@
 pub mod agent;
+// 取消信号注册表：Agent 任务 / SFTP 上传 / SFTP 下载 / 插件安装四张取消表
+// 的统一容器（此前是同一个类型抄 4 遍 + 两份逐字相同的 Drop guard）。
+pub mod cancel;
+// 「owner → 子资源 id」记账：owner 终态时整体取走回收（多机自动拉起的会话 /
+// Agent 传输）。注册与清理的竞态由收尾标记关掉，见模块注释。
+pub mod child_resources;
 pub mod command_exec;
 pub mod commands;
 pub mod config;
@@ -86,18 +92,15 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Agent 阻塞式交互（审批 / 提问）统一队列管理器
     pub agent_interaction: crate::agent::interaction::AgentInteractionManager,
-    /// Cancellation signals for running agent tasks: task_id -> watch sender.
-    /// Setting the value to `true` signals the agent loop to abort the current LLM call.
-    pub cancel_senders: std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Cancellation signals for SFTP uploads: upload_id -> watch sender.
-    pub upload_cancel_senders:
-        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Cancellation signals for SFTP downloads: download_id -> watch sender.
-    pub download_cancel_senders:
-        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Cancellation signals for plugin installs: install_id -> watch sender.
-    pub plugin_install_cancel_senders:
-        std::sync::Arc<PlRwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// 运行中 Agent 任务的取消信号（task_id → 取消通道）。置位即让 agent loop
+    /// 放弃当前 LLM 调用（`llm/manager.rs` 的 `select!` 臂）。
+    pub task_cancel: crate::cancel::CancellationRegistry,
+    /// SFTP 上传的取消信号（upload_id → 取消通道）。
+    pub upload_cancel: crate::cancel::CancellationRegistry,
+    /// SFTP 下载的取消信号（download_id → 取消通道）。
+    pub download_cancel: crate::cancel::CancellationRegistry,
+    /// 插件安装的取消信号（install_id → 取消通道）。
+    pub plugin_install_cancel: crate::cancel::CancellationRegistry,
     /// 命令执行统一管理器：所有 SSH 命令执行（用户直发 / 系统长任务 /
     /// Agent 工具 / 插件）的唯一入口，集中管理执行记录、取消注册表
     /// （取代旧的 long_exec_cancel_senders）、断连级联取消与后台作业
@@ -121,19 +124,19 @@ pub struct AppState {
     /// Reloads on startup and whenever settings change (enable/disable plugin,
     /// authorized capabilities). Emits `plugin-registry-changed` after reload.
     pub plugin_registry: crate::plugins::registry::SharedPluginRegistry,
-    /// 多机操控记账：task_id → 该任务自动拉起的会话 id 集合（见
-    /// `multi_host` 模块）。任务终态时经 `cleanup_task_targets` 关闭这些
-    /// 会话；**用户手动打开的会话不在集合内，绝不被自动关闭**。
-    pub multi_host_targets:
-        std::sync::Arc<TokioRwLock<HashMap<String, std::collections::HashSet<String>>>>,
+    /// 多机操控记账：task_id → 该任务自动拉起的会话 id（见 `multi_host` 模块）。
+    /// 任务终态时经 `cleanup_task_targets` 关闭这些会话；**用户手动打开的会话
+    /// 不在集合内，绝不被自动关闭**。注册与终态清理的竞态由
+    /// [`crate::child_resources`] 的收尾标记关掉（不是靠"注册前查一眼"）。
+    pub multi_host_targets: crate::child_resources::ChildResources,
     /// Agent 传输互斥：**同一时刻只跑一个 Agent 传输**（多 agent 任务的
     /// 上传/下载串行）。用户 SFTP 面板传输不受此锁限制（那是前端双道
     /// transferScheduler 调度，与 Agent 传输相互独立——见传输中心语义）。
     pub agent_transfer_mutex: std::sync::Arc<tokio::sync::Mutex<()>>,
-    /// Agent 传输记账：task_id → 该任务发起的 Agent 传输 id 集合。
+    /// Agent 传输记账：task_id → 该任务发起的 Agent 传输 id。
     /// 任务终态/停止时级联取消这些传输（只取消传输本身，不动任务）。
-    pub agent_transfer_by_task:
-        std::sync::Arc<TokioRwLock<HashMap<String, std::collections::HashSet<String>>>>,
+    /// 与 `multi_host_targets` 共用 [`crate::child_resources`] 的竞态保证。
+    pub agent_transfer_by_task: crate::child_resources::ChildResources,
 }
 
 impl AppState {
@@ -475,18 +478,18 @@ impl AppState {
             mcp_manager: mcp_manager.clone(),
             config_dir,
             agent_interaction: crate::agent::interaction::AgentInteractionManager::new(),
-            cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            upload_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            download_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
-            plugin_install_cancel_senders: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            task_cancel: crate::cancel::CancellationRegistry::new(),
+            upload_cancel: crate::cancel::CancellationRegistry::new(),
+            download_cancel: crate::cancel::CancellationRegistry::new(),
+            plugin_install_cancel: crate::cancel::CancellationRegistry::new(),
             command_exec,
             sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             sysopen_active_paths: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             settings_warning: std::sync::Arc::new(PlRwLock::new(settings_warning)),
             plugin_registry: crate::plugins::registry::new_shared(),
-            multi_host_targets: std::sync::Arc::new(TokioRwLock::new(HashMap::new())),
+            multi_host_targets: crate::child_resources::ChildResources::new(),
             agent_transfer_mutex: std::sync::Arc::new(tokio::sync::Mutex::new(())),
-            agent_transfer_by_task: std::sync::Arc::new(TokioRwLock::new(HashMap::new())),
+            agent_transfer_by_task: crate::child_resources::ChildResources::new(),
         }
     }
 }

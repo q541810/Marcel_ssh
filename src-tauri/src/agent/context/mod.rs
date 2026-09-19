@@ -160,6 +160,115 @@ fn region_shadowed_tokens(msgs: &[LlmMessage], range: &region::RangeSelection) -
         .sum()
 }
 
+/// 摘要请求里**区域之外**的固定开销：tools schema header + 指令正文。
+///
+/// 摘要调用不带 system（见 `compact_region`），所以只算这两块——它们同样占
+/// provider 的输入预算，漏算就会低估请求大小、"别被上游炸飞"的预检形同虚设。
+fn summary_request_overhead(tools: &[ToolDefinition]) -> usize {
+    meter::estimate_header(None, tools)
+        + meter::estimate_message(&LlmMessage::user(summarizer::compaction_instruction()))
+}
+
+/// 摘要请求的预留输出量（与 [`summary_input_budget`] 同源）。
+///
+/// 取 `min(SUMMARY_INPUT_RESERVE_TOKENS, 窗口 / 4)`：大窗口下 8k 足以代表常见模型
+/// 的默认输出上限，小窗口下按比例缩放，避免预算被压成 0 而让压缩整体失效。
+fn summary_input_reserve(context_window: u64) -> u64 {
+    summarizer::SUMMARY_INPUT_RESERVE_TOKENS.min(context_window / 4)
+}
+
+/// 摘要请求的输入预算（含 overhead）：`窗口 − 预留输出`。
+///
+/// 窗口用的是会话模型（或全局配置）的 `context_window`；若用户在「上下文压缩模型」
+/// 槽位单独配了别的模型，它的真实上限靠 `compact_region` 的事后降级兜住。
+/// 窗口未配置（0）、或预算小到连最小可压区间都装不下时返回 `None` = 不按尺寸收缩
+/// （保持原行为；这类小窗口下触发阈值本身也到不了）。
+fn summary_input_budget(context_window: u64) -> Option<usize> {
+    if context_window == 0 {
+        return None;
+    }
+    let budget = (context_window - summary_input_reserve(context_window)) as usize;
+    (budget > MIN_COMPACTABLE_TOKENS).then_some(budget)
+}
+
+/// 按输入预算收紧区间末条：返回 `overhead + 区间` 仍 ≤ `budget` 的最大末条；
+/// 连单条消息（区间首条）都装不下时返回 `None`。
+///
+/// 只负责尺寸。锚点与工具配对仍由 [`shrink_to_known_tail`] 保证，且回退只会让
+/// 区间更小，不会破坏这里算出的预算约束。
+fn shrink_end_to_budget(
+    msgs: &[LlmMessage],
+    range: &region::RangeSelection,
+    overhead: usize,
+    budget: usize,
+) -> Option<usize> {
+    let mut end = range.end;
+    let mut tokens: usize = msgs[range.start..=range.end]
+        .iter()
+        .map(meter::estimate_message)
+        .sum();
+    loop {
+        if overhead + tokens <= budget {
+            return Some(end);
+        }
+        if end == range.start {
+            return None;
+        }
+        tokens -= meter::estimate_message(&msgs[end]);
+        end -= 1;
+    }
+}
+
+/// 事前预检：把区间末条收到摘要请求能装下的大小（窗口未配置时原样返回）。
+///
+/// 触发压缩说明上下文已经很大；若区间还超过摘要模型能收的输入，那次请求一上去
+/// 就会被 provider 拒掉——不发这一枪，直接跳过（不留痕），等后面几轮再试。
+///
+/// 只在自动路径调用：手动压缩的卡片定位依赖"区间一直压到最后一条"，收缩会让
+/// 前端把未被摘要的中间段屏蔽掉（静默丢上下文），见 `compact_if_needed`。
+fn apply_input_budget(
+    msgs: &[LlmMessage],
+    range: region::RangeSelection,
+    tools: &[ToolDefinition],
+    context_window: u64,
+) -> Result<region::RangeSelection, String> {
+    let Some(budget) = summary_input_budget(context_window) else {
+        return Ok(range);
+    };
+    let overhead = summary_request_overhead(tools);
+    match shrink_end_to_budget(msgs, &range, overhead, budget) {
+        Some(end) => {
+            if end < range.end {
+                log::info!(
+                    "compaction: 区间末条按摘要请求预算从 {} 收到 {}（预算 {} tokens、固定开销 {}）",
+                    range.end,
+                    end,
+                    budget,
+                    overhead
+                );
+            }
+            Ok(region::RangeSelection {
+                start: range.start,
+                end,
+            })
+        }
+        None => Err(format!(
+            "摘要请求超出输入预算（窗口 {context_window} tokens、预留输出 {}），已放弃本次压缩",
+            summary_input_reserve(context_window)
+        )),
+    }
+}
+
+/// 区间过小导致跳过时的原因文案。预算收缩导致时给出区分，免得用户以为
+/// 是"历史太短"而困惑。
+fn too_small_reason(shadowed: usize, budget_bound: bool) -> String {
+    if budget_bound {
+        format!("被压区间按摘要输入预算收得太小（约 {shadowed} tokens），压缩无收益")
+    } else {
+        format!("被压区间过小（约 {shadowed} tokens），压缩无收益")
+    }
+}
+
 /// 收缩区间末条到"最近一条满足锚点条件的平衡切点"。
 ///
 /// 统一 id 指针（`tail_db_id`）要求被压区间末条消息在 DB 里有行可定位；运行中
@@ -191,6 +300,27 @@ fn shrink_to_known_tail(
         }
         end -= 1;
     }
+}
+
+/// 摘要请求被 provider 拒绝（真实上下文上限）后的降级区间：把预算砍到"刚被拒那次
+/// 的一半"，再回退到有锚点的平衡切点。无可行区间返回 `None`（调用方按原错误失败）。
+fn shrink_region_for_retry(
+    msgs: &[LlmMessage],
+    cuts: &[bool],
+    range: &region::RangeSelection,
+    overhead: usize,
+    region_tokens: usize,
+    known_only: bool,
+) -> Option<region::RangeSelection> {
+    let end = shrink_end_to_budget(msgs, range, overhead, overhead + region_tokens / 2)?;
+    let narrowed = region::RangeSelection {
+        start: range.start,
+        end,
+    };
+    if narrowed.end == range.end {
+        return None; // 没收到（预算只剩一半，正常不会发生）→ 不做无意义的重试
+    }
+    shrink_to_known_tail(msgs, cuts, &narrowed, known_only)
 }
 
 /// 入口：按触发来源执行一次压缩管线，返回结果 + 生命周期事件。
@@ -272,11 +402,32 @@ pub async fn compact_if_needed(
             // 也一并压掉；`tail_db_id` 恒为 None，persist 按最后一行定位队尾）。
             // 自动（Overflow，known_only=false）收缩到有 DB 行的平衡末条：
             // 运行中消息也可压（超长任务恢复）；无锚点则跳过。
-            let range = if trigger == CompactionTrigger::Manual {
-                range
+            // 手动不做事前预算收缩：卡片定位靠"区间一直压到最后一条"，收短会让
+            // 前端把未被摘要的中间段屏蔽掉（静默丢上下文）。
+            let (range, budget_bound) = if trigger == CompactionTrigger::Manual {
+                (range, false)
             } else {
-                match shrink_to_known_tail(msgs, &cuts, &range, false) {
-                    Some(r) => r,
+                let unbudgeted_end = range.end;
+                let budgeted = match apply_input_budget(msgs, range, tools, context_window) {
+                    Ok(r) => r,
+                    Err(reason) => {
+                        record_event(
+                            &mut events,
+                            on_event,
+                            CompactionEvent::Skipped {
+                                reason,
+                                attempted: false,
+                            },
+                        );
+                        return CompactionRun {
+                            outcome: None,
+                            events,
+                        };
+                    }
+                };
+                let budget_bound = budgeted.end < unbudgeted_end;
+                match shrink_to_known_tail(msgs, &cuts, &budgeted, false) {
+                    Some(r) => (r, budget_bound),
                     None => {
                         record_event(
                             &mut events,
@@ -300,7 +451,7 @@ pub async fn compact_if_needed(
                     &mut events,
                     on_event,
                     CompactionEvent::Skipped {
-                        reason: format!("被压区间过小（约 {shadowed} tokens），压缩无收益"),
+                        reason: too_small_reason(shadowed, budget_bound),
                         attempted: false,
                     },
                 );
@@ -313,6 +464,7 @@ pub async fn compact_if_needed(
                 msgs,
                 manager,
                 &range,
+                tools,
                 cancel_rx,
                 &mut events,
                 on_event,
@@ -401,10 +553,30 @@ pub async fn compact_if_needed(
                     }
                     break;
                 };
+                // 事前预检：区间超过摘要请求输入预算时先收到能装下（窗口未配置则不收缩）
+                let unbudgeted_end = range.end;
+                let budgeted = match apply_input_budget(msgs, range, tools, context_window) {
+                    Ok(r) => r,
+                    Err(reason) => {
+                        // 已有成功压缩时不再报"跳过"（卡片保持 done，避免误导）
+                        if result.is_none() {
+                            record_event(
+                                &mut events,
+                                on_event,
+                                CompactionEvent::Skipped {
+                                    reason,
+                                    attempted: false,
+                                },
+                            );
+                        }
+                        break;
+                    }
+                };
+                let budget_bound = budgeted.end < unbudgeted_end;
                 // 收缩到"前端已知 id"的平衡末条（known_only=true）：区间末条
                 // 必是前端 store 有 dbId 的消息 → 前端按 id 必能找到插入点，
                 // live 降级路径实际不再触发。运行中消息留在尾部保留。
-                let Some(range) = shrink_to_known_tail(msgs, &cuts, &range, true) else {
+                let Some(range) = shrink_to_known_tail(msgs, &cuts, &budgeted, true) else {
                     if result.is_none() {
                         record_event(
                             &mut events,
@@ -425,7 +597,7 @@ pub async fn compact_if_needed(
                             &mut events,
                             on_event,
                             CompactionEvent::Skipped {
-                                reason: format!("被压区间过小（约 {shadowed} tokens），压缩无收益"),
+                                reason: too_small_reason(shadowed, budget_bound),
                                 attempted: false,
                             },
                         );
@@ -436,6 +608,7 @@ pub async fn compact_if_needed(
                     msgs,
                     manager,
                     &range,
+                    tools,
                     cancel_rx,
                     &mut events,
                     on_event,
@@ -506,13 +679,20 @@ pub async fn compact_if_needed(
 /// 单个区间压缩事务。
 ///
 /// 顺序：实时发 `SummarizingStart`（摘要调用开始，前端立刻进入进行中状态）
-/// → 影子定价 → 构建摘要输入（system + 区间消息）→ LLM 摘要（可取消，
-/// 文本增量经 `Progress` 实时推送）→ framing + shrink 校验 → splice 替换。
+/// → 影子定价 → 构建摘要输入（system + 区间消息 + 常规请求的 tools）→ LLM 摘要
+/// （可取消，文本增量经 `Progress` 实时推送）→ framing + shrink 校验 → splice 替换。
 /// 任何失败在 splice 之前返回 `Err`，messages 保持不变；splice 之后无失败路径。
+///
+/// **事后降级**：provider 用它的真实上下文上限拒绝了这次摘要请求（我们的估算是
+/// 启发式的，中文内容还会被 `chars/4` 低估）时，把区间末条按同一套约束
+/// （尺寸 → 平衡切点 → 锚点）收紧到一半后**重试一次**，而不是把整次压缩判死。
+/// 手动压缩不参与降级：它的卡片定位依赖"区间一直压到最后一条"。
+#[allow(clippy::too_many_arguments)]
 async fn compact_region(
     msgs: &mut Vec<LlmMessage>,
     manager: &LlmManager,
     range: &region::RangeSelection,
+    tools: &[ToolDefinition],
     cancel_rx: &mut watch::Receiver<bool>,
     events: &mut Vec<CompactionEvent>,
     on_event: &(dyn Fn(CompactionEvent) + Sync),
@@ -524,35 +704,77 @@ async fn compact_region(
         CompactionEvent::SummarizingStart { trigger },
     );
 
-    let shadowed_tokens: usize = msgs[range.start..=range.end]
-        .iter()
-        .map(meter::estimate_message)
-        .sum();
-
     // 摘要调用**不**复用会话 system 提示：msl 的会话 system 是中文人格设定
     // （"你是玛瑟尔 SSH…中文优先"），与英文压缩指令冲突，会把摘要模型带偏成
     // 以助手身份闲聊/打招呼（DSH 的 system 是英文 coding-assistant 设定才安全）。
     // 不传 system 会让 KV 前缀缓存失效，但正确性优先，压缩频率低可接受。
-    let input = summarizer::SummarizationInput {
-        system: None,
-        region: &msgs[range.start..=range.end],
-    };
+    // 工具 schema 反而要传：与常规请求的 tools 段对齐，模型据此理解历史里的
+    // 工具调用（减少信息丢失）；传工具 ≠ 允许调用，指令首尾双重警告 + 返回
+    // tool_calls 即拒绝（见 `summarizer`）。
+    let known_only = trigger == "pressure";
+    let mut current = *range;
+    let mut fallback_used = false;
+    let summary_text = loop {
+        let region_tokens = region_shadowed_tokens(msgs, &current);
+        let input = summarizer::SummarizationInput {
+            system: None,
+            tools,
+            region: &msgs[current.start..=current.end],
+        };
 
-    // 摘要文本增量 → Progress 事件实时转发（前端实时显示生成中的摘要）。
-    // 进度回调借用 on_event 引用，生命周期限定在本次压缩事务内。
-    let progress = |text: &str| {
-        on_event(CompactionEvent::Progress {
-            text: text.to_string(),
-        });
-    };
+        // 摘要文本增量 → Progress 事件实时转发（前端实时显示生成中的摘要）。
+        // 回调借用 on_event 引用，生命周期限定在本次压缩事务内。
+        let progress = |text: &str| {
+            on_event(CompactionEvent::Progress {
+                text: text.to_string(),
+            });
+        };
 
-    let summary_text = tokio::select! {
-        r = summarizer::summarize_with_llm(manager, &input, Some(&progress)) => r.map_err(|e| e)?,
-        _ = cancel_rx.changed() => {
-            log::info!("compaction cancelled by user; messages unchanged");
-            return Err("已取消".into());
+        let result = tokio::select! {
+            r = summarizer::summarize_with_llm(manager, &input, Some(&progress)) => r,
+            _ = cancel_rx.changed() => {
+                log::info!("compaction cancelled by user; messages unchanged");
+                return Err("已取消".into());
+            }
+        };
+
+        match result {
+            Ok(text) => break text,
+            Err(e) => {
+                let fallbackable = !fallback_used
+                    && !matches!(trigger, "manual")
+                    && is_context_overflow_error(&e);
+                if !fallbackable {
+                    return Err(e);
+                }
+                let Ok(cuts) = pairing::cut_balance(msgs) else {
+                    return Err(e);
+                };
+                let Some(smaller) = shrink_region_for_retry(
+                    msgs,
+                    &cuts,
+                    &current,
+                    summary_request_overhead(tools),
+                    region_tokens,
+                    known_only,
+                ) else {
+                    return Err(e);
+                };
+                log::warn!(
+                    "摘要请求被 provider 拒绝（上下文超限），区间 {}..={} 收紧到 {}..={} 后重试",
+                    current.start,
+                    current.end,
+                    smaller.start,
+                    smaller.end
+                );
+                fallback_used = true;
+                current = smaller;
+            }
         }
     };
+
+    // 影子定价按**最终**区间算（降级后区间可能比调用方给的更短）
+    let shadowed_tokens = region_shadowed_tokens(msgs, &current);
 
     // framing + shrink 校验：摘要（含 framing）必须比被压内容小，否则拒绝
     let framed = format!(
@@ -567,17 +789,17 @@ async fn compact_region(
         ));
     }
 
-    let shadowed_messages = range.end - range.start + 1;
+    let shadowed_messages = current.end - current.start + 1;
     // 统一 id 指针：被压区间末条的 DB row id（自动路径调用方已收缩保证有值，
     // 前端按 dbId 定位插卡、后端按 id 查行取 created_at）。
     // **手动 = 队尾语义**：恒 `None`（本会话消息可能没有 db_id），后端按
     // 最后一行定位队尾、前端队尾追加——前后端位置严格一致，不依赖 id。
-    let tail_db_id = if trigger == "manual" {
+    let tail_db_id = if matches!(trigger, "manual") {
         None
     } else {
-        msgs[range.end].db_id.clone()
+        msgs[current.end].db_id.clone()
     };
-    msgs.splice(range.start..=range.end, [framed_msg]);
+    msgs.splice(current.start..=current.end, [framed_msg]);
 
     Ok(CompactionOutcome {
         shadowed_messages,
@@ -759,6 +981,148 @@ mod tests {
         assert_eq!(
             shrink_to_known_tail(&msgs2, &cuts2, &range2, true),
             Some(region::RangeSelection { start: 0, end: 0 })
+        );
+    }
+
+    /// 大量同长度消息（char_len 字符），用于预算收缩的确定性用例。
+    fn many_msgs(n: usize, char_len: usize) -> Vec<LlmMessage> {
+        (0..n)
+            .map(|i| LlmMessage::user(&format!("m{i}-{}", "x".repeat(char_len))))
+            .collect()
+    }
+
+    #[test]
+    fn summary_input_budget_needs_window_and_room() {
+        // 未配置窗口 → 不做尺寸收缩（保持原行为）
+        assert_eq!(summary_input_budget(0), None);
+        // 窗口太小（预算 ≤ 最小可压区间）→ 同样不收缩
+        assert_eq!(summary_input_budget(600), None);
+        // 大窗口：预留固定 8192
+        assert_eq!(summary_input_budget(100_000), Some(100_000 - 8192));
+        // 小窗口：预留按 1/4 缩放，预算不被压成 0（否则压缩整体失效）
+        assert_eq!(summary_input_budget(20_000), Some(20_000 - 5000));
+        assert_eq!(summary_input_budget(2_000), Some(2_000 - 500));
+    }
+
+    /// 预算够 → 原样返回；不够 → 收到"能装下的最大末条"，不是随手砍一条。
+    #[test]
+    fn apply_input_budget_narrows_to_largest_fitting_end() {
+        let msgs = many_msgs(40, 4_000);
+        let range = region::RangeSelection { start: 0, end: 39 };
+        let window = 40_000;
+        let budget = summary_input_budget(window).expect("预算");
+        let overhead = summary_request_overhead(&[]);
+        let narrower = apply_input_budget(&msgs, range, &[], window).expect("应收紧");
+
+        assert_eq!(narrower.start, range.start, "起点不变（头锚定）");
+        assert!(narrower.end < range.end);
+        assert!(overhead + region_shadowed_tokens(&msgs, &narrower) <= budget);
+        // 再多留一条就装不下 → 确实取到了最大可装末条
+        let one_more = region::RangeSelection {
+            start: 0,
+            end: narrower.end + 1,
+        };
+        assert!(overhead + region_shadowed_tokens(&msgs, &one_more) > budget);
+
+        // 同样的消息：窗口给足 → 原样返回
+        assert_eq!(
+            apply_input_budget(&msgs, range, &[], 1_000_000),
+            Ok(range)
+        );
+    }
+
+    /// 传工具 schema 会让摘要请求变大 → 预算收缩必须把它算进去（收到更小的区间）。
+    #[test]
+    fn apply_input_budget_accounts_for_tool_schema() {
+        let msgs = many_msgs(40, 4_000);
+        let range = region::RangeSelection { start: 0, end: 39 };
+        let window = 40_000;
+        let big_tools = vec![crate::llm::provider::ToolDefinition {
+            name: "read_file".into(),
+            description: "x".repeat(20_000),
+            parameters: serde_json::json!({}),
+        }];
+
+        let without = apply_input_budget(&msgs, range, &[], window).expect("应收紧");
+        let with = apply_input_budget(&msgs, range, &big_tools, window).expect("应收紧");
+        assert!(
+            with.end < without.end,
+            "工具 schema 的固定开销必须计入预算（{} 应小于 {}）",
+            with.end,
+            without.end
+        );
+        let budget = summary_input_budget(window).expect("预算");
+        assert!(
+            summary_request_overhead(&big_tools) + region_shadowed_tokens(&msgs, &with) <= budget
+        );
+    }
+
+    /// 连单条消息都装不下 → 报错跳过（不发那次注定被 provider 拒的请求）。
+    #[test]
+    fn apply_input_budget_rejects_when_nothing_fits() {
+        let msgs = many_msgs(2, 400_000);
+        let range = region::RangeSelection { start: 0, end: 1 };
+        let err = apply_input_budget(&msgs, range, &[], 40_000).unwrap_err();
+        assert!(err.contains("输入预算"), "实际文案: {err}");
+    }
+
+    /// 事后降级（provider 拒绝摘要请求）：预算砍到刚被拒那次的一半，
+    /// 并落到有锚点的平衡切点——这是唯一能对齐 provider 真实上限的机制。
+    #[test]
+    fn retry_shrink_halves_region_and_keeps_anchor() {
+        let mut msgs = many_msgs(40, 4_000);
+        for (i, m) in msgs.iter_mut().enumerate() {
+            if i % 2 == 1 {
+                m.db_id = Some(format!("row-{i}"));
+                m.db_id_known = true;
+            }
+        }
+        let range = region::RangeSelection { start: 0, end: 39 };
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let overhead = summary_request_overhead(&[]);
+        let region_tokens = region_shadowed_tokens(&msgs, &range);
+
+        let smaller =
+            shrink_region_for_retry(&msgs, &cuts, &range, overhead, region_tokens, true)
+                .expect("砍半后应仍有可行区间");
+
+        assert_eq!(smaller.start, range.start);
+        assert!(smaller.end < range.end);
+        assert!(msgs[smaller.end].db_id.is_some(), "末条必须有 DB 锚点");
+        assert!(cuts[smaller.end + 1], "末条之后必须是平衡切点");
+        assert!(
+            region_shadowed_tokens(&msgs, &smaller) <= region_tokens / 2,
+            "降级后区间应不超过原来的一半"
+        );
+    }
+
+    /// 收缩链：先按预算收尺寸、再回退到有锚点的平衡切点；两步之后预算仍成立。
+    #[test]
+    fn budget_narrowing_keeps_anchor_balance_and_budget() {
+        // 只有奇数索引有 db_id（模拟运行中未回填的那些条），且预算收缩落在无锚点的
+        // 偶数末条上 → 必须能回退到最近的有锚点平衡切点
+        let mut msgs = many_msgs(40, 4_000);
+        for (i, m) in msgs.iter_mut().enumerate() {
+            if i % 2 == 1 {
+                m.db_id = Some(format!("row-{i}"));
+                m.db_id_known = true;
+            }
+        }
+        let range = region::RangeSelection { start: 0, end: 39 };
+        let window = 40_000;
+        let budget = summary_input_budget(window).expect("预算");
+        let overhead = summary_request_overhead(&[]);
+
+        let budgeted = apply_input_budget(&msgs, range, &[], window).expect("应收紧");
+        let cuts = pairing::cut_balance(&msgs).unwrap();
+        let final_range = shrink_to_known_tail(&msgs, &cuts, &budgeted, true).expect("锚点");
+
+        assert!(final_range.end <= budgeted.end, "锚点回退只会更小");
+        assert!(msgs[final_range.end].db_id.is_some(), "末条必须有 DB 锚点");
+        assert!(cuts[final_range.end + 1], "末条之后必须是平衡切点");
+        assert!(
+            overhead + region_shadowed_tokens(&msgs, &final_range) <= budget,
+            "两步收缩后预算仍必须成立"
         );
     }
 }

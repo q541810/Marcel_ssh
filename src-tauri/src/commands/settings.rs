@@ -283,6 +283,41 @@ mod tests {
     use super::*;
     use tokio::runtime::Runtime;
 
+    /// 设置的**有效默认值**锚点。**故意不放在 `config/settings.rs` 里。**
+    ///
+    /// 2026-09-19 一次误操作把 `config/settings.rs` 整份还原成 HEAD：那边 `mod tests`
+    /// 里的三个契约测试**跟着文件一起消失了** —— 全量 963 条测试里零条 settings 失败，
+    /// 因为 HEAD 那版自己是自洽的（`font_family: "monospace"` 配它自己的 `Default`、
+    /// `max_tool_rounds: 80`、`llm_config` 的 serde 默认是 `None`）。
+    ///
+    /// 所以这里放一份**不在被审文件里**的锚：只要整份还原（或任何把这几条改回旧值的
+    /// 编辑）发生，这条测试立刻红。下面每一条都是当时真的被抹掉过的。
+    #[test]
+    fn effective_settings_defaults_are_pinned() {
+        let s = AppSettings::default();
+
+        // 长字体栈（HEAD 是 "monospace"；serde 缺字段路径读 `default_font_family()`，
+        // 两边不是同一个来源就会「新装」与「旧配置」拿到不同字体）
+        assert_eq!(
+            s.font_family,
+            "JetBrains Mono, Fira Code, Consolas, \"Microsoft YaHei\", monospace"
+        );
+        // 500（HEAD 的 AppSettings 内联是 80，而 serde 侧读函数返回 500）
+        assert_eq!(s.agent_mode_settings.max_tool_rounds, 500);
+        // 新装必须预置一个默认渠道（serde 侧若退化成 None，全新安装的注册表是空的）
+        assert!(
+            s.llm_config.is_some(),
+            "llm_config 的 serde/Default 默认值必须都是 Some"
+        );
+        // 两个幽灵字段：后端不读它们、只负责持久化，缺了就是「前端写进去、重启即失效」
+        assert!(s.fold_completed_turns);
+        assert!(!s.privacy_mode);
+
+        // 并且与 `{}` 反序列化路径逐字段一致（同一条链路的另一半）
+        let from_empty: AppSettings = serde_json::from_str("{}").expect("deserialize {}");
+        assert_eq!(from_empty, s, "serde 缺字段路径与 Default::default() 不一致");
+    }
+
     fn validate(paths: Vec<String>) -> Result<(), String> {
         Runtime::new()
             .unwrap()

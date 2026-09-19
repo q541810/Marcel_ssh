@@ -457,7 +457,7 @@ impl AgentTool for SubagentTool {
                 )
             }
             None => {
-                if status == AgentStatus::Cancelled {
+                if status.is_cancelled() {
                     log::info!("Subtask {} cancelled", sub_task_id);
                     Ok(ToolOutput::fail(
                         format!("子agent已取消：{}", description),

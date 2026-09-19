@@ -17,15 +17,13 @@ use std::sync::Arc;
 
 use futures::FutureExt;
 use tauri::AppHandle;
-use tokio::sync::watch;
 
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
-    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent::SubagentTool,
-    ToolRegistry,
+    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
 };
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
@@ -119,6 +117,68 @@ impl AgentManager {
         Self { state }
     }
 
+    /// 按当前设置解析「工具集输入」：启用技能、启用的 MCP server、实验开关。
+    ///
+    /// `spawn` 与 [`Self::current_tool_definitions`] 共用同一来源——两处各写一份
+    /// 必然分叉，而工具清单一分叉，摘要调用与常规请求的 tools 段就不再一致
+    /// （上下文压缩把"与常规请求对齐"当作减少信息丢失的手段）。
+    async fn resolve_tool_inputs(
+        &self,
+    ) -> (
+        Vec<crate::skills::store::Skill>,
+        Vec<McpServerConfig>,
+        ExperimentalSettings,
+    ) {
+        let settings = self.state.settings.read().await;
+        let skills = self.state.skill_store.read().await;
+        let mcp_store = self.state.mcp_store.read().await;
+        let experimental_settings = settings.experimental_settings.clone();
+        let mut enabled_skills = skills
+            .list()
+            .iter()
+            .filter(|s| s.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+        let enabled_mcp_servers = mcp_store
+            .list()
+            .iter()
+            .filter(|s| s.enabled)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !crate::agent::tools::html_render_enabled(&experimental_settings) {
+            enabled_skills.retain(|skill| skill.id != "builtin.visualize");
+        }
+        (enabled_skills, enabled_mcp_servers, experimental_settings)
+    }
+
+    /// 「该会话下一次常规请求」会下发的工具 schema（角色 Main，模式取设置里持久化的
+    /// 当前模式）：供手动压缩（无运行中任务）复用，让摘要调用与常规请求的 tools 段
+    /// 一致。走 `spawn` 同一个 `build_registry`，工具集将来怎么变都自动跟上。
+    ///
+    /// 模式来源：前端切换模式时经 `taskStore.setMode` 写入 `defaultAgentMode`，
+    /// 即下一次请求实际会用的模式；未知值回落 `Agent`，只影响工具清单不影响安全边界。
+    pub async fn current_tool_definitions(&self) -> Vec<ToolDefinition> {
+        let (enabled_skills, enabled_mcp_servers, experimental_settings) =
+            self.resolve_tool_inputs().await;
+        let mode = {
+            let raw = self.state.settings.read().await.default_agent_mode.clone();
+            AgentMode::from_settings_str(&raw)
+        };
+        let plugin_registry_guard = self.state.plugin_registry.read().await;
+        let registry = self
+            .build_registry(
+                &AgentRole::Main,
+                &mode,
+                &enabled_skills,
+                &enabled_mcp_servers,
+                &experimental_settings,
+                &plugin_registry_guard,
+            )
+            .await;
+        build_definitions(&registry, &mode)
+    }
+
     /// 组装并启动一个 agent 实例。负责：
     /// 1. 注册 [`AgentTask`]（主任务额外恢复最近一次 plan）；
     /// 2. 从 spec 派生 provider / registry / messages；
@@ -131,38 +191,15 @@ impl AgentManager {
         let task_id = spec.task_id.clone();
 
         // ── 1. 读取设置 ──
-        let (
-            llm_registry,
-            mut agent_settings,
-            experimental_settings,
-            mut enabled_skills,
-            enabled_mcp_servers,
-        ) = {
+        let (llm_registry, mut agent_settings) = {
             let settings = self.state.settings.read().await;
-            let skills = self.state.skill_store.read().await;
-            let mcp_store = self.state.mcp_store.read().await;
             (
                 settings.llm_registry.clone(),
                 settings.agent_mode_settings.clone(),
-                settings.experimental_settings.clone(),
-                skills
-                    .list()
-                    .iter()
-                    .filter(|s| s.enabled)
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                mcp_store
-                    .list()
-                    .iter()
-                    .filter(|s| s.enabled)
-                    .cloned()
-                    .collect::<Vec<_>>(),
             )
         };
-
-        if !crate::agent::tools::html_render_enabled(&experimental_settings) {
-            enabled_skills.retain(|skill| skill.id != "builtin.visualize");
-        }
+        let (enabled_skills, enabled_mcp_servers, experimental_settings) =
+            self.resolve_tool_inputs().await;
 
         // ── 2. 模型路由（主模型语义 = 会话级 → 全局最近使用 → 第一个） ──
         // - 主任务：`spec.model_override` 为空时，先查本会话内存模型记忆；
@@ -334,11 +371,12 @@ impl AgentManager {
         }
 
         // ── 6. spawn + 生命周期 ──
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        self.state
-            .cancel_senders
-            .write()
-            .insert(task_id.clone(), cancel_tx);
+        // 取消通道注册进统一表。guard 必须**活到任务结束**，所以它随下面
+        // `tokio::spawn` 的 future 一起被捕获：在外面建、在外面 drop 的话，表里
+        // 唯一的 sender 立刻消失，而 agent loop 把「通道关闭」也当成取消
+        // （`llm/manager.rs` 的 `select!` 里 `rx.changed()` 的 Err 同样命中取消
+        // 分支）—— 任务会在开跑前把自己取消掉。
+        let cancel_registration = self.state.task_cancel.register(&task_id);
 
         let loop_ctx = LoopContext {
             ssh: self.state.ssh_manager.clone(),
@@ -348,7 +386,7 @@ impl AgentManager {
             registry,
             conversation_id: spec.conversation_id.clone(),
             conv_db: self.state.conversation_db.clone(),
-            cancel_rx,
+            cancel_rx: cancel_registration.receiver(),
             config_dir: self.state.config_dir.clone(),
             is_subtask: spec.role.is_subtask(),
         };
@@ -358,6 +396,9 @@ impl AgentManager {
         let mode_owned = spec.mode.clone();
         let approval_mode_owned = spec.approval_mode.clone();
         let join = tokio::spawn(async move {
+            // 持有注册凭据 = 任务尚未结束；Drop 即从取消表注销（原先由
+            // `finalize_task` 手写 `cancel_senders.remove`，现在由类型保证）。
+            let _cancel_registration = cancel_registration;
             // catch_unwind：无论 run_agent_loop 内部是否 panic，终态更新与
             // 取消清理都保证执行（此前主任务丢弃 JoinHandle，panic 时泄漏）。
             let result = std::panic::AssertUnwindSafe(run_agent_loop(
@@ -406,22 +447,19 @@ impl AgentManager {
                 experimental_settings,
             )),
             AgentMode::Agent | AgentMode::Auto => {
-                let mut registry =
-                    ToolRegistry::build_mut_for_mode(enabled_skills, experimental_settings);
-                // ── 子 agent 工具集收敛（mode="agent" 读写执行子 agent）──
-                // 与只读 Plan 子 agent（build_plan_registry：Sub 不注册 subagent/plan、
-                // 不加载插件/MCP）对齐：子 agent 是「单任务执行者」，不是编排者——
-                //   - `subagent`：子 agent 不能再派发子 agent（运行时 parent_task_id
-                //     防御仍保留作纵深，工具集层面先杜绝）；
-                //   - plan 三件套：子 agent 不规划 todolist（其 plan 事件前端无
-                //     listener、PlanList 也不跟随子对话，建了无处消费）；
-                //   - 插件 / MCP 工具：子 agent 只携带核心读写工具，不加载插件
-                //     生态，也不去刷新 MCP server（省一次无谓连接），与只读
-                //     子 agent 一致，提示词工具列表不会说谎。
-                // 主任务（role=Main）不受影响：subagent 派发、plan 编排、插件/MCP
-                // 全套保留。
-                let is_subtask = role.is_subtask();
-                if !is_subtask {
+                let mut registry = ToolRegistry::build_mut_for_mode(
+                    audience_of(role),
+                    enabled_skills,
+                    experimental_settings,
+                );
+                // 子 agent 只携带核心读写工具，不加载插件生态，也不去刷新 MCP
+                // server（省一次无谓连接）—— 与只读 Plan 子 agent 一致，提示词里
+                // 的工具列表不会说谎。主任务（role=Main）插件/MCP 全套保留。
+                //
+                // 「子 agent 没有 subagent / plan 三件套」这一条不在本处删减：
+                // 它由工具声明表的 `ToolRoles::MainOnly` 表达，见
+                // `tools/mod.rs` 的 `BUILTIN_TOOLS_COMMON`。
+                if !role.is_subtask() {
                     let manifests = plugin_registry.enabled_manifests();
                     for m in &manifests {
                         register_plugin_tools(
@@ -451,8 +489,6 @@ impl AgentManager {
                             Err(join_err) => log::warn!("MCP 刷新任务 panic: {}", join_err),
                         }
                     }
-                } else {
-                    converge_subagent_registry(&mut registry);
                 }
                 Arc::new(registry)
             }
@@ -506,10 +542,9 @@ impl AgentManager {
 
 /// 按角色构建 Plan 模式工具集。
 ///
-/// 顶层 Plan agent（`AgentRole::Main`）额外注册 `subagent` 子agent 工具，
-/// 以便派发只读调研子agent；子agent（`AgentRole::Sub`）是 Plan 只读模式，
-/// 不注册 `subagent`，从而保证「子agent 没有子agent」。运行时 `parent_task_id`
-/// 二次防御（`tools/subagent.rs`）仍保留作纵深防御。
+/// `AgentRole` 是 manager 的概念，`ToolAudience` 是工具层的概念；这里做一次映射，
+/// 免得 `tools` 反向依赖 manager（子 agent 的工具收敛规则本身写在声明表的
+/// `ToolRoles` 里，不在这里删减）。
 ///
 /// 抽成自由函数便于单测，避免为 `build_registry` 私有方法构造整个 `AppState`。
 fn build_plan_registry(
@@ -517,11 +552,16 @@ fn build_plan_registry(
     enabled_skills: &[crate::skills::store::Skill],
     experimental_settings: &ExperimentalSettings,
 ) -> ToolRegistry {
-    let mut registry = ToolRegistry::build_for_plan_mode(enabled_skills, experimental_settings);
-    if !role.is_subtask() {
-        registry.register(Arc::new(SubagentTool));
+    ToolRegistry::build_for_plan_mode(audience_of(role), enabled_skills, experimental_settings)
+}
+
+/// `AgentRole` → 工具层可见性角色。
+fn audience_of(role: &AgentRole) -> crate::agent::tools::ToolAudience {
+    if role.is_subtask() {
+        crate::agent::tools::ToolAudience::Sub
+    } else {
+        crate::agent::tools::ToolAudience::Main
     }
-    registry
 }
 
 fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<ToolDefinition> {
@@ -535,24 +575,6 @@ fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<Tool
                 parameters: d.parameters,
             })
             .collect(),
-    }
-}
-
-/// 收敛 **读写执行子 agent**（`mode="agent"`）的工具集：去掉主 agent 的
-/// 编排工具。
-///
-/// 与只读 Plan 子 agent（`build_plan_registry`：Sub 不注册 subagent/plan、不加载
-/// 插件/MCP）对齐——子 agent 是「单任务执行者」不是编排者：
-/// - `subagent`：子 agent 不能再派发子 agent（运行时 parent_task_id 防御仍保留
-///   作纵深，工具集层面先杜绝，LLM 不会尝试调用注定失败的 tool）；
-/// - `create_plan` / `update_plan_item` / `edit_plan`：子 agent 不规划
-///   todolist（其 plan 事件前端无 listener、PlanList 不跟随子对话）。
-///
-/// 抽成纯函数便于单测（`build_registry` 的 Agent/Auto 分支在
-/// `role.is_subtask()` 时调用；主任务 role=Main 不调用，全套保留）。
-fn converge_subagent_registry(registry: &mut crate::agent::tools::ToolRegistry) {
-    for name in ["subagent", "create_plan", "update_plan_item", "edit_plan"] {
-        registry.remove(name);
     }
 }
 
@@ -677,18 +699,25 @@ fn build_agent_messages(
     plan_mode: bool,
     extra_sections: &[String],
 ) -> Result<Vec<LlmMessage>, AppError> {
-    let has_tool = |name: &str| tools.iter().any(|t| t.name == name);
-    let has_skills = tools.iter().any(|t| t.name.starts_with("skill_"));
+    // 提示词段由「已注册工具的声明」推导，不按工具名 hardcode：
+    // 声明表里给工具写了 `prompt_section`，它出现在本次注册里就会带上对应段落。
+    let tool_sections: std::collections::BTreeSet<crate::agent::tools::PromptSection> = tools
+        .iter()
+        .filter_map(|t| crate::agent::tools::prompt_section_of(&t.name))
+        .collect();
+    // skills 是动态注册的工具（`skill_<id>`），不在声明表里，只能按前缀判断。
+    let has_skills = tools.iter().any(|t| {
+        t.name
+            .starts_with(crate::agent::tools::skill::SKILL_TOOL_PREFIX)
+    });
     let system_prompt = build_system_prompt(
         template_manager,
         session_id,
         has_skills,
-        has_tool("web_search"),
-        has_tool("http_get"),
+        &tool_sections,
         agent_system_prompt,
         plugin_sections,
         plan_mode,
-        has_tool("subagent"),
         extra_sections,
     )?;
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
@@ -708,20 +737,20 @@ fn build_agent_messages(
     Ok(messages)
 }
 
-/// 统一的任务收尾：更新终态 + 清理取消信号。
+/// 统一的任务收尾：更新终态 + 清理作业结算通道 + 级联清理子资源。
+/// （取消表的注销不在这里：由 spawned future 持有的 `Registration` 在 Drop 时
+/// 完成，见 `spawn` 里的注释。）
 /// 停止路径已置 Cancelled 则保留；自然结束=Completed，其余（LLM 失败 /
 /// 达最大轮数 / panic）=Failed。
 fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
     if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
-        if task.status != AgentStatus::Cancelled {
-            task.status = if result.is_some() {
-                AgentStatus::Completed
-            } else {
-                AgentStatus::Failed
-            };
-        }
+        // 吸收规则在 `AgentTask::transition_to` 里（Cancelled 不接受后续写入）。
+        task.transition_to(if result.is_some() {
+            AgentStatus::Completed
+        } else {
+            AgentStatus::Failed
+        });
     }
-    state.cancel_senders.write().remove(task_id);
     // 释放该 task 的作业结算通知通道（挂起中的 agent loop 若因取消/失败
     // 退出，此处确保通道不泄漏；正常路径 loop 已自行 break，这里幂等）。
     state.command_exec.remove_task_settlement_channel(task_id);
@@ -742,12 +771,7 @@ fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
     let mut tasks = state.agent_tasks.write();
     let mut terminal: Vec<(String, chrono::DateTime<chrono::Utc>)> = tasks
         .iter()
-        .filter(|(_, task)| {
-            matches!(
-                task.status,
-                AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Cancelled
-            )
-        })
+        .filter(|(_, task)| task.status.is_terminal())
         .map(|(id, task)| (id.clone(), task.created_at))
         .collect();
     if terminal.len() <= max_terminal {
@@ -768,6 +792,36 @@ fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {
     for task_id in &remove_ids {
         plans.remove(task_id);
     }
+    drop(plans);
+    // 子资源记账的收尾标记与 owner 同生命周期：任务记录都剪掉了，标记留着只会
+    // 无限增长（而且 task_id 一旦被复用，旧标记会让新任务注册不上子资源）。
+    // 本函数是同步的，而记账表用的是 tokio 锁 —— 照 finalize_task 的做法
+    // fire-and-forget（剪枝不因这次清理而阻塞）。
+    //
+    // **顺序要紧：先清理、后遗忘**。`finalize_task` 的清理是另一次 fire-and-forget
+    // spawn，tokio 不保证两次 spawn 的先后；如果先遗忘，`forget_owner` 会把还没被
+    // 取走的子资源连同收尾标记一起删掉，随后晚到的 `take_all` 拿到空集 ——
+    // 自动拉起的会话再也不会被断开、在册传输再也不会被取消（实测复现率约 1/300）。
+    // 这里同一个 async 块内顺序 await 是有保证的，而对已清理过的 id 是幂等空操作。
+    let prune_state = state.clone();
+    tokio::spawn(async move {
+        for task_id in &remove_ids {
+            crate::multi_host::cleanup_task_targets(&prune_state, task_id).await;
+            crate::agent::transfer::cancel_task_transfers(&prune_state, task_id).await;
+            // 走到这里表项应当已空；非空 = 清理没跑到（或没取到），
+            // 那些子资源此刻无人回收 —— 不许静默。
+            let leftover_targets = prune_state.multi_host_targets.forget_owner(task_id).await;
+            let leftover_transfers = prune_state.agent_transfer_by_task.forget_owner(task_id).await;
+            if !leftover_targets.is_empty() || !leftover_transfers.is_empty() {
+                log::warn!(
+                    "任务 {} 记录剪枝时仍残留子资源（多机会话 {:?}／传输 {:?}）—— 清理未完成，这些资源已无人回收",
+                    task_id,
+                    leftover_targets,
+                    leftover_transfers
+                );
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -814,29 +868,33 @@ mod tests {
         assert!(registry.get("edit_file").is_none());
     }
 
+    /// 读写执行子 agent（Agent/Auto + Sub）拿不到任何编排工具。
+    ///
+    /// 这条规则现在由工具声明表的 `ToolRoles::MainOnly` 表达（见
+    /// `tools/mod.rs` 的 `BUILTIN_TOOLS_COMMON`），不再「先注册全套、再按名字删」，
+    /// 所以这里直接断言「以 Sub 身份构建出来的 registry」。
     #[test]
-    fn converge_subagent_registry_strips_orchestration_tools() {
-        use crate::agent::tools::ToolRegistry;
-        let mut registry = ToolRegistry::with_core_tools();
-        // 前置：读写执行子 agent 会拿到全套核心工具（含 subagent/plan 编排工具）。
-        for name in ["subagent", "create_plan", "update_plan_item", "edit_plan", "bash", "write_file"] {
-            assert!(registry.get(name).is_some(), "前置缺失: {}", name);
-        }
-        converge_subagent_registry(&mut registry);
-        // subagent 与 plan 编排工具被收敛
+    fn sub_agent_registry_lacks_orchestration_tools() {
+        use crate::agent::tools::{ToolAudience, ToolRegistry};
+        let registry = ToolRegistry::build_mut_for_mode(ToolAudience::Sub, &[], &exp());
         for name in ["subagent", "create_plan", "update_plan_item", "edit_plan"] {
             assert!(registry.get(name).is_none(), "读写子agent 不应有 {}", name);
         }
         // 读写核心工具保留
-        for name in ["bash", "write_file", "edit_file", "read_file", "upload_file", "download_file"] {
+        for name in ["bash", "write_file", "edit_file", "read_file"] {
+            assert!(registry.get(name).is_some(), "读写子agent 应保留 {}", name);
+        }
+        // 桌面专属的本机文件系统工具同样保留（子 agent 也在桌面跑）。
+        #[cfg(desktop)]
+        for name in ["upload_file", "download_file"] {
             assert!(registry.get(name).is_some(), "读写子agent 应保留 {}", name);
         }
     }
 
     #[test]
-    fn converge_subagent_registry_keeps_main_registry_untouched() {
-        // 主任务（role=Main）不经收敛：subagent/plan 编排工具保留。
-        let r = ToolRegistry::with_core_tools();
+    fn main_agent_registry_keeps_orchestration_tools() {
+        use crate::agent::tools::{ToolAudience, ToolRegistry};
+        let r = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &exp());
         for name in ["subagent", "create_plan", "bash", "write_file"] {
             assert!(r.get(name).is_some(), "主任务应保留 {}", name);
         }

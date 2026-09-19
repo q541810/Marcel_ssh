@@ -16,12 +16,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use parking_lot::RwLock as PlRwLock;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
-use tokio::sync::oneshot;
 
 use crate::agent::sandbox::RiskLevel;
+use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::ssh::connection::SshManager;
 
@@ -115,14 +114,6 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
-}
-
-/// Summary information about a registered tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInfo {
-    pub name: String,
-    pub description: String,
-    pub risk_level: RiskLevel,
 }
 
 /// Execution context handed to a tool. Provides the live SSH session and
@@ -451,41 +442,513 @@ pub trait AgentTool: Send + Sync {
 ///
 /// The registry is the single source of truth: the agent loop calls
 /// [`ToolRegistry::definitions`] to advertise tools to the LLM and
-/// [`ToolRegistry::get`] to dispatch tool calls. Adding a new tool requires
-/// only:
-///   1. Implementing [`AgentTool`] in `tools/<name>.rs`
-///   2. Registering it inside [`ToolRegistry::with_builtins`]
-///   3. Optionally listing it in `AGENTS.md`
+/// [`ToolRegistry::get`] to dispatch tool calls.
+///
+/// **新增内置工具只改两处**：
+///   1. 在 `tools/<name>.rs` 里实现 [`AgentTool`]；
+///   2. 在 [`BUILTIN_TOOLS_COMMON`]（或桌面专属的 [`BUILTIN_TOOLS_DESKTOP`]）
+///      里加一行声明。
+///
+/// 「在哪些模式可用 / 子 agent 能不能拿到 / 挂在哪个实验性开关后面」全部写在
+/// 声明里，三个 builder 从同一张表过滤生成；不要再往 builder 里加 `if`。
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn AgentTool>>,
     local_handlers: HashMap<String, Arc<dyn LocalHandler>>,
+    /// 内置工具的参数语义，按名字索引。动态工具（skill / 插件 / MCP 工具）没有
+    /// 条目 —— 它们在 dispatcher 里一律走通用路径，风险取 `AgentTool::risk_level()`。
+    builtin_semantics: HashMap<String, ToolSemantics>,
 }
 
 /// Whether the `render_html` tool and the `builtin.visualize` skill are
 /// available. Interactive visualization is desktop-only, so the platform is
 /// part of the gate rather than a separate check at each call site.
-pub(crate) fn html_render_enabled(
-    experimental_settings: &crate::config::settings::ExperimentalSettings,
-) -> bool {
+pub(crate) fn html_render_enabled(experimental_settings: &ExperimentalSettings) -> bool {
     cfg!(desktop) && experimental_settings.enable_html_render
 }
 
-/// Register `render_html` for every mode builder that offers it.
-///
-/// [`html_render_enabled`] is the only gate: it already accounts for the
-/// platform, so the `cfg(desktop)` below is not a second policy decision.
-/// It exists purely because the tool module itself is desktop-only code and
-/// does not compile for mobile targets.
-#[cfg_attr(mobile, allow(unused_variables))]
-fn register_html_render(
-    registry: &mut ToolRegistry,
-    experimental_settings: &crate::config::settings::ExperimentalSettings,
-) {
-    if !html_render_enabled(experimental_settings) {
-        return;
+// ───────────────────── 内置工具声明表 ─────────────────────
+
+/// Registry 的目标运行模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistryMode {
+    /// Plan 模式：只读调研与规划，不含写工具、计划编排工具与本机文件系统工具。
+    Plan,
+    /// Agent / Auto 模式：读写执行。
+    Execute,
+}
+
+/// 工具可用的运行模式集合。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolModes {
+    plan: bool,
+    execute: bool,
+}
+
+impl ToolModes {
+    /// Plan 与 Agent/Auto 都能拿到。
+    pub const ALL: Self = Self {
+        plan: true,
+        execute: true,
+    };
+    /// 仅 Agent / Auto（写工具、计划编排、需要本机文件系统的工具）。
+    pub const EXECUTE: Self = Self {
+        plan: false,
+        execute: true,
+    };
+    /// 仅 Plan 模式。
+    pub const PLAN: Self = Self {
+        plan: true,
+        execute: false,
+    };
+
+    fn matches(self, mode: RegistryMode) -> bool {
+        match mode {
+            RegistryMode::Plan => self.plan,
+            RegistryMode::Execute => self.execute,
+        }
     }
+}
+
+/// 工具面向哪一类 agent。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolAudience {
+    /// 主任务：能拿到编排类工具（派发子 agent、维护 todolist）。
+    Main,
+    /// 子 agent：单任务执行者，不编排。这条收敛规则写在声明里，
+    /// 不再「先注册全套、再回头按名字删掉」。
+    Sub,
+}
+
+/// 工具对「角色」的限制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolRoles {
+    /// 主任务与子 agent 都能拿到。
+    Both,
+    /// 只有主任务能拿到（编排类工具）。
+    MainOnly,
+}
+
+impl ToolRoles {
+    fn allows(self, audience: ToolAudience) -> bool {
+        match self {
+            Self::Both => true,
+            Self::MainOnly => matches!(audience, ToolAudience::Main),
+        }
+    }
+}
+
+/// `ExperimentalSettings` 里控制工具可见性的开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSwitch {
+    WebSearch,
+    HttpFetch,
+    CloudPage,
+    HtmlRender,
+}
+
+impl ToolSwitch {
+    fn is_on(self, settings: &ExperimentalSettings) -> bool {
+        match self {
+            Self::WebSearch => settings.enable_web_search,
+            Self::HttpFetch => settings.enable_http_fetch,
+            Self::CloudPage => settings.enable_cloud_page,
+            // 平台维度不在这里判断：`render_html` 的条目只在桌面端存在。
+            Self::HtmlRender => settings.enable_html_render,
+        }
+    }
+}
+
+/// 工具对 `path_arg` 的写方式，决定「写前必须已读」的检查强度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathWrite {
+    /// 不写路径（`read_file`）。
+    None,
+    /// 改写既有文件：目标没读过就直接失败，不进入审批 —— 注定失败的编辑不该
+    /// 让用户白点一次审批。目标不存在的情况由 `execute()` 自己报错。
+    Edit,
+    /// 写入 / 覆盖：目标已存在且未读过才拦，新建放行。
+    Overwrite,
+}
+
+/// `AgentModeSettings` 里的细粒度审批开关。
+///
+/// 与 `confirm_each_command`（按风险档位全局生效）不同，这类开关只约束
+/// 声明了它的那些工具。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalSwitch {
+    /// `confirm_edit_file`：编辑文件前必须人工确认。
+    EditFile,
+}
+
+impl ApprovalSwitch {
+    pub fn is_on(self, settings: &crate::config::settings::AgentModeSettings) -> bool {
+        match self {
+            Self::EditFile => settings.confirm_edit_file,
+        }
+    }
+}
+
+/// 工具的参数语义 —— 让 dispatcher 不必靠工具名硬编码就能正确处理它。
+///
+/// 这些字段回答的是「这个工具的参数里，哪个键是命令、哪个是路径、它会不会写路径、
+/// 受哪个审批开关约束」。dispatcher 只认这些声明，不再出现
+/// `if tc.name == "bash"` / `if tc.name == "edit_file"` 这类判断：
+/// 新增一个「执行命令」或「改远端文件」的工具时，填好这里的声明就自动获得
+/// 动态风险、读前检查、受保护路径提权、审批摘要等全部通用处理。
+#[derive(Debug, Clone, Copy)]
+pub struct ToolSemantics {
+    /// 参数里承载「要执行的 shell 命令」的键。有它的工具会：按命令文本算动态
+    /// 风险、走命令名单审批、走模型审批、被拒绝时摘要格式化成 `$ cmd`。
+    pub command_arg: Option<&'static str>,
+    /// 参数里承载「远端路径」的键。有它的工具会：成功执行后把该路径记入
+    /// 「本任务已读」、在 `protected_paths` 命中时把风险抬到 HighRisk。
+    pub path_arg: Option<&'static str>,
+    /// 该工具会写 `path_arg` 指向的路径，以及写前检查的强度。
+    pub path_write: PathWrite,
+    /// 受哪个细粒度审批开关约束。
+    pub approval_switch: Option<ApprovalSwitch>,
+    /// 弹审批前先预演一次（目前只有编辑预览）：预演就会失败的调用不弹窗。
+    pub preview_before_approval: bool,
+}
+
+impl ToolSemantics {
+    /// 无参数语义：dispatcher 走通用路径，风险直接取 `AgentTool::risk_level()`。
+    pub const NONE: Self = Self {
+        command_arg: None,
+        path_arg: None,
+        path_write: PathWrite::None,
+        approval_switch: None,
+        preview_before_approval: false,
+    };
+
+    /// 命令类工具（`bash`）：风险由命令文本决定，走名单与模型审批。
+    pub const fn command(key: &'static str) -> Self {
+        Self {
+            command_arg: Some(key),
+            ..Self::NONE
+        }
+    }
+
+    /// 只读路径类工具（`read_file`）：成功即记账，不参与写前检查。
+    pub const fn reads_path(key: &'static str) -> Self {
+        Self {
+            path_arg: Some(key),
+            ..Self::NONE
+        }
+    }
+
+    /// 编辑类工具（`edit_file`）：改写既有文件，受 `confirm_edit_file` 约束，
+    /// 弹窗前先预演。
+    pub const fn edits_path(key: &'static str) -> Self {
+        Self {
+            path_arg: Some(key),
+            path_write: PathWrite::Edit,
+            approval_switch: Some(ApprovalSwitch::EditFile),
+            preview_before_approval: true,
+            command_arg: None,
+        }
+    }
+
+    /// 写入类工具（`write_file`）：可新建可覆盖，覆盖前要求已读过。
+    pub const fn overwrites_path(key: &'static str) -> Self {
+        Self {
+            path_arg: Some(key),
+            path_write: PathWrite::Overwrite,
+            ..Self::NONE
+        }
+    }
+}
+
+/// 工具在系统提示词里需要的附加段。
+///
+/// 这里只说「语义需求」（这个工具需要联网搜索的说明段），具体渲染成哪个模板、
+/// 排在什么位置由 `templates.rs` 的 `render_agent_prompt` 决定 —— 提示词结构的
+/// 权威在那里，工具层不该知道模板文件名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PromptSection {
+    /// 「联网搜索」段。
+    WebSearch,
+    /// 「网页访问」段。
+    HttpFetch,
+    /// 「子agent 派发」段。
+    Subagent,
+}
+
+/// 一个内置工具的完整声明。
+///
+/// 三个模式 builder 都从声明表过滤生成，所以「要不要在 Plan 模式出现」
+/// （`modes`）、「子 agent 能不能拿到」（`roles`）、「挂在哪个实验性开关后面」
+/// （`switch`）、「参数里哪个是命令/路径」（`semantics`）、「要不要提示词段」
+/// （`prompt_section`）都只在这里写一遍，不必再去 builder / dispatcher /
+/// 提示词拼装处找对应的 `if`。
+#[derive(Clone, Copy)]
+struct BuiltinToolSpec {
+    /// 工具名，必须与 `AgentTool::name()` 完全一致。同名条目允许出现两条，
+    /// 只要 `modes` 不重叠 —— Plan 模式的 `ask_user` 就是这样（见下）。
+    name: &'static str,
+    modes: ToolModes,
+    roles: ToolRoles,
+    /// 需要在「设置 → 实验性功能」里打开的开关；`None` = 无条件可用。
+    switch: Option<ToolSwitch>,
+    semantics: ToolSemantics,
+    /// 注册时要在系统提示词里追加的段。
+    prompt_section: Option<PromptSection>,
+    build: fn() -> Arc<dyn AgentTool>,
+}
+
+/// 声明表里「工具名 → 提示词段」的查询。
+///
+/// 提示词拼装处拿到的是一份扁平的 [`ToolDefinition`] 列表（名字 + 描述 + schema），
+/// 拿不到 registry，所以这里提供按名字查声明的能力 —— 它仍然只有一个数据来源。
+pub(crate) fn prompt_section_of(tool_name: &str) -> Option<PromptSection> {
+    builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == tool_name)
+        .and_then(|spec| spec.prompt_section)
+}
+
+/// 全平台共用的内置工具声明。
+///
+/// 顺序不影响行为（[`ToolRegistry::definitions`] 按名字排序），按「核心执行 →
+/// 计划编排 → 实验性」分组只是为了好读。
+static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
+    // ── 只读 / 通用 ──
+    BuiltinToolSpec {
+        name: "connection_info",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(connection_info::ConnectionInfoTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "bash",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::command("command"),
+        prompt_section: None,
+        build: || Arc::new(bash::BashTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "read_file",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::reads_path("path"),
+        prompt_section: None,
+        build: || Arc::new(file_ops::ReadFileTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "list_directory",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(file_ops::ListDirectoryTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "search_files",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(search::SearchFilesTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "system_info",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(system::SystemInfoTool::new()),
+    },
+    // ── 后台作业 ──
+    BuiltinToolSpec {
+        name: "job_output",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(job_ops::JobOutputTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "job_kill",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(job_ops::JobKillTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "job_list",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(job_ops::JobListTool::new()),
+    },
+    // ── 提问：两种模式各一个实例 ──
+    // Plan 模式是「先调研清楚再动手」，不接受「要不要切到 Auto 模式」这类提问，
+    // 所以 Plan 用的实例开 `reject_plan_mode_switch_questions`。
+    BuiltinToolSpec {
+        name: "ask_user",
+        modes: ToolModes::PLAN,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(question::QuestionTool::new(true)),
+    },
+    BuiltinToolSpec {
+        name: "ask_user",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(question::QuestionTool::new(false)),
+    },
+    // ── 写工具：Plan 模式不提供 ──
+    BuiltinToolSpec {
+        name: "write_file",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::overwrites_path("path"),
+        prompt_section: None,
+        build: || Arc::new(file_ops::WriteFileTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "edit_file",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::edits_path("path"),
+        prompt_section: None,
+        build: || Arc::new(file_ops::EditFileTool::new()),
+    },
+    // ── 编排：子 agent 是「单任务执行者」，不派发子 agent、不维护 todolist ──
+    BuiltinToolSpec {
+        name: "create_plan",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::MainOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(plan::CreatePlanTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "update_plan_item",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::MainOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(plan::UpdatePlanItemTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "edit_plan",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::MainOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(plan::EditPlanTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "subagent",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::MainOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: Some(PromptSection::Subagent),
+        build: || Arc::new(subagent::SubagentTool),
+    },
+    // ── 实验性：联网能力 ──
+    BuiltinToolSpec {
+        name: "web_search",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: Some(ToolSwitch::WebSearch),
+        semantics: ToolSemantics::NONE,
+        prompt_section: Some(PromptSection::WebSearch),
+        build: || Arc::new(web_search::WebSearchTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "http_get",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: Some(ToolSwitch::HttpFetch),
+        semantics: ToolSemantics::NONE,
+        prompt_section: Some(PromptSection::HttpFetch),
+        build: || Arc::new(http_get::HttpGetTool::new()),
+    },
+    // 需要联网打开云厂商控制台；离线不可用，也不属于只读调研，故不进 Plan 模式。
+    BuiltinToolSpec {
+        name: "open_cloud_page",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: Some(ToolSwitch::CloudPage),
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(open_cloud_page::OpenCloudPageTool::new()),
+    },
+];
+
+/// 仅桌面端存在的内置工具声明。
+///
+/// 整段用 `cfg(desktop)` 隔开而不是塞一个恒假的开关：`render_html` 模块本身是
+/// 桌面专属代码，`upload_file` / `download_file` 读写本机文件系统（Android 走
+/// SAF，没有对应语义），移动端连类型都不编译。
+#[cfg(desktop)]
+static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
+    BuiltinToolSpec {
+        name: "render_html",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: Some(ToolSwitch::HtmlRender),
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(render_html::RenderHtmlTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "upload_file",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(sftp_transfer::UploadFileTool::new()),
+    },
+    BuiltinToolSpec {
+        name: "download_file",
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(sftp_transfer::DownloadFileTool::new()),
+    },
+];
+
+/// 当前平台的全部内置工具声明。
+///
+/// 每次构建 registry 时取一份 `Vec`（二十余个 `Copy` 元素），相对一次任务派发
+/// 的开销可以忽略，换来的是移动端不必为桌面专属工具维护一个永远为假的分支。
+#[cfg_attr(mobile, allow(unused_mut))]
+fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
+    let mut specs = BUILTIN_TOOLS_COMMON.to_vec();
     #[cfg(desktop)]
-    registry.register(Arc::new(render_html::RenderHtmlTool::new()));
+    specs.extend_from_slice(BUILTIN_TOOLS_DESKTOP);
+    specs
 }
 
 impl ToolRegistry {
@@ -493,7 +956,27 @@ impl ToolRegistry {
         Self {
             tools: HashMap::new(),
             local_handlers: HashMap::new(),
+            builtin_semantics: HashMap::new(),
         }
+    }
+
+    /// 按声明注册一个内置工具：工具本体 + 它的参数语义一起登记，两者不会走散。
+    fn register_builtin(&mut self, spec: &BuiltinToolSpec) {
+        let tool = (spec.build)();
+        debug_assert_eq!(
+            tool.name(),
+            spec.name,
+            "内置工具声明表里的 name 与 AgentTool::name() 不一致"
+        );
+        self.builtin_semantics
+            .insert(spec.name.to_string(), spec.semantics);
+        self.register(tool);
+    }
+
+    /// 查内置工具的参数语义。动态工具（skill / 插件 / MCP）返回 `None`，
+    /// dispatcher 据此走通用路径。
+    pub fn semantics(&self, name: &str) -> Option<ToolSemantics> {
+        self.builtin_semantics.get(name).copied()
     }
 
     /// Register a tool. The last registration wins on name collision.
@@ -541,21 +1024,6 @@ impl ToolRegistry {
         defs
     }
 
-    /// Lightweight info entries for every tool.
-    pub fn list_tools(&self) -> Vec<ToolInfo> {
-        let mut infos: Vec<_> = self
-            .tools
-            .values()
-            .map(|t| ToolInfo {
-                name: t.name().to_string(),
-                description: t.description().to_string(),
-                risk_level: t.risk_level(),
-            })
-            .collect();
-        infos.sort_by(|a, b| a.name.cmp(&b.name));
-        infos
-    }
-
     /// Register all enabled skills as tools (progressive disclosure).
     /// Each skill becomes a separate tool that the LLM explicitly calls to
     /// retrieve its full instructions.
@@ -567,170 +1035,93 @@ impl ToolRegistry {
         }
     }
 
-    // ── Mode-aware registry builders ──────────────────────────────────────
+    // ── 模式感知的 registry 构建 ──────────────────────────────────────────
     //
-    // There are three agent modes (Plan / Agent / Auto), each registering a
-    // different set of tools:
+    // 三种模式的工具集不再各写一份 if-else，而是同一张声明表
+    // （`BUILTIN_TOOLS_COMMON` / `BUILTIN_TOOLS_DESKTOP`）按三个维度过滤：
     //
-    //   Plan  — Read-oriented only: ask_user, connection_info, bash,
-    //           read_file, list_directory, search_files, system_info,
-    //           job_output/job_kill/job_list, plus skills / experimental
-    //           tools (web_search, http_get, render_html).  Main role
-    //           additionally registers `subagent`; sub role does not.
-    //           No write/edit/plan tools, no plugin tools, no MCP tools,
-    //           no upload_file/download_file.
-    //           Intended for research & planning before execution.
+    //   modes   —— Plan（只读调研）/ Execute（Agent 与 Auto）
+    //   roles   —— Main 能编排，Sub 只执行
+    //   switch  —— 实验性开关（联网搜索 / 网页抓取 / 云控制台 / 交互式可视化）
     //
-    //   Agent — Full core set from `with_core_tools` (bash, file ops,
-    //           plan tools, subagent, job ops, desktop upload/download),
-    //           skills, experimental tools, plugin tools, MCP tools.
-    //           Command execution is gated by allow/deny lists.
-    //           Subtasks strip orchestration tools via
-    //           `converge_subagent_registry`.
-    //
-    //   Auto  — Same tool set as Agent, but all commands execute without
-    //           confirmation.
-    //
-    // When adding or removing a built-in tool, consider whether it should
-    // be available in Plan mode.  Destructive tools (write_file, edit_file)
-    // and offline-unavailable tools (open_cloud_page) should stay out of
-    // Plan mode.
+    // Plan 与 Agent/Auto 的差异全部落在声明里：写工具、计划编排、本机文件系统
+    // 工具标 `EXECUTE`，编排类标 `MainOnly`，联网类挂各自的开关。一个新工具该不该
+    // 进 Plan 模式，看声明表就能回答，不必翻 builder。
 
-    /// Build a Plan-mode registry containing only read-oriented + research
-    /// tools.  Excludes write/edit tools, plugin tools, and MCP tools.
-    pub fn build_for_plan_mode(
+    /// 从声明表构建 registry。
+    ///
+    /// skills 在最后注册（渐进披露）；插件本地处理器不在这里，见
+    /// [`Self::build_mut_for_mode`]。
+    fn build_from_specs(
+        mode: RegistryMode,
+        audience: ToolAudience,
         enabled_skills: &[crate::skills::store::Skill],
-        experimental_settings: &crate::config::settings::ExperimentalSettings,
+        experimental_settings: &ExperimentalSettings,
     ) -> Self {
-        use std::sync::Arc;
         let mut registry = Self::new();
-        registry.register(Arc::new(question::QuestionTool::new(true)));
-        registry.register(Arc::new(connection_info::ConnectionInfoTool::new()));
-        registry.register(Arc::new(bash::BashTool::new()));
-        registry.register(Arc::new(file_ops::ReadFileTool::new()));
-        registry.register(Arc::new(file_ops::ListDirectoryTool::new()));
-        registry.register(Arc::new(search::SearchFilesTool::new()));
-        registry.register(Arc::new(system::SystemInfoTool::new()));
-        registry.register(Arc::new(job_ops::JobOutputTool::new()));
-        registry.register(Arc::new(job_ops::JobKillTool::new()));
-        registry.register(Arc::new(job_ops::JobListTool::new()));
+        for spec in builtin_tool_specs() {
+            if !spec.modes.matches(mode) || !spec.roles.allows(audience) {
+                continue;
+            }
+            if let Some(switch) = spec.switch {
+                if !switch.is_on(experimental_settings) {
+                    continue;
+                }
+            }
+            registry.register_builtin(&spec);
+        }
         registry.register_skills(enabled_skills);
-        if experimental_settings.enable_web_search {
-            registry.register(Arc::new(web_search::WebSearchTool::new()));
-        }
-        if experimental_settings.enable_http_fetch {
-            registry.register(Arc::new(http_get::HttpGetTool::new()));
-        }
-        register_html_render(&mut registry, experimental_settings);
         registry
     }
 
-    /// Build a full registry for Agent/Auto mode from the current settings.
-    /// This method does NOT register local handlers or plugin/MCP tools —
-    /// use [`build_mut_for_mode`] when those are needed.
-    pub fn build_for_mode(
+    /// Plan 模式的 registry：只读调研 + 规划所需工具，不含写工具与计划编排工具。
+    pub fn build_for_plan_mode(
+        audience: ToolAudience,
         enabled_skills: &[crate::skills::store::Skill],
-        experimental_settings: &crate::config::settings::ExperimentalSettings,
-    ) -> Arc<Self> {
-        let mut registry = Self::with_core_tools();
-        registry.register_skills(enabled_skills);
-        if experimental_settings.enable_web_search {
-            registry.register(Arc::new(web_search::WebSearchTool::new()));
-        }
-        if experimental_settings.enable_http_fetch {
-            registry.register(Arc::new(http_get::HttpGetTool::new()));
-        }
-        if experimental_settings.enable_cloud_page {
-            registry.register(Arc::new(
-                crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
-            ));
-        }
-        register_html_render(&mut registry, experimental_settings);
-        Arc::new(registry)
+        experimental_settings: &ExperimentalSettings,
+    ) -> Self {
+        Self::build_from_specs(
+            RegistryMode::Plan,
+            audience,
+            enabled_skills,
+            experimental_settings,
+        )
     }
 
+    /// Agent / Auto 模式的 registry + 插件本地处理器。
+    ///
+    /// 这是 Agent/Auto 的唯一构建入口：生产路径需要 `kind: "local"` 处理器，
+    /// 而「不加本地处理器」的变体没有任何调用方，故不再单独提供。
     pub fn build_mut_for_mode(
+        audience: ToolAudience,
         enabled_skills: &[crate::skills::store::Skill],
-        experimental_settings: &crate::config::settings::ExperimentalSettings,
+        experimental_settings: &ExperimentalSettings,
     ) -> Self {
-        let mut registry = Self::with_core_tools();
+        let mut registry = Self::build_from_specs(
+            RegistryMode::Execute,
+            audience,
+            enabled_skills,
+            experimental_settings,
+        );
         // Register the 6 generic local handlers (fs.read/fs.write/fs.append/
         // session.info/connection.info/host_port) so any plugin tool declaring
         // `kind: "local"` + `handler: "<name>"` can invoke them. Without this
         // call, plugin local tools would always fail with "handler 未注册".
         local_handlers::register_default_handlers(&mut registry);
-        registry.register_skills(enabled_skills);
-        if experimental_settings.enable_web_search {
-            registry.register(Arc::new(web_search::WebSearchTool::new()));
-        }
-        if experimental_settings.enable_http_fetch {
-            registry.register(Arc::new(http_get::HttpGetTool::new()));
-        }
-        if experimental_settings.enable_cloud_page {
-            registry.register(Arc::new(
-                crate::agent::tools::open_cloud_page::OpenCloudPageTool::new(),
-            ));
-        }
-        register_html_render(&mut registry, experimental_settings);
         registry
     }
 
-    /// Build a registry pre-populated with all 12 built-in core tools.
+    /// 默认设置下的完整内置工具集（主任务视角）。
     ///
-    /// Built-ins:
-    /// - `ask_user`                   (question)
-    /// - `connection_info`            (connection_info)
-    /// - `bash`           (bash)
-    /// - `read_file`, `write_file`,
-    ///   `edit_file`, `list_directory` (file_ops)
-    /// - `search_files`               (search)
-    /// - `system_info`                (system)
-    /// - `create_plan`                (plan)
-    /// - `update_plan_item`           (plan)
-    /// - `edit_plan`                  (plan)
-    ///
-    /// Skills are NOT registered here — register them separately via
-    /// [`register_skills`] for progressive disclosure.
-    pub fn with_core_tools() -> Self {
-        let mut r = Self::new();
-        r.register(Arc::new(connection_info::ConnectionInfoTool::new()));
-        r.register(Arc::new(bash::BashTool::new()));
-        r.register(Arc::new(file_ops::ReadFileTool::new()));
-        r.register(Arc::new(file_ops::WriteFileTool::new()));
-        r.register(Arc::new(file_ops::EditFileTool::new()));
-        r.register(Arc::new(file_ops::ListDirectoryTool::new()));
-        r.register(Arc::new(search::SearchFilesTool::new()));
-        r.register(Arc::new(system::SystemInfoTool::new()));
-        r.register(Arc::new(plan::CreatePlanTool::new()));
-        r.register(Arc::new(plan::UpdatePlanItemTool::new()));
-        r.register(Arc::new(plan::EditPlanTool::new()));
-        r.register(Arc::new(question::QuestionTool::new(false)));
-        r.register(Arc::new(subagent::SubagentTool));
-        r.register(Arc::new(job_ops::JobOutputTool::new()));
-        r.register(Arc::new(job_ops::JobKillTool::new()));
-        r.register(Arc::new(job_ops::JobListTool::new()));
-        // upload_file / download_file：桌面专属。它们读写「本机文件系统」——
-        // 本地路径用 dirs::download_dir/home_dir 解析（download 缺省落系统下载
-        // 目录、upload 读本机文件）；移动端这些目录解析为 None、也无文件系统
-        // 语义（Android 走 SAF），工具不可用。与 render_html 同款门控：移动端
-        // 不注册，避免 LLM 反复调用必失败的 tool。
-        #[cfg(desktop)]
-        {
-            r.register(Arc::new(sftp_transfer::UploadFileTool::new()));
-            r.register(Arc::new(sftp_transfer::DownloadFileTool::new()));
-        }
-        r
-    }
-
+    /// 只给测试与 [`Default`] 用：生产路径一律走 [`Self::build_mut_for_mode`] 与
+    /// [`Self::build_for_plan_mode`]，由那里把真实设置与角色传进来。
     pub fn with_builtins() -> Self {
-        let mut r = Self::with_core_tools();
-        r.register(Arc::new(web_search::WebSearchTool::new()));
-        r.register(Arc::new(http_get::HttpGetTool::new()));
-        register_html_render(
-            &mut r,
-            &crate::config::settings::ExperimentalSettings::default(),
-        );
-        r
+        Self::build_from_specs(
+            RegistryMode::Execute,
+            ToolAudience::Main,
+            &[],
+            &ExperimentalSettings::default(),
+        )
     }
 }
 
@@ -764,7 +1155,9 @@ mod tests {
         let mut host_params = 0;
         for def in r.definitions() {
             assert!(
-                !def.description.to_lowercase().contains("character-for-character"),
+                !def.description
+                    .to_lowercase()
+                    .contains("character-for-character"),
                 "{} 的工具描述里又抄了一份 host 规则；完整说明在多机段，工具侧用 HOST_MATCH_RULE",
                 def.name
             );
@@ -786,22 +1179,118 @@ mod tests {
             host_params += 1;
         }
         // 桌面构建下应有 bash / subagent / upload_file / download_file 四个。
-        assert!(host_params >= 2, "带 host 参数的工具数异常：{}", host_params);
+        assert!(
+            host_params >= 2,
+            "带 host 参数的工具数异常：{}",
+            host_params
+        );
     }
 
+    /// 全部实验性开关关闭。
+    fn all_switches_off() -> ExperimentalSettings {
+        ExperimentalSettings {
+            enable_web_search: false,
+            enable_http_fetch: false,
+            enable_cloud_page: false,
+            enable_html_render: false,
+            ..Default::default()
+        }
+    }
+
+    /// 全部实验性开关打开。
+    fn all_switches_on() -> ExperimentalSettings {
+        ExperimentalSettings {
+            enable_web_search: true,
+            enable_http_fetch: true,
+            enable_cloud_page: true,
+            enable_html_render: true,
+            ..Default::default()
+        }
+    }
+
+    /// 声明表自身的不变量，两条都在这个测试里钉死：
+    /// 1. 每个条目都能构造出来，且工具的 `name()` 与声明的 `name` 一致；
+    /// 2. 同名条目在任一「模式 × 角色」组合下**至多命中一条** —— `ask_user`
+    ///    有两条（Plan 版 / Execute 版），靠 `modes` 互斥分开，一旦有人把它们
+    ///    的模式改成重叠，这里会立刻报出来，而不是让后者静默覆盖前者。
     #[test]
-    fn registry_with_builtins_has_all_tools() {
-        let r = ToolRegistry::with_builtins();
-        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-        assert_eq!(
-            names.len(),
-            21,
-            "expected 21 built-in tools, got {:?}",
-            names
-        );
-        for expected in [
+    fn builtin_tool_specs_are_well_formed() {
+        for spec in builtin_tool_specs() {
+            let tool = (spec.build)();
+            assert_eq!(
+                tool.name(),
+                spec.name,
+                "声明表的 name 与 AgentTool::name() 不一致"
+            );
+        }
+        for mode in [RegistryMode::Plan, RegistryMode::Execute] {
+            for audience in [ToolAudience::Main, ToolAudience::Sub] {
+                let mut seen = std::collections::BTreeSet::new();
+                for spec in builtin_tool_specs() {
+                    if !spec.modes.matches(mode) || !spec.roles.allows(audience) {
+                        continue;
+                    }
+                    assert!(
+                        seen.insert(spec.name),
+                        "{} 在 {:?} / {:?} 下被声明了两次",
+                        spec.name,
+                        mode,
+                        audience
+                    );
+                }
+            }
+        }
+    }
+
+    /// 各「模式 × 角色」的工具集契约。
+    ///
+    /// 只断言**已有工具**的归位，不做「总数等于 N」的穷举 —— 那样每加一个工具都要
+    /// 回来改测试。新工具该进哪个集合，由 `BUILTIN_TOOLS_COMMON` 的声明决定。
+    #[test]
+    fn registry_tool_sets_per_mode_and_audience() {
+        let on = all_switches_on();
+
+        // Plan（只读调研）：有读工具与联网工具，没有写工具、计划编排、本机文件系统工具。
+        let plan_main = ToolRegistry::build_for_plan_mode(ToolAudience::Main, &[], &on);
+        for name in [
             "ask_user",
             "connection_info",
+            "bash",
+            "read_file",
+            "list_directory",
+            "search_files",
+            "system_info",
+            "job_output",
+            "job_kill",
+            "job_list",
+            "subagent",
+            "web_search",
+            "http_get",
+        ] {
+            assert!(plan_main.get(name).is_some(), "Plan/Main 应含 {}", name);
+        }
+        for name in [
+            "write_file",
+            "edit_file",
+            "create_plan",
+            "update_plan_item",
+            "edit_plan",
+            "open_cloud_page",
+        ] {
+            assert!(plan_main.get(name).is_none(), "Plan/Main 不应有 {}", name);
+        }
+
+        // Plan 子 agent 不能派发子 agent。
+        let plan_sub = ToolRegistry::build_for_plan_mode(ToolAudience::Sub, &[], &on);
+        assert!(
+            plan_sub.get("subagent").is_none(),
+            "Plan/Sub 不应有 subagent"
+        );
+        assert!(plan_sub.get("bash").is_some(), "Plan/Sub 应保留 bash");
+
+        // Agent/Auto：读写执行 + 计划编排 + 云控制台；插件本地处理器随之注册。
+        let exec_main = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &on);
+        for name in [
             "bash",
             "read_file",
             "write_file",
@@ -809,9 +1298,6 @@ mod tests {
             "list_directory",
             "search_files",
             "system_info",
-            "web_search",
-            "http_get",
-            "render_html",
             "create_plan",
             "update_plan_item",
             "edit_plan",
@@ -819,81 +1305,77 @@ mod tests {
             "job_output",
             "job_kill",
             "job_list",
-            "upload_file",
-            "download_file",
+            "web_search",
+            "http_get",
+            "open_cloud_page",
         ] {
+            assert!(exec_main.get(name).is_some(), "Execute/Main 应含 {}", name);
+        }
+        assert!(
+            exec_main.get_local_handler("fs.read").is_some(),
+            "build_mut_for_mode 必须注册插件本地处理器"
+        );
+
+        // Execute 子 agent 拿不到任何编排工具。
+        let exec_sub = ToolRegistry::build_mut_for_mode(ToolAudience::Sub, &[], &on);
+        for name in ["subagent", "create_plan", "update_plan_item", "edit_plan"] {
+            assert!(exec_sub.get(name).is_none(), "Execute/Sub 不应有 {}", name);
+        }
+        assert!(
+            exec_sub.get("write_file").is_some(),
+            "Execute/Sub 应保留写工具"
+        );
+    }
+
+    /// 实验性开关必须逐项独立生效：关掉谁就只少谁。
+    #[test]
+    fn registry_respects_experimental_tool_toggles() {
+        let off = all_switches_off();
+        for (mode, names) in [
+            (
+                RegistryMode::Plan,
+                ToolRegistry::build_for_plan_mode(ToolAudience::Main, &[], &off),
+            ),
+            (
+                RegistryMode::Execute,
+                ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &off),
+            ),
+        ] {
+            let names: Vec<String> = names.definitions().into_iter().map(|d| d.name).collect();
+            for absent in ["web_search", "http_get", "open_cloud_page", "render_html"] {
+                assert!(
+                    !names.iter().any(|n| n == absent),
+                    "{:?} 模式在开关全关时不应有 {}",
+                    mode,
+                    absent
+                );
+            }
+        }
+
+        let on = all_switches_on();
+        let names: Vec<String> = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &on)
+            .definitions()
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        for present in ["web_search", "http_get", "open_cloud_page", "render_html"] {
             assert!(
-                names.iter().any(|n| n == expected),
-                "missing tool: {}",
-                expected
+                names.iter().any(|n| n == present),
+                "开关全开时应有 {}",
+                present
             );
         }
     }
 
-    #[test]
-    fn registry_build_for_mode_respects_experimental_tool_toggles() {
-        let disabled = crate::config::settings::ExperimentalSettings {
-            enable_web_search: false,
-            enable_http_fetch: false,
-            enable_cloud_page: false,
-            enable_html_render: false,
-            web_search_mode: crate::config::settings::WebSearchMode::Browser,
-            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
-            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
-            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
-            multi_host_connection_ids: Vec::new(),
-        };
-        let r = ToolRegistry::build_for_mode(&[], &disabled);
-        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-
-        assert!(!names.iter().any(|n| n == "web_search"));
-        assert!(!names.iter().any(|n| n == "http_get"));
-        assert!(!names.iter().any(|n| n == "open_cloud_page"));
-        assert!(!names.iter().any(|n| n == "render_html"));
-
-        let r = ToolRegistry::build_mut_for_mode(&[], &disabled);
-        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-
-        assert!(!names.iter().any(|n| n == "web_search"));
-        assert!(!names.iter().any(|n| n == "http_get"));
-        assert!(!names.iter().any(|n| n == "open_cloud_page"));
-        assert!(!names.iter().any(|n| n == "render_html"));
-
-        let enabled = crate::config::settings::ExperimentalSettings {
-            enable_web_search: true,
-            enable_http_fetch: true,
-            enable_cloud_page: true,
-            enable_html_render: true,
-            web_search_mode: crate::config::settings::WebSearchMode::Browser,
-            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
-            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
-            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
-            multi_host_connection_ids: Vec::new(),
-        };
-
-        let r = ToolRegistry::build_for_mode(&[], &enabled);
-        let names: Vec<_> = r.definitions().into_iter().map(|d| d.name).collect();
-
-        assert!(names.iter().any(|n| n == "web_search"));
-        assert!(names.iter().any(|n| n == "http_get"));
-        assert!(names.iter().any(|n| n == "open_cloud_page"));
-        assert!(names.iter().any(|n| n == "render_html"));
-    }
-
+    /// 联网两个开关互不影响：只开一个就只多一个。
     #[test]
     fn registry_toggles_web_search_and_http_get_independently() {
-        let only_search = crate::config::settings::ExperimentalSettings {
+        let only_search = ExperimentalSettings {
             enable_web_search: true,
             enable_http_fetch: false,
-            enable_cloud_page: false,
-            enable_html_render: false,
-            web_search_mode: crate::config::settings::WebSearchMode::Html,
-            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
-            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
-            http_fetch_mode: crate::config::settings::HttpFetchMode::Html,
-            multi_host_connection_ids: Vec::new(),
+            ..all_switches_off()
         };
-        let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_search)
+        let names: Vec<_> = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &only_search)
             .definitions()
             .into_iter()
             .map(|d| d.name)
@@ -901,24 +1383,142 @@ mod tests {
         assert!(names.iter().any(|n| n == "web_search"));
         assert!(!names.iter().any(|n| n == "http_get"));
 
-        let only_http = crate::config::settings::ExperimentalSettings {
+        let only_http = ExperimentalSettings {
             enable_web_search: false,
             enable_http_fetch: true,
-            enable_cloud_page: false,
-            enable_html_render: false,
-            web_search_mode: crate::config::settings::WebSearchMode::Browser,
-            web_search_api_provider: crate::config::settings::WebSearchApiProvider::Brave,
-            web_search_endpoint: crate::config::settings::WebSearchEndpoint::Cn,
-            http_fetch_mode: crate::config::settings::HttpFetchMode::Browser,
-            multi_host_connection_ids: Vec::new(),
+            ..all_switches_off()
         };
-        let names: Vec<_> = ToolRegistry::build_for_mode(&[], &only_http)
+        let names: Vec<_> = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &only_http)
             .definitions()
             .into_iter()
             .map(|d| d.name)
             .collect();
         assert!(!names.iter().any(|n| n == "web_search"));
         assert!(names.iter().any(|n| n == "http_get"));
+    }
+
+    /// 参数语义声明的契约。
+    ///
+    /// dispatcher 不再按工具名硬编码，而是读这些声明来决定：风险怎么算、写前
+    /// 要不要检查、受保护路径要不要提权、受哪个审批开关约束、弹窗前要不要预演。
+    /// 所以「哪个工具属于哪一类」必须在这里被钉住 —— 新增同类工具时应当是有意
+    /// 为之，而不是被静默继承。
+    #[test]
+    fn builtin_tool_semantics_are_declared() {
+        let sem = |name: &str| {
+            builtin_tool_specs()
+                .into_iter()
+                .find(|s| s.name == name)
+                .unwrap_or_else(|| panic!("声明表里没有 {} ", name))
+                .semantics
+        };
+
+        // 命令类：目前只有 bash 执行 shell 命令，因而只有它按命令文本算风险、
+        // 走命令名单与模型审批、用 `$ cmd` 作拒绝摘要。
+        let command_tools: Vec<&str> = builtin_tool_specs()
+            .iter()
+            .filter(|s| s.semantics.command_arg.is_some())
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            command_tools,
+            vec!["bash"],
+            "命令类工具的归属变了：请确认是新增了执行命令的工具，而不是漏改声明"
+        );
+
+        // 路径类：都声明了路径参数键；读工具不参与写前检查。
+        assert_eq!(sem("read_file").path_arg, Some("path"));
+        assert_eq!(sem("read_file").path_write, PathWrite::None);
+        // 写工具必须声明路径参数，否则「写前必须已读」无从下手。
+        assert_eq!(sem("edit_file").path_arg, Some("path"));
+        assert_eq!(sem("write_file").path_arg, Some("path"));
+        // 写前检查的强度不同：改既有文件必须已读；覆盖才查存在性。
+        assert_eq!(sem("edit_file").path_write, PathWrite::Edit);
+        assert_eq!(sem("write_file").path_write, PathWrite::Overwrite);
+
+        // 编辑类工具受 confirm_edit_file 约束，且弹审批前先预演。
+        assert_eq!(
+            sem("edit_file").approval_switch,
+            Some(ApprovalSwitch::EditFile)
+        );
+        let previewing: Vec<&str> = builtin_tool_specs()
+            .iter()
+            .filter(|s| s.semantics.preview_before_approval)
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            previewing,
+            vec!["edit_file"],
+            "dispatcher 只实现了编辑预览；多出别的预演工具说明这里没跟上"
+        );
+
+        // 其余工具不应误声明语义：随手写上 path_arg 会让它无端参与写前检查。
+        let with_semantics: Vec<&str> = builtin_tool_specs()
+            .iter()
+            .filter(|s| {
+                s.semantics.command_arg.is_some()
+                    || s.semantics.path_arg.is_some()
+                    || s.semantics.approval_switch.is_some()
+                    || s.semantics.preview_before_approval
+            })
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(
+            with_semantics,
+            vec!["bash", "read_file", "write_file", "edit_file"]
+        );
+    }
+
+    /// 提示词段声明的契约。
+    ///
+    /// 系统提示词的组装不再判断「有没有 web_search 工具」，而是问声明表：
+    /// 「这次注册进来的工具里有谁需要提示词段」。所以这里既钉住归属，也验证
+    /// 这条推导链真的通（声明 → 注册集合 → 派生出的段）。
+    #[test]
+    fn builtin_tool_prompt_sections_are_declared() {
+        let declared: Vec<(&str, PromptSection)> = builtin_tool_specs()
+            .iter()
+            .filter_map(|spec| spec.prompt_section.map(|section| (spec.name, section)))
+            .collect();
+        assert_eq!(
+            declared,
+            vec![
+                ("subagent", PromptSection::Subagent),
+                ("web_search", PromptSection::WebSearch),
+                ("http_get", PromptSection::HttpFetch),
+            ],
+            "带提示词段的工具集变了：请同步确认 templates/agent 下的模板仍对应"
+        );
+
+        // 开关全开时，从注册集合推导出的段应与声明一致 —— 验证推导链本身。
+        let registry =
+            ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &all_switches_on());
+        let derived: std::collections::BTreeSet<PromptSection> = registry
+            .definitions()
+            .iter()
+            .filter_map(|def| prompt_section_of(&def.name))
+            .collect();
+        assert_eq!(
+            derived,
+            std::collections::BTreeSet::from([
+                PromptSection::Subagent,
+                PromptSection::WebSearch,
+                PromptSection::HttpFetch,
+            ]),
+            "从注册集合推导出的提示词段与声明表不一致"
+        );
+    }
+
+    /// 桌面专属工具只在桌面注册（移动端连类型都不编译）。
+    #[test]
+    fn desktop_only_tools_are_platform_gated() {
+        let r = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &all_switches_on());
+        for name in ["render_html", "upload_file", "download_file"] {
+            #[cfg(desktop)]
+            assert!(r.get(name).is_some(), "桌面应注册 {}", name);
+            #[cfg(not(desktop))]
+            assert!(r.get(name).is_none(), "移动端不应注册 {}", name);
+        }
     }
 
     #[test]

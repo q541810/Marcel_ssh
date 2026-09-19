@@ -82,7 +82,9 @@ pub async fn agent_stop_task(
         let mut found = false;
         for tid in &tasks_to_cancel {
             if let Some(task) = tasks.get_mut(tid) {
-                task.status = AgentStatus::Cancelled;
+                // 经 `transition_to` 而非直接赋值：写状态的规则只有一处
+                // （重复写 Cancelled 是幂等的空操作）。
+                task.transition_to(AgentStatus::Cancelled);
                 found = true;
             }
         }
@@ -97,9 +99,7 @@ pub async fn agent_stop_task(
     }
 
     for tid in &tasks_to_cancel {
-        if let Some(cancel_tx) = state.cancel_senders.write().remove(tid) {
-            let _ = cancel_tx.send(true);
-        }
+        state.task_cancel.cancel(tid);
         // bash 以 Agent task_id 注册到统一命令 manager；任务停止属级联
         // 取消 → Task，与界面直接取消（User）、Agent job_kill（Agent）
         // 区分，job_output 的终止来源文案据此渲染。

@@ -8,15 +8,15 @@
 //! | 子 agent 角色约束 | `templates/agent/子agent_只读.hbs`、`子agent_执行.hbs` | 仅子 agent | system prompt（经 `prompt_extra`） |
 //! | 多机操控 | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
 //! | 沟通 / 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | 无条件 | system prompt |
-//! | 联网搜索 | `templates/agent/联网搜索.hbs` | 注册了 `web_search` | system prompt |
-//! | 网页访问 | `templates/agent/网页访问.hbs` | 注册了 `http_get` | system prompt |
+//! | 联网搜索 | `templates/agent/联网搜索.hbs` | 注册了声明 `WebSearch` 段的工具（当前是 `web_search`） | system prompt |
+//! | 网页访问 | `templates/agent/网页访问.hbs` | 注册了声明 `HttpFetch` 段的工具（当前是 `http_get`） | system prompt |
 //! | 会话 | `templates/agent/会话.hbs` | 无条件 | system prompt |
 //! | 技能 | `templates/agent/技能.hbs` | 注册了 `skill_*` | system prompt |
 //! | 规划模式 | `templates/agent/规划模式.hbs` | Plan 模式 | system prompt |
-//! | 子agent 派发 | `templates/agent/子agent.hbs` | 注册了 `subagent` | system prompt |
+//! | 子agent 派发 | `templates/agent/子agent.hbs` | 注册了声明 `Subagent` 段的工具（当前是 `subagent`） | system prompt |
 //! | 用户附加指令 | `templates/agent/用户指令.hbs` | 设置为非空（上限 2000 字） | system prompt |
 //! | 插件扩展指令 | `templates/agent/插件指令.hbs` | 有插件 `systemPromptSection` | system prompt |
-//! | 压缩前言 / 压缩指令 | `templates/context/压缩前言.hbs`、`压缩指令.hbs` | 每次上下文压缩 | 摘要专用 LLM 调用 |
+//! | 压缩前言 / 压缩指令 | `templates/context/压缩前言.hbs`、`压缩指令.hbs` | 每次上下文压缩 | 摘要专用 LLM 调用（带常规请求同一份 tools schema） |
 //! | 技能平台说明 | `templates/skill/平台说明.hbs` | 调用内置教学 skill | skill 工具结果 |
 //! | 命令审批 | `templates/approval/审批.hbs` | 启用模型审批且用户未自定义 | 审批专用 LLM 调用 |
 //! | 审批（Plan 追加） | `templates/approval/审批规划.hbs` | 同上 + Plan 模式 | 审批专用 LLM 调用 |
@@ -47,7 +47,10 @@
 //! - 多机操控与 host 规则 → `templates/agent/多机.hbs`（工具侧只复用
 //!   `tools::HOST_MATCH_RULE` 短句）
 //! - 上下文压缩的质量 → `templates/context/压缩指令.hbs`（八段标题与
-//!   `summarizer::REQUIRED_SECTIONS` 硬校验一一对应，别改标题）
+//!   `summarizer::REQUIRED_SECTIONS` 硬校验一一对应，别改标题；开头与结尾各一段
+//!   同样的强警告禁止调用工具——只靠单处压不住；中间要求先写 `<analysis>` 预写块
+//!   再写八段，`<analysis>` 在回注前由 `summarizer::sanitize_summary` 剥离，
+//!   不进上下文/不落库/不展示）
 //! - 技能里的平台措辞 → `templates/skill/平台说明.hbs`
 //! - 命令审批判据 → `templates/approval/审批.hbs`（前端经 `agent_default_approval_prompt` 取用，
 //!   不再自带副本）
@@ -58,6 +61,7 @@
 use handlebars::Handlebars;
 use serde_json::json;
 
+use crate::agent::tools::PromptSection;
 use crate::error::AppError;
 
 /// Variables injected into agent prompt templates.
@@ -145,16 +149,18 @@ impl TemplateManager {
     }
 
     /// Render the full agent system prompt by composing applicable template
-    /// fragments in order. Conditions (`has_skills`, `plan_mode`, etc.) are
+    /// fragments in order. Conditions (`has_skills`, `plan_mode`, …) are
     /// evaluated by the caller — only applicable fragments are included.
+    ///
+    /// `tool_sections` 是「已注册工具声明出来的段需求」（见
+    /// `tools::prompt_section_of`）。段落顺序就是提示词结构，仍是本函数显式写出
+    /// 的；工具层只声明「我需要哪一段」，不决定位置、也不知道模板文件名。
     pub fn render_agent_prompt(
         &self,
         vars: &AgentPromptVars,
         has_skills: bool,
-        has_web_search: bool,
-        has_http_get: bool,
+        tool_sections: &std::collections::BTreeSet<PromptSection>,
         plan_mode: bool,
-        has_task: bool,
         extra_sections: &[String],
     ) -> Result<String, AppError> {
         let reg = Self::build_agent_registry();
@@ -183,10 +189,10 @@ impl TemplateManager {
         // 常驻行为段（沟通 / 上下文 / 收尾），不按工具与模式门控；必须在
         // extra_sections 之后 —— 那些是「角色」的追加约束，不能插在中间。
         parts.push(render("沟通"));
-        if has_web_search {
+        if tool_sections.contains(&PromptSection::WebSearch) {
             parts.push(render("联网搜索"));
         }
-        if has_http_get {
+        if tool_sections.contains(&PromptSection::HttpFetch) {
             parts.push(render("网页访问"));
         }
         parts.push(render("会话"));
@@ -196,7 +202,7 @@ impl TemplateManager {
         if plan_mode {
             parts.push(render("规划模式"));
         }
-        if has_task {
+        if tool_sections.contains(&PromptSection::Subagent) {
             parts.push(render("子agent"));
         }
         if !vars.user_prompt.is_empty() {
@@ -276,16 +282,21 @@ impl TemplateManager {
 mod tests {
     use super::*;
 
+    /// 把「需要提示词段的工具」列表转成集合，供直接调用 render 的测试使用。
+    fn secs(list: &[PromptSection]) -> std::collections::BTreeSet<PromptSection> {
+        list.iter().copied().collect()
+    }
+
     fn build(
         vars: &AgentPromptVars,
         skills: bool,
-        ws: bool,
-        hg: bool,
+        sections: &[PromptSection],
         plan: bool,
-        task: bool,
     ) -> String {
+        let tool_sections: std::collections::BTreeSet<PromptSection> =
+            sections.iter().copied().collect();
         TemplateManager
-            .render_agent_prompt(vars, skills, ws, hg, plan, task, &[])
+            .render_agent_prompt(vars, skills, &tool_sections, plan, &[])
             .unwrap()
     }
 
@@ -296,7 +307,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
 
         assert!(!prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
@@ -313,7 +324,12 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, true, true, false, false, true);
+        let prompt = build(
+            &vars,
+            true,
+            &[PromptSection::WebSearch, PromptSection::Subagent],
+            false,
+        );
 
         assert!(prompt.contains("web_search"));
         assert!(!prompt.contains("http_get"));
@@ -328,7 +344,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, true, false);
+        let prompt = build(&vars, false, &[], true);
         assert!(prompt.contains("Plan 模式"));
         assert!(prompt.contains("write_file"));
     }
@@ -340,7 +356,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(!prompt.contains("Plan 模式"));
     }
 
@@ -351,7 +367,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(prompt.contains("## 与用户沟通"));
         assert!(prompt.contains("先说结论"));
         // 回合折叠：结论必须落在最后一条不含工具调用的回复里。
@@ -363,7 +379,7 @@ mod tests {
         // 那些是「角色」的追加约束，插到它们中间会让约束被日常行为规则隔开。
         let extras = vec!["EXTRA_MARKER".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, false, false, false, false, &extras)
+            .render_agent_prompt(&vars, false, &secs(&[]), false, &extras)
             .unwrap();
         assert!(prompt.find("EXTRA_MARKER").unwrap() < prompt.find("## 与用户沟通").unwrap());
     }
@@ -377,10 +393,20 @@ mod tests {
             user_prompt: "USER_MARKER".into(),
             plugin_sections: vec!["PLUGIN_MARKER".into()],
         };
-        let minimal = build(&vars, false, false, false, false, false);
+        let minimal = build(&vars, false, &[], false);
         let extras = vec!["EXTRA_MARKER".to_string()];
         let full = TemplateManager
-            .render_agent_prompt(&vars, true, true, true, true, true, &extras)
+            .render_agent_prompt(
+                &vars,
+                true,
+                &secs(&[
+                    PromptSection::WebSearch,
+                    PromptSection::HttpFetch,
+                    PromptSection::Subagent,
+                ]),
+                true,
+                &extras,
+            )
             .unwrap();
         for prompt in [minimal, full] {
             let lines: Vec<&str> = prompt.lines().collect();
@@ -469,7 +495,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, true);
+        let prompt = build(&vars, false, &[PromptSection::Subagent], false);
         assert!(prompt.contains("子agent 派发"));
         assert!(prompt.contains("subagent"));
         // 联网搜集信息默认派发子agent 的引导（web_search 质量低/token 消耗/会话时长）
@@ -484,7 +510,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(!prompt.contains("子agent 派发"));
     }
 
@@ -495,7 +521,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec![],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(!prompt.contains("插件扩展指令"));
     }
 
@@ -506,7 +532,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec!["记住用户偏好".into()],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(prompt.contains("插件扩展指令"));
         assert!(prompt.contains("记住用户偏好"));
     }
@@ -518,7 +544,7 @@ mod tests {
             user_prompt: String::new(),
             plugin_sections: vec!["插件A 指令".into(), "插件B 指令".into()],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         assert!(prompt.contains("插件A 指令\n\n插件B 指令"));
     }
 
@@ -529,7 +555,7 @@ mod tests {
             user_prompt: "USER_MARKER".into(),
             plugin_sections: vec!["PLUGIN_MARKER".into()],
         };
-        let prompt = build(&vars, false, false, false, false, false);
+        let prompt = build(&vars, false, &[], false);
         let user_pos = prompt.find("USER_MARKER").unwrap();
         let plugin_pos = prompt.find("PLUGIN_MARKER").unwrap();
         assert!(user_pos < plugin_pos);
@@ -544,7 +570,7 @@ mod tests {
         };
         let extras = vec!["EXTRA_MARKER_A".to_string(), "EXTRA_MARKER_B".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, false, false, false, false, &extras)
+            .render_agent_prompt(&vars, false, &secs(&[]), false, &extras)
             .unwrap();
         assert!(prompt.contains("EXTRA_MARKER_A"));
         assert!(prompt.contains("EXTRA_MARKER_B"));

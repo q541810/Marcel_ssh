@@ -4,7 +4,7 @@ use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
 use crate::agent::sandbox::{assess_risk, split_command_chain, RiskLevel};
 use crate::agent::task::AgentMode;
-use crate::agent::tools::{ToolContext, ToolOutput, ToolRegistry};
+use crate::agent::tools::{PathWrite, ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
 use crate::emit_event;
 use crate::llm::manager::LlmManager;
@@ -213,66 +213,74 @@ impl ToolDispatcher {
         let Some(tool) = self.registry.get(&tc.name) else {
             return DispatchResult::unknown(&tc.name);
         };
+        // 参数语义来自内置工具声明表（`tools/mod.rs` 的 BUILTIN_TOOLS_*）：
+        // 哪个参数键是命令、哪个是路径、会不会写路径、受哪个审批开关约束。
+        // 动态工具（skill / 插件 / MCP）没有条目 → 走通用路径。
+        let semantics = self.registry.semantics(&tc.name);
+        let declares_command = semantics.and_then(|s| s.command_arg).is_some();
+        let command = semantics
+            .and_then(|s| s.command_arg)
+            .and_then(|key| tc.arguments.get(key))
+            .and_then(|v| v.as_str());
+        let path = semantics
+            .and_then(|s| s.path_arg)
+            .and_then(|key| tc.arguments.get(key))
+            .and_then(|v| v.as_str());
+        let path_write = semantics.map(|s| s.path_write).unwrap_or(PathWrite::None);
 
-        let effective_risk = match tc.name.as_str() {
-            "bash" => tc
-                .arguments
-                .get("command")
-                .and_then(|v| v.as_str())
-                .map(assess_risk)
-                .unwrap_or_else(|| tool.risk_level()),
-            "write_file" | "edit_file" => {
-                let base_risk = tool.risk_level();
-                let path_hits_protected = tc
-                    .arguments
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .map(|path| {
-                        ctx.policy
-                            .as_ref()
-                            .map(|p| p.is_protected_path(path))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(false);
-                if path_hits_protected {
-                    RiskLevel::HighRisk
-                } else {
-                    base_risk
-                }
-            }
-            _ => tool.risk_level(),
+        // 动态风险：命令类工具由命令文本决定（工具声明的风险只是基线）；写路径类
+        // 工具写到受保护路径时抬到 HighRisk；其余取工具声明的风险。
+        let hits_protected_path = path
+            .map(|p| {
+                ctx.policy
+                    .as_ref()
+                    .map(|policy| policy.is_protected_path(p))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        let effective_risk = if let Some(cmd) = command {
+            assess_risk(cmd)
+        } else if path_write != PathWrite::None && hits_protected_path {
+            RiskLevel::HighRisk
+        } else {
+            tool.risk_level()
         };
         let requires_default_approval = tool.requires_approval_by_default();
 
-        // 0.5 编辑前必须已读取（read-before-edit）：
-        //     edit_file 的目标文件必须在本任务内先经 read_file 成功读取过
-        //     （路径按 normalize_path 归一化比较），否则直接失败并提示先读取，
-        //     不进入审批流程（注定失败的编辑不需要用户审批）。
-        if tc.name == "edit_file" {
-            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
-                if !path_was_read(&self.read_files.read(), path) {
-                    return DispatchResult::from_tool_output(
-                        ToolOutput::fail(format!("edit {}", path), read_before_edit_error(path)),
-                        effective_risk,
-                    );
+        // 0.5 / 0.6 写前必须已读：注定失败的写会直接失败并提示先读取，不进入审批
+        // 流程（不值得让用户为一次注定失败的调用点确认）。强度由声明决定：
+        //   Edit      —— 改写既有文件，目标必须已读过；
+        //   Overwrite —— 覆盖已存在的目标前要求已读过，新建放行。
+        match path_write {
+            PathWrite::Edit => {
+                if let Some(path) = path {
+                    if !path_was_read(&self.read_files.read(), path) {
+                        return DispatchResult::from_tool_output(
+                            ToolOutput::fail(
+                                format!("edit {}", path),
+                                read_before_edit_error(path),
+                            ),
+                            effective_risk,
+                        );
+                    }
                 }
             }
-        }
-
-        // 0.6 覆盖已有文件前必须已读取（read-before-overwrite）：
-        //     write_file 的目标已存在（覆盖）且本任务未读过 → 拦截提示先读取；
-        //     目标不存在（新建）→ 放行。已读过的路径跳过 stat，省一次往返。
-        if tc.name == "write_file" {
-            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
-                if !path_was_read(&self.read_files.read(), path)
-                    && remote_file_exists(&ctx.ssh, &ctx.session_id, path).await
-                {
-                    return DispatchResult::from_tool_output(
-                        ToolOutput::fail(format!("write {}", path), read_before_write_error(path)),
-                        effective_risk,
-                    );
+            PathWrite::Overwrite => {
+                if let Some(path) = path {
+                    if !path_was_read(&self.read_files.read(), path)
+                        && remote_file_exists(&ctx.ssh, &ctx.session_id, path).await
+                    {
+                        return DispatchResult::from_tool_output(
+                            ToolOutput::fail(
+                                format!("write {}", path),
+                                read_before_write_error(path),
+                            ),
+                            effective_risk,
+                        );
+                    }
                 }
             }
+            PathWrite::None => {}
         }
 
         // 1. Compute sandbox/mode-level need for human confirmation.
@@ -283,13 +291,11 @@ impl ToolDispatcher {
         let approval_mode = self.approval_mode.as_ref().unwrap_or(&self.mode);
         let sandbox_needs_confirm: Option<bool> = match approval_mode {
             AgentMode::Plan | AgentMode::Agent => {
-                if tc.name == "bash" {
-                    let cmd = tc
-                        .arguments
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    Some(command_list_requires_confirm(cmd, &self.agent_settings))
+                if declares_command {
+                    Some(command_list_requires_confirm(
+                        command.unwrap_or(""),
+                        &self.agent_settings,
+                    ))
                 } else {
                     let mut needs_confirm = requires_default_approval
                         || match effective_risk {
@@ -298,7 +304,11 @@ impl ToolDispatcher {
                             RiskLevel::Moderate => self.agent_settings.confirm_each_command,
                             RiskLevel::HighRisk | RiskLevel::Destructive => true,
                         };
-                    if tc.name == "edit_file" && self.agent_settings.confirm_edit_file {
+                    if semantics
+                        .and_then(|s| s.approval_switch)
+                        .map(|switch| switch.is_on(&self.agent_settings))
+                        .unwrap_or(false)
+                    {
                         needs_confirm = true;
                     }
                     Some(needs_confirm)
@@ -318,21 +328,18 @@ impl ToolDispatcher {
             Some(v) => v,
         };
 
-        // 2. Model-based approval — runs for `bash` when an approver is
-        //    configured, regardless of whether the sandbox requires human
-        //    approval. The model can only judge; it cannot rewrite the command.
+        // 2. Model-based approval — runs for tools that declare a command
+        //    argument (i.e. `bash`) when an approver is configured, regardless
+        //    of whether the sandbox requires human approval. The model can only
+        //    judge; it cannot rewrite the command.
         //    Reuses the agent's normal model + retry path; failure after retries
         //    is surfaced as a blocked tool result.
         let mut final_needs_confirm = sandbox_needs_confirm;
         let mut model_reasons: Option<Vec<String>> = None;
 
-        if tc.name == "bash" {
+        if declares_command {
             if let Some(ref approver) = self.approver {
-                let cmd = tc
-                    .arguments
-                    .get("command")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let cmd = command.unwrap_or("");
 
                 // Signal the frontend that model approval is in progress.
                 emit_event(
@@ -427,9 +434,12 @@ impl ToolDispatcher {
         if final_needs_confirm {
             let mut approval_metadata: Option<serde_json::Value> = None;
 
-            // edit_file: pre-read + validate before asking the user. Failures
-            // that would make execute() fail must not open the approval dialog.
-            if tc.name == "edit_file" {
+            // 需要预演的工具（`edit_file`）先做一次预读 + 校验再问用户：
+            // 会让 execute() 失败的调用不该打开审批对话框。
+            if semantics
+                .map(|s| s.preview_before_approval)
+                .unwrap_or(false)
+            {
                 match crate::agent::tools::file_ops::preview_edit_for_approval(
                     &ctx.ssh,
                     &ctx.session_id,
@@ -487,13 +497,10 @@ impl ToolDispatcher {
                 crate::agent::task::AgentStatus::Executing,
             );
             if !approved {
-                let summary = if tc.name == "bash" {
-                    let cmd = tc
-                        .arguments
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    format!("$ {}", cmd)
+                // 命令类工具的摘要用 `$ cmd`（用户看到的是被拒的那条命令），
+                // 其余用工具名。
+                let summary = if declares_command {
+                    format!("$ {}", command.unwrap_or(""))
                 } else {
                     tc.name.clone()
                 };
@@ -508,13 +515,11 @@ impl ToolDispatcher {
         );
         match tool.execute(tc.arguments.clone(), ctx).await {
             Ok(out) => {
-                // read_file / write_file / edit_file 成功即记账：模型刚读过，
-                // 或刚写入/改过的文件内容都在其上下文中，等价于"已观察"。
-                // 后续 edit_file 与 write_file 覆盖的预读检查以此集合为准。
-                if matches!(tc.name.as_str(), "read_file" | "write_file" | "edit_file")
-                    && out.success
-                {
-                    if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
+                // 带路径参数的工具成功即记账：模型刚读过，或刚写入/改过的文件
+                // 内容都在其上下文中，等价于「已观察」。后续 edit_file 与
+                // write_file 的写前检查以此集合为准。
+                if out.success {
+                    if let Some(path) = path {
                         self.read_files
                             .write()
                             .insert(crate::agent::sandbox::normalize_path(path));
@@ -538,9 +543,9 @@ impl ToolDispatcher {
 
 fn set_task_status(state: &AppState, task_id: &str, status: crate::agent::task::AgentStatus) {
     if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
-        if task.status != crate::agent::task::AgentStatus::Cancelled {
-            task.status = status;
-        }
+        // 吸收规则在 `AgentTask::transition_to` 里：已取消的任务不接受后续写入
+        // （用户点了停止之后，正在跑的工具不该把状态推回 Executing）。
+        task.transition_to(status);
     }
 }
 

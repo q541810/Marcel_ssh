@@ -1,29 +1,14 @@
-use serde::Serialize;
 use tauri::AppHandle;
 
 use crate::agent::interaction::AgentInteractionManager;
 use crate::agent::sandbox::RiskLevel;
 
-/// Event requesting user approval for a tool call.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ApprovalRequestEvent {
-    #[serde(rename = "type")]
-    pub event_type: String,
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub arguments: serde_json::Value,
-    pub risk_level: RiskLevel,
-    /// Reasons from the model approval step (when it decided to route to human).
-    /// Surfaced in the approval dialog so the user sees why human review is needed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasons: Option<Vec<String>>,
-    /// Optional preview metadata (e.g. edit_file file_content / line_position).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<serde_json::Value>,
-}
-
 /// Manages user approval flow for tool execution.
+///
+/// 审批请求**只**经统一交互队列（`AgentInteractionManager`）发给前端 ——
+/// 那条路的事件是 `agent://interaction-active`，前端由 `interactionStore` 消费。
+/// 这里原先还有一个 `ApprovalRequestEvent`（走 `agent://stream/{taskId}` 的老路），
+/// 自交互队列接管后就不再被构造，已删除。
 pub(crate) struct ApprovalManager {
     app: AppHandle,
     interaction_mgr: AgentInteractionManager,

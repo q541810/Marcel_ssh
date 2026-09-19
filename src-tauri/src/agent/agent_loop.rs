@@ -8,7 +8,7 @@ use crate::agent::plan_handler::{
     build_plan_context, emit_final_plan_normalized, handle_plan_tool_output, PLAN_CONTEXT_PREFIX,
 };
 use crate::agent::sandbox::RiskLevel;
-use crate::agent::task::{AgentMode, AgentStatus};
+use crate::agent::task::AgentMode;
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
 use crate::agent::tools::{ToolContext, ToolRegistry};
@@ -59,12 +59,15 @@ pub(crate) struct PersistedAssistantToolCall {
 }
 
 /// Checks if a task has been cancelled by the user.
+///
+/// 问的是「因取消而终止」而不是「已终态」—— 失败的任务不该让循环表现为被取消
+/// （谓词语义见 `AgentStatus::is_cancelled`）。
 fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
     state
         .agent_tasks
         .read()
         .get(task_id)
-        .map_or(false, |t| t.status == AgentStatus::Cancelled)
+        .is_some_and(|t| t.status.is_cancelled())
 }
 
 /// 把一批已结算的后台作业渲染成一条给模型的 user 通知。

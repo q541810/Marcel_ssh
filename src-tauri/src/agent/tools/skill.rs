@@ -7,6 +7,12 @@ use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::skills::store::Skill;
 
+/// skill 注册成工具时的名字前缀。
+///
+/// 单独提成常量是因为「这次注册里有没有 skill」只能按前缀判断 —— skills 是
+/// 运行时动态注册的（`skill_<名称>_<id>`），不像内置工具那样有声明条目。
+pub const SKILL_TOOL_PREFIX: &str = "skill_";
+
 pub struct SkillTool {
     name: String,
     display_name: String,
@@ -38,9 +44,9 @@ impl SkillTool {
             .take(8)
             .collect();
         let name = if safe_name.is_empty() {
-            format!("skill_{}", id_tag)
+            format!("{}{}", SKILL_TOOL_PREFIX, id_tag)
         } else {
-            format!("skill_{}_{}", safe_name, id_tag)
+            format!("{}{}_{}", SKILL_TOOL_PREFIX, safe_name, id_tag)
         };
         let mut prompt = skill.prompt.clone();
         if crate::skills::builtin::is_builtin_skill_id(&skill.id) {

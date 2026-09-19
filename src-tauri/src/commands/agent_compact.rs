@@ -3,7 +3,7 @@ use tauri::{AppHandle, State};
 
 use crate::agent::agent_loop::forward_compaction_event;
 use crate::agent::conversation_persister::ConversationPersister;
-use crate::agent::task::AgentStatus;
+use crate::agent::manager::AgentManager;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
 use crate::llm::provider::LlmMessage;
@@ -52,13 +52,11 @@ pub async fn agent_compact_conversation(
 ) -> Result<CompactionCommandResult, AppError> {
     // busy 守卫：同一会话有任务正在运行时拒绝手动压缩（对齐 DSH compactNow
     // 的 idle 语义，避免运行中任务与手动替换并发造成竞态）。
-    let running = state.agent_tasks.read().values().any(|t| {
-        t.conversation_id == conversation_id
-            && matches!(
-                t.status,
-                AgentStatus::Planning | AgentStatus::Executing | AgentStatus::WaitingApproval
-            )
-    });
+    let running = state
+        .agent_tasks
+        .read()
+        .values()
+        .any(|t| t.conversation_id == conversation_id && t.status.is_running());
     if running {
         return Err(AppError::Agent(
             "会话正在运行任务，请等待任务结束或停止后再压缩".into(),
@@ -87,6 +85,14 @@ pub async fn agent_compact_conversation(
         }
     }?;
     let llm_manager = LlmManager::new(resolved.config)?;
+
+    // 摘要调用的工具 schema =「该会话下一次常规请求」会下发的那一份（走 `spawn`
+    // 同一个 `build_registry`，工具集将来怎么变都自动跟上）：摘要调用与常规请求的
+    // tools 段因而一致，模型也能据此理解历史里的工具调用（减少信息丢失）。
+    // 手动压缩跑在会话空闲时，凭设置里持久化的当前模式取清单。
+    let tools = AgentManager::new(state.inner().clone())
+        .current_tool_definitions()
+        .await;
 
     let mut messages: Vec<LlmMessage> = history;
     if messages.is_empty() {
@@ -120,7 +126,7 @@ pub async fn agent_compact_conversation(
     let run = crate::agent::context::compact_if_needed(
         &mut messages,
         &llm_manager,
-        &[],
+        &tools,
         0, // context_window 仅 pressure 触发使用，Manual 跳过阈值
         crate::agent::context::CompactionTrigger::Manual,
         &mut cancel_rx,

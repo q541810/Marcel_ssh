@@ -135,14 +135,14 @@ impl Default for AgentModeSettings {
                 "shutdown".into(),
                 "reboot".into(),
             ],
-            confirm_each_command: true,
+            confirm_each_command: default_true(),
             enable_model_command_approval: false,
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
-            max_tool_rounds: 500,
+            max_tool_rounds: default_max_tool_rounds(),
             context_window: 0,
-            confirm_edit_file: true,
+            confirm_edit_file: default_true(),
         }
     }
 }
@@ -228,10 +228,10 @@ pub struct ExperimentalSettings {
 impl Default for ExperimentalSettings {
     fn default() -> Self {
         Self {
-            enable_web_search: true,
-            enable_http_fetch: true,
+            enable_web_search: default_true(),
+            enable_http_fetch: default_true(),
             enable_cloud_page: false,
-            enable_html_render: true,
+            enable_html_render: default_true(),
             web_search_mode: WebSearchMode::Browser,
             web_search_api_provider: WebSearchApiProvider::Brave,
             web_search_endpoint: WebSearchEndpoint::Cn,
@@ -268,11 +268,11 @@ fn default_true() -> bool {
 impl Default for NotificationSettings {
     fn default() -> Self {
         Self {
-            agent_approval: true,
-            agent_question: true,
-            agent_task_done: true,
-            agent_task_failed: true,
-            notification_volume: 70,
+            agent_approval: default_true(),
+            agent_question: default_true(),
+            agent_task_done: default_true(),
+            agent_task_failed: default_true(),
+            notification_volume: default_volume(),
         }
     }
 }
@@ -502,7 +502,7 @@ pub struct AppSettings {
     pub font_family: String,
     #[serde(default = "default_agent_mode_str")]
     pub default_agent_mode: String,
-    #[serde(default)]
+    #[serde(default = "default_llm_config")]
     pub llm_config: Option<LlmConfig>,
     /// 多渠道多模型注册表（渠道/模型/场景槽位）。旧 `llm_config` 迁移后恒为 None。
     #[serde(default)]
@@ -573,6 +573,15 @@ pub struct AppSettings {
     /// main window.
     #[serde(default)]
     pub disable_all_injections: bool,
+    /// 折叠「已完成且过程较长」的回合（前端 `ConversationDisplaySection`）。
+    /// 后端不读它，只负责持久化 —— 但**必须有这个字段**，否则前端写进来会被
+    /// serde 静默丢弃、重启即失效。
+    #[serde(default = "default_true")]
+    pub fold_completed_turns: bool,
+    /// 隐私模式：连接名/地址在界面上打码（前端 `usePrivacyMode`）。
+    /// 同上：后端不读，只负责持久化。
+    #[serde(default)]
+    pub privacy_mode: bool,
     /// 更新方式（三态）：自动更新 / 仅提醒 / 关闭。旧配置（1.4.0 及更早）没有
     /// 这个字段，由下面的 `auto_update` 推导 —— 见 `migrate_update_mode_from_legacy`。
     #[serde(default)]
@@ -609,33 +618,32 @@ fn default_command_timeout() -> u64 {
     180
 }
 
+/// 旧单配置 `llm_config` 的默认值。
+///
+/// 它同时承担「新装用户预置一个默认渠道」的职责：启动时
+/// `llm::registry::migrate_legacy_settings` 会把这里的旧配置铺成「默认渠道 +
+/// 默认模型」（仅当注册表里一个渠道都没有时），用户只需填 API Key 即可用。
+/// 因此它的默认值必须与 `AppSettings::default()` 一致，不能单方面退化成 `None`
+/// —— 那会让全新安装的注册表变成空的。`serde_defaults_match_default_impl`
+/// 守着这条一致性。
+fn default_llm_config() -> Option<LlmConfig> {
+    Some(LlmConfig::default())
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             terminal_colors: TerminalColors::default(),
-            font_size: 14,
-            font_family: "monospace".into(),
-            default_agent_mode: "agent".into(),
-            llm_config: Some(LlmConfig::default()),
+            // 这几个字段一律调默认值函数，**不再内联抄一遍**：抄过的代价是
+            // `font_family`（"monospace" vs 长字体栈）与 `max_tool_rounds`
+            // （80 vs 500）两处漂移 —— serde 缺字段路径读函数、新装路径读内联值，
+            // 于是「新装」和「读到没有该字段的旧配置」拿到不同默认值。
+            font_size: default_font_size(),
+            font_family: default_font_family(),
+            default_agent_mode: default_agent_mode_str(),
+            llm_config: default_llm_config(),
             llm_registry: LlmRegistry::default(),
-            agent_mode_settings: AgentModeSettings {
-                list_mode: CommandListMode::Denylist,
-                command_list: vec![
-                    "rm".into(),
-                    "mkfs".into(),
-                    "dd".into(),
-                    "shutdown".into(),
-                    "reboot".into(),
-                ],
-                confirm_each_command: true,
-                enable_model_command_approval: false,
-                model_approval_model: String::new(),
-                model_approval_prompt: String::new(),
-                system_prompt: String::new(),
-                max_tool_rounds: 80,
-                context_window: 0,
-                confirm_edit_file: true,
-            },
+            agent_mode_settings: AgentModeSettings::default(),
             experimental_settings: ExperimentalSettings::default(),
             file_manager_path: default_file_manager_path(),
             file_manager_paths: HashMap::new(),
@@ -655,8 +663,10 @@ impl Default for AppSettings {
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),
             disable_all_injections: false,
+            fold_completed_turns: true,
+            privacy_mode: false,
             update_mode: UpdateMode::Auto,
-            auto_update: true,
+            auto_update: default_true(),
         }
     }
 }
@@ -716,6 +726,7 @@ impl JsonPersistable for AppSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn app_settings_default_roundtrip_json() {
@@ -856,7 +867,12 @@ mod tests {
     fn app_settings_default_values() {
         let s = AppSettings::default();
         assert_eq!(s.font_size, 14);
-        assert_eq!(s.font_family, "monospace");
+        // 钉**字面量**而不是调 `default_font_family()` 自比（那样永不可能失败）：
+        // 历史上这里是 "monospace"，而 serde 缺字段路径走函数 → 同一批默认值两份。
+        assert_eq!(
+            s.font_family,
+            "JetBrains Mono, Fira Code, Consolas, \"Microsoft YaHei\", monospace"
+        );
         assert_eq!(s.default_agent_mode, "agent");
         assert_eq!(s.panel_height, 256);
         assert_eq!(s.file_manager_path, "/");
@@ -1099,5 +1115,445 @@ mod tests {
         assert!(!UpdateMode::Notify.auto_downloads());
         assert!(!UpdateMode::Off.checks_for_updates());
         assert!(!UpdateMode::Off.auto_downloads());
+    }
+
+
+    /// 读 `src/lib/types.ts`，取 `export interface NAME { ... }` 的字段名。
+    /// 跳过块注释 / 行注释，去掉可选标记 `?`。
+    fn extract_interface_fields(source: &str, name: &str) -> std::collections::BTreeSet<String> {
+        let mut fields = std::collections::BTreeSet::new();
+        let mut lines = source.lines();
+        let needle = format!("export interface {name}");
+        let mut in_block_comment = false;
+        let mut inside = false;
+        let mut depth = 0usize;
+
+        while let Some(line) = lines.next() {
+            let trimmed = line.trim();
+            if in_block_comment {
+                if trimmed.contains("*/") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if !inside {
+                if !trimmed.starts_with(&needle) {
+                    continue;
+                }
+                inside = true;
+                depth = trimmed.matches('{').count();
+                continue;
+            }
+            if trimmed.starts_with("/*") {
+                if !trimmed.contains("*/") {
+                    in_block_comment = true;
+                }
+                continue;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            depth += trimmed.matches('{').count();
+            depth = depth.saturating_sub(trimmed.matches('}').count());
+            if depth == 0 {
+                break;
+            }
+            let field = trimmed.split([':', '?']).next().unwrap_or("").trim();
+            if !field.is_empty()
+                && field
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                fields.insert(field.to_string());
+            }
+        }
+        fields
+    }
+
+    fn read_frontend_app_settings_interface() -> String {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/types.ts");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()))
+    }
+
+    /// 后端存在但前端 `AppSettings` 里没有的字段（后端自用，不参与前端往返）。
+    const BACKEND_ONLY_SETTINGS_FIELDS: &[&str] = &["llmConfig"];
+
+    /// **嵌套**结构的 serde 默认值也必须与 `Default::default()` 一致。
+    ///
+    /// 顶层那条（`serde_defaults_match_default_impl`）管不到嵌套结构：字段属性写
+    /// `#[serde(default = "default_true")]`，而 `impl Default` 里内联 `true`，就是
+    /// 同一批默认值的两个来源。这种漂移的后果与 `max_tool_rounds` 80/500 那次一模
+    /// 一样 ——「读到缺该键的旧配置」与「新装」拿到不同的默认值，而没有任何测试会红
+    /// （实测：把 `default_max_tool_rounds()` 改成 800 后 37 条全绿）。
+    /// 现在两处都调同一个函数，这条测试守的是「别再有人把它写回内联字面量」。
+    #[test]
+    fn nested_serde_defaults_match_their_default_impl() {
+        fn assert_same<T>(name: &str)
+        where
+            T: serde::de::DeserializeOwned + Default + PartialEq + std::fmt::Debug,
+        {
+            let from_empty: T = serde_json::from_str("{}")
+                .unwrap_or_else(|e| panic!("{name} 反序列化 {{}} 失败：{e}"));
+            assert_eq!(
+                from_empty,
+                T::default(),
+                "{name}：serde 缺字段默认值与 Default impl 不一致（同一个默认值两个来源）"
+            );
+        }
+
+        assert_same::<AgentModeSettings>("AgentModeSettings");
+        assert_same::<ExperimentalSettings>("ExperimentalSettings");
+        assert_same::<NotificationSettings>("NotificationSettings");
+        assert_same::<MobileNotificationSettings>("MobileNotificationSettings");
+        assert_same::<MobileBackgroundSettings>("MobileBackgroundSettings");
+        assert_same::<WorkspaceLayoutSettings>("WorkspaceLayoutSettings");
+        assert_same::<TerminalColors>("TerminalColors");
+    }
+
+    /// 后端 `AppSettings` 的 serde 默认值必须与 `Default::default()` 一致。
+    ///
+    /// 两者是**两条独立路径**：`serde_json::from_str("{}")` 走 `#[serde(default = ...)]`
+    /// 属性，而新装 / 重置走 `Default::default()`。同一批默认值写两遍，抄错就是
+    /// 「新装是 A、读到缺字段的旧配置是 B」。`llm_config` 就这么漂过一次
+    /// （serde 侧 `None`／Default 侧 `Some`），后果是全新安装的模型注册表是空的
+    /// ——「新装预置一个默认渠道」那条路径直接失效。
+    #[test]
+    fn serde_defaults_match_default_impl() {
+        let from_empty: AppSettings = serde_json::from_str("{}").expect("deserialize {}");
+        let explicit = AppSettings::default();
+        assert_eq!(
+            from_empty, explicit,
+            "serde 缺字段默认值与 Default impl 不一致：某个字段有两份默认值"
+        );
+    }
+
+    /// 前端 `types.ts` 的 `AppSettings` 字段必须都在后端存在。
+    ///
+    /// 前端写进去、后端不认识的字段会被 serde **静默丢弃**，重启即失效 ——
+    /// `privacyMode` / `foldCompletedTurns` 就这么幽灵过：前端有开关、能写进
+    /// 配置文件？不能，后端根本没有这个字段。反方向（后端有、前端没暴露）也查，
+    /// 否则「后端加了字段但忘了给前端」会一直没人发现。
+    #[test]
+    fn frontend_settings_fields_must_exist_in_backend() {
+        let backend: serde_json::Value =
+            serde_json::to_value(AppSettings::default()).expect("序列化 AppSettings");
+        let backend_keys: std::collections::BTreeSet<String> = backend
+            .as_object()
+            .expect("AppSettings 应序列化为 JSON 对象")
+            .keys()
+            .cloned()
+            .collect();
+
+        let source = read_frontend_app_settings_interface();
+        let frontend_keys = extract_interface_fields(&source, "AppSettings");
+        assert!(
+            frontend_keys.len() > 20,
+            "只从 types.ts 解析出 {} 个 AppSettings 字段，解析器可能已失效",
+            frontend_keys.len()
+        );
+
+        let dropped: Vec<&String> = frontend_keys.difference(&backend_keys).collect();
+        assert!(
+            dropped.is_empty(),
+            "前端 AppSettings 存在后端没有的字段，保存时会被静默丢弃：{:?}。\
+             要么给后端补上字段，要么从 types.ts 里删掉它。",
+            dropped
+        );
+
+        let unexposed: Vec<&String> = backend_keys
+            .difference(&frontend_keys)
+            .filter(|k| !BACKEND_ONLY_SETTINGS_FIELDS.contains(&k.as_str()))
+            .collect();
+        assert!(
+            unexposed.is_empty(),
+            "后端 AppSettings 有字段没暴露给前端：{:?}。\
+             要么加进 types.ts，要么登记进 BACKEND_ONLY_SETTINGS_FIELDS。",
+            unexposed
+        );
+    }
+
+    // ── 前端默认值 ↔ 后端默认值 ──────────────────────────────────────────
+
+    /// 读前端 settingsStore 源码（那份手写的 DEFAULT 对象在里面）。
+    fn read_frontend_settings_store() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src/stores/settingsStore.ts");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}: {e}", path.display()))
+    }
+
+    /// 去掉 TS 注释（`//` 与块注释）。字符串内部的斜杠不算注释。
+    fn strip_ts_comments(source: &str) -> String {
+        let chars: Vec<char> = source.chars().collect();
+        let mut out = String::with_capacity(source.len());
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            let next = chars.get(i + 1).copied();
+            if c == '/' && next == Some('/') {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if c == '/' && next == Some('*') {
+                i += 2;
+                while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                    i += 1;
+                }
+                i += 2;
+                continue;
+            }
+            if c == '"' || c == '\'' || c == '`' {
+                let quote = c;
+                out.push(c);
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' {
+                        out.push(chars[i]);
+                        if let Some(n) = chars.get(i + 1) {
+                            out.push(*n);
+                        }
+                        i += 2;
+                        continue;
+                    }
+                    out.push(chars[i]);
+                    let done = chars[i] == quote;
+                    i += 1;
+                    if done {
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+            i += 1;
+        }
+        out
+    }
+
+    /// `key: <标量字面量>` → (key, 值)；不是标量（数组 / 对象 / 引用常量 / 展开）则 None。
+    fn split_scalar_field(chunk: &str) -> Option<(String, serde_json::Value)> {
+        let (key, value) = chunk.split_once(':')?;
+        let key = key.trim();
+        if key.is_empty() || key.contains("...") {
+            return None;
+        }
+        let value = value.trim().trim_end_matches(',').trim();
+        let single = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\''));
+        let double = value.strip_prefix('"').and_then(|v| v.strip_suffix('"'));
+        let parsed = if let Some(inner) = single.or(double) {
+            Some(serde_json::Value::String(unescape_ts(inner)))
+        } else if value == "true" {
+            Some(serde_json::Value::Bool(true))
+        } else if value == "false" {
+            Some(serde_json::Value::Bool(false))
+        } else if !value.is_empty() && value.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            value.parse::<i64>().ok().map(serde_json::Value::from)
+        } else {
+            None
+        };
+        parsed.map(|v| (key.to_string(), v))
+    }
+
+    fn unescape_ts(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                if let Some(n) = chars.next() {
+                    out.push(n);
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// 取 TS 源里 `OBJECT_NAME ... = { ... }` 那个对象**直属**的标量字段。
+    ///
+    /// 只收数字 / 字符串 / 布尔：数组与对象要么是空集合、要么引用别的常量
+    /// （`DEFAULT_TERMINAL_COLORS` / `DEFAULT_WORKSPACE_LAYOUT`），它们不是
+    /// 「同一个默认值被抄成两遍」，比不了也不该比。
+    fn ts_object_scalars(source: &str, object_name: &str) -> BTreeMap<String, serde_json::Value> {
+        let code = strip_ts_comments(source);
+        let name_at = code
+            .find(object_name)
+            .unwrap_or_else(|| panic!("settingsStore.ts 里找不到 {object_name}"));
+        let open = name_at
+            + code[name_at..]
+                .find("= {")
+                .unwrap_or_else(|| panic!("{object_name} 后面没有 `= {{`"))
+            + 2;
+
+        // 先扫到配对的 '}'（跳过字符串里的花括号），拿到对象体。
+        let chars: Vec<char> = code[open..].chars().collect();
+        let mut depth = 0usize;
+        let mut end = chars.len();
+        let mut i = 0;
+        while i < chars.len() {
+            match chars[i] {
+                '"' | '\'' | '`' => {
+                    let q = chars[i];
+                    i += 1;
+                    while i < chars.len() {
+                        if chars[i] == '\\' {
+                            i += 2;
+                            continue;
+                        }
+                        let done = chars[i] == q;
+                        i += 1;
+                        if done {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+
+        // 按顶层逗号切块，逐块解析 `key: value`。
+        let mut body: Vec<char> = chars[1..end].iter().copied().collect();
+        body.push(',');
+        let mut fields = BTreeMap::new();
+        let mut chunk = String::new();
+        let mut depth = 0usize;
+        let mut i = 0;
+        while i < body.len() {
+            let c = body[i];
+            match c {
+                '"' | '\'' | '`' => {
+                    let q = c;
+                    chunk.push(c);
+                    i += 1;
+                    while i < body.len() {
+                        if body[i] == '\\' {
+                            chunk.push(body[i]);
+                            if let Some(n) = body.get(i + 1) {
+                                chunk.push(*n);
+                            }
+                            i += 2;
+                            continue;
+                        }
+                        chunk.push(body[i]);
+                        let done = body[i] == q;
+                        i += 1;
+                        if done {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                '{' | '[' | '(' => depth += 1,
+                '}' | ']' | ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    if let Some((k, v)) = split_scalar_field(&chunk) {
+                        fields.insert(k, v);
+                    }
+                    chunk.clear();
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            chunk.push(c);
+            i += 1;
+        }
+        fields
+    }
+
+    /// 把后端默认值序列化成 `字段名 → 标量值`（对象 / 数组字段跳过）。
+    fn json_scalar_fields(value: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
+        value
+            .as_object()
+            .expect("默认值应序列化为 JSON 对象")
+            .iter()
+            .filter(|(_, v)| v.is_number() || v.is_string() || v.is_boolean())
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// 前端那份手写的默认值必须与后端权威默认值一致。
+    ///
+    /// 为什么需要：前端**没法**等后端才渲染（首帧就要有值），所以同一批默认值被抄了
+    /// 两遍 —— 而后端才是权威。抄错时没有任何提示，表现是「界面显示 80、后端按 500
+    /// 跑」，用户一保存就把自己的设置改小了：`max_tool_rounds`(500 vs 80) 与
+    /// `font_family`(长字体栈 vs `"monospace"`) 就是这么坏过一次的。
+    ///
+    /// 口径：只比**两边都有**的**标量**字段。数组 / 对象 / 引用常量的键跳过；前端多
+    /// 出来的字段由 `frontend_settings_fields_must_exist_in_backend` 负责。
+    #[test]
+    fn frontend_default_values_match_backend_defaults() {
+        let source = read_frontend_settings_store();
+
+        let cases: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "DEFAULT_AGENT_MODE_SETTINGS",
+                serde_json::to_value(AgentModeSettings::default()).unwrap(),
+            ),
+            (
+                "DEFAULT_EXPERIMENTAL_SETTINGS",
+                serde_json::to_value(ExperimentalSettings::default()).unwrap(),
+            ),
+            (
+                "DEFAULT_NOTIFICATION_SETTINGS",
+                serde_json::to_value(NotificationSettings::default()).unwrap(),
+            ),
+            (
+                "DEFAULT_MOBILE_NOTIFICATION_SETTINGS",
+                serde_json::to_value(MobileNotificationSettings::default()).unwrap(),
+            ),
+            (
+                "DEFAULT_MOBILE_BACKGROUND_SETTINGS",
+                serde_json::to_value(MobileBackgroundSettings::default()).unwrap(),
+            ),
+            (
+                "DEFAULT_SETTINGS",
+                serde_json::to_value(AppSettings::default()).unwrap(),
+            ),
+        ];
+
+        let mut compared = 0usize;
+        let mut mismatches: Vec<String> = Vec::new();
+        for (object_name, backend_default) in &cases {
+            let frontend = ts_object_scalars(&source, object_name);
+            assert!(
+                !frontend.is_empty(),
+                "{object_name} 一个标量字段都没解析出来 —— 解析器可能已失效（不许空跑通过）"
+            );
+            let backend = json_scalar_fields(backend_default);
+            for (key, frontend_value) in &frontend {
+                let Some(backend_value) = backend.get(key) else {
+                    continue; // 前端独有的键：交给字段存在性测试
+                };
+                compared += 1;
+                if frontend_value != backend_value {
+                    mismatches.push(format!(
+                        "{object_name}.{key}: 前端 {frontend_value} ≠ 后端 {backend_value}"
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            compared >= 30,
+            "只比对了 {compared} 个字段（预期 30+）—— 解析器可能已失效，不许空跑通过"
+        );
+        assert!(
+            mismatches.is_empty(),
+            "前端默认值与后端权威默认值不一致（前端抄的那份要跟着后端改）：\n  {}",
+            mismatches.join("\n  ")
+        );
     }
 }

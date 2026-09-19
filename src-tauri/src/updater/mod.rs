@@ -115,8 +115,6 @@ struct PendingUpdateMeta {
 struct UpdaterInner {
     state: UpdateState,
     pending: Option<PendingInstall>,
-    /// 最近一次检查到的更新（「立即下载」手动触发用）。
-    last_offer: Option<LatestRelease>,
     downloading: bool,
     /// 「停止当前下载」请求：切换到「关闭」模式时置位，下载循环每个 chunk 检查
     /// 一次后自行收尾（删 .part、复位 downloading，且**不**写 Failed/Ready ——
@@ -140,7 +138,6 @@ impl UpdaterState {
         Self(Mutex::new(UpdaterInner {
             state: initial,
             pending,
-            last_offer: None,
             downloading: false,
             cancel_requested: false,
             manual_install_requested: false,
@@ -230,7 +227,7 @@ fn apply_state(app: &AppHandle, f: impl FnOnce(&mut UpdaterInner) -> Option<Upda
         return;
     };
     // 变更检测必须在闭包动手之前记下「改动前」的种类：闭包只允许改
-    // `downloading`/`pending`/`last_offer` 这些辅助字段，状态一律通过返回值
+    // `downloading`/`pending` 这些辅助字段，状态一律通过返回值
     // 表达。否则拿已被闭包改过的 state 与返回值比较，会永远判定为未变化，
     // 事件静默丢失（Idle → Downloading 就是这么丢的）。
     let prev_kind = kind_of(&inner.state);
@@ -306,8 +303,7 @@ async fn tick(app: &AppHandle) {
                 Some(UpdateState::Idle)
             }
         }),
-        TickAction::MarkAvailable(rel) => apply_state(app, |inner| {
-            inner.last_offer = Some(rel.clone());
+        TickAction::MarkAvailable(rel) => apply_state(app, |_| {
             Some(UpdateState::Available {
                 version: rel.version.clone(),
                 release_url: rel.release_url.clone(),
