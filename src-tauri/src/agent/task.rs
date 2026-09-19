@@ -20,7 +20,7 @@ pub enum AgentMode {
 impl AgentMode {
     /// 设置里的字符串（`settings.default_agent_mode`，前端切换模式时经
     /// `taskStore.setMode` 写入）→ 模式。未知值回落 `Agent`（与设置默认值一致）、
-    /// 不报错：模式只决定取哪套工具清单，不改变安全边界（审批与沙箱各自独立）。
+    /// 不报错：模式只决定取哪套工具清单，不改变安全边界（审批与风险评估各自独立）。
     pub fn from_settings_str(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "plan" => AgentMode::Plan,

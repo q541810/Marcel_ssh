@@ -1,4 +1,4 @@
-//! Shell command parsing utilities for sandbox risk assessment.
+//! Shell command parsing utilities for risk assessment.
 //!
 //! Provides:
 //! - [`split_command_chain`] — splits a command line by `;`, `&&`, `||`, `|`,

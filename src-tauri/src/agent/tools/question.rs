@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::Manager;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 

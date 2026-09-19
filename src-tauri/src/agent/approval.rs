@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 
 use crate::agent::interaction::AgentInteractionManager;
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 
 /// Manages user approval flow for tool execution.
 ///

@@ -7,7 +7,7 @@ use russh_sftp::protocol::OpenFlags;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 

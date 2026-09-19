@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::question::QuestionItem;
 use crate::emit_event;
 use crate::notification::{send_notification, NotificationKind};

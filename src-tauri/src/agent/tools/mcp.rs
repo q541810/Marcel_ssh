@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tauri::Manager;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::mcp::protocol::McpToolInfo;

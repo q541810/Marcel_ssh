@@ -7,7 +7,7 @@ use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::{
     build_plan_context, emit_final_plan_normalized, handle_plan_tool_output, PLAN_CONTEXT_PREFIX,
 };
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::task::AgentMode;
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
@@ -36,7 +36,7 @@ pub(crate) struct PersistedToolResult {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
-    pub risk_level: crate::agent::sandbox::RiskLevel,
+    pub risk_level: crate::agent::risk::RiskLevel,
     pub summary: String,
     pub success: bool,
     pub blocked: bool,
@@ -893,7 +893,7 @@ async fn execute_single_tool(
     let tool_ctx = {
         let settings = state.settings.read().await;
         let policy =
-            std::sync::Arc::new(crate::agent::sandbox::SecurityPolicy::from_user_settings(
+            std::sync::Arc::new(crate::agent::risk::SecurityPolicy::from_user_settings(
                 &settings.custom_protected_paths,
                 settings.command_timeout_secs,
             ));
@@ -1045,7 +1045,7 @@ mod tests {
         build_job_settlement_notice, group_tool_calls_into_batches, PersistedAssistantToolCall,
         PersistedToolResult, MAX_CONCURRENT_TOOL_EXECUTIONS,
     };
-    use crate::agent::sandbox::RiskLevel;
+    use crate::agent::risk::RiskLevel;
     use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
     use crate::error::AppError;
     use crate::llm::provider::ToolCall;

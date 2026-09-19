@@ -10,7 +10,7 @@ use super::checker::{
     looks_like_path, normalize_path, pattern_matches,
 };
 use super::parser::{parse_segment, split_command_chain};
-use super::risk_model::parse_and_classify;
+use super::model::parse_and_classify;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityPolicy {
@@ -81,11 +81,11 @@ impl Default for SecurityPolicy {
     }
 }
 
-pub struct Sandbox {
+pub struct RiskAssessor {
     policy: SecurityPolicy,
 }
 
-impl Sandbox {
+impl RiskAssessor {
     pub fn new(policy: SecurityPolicy) -> Self {
         Self { policy }
     }
@@ -94,7 +94,7 @@ impl Sandbox {
         &self.policy
     }
 
-    pub fn check_command(&self, cmd: &str) -> Result<RiskLevel, AppError> {
+    pub fn assess_command(&self, cmd: &str) -> Result<RiskLevel, AppError> {
         let trimmed = cmd.trim();
         if trimmed.is_empty() {
             return Err(AppError::Agent("Empty command".into()));
@@ -143,7 +143,7 @@ impl Sandbox {
                         // HighRisk but not blocked — continue to other segments.
                     } else if let Some(s) = inner {
                         // Recursively enforce policy on inner command.
-                        self.check_command(s)?;
+                        self.assess_command(s)?;
                     }
                 }
                 // Bare shell as pipe sink: `... | bash` etc.
@@ -234,7 +234,7 @@ impl Sandbox {
     }
 }
 
-impl Default for Sandbox {
+impl Default for RiskAssessor {
     fn default() -> Self {
         Self::new(SecurityPolicy::default())
     }

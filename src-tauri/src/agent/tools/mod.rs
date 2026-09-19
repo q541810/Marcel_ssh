@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::ssh::connection::SshManager;
@@ -131,10 +131,9 @@ pub struct ToolContext {
     /// 当前所属的 agent task id（agent_loop 构造时注入）。
     /// `subagent` 工具用它做子agent嵌套检查与子agent注册。
     pub task_id: Option<String>,
-    /// Optional security policy. When set, tools that run a sandbox
-    /// (e.g. `bash`) should honour it instead of falling back
-    /// to [`crate::agent::sandbox::Sandbox::default`].
-    pub policy: Option<Arc<crate::agent::sandbox::SecurityPolicy>>,
+    /// 可选的安全策略：设置后，需要风险评估的工具（如 `bash`）遵循它，
+    /// 而不是回落到 [`crate::agent::risk::RiskAssessor::default`]。
+    pub policy: Option<Arc<crate::agent::risk::SecurityPolicy>>,
     /// Kernel-registered local handlers, keyed by name (e.g. `"fs.read"`).
     /// Shared via `Arc` so the context can be cloned cheaply per tool call.
     pub local_handlers: Arc<HashMap<String, Arc<dyn LocalHandler>>>,
@@ -172,7 +171,7 @@ impl ToolContext {
     }
 
     /// Attach a security policy to this context (builder-style).
-    pub fn with_policy(mut self, policy: Arc<crate::agent::sandbox::SecurityPolicy>) -> Self {
+    pub fn with_policy(mut self, policy: Arc<crate::agent::risk::SecurityPolicy>) -> Self {
         self.policy = Some(policy);
         self
     }
@@ -217,7 +216,7 @@ impl ToolContext {
     /// 派生一个「执行目标」不同的工具上下文（多机操控换机执行）。
     /// 事件通道 / 工具调用 id / 任务 id / 安全策略 / 本地处理器全部保留，
     /// 仅替换 SSH 会话——工具换机执行时，审批与流式输出仍回到原任务的
-    /// 事件通道，沙箱策略与取消归属也不变。
+    /// 事件通道，风险评估策略与取消归属也不变。
     pub fn fork_for(&self, session_id: impl Into<String>) -> Self {
         let mut next = self.clone();
         next.session_id = session_id.into();

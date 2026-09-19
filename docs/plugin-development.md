@@ -483,7 +483,7 @@ const { ok, data } = await res.json();
 | `ReadOnly` | 只读操作 |
 | `LowRisk` | 低风险，可能创建临时文件 |
 | `Moderate` | 中等风险（默认） |
-| `HighRisk` | 高风险，沙箱审查后执行 |
+| `HighRisk` | 高风险，风险评估后执行 |
 
 > **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 

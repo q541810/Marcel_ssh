@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::agent::approval::ApprovalManager;
 use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
-use crate::agent::sandbox::{assess_risk, split_command_chain, RiskLevel};
+use crate::agent::risk::{assess_risk, split_command_chain, RiskLevel};
 use crate::agent::task::AgentMode;
 use crate::agent::tools::{PathWrite, ToolContext, ToolOutput, ToolRegistry};
 use crate::config::settings::{AgentModeSettings, CommandListMode};
@@ -119,7 +119,7 @@ pub(crate) struct ToolDispatcher {
     /// 审批判定实际使用的模式：`Some(m)` 覆盖 `mode`，`None` = 跟随 `mode`。
     /// Auto 父任务派发的只读调研子 agent 传 `Some(Auto)`：子 agent 自身是
     /// Plan（只读工具集），但命令确认语义按父任务 Auto 静默放行（不弹人审，
-    /// 模型审批 route_to_human 也不转人审；sandbox 硬拦截仍保留）。
+    /// 模型审批 route_to_human 也不转人审；风险评估硬拦截仍保留）。
     approval_mode: Option<AgentMode>,
     agent_settings: AgentModeSettings,
     task_id: String,
@@ -128,7 +128,7 @@ pub(crate) struct ToolDispatcher {
     registry: std::sync::Arc<ToolRegistry>,
     /// LLM-backed command approver. `None` when the feature is disabled by
     /// settings or the tool is not `bash`. Inserted after the
-    /// sandbox risk assessment and before the human-approval trigger.
+    /// risk assessment and before the human-approval trigger.
     approver: Option<std::sync::Arc<dyn CommandApprover>>,
     /// 本任务内已观察过的路径（`read_file` / `write_file` / `edit_file` 成功
     /// 后按 `normalize_path` 归一化记账）。`edit_file` 的目标必须已读取，
@@ -283,13 +283,13 @@ impl ToolDispatcher {
             PathWrite::None => {}
         }
 
-        // 1. Compute sandbox/mode-level need for human confirmation.
+        // 1. Compute risk/mode-level need for human confirmation.
         //    审批判定实际遵循 approval_mode（Auto 父任务派发的静默子 agent
         //    为 Some(Auto)），否则跟随自身 mode。Auto 语义下只读调研命令
-        //    不再逐条弹窗，但 sandbox 硬拦截（bash 工具内）与外置工具的
+        //    不再逐条弹窗，但 风险评估硬拦截（bash 工具内）与外置工具的
         //    requires_default_approval 仍保留。
         let approval_mode = self.approval_mode.as_ref().unwrap_or(&self.mode);
-        let sandbox_needs_confirm: Option<bool> = match approval_mode {
+        let risk_needs_confirm: Option<bool> = match approval_mode {
             AgentMode::Plan | AgentMode::Agent => {
                 if declares_command {
                     Some(command_list_requires_confirm(
@@ -317,7 +317,7 @@ impl ToolDispatcher {
             AgentMode::Auto => Some(requires_default_approval),
         };
 
-        let sandbox_needs_confirm = match sandbox_needs_confirm {
+        let risk_needs_confirm = match risk_needs_confirm {
             None => {
                 return DispatchResult::blocked(
                     tc.name.clone(),
@@ -330,11 +330,11 @@ impl ToolDispatcher {
 
         // 2. Model-based approval — runs for tools that declare a command
         //    argument (i.e. `bash`) when an approver is configured, regardless
-        //    of whether the sandbox requires human approval. The model can only
+        //    of whether the risk assessment requires human approval. The model can only
         //    judge; it cannot rewrite the command.
         //    Reuses the agent's normal model + retry path; failure after retries
         //    is surfaced as a blocked tool result.
-        let mut final_needs_confirm = sandbox_needs_confirm;
+        let mut final_needs_confirm = risk_needs_confirm;
         let mut model_reasons: Option<Vec<String>> = None;
 
         if declares_command {
@@ -430,7 +430,7 @@ impl ToolDispatcher {
             }
         }
 
-        // 3. Human approval (if the sandbox or the model requires it).
+        // 3. Human approval (if the risk assessment or the model requires it).
         if final_needs_confirm {
             let mut approval_metadata: Option<serde_json::Value> = None;
 
@@ -522,7 +522,7 @@ impl ToolDispatcher {
                     if let Some(path) = path {
                         self.read_files
                             .write()
-                            .insert(crate::agent::sandbox::normalize_path(path));
+                            .insert(crate::agent::risk::normalize_path(path));
                     }
                 }
                 DispatchResult::from_tool_output(out, effective_risk)
@@ -550,9 +550,9 @@ fn set_task_status(state: &AppState, task_id: &str, status: crate::agent::task::
 }
 
 /// read-before-edit：目标路径是否已被本任务成功读取（归一化比较）。
-/// 复用 sandbox 的 `normalize_path`（折叠 `//`、`.`、`..`、尾斜杠）。
+/// 复用风险评估模块的 `normalize_path`（折叠 `//`、`.`、`..`、尾斜杠）。
 fn path_was_read(read_files: &std::collections::HashSet<String>, path: &str) -> bool {
-    read_files.contains(&crate::agent::sandbox::normalize_path(path))
+    read_files.contains(&crate::agent::risk::normalize_path(path))
 }
 
 /// read-before-edit 拦截时的固定错误文案（xxx 为本次 edit 传入的 path）。
@@ -778,7 +778,7 @@ mod tests {
     fn path_was_read_matches_after_normalization() {
         let mut read = std::collections::HashSet::new();
         // 读取时带了冗余路径成分，编辑时用干净路径 → 归一化后应匹配
-        read.insert(crate::agent::sandbox::normalize_path("/var//www/./app.js"));
+        read.insert(crate::agent::risk::normalize_path("/var//www/./app.js"));
         assert!(path_was_read(&read, "/var/www/app.js"));
         // 尾斜杠差异也应匹配
         assert!(path_was_read(&read, "/var/www/app.js/"));

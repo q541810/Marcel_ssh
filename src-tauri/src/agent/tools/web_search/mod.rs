@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tauri::Manager;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::web_result::{detect_challenge, FallbackNote};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;

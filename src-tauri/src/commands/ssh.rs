@@ -198,12 +198,12 @@ pub async fn ssh_list_sessions(state: State<'_, AppState>) -> Result<Vec<String>
 
 /// 在远程 SSH 会话上执行命令并返回输出。
 ///
-/// 这是**用户主动触发**的命令（由 ProcessPanel 调用，用于进程管理），无需沙箱检查，原因：
-///   - 沙箱是为面向 LLM 的 Agent 命令（`bash` tool）设计的，LLM 输出不可信。
+/// 这是**用户主动触发**的命令（由 ProcessPanel 调用，用于进程管理），无需风险评估，原因：
+///   - 风险评估是为面向 LLM 的 Agent 命令（`bash` tool）设计的，LLM 输出不可信。
 ///   - `ssh_exec` 由用户通过终端 UI 组件调用——该用户本身已通过 `ssh_send_input`
 ///     拥有完整的交互式 shell。如果 WebView 被攻破，`ssh_send_input` 同样危险。
-///   - 在此加沙箱会导致用户自定义的黑名单（如屏蔽 `kill`）悄悄破坏 ProcessPanel 功能。
-///   - 面向 LLM 的真正沙箱入口：`agent/tools/execute_cmd.rs` → `Sandbox::check_command()`。
+///   - 在此加风险评估会导致用户自定义的黑名单（如屏蔽 `kill`）悄悄破坏 ProcessPanel 功能。
+///   - 面向 LLM 的真正入口：`agent/tools/bash.rs` → `RiskAssessor::assess_command()`。
 ///
 /// 经 command_exec 统一管理器执行（120s 超时，行为与旧实现一致）。
 #[tauri::command]
@@ -234,7 +234,7 @@ pub async fn ssh_exec(
 /// - 实时 emit `ssh-long-output` 事件（含 chunk）
 /// - 完成/取消/超时分别 emit `ssh-long-done` / `ssh-long-cancelled` / `ssh-long-error`
 ///
-/// 安全：与 `ssh_exec` 同级，不走沙箱。调用方（如压缩功能）负责命令构造和路径校验。
+/// 安全：与 `ssh_exec` 同级，不走风险评估。调用方（如压缩功能）负责命令构造和路径校验。
 ///
 /// 返回值：命令完整输出（合并 stdout+stderr）。命令本身非零退出不算 Err——
 /// 调用方需通过输出内容（如 OK/FAILED 标记）判断业务成功与否。

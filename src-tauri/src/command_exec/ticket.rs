@@ -47,7 +47,7 @@ pub enum CommandSource {
     User,
     /// 系统内部长任务（压缩 / 解压 / 快速删除等由产品功能构造的命令）。
     SystemTask,
-    /// Agent `bash` 工具（原 `bash`，已过沙箱与审批）。
+    /// Agent `bash` 工具（原 `bash`，已过风险评估与审批）。
     Agent,
     /// 插件系统后端路由的命令执行。
     Plugin,

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::agent::sandbox::{RiskLevel, Sandbox};
+use crate::agent::risk::{RiskLevel, RiskAssessor};
 use crate::agent::tools::{local_handlers, truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::plugins::context::{apply_to_string, apply_to_value, SessionContext};
@@ -234,7 +234,7 @@ impl AgentTool for PluginAgentTool {
             return self.execute_local(params, ctx).await;
         }
 
-        // kind=ssh: original logic — render template, sandbox-check, exec.
+        // kind=ssh: original logic — render template, risk-assess, exec.
         let session_ctx = extract_session_context(ctx).await;
         if session_ctx.is_none() {
             log::warn!(
@@ -244,17 +244,17 @@ impl AgentTool for PluginAgentTool {
         }
         let command = self.render_command(&params, session_ctx.as_ref());
 
-        let sandbox = ctx
+        let assessor = ctx
             .policy
             .as_ref()
-            .map(|p| Sandbox::new((**p).clone()))
+            .map(|p| RiskAssessor::new((**p).clone()))
             .unwrap_or_default();
-        let risk = sandbox.check_command(&command)?;
+        let risk = assessor.assess_command(&command)?;
         if risk == RiskLevel::HighRisk {
             return Ok(ToolOutput::fail(
-                "Blocked by sandbox",
+                "Blocked by risk assessment",
                 format!(
-                    "命令被安全沙箱拒绝（插件工具: {}）。\n命令: {}",
+                    "命令未通过风险评估（插件工具: {}）。\n命令: {}",
                     self.name, command
                 ),
             ));

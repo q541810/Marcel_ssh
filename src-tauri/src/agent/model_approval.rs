@@ -1,13 +1,13 @@
 //! Model-based command approval.
 //!
 //! Pure-function module: an independent approval judge inserted after the
-//! sandbox risk assessment and before the human-approval trigger. Even when
-//! the sandbox says no human approval is needed, this step still runs for
+//! risk assessment and before the human-approval trigger. Even when
+//! the risk assessment says no human approval is needed, this step still runs for
 //! `bash` (when enabled).
 //!
 //! Power boundary:
-//! - `Approve` — allow the command. Cannot override a sandbox human-approval
-//!   requirement (the sandbox's `needs_confirm` stays in effect).
+//! - `Approve` — allow the command. Cannot override a risk-assessment human-approval
+//!   requirement (its `needs_confirm` stays in effect).
 //! - `RouteToHuman` — force the command into the human approval flow. Reasons
 //!   are surfaced to the user in the approval dialog.
 //! - `Block` — block the command outright. Reasons describe the problem points.
@@ -30,7 +30,7 @@ use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 /// Model's decision on whether a command may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ModelApprovalDecision {
-    /// Allow the command. Cannot override a sandbox human-approval requirement.
+    /// Allow the command. Cannot override a risk-assessment human-approval requirement.
     Approve,
     /// Force the command into the human approval flow. Reasons are shown to the user.
     RouteToHuman(Vec<String>),

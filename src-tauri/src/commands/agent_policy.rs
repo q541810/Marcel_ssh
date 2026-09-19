@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::agent::sandbox::{assess_risk, RiskLevel};
+use crate::agent::risk::{assess_risk, RiskLevel};
 use crate::agent::task::AgentMode;
 use crate::config::settings::CommandListMode;
 use crate::error::AppError;
@@ -24,10 +24,11 @@ pub async fn agent_default_approval_prompt() -> String {
     crate::agent::templates::TemplateManager.render_approval_base()
 }
 
-/// 仅用于 Agent 审批流的风险预估（allowlist/denylist），**不替代完整沙箱**。
-/// 实际命令执行时的完整沙箱审查在 `agent/tools/execute_cmd.rs` 中完成
-/// （`Sandbox::check_command()` 包含 fork bomb 检测、blocked commands/patterns、
-/// protected paths、dd 阻断等）。
+/// 仅用于 Agent 审批流的风险预估（allowlist/denylist），**不替代执行前的完整评估**。
+/// 命令真正执行前的完整评估在 `agent/tools/bash.rs` 中完成
+/// （`RiskAssessor::assess_command()` 包含 fork bomb 检测、blocked commands/patterns、
+/// protected paths、dd 阻断等，任一命中即拒绝执行）。
+/// 注意：本命令自身走 `assess_risk`（纯分级、不做策略否决），返回值只用于审批前的展示预估。
 #[tauri::command]
 pub async fn agent_check_command(
     state: State<'_, AppState>,

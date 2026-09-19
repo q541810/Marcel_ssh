@@ -9,7 +9,6 @@ pub mod manager;
 pub mod model_approval;
 pub mod plan_handler;
 pub mod risk;
-pub mod sandbox;
 pub mod system_prompt;
 pub mod task;
 pub mod templates;

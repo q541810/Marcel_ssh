@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use tauri::Manager;
 use tokio::fs;
 
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 

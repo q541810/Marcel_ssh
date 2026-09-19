@@ -24,7 +24,7 @@ use serde_json::json;
 use tauri::Manager;
 
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
-use crate::agent::sandbox::RiskLevel;
+use crate::agent::risk::RiskLevel;
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
@@ -143,7 +143,7 @@ impl AgentTool for SubagentTool {
          subagent runs on the current session's machine.\n\
          - `mode`: \"plan\" (default) = read-only research subagent as described \
          above; \"agent\" = a read-write execution subagent that can actually \
-         modify files / run installs / deploy on its machine (still sandboxed and \
+         modify files / run installs / deploy on its machine (still risk-assessed and \
          subject to the parent task's approval semantics). mode=\"agent\" is only \
          allowed when the CURRENT parent task is in Agent/Auto mode — Plan-mode \
          parents can only spawn read-only research subagents (use \"plan\")."
@@ -369,8 +369,8 @@ impl AgentTool for SubagentTool {
         // ── 审批语义：跟随父任务模式 ──
         // Auto 父任务派发的子 agent 是「全自主」的一部分——主用户选 Auto 即
         // 接受全程不打扰，因此 **任何模式** 的子 agent（含 mode="agent" 读写
-        // 执行子 agent）都继承 Some(Auto)：命令静默执行，仅保留 sandbox 硬
-        // 拦截与工具默认审批（requires_default_approval）。
+        // 执行子 agent）都继承 Some(Auto)：命令静默执行，仅保留风险评估的
+        // 硬拦截与工具默认审批（requires_default_approval）。
         // Plan/Agent 父任务保持 None：子 agent 走自身 mode 的审批语义——
         //   - Plan 子 agent：只读工具集，命令逐条人审；
         //   - mode="agent" 读写子 agent：破坏性命令人审（安全护栏，不能因

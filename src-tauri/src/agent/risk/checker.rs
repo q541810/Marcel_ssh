@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn bare_shell_no_args() {
-        let seg = crate::agent::sandbox::parser::ParsedSegment {
+        let seg = crate::agent::risk::parser::ParsedSegment {
             raw: "bash".into(),
             tokens: vec!["bash".into()],
             base_cmd: "bash".into(),
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn shell_with_dash_c_is_not_bare() {
-        let seg = crate::agent::sandbox::parser::ParsedSegment {
+        let seg = crate::agent::risk::parser::ParsedSegment {
             raw: "bash -c 'echo hi'".into(),
             tokens: vec!["bash".into(), "-c".into(), "echo hi".into()],
             base_cmd: "bash".into(),
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn shell_with_script_path_is_not_bare() {
-        let seg = crate::agent::sandbox::parser::ParsedSegment {
+        let seg = crate::agent::risk::parser::ParsedSegment {
             raw: "bash script.sh".into(),
             tokens: vec!["bash".into(), "script.sh".into()],
             base_cmd: "bash".into(),

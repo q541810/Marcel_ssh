@@ -333,13 +333,13 @@ describe('storedMessageToAgentMessage', () => {
         name: 'execute_command',
         arguments: { command: 'rm -rf /' },
         risk_level: 'Destructive',
-        summary: 'Blocked by sandbox',
+        summary: 'Blocked by risk assessment',
         success: false,
         blocked: true,
       };
       const stored = createStoredMessage({
         role: 'tool',
-        content: 'BLOCKED by sandbox',
+        content: 'BLOCKED by risk assessment',
         toolCallsJson: JSON.stringify(toolResult),
       });
       const result = storedMessageToAgentMessage(stored);

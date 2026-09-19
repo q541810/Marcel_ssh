@@ -79,7 +79,7 @@ pub struct AgentSpec {
     pub prompt_extra: Vec<String>,
     /// 审批语义覆盖：`None` = 跟随自身 `mode`（现状：Plan 模式子 agent 逐条
     /// 人审）；`Some(Auto)` = 命令执行静默放行不弹人审（模型审批的
-    /// route_to_human 也不转人审），仅保留 sandbox 硬拦截。Auto 父任务派发的
+    /// route_to_human 也不转人审），仅保留 风险评估硬拦截。Auto 父任务派发的
     /// 只读调研子 agent 用它，避免主任务在 Auto 全自主时子 agent 的每条
     /// 只读命令仍弹 Plan 审批窗。
     pub approval_mode: Option<AgentMode>,

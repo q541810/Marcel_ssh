@@ -1,7 +1,7 @@
 //! `bash` — run an arbitrary shell command on the remote server.
 //!
 //! Security:
-//! - The [`Sandbox`] is consulted before execution and rejects destructive
+//! - The [`RiskAssessor`] is consulted before execution and rejects destructive
 //!   patterns regardless of agent mode.
 //! - Higher-level confirmation/approval flow is implemented in
 //!   `commands/agent.rs`, which wraps this tool with mode-aware policy.
@@ -22,7 +22,7 @@ use serde_json::json;
 use std::time::Duration;
 use zeroize::Zeroize;
 
-use crate::agent::sandbox::{self, RiskLevel, Sandbox};
+use crate::agent::risk::{self, RiskLevel, RiskAssessor};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;
 use crate::error::AppError;
@@ -83,14 +83,14 @@ impl BashTool {
 
         // Static safety check. Higher-level policy (allow/deny lists, user
         // approval) is applied by `commands/agent.rs`.
-        let sandbox = match ctx.policy.as_ref() {
-            Some(p) => Sandbox::new((**p).clone()),
-            None => Sandbox::default(),
+        let assessor = match ctx.policy.as_ref() {
+            Some(p) => RiskAssessor::new((**p).clone()),
+            None => RiskAssessor::default(),
         };
-        if let Err(e) = sandbox.check_command(command) {
+        if let Err(e) = assessor.assess_command(command) {
             return Ok(ToolOutput::fail(
                 format!("$ {}", command),
-                format!("BLOCKED by sandbox: {}", e),
+                format!("BLOCKED by risk assessment: {}", e),
             )
             .with_metadata(attach_target(json!({
                 "blocked": true,
@@ -98,7 +98,7 @@ impl BashTool {
             }))));
         }
 
-        let risk = sandbox::assess_risk(command);
+        let risk = risk::assess_risk(command);
 
         // Auto-inject password for sudo commands when running as non-root
         let mut sudo_password: Option<String> = None;
@@ -243,7 +243,7 @@ impl AgentTool for BashTool {
     fn description(&self) -> &str {
         "Execute a shell command on the remote server via the user's login shell \
          (usually bash). Returns combined stdout+stderr. Long output is truncated. \
-         The command is statically analyzed by a security sandbox before execution; \
+         The command is statically analyzed by a risk assessment before execution; \
          some patterns (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) \
          are always rejected. Timeout is configured by the user (default 120s).\n\
          Set `run_in_background: true` for long-running commands (compilations, \
@@ -284,7 +284,7 @@ impl AgentTool for BashTool {
     }
 
     fn risk_level(&self) -> RiskLevel {
-        // Baseline. Real risk is computed per-invocation via [`sandbox::assess_risk`].
+        // Baseline. Real risk is computed per-invocation via [`risk::assess_risk`].
         RiskLevel::Moderate
     }
 
