@@ -5,6 +5,20 @@
 /* xterm.js styles */
 @import "@xterm/xterm/css/xterm.css";
 
+/*
+ * 内置 Nerd Fonts 图标字体（JetBrainsMono Nerd Font Mono，随包分发，字体与许可见 public/fonts/）。
+ * 终端字体栈用它补图标字形，用户不需要自己装 Nerd Font；
+ * font-display: block —— 图标宁可短暂不显示，也不要先用缺字的兜底字形画出来（会被缓存进纹理图集）。
+ * 字体栈构造与加载见 src/lib/terminalFont.ts。
+ */
+@font-face {
+  font-family: "Marcel Nerd Font Mono";
+  src: url("/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
 /* Spring animation timing functions */
 :root {
   --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);

@@ -60,7 +60,10 @@ describe('resolveTerminalAppearance', () => {
   it('uses settings when no preview and forces high-contrast selection', () => {
     const result = resolveTerminalAppearance(baseSettings, null);
     expect(result.fontSize).toBe(14);
-    expect(result.fontFamily).toBe('JetBrains Mono');
+    // 字体栈经 lib/terminalFont 构造：用户字体 + 内置 Nerd Font 兜底 + monospace。
+    expect(result.fontFamily).toBe(
+      'JetBrains Mono, "Marcel Nerd Font Mono", monospace',
+    );
     expect(result.terminalColors.selectionBackground).toBe('#6366f1');
     expect(result.terminalColors.selectionForeground).toBe('#ffffff');
     // other palette fields preserved
@@ -75,7 +78,7 @@ describe('resolveTerminalAppearance', () => {
       fontFamily: 'Consolas',
     });
     expect(result.fontSize).toBe(18);
-    expect(result.fontFamily).toBe('Consolas');
+    expect(result.fontFamily).toBe('Consolas, "Marcel Nerd Font Mono", monospace');
     expect(result.terminalColors.selectionBackground).toBe('#6366f1');
   });
 

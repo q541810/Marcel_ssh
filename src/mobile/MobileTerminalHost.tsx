@@ -36,6 +36,7 @@ import {
 } from './terminalInput';
 import { resolveTerminalPanelMode } from './sessionUi';
 import { resolveTerminalAppearance } from './mobileSettingsModel';
+import { onBundledNerdFontReady } from '@/lib/terminalFont';
 import { attachXtermMomentumScroll } from './terminalMomentum';
 import { attachTouchSelection } from './terminalSelection';
 import { attachTapLocate } from './terminalTapLocate';
@@ -74,6 +75,7 @@ export default function MobileTerminalHost({
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const canvasAddonRef = useRef<CanvasAddon | null>(null);
   const inputStateRef = useRef(inputState);
   const inputBatcherRef = useRef<InputBatcher | null>(null);
   const activeSessionIdRef = useRef(activeSessionId);
@@ -143,12 +145,21 @@ export default function MobileTerminalHost({
     // target mid-gesture — the WebView then fires touchcancel and scroll
     // dies whenever the finger rests on text (blank areas hit persistent
     // row divs, so they scrolled fine).
-    term.loadAddon(new CanvasAddon());
+    const canvasAddon = new CanvasAddon();
+    term.loadAddon(canvasAddon);
+    canvasAddonRef.current = canvasAddon;
     try {
       fitAddon.fit();
     } catch {
       /* hidden */
     }
+
+    // 内置 Nerd Font 异步就绪时清一次图集：缺字若已被缓存进图集，图标之后一直显示不出来。
+    const offFontReady = onBundledNerdFontReady(() => {
+      if (termRef.current !== term) return;
+      canvasAddonRef.current?.clearTextureAtlas();
+      term.refresh(0, term.rows - 1);
+    });
 
     // xterm touch has no fling; add lift-off inertia via scrollLines.
     const momentum = attachXtermMomentumScroll({
@@ -258,9 +269,11 @@ export default function MobileTerminalHost({
         clearTimeout(copyHintTimerRef.current);
         copyHintTimerRef.current = null;
       }
+      offFontReady();
       term.dispose();
       termRef.current = null;
       fitAddonRef.current = null;
+      canvasAddonRef.current = null;
       boundSessionIdRef.current = null;
     };
   }, []);

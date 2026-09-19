@@ -166,7 +166,7 @@ export function MobileAppearanceSection() {
       </MobileSettingRow>
 
       {/* Font family */}
-      <MobileSettingRow label="字体" description="终端字体族">
+      <MobileSettingRow label="字体" description="终端字体族；Nerd Fonts 图标已内置">
         <input
           type="text"
           value={settings.fontFamily}

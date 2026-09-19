@@ -1,4 +1,5 @@
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import type { AppSettings, TerminalColors } from '@/lib/types';
 
 /**
@@ -97,7 +98,8 @@ export function resolveTerminalAppearance(
     DEFAULT_TERMINAL_COLORS;
   return {
     fontSize: preview?.fontSize ?? settings.fontSize,
-    fontFamily: preview?.fontFamily ?? settings.fontFamily,
+    // 与桌面同一套字体栈构造（内置 Nerd Font + monospace 兜底），见 lib/terminalFont.ts。
+    fontFamily: buildTerminalFontFamily(preview?.fontFamily ?? settings.fontFamily),
     terminalColors: withMobileSelectionContrast(base),
   };
 }

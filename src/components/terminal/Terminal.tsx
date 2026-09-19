@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
 import { sshSendInput } from '@/lib/tauri';
 import { BOTTOM_TABS, DEFAULT_TERMINAL_COLORS, type BottomTab } from '@/lib/constants';
+import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
@@ -186,9 +187,10 @@ export default function Terminal() {
 
   // Apply settings changes
   useEffect(() => {
+    const appliedFontFamily = buildTerminalFontFamily(fontFamily);
     for (const [, instance] of terminalInstanceManager.getAll()) {
       instance.terminal.options.fontSize = fontSize;
-      instance.terminal.options.fontFamily = fontFamily;
+      instance.terminal.options.fontFamily = appliedFontFamily;
       instance.terminal.options.theme = terminalColors;
       requestAnimationFrame(() => {
         instance.fitAddon.fit();

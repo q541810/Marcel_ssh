@@ -41,9 +41,9 @@ export function TerminalAppearanceSection() {
       <SettingItem
         id="font-family"
         label="字体"
-        description="终端字体族"
+        description="终端字体族；Nerd Fonts 图标已内置，无需自己安装"
         sectionId="settings-appearance"
-        keywords={['font', 'family', 'typeface', '字体', '界面', '终端外观']}
+        keywords={['font', 'family', 'typeface', 'nerd', '字体', '界面', '终端外观']}
       >
         <input
           type="text"

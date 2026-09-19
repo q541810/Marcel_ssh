@@ -7,6 +7,7 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { openExternalLink } from '@/lib/externalLinks';
+import { buildTerminalFontFamily, onBundledNerdFontReady } from '@/lib/terminalFont';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { attachClickLocate } from './terminalClickLocate';
 
@@ -67,7 +68,9 @@ class TerminalInstanceManager {
     container.style.display = 'none';
 
     const initialFontSize = useSettingsStore.getState().settings.fontSize;
-    const initialFontFamily = useSettingsStore.getState().settings.fontFamily;
+    const initialFontFamily = buildTerminalFontFamily(
+      useSettingsStore.getState().settings.fontFamily,
+    );
     const initialColors = useSettingsStore.getState().settings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
 
     const terminal = new XTerm({
@@ -112,6 +115,16 @@ class TerminalInstanceManager {
     } catch (err) {
       console.warn('WebGL terminal renderer unavailable, using Canvas 2D:', err);
     }
+
+    // 内置 Nerd Font 是异步加载的。万一首个图标在它就绪前就被栅格化，缺字会被缓存进
+    // 纹理图集，之后一直显示不出图标；就绪后清一次图集并重绘，用正确字形重新栅格化。
+    instance.domListeners.push(
+      onBundledNerdFontReady(() => {
+        if (this.instances.get(sessionId) !== instance) return;
+        instance.webglAddon?.clearTextureAtlas();
+        terminal.refresh(0, terminal.rows - 1);
+      }),
+    );
 
     // SSH input
     const onDataDisposable = terminal.onData((data: string) => {
