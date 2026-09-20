@@ -159,9 +159,17 @@ pub struct ActiveMessagesResult {
 // 表里（用户往上滚就能看到），所以「读回被压掉的原文」只是给已有数据加一个只读
 // 入口 —— 不新增表、不新增列、不迁移。
 //
-// 归档边界复用既有唯一定义：**最新一张压缩卡之前的行 = 归档原文，卡片及之后 =
-// 当前上下文**（`load_active_messages` 与前端 `buildLlmHistory` 同一条规则）。
-// 压缩恒从头部开始 ⇒ 新卡必然吸收旧卡 ⇒ 一个会话在任何时刻最多一张卡。
+// 归档边界复用既有的那条规则：**最新一张压缩卡之前的行 = 归档原文，卡片及之后 =
+// 当前上下文**。压缩恒从头部开始 ⇒ 新卡必然吸收旧卡 ⇒ 一个会话在任何时刻最多一张卡。
+//
+// 但别把"复用"读成"收敛"：这条规则在仓库里是**多处各写一遍**的等价实现 ——
+//   · 共享的只有卡片前缀常量 `COMPACTION_CARD_PREFIX`（写卡与认卡一处定义）；
+//   · 定位边界卡的 SQL 有两份：`load_active_messages` 与 `boundary_card`；
+//   · `(created_at, rowid)` 行序比较在 SQL 片段里 6 处、Rust 里 2 处各写一遍；
+//   · 前端还有自己的一份等价信号：`compaction?.status === 'done'`（从 DB 重载时
+//     `parseCompactionSummary` 会把带前缀的行强制置成 done，两套信号因此等价，
+//     由 `messageConversion.test.ts` 与 `conversationStore.test.ts` 钉住）。
+// 改这条规则时这几处必须一起想，见各处交叉引用注释。
 
 /// 行序游标：`messages` 的 `(created_at ASC, rowid ASC)` 位置。
 /// 与 `load_earlier_messages` 用的是同一套比较语义。
@@ -243,6 +251,19 @@ impl ResolvedWindow {
         }
         true
     }
+
+    /// 窗口是不是**空区间**（两端都有位置、且上界排在下界之前）。
+    ///
+    /// 任一端为 `None` = 那一侧不限 ⇒ 永远不空。所以只有 `scope=parent` 能触发：
+    /// 主 agent 在派发之后又压缩过，新卡排到了"派发那一刻"的冻结上界之后。
+    /// 空区间在语义上是**正确**的（整段都落在最新卡之前 = 归档），错的只是报告方式 ——
+    /// 检索会静默给"没有命中"、回读会报"这条不在窗口内"，都让 agent 误以为历史里没有。
+    fn is_empty(&self) -> bool {
+        match (&self.from, &self.upto) {
+            (Some(from), Some(upto)) => upto.before(from),
+            _ => false,
+        }
+    }
 }
 
 /// 窗口条件的 SQL 片段。`:win_*` 为 NULL 时对应侧短路为真。
@@ -275,20 +296,29 @@ pub struct CardBrief {
 }
 
 /// 本会话历史概览（需求：agent 得先知道"前面还有什么"）。
+///
+/// 所有计数与 id 都限定在**本次可读窗口内**：`scope=parent` 时窗口之外的东西
+/// 一律不出现，免得给 agent 一串拿去做 `action=read` 必然失败的死 id。
+/// 窗口外还有多少不告诉它不行 —— 那会让它以为"会话就这么多" —— 所以有
+/// [`Self::hidden_before_window`]。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryOverview {
+    /// 窗口内的总条数
     pub total: i64,
-    /// 归档段条数 = 边界卡之前的行数；无卡 = 0
+    /// 窗口内、边界卡之前的条数（= 归档段）；窗口内无卡 = 0
     pub archived: i64,
-    /// 当前上下文段条数 = total - archived
+    /// 窗口内剩下的部分 = total - archived
     pub active: i64,
     pub oldest: Option<MsgBrief>,
     pub newest: Option<MsgBrief>,
     /// 归档段最后一条（配合 `oldest` 给出归档段的时间范围）
     pub archived_newest: Option<MsgBrief>,
-    /// 归档边界 = 最新一张压缩卡；无卡 = None（本会话没被压缩过）
+    /// 归档边界 = 最新一张压缩卡，**且它落在窗口内**；无卡 / 卡在窗口外 = None
     pub boundary_card: Option<CardBrief>,
+    /// 严格早于窗口下界的行数（"你看不到的那部分"）。非窗口路径恒为 0；
+    /// `scope=parent` 下 > 0 表示有归档原文不在这个子代理的可读范围里。
+    pub hidden_before_window: i64,
 }
 
 /// 检索命中（需求：返回可挑选的短清单，不是把历史倒出来）。
@@ -332,6 +362,12 @@ pub enum HistoryError {
     Missing(String),
     /// 引用的行存在，但不在本次可读窗口内（例如子代理去读被压缩掉的归档原文）
     OutOfWindow(String),
+    /// 整个可读窗口是**空区间**：范围里一条都没有。
+    ///
+    /// 与 `OutOfWindow` 分开是因为"这条路走不通"与"锅里本来就没有"是两件事：
+    /// 前者让 agent 换个锚点，后者要它换一条路（找主 agent 或直接问用户）。
+    /// 无载荷 —— 它不是某条消息的问题，是整个范围的问题。
+    EmptyWindow,
 }
 
 impl std::fmt::Display for HistoryError {
@@ -340,6 +376,7 @@ impl std::fmt::Display for HistoryError {
             Self::Db(e) => write!(f, "history read db error: {e}"),
             Self::Missing(id) => write!(f, "message not found: {id}"),
             Self::OutOfWindow(id) => write!(f, "message out of readable window: {id}"),
+            Self::EmptyWindow => write!(f, "readable window is empty"),
         }
     }
 }
@@ -493,6 +530,11 @@ impl ConversationDb {
         // Migration: add turn_state —— 回合收尾状态（写在回合首条 user 消息行上，
         // 见 `agent::task::TurnState`）。旧库 ALTER 加列；旧数据的 NULL = 「没有
         // 记录」，前端按消息形态判定（与加这一列之前完全一致）。
+        //
+        // 提交记录提醒（留着免得以后二分/回滚踩坑）：这条迁移与下面那条
+        // `conversations.pinned` 是**和 read_history 无关**的两个特性，却一起混进了
+        // 提交 82fa074（提交信息讲的是 read_history）—— 用 `git log -S turn_state`
+        // 或对这两列做二分时，落在那个提交上并不代表问题出在回读功能里。
         if !column_exists(&conn, "messages", "turn_state") {
             log::info!("Migrating conversation database: adding turn_state column");
             conn.execute("ALTER TABLE messages ADD COLUMN turn_state TEXT", [])
@@ -789,6 +831,10 @@ impl ConversationDb {
         // 1. 查询最新的 Compaction Checkpoint 消息 (role = 'system' 且以压缩卡前缀开头)。
         //    前缀从 COMPACTION_CARD_PREFIX 来：写卡的地方与认卡的地方只能有一份字面量，
         //    否则改一处会静默失去归档边界（卡片被当成普通 system 消息）。
+        //
+        // ⚠️ 这段"定位边界卡"的 SQL 在本文件里还有一份等价实现：`boundary_card`
+        // （回读用）。**改这里必须同时改那一处**，否则前端翻页与 agent 回读会对
+        // 归档边界产生两种看法。前端另有一份等价判定，见文件头"归档边界"段落。
         let mut check_stmt = conn.prepare(
             "SELECT id, created_at, rowid FROM messages 
              WHERE conversation_id = ?1 
@@ -906,36 +952,88 @@ impl ConversationDb {
     // 压缩只可能在整次回读之前或之后发生，不会出现锚点用旧卡、取行用新卡的
     // 半新半旧拼接。工具侧每个 action 只调一个方法，同理。
 
-    /// 本会话历史概览：总数、归档段（边界卡之前）条数与时间范围、边界卡。
-    pub fn history_overview(&self, conversation_id: &str) -> RusqliteResult<HistoryOverview> {
+    /// 本会话历史概览：窗口内总数、归档段（边界卡之前）条数与时间范围、边界卡、
+    /// 以及窗口之外还有多少条。
+    ///
+    /// `window = None` 与加这个参数之前**逐字节相同**（`HISTORY_WINDOW_SQL` 的四段
+    /// 条件在两端为 NULL 时全部短路为真，且 `hidden_before_window` 恒为 0）。
+    pub fn history_overview(
+        &self,
+        conversation_id: &str,
+        window: Option<&HistoryWindow>,
+    ) -> Result<HistoryOverview, HistoryError> {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
+        let win = Self::resolve_history_window(&tx, conversation_id, window)?;
+        let (fc, fr, uc, ur) = win.bindings();
 
         let total: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
-            [conversation_id],
+            &format!(
+                "SELECT COUNT(*) FROM messages
+                 WHERE conversation_id = :conv {HISTORY_WINDOW_SQL}"
+            ),
+            rusqlite::named_params! {
+                ":conv": conversation_id,
+                ":win_from_created": fc,
+                ":win_from_rowid": fr,
+                ":win_upto_created": uc,
+                ":win_upto_rowid": ur,
+            },
             |r| r.get(0),
         )?;
-        let oldest = Self::boundary_message(&tx, conversation_id, true)?;
-        let newest = Self::boundary_message(&tx, conversation_id, false)?;
-        let card = Self::boundary_card(&tx, conversation_id)?;
+        let oldest = Self::boundary_message(&tx, conversation_id, true, &win)?;
+        let newest = Self::boundary_message(&tx, conversation_id, false, &win)?;
+        // 边界卡只有在**落在窗口内**时才报：窗口为空时（父会话在派发后又压过）
+        // 那张卡排在冻结上界之后，报出去就是一串读不到的 id —— 正是要修的缺陷类。
+        let card = Self::boundary_card(&tx, conversation_id)?.filter(|c| {
+            win.contains(&MsgPos {
+                created_at: c.created_at.clone(),
+                rowid: c.rowid,
+            })
+        });
 
         let (archived, archived_newest) = match &card {
             Some(card) => {
                 let count: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM messages
-                     WHERE conversation_id = ?1
-                       AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))",
-                    rusqlite::params![conversation_id, card.created_at, card.rowid],
+                    &format!(
+                        "SELECT COUNT(*) FROM messages
+                         WHERE conversation_id = :conv
+                           AND (messages.created_at < :card_created
+                                OR (messages.created_at = :card_created
+                                    AND messages.rowid < :card_rowid))
+                           {HISTORY_WINDOW_SQL}"
+                    ),
+                    rusqlite::named_params! {
+                        ":conv": conversation_id,
+                        ":card_created": card.created_at,
+                        ":card_rowid": card.rowid,
+                        ":win_from_created": fc,
+                        ":win_from_rowid": fr,
+                        ":win_upto_created": uc,
+                        ":win_upto_rowid": ur,
+                    },
                     |r| r.get(0),
                 )?;
                 let last = tx
                     .query_row(
-                        "SELECT id, role, timestamp FROM messages
-                         WHERE conversation_id = ?1
-                           AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
-                         ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                        rusqlite::params![conversation_id, card.created_at, card.rowid],
+                        &format!(
+                            "SELECT id, role, timestamp FROM messages
+                             WHERE conversation_id = :conv
+                               AND (messages.created_at < :card_created
+                                    OR (messages.created_at = :card_created
+                                        AND messages.rowid < :card_rowid))
+                               {HISTORY_WINDOW_SQL}
+                             ORDER BY created_at DESC, rowid DESC LIMIT 1"
+                        ),
+                        rusqlite::named_params! {
+                            ":conv": conversation_id,
+                            ":card_created": card.created_at,
+                            ":card_rowid": card.rowid,
+                            ":win_from_created": fc,
+                            ":win_from_rowid": fr,
+                            ":win_upto_created": uc,
+                            ":win_upto_rowid": ur,
+                        },
                         |r| {
                             Ok(MsgBrief {
                                 id: r.get(0)?,
@@ -950,6 +1048,18 @@ impl ConversationDb {
             None => (0, None),
         };
 
+        // 窗口之外（更早）还有多少：不报的话 agent 会以为"会话就这么多"。
+        let hidden_before_window: i64 = match win.from.as_ref() {
+            Some(from) => tx.query_row(
+                "SELECT COUNT(*) FROM messages
+                 WHERE conversation_id = ?1
+                   AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))",
+                rusqlite::params![conversation_id, from.created_at, from.rowid],
+                |r| r.get(0),
+            )?,
+            None => 0,
+        };
+
         let overview = HistoryOverview {
             total,
             archived,
@@ -962,6 +1072,7 @@ impl ConversationDb {
                 timestamp: c.timestamp.clone(),
                 content: c.content.clone(),
             }),
+            hidden_before_window,
         };
         tx.finish()?;
         Ok(overview)
@@ -983,6 +1094,11 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         let win = Self::resolve_history_window(&tx, conversation_id, window)?;
+        // 空窗口放行到 SQL 会静默返回 0 行，工具渲染成"没有命中" —— agent 据此
+        // 断定"历史里没有这段内容"，而事实是整个范围都读不到。必须明确报错。
+        if win.is_empty() {
+            return Err(HistoryError::EmptyWindow);
+        }
         let (fc, fr, uc, ur) = win.bindings();
         let pattern = format!("%{}%", escape_like(keyword));
         let sql = format!(
@@ -1039,6 +1155,13 @@ impl ConversationDb {
         let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction()?;
         let win = Self::resolve_history_window(&tx, conversation_id, window)?;
+        // 空窗口的判断**必须早于锚点解析**：范围里一条都没有时，报"这条不在窗口内"
+        // 或"这条不存在"都会把 agent 引去换锚点，而正确答案是"这个范围整个读不到"。
+        // 有意保留的副作用：空窗口 + 不存在的锚点报 EmptyWindow 而不是 Missing ——
+        // 空窗口是更上位的事实，两者都是明确报错，不会静默。
+        if win.is_empty() {
+            return Err(HistoryError::EmptyWindow);
+        }
         let anchor = Self::msg_pos(&tx, conversation_id, anchor_id)?
             .ok_or_else(|| HistoryError::Missing(anchor_id.to_string()))?;
         if !win.contains(&anchor) {
@@ -1153,20 +1276,29 @@ impl ConversationDb {
         Ok(resolved)
     }
 
-    /// 会话里最早/最新的一条消息。
+    /// 窗口内最早/最新的一条消息。
     fn boundary_message(
         conn: &Connection,
         conversation_id: &str,
         oldest: bool,
+        win: &ResolvedWindow,
     ) -> RusqliteResult<Option<MsgBrief>> {
         let order = if oldest { "ASC" } else { "DESC" };
+        let (fc, fr, uc, ur) = win.bindings();
         conn.query_row(
             &format!(
                 "SELECT id, role, timestamp FROM messages
-                 WHERE conversation_id = ?1
+                 WHERE conversation_id = :conv
+                 {HISTORY_WINDOW_SQL}
                  ORDER BY created_at {order}, rowid {order} LIMIT 1"
             ),
-            [conversation_id],
+            rusqlite::named_params! {
+                ":conv": conversation_id,
+                ":win_from_created": fc,
+                ":win_from_rowid": fr,
+                ":win_upto_created": uc,
+                ":win_upto_rowid": ur,
+            },
             |r| {
                 Ok(MsgBrief {
                     id: r.get(0)?,
@@ -1179,6 +1311,11 @@ impl ConversationDb {
     }
 
     /// 归档边界 = 最新一张压缩卡（带行序位置，供比较用）。无卡 → None。
+    ///
+    /// ⚠️ 本查询与 `load_active_messages` 里那段"定位 checkpoint"是**同一件事的两份
+    /// 实现**（前端翻页用那份，agent 回读用这份）。**改一处必须同时改另一处**，
+    /// 否则两边对归档边界会有两种看法。前端还有一份等价判定（`compaction.status
+    /// === 'done'` + 卡片前缀），见文件头"归档边界"段落。
     fn boundary_card(
         conn: &Connection,
         conversation_id: &str,
@@ -3655,7 +3792,7 @@ mod tests")
         let db = create_test_db();
         let (conv_id, archived, card_id, active) = seed_compacted_conversation(&db);
 
-        let ov = db.history_overview(&conv_id).expect("overview");
+        let ov = db.history_overview(&conv_id, None).expect("overview");
         assert_eq!(ov.total, 6, "3 条归档 + 卡片 + 2 条当前上下文");
         assert_eq!(ov.archived, 3, "卡片之前的 3 条 = 归档");
         assert_eq!(ov.active, 3, "卡片及之后 = 当前上下文（卡片本身算上下文里有的）");
@@ -3679,7 +3816,7 @@ mod tests")
         db.save_message(&conv.id, "user", "只有一条", "2026-01-01T00:00:00Z", None, None)
             .expect("msg");
 
-        let ov = db.history_overview(&conv.id).expect("overview");
+        let ov = db.history_overview(&conv.id, None).expect("overview");
         assert_eq!(ov.total, 1);
         assert_eq!(ov.archived, 0);
         assert_eq!(ov.active, 1);
@@ -3688,7 +3825,7 @@ mod tests")
 
         // 空会话也不炸
         let empty = db.create_conversation("conn_1", "empty").expect("empty");
-        let ov = db.history_overview(&empty.id).expect("overview empty");
+        let ov = db.history_overview(&empty.id, None).expect("overview empty");
         assert_eq!(ov.total, 0);
         assert!(ov.oldest.is_none() && ov.newest.is_none());
     }
@@ -3733,7 +3870,8 @@ mod tests")
     #[test]
     fn search_history_respects_window() {
         let db = create_test_db();
-        let (conv_id, _, card_id, _) = seed_compacted_conversation(&db);
+        // 窗口下界改成"读时最新卡"之后，这里不再需要卡 id
+        let (conv_id, _, _card_id, _) = seed_compacted_conversation(&db);
         let window = HistoryWindow {
             start: WindowStart::LatestCard,
             upto_message_id: None,
@@ -3844,7 +3982,7 @@ mod tests")
     #[test]
     fn read_history_window_stops_at_upto_anchor() {
         let db = create_test_db();
-        let (conv_id, _, card_id, active) = seed_compacted_conversation(&db);
+        let (conv_id, _, _card_id, active) = seed_compacted_conversation(&db);
         // 派发瞬间最后一条落库消息 = active[0]
         let window = HistoryWindow {
             start: WindowStart::LatestCard,
@@ -3860,6 +3998,251 @@ mod tests")
         let err = db
             .read_history(&conv_id, Some(&window), &active[1], 0, 0)
             .expect_err("上界之后的消息应报错");
+        assert!(matches!(err, HistoryError::OutOfWindow(_)), "{err:?}");
+    }
+
+    /// 造一个"窗口为空"的场景，返回 (会话 id, 派发锚 = 冻结上界, 之后压出来的卡 id)。
+    ///
+    /// 路径：落若干行 → 冻结"派发那一刻"= 当时最后一条 → 父会话**在派发之后**压缩。
+    /// 手动压缩（`tail_db_id = None`）取**队尾行**当卡片时间 ⇒ 卡片排到队尾紧后面，
+    /// 也就排到冻结上界之后 ⇒ 窗口 `[最新卡, 派发锚]` 成为空区间。
+    fn seed_empty_window_conversation(db: &ConversationDb) -> (String, String, String) {
+        let conv = db.create_conversation("conn_1", "empty-window").expect("conv");
+        for (i, (role, content)) in [
+            ("user", "把 nginx 换成 caddy"),
+            ("assistant", "先做只读检查"),
+            ("tool", "inactive (dead)"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            db.save_message(
+                &conv.id,
+                role,
+                content,
+                &format!("2026-01-01T00:0{i}:00Z"),
+                None,
+                None,
+            )
+            .expect("msg");
+        }
+        let dispatch_anchor = db
+            .load_messages(&conv.id)
+            .expect("load")
+            .last()
+            .expect("tail")
+            .id
+            .clone();
+
+        let rows = db.load_messages(&conv.id).expect("load");
+        let tail = rows.last().expect("tail row");
+        db.commit_compaction(
+            &conv.id,
+            &[],
+            "【上下文已压缩】派发之后又压了一次",
+            &tail.created_at.to_rfc3339(),
+            &tail.timestamp,
+        )
+        .expect("commit");
+        let card_id = db
+            .load_messages(&conv.id)
+            .expect("load")
+            .into_iter()
+            .find(|m| m.content.starts_with(COMPACTION_CARD_PREFIX))
+            .expect("card")
+            .id;
+
+        (conv.id, dispatch_anchor, card_id)
+    }
+
+    /// **空窗口是真实可达的**（不是理论构造）：父会话在派发之后压缩，卡片就排到
+    /// 冻结上界之后，`[最新卡, 派发锚]` 成为空区间。这条同时是后两个测试的 fixture。
+    ///
+    /// 控制组在同一处断言：同样的上界换成"不限下界"就不是空区间 —— 排除
+    /// `is_empty()` 恒为真的可能。
+    #[test]
+    fn empty_window_arises_when_parent_compacts_after_dispatch() {
+        let db = create_test_db();
+        let (conv_id, dispatch_anchor, card_id) = seed_empty_window_conversation(&db);
+
+        let empty = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: Some(dispatch_anchor.clone()),
+        };
+        let control = HistoryWindow {
+            start: WindowStart::Earliest,
+            upto_message_id: Some(dispatch_anchor),
+        };
+        {
+            let conn = db.conn.lock().unwrap();
+            let win = ConversationDb::resolve_history_window(&conn, &conv_id, Some(&empty))
+                .expect("resolve");
+            assert!(win.is_empty(), "派发之后压缩 ⇒ 窗口应为空区间");
+            assert!(
+                win.from.is_some() && win.upto.is_some(),
+                "两端都应有位置（空是因为上界排在下界之前）"
+            );
+            let ctrl = ConversationDb::resolve_history_window(&conn, &conv_id, Some(&control))
+                .expect("resolve control");
+            assert!(!ctrl.is_empty(), "同样的上界、不限下界时不是空区间");
+        }
+
+        // 成因：那张新卡实体上排在派发锚**之后**
+        let rows = db.load_messages(&conv_id).expect("load");
+        let pos = |id: &str| rows.iter().position(|m| m.id == id).expect("row");
+        assert!(
+            pos(&card_id) > pos(&rows[2].id),
+            "新卡必须排在派发锚之后，否则窗口不会为空"
+        );
+    }
+
+    /// **验收：空窗口必须明确报错** —— 不是"没有命中"，也不是"这条不在窗口内"。
+    #[test]
+    fn empty_window_reports_explicit_error() {
+        let db = create_test_db();
+        let (conv_id, dispatch_anchor, card_id) = seed_empty_window_conversation(&db);
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: Some(dispatch_anchor),
+        };
+
+        // 检索：Err(EmptyWindow)，**不是** Ok(空) —— 后者会被渲染成"没有命中"，
+        // agent 据此断定历史里没这段内容，而事实是整个范围都读不到。
+        let err = db
+            .search_history(&conv_id, "inactive", Some(&window), 20)
+            .expect_err("空窗口不能静默返回空");
+        assert!(matches!(err, HistoryError::EmptyWindow), "{err:?}");
+
+        // 回读：拿卡当锚、拿旧消息当锚、不管前后取多少条，都是同一个事实
+        for anchor in [card_id.as_str(), "2026-01-01T00:00:00Z 那条旧消息"] {
+            for (before, after) in [(0usize, 0usize), (5, 5)] {
+                let err = db
+                    .read_history(&conv_id, Some(&window), anchor, before, after)
+                    .expect_err("空窗口下回读必须报错");
+                assert!(
+                    matches!(err, HistoryError::EmptyWindow),
+                    "({before},{after}) 应为 EmptyWindow，实得 {err:?}"
+                );
+            }
+        }
+        // 有意保留的副作用：空窗口 + 不存在的锚点 → EmptyWindow（更上位的事实）而不是 Missing
+        let err = db
+            .read_history(&conv_id, Some(&window), "根本不存在的 id", 0, 0)
+            .expect_err("空窗口优先于锚点存在性");
+        assert!(matches!(err, HistoryError::EmptyWindow), "{err:?}");
+
+        // 回归：这个修复只对空窗口生效 —— 无窗口 / 非空窗口照旧能读
+        assert!(db.search_history(&conv_id, "inactive", None, 20).is_ok());
+        assert!(db.read_history(&conv_id, None, &card_id, 0, 0).is_ok());
+    }
+
+    /// **验收：带窗口的概览不再给出死 id** —— 概览里出现的每一个 id 都必须能用
+    /// `read_history` 读到。这条钉住"窗口算好了却没传进概览"的缺陷：修复前概览报的是
+    /// 整会话的 id，子代理拿去读必然 `OutOfWindow`。
+    #[test]
+    fn windowed_overview_only_reports_readable_ids() {
+        let db = create_test_db();
+        let (conv_id, archived, card_id, active) = seed_compacted_conversation(&db);
+        // 派发瞬间的最后一条 = 会话最后一行
+        let upto = active.last().expect("last active").clone();
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: Some(upto),
+        };
+
+        let ov = db
+            .history_overview(&conv_id, Some(&window))
+            .expect("overview");
+        assert_eq!(ov.total, 3, "窗口 = 卡片 + 2 条当前上下文");
+        assert_eq!(ov.archived, 0, "归档段整个落在窗口外");
+        assert_eq!(ov.active, ov.total);
+        assert_eq!(
+            ov.oldest.as_ref().expect("oldest").id,
+            card_id,
+            "窗口内最早一条就是边界卡本身"
+        );
+        assert_eq!(
+            ov.hidden_before_window, 3,
+            "3 条归档原文要报成「你看不到的那部分」"
+        );
+
+        // 最强的一条：概览给出的每一个 id 都读得到
+        let mut ids: Vec<String> = vec![ov.oldest.as_ref().expect("oldest").id.clone()];
+        if let Some(m) = &ov.newest {
+            ids.push(m.id.clone());
+        }
+        if let Some(m) = &ov.archived_newest {
+            ids.push(m.id.clone());
+        }
+        let card = ov.boundary_card.as_ref().expect("窗口内应报边界卡");
+        ids.push(card.id.clone());
+        for id in &ids {
+            let read = db
+                .read_history(&conv_id, Some(&window), id, 0, 0)
+                .unwrap_or_else(|e| panic!("概览给出的 id={id} 读不到：{e:?}"));
+            assert_eq!(&read.messages[0].id, id);
+        }
+        assert!(
+            !ids.iter().any(|id| archived.contains(id)),
+            "归档原文的 id 不该出现在概览里：{ids:?}"
+        );
+
+        // 对照：不带窗口时归档段照旧（证明上面的 0 是窗口造成的，不是 fixture 变了）
+        let full = db.history_overview(&conv_id, None).expect("overview full");
+        assert_eq!(full.archived, 3);
+        assert_eq!(full.hidden_before_window, 0, "无窗口 ⇒ 没有被藏起来的");
+    }
+
+    /// 空窗口下的概览：范围内 0 条、边界卡也不报（它排在冻结上界之后，可能含
+    /// 派发之后才发生的事）。让工具能说清"整个范围为空"，而不是给一串读不到的 id。
+    #[test]
+    fn overview_on_empty_window_reports_nothing_readable() {
+        let db = create_test_db();
+        let (conv_id, dispatch_anchor, _card_id) = seed_empty_window_conversation(&db);
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: Some(dispatch_anchor),
+        };
+
+        let ov = db
+            .history_overview(&conv_id, Some(&window))
+            .expect("overview");
+        assert_eq!(ov.total, 0);
+        assert_eq!(ov.archived, 0);
+        assert_eq!(ov.active, 0);
+        assert!(ov.oldest.is_none() && ov.newest.is_none());
+        assert!(
+            ov.boundary_card.is_none(),
+            "窗口外的卡不报：它可能是派发之后新压的"
+        );
+        assert!(ov.hidden_before_window > 0, "要说明还有东西在范围外");
+    }
+
+    /// **验收：锚点=窗口下界那张卡 + `before > 0` 时不泄漏归档原文**
+    /// （此前只有 `before = 0` 的用例，`before` 这条路径没人守）。
+    #[test]
+    fn read_history_from_card_anchor_with_before_never_leaks_archive() {
+        let db = create_test_db();
+        let (conv_id, archived, card_id, _) = seed_compacted_conversation(&db);
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: None,
+        };
+
+        let read = db
+            .read_history(&conv_id, Some(&window), &card_id, 5, 0)
+            .expect("read");
+        assert_eq!(read.messages.len(), 1, "窗口下界就是这张卡，前面没有可读的行");
+        assert_eq!(read.messages[0].id, card_id);
+        assert!(!read.has_more_before, "窗口内前面没有更多");
+        for m in &read.messages {
+            assert!(!archived.contains(&m.id), "归档原文不许出现：{}", m.id);
+        }
+
+        // 反向：拿归档里的行当锚 → 明确报错（不是静默少给几条）
+        let err = db
+            .read_history(&conv_id, Some(&window), &archived[0], 5, 5)
+            .expect_err("归档锚点必须被窗口挡住");
         assert!(matches!(err, HistoryError::OutOfWindow(_)), "{err:?}");
     }
 
@@ -3935,13 +4318,20 @@ mod tests")
         assert_eq!(subs[1].message_count, 0);
     }
 
-    /// **验收：回读期间同时发生压缩，结果不能是半新半旧的拼接。**
+    /// 写-读并发的 **smoke test**（不是竞态证明 —— 请看下面那段）。
     ///
-    /// 写线程反复"插入新卡 + 吸收旧卡"（与 persister 同序），读线程反复做
-    /// 概览 + 全窗口回读。整次回读持同一把锁 + 一个事务 ⇒ 每次结果都必须自洽：
-    /// 消息数恒定、原文逐条按序完整、结果里最多一张卡（绝不出现新旧卡同框或重复行）。
+    /// 它守的是：写线程反复"插入新卡 + 吸收旧卡"（与 persister 同序）时，回读路径
+    /// 不 panic、不死锁、不因为 fixture 腐烂而静默变成空断言。断言的内容是每次回读的
+    /// 结果自洽（原文逐条完整有序、结果里最多一张卡）。
+    ///
+    /// **"不会有半新半旧的拼接"这个保证不来自本测试**，而是结构性的：两个线程共用
+    /// 同一个 `Arc<ConversationDb>`（同一把 Mutex + 同一个 Connection），且
+    /// `history_overview` / `search_history` / `read_history` 各自都是"一次持锁 +
+    /// 一个事务"把解析锚点与取行做完 —— 交错在结构上就不可能发生，所以这个测试
+    /// **无法失败**（它最多因为死锁或 `tx.finish()` 漏掉而失败）。
+    /// 现状最坏的地方不是它弱，而是它一度看起来像"竞态已被证明"。
     #[test]
-    fn concurrent_compaction_never_yields_torn_read() {
+    fn concurrent_compaction_smoke_no_deadlock_or_half_written_state() {
         use std::sync::Arc;
 
         let db = Arc::new(create_test_db());
@@ -3962,14 +4352,19 @@ mod tests")
         let writer = std::thread::spawn(move || {
             for i in 0..40 {
                 let card_content = format!("{COMPACTION_CARD_PREFIX}第 {i} 次压缩");
-                // 与被压区间末行对齐：卡片要排在被压区间紧后面
+                // 手动压缩语义：卡片取**队尾行**的 created_at / timestamp，于是它排在
+                // 队尾紧后面。此前这里写死一个与行序无关的时间戳，卡片实际排到了会话
+                // 最前面 ⇒ `archived` 恒为 0，那条断言等于白写（注释还宣称"与被压区间
+                // 末行对齐"，是假的）。
+                let rows = writer_db.load_messages(&writer_conv).expect("reload");
+                let tail = rows.last().expect("tail row");
                 writer_db
                     .commit_compaction(
                         &writer_conv,
                         std::slice::from_ref(&prev_card),
                         &card_content,
-                        "2026-01-01T00:02:00Z",
-                        "2026-01-01T00:02:00Z",
+                        &tail.created_at.to_rfc3339(),
+                        &tail.timestamp,
                     )
                     .expect("commit");
                 prev_card = writer_db
@@ -3986,11 +4381,16 @@ mod tests")
         let reader_conv = conv_id.clone();
         let reader = std::thread::spawn(move || {
             for _ in 0..40 {
-                let ov = reader_db.history_overview(&reader_conv).expect("overview");
+                let ov = reader_db.history_overview(&reader_conv, None).expect("overview");
                 assert_eq!(
                     ov.archived + ov.active,
                     ov.total,
                     "归档段 + 活跃段必须等于总数（半新半旧的标志）"
+                );
+                assert!(
+                    ov.archived > 0,
+                    "卡片按手动压缩语义排在队尾 ⇒ 归档段非空；为 0 说明 fixture 的时间戳又写死了，\
+                     这条 smoke test 会退化成空断言"
                 );
 
                 let read = reader_db

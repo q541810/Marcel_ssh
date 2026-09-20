@@ -599,7 +599,26 @@ fn clip_chars(s: &str, max_chars: usize) -> String {
 }
 
 /// 概览正文。
+///
+/// 所有 id 都来自**窗口内**的查询（`history_overview` 已按窗口裁过），所以这里
+/// 不会打印拿去做 `action=read` 必然失败的 id。窗口外还有东西时必须说出来，
+/// 否则 agent 会以为"会话就这么多"。
 fn render_overview(conversation_id: &str, scope: Scope, ov: &crate::agent::conversation::HistoryOverview) -> String {
+    // 范围内一条都没有：这不是"没有压缩过"，而是整个可读窗口为空（父会话在派发后
+    // 又压过）。必须与"空会话"分开说，否则 agent 会得出相反结论。
+    if ov.total == 0 && ov.hidden_before_window > 0 {
+        return format!(
+            "会话历史概览（scope={}，会话 {}）\n\
+             - 本次可读范围内一条都没有：另有 {} 条在范围之外（更早的部分已被压缩归档，\
+             或在主 agent 派发你之后才产生）。\n\
+             - 换锚点、换关键词都没用：不是没匹配上，是整个范围为空。\n\
+             要那段内容请让主 agent 用 scope=own 回读，或直接问它/用户。\n",
+            scope.as_str(),
+            conversation_id,
+            ov.hidden_before_window
+        );
+    }
+
     let mut out = String::new();
     out.push_str(&format!(
         "会话历史概览（scope={}，会话 {}）\n",
@@ -607,9 +626,16 @@ fn render_overview(conversation_id: &str, scope: Scope, ov: &crate::agent::conve
         conversation_id
     ));
     out.push_str(&format!(
-        "- 共 {} 条：归档段 {} 条，当前上下文段 {} 条\n",
+        "- 可读范围内共 {} 条：归档段 {} 条，当前上下文段 {} 条\n",
         ov.total, ov.archived, ov.active
     ));
+    if ov.hidden_before_window > 0 {
+        out.push_str(&format!(
+            "- 另有 {} 条不在你的可读范围内（更早的归档原文 / 派发之后的内容）——\
+             下面的 id 里没有它们，也不要拿去 read。\n",
+            ov.hidden_before_window
+        ));
+    }
     if let (Some(oldest), Some(newest)) = (&ov.oldest, &ov.newest) {
         out.push_str(&format!(
             "- 最早一条：id={}（{}，{}）\n- 最新一条：id={}（{}，{}）\n",
@@ -959,21 +985,27 @@ impl ReadHistoryTool {
 
         match params.action {
             Action::Overview => {
-                let ov = match db.history_overview(&conversation_id) {
+                // 概览同样吃窗口：scope=parent 下只能报"这个子代理读得到的部分"，
+                // 否则它会拿到一串拿去 read 必然失败的 id（窗口外的东西）。
+                let ov = match db.history_overview(&conversation_id, window.as_ref()) {
                     Ok(ov) => ov,
-                    Err(e) => {
-                        return Ok(ToolOutput::fail(
-                            "回读历史：读概览失败",
-                            format!("读取会话库出错：{e}"),
-                        ))
-                    }
+                    Err(e) => return Ok(history_error_output(e, &conversation_id)),
                 };
                 let text = render_overview(&conversation_id, params.scope, &ov);
-                Ok(ToolOutput::ok(
+                // 卡片标题也要说实话：范围内为空时用户一眼就能看出"不是没匹配上"
+                let summary = if ov.total == 0 && ov.hidden_before_window > 0 {
                     format!(
-                        "回读历史：{scope_label}概览（共 {} 条，归档 {} 条）",
+                        "回读历史：{scope_label}可读范围内为空（{} 条在范围外）",
+                        ov.hidden_before_window
+                    )
+                } else {
+                    format!(
+                        "回读历史：{scope_label}概览（可读 {} 条，其中归档 {} 条）",
                         ov.total, ov.archived
-                    ),
+                    )
+                };
+                Ok(ToolOutput::ok(
+                    summary,
                     text,
                 ))
             }
@@ -1063,6 +1095,17 @@ fn history_error_output(e: HistoryError, conversation_id: &str) -> ToolOutput {
                 "id={id} 存在但不在本次可读窗口内（例如它是被压缩掉的归档原文，\
                  或它落在\"派发那一刻\"之后）。scope=parent 只能读主 agent 派发你时上下文里有的部分。"
             ),
+        ),
+        // 与上一条分清楚：不是"这个锚点不行"，而是"整个范围都读不到"。
+        // 这种时候让 agent 换锚点是把它带沟里 —— 出路只有换一条路。
+        HistoryError::EmptyWindow => ToolOutput::fail(
+            "回读历史：可读范围内没有任何内容",
+            "本次可读范围内一条都没有：主 agent 在派发你之后又压缩过，\
+             派发那一刻的上下文已经被归档进新的压缩卡，落到你被派发时冻结的上界之外了。\n\
+             这段内容你用 read_history 读不到 —— 需要的话请让主 agent 自己用 scope=own 回读原文，\
+             或者直接向它/用户问你要的那件事。\n\
+             （换锚点、换关键词都不会有用：不是没匹配上，是整个范围为空。）"
+                .to_string(),
         ),
         HistoryError::Db(e) => ToolOutput::fail(
             "回读历史：读会话库失败",
@@ -1449,7 +1492,7 @@ mod tests {
             .expect("active msg");
         let last_id = db.load_messages(&conv.id).expect("load").pop().expect("last").id;
         let card_id = db
-            .history_overview(&conv.id)
+            .history_overview(&conv.id, None)
             .expect("overview")
             .boundary_card
             .expect("card")
@@ -1584,10 +1627,57 @@ mod tests {
             }),
             archived_newest: None,
             boundary_card: None,
+            hidden_before_window: 0,
         };
         let text = render_overview("conv-1", Scope::Own, &ov);
         assert!(text.contains("没有被压缩过"));
-        assert!(text.contains("共 4 条"));
+        assert!(text.contains("可读范围内共 4 条"));
         assert!(text.contains("id=m1"));
+    }
+
+    /// 概览要把"窗口外还有东西"说出来：不说的话 agent 会以为"会话就这么多"。
+    /// 范围内为空时还必须与"没有被压缩过"分开说 —— 那是相反的结论。
+    #[test]
+    fn overview_reports_hidden_rows_and_empty_window() {
+        fn brief(id: &str, role: &str, ts: &str) -> crate::agent::conversation::MsgBrief {
+            crate::agent::conversation::MsgBrief {
+                id: id.into(),
+                role: role.into(),
+                timestamp: ts.into(),
+            }
+        }
+
+        let ov = crate::agent::conversation::HistoryOverview {
+            total: 3,
+            archived: 0,
+            active: 3,
+            oldest: Some(brief("m9", "user", "2026-01-01T00:09:00Z")),
+            newest: Some(brief("m11", "assistant", "2026-01-01T00:11:00Z")),
+            archived_newest: None,
+            boundary_card: None,
+            hidden_before_window: 12,
+        };
+        let text = render_overview("conv-1", Scope::Parent, &ov);
+        assert!(text.contains("另有 12 条"), "{text}");
+        assert!(text.contains("可读范围内共 3 条"), "{text}");
+
+        let empty = crate::agent::conversation::HistoryOverview {
+            total: 0,
+            archived: 0,
+            active: 0,
+            oldest: None,
+            newest: None,
+            archived_newest: None,
+            boundary_card: None,
+            hidden_before_window: 12,
+        };
+        let text = render_overview("conv-1", Scope::Parent, &empty);
+        assert!(text.contains("一条都没有"), "{text}");
+        assert!(text.contains("另有 12 条"), "{text}");
+        assert!(text.contains("换锚点"), "{text}");
+        assert!(
+            !text.contains("没有被压缩过"),
+            "空窗口不是「没压缩过」，那是相反的结论：{text}"
+        );
     }
 }
