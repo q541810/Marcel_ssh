@@ -52,7 +52,16 @@ export default function Modal({
   const exiting = presence.phase === 'exit';
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      /**
+       * 软键盘适配：Android 侧不会为 IME resize 窗口，只把键盘高度写进
+       * `--ime-bottom`（挂在 documentElement 上，所以 portal 出去也读得到）。
+       * 这里让出键盘占的高度、并把面板最大高度压进剩余空间，否则键盘一弹起就会
+       * 盖住输入框和按钮——移动端连接时输私钥密码走的正是这个浮层。
+       */
+      style={{ paddingBottom: 'var(--ime-bottom, 0px)' }}
+    >
       {/* Backdrop */}
       <div
         className={`absolute inset-0 bg-black/60 backdrop-blur-sm ${
@@ -66,7 +75,7 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         onAnimationEnd={presence.onAnimationEnd}
-        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[90vh] flex flex-col ${
+        className={`relative w-full mx-4 rounded-2xl bg-zinc-800 border border-zinc-700 shadow-2xl max-h-[min(90vh,calc(100dvh-var(--ime-bottom,0px)-2rem))] flex flex-col ${
           exiting ? 'modal-panel-exit' : 'modal-panel-enter'
         } ${SIZE_CLASSES[size]} ${contentClassName}`}
       >
