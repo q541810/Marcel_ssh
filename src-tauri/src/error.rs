@@ -1,5 +1,29 @@
 use serde::Serialize;
 
+/// 私钥认证失败的具体原因。
+///
+/// 存在的理由：前端要据此决定**下一步该让用户做什么**——只有 `NeedsPassphrase`
+/// / `BadPassphrase` 才该弹密码框。此前所有私钥失败都退化成同一个字符串，于是
+/// "密钥文件根本不存在"也会弹密码框，用户输完还是失败。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyAuthCode {
+    /// 私钥文件不存在或已被移动
+    KeyNotFound,
+    /// 私钥读不出来（权限不足、内容损坏、不是文本）
+    KeyUnreadable,
+    /// 私钥带密码，需要用户输入
+    NeedsPassphrase,
+    /// 私钥密码不正确
+    BadPassphrase,
+    /// 不是可识别的私钥格式
+    UnsupportedKey,
+    /// 连接引用的密钥已从密钥库删除
+    KeyMissingFromStore,
+    /// 服务器拒绝了这把密钥
+    Rejected,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("SSH error: {0}")]
@@ -35,6 +59,13 @@ pub enum AppError {
     Network(String),
     #[error("已取消: {0}")]
     Cancelled(String),
+    /// 私钥相关的失败，带机器可读的原因码（见 `KeyAuthCode`）。
+    /// `message` 已是给用户看的中文文案，前端直接展示。
+    #[error("{message}")]
+    KeyAuth {
+        code: KeyAuthCode,
+        message: String,
+    },
     #[error("{0}")]
     Other(String),
 }
@@ -86,13 +117,21 @@ impl Serialize for AppError {
                     AppError::Io(_) => "Io",
                     AppError::Serde(_) => "Serde",
                     AppError::HostKeyVerification(_) => "HostKeyVerification",
+                    AppError::KeyAuth { .. } => "KeyAuth",
                     AppError::Other(_) => "Other",
                     AppError::HostKeyMismatch { .. } => unreachable!(),
                 };
                 m.serialize_entry("kind", kind)?;
                 m.serialize_entry("message", &other.to_string())?;
-                if let AppError::Sftp { code, .. } = other {
-                    m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
+                match other {
+                    AppError::Sftp { code, .. } => {
+                        m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
+                    }
+                    // 私钥失败的原因码：前端据此决定要不要弹密码框
+                    AppError::KeyAuth { code, .. } => {
+                        m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
+                    }
+                    _ => {}
                 }
             }
         }
@@ -169,6 +208,40 @@ mod tests {
     }
 
     #[test]
+    fn key_auth_serializes_with_code_and_bare_message() {
+        let err = AppError::KeyAuth {
+            code: KeyAuthCode::NeedsPassphrase,
+            message: "此私钥已加密，请输入私钥密码".into(),
+        };
+        let v = serialize_err(&err);
+        assert_eq!(kind_of(&v), "KeyAuth");
+        // message 就是给用户看的那句话，不带技术前缀
+        assert_eq!(message_of(&v), "此私钥已加密，请输入私钥密码");
+        assert_eq!(
+            v.get("data")
+                .and_then(|d| d.get("code"))
+                .and_then(|c| c.as_str()),
+            Some("needs_passphrase")
+        );
+    }
+
+    #[test]
+    fn every_key_auth_code_round_trips_as_snake_case() {
+        for (code, expected) in [
+            (KeyAuthCode::KeyNotFound, "key_not_found"),
+            (KeyAuthCode::KeyUnreadable, "key_unreadable"),
+            (KeyAuthCode::NeedsPassphrase, "needs_passphrase"),
+            (KeyAuthCode::BadPassphrase, "bad_passphrase"),
+            (KeyAuthCode::UnsupportedKey, "unsupported_key"),
+            (KeyAuthCode::KeyMissingFromStore, "key_missing_from_store"),
+            (KeyAuthCode::Rejected, "rejected"),
+        ] {
+            let v = serde_json::to_value(code).expect("code should serialize");
+            assert_eq!(v.as_str(), Some(expected));
+        }
+    }
+
+    #[test]
     fn every_variant_serializes_with_kind() {
         let cases: Vec<(&str, AppError)> = vec![
             ("Agent", AppError::Agent("test".into())),
@@ -188,6 +261,13 @@ mod tests {
                 AppError::HostKeyVerification("test".into()),
             ),
             ("Cancelled", AppError::Cancelled("test".into())),
+            (
+                "KeyAuth",
+                AppError::KeyAuth {
+                    code: KeyAuthCode::Rejected,
+                    message: "test".into(),
+                },
+            ),
             ("Other", AppError::Other("test".into())),
         ];
         for (expected_kind, err) in cases {

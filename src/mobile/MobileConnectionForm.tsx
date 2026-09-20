@@ -1,7 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { JumpAuthMethod, SavedConnection } from '@/lib/types';
+import type { JumpAuthMethod, SavedConnection, StoredKeyMeta } from '@/lib/types';
 import { DEFAULT_PORT } from '@/lib/constants';
 import * as tauri from '@/lib/tauri';
+import { describeAlgorithm, shortFingerprint } from '@/lib/privateKey';
+import { useConnectionStore } from '@/stores/connectionStore';
+import KeyManager from '@/components/connection/KeyManager';
 import MobileSheet from './ui/MobileSheet';
 
 interface MobileConnectionFormProps {
@@ -52,6 +55,14 @@ export default function MobileConnectionForm({
   const [username, setUsername] = useState('');
   const [authMethod, setAuthMethod] = useState('Password');
   const [keyPath, setKeyPath] = useState('');
+  const [keyId, setKeyId] = useState('');
+  const [keys, setKeys] = useState<StoredKeyMeta[]>([]);
+  const [keyManagerTarget, setKeyManagerTarget] = useState<'main' | 'jump' | null>(
+    null,
+  );
+  /** 本地已存了主凭证（密码或密钥密码）——用于"已保存 / 修改 / 清除"的呈现 */
+  const [hasSecret, setHasSecret] = useState(false);
+  const [secretDirty, setSecretDirty] = useState(false);
   const [group, setGroup] = useState('');
   /** Optional main credential (password or key passphrase) saved to keychain. */
   const [secret, setSecret] = useState('');
@@ -66,10 +77,13 @@ export default function MobileConnectionForm({
   const [jumpAuthMethod, setJumpAuthMethod] =
     useState<JumpAuthMethod>('withTarget');
   const [jumpKeyPath, setJumpKeyPath] = useState('');
+  const [jumpKeyId, setJumpKeyId] = useState('');
   const [jumpPassword, setJumpPassword] = useState('');
   const [jumpPassphrase, setJumpPassphrase] = useState('');
   const [hasJumpPassword, setHasJumpPassword] = useState(false);
   const [hasJumpPassphrase, setHasJumpPassphrase] = useState(false);
+
+  const connections = useConnectionStore((s) => s.connections);
 
   // Re-init form state each time the sheet opens (create vs edit).
   useEffect(() => {
@@ -80,8 +94,11 @@ export default function MobileConnectionForm({
     setUsername(connection?.username ?? '');
     setAuthMethod(connection?.authMethod ?? 'Password');
     setKeyPath(connection?.keyPath ?? '');
+    setKeyId(connection?.keyId ?? '');
     setGroup(connection?.group ?? '');
     setSecret('');
+    setHasSecret(false);
+    setSecretDirty(false);
     setErrors({});
     setSaving(false);
     setUseJump(connection?.useJump ?? false);
@@ -90,10 +107,48 @@ export default function MobileConnectionForm({
     setJumpUsername(connection?.jumpUsername ?? '');
     setJumpAuthMethod(connection?.jumpAuthMethod ?? 'withTarget');
     setJumpKeyPath(connection?.jumpKeyPath ?? '');
+    setJumpKeyId(connection?.jumpKeyId ?? '');
     setJumpPassword('');
     setJumpPassphrase('');
     setHasJumpPassword(false);
     setHasJumpPassphrase(false);
+  }, [open, connection]);
+
+  // 密钥库列表：进入表单时载入；密钥库浮层关闭后重载（期间可能刚导入或删过）
+  useEffect(() => {
+    if (!open || keyManagerTarget !== null) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await tauri.listKeys();
+        if (!cancelled) setKeys(list);
+      } catch {
+        /* 私钥库读取失败不该挡住表单 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, keyManagerTarget]);
+
+  // 主凭证是否已保存（编辑模式才问得出来）
+  useEffect(() => {
+    if (!open || !connection?.id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const has =
+          connection.authMethod === 'Password'
+            ? await tauri.hasPassword(connection.id)
+            : await tauri.hasPassphrase(connection.id);
+        if (!cancelled) setHasSecret(has);
+      } catch {
+        /* keychain optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [open, connection]);
 
   // Check saved jump credentials when editing a jump-enabled connection.
@@ -126,7 +181,9 @@ export default function MobileConnectionForm({
     port,
     username: username.trim(),
     authMethod,
-    keyPath: authMethod === 'PrivateKey' ? keyPath.trim() : undefined,
+    // 选了密钥库里的私钥就不再记路径；反之保留手填路径（老数据与高级用法）
+    keyPath: authMethod === 'PrivateKey' && !keyId ? keyPath.trim() : undefined,
+    keyId: authMethod === 'PrivateKey' ? keyId || undefined : undefined,
     group: group.trim() || undefined,
     lastConnected: connection?.lastConnected,
     useJump,
@@ -135,8 +192,12 @@ export default function MobileConnectionForm({
     jumpUsername: useJump ? jumpUsername.trim() : undefined,
     jumpAuthMethod: useJump ? jumpAuthMethod : undefined,
     jumpKeyPath:
-      useJump && jumpAuthMethod === 'PrivateKey'
+      useJump && jumpAuthMethod === 'PrivateKey' && !jumpKeyId
         ? jumpKeyPath.trim()
+        : undefined,
+    jumpKeyId:
+      useJump && jumpAuthMethod === 'PrivateKey'
+        ? jumpKeyId || undefined
         : undefined,
   });
 
@@ -146,16 +207,16 @@ export default function MobileConnectionForm({
     if (!host.trim()) next.host = '主机为必填项';
     if (!username.trim()) next.username = '用户名为必填项';
     if (port < 1 || port > 65535) next.port = '端口必须在 1-65535 之间';
-    if (authMethod === 'PrivateKey' && !keyPath.trim()) {
-      next.keyPath = '私钥认证需要密钥路径';
+    if (authMethod === 'PrivateKey' && !keyId && !keyPath.trim()) {
+      next.keyPath = '请选择或导入一把私钥';
     }
     if (useJump) {
       if (!jumpHost.trim()) next.jumpHost = '跳板机主机为必填项';
       if (!jumpUsername.trim()) next.jumpUsername = '跳板机用户名为必填项';
       if (jumpPort < 1 || jumpPort > 65535)
         next.jumpPort = '端口必须在 1-65535 之间';
-      if (jumpAuthMethod === 'PrivateKey' && !jumpKeyPath.trim()) {
-        next.jumpKeyPath = '跳板机私钥路径为必填项';
+      if (jumpAuthMethod === 'PrivateKey' && !jumpKeyId && !jumpKeyPath.trim()) {
+        next.jumpKeyPath = '请选择或导入跳板机的私钥';
       }
       if (jumpAuthMethod === 'Password' && !jumpPassword && !hasJumpPassword) {
         next.jumpPassword = '请填写跳板机密码';
@@ -164,6 +225,12 @@ export default function MobileConnectionForm({
     setErrors(next);
     return Object.keys(next).length === 0;
   };
+
+  /** 有几条连接在用这把私钥（含作为跳板机私钥），删除前要提醒清楚。 */
+  const keyUsage = (id: string) =>
+    connections.filter(
+      (c) => c.keyId === id || (c.useJump && c.jumpKeyId === id),
+    ).length;
 
   /** Persist secrets to keychain (best-effort, same semantics as desktop). */
   const persistSecrets = async (id: string) => {
@@ -212,6 +279,8 @@ export default function MobileConnectionForm({
   const secretPlaceholder = connection?.id
     ? '留空则保持不变'
     : '留空则连接时输入';
+  const selectedKey = keys.find((k) => k.id === keyId);
+  const selectedJumpKey = keys.find((k) => k.id === jumpKeyId);
 
   return (
     <MobileSheet
@@ -296,6 +365,7 @@ export default function MobileConnectionForm({
             onChange={(e) => {
               setAuthMethod(e.target.value);
               setSecret('');
+              setSecretDirty(false);
             }}
             className={inputClass}
           >
@@ -305,33 +375,115 @@ export default function MobileConnectionForm({
         </Field>
 
         {authMethod === 'PrivateKey' && (
-          <Field label="私钥路径" error={errors.keyPath}>
-            <input
-              type="text"
-              value={keyPath}
-              onChange={(e) => setKeyPath(e.target.value)}
-              placeholder="~/.ssh/id_rsa"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className={errors.keyPath ? inputErrorClass : inputClass}
-            />
-          </Field>
+          <>
+            <Field label="私钥">
+              <div className="flex gap-2">
+                <select
+                  value={keyId}
+                  onChange={(e) => {
+                    setKeyId(e.target.value);
+                    if (e.target.value) setKeyPath('');
+                  }}
+                  className={`min-w-0 flex-1 ${inputClass}`}
+                >
+                  <option value="">
+                    {keys.length > 0 ? '未选择' : '还没有导入私钥'}
+                  </option>
+                  {keys.map((key) => (
+                    <option key={key.id} value={key.id}>
+                      {key.name}（{describeAlgorithm(key.algorithm)}
+                      {key.encrypted ? ' · 带密码' : ''}）
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setKeyManagerTarget('main')}
+                  className="shrink-0 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-zinc-700"
+                >
+                  选择 / 导入…
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                {selectedKey
+                  ? `${describeAlgorithm(selectedKey.algorithm)} · ${shortFingerprint(selectedKey.fingerprint)}`
+                  : '从手机里挑一个密钥文件，或直接粘贴私钥内容。'}
+              </p>
+            </Field>
+
+            {!keyId && (
+              <Field label="私钥路径（高级）" error={errors.keyPath}>
+                <input
+                  type="text"
+                  value={keyPath}
+                  onChange={(e) => setKeyPath(e.target.value)}
+                  placeholder="~/.ssh/id_rsa"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className={errors.keyPath ? inputErrorClass : inputClass}
+                />
+              </Field>
+            )}
+          </>
         )}
 
-        <Field label={secretLabel}>
-          <input
-            type="password"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder={secretPlaceholder}
-            autoComplete="new-password"
-            className={inputClass}
-          />
-          <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
-            填写后加密保存到本设备，连接时自动使用。
-          </p>
-        </Field>
+        {hasSecret && !secretDirty && !secret ? (
+          <Field label={authMethod === 'Password' ? '密码' : '密钥密码'}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-zinc-400">已保存在本设备</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSecretDirty(true)}
+                  className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-200 active:bg-zinc-700"
+                >
+                  修改
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (async () => {
+                      if (!connection?.id) return;
+                      try {
+                        if (authMethod === 'Password') {
+                          await tauri.deletePassword(connection.id);
+                        } else {
+                          await tauri.deletePassphrase(connection.id);
+                        }
+                        setHasSecret(false);
+                        setSecret('');
+                        setSecretDirty(false);
+                      } catch {
+                        /* keychain optional */
+                      }
+                    })()
+                  }
+                  className="rounded-lg px-3 py-2 text-xs text-red-400/80 active:bg-zinc-800"
+                >
+                  清除
+                </button>
+              </div>
+            </div>
+          </Field>
+        ) : (
+          <Field label={secretLabel}>
+            <input
+              type="password"
+              value={secret}
+              onChange={(e) => {
+                setSecret(e.target.value);
+                setSecretDirty(true);
+              }}
+              placeholder={secretPlaceholder}
+              autoComplete="new-password"
+              className={inputClass}
+            />
+            <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+              填写后加密保存到本设备，连接时自动使用。
+            </p>
+          </Field>
+        )}
 
         <Field label="分组（可选）">
           <input
@@ -449,20 +601,57 @@ export default function MobileConnectionForm({
 
               {jumpAuthMethod === 'PrivateKey' && (
                 <>
-                  <Field label="私钥路径" error={errors.jumpKeyPath}>
-                    <input
-                      type="text"
-                      value={jumpKeyPath}
-                      onChange={(e) => setJumpKeyPath(e.target.value)}
-                      placeholder="~/.ssh/id_rsa"
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      spellCheck={false}
-                      className={
-                        errors.jumpKeyPath ? inputErrorClass : inputClass
-                      }
-                    />
+                  <Field label="私钥">
+                    <div className="flex gap-2">
+                      <select
+                        value={jumpKeyId}
+                        onChange={(e) => {
+                          setJumpKeyId(e.target.value);
+                          if (e.target.value) setJumpKeyPath('');
+                        }}
+                        className={`min-w-0 flex-1 ${inputClass}`}
+                      >
+                        <option value="">
+                          {keys.length > 0 ? '未选择' : '还没有导入私钥'}
+                        </option>
+                        {keys.map((key) => (
+                          <option key={key.id} value={key.id}>
+                            {key.name}（{describeAlgorithm(key.algorithm)}）
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setKeyManagerTarget('jump')}
+                        className="shrink-0 rounded-lg bg-zinc-800 px-3 py-2.5 text-sm text-zinc-200 active:bg-zinc-700"
+                      >
+                        选择 / 导入…
+                      </button>
+                    </div>
+                    {selectedJumpKey && (
+                      <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+                        {describeAlgorithm(selectedJumpKey.algorithm)} ·{' '}
+                        {shortFingerprint(selectedJumpKey.fingerprint)}
+                      </p>
+                    )}
                   </Field>
+
+                  {!jumpKeyId && (
+                    <Field label="私钥路径（高级）" error={errors.jumpKeyPath}>
+                      <input
+                        type="text"
+                        value={jumpKeyPath}
+                        onChange={(e) => setJumpKeyPath(e.target.value)}
+                        placeholder="~/.ssh/id_rsa"
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        className={
+                          errors.jumpKeyPath ? inputErrorClass : inputClass
+                        }
+                      />
+                    </Field>
+                  )}
                   <Field
                     label={
                       hasJumpPassphrase
@@ -487,6 +676,29 @@ export default function MobileConnectionForm({
           )}
         </div>
       </div>
+
+      {/* 私钥库：选文件 / 粘贴内容 / 重命名 / 删除都在同一个界面里。
+          浮层叠在表单之上，返回键由 MobileSheet 自己接管，先关它再关表单。 */}
+      <MobileSheet
+        open={keyManagerTarget !== null}
+        onClose={() => setKeyManagerTarget(null)}
+        title="私钥"
+      >
+        <KeyManager
+          variant="mobile"
+          selectedId={keyManagerTarget === 'jump' ? jumpKeyId : keyId}
+          onSelect={(id) => {
+            if (keyManagerTarget === 'jump') {
+              setJumpKeyId(id ?? '');
+              if (id) setJumpKeyPath('');
+            } else {
+              setKeyId(id ?? '');
+              if (id) setKeyPath('');
+            }
+          }}
+          usageOf={keyUsage}
+        />
+      </MobileSheet>
     </MobileSheet>
   );
 }

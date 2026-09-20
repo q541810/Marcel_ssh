@@ -217,8 +217,14 @@ export interface ConnectionConfig {
 
 export type AuthMethod =
   | { type: 'Password'; password: string }
-  | { type: 'PrivateKey'; keyPath: string; passphrase?: string }
-  | { type: 'Agent' };
+  | {
+      type: 'PrivateKey';
+      /** 密钥库里的私钥 id（导入进来的私钥）。与 keyPath 二选一，优先它。 */
+      keyId?: string;
+      /** 私钥文件路径（老数据 / 直接指向本地活文件），支持开头的 ~ */
+      keyPath?: string;
+      passphrase?: string;
+    };
 
 /** Jump auth mode stored on SavedConnection (not runtime credentials). */
 export type JumpAuthMethod = 'withTarget' | 'Password' | 'PrivateKey';
@@ -231,6 +237,8 @@ export interface SavedConnection {
   username: string;
   authMethod: string;
   keyPath?: string;
+  /** 密钥库里那把私钥的 id；缺失（老数据）时按 keyPath 走 */
+  keyId?: string;
   group?: string;
   lastConnected?: string;
   /** ProxyJump — missing on old data means disabled. */
@@ -240,6 +248,42 @@ export interface SavedConnection {
   jumpUsername?: string;
   jumpAuthMethod?: JumpAuthMethod;
   jumpKeyPath?: string;
+  /** 跳板机私钥的密钥库 id，语义同 keyId */
+  jumpKeyId?: string;
+}
+
+/**
+ * 已导入到密钥库的一把私钥的元数据。
+ *
+ * 只有能给人看的东西：**没有私钥内容、没有密码**。私钥正文全程留在 Rust 侧，
+ * 连接时由后端自行取用（见 `ssh::key_store`）。
+ */
+export interface StoredKeyMeta {
+  id: string;
+  name: string;
+  /** 例如 `ssh-ed25519` / `ssh-rsa` */
+  algorithm: string;
+  /** 例如 `SHA256:AbC…`，导入后展示给用户核对"是不是这把钥匙" */
+  fingerprint: string;
+  /** 私钥自身是否带密码——连接前据此决定要不要问密码，不再靠"连一次试试" */
+  encrypted: boolean;
+  /** 导入来源（来自真实文件路径时才有） */
+  originPath?: string;
+  createdAt: string;
+}
+
+/**
+ * 导入来源的现状：原文件还在不在、还是不是同一把钥匙。
+ *
+ * 存在的理由：用户重新生成密钥后，库里那份仍是旧的，连接会以"服务器拒绝"收场，
+ * 而他明明刚把新公钥加到服务器上——这条提示让那种困惑有处可查。
+ */
+export interface KeyOriginStatus {
+  originPath: string;
+  /** 原文件已经不在（不影响使用，库里这份是独立的） */
+  missing: boolean;
+  /** 原文件还在、但已经是另一把钥匙了 */
+  changed: boolean;
 }
 
 // Session types

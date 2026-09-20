@@ -1,4 +1,6 @@
 pub mod auth;
+pub mod key_material;
+pub mod key_store;
 pub mod known_hosts;
 pub(crate) mod sftp_extract;
 

@@ -13,7 +13,13 @@ pub enum AuthMethod {
         password: String,
     },
     PrivateKey {
-        key_path: String,
+        /// 密钥库条目的 id（导入进来的私钥）。与 `key_path` 二选一，优先它。
+        #[serde(default)]
+        key_id: Option<String>,
+        /// 私钥文件路径：老数据，以及"就想直接指向 ~/.ssh/id_rsa 这个活文件"的用法。
+        /// 开头的 `~` 会被展开。
+        #[serde(default)]
+        key_path: Option<String>,
         passphrase: Option<String>,
     },
 }
@@ -46,8 +52,11 @@ impl fmt::Debug for AuthMethod {
                 .debug_struct("AuthMethod::Password")
                 .field("password", &"***")
                 .finish_non_exhaustive(),
-            AuthMethod::PrivateKey { key_path, .. } => f
+            AuthMethod::PrivateKey {
+                key_id, key_path, ..
+            } => f
                 .debug_struct("AuthMethod::PrivateKey")
+                .field("key_id", key_id)
                 .field("key_path", key_path)
                 .field("passphrase", &"***")
                 .finish_non_exhaustive(),

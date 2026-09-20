@@ -6,6 +6,7 @@ import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
+import { isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
 import { formatConnLabel } from '@/lib/privacy';
 import {
   groupConnections,
@@ -107,6 +108,14 @@ export default function ConnectionList() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingConnection, setEditingConnection] =
     useState<SavedConnection | undefined>(undefined);
+  /**
+   * 连接前的本地错误（如"这条连接存的认证方式已不支持"）。
+   *
+   * 连接失败本身有终端横幅兜着（失败会话会把详细信息打上去），但**还没开始连就
+   * 走不下去**的情况以前只写进 console，用户那边什么都不显示。移动端一直有这条
+   * 红条，桌面补齐成同一套。
+   */
+  const [localError, setLocalError] = useState<string | null>(null);
   // 拖拽排序状态：拖连接、拖分组各一套落点
   const [dragSubject, setDragSubject] = useState<DragSubject | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
@@ -672,13 +681,18 @@ export default function ConnectionList() {
       case 'PrivateKey':
         authMethod = {
           type: 'PrivateKey',
-          keyPath: conn.keyPath ?? '',
+          keyId: conn.keyId,
+          keyPath: conn.keyPath,
           passphrase,
         };
         break;
-      case 'Agent':
       default:
-        authMethod = { type: 'Agent' };
+        // 历史数据里可能有已不再支持的取值（例如早期的 "Agent"）：
+        // 说清楚是哪一条、该怎么修，而不是发一个后端必然拒绝的请求
+        setLocalError(
+          `「${conn.name}」保存的认证方式（${conn.authMethod}）已不再支持，请编辑这条连接、重新选择认证方式`,
+        );
+        return;
     }
     // Jump secrets are loaded on the Rust side from keychain when connectionId is set.
     const config: ConnectionConfig = {
@@ -752,6 +766,7 @@ export default function ConnectionList() {
    * exposing it to the WebView. Otherwise prompts the user.
    */
   const handleConnect = async (connection: SavedConnection) => {
+    setLocalError(null);
     if (connection.authMethod === 'Password') {
       try {
         const stored = await tauri.hasPassword(connection.id);
@@ -790,10 +805,12 @@ export default function ConnectionList() {
       return;
     }
     if (connection.authMethod === 'PrivateKey') {
+      setLocalError(null);
       const hasSavedPassphrase = await tauri.hasPassphrase(connection.id).catch((err) => {
         console.warn('检查已保存 passphrase 失败:', err);
         return false;
       });
+
       if (hasSavedPassphrase) {
         const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
         try {
@@ -816,15 +833,32 @@ export default function ConnectionList() {
             });
             return;
           }
-          console.warn('passphrase 连接失败，尝试无 passphrase:', err);
+          // 真需要密码（保存的那把已经不对了）才追问；别的原因就说别的
+          if (isPassphraseProblem(err)) {
+            promptForPassphrase(connection);
+            return;
+          }
+          console.warn('私钥连接失败:', err);
+          return;
         }
       }
+
+      // 密钥库里的私钥是带密码的、而本地没存：直接问，不拿一次失败去试
+      if (await keyNeedsPassphrase(connection)) {
+        promptForPassphrase(connection);
+        return;
+      }
+
       try {
         const config: ConnectionConfig = {
           host: connection.host,
           port: connection.port,
           username: connection.username,
-          authMethod: { type: 'PrivateKey', keyPath: connection.keyPath ?? '' },
+          authMethod: {
+            type: 'PrivateKey',
+            keyId: connection.keyId,
+            keyPath: connection.keyPath,
+          },
           connectionId: connection.id,
         };
         const sessionId = await connect(config);
@@ -846,9 +880,14 @@ export default function ConnectionList() {
           });
           return;
         }
-        console.warn('无 passphrase 连接失败，可能私钥已加密:', err);
+        // 这一次尝试不是白费的：后端明确告诉我们原因，只有"缺密码 / 密码错"
+        // 才继续追问，其他原因（文件没了、格式不认、服务器拒绝）照实显示
+        if (isPassphraseProblem(err)) {
+          promptForPassphrase(connection);
+          return;
+        }
+        console.warn('私钥连接失败:', err);
       }
-      promptForPassphrase(connection);
       return;
     }
     await doConnect(connection);
@@ -943,6 +982,22 @@ export default function ConnectionList() {
       searchPlaceholder="搜索连接..."
     >
       <div ref={listRef} className="space-y-3" onClick={closeContextMenu}>
+        {localError && (
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs leading-relaxed text-red-300"
+          >
+            <span>{localError}</span>
+            <button
+              type="button"
+              onClick={() => setLocalError(null)}
+              className="shrink-0 text-red-400/70 hover:text-red-200"
+              aria-label="关闭提示"
+            >
+              &times;
+            </button>
+          </div>
+        )}
         {loading && (
           <p className="text-sm text-zinc-500 text-center mt-4">加载中...</p>
         )}

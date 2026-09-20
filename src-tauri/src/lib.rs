@@ -148,6 +148,8 @@ impl AppState {
     /// backfill) runs sequentially after settings are loaded.
     pub async fn new(config_dir: PathBuf) -> Self {
         crate::agent::image_store::init(&config_dir);
+        // 私钥库：导入的私钥加密存放在 {config_dir}/keys，与其它配置同目录
+        crate::ssh::key_store::init(&config_dir);
 
         // Pre-compute file paths so each `spawn_blocking` closure can own its
         // own copy without borrowing `config_dir`.
@@ -741,6 +743,13 @@ pub fn run() {
             commands::ssh::ssh_exec,
             commands::ssh::ssh_exec_long,
             commands::ssh::ssh_exec_long_cancel,
+            commands::ssh_keys::ssh_key_import_file,
+            commands::ssh_keys::ssh_key_import_text,
+            commands::ssh_keys::ssh_key_list,
+            commands::ssh_keys::ssh_key_rename,
+            commands::ssh_keys::ssh_key_delete,
+            commands::ssh_keys::ssh_key_origin_status,
+            commands::ssh_keys::ssh_key_refresh_from_origin,
             commands::agent_lifecycle::agent_start_task,
             commands::agent_lifecycle::agent_stop_task,
             commands::agent_attachment::agent_read_local_file,

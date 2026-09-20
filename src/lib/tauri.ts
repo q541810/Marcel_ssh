@@ -4,6 +4,8 @@ import type {
   AppBootstrapData,
   ConnectionConfig,
   SavedConnection,
+  StoredKeyMeta,
+  KeyOriginStatus,
   AppSettings,
   AgentConversation,
   StoredMessage,
@@ -560,6 +562,73 @@ export async function hasPassphrase(connectionId: string): Promise<boolean> {
 
 export async function deletePassphrase(connectionId: string): Promise<void> {
   return invoke("config_delete_passphrase", { connectionId });
+}
+
+// 私钥库（已导入的私钥）
+//
+// 安全：这些命令只进出元数据（名字 / 算法 / 指纹 / 是否带密码），私钥正文只在
+// Rust 侧存在——导入时进去一次，连接时由后端自行取用，从不回读给前端。
+
+/**
+ * 导入一把私钥文件。`path` 是系统文件对话框给的结果：桌面上是真实路径，
+ * Android 上是 `content://` 取件凭据（由 Rust 侧经 ContentResolver 读）。
+ */
+export async function importKeyFile(
+  path: string,
+  name?: string,
+  passphrase?: string,
+): Promise<StoredKeyMeta> {
+  return invoke<StoredKeyMeta>("ssh_key_import_file", {
+    path,
+    name,
+    passphrase,
+  });
+}
+
+/** 导入用户粘贴的私钥文本。 */
+export async function importKeyText(
+  content: string,
+  name?: string,
+  passphrase?: string,
+): Promise<StoredKeyMeta> {
+  return invoke<StoredKeyMeta>("ssh_key_import_text", {
+    content,
+    name,
+    passphrase,
+  });
+}
+
+export async function listKeys(): Promise<StoredKeyMeta[]> {
+  return invoke<StoredKeyMeta[]>("ssh_key_list");
+}
+
+export async function renameKey(id: string, name: string): Promise<StoredKeyMeta> {
+  return invoke<StoredKeyMeta>("ssh_key_rename", { id, name });
+}
+
+export async function deleteKey(id: string): Promise<void> {
+  return invoke("ssh_key_delete", { id });
+}
+
+/** 这把私钥的导入来源现在什么样（`null` = 没有来源可比，例如粘贴导入的）。 */
+export async function keyOriginStatus(
+  id: string,
+): Promise<KeyOriginStatus | null> {
+  return invoke<KeyOriginStatus | null>("ssh_key_origin_status", { id });
+}
+
+/**
+ * 用来源文件的当前内容刷新库里那一份（同一个条目原地换掉，连接不用改）。
+ * 新内容带密码时要把密码一起给。
+ */
+export async function refreshKeyFromOrigin(
+  id: string,
+  passphrase?: string,
+): Promise<StoredKeyMeta | null> {
+  return invoke<StoredKeyMeta | null>("ssh_key_refresh_from_origin", {
+    id,
+    passphrase,
+  });
 }
 
 // Jump host keychain

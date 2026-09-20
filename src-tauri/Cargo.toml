@@ -57,6 +57,9 @@ tauri-plugin-opener = "^2"
 # 磁盘剩余空间预检（minisign 验签仅 Windows 需要，见下方 target 段）。
 sha2 = "0.10"
 fs4 = "0.8"
+# 私钥库（ssh/key_store.rs）：导入的私钥用 AES-256-GCM 加密后再落盘。
+# 选 RustCrypto 而非 ring 是因为它纯 Rust，Android 交叉编译不会有构建脚本意外。
+aes-gcm = "0.10"
 
 
 

@@ -14,6 +14,10 @@ pub struct SavedConnection {
     pub username: String,
     pub auth_method: String,
     pub key_path: Option<String>,
+    /// 密钥库里那把私钥的 id（导入进来的私钥）。老数据没有这个字段，
+    /// 为 `None` 时按 `key_path` 走——两条路都保留见 `ssh::key_store::resolve_pem`。
+    #[serde(default)]
+    pub key_id: Option<String>,
     pub group: Option<String>,
     pub last_connected: Option<DateTime<Utc>>,
     /// Whether ProxyJump is enabled. Missing on old data = disabled.
@@ -30,6 +34,9 @@ pub struct SavedConnection {
     pub jump_auth_method: Option<String>,
     #[serde(default)]
     pub jump_key_path: Option<String>,
+    /// 跳板机私钥的密钥库 id，语义同 `key_id`
+    #[serde(default)]
+    pub jump_key_id: Option<String>,
 }
 
 /// Store for managing saved SSH connections.
@@ -139,6 +146,7 @@ mod tests {
             username: "root".into(),
             auth_method: "Agent".into(),
             key_path: None,
+            key_id: None,
             group: group.map(String::from),
             last_connected: None,
             use_jump: false,
@@ -147,6 +155,7 @@ mod tests {
             jump_username: None,
             jump_auth_method: None,
             jump_key_path: None,
+            jump_key_id: None,
         }
     }
 

@@ -11,8 +11,10 @@ use tokio::sync::{mpsc, Mutex as TokioMutex, RwLock};
 use uuid::Uuid;
 
 use crate::emit_event;
-use crate::error::AppError;
+use crate::error::{AppError, KeyAuthCode};
 use crate::ssh::auth::AuthMethod;
+use crate::ssh::key_material;
+use crate::ssh::key_store;
 use crate::ssh::known_hosts::{KnownHostsStore, VerifyOutcome};
 
 use super::client::Client;
@@ -489,11 +491,15 @@ impl SshManager {
                 .await
                 .map_err(|e| AppError::Ssh(format!("密码认证错误: {}", e)))?,
             AuthMethod::PrivateKey {
+                key_id,
                 key_path,
                 passphrase,
             } => {
-                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                    .map_err(|e| AppError::Ssh(format!("加载私钥失败: {}", e)))?;
+                // 私钥正文只在 Rust 侧出现：从密钥库解密，或按路径读文件（支持 `~`）。
+                // 解析成内存里的 PEM 再解码，而不是把路径交给 load_secret_key——
+                // 密钥库里的密文不是它能读的格式，而 Android 上的 content:// 更不是。
+                let pem = key_store::resolve_pem(key_id.as_deref(), key_path.as_deref())?;
+                let key = key_material::decode_pem(&pem, passphrase.as_deref())?;
                 handle
                     .authenticate_publickey(
                         username,
@@ -504,7 +510,17 @@ impl SshManager {
             }
         };
         if !auth_success.success() {
-            return Err(AppError::Ssh("认证失败：用户名或密码/密钥错误".into()));
+            // 区分两次失败：密码被拒不等于密钥被拒，能照做的下一步完全不同
+            return Err(match auth_method {
+                AuthMethod::Password { .. } => {
+                    AppError::Ssh("认证失败：用户名或密码错误".into())
+                }
+                AuthMethod::PrivateKey { .. } => AppError::KeyAuth {
+                    code: KeyAuthCode::Rejected,
+                    message: "服务器拒绝了这把密钥。请确认它对应的公钥已加到服务器的 authorized_keys 里、用户名正确；如果你最近换过密钥文件，请在连接设置里重新导入——应用用的可能是导入时那份。"
+                        .into(),
+                },
+            });
         }
         Ok(())
     }

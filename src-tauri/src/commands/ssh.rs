@@ -55,16 +55,13 @@ pub(crate) fn build_jump_config(
             AuthMethod::Password { password }
         }
         "PrivateKey" => {
-            let key_path = saved
-                .jump_key_path
-                .clone()
-                .filter(|p| !p.is_empty())
-                .ok_or_else(|| AppError::Config("未配置跳板机私钥路径".into()))?;
             let passphrase = keychain::get_password(&jump_passphrase_account(connection_id))?;
-            AuthMethod::PrivateKey {
-                key_path,
+            build_private_key_auth(
+                saved.jump_key_id.as_deref(),
+                saved.jump_key_path.as_deref(),
                 passphrase,
-            }
+                "跳板机的私钥",
+            )?
         }
         other => {
             return Err(AppError::Config(format!(
@@ -88,13 +85,47 @@ fn clone_auth_method(auth: &AuthMethod) -> AuthMethod {
             password: password.clone(),
         },
         AuthMethod::PrivateKey {
+            key_id,
             key_path,
             passphrase,
         } => AuthMethod::PrivateKey {
+            key_id: key_id.clone(),
             key_path: key_path.clone(),
             passphrase: passphrase.clone(),
         },
     }
+}
+
+/// 组装私钥认证方式：优先密钥库 id（导入进来的私钥），否则回落到手填的文件路径。
+///
+/// 两者都为空时**在这里**给出一句能照做的提示——放进下层的话，用户看到的会是
+/// 一句底层的"文件不存在"，而他真正缺的是"去选一把私钥"。`subject` 让跳板机
+/// 那条路说清是哪一把私钥缺了。
+fn build_private_key_auth(
+    key_id: Option<&str>,
+    key_path: Option<&str>,
+    passphrase: Option<String>,
+    subject: &str,
+) -> Result<AuthMethod, AppError> {
+    let key_id = key_id
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let key_path = key_path
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if key_id.is_none() && key_path.is_none() {
+        return Err(AppError::Config(format!(
+            "这个连接还没有指定{}，请在连接设置里选择或导入一把",
+            subject
+        )));
+    }
+    Ok(AuthMethod::PrivateKey {
+        key_id,
+        key_path,
+        passphrase,
+    })
 }
 
 /// 从 SavedConnection 的认证方式 + keychain 组装运行时 AuthMethod。
@@ -108,16 +139,13 @@ pub(crate) fn build_connect_auth_method(saved: &SavedConnection) -> Result<AuthM
             Ok(AuthMethod::Password { password })
         }
         "PrivateKey" => {
-            let key_path = saved
-                .key_path
-                .clone()
-                .filter(|p| !p.is_empty())
-                .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
             let passphrase = keychain::get_password(&format!("pk:{}", saved.id))?;
-            Ok(AuthMethod::PrivateKey {
-                key_path,
+            build_private_key_auth(
+                saved.key_id.as_deref(),
+                saved.key_path.as_deref(),
                 passphrase,
-            })
+                "私钥",
+            )
         }
         other => Err(AppError::Config(format!("不支持的认证方式: {}", other))),
     }
@@ -365,17 +393,13 @@ pub async fn ssh_connect_with_saved_passphrase(
             .clone()
     };
 
-    let key_path = saved
-        .key_path
-        .clone()
-        .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
-
     let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
-
-    let auth_method = AuthMethod::PrivateKey {
-        key_path,
+    let auth_method = build_private_key_auth(
+        saved.key_id.as_deref(),
+        saved.key_path.as_deref(),
         passphrase,
-    };
+        "私钥",
+    )?;
     let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
 
     let config = ConnectionConfig {
@@ -424,15 +448,13 @@ pub async fn ssh_reconnect(
             AuthMethod::Password { password }
         }
         "PrivateKey" => {
-            let key_path = saved
-                .key_path
-                .clone()
-                .ok_or_else(|| AppError::Config("未配置私钥路径".into()))?;
             let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
-            AuthMethod::PrivateKey {
-                key_path,
+            build_private_key_auth(
+                saved.key_id.as_deref(),
+                saved.key_path.as_deref(),
                 passphrase,
-            }
+                "私钥",
+            )?
         }
         other => return Err(AppError::Config(format!("不支持的认证方式: {}", other))),
     };

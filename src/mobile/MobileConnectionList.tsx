@@ -26,6 +26,7 @@ import {
   getErrorMessage,
   parseAppError,
 } from '@/lib/errors';
+import { isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
 import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig, SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
@@ -165,13 +166,18 @@ export default function MobileConnectionList({
       case 'PrivateKey':
         authMethod = {
           type: 'PrivateKey',
-          keyPath: conn.keyPath ?? '',
+          keyId: conn.keyId,
+          keyPath: conn.keyPath,
           passphrase,
         };
         break;
-      case 'Agent':
       default:
-        authMethod = { type: 'Agent' };
+        // 历史数据里可能有已不再支持的取值（例如早期的 "Agent"）：
+        // 说清楚是哪一条、该怎么修，而不是发一个后端必然拒绝的请求
+        setLocalError(
+          `「${conn.name}」保存的认证方式（${conn.authMethod}）已不再支持，请编辑这条连接、重新选择认证方式`,
+        );
+        return;
     }
 
     const config: ConnectionConfig = {
@@ -336,9 +342,22 @@ export default function MobileConnectionList({
             });
             return;
           }
+          // 真需要密码（保存的那把已经不对了）才追问；别的原因就说别的
+          if (isPassphraseProblem(err)) {
+            promptForPassphrase(connection);
+            return;
+          }
+          setLocalError(getErrorMessage(err));
+          return;
         } finally {
           setConnectingId(null);
         }
+      }
+
+      // 密钥库里的私钥是带密码的、而本地没存：直接问，不拿一次失败去试
+      if (await keyNeedsPassphrase(connection)) {
+        promptForPassphrase(connection);
+        return;
       }
 
       try {
@@ -348,7 +367,11 @@ export default function MobileConnectionList({
           host: connection.host,
           port: connection.port,
           username: connection.username,
-          authMethod: { type: 'PrivateKey', keyPath: connection.keyPath ?? '' },
+          authMethod: {
+            type: 'PrivateKey',
+            keyId: connection.keyId,
+            keyPath: connection.keyPath,
+          },
           connectionId: connection.id,
         };
         const sessionId = await connect(config);
@@ -364,10 +387,16 @@ export default function MobileConnectionList({
           });
           return;
         }
+        // 这一次尝试不是白费的：后端明确告诉我们原因，只有"缺密码 / 密码错"
+        // 才继续追问，其他原因照实显示
+        if (isPassphraseProblem(err)) {
+          promptForPassphrase(connection);
+          return;
+        }
+        setLocalError(getErrorMessage(err));
       } finally {
         setConnectingId(null);
       }
-      promptForPassphrase(connection);
       return;
     }
 
