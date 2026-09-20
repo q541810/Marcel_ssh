@@ -23,6 +23,7 @@ export function useAgent() {
     loadConversation: s.loadConversation,
     renameConversation: s.renameConversation,
     deleteConversation: s.deleteConversation,
+    setConversationPinned: s.setConversationPinned,
     setConversationModel: s.setConversationModel,
     setConversationEffort: s.setConversationEffort,
     rollbackToMessage: s.rollbackToMessage,
@@ -110,6 +111,13 @@ export function useAgent() {
     [store.deleteConversation],
   );
 
+  const setConversationPinned = useCallback(
+    async (conversationId: string, pinned: boolean) => {
+      return store.setConversationPinned(conversationId, pinned);
+    },
+    [store.setConversationPinned],
+  );
+
   const rollbackToMessage = useCallback(
     async (conversationId: string, messageId: string) => {
       return store.rollbackToMessage(conversationId, messageId);
@@ -156,6 +164,7 @@ export function useAgent() {
     loadConversation,
     renameConversation,
     deleteConversation,
+    setConversationPinned,
     setConversationModel: store.setConversationModel,
     setConversationEffort: store.setConversationEffort,
     rollbackToMessage,

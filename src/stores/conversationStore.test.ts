@@ -15,6 +15,7 @@ const {
   agentDeleteConversation,
   agentGetConversation,
   agentCompactConversation,
+  agentSetConversationPinned,
   listen,
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
@@ -27,6 +28,7 @@ const {
   agentDeleteConversation: vi.fn(),
   agentGetConversation: vi.fn(),
   agentCompactConversation: vi.fn(),
+  agentSetConversationPinned: vi.fn(),
   listen: vi.fn(),
 }));
 
@@ -41,6 +43,7 @@ vi.mock('@/lib/tauri', () => ({
   agentDeleteConversation,
   agentGetConversation,
   agentCompactConversation,
+  agentSetConversationPinned,
 }));
 
 // compactConversation 经 attachStreamListener 订阅 `agent://stream/{taskId}`；
@@ -876,6 +879,76 @@ describe('conversationStore', () => {
     });
   });
 
+  describe('setConversationPinned', () => {
+    function seedConversations() {
+      useConversationStore.setState({
+        conversations: {
+          // 对象键序 = 展示顺序（reorderByUpdatedAt 维护）
+          newer: {
+            id: 'newer',
+            connectionId: 'conn-1',
+            title: 'Newer',
+            createdAt: '2026-01-02T00:00:00Z',
+            updatedAt: '2026-01-02T00:00:00Z',
+          },
+          older: {
+            id: 'older',
+            connectionId: 'conn-1',
+            title: 'Older',
+            createdAt: '2026-01-01T00:00:00Z',
+            updatedAt: '2026-01-01T00:00:00Z',
+          },
+        },
+      });
+    }
+
+    it('置顶后浮到最前，且不改 updatedAt', async () => {
+      seedConversations();
+      agentSetConversationPinned.mockResolvedValue(undefined);
+
+      await useConversationStore.getState().setConversationPinned('older', true);
+
+      expect(agentSetConversationPinned).toHaveBeenCalledWith('older', true);
+      const convs = useConversationStore.getState().conversations;
+      expect(Object.keys(convs)).toEqual(['older', 'newer']);
+      expect(convs.older.pinned).toBe(true);
+      // 置顶不是内容变更：时间戳原样（否则取消置顶会打乱日期分组）
+      expect(convs.older.updatedAt).toBe('2026-01-01T00:00:00Z');
+    });
+
+    it('取消置顶后回落时间序', async () => {
+      seedConversations();
+      useConversationStore.setState((s) => ({
+        conversations: {
+          ...s.conversations,
+          older: { ...s.conversations.older, pinned: true },
+        },
+      }));
+      agentSetConversationPinned.mockResolvedValue(undefined);
+
+      await useConversationStore.getState().setConversationPinned('older', false);
+
+      const convs = useConversationStore.getState().conversations;
+      expect(Object.keys(convs)).toEqual(['newer', 'older']);
+      expect(convs.older.pinned).toBe(false);
+    });
+
+    it('后端失败时抛出且不改本地（先 await 后 set）', async () => {
+      seedConversations();
+      const before = useConversationStore.getState().conversations;
+      agentSetConversationPinned.mockRejectedValue(new Error('boom'));
+
+      await expect(
+        useConversationStore.getState().setConversationPinned('older', true),
+      ).rejects.toThrow('boom');
+
+      const after = useConversationStore.getState().conversations;
+      expect(after).toBe(before);
+      expect(after.older.pinned).toBeUndefined();
+      expect(Object.keys(after)).toEqual(['newer', 'older']);
+    });
+  });
+
   describe('deleteConversation cascade', () => {
     it('deletes the conversation and all its sub-conversations from the store', async () => {
       agentDeleteConversation.mockResolvedValue(undefined);
@@ -1303,13 +1376,13 @@ describe('conversationStore', () => {
                   id: 'call-a',
                   name: 'execute_command',
                   arguments: { command: 'ls' },
-                  riskLevel: 'LowRisk',
+                  disposition: 'Allow',
                 },
                 {
                   id: 'call-b',
                   name: 'system_info',
                   arguments: { category: 'os' },
-                  riskLevel: 'ReadOnly',
+                  disposition: 'Allow',
                 },
               ],
             }),
@@ -1431,7 +1504,7 @@ describe('conversationStore', () => {
           id: cid,
           name: `tool_${i}`,
           arguments: { x: i },
-          riskLevel: 'LowRisk' as const,
+          disposition: 'Allow' as const,
         })),
       });
     }
@@ -1707,7 +1780,7 @@ describe('conversationStore', () => {
               role: 'assistant',
               content: '让我看看',
               toolCalls: [
-                { id: 'call-1', name: 'execute_command', arguments: { command: 'ls' }, riskLevel: 'LowRisk' as const },
+                { id: 'call-1', name: 'execute_command', arguments: { command: 'ls' }, disposition: 'Allow' as const },
               ],
               reasoningContent: '先列目录',
             }),

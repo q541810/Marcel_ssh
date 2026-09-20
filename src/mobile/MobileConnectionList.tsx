@@ -29,6 +29,12 @@ import {
 import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig, SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import {
+  UNGROUPED_NAME,
+  groupNameOf,
+  toOrderEntries,
+} from '@/lib/connectionOrder';
+import { useLongPressDrag } from './useLongPressDrag';
 import { listSessionsToDisconnectBeforeNewConnect } from './sessionUi';
 import MobileConnectionForm from './MobileConnectionForm';
 import MobileSheet from './ui/MobileSheet';
@@ -61,7 +67,20 @@ export default function MobileConnectionList({
     useConnectWithPassword();
   const mismatch = useHostKeyMismatch();
   const privacyMode = usePrivacyMode();
+  const applyConnectionOrder = useConnectionStore((s) => s.applyConnectionOrder);
   const [connectingId, setConnectingId] = useState<string | null>(null);
+  // 长按拖拽排序（移动端列表是平铺的，拖动即全局顺序；分组仍由编辑表单设置）
+  const drag = useLongPressDrag({
+    orderedIds: connections.map((c) => c.id),
+    onCommit: (orderedIds) => {
+      const byId = new Map(connections.map((c) => [c.id, c]));
+      const next = orderedIds
+        .map((id) => byId.get(id))
+        .filter((c): c is SavedConnection => c != null);
+      if (next.length !== connections.length) return;
+      void applyConnectionOrder(toOrderEntries(next));
+    },
+  });
   const [localError, setLocalError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingConnection, setEditingConnection] = useState<
@@ -450,13 +469,33 @@ export default function MobileConnectionList({
         <ul className="flex flex-col gap-2">
           {connections.map((conn) => {
             const busy = connectingId === conn.id;
+            const groupName = groupNameOf(conn);
+            const dragging = drag.draggingId === conn.id;
             return (
-              <li key={conn.id}>
+              <li
+                key={conn.id}
+                ref={drag.registerItem(conn.id)}
+                onTouchStart={drag.onTouchStart(conn.id)}
+                onTouchMove={drag.onTouchMovePending}
+                onTouchEnd={drag.onTouchEndPending}
+                onTouchCancel={drag.onTouchEndPending}
+                style={{ transform: drag.translateFor(conn.id) }}
+                className={
+                  // 被拖的行必须零过渡（跟手 1:1）；其余行保留过渡，拖拽时才有让位动画
+                  dragging
+                    ? 'relative z-10 shadow-xl shadow-black/40'
+                    : `transition-transform ${drag.isDragging ? 'duration-150' : ''}`
+                }
+              >
                 <div className="flex w-full items-center rounded-xl border border-zinc-800 bg-zinc-900 pr-1">
                   <button
                     type="button"
                     disabled={busy || connectingId != null}
-                    onClick={() => void handleConnect(conn)}
+                    onClick={() => {
+                      // 长按拖拽松手后的合成点击要忽略，否则一拖就顺带连上了
+                      if (drag.shouldSuppressClick()) return;
+                      void handleConnect(conn);
+                    }}
                     className="flex min-w-0 flex-1 items-center gap-3 rounded-l-xl px-3 py-3 text-left active:scale-[0.99] disabled:opacity-60"
                   >
                     <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-zinc-800 text-indigo-400">
@@ -472,11 +511,13 @@ export default function MobileConnectionList({
                       </div>
                       <div className="truncate text-xs text-zinc-500">
                         {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
+                        {groupName !== UNGROUPED_NAME && ` · ${groupName}`}
                       </div>
                     </div>
                   </button>
                   <button
                     type="button"
+                    data-nodrag
                     onClick={() => openEditForm(conn)}
                     className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800"
                     aria-label={`编辑 ${conn.name}`}
@@ -485,6 +526,7 @@ export default function MobileConnectionList({
                   </button>
                   <button
                     type="button"
+                    data-nodrag
                     onClick={() => setDeleteTarget(conn)}
                     className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-500 active:bg-zinc-800 active:text-red-400"
                     aria-label={`删除 ${conn.name}`}

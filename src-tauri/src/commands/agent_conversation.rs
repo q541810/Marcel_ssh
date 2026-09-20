@@ -247,6 +247,32 @@ pub async fn agent_rename_conversation(
     Ok(())
 }
 
+/// 设置/取消会话置顶。
+///
+/// 只改列表视图的元数据：**不更新 `updated_at`、不产生内容变更**，
+/// 因此取消置顶不会把对话打回日期分组最前面（见 `ConversationDb::set_conversation_pinned`）。
+#[tauri::command]
+pub async fn agent_set_conversation_pinned(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    pinned: bool,
+) -> Result<(), AppError> {
+    let updated = state
+        .conversation_db
+        .set_conversation_pinned(&conversation_id, pinned)
+        .map_err(|e| AppError::Agent(format!("Failed to pin conversation: {}", e)))?;
+    if !updated {
+        return Err(AppError::Agent(format!("会话不存在: {}", conversation_id)));
+    }
+    log::info!(
+        "{} conversation: {}",
+        if pinned { "Pinned" } else { "Unpinned" },
+        conversation_id
+    );
+
+    Ok(())
+}
+
 /// 设置会话级模型（**仅内存**：`AppState.session_models`）。
 ///
 /// 会话 → 模型 的选择不再落盘（SQLite `conversations.model_id` 仅作旧数据

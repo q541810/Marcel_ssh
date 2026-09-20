@@ -12,13 +12,13 @@ import { getConversationAgentStatus } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from '@/components/agent/AgentStatusIndicator';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
-import { groupConversationsByDate } from '@/lib/dateGrouping';
+import { groupConversationsWithPinned } from '@/lib/dateGrouping';
 import {
   useConversationHistoryStore,
   groupSearchResultsByConnection,
   formatMatchCountLabel,
 } from '@/stores/conversationHistoryManager';
-import { Pencil } from 'lucide-react';
+import { Pencil, Pin } from 'lucide-react';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import MobileSheet from './ui/MobileSheet';
 
@@ -69,6 +69,7 @@ export default function MobileChatHistorySheet({
   const matchIndex = useConversationHistoryStore((s) => s.matchIndex);
   const highlightMessageId = useConversationHistoryStore((s) => s.highlightMessageId);
 
+  const setConversationPinned = useConversationHistoryStore((s) => s.setConversationPinned);
   const renameTarget = useConversationHistoryStore((s) => s.renameTarget);
   const renameInput = useConversationHistoryStore((s) => s.renameInput);
 
@@ -379,7 +380,7 @@ export default function MobileChatHistorySheet({
                         )}
                         {expanded && convs.length > 0 && (
                           <div className="mt-1 space-y-2 pl-2">
-                            {groupConversationsByDate(convs).map((group) => (
+                            {groupConversationsWithPinned(convs).map((group) => (
                               <div key={group.key} className="space-y-1">
                                 <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
                                   {group.label}
@@ -408,6 +409,17 @@ export default function MobileChatHistorySheet({
                                           )}
                                           size="xs"
                                         />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void setConversationPinned(conv.id, !conv.pinned);
+                                        }}
+                                        className="mr-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800 active:text-zinc-200"
+                                        aria-label={conv.pinned ? `取消置顶 ${conv.title}` : `置顶 ${conv.title}`}
+                                      >
+                                        <Pin className="h-3.5 w-3.5" />
                                       </button>
                                       <button
                                         type="button"

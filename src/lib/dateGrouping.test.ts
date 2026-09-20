@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { groupConversationsByDate, TIME_GROUP_LABELS } from './dateGrouping';
+import {
+  PINNED_GROUP_LABEL,
+  groupConversationsByDate,
+  groupConversationsWithPinned,
+  TIME_GROUP_LABELS,
+} from './dateGrouping';
 
 describe('groupConversationsByDate', () => {
   // Use local-timezone-aware dates to avoid UTC/local mismatch
@@ -61,5 +66,43 @@ describe('groupConversationsByDate', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].key).toBe('earlier');
     expect(groups[0].items).toHaveLength(2);
+  });
+});
+
+describe('groupConversationsWithPinned', () => {
+  const baseNow = new Date(2026, 3, 10, 12, 0, 0);
+
+  it('置顶单独成组放在最前，且不再出现在日期分组里', () => {
+    const items = [
+      {
+        id: 'old-pinned',
+        updatedAt: new Date(2025, 0, 1, 10, 0, 0).toISOString(),
+        pinned: true,
+      },
+      { id: 'today', updatedAt: new Date(2026, 3, 10, 8, 0, 0).toISOString() },
+      {
+        id: 'today-pinned',
+        updatedAt: new Date(2026, 3, 10, 9, 0, 0).toISOString(),
+        pinned: true,
+      },
+    ];
+
+    const groups = groupConversationsWithPinned(items, baseNow);
+
+    expect(groups[0].key).toBe('pinned');
+    expect(groups[0].label).toBe(PINNED_GROUP_LABEL);
+    // 置顶组内仍按更新时间倒序
+    expect(groups[0].items.map((i) => i.id)).toEqual(['today-pinned', 'old-pinned']);
+    // 非置顶项照旧按日期分组，且没有重复出现
+    expect(groups[1].key).toBe('today');
+    expect(groups[1].items.map((i) => i.id)).toEqual(['today']);
+    expect(groups.flatMap((g) => g.items)).toHaveLength(3);
+  });
+
+  it('没有置顶项时不产出空组（与纯日期分组结果一致）', () => {
+    const items = [{ id: 'a', updatedAt: new Date(2026, 3, 10, 8, 0, 0).toISOString() }];
+    expect(groupConversationsWithPinned(items, baseNow)).toEqual(
+      groupConversationsByDate(items, baseNow),
+    );
   });
 });

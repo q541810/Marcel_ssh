@@ -3,6 +3,7 @@ import type {
   AgentMessage,
   AgentConversation,
   StoredMessage,
+  TurnState,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import type { AgentCompactResult } from '@/lib/tauri';
@@ -18,6 +19,7 @@ import { useSettingsStore } from './settingsStore';
 import { effectiveModelId } from '@/lib/llmRegistry';
 import { isStreamingTool } from '@/lib/toolCatalog';
 import { isTaskBusy } from '@/lib/agentStatus';
+import { withTailTurnState } from '@/lib/agentTurnFold';
 import { attachStreamListener, cleanupTaskListeners } from './agentStreamManager';
 import { getStreamState, setStreamState } from './agentStreamHandlers';
 
@@ -42,6 +44,8 @@ export interface ConversationState {
   bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => void;
   unbindSessionConversation: (sessionId: string) => void;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
+  /** 置顶/取消置顶会话（列表里浮到最上方；不改 updatedAt）。 */
+  setConversationPinned: (conversationId: string, pinned: boolean) => Promise<void>;
   /**
    * 设置会话级模型（**仅内存**：后端 session_models + 本地 conv.modelId）。
    * modelId 非空 = 固定本会话用该模型，**顺带更新全局「最近使用」并落盘**；
@@ -100,6 +104,9 @@ export interface ConversationState {
   clearAllAssistantFlags: (conversationId?: string) => void;
   clearExecutingToolFlags: () => void;
   markAbortedToolFlags: (conversationId?: string) => void;
+  /** 把回合收尾状态写到该对话尾回合的锚点（最后一条 user 消息）上。
+   *  与后端 `messages.turn_state` 同一落点；仅 completed 允许折叠回合。 */
+  markTailTurnState: (conversationId: string, state: TurnState) => void;
   buildLlmHistory: (conversationId: string) => Array<{
     role: string;
     content: string;
@@ -278,9 +285,12 @@ function restoreRunningTaskForConversation(conversationId: string) {
 }
 
 function reorderByUpdatedAt(convs: Record<string, AgentConversation>): Record<string, AgentConversation> {
-  const sorted = Object.values(convs).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  );
+  const sorted = Object.values(convs).sort((a, b) => {
+    // 置顶优先（与 lib/dateGrouping 的置顶分组同一口径），组内仍按更新时间倒序。
+    const pinnedDiff = Number(!!b.pinned) - Number(!!a.pinned);
+    if (pinnedDiff !== 0) return pinnedDiff;
+    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  });
   const reordered: Record<string, AgentConversation> = {};
   for (const c of sorted) reordered[c.id] = c;
   return reordered;
@@ -492,6 +502,24 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         conversations: reorderByUpdatedAt({
           ...state.conversations,
           [conversationId]: updated,
+        }),
+      };
+    });
+  },
+
+  /**
+   * 置顶/取消置顶会话。与 `renameConversation` 同一模式：**先 await 后端成功，
+   * 再改本地**（后端才是权威，失败就不动本地，避免 UI 与磁盘不一致）。
+   */
+  setConversationPinned: async (conversationId: string, pinned: boolean) => {
+    await tauri.agentSetConversationPinned(conversationId, pinned);
+    set((state) => {
+      const conv = state.conversations[conversationId];
+      if (!conv) return state;
+      return {
+        conversations: reorderByUpdatedAt({
+          ...state.conversations,
+          [conversationId]: { ...conv, pinned },
         }),
       };
     });
@@ -1300,6 +1328,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         ]),
       ),
     }));
+  },
+
+  markTailTurnState: (conversationId: string, state: TurnState) => {
+    // 回合收尾状态的内存镜像：写到该对话**尾回合的锚点**（最后一条 user
+    // 消息）上 —— 后端持久化的是同一行同一字段（`messages.turn_state`），
+    // 重载后由 load 路径填回，两边落点一致。判定规则见 `agentTurnFold`：
+    // 只有 completed 允许把过程折叠起来。
+    //
+    // 为何要在这里写而不是等后端事件：手动停止时前端已按设计拆掉该任务的
+    // 流通道（避免晚到的 Done 被当成「已完成」），事件不可能到达。
+    set((store) => {
+      const msgs = store.messages[conversationId];
+      if (!msgs) return store;
+      const next = withTailTurnState(msgs, state);
+      if (next === msgs) return store;
+      return {
+        messages: { ...store.messages, [conversationId]: next },
+      };
+    });
   },
 
   buildLlmHistory: (conversationId: string) => {

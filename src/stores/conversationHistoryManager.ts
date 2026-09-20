@@ -73,6 +73,8 @@ export interface ConversationHistoryActions {
   setRenameInput: (input: string) => void;
   cancelRename: () => void;
   confirmRename: (convId?: string, newTitle?: string) => Promise<boolean>;
+  /** 置顶/取消置顶会话，同步历史侧列表与选中项；失败返回 false 且不改本地。 */
+  setConversationPinned: (conversationId: string, pinned: boolean) => Promise<boolean>;
   deleteConversation: (conversationId: string) => Promise<void>;
 
   // 重置全部状态（关闭历史面板时调用）
@@ -431,6 +433,44 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
     }
   },
 
+  /**
+   * 置顶/取消置顶会话。与 `confirmRename` 同一模式：调 live store 的 action（它负责
+   * await 后端 + 改 live 列表），成功后同步历史侧的三块状态。失败不改本地。
+   */
+  setConversationPinned: async (conversationId: string, pinned: boolean) => {
+    try {
+      await useConversationStore.getState().setConversationPinned(conversationId, pinned);
+
+      set((s) => {
+        const nextConvsByConn: Record<string, AgentConversation[]> = {};
+        for (const [connId, convs] of Object.entries(s.conversationsByConn)) {
+          nextConvsByConn[connId] = convs.map((c) =>
+            c.id === conversationId ? { ...c, pinned } : c,
+          );
+        }
+
+        const nextSelectedConv =
+          s.selectedConv?.id === conversationId
+            ? { ...s.selectedConv, pinned }
+            : s.selectedConv;
+
+        return {
+          conversationsByConn: nextConvsByConn,
+          // 搜索结果不动：ConversationSearchResult 里没有 pinned 字段，排序也按
+          // 相关度/时间走，置顶不参与（与「置顶只影响列表顺序」的口径一致）。
+          selectedConv: nextSelectedConv,
+        };
+      });
+      return true;
+    } catch (err) {
+      console.error(
+        '[ConversationHistoryManager] setConversationPinned failed:',
+        getErrorMessage(err),
+      );
+      return false;
+    }
+  },
+
   deleteConversation: async (conversationId: string) => {
     try {
       await useConversationStore.getState().deleteConversation(conversationId);
@@ -555,6 +595,8 @@ export const conversationHistoryManager = {
     useConversationHistoryStore.getState().startRename(conv),
   confirmRename: (convId?: string, newTitle?: string) =>
     useConversationHistoryStore.getState().confirmRename(convId, newTitle),
+  setConversationPinned: (conversationId: string, pinned: boolean) =>
+    useConversationHistoryStore.getState().setConversationPinned(conversationId, pinned),
   deleteConversation: (conversationId: string) =>
     useConversationHistoryStore.getState().deleteConversation(conversationId),
   reset: () =>

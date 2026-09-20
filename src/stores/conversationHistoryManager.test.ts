@@ -5,6 +5,7 @@ vi.mock('@/lib/tauri', () => ({
   agentLoadConversation: vi.fn(),
   agentSearchConversations: vi.fn(),
   agentRenameConversation: vi.fn(),
+  agentSetConversationPinned: vi.fn(),
   agentDeleteConversation: vi.fn(),
   agentCreateConversation: vi.fn(),
   agentLoadActiveMessages: vi.fn().mockResolvedValue({ messages: [], hasEarlier: false, checkpointId: null }),
@@ -203,6 +204,69 @@ describe('ConversationHistoryManager', () => {
     expect(state.conversationsByConn['conn-1'][0].title).toBe('New Title');
     expect(state.searchResults[0].title).toBe('New Title');
     expect(state.selectedConv?.title).toBe('New Title');
+  });
+
+  it('置顶同步历史侧列表与选中项，不动搜索结果', async () => {
+    useConversationHistoryStore.setState({
+      conversationsByConn: {
+        'conn-1': [
+          { id: 'c1', connectionId: 'conn-1', title: 'C1', createdAt: '', updatedAt: '' },
+          { id: 'c2', connectionId: 'conn-1', title: 'C2', createdAt: '', updatedAt: '' },
+        ],
+      },
+      searchResults: [
+        {
+          conversationId: 'c1',
+          connectionId: 'conn-1',
+          title: 'C1',
+          matchedSnippet: '',
+          matchCount: 1,
+          matchedMessageIds: ['m1'],
+          updatedAt: '',
+        },
+      ],
+      selectedConv: { id: 'c1', connectionId: 'conn-1', title: 'C1', createdAt: '', updatedAt: '' },
+    });
+    useConversationStore.setState({
+      conversations: {
+        c1: { id: 'c1', connectionId: 'conn-1', title: 'C1', createdAt: '', updatedAt: '' },
+      },
+    });
+    (tauri.agentSetConversationPinned as any).mockResolvedValue(undefined);
+
+    const ok = await useConversationHistoryStore.getState().setConversationPinned('c1', true);
+    expect(ok).toBe(true);
+    expect(tauri.agentSetConversationPinned).toHaveBeenCalledWith('c1', true);
+
+    const state = useConversationHistoryStore.getState();
+    expect(state.conversationsByConn['conn-1'][0].pinned).toBe(true);
+    expect(state.conversationsByConn['conn-1'][1].pinned).toBeUndefined();
+    expect(state.selectedConv?.pinned).toBe(true);
+    // 搜索结果没有 pinned 字段，排序也不参与置顶：保持原样
+    expect(state.searchResults).toHaveLength(1);
+  });
+
+  it('置顶失败时不改本地并返回 false', async () => {
+    useConversationHistoryStore.setState({
+      conversationsByConn: {
+        'conn-1': [
+          { id: 'c1', connectionId: 'conn-1', title: 'C1', createdAt: '', updatedAt: '' },
+        ],
+      },
+    });
+    useConversationStore.setState({
+      conversations: {
+        c1: { id: 'c1', connectionId: 'conn-1', title: 'C1', createdAt: '', updatedAt: '' },
+      },
+    });
+    (tauri.agentSetConversationPinned as any).mockRejectedValue(new Error('boom'));
+
+    const ok = await useConversationHistoryStore.getState().setConversationPinned('c1', true);
+    expect(ok).toBe(false);
+    expect(
+      useConversationHistoryStore.getState().conversationsByConn['conn-1'][0].pinned,
+    ).toBeUndefined();
+    expect(useConversationStore.getState().conversations.c1.pinned).toBeUndefined();
   });
 
   it('deletes conversation and removes from history state', async () => {

@@ -25,7 +25,7 @@ const EDGE_SCROLL_SPEED = 12;
 
 interface DragState {
   id: string;
-  /** 卡片在 document 空间的原始 top（按传入顺序索引） */
+  /** 卡片在滚动坐标系下的原始 top（按传入顺序索引） */
   tops: number[];
   heights: number[];
   ids: string[];
@@ -34,6 +34,29 @@ interface DragState {
   draggedOrigIdx: number;
   grabOffsetDoc: number;
   lastClientY: number;
+}
+
+/**
+ * 向上找第一个真正能滚动的祖先（`overflow-y: auto|scroll` 且内容超出容器）。
+ *
+ * 移动端的列表不是窗口滚的（`html,body` 是 `position: fixed`）：滚动的是列表自己
+ * 那个 `overflow-y-auto` 的内层容器，所以坐标系要用**它的** `scrollTop`，边缘自动
+ * 滚动也要滚**它** —— 拿 `window.scrollY`/`window.scrollBy` 在这个容器上是恒 0 的
+ * 死代码，长列表只能排可见的那一屏。
+ */
+export function findScrollParent(el: HTMLElement | null): HTMLElement | null {
+  let node = el?.parentElement ?? null;
+  while (node) {
+    const { overflowY } = window.getComputedStyle(node);
+    if (
+      (overflowY === 'auto' || overflowY === 'scroll') &&
+      node.scrollHeight > node.clientHeight
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
 }
 
 export interface LongPressDragApi {
@@ -110,6 +133,10 @@ export function useLongPressDrag(opts: {
       // 被拖拽卡片的内联位移由这里清除；其余卡片随渲染还原
       const el = itemEls.current.get(d.id);
       if (el) el.style.transform = '';
+      // 点击抑制要在**拖拽结束**这一刻再续一段：松手才会触发合成 click，
+      // 而激活时那个固定的 +1000ms 窗口会在「长按 + 拖了一阵」的拖拽里提前
+      // 到期，抬起时卡片的 onClick 照走 —— 表现为误触发起连接。
+      suppressClickUntil.current = Date.now() + 350;
       if (commit) {
         const newIds = d.slots.map((origIdx) => d.ids[origIdx]);
         const changed = newIds.some((id, i) => id !== d.ids[i]);
@@ -132,9 +159,15 @@ export function useLongPressDrag(opts: {
     (id: string, startClientY: number) => {
       const els = orderedIds.map((i) => itemEls.current.get(i));
       if (els.some((el) => !el)) return;
-      const scrollY = window.scrollY;
+      // 坐标系统一用「滚动坐标系」：元素 rect.top + 滚动容器的 scrollTop 不随滚动
+      // 变化，这样被拖行 1:1 跟手、其他行腾位、指针/槽位判定在滚动过程中都成立。
+      // 移动端绝大多数情况是列表自己的内层容器在滚，窗口根本不滚（window.scrollY
+      // 恒 0）。
+      const scrollParent = findScrollParent(itemEls.current.get(id) ?? null);
+      const scrollTop = () => scrollParent?.scrollTop ?? window.scrollY;
+      const scrollBounds = scrollParent?.getBoundingClientRect() ?? null;
       const tops = (els as HTMLElement[]).map(
-        (el) => el.getBoundingClientRect().top + scrollY,
+        (el) => el.getBoundingClientRect().top + scrollTop(),
       );
       const heights = (els as HTMLElement[]).map((el) => el.offsetHeight || 1);
       const draggedOrigIdx = orderedIds.indexOf(id);
@@ -146,7 +179,7 @@ export function useLongPressDrag(opts: {
         ids: [...orderedIds],
         slots: orderedIds.map((_, i) => i),
         draggedOrigIdx,
-        grabOffsetDoc: startClientY + scrollY - tops[draggedOrigIdx],
+        grabOffsetDoc: startClientY + scrollTop() - tops[draggedOrigIdx],
         lastClientY: startClientY,
       };
       drag.current = state;
@@ -157,7 +190,7 @@ export function useLongPressDrag(opts: {
       const updateFrame = () => {
         const d = drag.current;
         if (!d) return;
-        const docPointer = d.lastClientY + window.scrollY;
+        const docPointer = d.lastClientY + scrollTop();
         const desiredTop = docPointer - d.grabOffsetDoc;
         const el = itemEls.current.get(d.id);
         if (el) {
@@ -194,15 +227,23 @@ export function useLongPressDrag(opts: {
       window.addEventListener('touchend', onEnd);
       window.addEventListener('touchcancel', onCancel);
 
-      // 边缘自动滚动（rAF 与显示器同步）
+      // 边缘自动滚动（rAF 与显示器同步）：滚的是「滚动容器」本身，不是窗口 ——
+      // 移动端 `html,body` 是 fixed、窗口根本不滚，原代码的 `window.scrollBy`
+      // 在这类容器上是恒 0 的死代码，长列表只能排可见的那一屏。
       const step = () => {
         const d = drag.current;
         if (!d) return;
-        const vh = window.innerHeight;
-        if (d.lastClientY < EDGE_MARGIN) {
-          window.scrollBy(0, -EDGE_SCROLL_SPEED);
-        } else if (d.lastClientY > vh - EDGE_MARGIN) {
-          window.scrollBy(0, EDGE_SCROLL_SPEED);
+        const top = scrollBounds?.top ?? 0;
+        const bottom = scrollBounds?.bottom ?? window.innerHeight;
+        const dy =
+          d.lastClientY < top + EDGE_MARGIN
+            ? -EDGE_SCROLL_SPEED
+            : d.lastClientY > bottom - EDGE_MARGIN
+              ? EDGE_SCROLL_SPEED
+              : 0;
+        if (dy !== 0) {
+          if (scrollParent) scrollParent.scrollBy(0, dy);
+          else window.scrollBy(0, dy);
         }
         updateFrame();
         rafRef.current = requestAnimationFrame(step);

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useCallback } from 'react';
+import { Pin } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import type { SavedConnection } from '@/lib/types';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatNameWithAddress } from '@/lib/privacy';
-import { groupConversationsByDate } from '@/lib/dateGrouping';
+import { groupConversationsWithPinned } from '@/lib/dateGrouping';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import { useTaskStore } from '@/stores/taskStore';
 import {
@@ -55,6 +56,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
   const clearSearch = useConversationHistoryStore((s) => s.clearSearch);
   const goMatch = useConversationHistoryStore((s) => s.goMatch);
   const confirmRename = useConversationHistoryStore((s) => s.confirmRename);
+  const setConversationPinned = useConversationHistoryStore((s) => s.setConversationPinned);
   const reset = useConversationHistoryStore((s) => s.reset);
 
   const isSearching = debouncedQuery.trim().length > 0;
@@ -204,7 +206,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                       </button>
                       {isSelected && convs.length > 0 && (
                         <div className="space-y-2 pl-2 mt-1">
-                          {groupConversationsByDate(convs).map((group) => (
+                          {groupConversationsWithPinned(convs).map((group) => (
                             <div key={group.key} className="space-y-1">
                               <div className="px-2 py-0.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
                                 {group.label}
@@ -242,6 +244,18 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                                       )}
                                       size="xs"
                                     />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      void setConversationPinned(conv.id, !conv.pinned);
+                                    }}
+                                    className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-600 transition-colors opacity-0 group-hover/conv:opacity-100 flex-shrink-0"
+                                    title={conv.pinned ? '取消置顶' : '置顶会话'}
+                                    aria-label={conv.pinned ? '取消置顶' : '置顶会话'}
+                                  >
+                                    <Pin className="w-3.5 h-3.5" />
                                   </button>
                                   <button
                                     type="button"

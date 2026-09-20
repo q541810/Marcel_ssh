@@ -305,11 +305,14 @@ export async function agentApproveOperation(
   return invoke("agent_approve_operation", { taskId, operationId });
 }
 
+/// 拒绝一次待审批的操作。`reason` 可选，会原样转达给模型 —— 不说理由时模型
+/// 只知道"被拒了"，于是换个写法再试，用户被迫反复拒绝。
 export async function agentRejectOperation(
   taskId: string,
   operationId: string,
+  reason?: string,
 ): Promise<void> {
-  return invoke("agent_reject_operation", { taskId, operationId });
+  return invoke("agent_reject_operation", { taskId, operationId, reason: reason ?? null });
 }
 
 export async function agentAnswerQuestion(
@@ -334,6 +337,14 @@ export async function agentRenameConversation(
   title: string,
 ): Promise<void> {
   return invoke("agent_rename_conversation", { conversationId, title });
+}
+
+/** 置顶/取消置顶会话（只改列表视图元数据，后端不动 updatedAt）。 */
+export async function agentSetConversationPinned(
+  conversationId: string,
+  pinned: boolean,
+): Promise<void> {
+  return invoke("agent_set_conversation_pinned", { conversationId, pinned });
 }
 
 export async function agentListConversations(
@@ -447,6 +458,22 @@ export async function saveConnection(
 
 export async function deleteConnection(id: string): Promise<void> {
   return invoke("config_delete_connection", { id });
+}
+
+/** 一条连接的落位（拖拽排序用）：id + 目标分组；group 为 null = 未分组。 */
+export interface ConnectionOrderEntry {
+  id: string;
+  group: string | null;
+}
+
+/**
+ * 应用拖拽后的连接顺序（组内重排 / 跨组移入 / 拖动整个分组都表达为一次全量顺序）。
+ * 数组顺序即展示顺序；后端会补齐请求里缺失的连接、忽略不存在的 id。
+ */
+export async function applyConnectionOrder(
+  order: ConnectionOrderEntry[],
+): Promise<void> {
+  return invoke("config_apply_connection_order", { order });
 }
 
 export async function getSettings(): Promise<{

@@ -2,8 +2,11 @@ import type { AgentConversation } from '@/lib/types';
 
 export type TimeGroupKey = 'today' | 'yesterday' | 'within7Days' | 'within30Days' | 'earlier';
 
+/** 列表分组键：时间分组 + 用户置顶那一组。 */
+export type ConversationGroupKey = 'pinned' | TimeGroupKey;
+
 export interface TimeGroup<T = AgentConversation> {
-  key: TimeGroupKey;
+  key: ConversationGroupKey;
   label: string;
   items: T[];
 }
@@ -15,6 +18,9 @@ export const TIME_GROUP_LABELS: Record<TimeGroupKey, string> = {
   within30Days: '这个月之内',
   earlier: '更早之前',
 };
+
+/** 置顶分组的标题（置顶项不再出现在日期分组里）。 */
+export const PINNED_GROUP_LABEL = '置顶';
 
 /**
  * 将给定的会话或带 updatedAt 的项目按自然时间分组：
@@ -84,4 +90,27 @@ export function groupConversationsByDate<T extends { updatedAt?: string; created
   }
 
   return result;
+}
+
+/**
+ * 会话列表的分组：先把置顶项摘出来单独成组放在最前，其余按时间分组。
+ *
+ * 为什么单独一组而不是"在日期组里往前排"：置顶的意义就是**不随时间下沉**，
+ * 留在日期组里会被 newer 的会话挤下去，用户会觉得置顶没生效。
+ * 置顶组内仍按更新时间倒序（与日期组同一套排序）；没有置顶项时不产出空组。
+ */
+export function groupConversationsWithPinned<
+  T extends { updatedAt?: string; createdAt?: string; pinned?: boolean },
+>(items: T[], now: Date = new Date()): TimeGroup<T>[] {
+  const pinned = items.filter((item) => item.pinned);
+  const rest = items.filter((item) => !item.pinned);
+  const groups = groupConversationsByDate(rest, now);
+  if (pinned.length === 0) return groups;
+
+  const sortByUpdatedAtDesc = (a: T, b: T) =>
+    new Date(b.updatedAt || b.createdAt || 0).getTime() -
+    new Date(a.updatedAt || a.createdAt || 0).getTime();
+  pinned.sort(sortByUpdatedAtDesc);
+
+  return [{ key: 'pinned', label: PINNED_GROUP_LABEL, items: pinned }, ...groups];
 }
