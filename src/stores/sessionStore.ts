@@ -33,12 +33,45 @@ interface SessionState {
   ) => void;
 }
 
+/**
+ * 连接失败会留下一个 `status: "error"` 的会话——**这是有意的**：失败详情就打在它的
+ * 终端横幅里，用户要靠它看清原因，所以不能失败即删。
+ *
+ * 但同一条连接重试会一摞摞攒出同名的"连接失败"标签（点一次连接可能试两次：先用
+ * 已存的凭证、再不带凭证试一次），只能手动一个个关。所以重试时**复用**那条已有的
+ * 失败会话槽位，而不是再开一个新的。
+ */
+function failedSessionIdFor(
+  sessions: Record<string, Session>,
+  connectionId: string | undefined,
+): string | null {
+  if (!connectionId) return null;
+  const found = Object.values(sessions).find(
+    (s) => s.configId === connectionId && s.status === "error",
+  );
+  return found?.id ?? null;
+}
+
+/**
+ * 挑一个放本次连接的会话槽位：复用同一条连接的失败槽位，否则新开。
+ * 复用时要清掉横幅的"已显示过"标记，否则第二次失败的原因不会出现在终端里。
+ */
+function allocateSessionSlot(
+  sessions: Record<string, Session>,
+  connectionId: string | undefined,
+): string {
+  const reused = failedSessionIdFor(sessions, connectionId);
+  if (!reused) return crypto.randomUUID();
+  terminalInstanceManager.prepareReconnect(reused);
+  return reused;
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: {},
   activeSessionId: null,
 
   connect: async (config: ConnectionConfig) => {
-    const tempId = crypto.randomUUID();
+    const tempId = allocateSessionSlot(get().sessions, config.connectionId);
     const privacyMode =
       useSettingsStore.getState().settings.privacyMode ?? false;
     const connLabel = formatConnLabel(
@@ -96,7 +129,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     connLabel: string,
     trustNewHostKey = false,
   ) => {
-    const tempId = crypto.randomUUID();
+    const tempId = allocateSessionSlot(get().sessions, connectionId);
     const session: Session = {
       id: tempId,
       connectionId: connLabel,
@@ -149,7 +182,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     connLabel: string,
     trustNewHostKey = false,
   ) => {
-    const tempId = crypto.randomUUID();
+    const tempId = allocateSessionSlot(get().sessions, connectionId);
     const session: Session = {
       id: tempId,
       connectionId: connLabel,
