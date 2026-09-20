@@ -1,5 +1,5 @@
 use crate::agent::templates::{AgentPromptVars, TemplateManager};
-use crate::agent::tools::PromptSection;
+use crate::agent::tools::{PromptSection, ToolAudience};
 use crate::error::AppError;
 use std::collections::BTreeSet;
 
@@ -13,6 +13,7 @@ const USER_PROMPT_MAX_CHARS: usize = 2000;
 ///
 /// `tool_sections` 由已注册工具的声明推导（见 `tools::prompt_section_of`），
 /// 不是逐个工具名 hardcode —— 加一个需要提示词段的工具时不必改这里。
+/// `audience` 决定「对用户说话」的段（沟通等）给不给，见 `render_agent_prompt`。
 pub(crate) fn build_system_prompt(
     template_manager: &TemplateManager,
     session_id: &str,
@@ -21,6 +22,7 @@ pub(crate) fn build_system_prompt(
     user_prompt: &str,
     plugin_sections: &[String],
     plan_mode: bool,
+    audience: ToolAudience,
     extra_sections: &[String],
 ) -> Result<String, AppError> {
     let user_prompt = if user_prompt.chars().count() > USER_PROMPT_MAX_CHARS {
@@ -46,6 +48,7 @@ pub(crate) fn build_system_prompt(
         has_skills,
         tool_sections,
         plan_mode,
+        audience,
         extra_sections,
     )
 }
@@ -72,6 +75,7 @@ mod tests {
             user,
             plugins,
             plan,
+            ToolAudience::Main,
             &[],
         )
         .unwrap()

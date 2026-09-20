@@ -7,7 +7,7 @@
 //! | 角色 | `templates/agent/角色.hbs` | 无条件 | system prompt |
 //! | 子 agent 角色约束 | `templates/agent/子agent_只读.hbs`、`子agent_执行.hbs` | 仅子 agent | system prompt（经 `prompt_extra`） |
 //! | 多机操控 | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
-//! | 沟通 / 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | 无条件 | system prompt |
+//! | 先理清需求 / 沟通 / 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
 //! | 联网搜索 | `templates/agent/联网搜索.hbs` | 注册了声明 `WebSearch` 段的工具（当前是 `web_search`） | system prompt |
 //! | 网页访问 | `templates/agent/网页访问.hbs` | 注册了声明 `HttpFetch` 段的工具（当前是 `http_get`） | system prompt |
 //! | 会话 | `templates/agent/会话.hbs` | 无条件 | system prompt |
@@ -40,8 +40,9 @@
 //!
 //! # 改 X 要动哪里
 //!
-//! - 沟通风格 / 结论放哪 / 上下文管理 → `templates/agent/沟通.hbs`
-//! - 人设、主动性、惯例、后台作业 → `templates/agent/角色.hbs`
+//! - 需求澄清 / 沟通风格 / 结论放哪 / 上下文管理 → `templates/agent/沟通.hbs`
+//!   （仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
+//! - 人设、主动性、惯例、后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`
 //! - 子 agent 行为约束 → `templates/agent/子agent_只读.hbs` / `子agent_执行.hbs`
 //!   （桌面/移动的工具清单差异走 `can_transfer` 分支，不要再写 cfg 副本）
 //! - 多机操控与 host 规则 → `templates/agent/多机.hbs`（工具侧只复用
@@ -61,7 +62,7 @@
 use handlebars::Handlebars;
 use serde_json::json;
 
-use crate::agent::tools::PromptSection;
+use crate::agent::tools::{PromptSection, ToolAudience};
 use crate::error::AppError;
 
 /// Variables injected into agent prompt templates.
@@ -155,12 +156,16 @@ impl TemplateManager {
     /// `tool_sections` 是「已注册工具声明出来的段需求」（见
     /// `tools::prompt_section_of`）。段落顺序就是提示词结构，仍是本函数显式写出
     /// 的；工具层只声明「我需要哪一段」，不决定位置、也不知道模板文件名。
+    ///
+    /// `audience` 是「这份提示词给谁用」，由任务角色推导（`manager::audience_of`）。
+    /// 对用户说话的段只该主 agent 拿到：子 agent 的读者是主 agent 本身。
     pub fn render_agent_prompt(
         &self,
         vars: &AgentPromptVars,
         has_skills: bool,
         tool_sections: &std::collections::BTreeSet<PromptSection>,
         plan_mode: bool,
+        audience: ToolAudience,
         extra_sections: &[String],
     ) -> Result<String, AppError> {
         let reg = Self::build_agent_registry();
@@ -186,9 +191,14 @@ impl TemplateManager {
         for extra in extra_sections {
             parts.push(extra.clone());
         }
-        // 常驻行为段（沟通 / 上下文 / 收尾），不按工具与模式门控；必须在
-        // extra_sections 之后 —— 那些是「角色」的追加约束，不能插在中间。
-        parts.push(render("沟通"));
+        // 主 agent 行为段（先理清需求 / 沟通 / 上下文管理 / 收尾），只按角色门控：
+        // 它讲的是怎么跟用户对话、怎么汇报，而子 agent 的读者是主 agent 本身
+        // （见 templates/agent/子agent_*.hbs），这些规则只会把它从调研带偏。
+        // 位置仍必须在 extra_sections 之后 —— 那些是「角色」的追加约束，
+        // 不能插在它们中间。
+        if audience == ToolAudience::Main {
+            parts.push(render("沟通"));
+        }
         if tool_sections.contains(&PromptSection::WebSearch) {
             parts.push(render("联网搜索"));
         }
@@ -293,10 +303,21 @@ mod tests {
         sections: &[PromptSection],
         plan: bool,
     ) -> String {
+        build_for(vars, skills, sections, plan, ToolAudience::Main)
+    }
+
+    /// 同 `build`，但指定这份提示词给谁用（主 agent / 子 agent）。
+    fn build_for(
+        vars: &AgentPromptVars,
+        skills: bool,
+        sections: &[PromptSection],
+        plan: bool,
+        audience: ToolAudience,
+    ) -> String {
         let tool_sections: std::collections::BTreeSet<PromptSection> =
             sections.iter().copied().collect();
         TemplateManager
-            .render_agent_prompt(vars, skills, &tool_sections, plan, &[])
+            .render_agent_prompt(vars, skills, &tool_sections, plan, audience, &[])
             .unwrap()
     }
 
@@ -375,13 +396,41 @@ mod tests {
         assert!(prompt.contains("## 上下文管理"));
         assert!(prompt.contains("## 收尾"));
 
-        // 常驻段必须排在 extra_sections（子 agent 角色约束等）之后：
+        // 主 agent 行为段必须排在 extra_sections（子 agent 角色约束等）之后：
         // 那些是「角色」的追加约束，插到它们中间会让约束被日常行为规则隔开。
         let extras = vec!["EXTRA_MARKER".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, &secs(&[]), false, &extras)
+            .render_agent_prompt(&vars, false, &secs(&[]), false, ToolAudience::Main, &extras)
             .unwrap();
         assert!(prompt.find("EXTRA_MARKER").unwrap() < prompt.find("## 与用户沟通").unwrap());
+    }
+
+    /// 「沟通」整段只给主 agent。它讲的是怎么跟用户对话、怎么把结论写给用户看，
+    /// 而子 agent 的读者是主 agent 自己——它的输出约定写在
+    /// `templates/agent/子agent_只读.hbs` / `子agent_执行.hbs` 里。
+    /// 子 agent 拿着这些规则只会从调研滑向"和用户对话"。
+    #[test]
+    fn communication_section_is_main_agent_only() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+
+        let main = build(&vars, false, &[], false);
+        assert!(main.contains("## 先理清需求"));
+        assert!(main.contains("## 与用户沟通"));
+        assert!(main.contains("## 收尾"));
+
+        // 只读子 agent 跑在 Plan 模式：模式段照旧，沟通段没有。
+        let sub = build_for(&vars, false, &[], true, ToolAudience::Sub);
+        assert!(!sub.contains("## 先理清需求"));
+        assert!(!sub.contains("## 与用户沟通"));
+        assert!(!sub.contains("## 上下文管理"));
+        assert!(!sub.contains("## 收尾"));
+        assert!(sub.contains("## Plan 模式"));
+        // 「角色」无条件，子 agent 依然拿到。
+        assert!(sub.contains("你是 Marcel SSH"));
     }
 
     /// 段落分隔由组装层生成：任何一段的标题前面都必须有空行。守卫的是
@@ -405,6 +454,7 @@ mod tests {
                     PromptSection::Subagent,
                 ]),
                 true,
+                ToolAudience::Main,
                 &extras,
             )
             .unwrap();
@@ -570,7 +620,7 @@ mod tests {
         };
         let extras = vec!["EXTRA_MARKER_A".to_string(), "EXTRA_MARKER_B".to_string()];
         let prompt = TemplateManager
-            .render_agent_prompt(&vars, false, &secs(&[]), false, &extras)
+            .render_agent_prompt(&vars, false, &secs(&[]), false, ToolAudience::Main, &extras)
             .unwrap();
         assert!(prompt.contains("EXTRA_MARKER_A"));
         assert!(prompt.contains("EXTRA_MARKER_B"));

@@ -346,6 +346,7 @@ impl AgentManager {
             &agent_settings.system_prompt,
             &plugin_sections,
             matches!(spec.mode, AgentMode::Plan),
+            audience_of(&spec.role),
             &prompt_extra,
         )?;
 
@@ -727,6 +728,7 @@ fn build_agent_messages(
     agent_system_prompt: &str,
     plugin_sections: &[String],
     plan_mode: bool,
+    audience: crate::agent::tools::ToolAudience,
     extra_sections: &[String],
 ) -> Result<Vec<LlmMessage>, AppError> {
     // 提示词段由「已注册工具的声明」推导，不按工具名 hardcode：
@@ -748,6 +750,7 @@ fn build_agent_messages(
         agent_system_prompt,
         plugin_sections,
         plan_mode,
+        audience,
         extra_sections,
     )?;
     let mut messages: Vec<LlmMessage> = Vec::with_capacity(history.len() + 2);
