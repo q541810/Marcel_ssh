@@ -7,6 +7,7 @@ import {
   useCallback,
 } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Pin } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
 import { useJobStore } from "@/stores/jobStore";
@@ -29,7 +30,8 @@ import {
   shouldAutoScroll,
   shouldShowScrollToBottomFab,
 } from "@/lib/agentScroll";
-import { groupConversationsByDate } from "@/lib/dateGrouping";
+import { groupConversationsWithPinned } from "@/lib/dateGrouping";
+import { getErrorMessage } from "@/lib/errors";
 import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import type { AgentMode, AgentMessage } from "@/lib/types";
 import {
@@ -134,6 +136,7 @@ export default function AgentPanel() {
     loadConversation,
     renameConversation,
     deleteConversation,
+    setConversationPinned,
     setConversationModel,
     setConversationEffort,
     rollbackToMessage,
@@ -200,18 +203,14 @@ export default function AgentPanel() {
     (lastMessage?.reasoningContent?.length ?? 0);
 
   // Stream: only pin when sticky zone or user just sent — never yank while reading up.
+  // 「还在不在底部」用 handleMessagesScroll 记下的 nearBottomRef，不在这里现量几何：
+  // 这个 effect 跑在内容已经进 DOM（容器已经变高）之后，现量得到的是"这一批长高了多少"
+  // —— 一次超过 80px（来一张工具卡就够）就再也追不回来，跟随会永久停住。
+  // 移动端 MobileAgentHost 用的就是 ref 这一路。
   useEffect(() => {
     if (!lastMessage || !canInteract) return;
     const container = messagesContainerRef.current;
-    const nearBottom = container
-      ? isNearBottom(
-          container.scrollTop,
-          container.clientHeight,
-          container.scrollHeight,
-          NEAR_BOTTOM_THRESHOLD_PX,
-        )
-      : true;
-    if (!shouldAutoScroll(nearBottom, userJustSentRef.current)) return;
+    if (!shouldAutoScroll(nearBottomRef.current, userJustSentRef.current)) return;
     const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
     lastScrolledMessageRef.current = lastMessage.id;
     if (container) {
@@ -848,7 +847,7 @@ export default function AgentPanel() {
   }, [editingConvId]);
 
   const groupedSessionConversations = useMemo(
-    () => groupConversationsByDate(sessionConversations),
+    () => groupConversationsWithPinned(sessionConversations),
     [sessionConversations],
   );
 
@@ -1612,6 +1611,21 @@ export default function AgentPanel() {
                                 )}
                                 size="xs"
                               />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // 后置失败就原地不动 —— 必须接住，否则是未处理拒绝
+                                //（沿用重命名那一套：失败 console.error，图标不变）
+                                setConversationPinned(conv.id, !conv.pinned).catch((err) => {
+                                  console.error('Failed to toggle pin:', getErrorMessage(err));
+                                });
+                              }}
+                              className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                              title={conv.pinned ? "取消置顶" : "置顶会话"}
+                              aria-label={conv.pinned ? "取消置顶" : "置顶会话"}
+                            >
+                              <Pin className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={(e) => startRenameConversation(e, conv.id, conv.title)}

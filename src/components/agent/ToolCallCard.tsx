@@ -3,6 +3,11 @@ import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import {
+  useIsomorphicLayoutEffect,
+  useStickyFollow,
+} from '@/hooks/useStickyFollow';
+import { INNER_FOLLOW_THRESHOLD_PX } from '@/lib/agentScroll';
 import { readWebToolStatus, webToolChips, webToolNotice } from '@/lib/webToolStatus';
 import type { ChipTone } from '@/lib/webToolStatus';
 import {
@@ -58,7 +63,11 @@ function openSubConversation(metadata: Record<string, unknown> | undefined) {
 function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
   const wasExecutingRef = useRef(message.isExecuting);
-  const outputRef = useRef<HTMLPreElement>(null);
+  const {
+    ref: outputRef,
+    onScroll: onOutputScroll,
+    follow: followOutput,
+  } = useStickyFollow<HTMLPreElement>(INNER_FOLLOW_THRESHOLD_PX);
   const onExpandChangeRef = useRef(onExpandChange);
   const lastNotifiedExpandedRef = useRef<boolean | null>(null);
   const expandNotifyId = messageId ?? message.id;
@@ -101,16 +110,11 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     onExpandChangeRef.current?.(expandNotifyId, expanded);
   }, [expanded, expandNotifyId]);
 
-  // Auto-scroll output when at bottom
-  useEffect(() => {
-    const el = outputRef.current;
-    if (!el || !message.isExecuting) return;
-    const threshold = 8;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-    if (atBottom) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [message.toolResult?.result, message.isExecuting]);
+  // 执行中输出逐条追加：用户没上翻就跟着走，上翻了就不打扰（判定见 useStickyFollow）
+  useIsomorphicLayoutEffect(() => {
+    if (!message.isExecuting) return;
+    followOutput();
+  }, [message.toolResult?.result, message.isExecuting, followOutput]);
 
   useEffect(() => {
     if (!autoExpand) {
@@ -367,6 +371,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           <div className={`min-w-0 border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
             <pre
               ref={outputRef}
+              onScroll={onOutputScroll}
               className="text-xs text-zinc-400 whitespace-pre max-h-[120px] max-w-full overflow-x-auto overflow-y-auto font-mono leading-relaxed"
             >
               {tr.result || ''}

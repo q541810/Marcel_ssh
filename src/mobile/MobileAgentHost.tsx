@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ArrowUp, ChevronDown, Plus, Square } from "lucide-react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Pin, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
 import { useJobStore } from "@/stores/jobStore";
@@ -17,7 +17,8 @@ import {
   conversationHasRunningTask,
 } from "@/stores/conversationStore";
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
-import { groupConversationsByDate } from "@/lib/dateGrouping";
+import { groupConversationsWithPinned } from "@/lib/dateGrouping";
+import { getErrorMessage } from "@/lib/errors";
 import { AGENT_MODES } from "@/lib/constants";
 import { currentVision } from "@/lib/llmRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -123,6 +124,7 @@ export default function MobileAgentHost({
     loadConversation,
     renameConversation,
     deleteConversation,
+    setConversationPinned,
     setConversationModel,
     setConversationEffort,
     syncActiveToConnection,
@@ -205,7 +207,7 @@ export default function MobileAgentHost({
   );
 
   const groupedSessionConversations = useMemo(
-    () => groupConversationsByDate(sessionConversations),
+    () => groupConversationsWithPinned(sessionConversations),
     [sessionConversations],
   );
 
@@ -915,6 +917,19 @@ export default function MobileAgentHost({
                                 )}
                                 size="xs"
                               />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                // 失败就原地不动 —— 必须接住，否则是未处理拒绝
+                                setConversationPinned(conv.id, !conv.pinned).catch((err) =>
+                                  console.error('Failed to toggle pin:', getErrorMessage(err)),
+                                )
+                              }
+                              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-zinc-800 active:text-zinc-200"
+                              aria-label={conv.pinned ? `取消置顶 ${conv.title}` : `置顶 ${conv.title}`}
+                            >
+                              <Pin className="h-3.5 w-3.5" />
                             </button>
                             <button
                               type="button"

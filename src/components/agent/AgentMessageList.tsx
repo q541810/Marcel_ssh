@@ -2,7 +2,6 @@ import {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +11,7 @@ import {
 import type { AgentMessage } from "@/lib/types";
 import { isNearBottom, NEAR_BOTTOM_THRESHOLD_PX } from "@/lib/agentScroll";
 import { useConversationStore } from "@/stores/conversationStore";
+import { useIsomorphicLayoutEffect } from "@/hooks/useStickyFollow";
 import { isTaskBusy } from "@/lib/agentStatus";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTaskStore } from "@/stores/taskStore";
@@ -73,9 +73,6 @@ const PAGE_SIZE = 50;
  *  顶部一致：一批新消息若全被回合折叠成矮行，哨兵不会离开该带，
  *  IO 也就不会再产生 crossing 回调——由布局后复查自动续载兜底。 */
 const TOP_SENTINEL_MARGIN = 160;
-
-const useIsomorphicLayoutEffect =
-  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /**
  * 计算分页窗口起点：从尾部取 count 条，若起点切在某个回合中间（非 user），

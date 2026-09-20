@@ -7,6 +7,11 @@ import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import { useSettingsStore } from '@/stores/settingsStore';
+import {
+  useIsomorphicLayoutEffect,
+  useStickyFollow,
+} from '@/hooks/useStickyFollow';
+import { INNER_FOLLOW_THRESHOLD_PX } from '@/lib/agentScroll';
 import { openExternalLink } from '@/lib/externalLinks';
 import 'katex/dist/katex.min.css';
 
@@ -193,44 +198,37 @@ function AgentMessage({
   const [thinkingUserToggle, setThinkingUserToggle] = useState<boolean | null>(
     null,
   );
-  const thinkingBodyRef = useRef<HTMLDivElement>(null);
   /** 思考区内滚：用户上翻后暂停跟随，滑回底部附近再恢复。 */
-  const thinkingUserScrolledRef = useRef(false);
+  const {
+    ref: thinkingBodyRef,
+    onScroll: onThinkingScroll,
+    follow: followThinking,
+    restart: restartThinkingFollow,
+  } = useStickyFollow<HTMLDivElement>(INNER_FOLLOW_THRESHOLD_PX);
   const [copied, setCopied] = useState(false);
   // 思考结束（autoExpand 变 false）时清空手动状态；进行中尊重用户点击
   useEffect(() => {
     if (!autoExpand) {
       setThinkingUserToggle(null);
-      thinkingUserScrolledRef.current = false;
+      restartThinkingFollow();
     }
-  }, [autoExpand]);
+  }, [autoExpand, restartThinkingFollow]);
   const thinkingExpanded = thinkingUserToggle ?? !!autoExpand;
 
   const handleToggleThinking = () => {
     const next = !thinkingExpanded;
     setThinkingUserToggle(next);
     // 重新展开时恢复跟随底部
-    if (next) thinkingUserScrolledRef.current = false;
+    if (next) restartThinkingFollow();
   };
 
-  // 流式思考：用户未上翻时，思考区内滚跟随最新内容（不带动外层对话滚动）
-  useEffect(() => {
-    const el = thinkingBodyRef.current;
-    if (!el || !thinkingExpanded || !message.isThinking) return;
-    if (thinkingUserScrolledRef.current) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    if (atBottom) el.scrollTop = el.scrollHeight;
-  }, [message.reasoningContent, thinkingExpanded, message.isThinking]);
-
-  const handleThinkingBodyScroll = () => {
-    const el = thinkingBodyRef.current;
-    if (!el || !message.isThinking) {
-      thinkingUserScrolledRef.current = false;
-      return;
-    }
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    thinkingUserScrolledRef.current = !atBottom;
-  };
+  // 流式思考：用户未上翻时，思考区内滚跟随最新内容（不带动外层对话滚动）。
+  // 判定用的是 onThinkingScroll 记下的"用户还在不在底部"，不在这里现量几何 ——
+  // 见 useStickyFollow 的说明。
+  useIsomorphicLayoutEffect(() => {
+    if (!thinkingExpanded || !message.isThinking) return;
+    followThinking();
+  }, [message.reasoningContent, thinkingExpanded, message.isThinking, followThinking]);
 
   const handleCopy = () => {
     onCopy?.(message);
@@ -437,7 +435,7 @@ function AgentMessage({
             {thinkingExpanded && (
               <div
                 ref={thinkingBodyRef}
-                onScroll={handleThinkingBodyScroll}
+                onScroll={onThinkingScroll}
                 className="mt-1.5 max-h-[40vh] overflow-y-auto overscroll-contain pl-4 border-l-2 border-zinc-700 text-xs text-zinc-400 whitespace-pre-wrap break-words"
               >
                 {message.reasoningContent}
@@ -521,14 +519,15 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
   const comp = message.compaction;
   const live = comp?.summary ?? '';
   const isOverflow = comp?.trigger === 'context-overflow';
-  const previewRef = useRef<HTMLDivElement>(null);
-  // 仅当用户已在底部附近时跟随滚动；用户上翻看历史时不打扰
-  useEffect(() => {
-    const el = previewRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    if (atBottom) el.scrollTop = el.scrollHeight;
-  }, [live]);
+  // 仅当用户已在底部附近时跟随滚动；用户上翻看历史时不打扰（判定见 useStickyFollow）
+  const {
+    ref: previewRef,
+    onScroll: onPreviewScroll,
+    follow: followPreview,
+  } = useStickyFollow<HTMLDivElement>(INNER_FOLLOW_THRESHOLD_PX);
+  useIsomorphicLayoutEffect(() => {
+    followPreview();
+  }, [live, followPreview]);
 
   return (
     <div className="my-1.5 flex justify-start">
@@ -548,6 +547,7 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
         {/* 实时进度是主角：生成中的摘要，逐字增长就是"没卡住"的最好证明 */}
         <div
           ref={previewRef}
+          onScroll={onPreviewScroll}
           className="mt-2 max-h-44 overflow-y-auto rounded-md border border-zinc-700/40 bg-zinc-950/60 px-2.5 py-2"
         >
           {live ? (
