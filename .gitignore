@@ -10,6 +10,8 @@ dist/
 
 # Rust
 src-tauri/target/
+# 并行 review/agent 用的独立构建目录（与主 target/ 分离，不抢锁）
+src-tauri/target-zcode/
 
 # IDE
 AGENTS.md
