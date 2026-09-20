@@ -7,7 +7,7 @@ use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::{
     build_plan_context, emit_final_plan_normalized, handle_plan_tool_output, PLAN_CONTEXT_PREFIX,
 };
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::task::AgentMode;
 use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
@@ -36,7 +36,11 @@ pub(crate) struct PersistedToolResult {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
-    pub risk_level: crate::agent::risk::RiskLevel,
+    /// 历史行里这个键叫 `risk_level`、值是五档严重度（`LowRisk` 之类）。
+    /// 这里的别名加上 `Disposition` 自带的变体别名一起把它们读进来，
+    /// 老会话照常打开、不需要数据迁移。
+    #[serde(alias = "risk_level")]
+    pub disposition: crate::agent::risk::Disposition,
     pub summary: String,
     pub success: bool,
     pub blocked: bool,
@@ -206,7 +210,14 @@ pub(crate) async fn run_agent_loop(
     }
 
     persister.update_title_from_first_user_msg(&messages);
-    persister.save_last_user_msg(&mut messages);
+    // 回合锚点：落库 user 消息并把这一行标成 running（崩溃时它就是「没收尾」
+    // 的持久证据）。行 id 记到任务上——收尾在 `manager::finalize_task` 里，
+    // 那里只能从任务记录拿锚点。写失败/无 user 行 → None，本回合不记录状态。
+    if let Some(anchor_id) = persister.begin_turn(&mut messages) {
+        if let Some(task) = state.agent_tasks.write().get_mut(&task_id) {
+            task.turn_anchor_id = Some(anchor_id);
+        }
+    }
 
     let max_rounds = agent_settings.max_tool_rounds.max(10);
     // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
@@ -718,6 +729,7 @@ pub(crate) async fn run_agent_loop(
                     let s_ssh = &ssh;
                     let sid = &session_id;
                     let tid = &task_id;
+                    let cid = &conversation_id;
                     let evn = &event_name;
                     let a = &app;
                     let st = &state;
@@ -727,7 +739,7 @@ pub(crate) async fn run_agent_loop(
                     futures.push(async move {
                         let _permit = sem.acquire().await.ok();
                         execute_single_tool(
-                            idx, tc, disp, s_ssh, sid, tid, evn, a, st, cdir, reg, msgs,
+                            idx, tc, disp, s_ssh, sid, tid, cid, evn, a, st, cdir, reg, msgs,
                         )
                         .await
                     });
@@ -748,6 +760,7 @@ pub(crate) async fn run_agent_loop(
                         &ssh,
                         &session_id,
                         &task_id,
+                        &conversation_id,
                         &event_name,
                         &app,
                         &state,
@@ -883,6 +896,7 @@ async fn execute_single_tool(
     ssh: &SshManager,
     session_id: &str,
     task_id: &str,
+    conversation_id: &str,
     event_name: &str,
     app: &AppHandle,
     state: &AppState,
@@ -897,7 +911,12 @@ async fn execute_single_tool(
                 &settings.custom_protected_paths,
                 settings.command_timeout_secs,
             ));
-        ToolContext::new(ssh.clone(), session_id.to_string(), app.clone())
+        ToolContext::new(
+            ssh.clone(),
+            session_id.to_string(),
+            conversation_id,
+            app.clone(),
+        )
             .with_policy(policy)
             .with_task_id(task_id)
             .with_tool_call_id(&tc.id)
@@ -917,7 +936,7 @@ async fn execute_single_tool(
             id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
-            risk_level: RiskLevel::ReadOnly,
+            disposition: Disposition::Allow,
             summary: format!("{} (cancelled)", tc.name),
             success: false,
             blocked: false,
@@ -1010,7 +1029,7 @@ async fn execute_single_tool(
         id: tc.id.clone(),
         name: tc.name.clone(),
         arguments: tc.arguments.clone(),
-        risk_level: exec.risk_level,
+        disposition: exec.disposition,
         summary: exec.summary,
         success: exec.success,
         blocked: exec.blocked,
@@ -1045,7 +1064,7 @@ mod tests {
         build_job_settlement_notice, group_tool_calls_into_batches, PersistedAssistantToolCall,
         PersistedToolResult, MAX_CONCURRENT_TOOL_EXECUTIONS,
     };
-    use crate::agent::risk::RiskLevel;
+    use crate::agent::risk::Disposition;
     use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
     use crate::error::AppError;
     use crate::llm::provider::ToolCall;
@@ -1069,8 +1088,8 @@ mod tests {
         fn parameters_schema(&self) -> serde_json::Value {
             json!({})
         }
-        fn risk_level(&self) -> RiskLevel {
-            RiskLevel::ReadOnly
+        fn disposition(&self) -> Disposition {
+            Disposition::Allow
         }
         fn is_concurrent_safe(&self) -> bool {
             self.concurrent
@@ -1227,8 +1246,12 @@ mod tests {
         );
     }
 
+    /// 历史行里这个键叫 `risk_level`、值是五档严重度。老会话必须照样能打开 ——
+    /// 这条测试盯的是「别名 + 变体别名」这条兼容链：去掉 `PersistedToolResult`
+    /// 上的 `alias = "risk_level"`，或者去掉 `Disposition` 变体上的旧值别名，
+    /// 这里都会解析失败。
     #[test]
-    fn persisted_tool_result_defaults_missing_timeout_to_false() {
+    fn persisted_tool_result_reads_legacy_risk_level_key_and_values() {
         let raw = r#"{
             "id": "call-1",
             "name": "bash",
@@ -1243,6 +1266,29 @@ mod tests {
 
         assert!(!result.was_timeout);
         assert!(!result.was_aborted);
+        // 值也要映射对：LowRisk 属于四档里的 Allow，不是别的档。
+        assert_eq!(result.disposition, crate::agent::risk::Disposition::Allow);
+    }
+
+    /// 新写入的行用新键名 `disposition`，读回来不能走别名那条路。
+    #[test]
+    fn persisted_tool_result_reads_current_disposition_key() {
+        let raw = r#"{
+            "id": "call-3",
+            "name": "bash",
+            "arguments": {"command": "reboot"},
+            "disposition": "ForceApproval",
+            "summary": "$ reboot",
+            "success": true,
+            "blocked": false
+        }"#;
+
+        let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
+
+        assert_eq!(
+            result.disposition,
+            crate::agent::risk::Disposition::ForceApproval
+        );
     }
 
     #[test]
@@ -1262,6 +1308,10 @@ mod tests {
         let result: PersistedToolResult = serde_json::from_str(raw).unwrap();
 
         assert!(result.was_aborted);
+        assert_eq!(
+            result.disposition,
+            crate::agent::risk::Disposition::Approval
+        );
     }
 
     #[test]

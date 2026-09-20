@@ -5,8 +5,16 @@
   "publisher": "棍母",
   "description": "让 Agent 选择性地把关键信息记到小本本上，按连接隔离",
   "minAppVersion": "0.6.0",
-  "preservePaths": ["config.json", "memories/"],
-  "capabilities": ["ssh.list", "fs.read", "fs.write", "events"],
+  "preservePaths": [
+    "config.json",
+    "memories/"
+  ],
+  "capabilities": [
+    "ssh.list",
+    "fs.read",
+    "fs.write",
+    "events"
+  ],
   "systemPromptSection": "system-prompt.md",
   "views": [
     {
@@ -33,9 +41,11 @@
             "description": "一行合法 JSON 字符串，即一条 entry。需包含 id/type/title/content/tags/createdAt/updatedAt 字段。结尾不要加换行符，工具会自动处理追加。"
           }
         },
-        "required": ["content"]
+        "required": [
+          "content"
+        ]
       },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     },
     {
       "name": "memory_recall",
@@ -48,7 +58,7 @@
         "properties": {},
         "additionalProperties": false
       },
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     },
     {
       "name": "memory_update",
@@ -64,9 +74,11 @@
             "description": "全量新内容（多行 JSONL 字符串），包含所有未删除和已修改的条目。每行一条 entry JSON。"
           }
         },
-        "required": ["content"]
+        "required": [
+          "content"
+        ]
       },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     },
     {
       "name": "memory_delete",
@@ -82,9 +94,11 @@
             "description": "删除后剩余的全量内容（多行 JSONL 字符串）。清空所有记忆时传空字符串。"
           }
         },
-        "required": ["content"]
+        "required": [
+          "content"
+        ]
       },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     }
   ]
 }

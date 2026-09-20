@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::agent::risk::{RiskLevel, RiskAssessor};
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{local_handlers, truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::plugins::context::{apply_to_string, apply_to_value, SessionContext};
@@ -20,7 +20,7 @@ pub struct PluginAgentTool {
     description: String,
     command_template: String,
     parameters: Value,
-    risk_level: RiskLevel,
+    disposition: Disposition,
     /// `"ssh"` (default) or `"local"`.
     kind: ToolKind,
     /// Required when `kind = "local"`. Names a kernel-registered handler.
@@ -77,7 +77,7 @@ impl PluginAgentTool {
             } else {
                 def.parameters.clone()
             },
-            risk_level: risk,
+            disposition: risk,
             kind: def.kind,
             handler: def.handler.clone(),
             plugin_id: plugin_id.to_string(),
@@ -224,8 +224,18 @@ impl AgentTool for PluginAgentTool {
         self.parameters.clone()
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        self.risk_level
+    fn disposition(&self) -> Disposition {
+        self.disposition
+    }
+
+    /// `kind=ssh` 的命令要先渲染模板才成型，参数里没有现成的字符串 —— 交给
+    /// dispatcher 拿去评风险、走命令名单和模型审批，本工具自己不再评一遍。
+    async fn rendered_command(&self, params: &Value, ctx: &ToolContext) -> Option<String> {
+        if self.kind != ToolKind::Ssh {
+            return None;
+        }
+        let session_ctx = extract_session_context(ctx).await;
+        Some(self.render_command(params, session_ctx.as_ref()))
     }
 
     async fn execute(&self, params: Value, ctx: &ToolContext) -> Result<ToolOutput, AppError> {
@@ -234,7 +244,7 @@ impl AgentTool for PluginAgentTool {
             return self.execute_local(params, ctx).await;
         }
 
-        // kind=ssh: original logic — render template, risk-assess, exec.
+        // kind=ssh: render the command template, then execute.
         let session_ctx = extract_session_context(ctx).await;
         if session_ctx.is_none() {
             log::warn!(
@@ -243,22 +253,6 @@ impl AgentTool for PluginAgentTool {
             );
         }
         let command = self.render_command(&params, session_ctx.as_ref());
-
-        let assessor = ctx
-            .policy
-            .as_ref()
-            .map(|p| RiskAssessor::new((**p).clone()))
-            .unwrap_or_default();
-        let risk = assessor.assess_command(&command)?;
-        if risk == RiskLevel::HighRisk {
-            return Ok(ToolOutput::fail(
-                "Blocked by risk assessment",
-                format!(
-                    "命令未通过风险评估（插件工具: {}）。\n命令: {}",
-                    self.name, command
-                ),
-            ));
-        }
 
         let output = ctx.exec(&command).await?;
         let truncated = truncate_output(output, 8_000);
@@ -288,7 +282,7 @@ pub fn register_plugin_tools(
 mod tests {
     use super::*;
 
-    fn make_def(name: &str, cmd: &str, risk: RiskLevel) -> PluginAgentToolDef {
+    fn make_def(name: &str, cmd: &str, risk: Disposition) -> PluginAgentToolDef {
         PluginAgentToolDef {
             name: name.into(),
             description: "test".into(),
@@ -318,7 +312,7 @@ mod tests {
                     "entry": { "type": "string" }
                 }
             }),
-            risk_level: RiskLevel::LowRisk,
+            risk_level: Disposition::Approval,
         }
     }
 
@@ -337,7 +331,7 @@ mod tests {
     #[test]
     fn render_command_replaces_placeholders() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "echo {{arg}}", RiskLevel::ReadOnly),
+            &make_def("test", "echo {{arg}}", Disposition::Allow),
             "p",
             &[],
         );
@@ -348,7 +342,7 @@ mod tests {
     #[test]
     fn render_command_handles_missing_params() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "echo {{arg}}", RiskLevel::ReadOnly),
+            &make_def("test", "echo {{arg}}", Disposition::Allow),
             "p",
             &[],
         );
@@ -357,28 +351,28 @@ mod tests {
     }
 
     #[test]
-    fn risk_level_passthrough() {
+    fn disposition_passthrough() {
         assert_eq!(
-            PluginAgentTool::new(&make_def("t", "cmd", RiskLevel::ReadOnly), "p", &[]).risk_level(),
-            RiskLevel::ReadOnly
+            PluginAgentTool::new(&make_def("t", "cmd", Disposition::Allow), "p", &[]).disposition(),
+            Disposition::Allow
         );
         assert_eq!(
-            PluginAgentTool::new(&make_def("t", "cmd", RiskLevel::LowRisk), "p", &[]).risk_level(),
-            RiskLevel::LowRisk
+            PluginAgentTool::new(&make_def("t", "cmd", Disposition::Approval), "p", &[]).disposition(),
+            Disposition::Approval
         );
         assert_eq!(
-            PluginAgentTool::new(&make_def("t", "cmd", RiskLevel::HighRisk), "p", &[]).risk_level(),
-            RiskLevel::HighRisk
+            PluginAgentTool::new(&make_def("t", "cmd", Disposition::ForceApproval), "p", &[]).disposition(),
+            Disposition::ForceApproval
         );
         assert_eq!(
-            PluginAgentTool::new(&make_def("t", "cmd", RiskLevel::Moderate), "p", &[]).risk_level(),
-            RiskLevel::Moderate
+            PluginAgentTool::new(&make_def("t", "cmd", Disposition::Approval), "p", &[]).disposition(),
+            Disposition::Approval
         );
     }
 
     #[test]
     fn null_parameters_defaults_to_empty_object() {
-        let mut def = make_def("t", "cmd", RiskLevel::ReadOnly);
+        let mut def = make_def("t", "cmd", Disposition::Allow);
         def.parameters = Value::Null;
         let tool = PluginAgentTool::new(&def, "p", &[]);
         assert_eq!(tool.parameters_schema()["type"], "object");
@@ -392,7 +386,7 @@ mod tests {
             &make_def(
                 "test",
                 "echo {{__host__}}:{{__port__}}",
-                RiskLevel::ReadOnly,
+                Disposition::Allow,
             ),
             "p",
             &[],
@@ -405,7 +399,7 @@ mod tests {
     #[test]
     fn render_command_injects_host_port_with_underscore() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "cat {{__host_port__}}.log", RiskLevel::ReadOnly),
+            &make_def("test", "cat {{__host_port__}}.log", Disposition::Allow),
             "p",
             &[],
         );
@@ -419,7 +413,7 @@ mod tests {
         // Model tries to pass __host__ = "evil.com"; the context variable
         // is injected FIRST so the placeholder is already consumed.
         let tool = PluginAgentTool::new(
-            &make_def("test", "echo {{__host__}}", RiskLevel::ReadOnly),
+            &make_def("test", "echo {{__host__}}", Disposition::Allow),
             "p",
             &[],
         );
@@ -434,7 +428,7 @@ mod tests {
             &make_def(
                 "test",
                 "echo {{__host__}}:{{__port__}}",
-                RiskLevel::ReadOnly,
+                Disposition::Allow,
             ),
             "p",
             &[],
@@ -446,7 +440,7 @@ mod tests {
     #[test]
     fn render_command_injects_timestamp() {
         let tool = PluginAgentTool::new(
-            &make_def("test", "id mem_{{__timestamp__}}", RiskLevel::ReadOnly),
+            &make_def("test", "id mem_{{__timestamp__}}", Disposition::Allow),
             "p",
             &[],
         );
@@ -490,7 +484,7 @@ mod tests {
     fn ssh_tool_does_not_parse_command_as_json() {
         // kind=ssh: command is a shell template, not JSON. It must be stored
         // as command_template verbatim and fixed_params stays empty.
-        let def = make_def("ssh_tool", "echo {{arg}}", RiskLevel::ReadOnly);
+        let def = make_def("ssh_tool", "echo {{arg}}", Disposition::Allow);
         let tool = PluginAgentTool::new(&def, "p", &[]);
         assert!(tool.fixed_params.as_object().is_some_and(|o| o.is_empty()));
         assert_eq!(tool.command_template, "echo {{arg}}");

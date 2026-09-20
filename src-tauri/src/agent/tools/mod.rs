@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::ssh::connection::SshManager;
@@ -30,6 +30,7 @@ pub mod bash;
 pub mod browser_cdp;
 pub mod connection_info;
 pub mod file_ops;
+pub mod history;
 pub mod http_get;
 pub mod job_ops;
 pub mod local_handlers;
@@ -145,10 +146,22 @@ pub struct ToolContext {
     /// `fork_for` 设置；None = 当前会话机器）。用于传输中心条目与结果
     /// metadata 的归属展示，工具执行无需再自行解析 host。
     pub target_host_label: Option<String>,
+    /// 本工具调用所属的会话 id（agent_loop 构造时注入）。
+    /// 回读历史这类工具靠它知道"我在哪个会话里"——比从 `task_id` 反查
+    /// `AppState.agent_tasks` 更直接，也不会在任务表里查不到时静默读到别的会话。
+    pub conversation_id: Option<String>,
 }
 
 impl ToolContext {
-    pub fn new(ssh: SshManager, session_id: impl Into<String>, app_handle: AppHandle) -> Self {
+    /// `conversation_id` 是**必填**参数而不是可选 builder：工具拿不到"我在哪个
+    /// 会话里"就只能报错（回读历史全靠它）。放进构造函数，漏注入是**编译错误**
+    /// 而不是运行时才发现。
+    pub fn new(
+        ssh: SshManager,
+        session_id: impl Into<String>,
+        conversation_id: impl Into<String>,
+        app_handle: AppHandle,
+    ) -> Self {
         Self {
             ssh,
             session_id: session_id.into(),
@@ -161,6 +174,7 @@ impl ToolContext {
             local_handlers: Arc::new(HashMap::new()),
             command_exec: None,
             target_host_label: None,
+            conversation_id: Some(conversation_id.into()),
         }
     }
 
@@ -402,9 +416,26 @@ pub trait AgentTool: Send + Sync {
     /// JSON Schema describing the tool's parameters.
     fn parameters_schema(&self) -> serde_json::Value;
 
-    /// Baseline risk level. May be elevated by the caller (e.g. for
-    /// `bash`, the actual risk is computed from the command text).
-    fn risk_level(&self) -> RiskLevel;
+    /// 本工具默认的处置档位。
+    ///
+    /// 它只是**基线**：命令类工具的真实档位由 dispatcher 按命令文本现算，写路径类
+    /// 工具写到受保护路径时会抬到强制审批。
+    fn disposition(&self) -> Disposition;
+
+    /// 本工具**即将执行的命令文本**，供风险评估与命令名单使用。默认 `None`。
+    ///
+    /// 内置工具都不需要实现它 —— 声明了 [`ToolSemantics::command_arg`] 的（目前是
+    /// `bash`）由 dispatcher 直接从参数里取。这个是给**动态工具**用的：插件
+    /// `kind=ssh` 的命令要先渲染模板才成型，参数里没有现成的字符串，于是它曾经
+    /// 完全绕过命令名单、自己评一次就执行 —— 两份判定并存，而且那份只用等号比
+    /// 「强制审批」，把更狠的「直接拒绝」漏了过去。
+    async fn rendered_command(
+        &self,
+        _params: &serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> Option<String> {
+        None
+    }
 
     /// External tools may request approval even when their coarse risk appears low.
     fn requires_approval_by_default(&self) -> bool {
@@ -454,7 +485,7 @@ pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn AgentTool>>,
     local_handlers: HashMap<String, Arc<dyn LocalHandler>>,
     /// 内置工具的参数语义，按名字索引。动态工具（skill / 插件 / MCP 工具）没有
-    /// 条目 —— 它们在 dispatcher 里一律走通用路径，风险取 `AgentTool::risk_level()`。
+    /// 条目 —— 它们在 dispatcher 里一律走通用路径，风险取 `AgentTool::disposition()`。
     builtin_semantics: HashMap<String, ToolSemantics>,
 }
 
@@ -600,7 +631,8 @@ pub struct ToolSemantics {
     /// 风险、走命令名单审批、走模型审批、被拒绝时摘要格式化成 `$ cmd`。
     pub command_arg: Option<&'static str>,
     /// 参数里承载「远端路径」的键。有它的工具会：成功执行后把该路径记入
-    /// 「本任务已读」、在 `protected_paths` 命中时把风险抬到 HighRisk。
+    /// 「本任务已读」、写到 `protected_paths` 命中时把档位抬到强制审批
+    /// （见 `tool_dispatcher::resolve_disposition`）。
     pub path_arg: Option<&'static str>,
     /// 该工具会写 `path_arg` 指向的路径，以及写前检查的强度。
     pub path_write: PathWrite,
@@ -611,7 +643,7 @@ pub struct ToolSemantics {
 }
 
 impl ToolSemantics {
-    /// 无参数语义：dispatcher 走通用路径，风险直接取 `AgentTool::risk_level()`。
+    /// 无参数语义：dispatcher 走通用路径，风险直接取 `AgentTool::disposition()`。
     pub const NONE: Self = Self {
         command_arg: None,
         path_arg: None,
@@ -729,6 +761,17 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         semantics: ToolSemantics::command("command"),
         prompt_section: None,
         build: || Arc::new(bash::BashTool::new()),
+    },
+    BuiltinToolSpec {
+        // 回读会话历史原文（含被压缩掉的归档原文）：本机只读，不需要审批；
+        // 范围与上限由工具自己把关（见 tools/history.rs）。
+        name: "read_history",
+        modes: ToolModes::ALL,
+        roles: ToolRoles::Both,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(history::ReadHistoryTool::new()),
     },
     BuiltinToolSpec {
         name: "read_file",
@@ -1256,6 +1299,7 @@ mod tests {
             "connection_info",
             "bash",
             "read_file",
+            "read_history",
             "list_directory",
             "search_files",
             "system_info",
@@ -1286,12 +1330,17 @@ mod tests {
             "Plan/Sub 不应有 subagent"
         );
         assert!(plan_sub.get("bash").is_some(), "Plan/Sub 应保留 bash");
+        assert!(
+            plan_sub.get("read_history").is_some(),
+            "Plan/Sub 应保留 read_history（子代理要能回读主 agent 派发它时的上下文）"
+        );
 
         // Agent/Auto：读写执行 + 计划编排 + 云控制台；插件本地处理器随之注册。
         let exec_main = ToolRegistry::build_mut_for_mode(ToolAudience::Main, &[], &on);
         for name in [
             "bash",
             "read_file",
+            "read_history",
             "write_file",
             "edit_file",
             "list_directory",
@@ -1323,6 +1372,10 @@ mod tests {
         assert!(
             exec_sub.get("write_file").is_some(),
             "Execute/Sub 应保留写工具"
+        );
+        assert!(
+            exec_sub.get("read_history").is_some(),
+            "Execute/Sub 应保留 read_history（只读，与 Main 一致）"
         );
     }
 
@@ -1567,8 +1620,8 @@ mod tests {
             fn parameters_schema(&self) -> serde_json::Value {
                 serde_json::json!({})
             }
-            fn risk_level(&self) -> RiskLevel {
-                RiskLevel::ReadOnly
+            fn disposition(&self) -> Disposition {
+                Disposition::Allow
             }
             async fn execute(
                 &self,

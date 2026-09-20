@@ -8,7 +8,7 @@ export interface InteractionState {
   currentInteraction: ActiveInteractionPayload | null;
   setCurrentInteraction: (interaction: ActiveInteractionPayload | null) => void;
   approve: (taskId: string, toolCallId: string) => Promise<void>;
-  reject: (taskId: string, toolCallId: string) => Promise<void>;
+  reject: (taskId: string, toolCallId: string, reason?: string) => Promise<void>;
   answerQuestion: (taskId: string, questionId: string, answers: QuestionAnswer[]) => Promise<void>;
 }
 
@@ -45,9 +45,9 @@ export const useInteractionStore = create<InteractionState>((set, get) => ({
     }
   },
 
-  reject: async (taskId: string, toolCallId: string) => {
+  reject: async (taskId: string, toolCallId: string, reason?: string) => {
     try {
-      await tauri.agentRejectOperation(taskId, toolCallId);
+      await tauri.agentRejectOperation(taskId, toolCallId, reason);
     } catch (err) {
       console.error('Failed to reject operation:', err);
     }

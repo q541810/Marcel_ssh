@@ -142,6 +142,33 @@ fn fail(stage: CdpStage, message: impl std::fmt::Display) -> CdpFailure {
     }
 }
 
+/// One readable line for a CDP `exceptionDetails`.
+///
+/// The raw object is mostly bookkeeping (`exceptionId`, `scriptId`,
+/// `stackTrace`, `objectId`), and this string is what the user ends up reading
+/// as the reason a web request fell back to another backend — so keep the part
+/// that names the failure and drop the rest. The stack is an `eval` frame
+/// (`at <anonymous>:1:26`) with nothing to learn from.
+fn describe_exception(exc: &Value) -> String {
+    let raw = exc
+        .pointer("/exception/description")
+        .and_then(|v| v.as_str())
+        .or_else(|| exc.pointer("/exception/value").and_then(|v| v.as_str()))
+        .or_else(|| exc.get("text").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("unknown page exception");
+    let line = raw.lines().next().unwrap_or(raw).trim();
+    if line.chars().count() > EXCEPTION_LINE_MAX {
+        format!("{}…", line.chars().take(EXCEPTION_LINE_MAX).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// Ceiling for [`describe_exception`]: a thrown string can be arbitrarily long.
+const EXCEPTION_LINE_MAX: usize = 200;
+
 /// Wall-clock budgets for one short-lived browser session.
 ///
 /// Defaults reproduce the long-standing numbers; tests shrink them so timeout
@@ -922,8 +949,19 @@ impl CdpPage {
 
         // The DOM domain can legitimately be unavailable; fall back to JS, but
         // surface a dead session rather than pretending the page is empty.
+        //
+        // The expression must be total: `document.documentElement` is still
+        // `null` on a document that has no root element at all, even after the
+        // navigation gate passed. Measured against real Chromium —
+        // `image/svg+xml` with an empty body commits, reports
+        // `readyState=complete` and the requested `location.href`, and
+        // `DOM.getOuterHTML` answers with an empty string. Reading `.outerHTML`
+        // straight off that threw `TypeError: Cannot read properties of null`,
+        // which reported "this page has nothing in it" as "the browser read
+        // failed" and degraded the whole web request to raw HTML. An empty
+        // document is the empty answer; the blank-content path says so.
         match self
-            .evaluate_string("document.documentElement.outerHTML")
+            .evaluate_string("document.documentElement ? document.documentElement.outerHTML : ''")
             .await
         {
             Ok(html) => Ok(html),
@@ -956,7 +994,10 @@ impl CdpPage {
             .await?;
 
         if let Some(exc) = result.pointer("/exceptionDetails") {
-            return Err(fail(CdpStage::Read, format!("page JS error: {}", exc)));
+            return Err(fail(
+                CdpStage::Read,
+                format!("page JS error: {}", describe_exception(exc)),
+            ));
         }
 
         Ok(result
@@ -1535,6 +1576,120 @@ mod tests {
 
         // The session is still usable afterwards.
         assert_eq!(page.evaluate_string("ok").await.expect("still usable"), "");
+    }
+
+    /// A page with no root element must read as **empty**, not as a read
+    /// failure.
+    ///
+    /// Reproduces a real Chromium document (`image/svg+xml` with an empty body):
+    /// the navigation gate passes (`readyState=complete`, `location.href` is the
+    /// requested URL) and `DOM.getOuterHTML` answers with an empty string, yet
+    /// `document.documentElement` is `null` — so the unguarded expression threw
+    /// `TypeError` and the whole web request degraded to raw HTML. The fake peer
+    /// throws exactly where Chromium throws, so this test fails on the old
+    /// expression.
+    #[tokio::test]
+    async fn a_rootless_document_reads_as_empty_instead_of_failing() {
+        let fake = FakeCdp::start(Arc::new(move |method, params, _| match method {
+            "DOM.getDocument" => Reply::Ok(json!({ "root": { "nodeId": 1 } })),
+            "DOM.getOuterHTML" => Reply::Ok(json!({ "outerHTML": "" })),
+            "Runtime.evaluate" => {
+                let expr = params
+                    .get("expression")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if expr.contains("documentElement ?") {
+                    eval_ok(json!(""))
+                } else if expr.contains("documentElement") {
+                    Reply::Ok(json!({
+                        "exceptionDetails": {
+                            "exceptionId": 1,
+                            "text": "Uncaught",
+                            "lineNumber": 0,
+                            "columnNumber": 25,
+                            "scriptId": "5",
+                            "exception": {
+                                "type": "object",
+                                "subtype": "error",
+                                "className": "TypeError",
+                                "description": "TypeError: Cannot read properties of null (reading 'outerHTML')\n    at <anonymous>:1:26",
+                                "objectId": "-1183206524193519571.3.2"
+                            }
+                        }
+                    }))
+                } else {
+                    eval_ok(json!(""))
+                }
+            }
+            _ => Reply::Ok(json!({})),
+        }));
+
+        let mut page = CdpPage::connect_with(&fake.ws_url(), fast())
+            .await
+            .expect("connect");
+        let html = page
+            .get_outer_html()
+            .await
+            .expect("a document with no root element is empty, not a failure");
+        assert_eq!(html, "");
+        assert!(
+            !page.is_poisoned(),
+            "reading an empty document must leave the session usable"
+        );
+    }
+
+    /// The exception text reaches the user as the reason a request fell back to
+    /// another backend, so it must be the readable line — not the CDP envelope.
+    #[tokio::test]
+    async fn a_page_exception_is_reported_as_one_readable_line() {
+        let fake = FakeCdp::start(Arc::new(move |method, _params, _| match method {
+            "Runtime.evaluate" => Reply::Ok(json!({
+                "exceptionDetails": {
+                    "exceptionId": 1,
+                    "text": "Uncaught",
+                    "lineNumber": 0,
+                    "columnNumber": 25,
+                    "scriptId": "5",
+                    "stackTrace": { "callFrames": [{ "lineNumber": 0, "columnNumber": 25 }] },
+                    "exception": {
+                        "type": "object",
+                        "subtype": "error",
+                        "className": "TypeError",
+                        "description": "TypeError: Cannot read properties of null (reading 'outerHTML')\n    at <anonymous>:1:26",
+                        "objectId": "-1183206524193519571.3.2"
+                    }
+                }
+            })),
+            _ => Reply::Ok(json!({})),
+        }));
+
+        let mut page = CdpPage::connect_with(&fake.ws_url(), fast())
+            .await
+            .expect("connect");
+        let message = page
+            .evaluate_string("document.documentElement.outerHTML")
+            .await
+            .expect_err("a page exception is a failure")
+            .to_string();
+
+        assert!(
+            message.contains("TypeError: Cannot read properties of null"),
+            "{message}"
+        );
+        assert!(!message.contains("stackTrace"), "{message}");
+        assert!(!message.contains("objectId"), "{message}");
+        assert!(!message.contains("exceptionId"), "{message}");
+    }
+
+    #[test]
+    fn an_exception_without_a_description_falls_back_to_the_text() {
+        let exc = json!({ "text": "Uncaught", "exception": { "type": "object" } });
+        assert_eq!(describe_exception(&exc), "Uncaught");
+        // A thrown string can be arbitrarily long; the reason line stays a line.
+        let long = json!({ "exception": { "description": "x".repeat(500) } });
+        let described = describe_exception(&long);
+        assert!(described.ends_with('…'), "{described}");
+        assert_eq!(described.chars().count(), EXCEPTION_LINE_MAX + 1);
     }
 
     /// The handshake must enable the domains the tools depend on, exactly once.

@@ -1,4 +1,4 @@
-import type { AgentMode, RiskLevel, TerminalColors } from './types';
+import type { AgentMode, Disposition, TerminalColors } from './types';
 
 export const APP_NAME = 'Marcel SSH';
 
@@ -63,23 +63,21 @@ export const DEFAULT_FONT_FAMILY = 'JetBrains Mono, Fira Code, Consolas, "Micros
 export const AGENT_MODES: { value: AgentMode; label: string; description: string }[] = [
   { value: 'plan', label: 'Plan', description: '计划模式，AI 可调用只读类工具做研究和规划，不可写文件，不注册插件/MCP 工具' },
   { value: 'agent', label: 'Agent', description: 'AI 可调用工具，命令执行受黑/白名单约束（在设置中配置）' },
-  { value: 'auto', label: 'Auto', description: 'AI 自主规划并执行所有工具调用，不再请求确认' },
+  { value: 'auto', label: 'Auto', description: 'AI 自主规划并执行所有工具调用，不再请求确认（强制审批档仍会询问）' },
 ];
 
-export const RISK_LEVEL_COLORS: Record<RiskLevel, string> = {
-  ReadOnly: 'bg-emerald-600 text-emerald-100',
-  LowRisk: 'bg-sky-600 text-sky-100',
-  Moderate: 'bg-amber-600 text-amber-100',
-  HighRisk: 'bg-orange-600 text-orange-100',
-  Destructive: 'bg-red-600 text-red-100',
+export const DISPOSITION_COLORS: Record<Disposition, string> = {
+  Allow: 'bg-emerald-600 text-emerald-100',
+  Approval: 'bg-amber-600 text-amber-100',
+  ForceApproval: 'bg-orange-600 text-orange-100',
+  Deny: 'bg-red-600 text-red-100',
 };
 
-export const RISK_LEVEL_LABELS: Record<RiskLevel, string> = {
-  ReadOnly: '只读',
-  LowRisk: '低风险',
-  Moderate: '中等风险',
-  HighRisk: '高风险',
-  Destructive: '破坏性',
+export const DISPOSITION_LABELS: Record<Disposition, string> = {
+  Allow: '正常放行',
+  Approval: '请求审批',
+  ForceApproval: '强制审批',
+  Deny: '直接拒绝',
 };
 
 export const TERMINAL_COLOR_PRESETS: { name: string; colors: TerminalColors }[] = [

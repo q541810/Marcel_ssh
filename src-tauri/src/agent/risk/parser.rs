@@ -30,6 +30,21 @@ impl std::fmt::Display for ParseError {
     }
 }
 
+impl ParseError {
+    /// 给模型/用户看的中文说明。
+    ///
+    /// 解析失败会**拒绝执行**并把原因回给模型，所以这句话就是模型改写的唯一线索：
+    /// 要说清是"哪种写法看不懂"，不能只丢一句"解析失败"。（`Display` 那份是诊断
+    /// 用的英文原文，别混进给用户的文案。）
+    pub fn explain(&self) -> &'static str {
+        match self {
+            ParseError::SubshellDetected => "含命令替换 $( )、反引号，或进程替换 <( )",
+            ParseError::UnbalancedQuote => "引号没有成对",
+            ParseError::ShellWordsError(_) => "无法切分成命令与参数（转义字符不完整等）",
+        }
+    }
+}
+
 /// Split a command line into segments at top-level `;`, `&&`, `||`, `|`, `&`,
 /// and bare `\n`/`\r`.
 /// Honors `'...'`, `"..."` quoting and `\` escapes. Rejects strings containing
@@ -430,6 +445,47 @@ mod tests {
             split_command_chain("diff <(a) <(b)"),
             Err(ParseError::SubshellDetected)
         );
+    }
+
+    /// `split_command_chain` 能接受的东西，每一段都必须能被 `parse_segment` 切出来。
+    ///
+    /// 这是 `assess_command` 里"段落 tokenize 失败"那一支**不可达**的依据：两个
+    /// 解析器对引号与转义的判定逐字符对齐，所以外层拒绝了的东西不会漏进内层。
+    /// 哪天有人放松了引号处理（或给分隔符加了新形态），这条会先红 —— 而不是让
+    /// "切不出参数" 悄悄落到别的分支上（历史版本那里是 `continue`，即放行）。
+    #[test]
+    fn split_and_tokenize_agree_on_what_is_parseable() {
+        for input in [
+            "ls -la",
+            "echo 'a;b'",
+            "echo \"a|b\"",
+            r#"grep -r "don't" /tmp/x"#,
+            r"echo a\ b",
+            r"echo \\",
+            r"echo x \",
+            r#"echo "abc\""#,
+            "echo 100%",
+            "a && b || c | d",
+            "ls\nrm -rf /etc",
+            "sudo -u root rm -rf /",
+            "bash -c \"rm -rf /\"",
+            "FOO=1 env A=2 nohup ls",
+            "echo '$HOME'",
+            "echo \"$(x)\"",
+            "echo `x`",
+        ] {
+            let Ok(segments) = split_command_chain(input) else {
+                continue; // 外层已经拒绝 → 不会走到内层
+            };
+            for seg in &segments {
+                assert!(
+                    parse_segment(seg).is_ok(),
+                    "`{}` 被 split 接受，但这一段切不出来：{:?}",
+                    input,
+                    seg
+                );
+            }
+        }
     }
 
     #[test]

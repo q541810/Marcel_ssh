@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect } from 'react';
 import { useInteractionStore } from '@/stores/interactionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useTaskStore } from '@/stores/taskStore';
 import ApprovalDialog from '@/components/agent/ApprovalDialog';
 import QuestionPanel from '@/components/agent/QuestionPanel';
 import { InteractionFloatingCapsule } from './InteractionFloatingCapsule';
@@ -12,6 +13,7 @@ export default function GlobalInteractionOverlay() {
   const approve = useInteractionStore((s) => s.approve);
   const reject = useInteractionStore((s) => s.reject);
   const answerQuestion = useInteractionStore((s) => s.answerQuestion);
+  const stopTask = useTaskStore((s) => s.stopTask);
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
@@ -45,6 +47,19 @@ export default function GlobalInteractionOverlay() {
     flyToInteractionCapsule(origin);
     setMinimized(true);
   }, [current, activeSessionId, activeConversationId, setActiveSession, switchConversation]);
+
+  /**
+   * 收起当前交互：飞到右下角浮动药丸，**不作答**。
+   *
+   * 它同时挂在 `onMinimize`（标题栏的收起按钮）和 `onClose`（点背景 / Esc）上。
+   * `onClose` 以前接的是 `reject` —— 一次误触就替用户判了「拒绝」，而且不可逆
+   * （模型收到「用户拒绝」就换方案走了）。审批是安全决定，答案只能来自显式按钮。
+   */
+  const minimizeInteraction = useCallback((e?: React.MouseEvent) => {
+    const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
+    flyToInteractionCapsule(origin);
+    setMinimized(true);
+  }, []);
 
   if (!current) return null;
 
@@ -85,7 +100,7 @@ export default function GlobalInteractionOverlay() {
           id: current.approval.toolCallId,
           name: current.approval.toolName,
           arguments: current.approval.arguments,
-          riskLevel: current.approval.riskLevel,
+          disposition: current.approval.disposition,
           reasons: current.approval.reasons,
           metadata: current.approval.metadata,
         }}
@@ -94,27 +109,27 @@ export default function GlobalInteractionOverlay() {
             void approve(current.taskId, current.approval.toolCallId);
           }
         }}
-        onReject={() => {
+        onReject={(reason?: string) => {
           if (current.approval) {
-            void reject(current.taskId, current.approval.toolCallId);
+            void reject(current.taskId, current.approval.toolCallId, reason);
           }
+        }}
+        onRejectAndStop={async (reason?: string) => {
+          if (!current.approval) return;
+          // 顺序要紧：先拒绝（理由要走交互队列送出去），再停任务。
+          // 反过来的话 stopTask 会先把待审批请求按「拒绝但无理由」清掉，
+          // 理由就丢了。
+          await reject(current.taskId, current.approval.toolCallId, reason);
+          await stopTask(current.taskId);
         }}
         open={true}
-        onClose={() => {
-          if (current.approval) {
-            void reject(current.taskId, current.approval.toolCallId);
-          }
-        }}
+        onClose={minimizeInteraction}
         sessionName={current.sessionName}
         conversationTitle={current.conversationTitle}
         isCurrentContext={isCurrentContext}
         onNavigateToContext={handleNavigate}
         queueLength={current.queueLength}
-        onMinimize={(e) => {
-          const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
-          flyToInteractionCapsule(origin);
-          setMinimized(true);
-        }}
+        onMinimize={minimizeInteraction}
       />
     );
   }

@@ -23,7 +23,7 @@
       "handler": "fs.read",      // kind=local 时必填，内核注册的 handler 名
       "command": "{\"path\":\"data.json\"}", // kind=local 时为 JSON 固定参数
       "parameters": {},
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     }
   ],
   "injections": [...],            // 可选。内容脚本注入（需 ui.inject 权限）。
@@ -139,7 +139,7 @@
 | `handler`     | string      | 否   | `kind=local` 时必填，指向内核注册的通用本地 handler 名称（如 `"fs.read"`）。`kind=ssh` 时忽略。详见 [通用本地 handler](#通用本地-handler)                                                                          |
 | `command`     | string      | 否   | `kind=ssh` 时为 SSH 命令模板；`kind=local` 时为 JSON 对象字符串（fixed_params）。详见下方说明                                                                                                          |
 | `parameters`  | JSON Schema | 否   | 参数 JSON Schema                                                                                                                                                                  |
-| `riskLevel`   | string      | 否   | 风险等级：`"ReadOnly"` / `"LowRisk"` / `"Moderate"` / `"HighRisk"` / `"Destructive"`（默认 `"Moderate"`）。**严格校验**——未知值（如 `"Medium"`、`"moderate"` 小写）在 manifest 加载时报错，不再静默降级为 `Moderate` |
+| `riskLevel`   | string      | 否   | 处置档位：`"Allow"` / `"Approval"` / `"ForceApproval"` / `"Deny"`（默认 `"Approval"`）。旧的五档严重度（`"ReadOnly"` … `"Destructive"`）仍可解析并自动映射到四档，已装好的插件不用改；新插件请直接用四档。**严格校验**——两边都不认的值（如 `"Medium"`、`"moderate"` 小写）在 manifest 加载时报错，不再静默降级 |
 
 > Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 
@@ -151,7 +151,7 @@
   "description": "获取服务器运行状态",
   "command": "top -bn1 | head -20",
   "parameters": {},
-  "riskLevel": "ReadOnly"
+  "riskLevel": "Allow"
 }
 ```
 
@@ -165,7 +165,7 @@
   "handler": "fs.read",
   "command": "{\"path\":\"data.json\"}",
   "parameters": {},
-  "riskLevel": "ReadOnly"
+  "riskLevel": "Allow"
 }
 ```
 

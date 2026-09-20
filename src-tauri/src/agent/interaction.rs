@@ -18,7 +18,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio::sync::oneshot;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::question::QuestionItem;
 use crate::emit_event;
 use crate::notification::{send_notification, NotificationKind};
@@ -42,7 +42,7 @@ pub struct ApprovalDetail {
     pub tool_call_id: String,
     pub tool_name: String,
     pub arguments: serde_json::Value,
-    pub risk_level: RiskLevel,
+    pub disposition: Disposition,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasons: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -77,9 +77,44 @@ pub struct ActiveInteractionPayload {
     pub question: Option<QuestionDetail>,
 }
 
+/// 用户对一次审批的回答。
+///
+/// `reason` 是拒绝理由（可空），会**原样转达给模型**。
+///
+/// 为什么要有这个字段：以前这条通道只传一个 `bool`，模型收到的全部信息就是
+/// 「用户拒绝」。它不知道自己哪里不对，于是换个写法再提一次，用户被迫反复拒绝 ——
+/// 而用户心里其实是有理由的，只是没地方说。
+#[derive(Debug, Clone, Default)]
+pub struct ApprovalAnswer {
+    pub approved: bool,
+    /// 拒绝理由。空字符串视为没填。
+    pub reason: Option<String>,
+}
+
+impl ApprovalAnswer {
+    pub fn approved() -> Self {
+        Self {
+            approved: true,
+            reason: None,
+        }
+    }
+
+    /// 拒绝。理由在入口处 trim 掉首尾空白，空白串归一成 `None` —— 这段文字会
+    /// 原样进模型提示词，一串空格和没有是同一回事。
+    pub fn rejected(reason: Option<String>) -> Self {
+        let reason = reason
+            .map(|r| r.trim().to_string())
+            .filter(|r| !r.is_empty());
+        Self {
+            approved: false,
+            reason,
+        }
+    }
+}
+
 /// 交互响应内部通道枚举
 enum InteractionResponder {
-    Approval(oneshot::Sender<bool>),
+    Approval(oneshot::Sender<ApprovalAnswer>),
     Question(oneshot::Sender<Vec<serde_json::Value>>),
 }
 
@@ -187,10 +222,10 @@ impl AgentInteractionManager {
         tool_call_id: String,
         tool_name: &str,
         arguments: serde_json::Value,
-        risk: RiskLevel,
+        risk: Disposition,
         model_reasons: Option<&[String]>,
         metadata: Option<serde_json::Value>,
-    ) -> bool {
+    ) -> ApprovalAnswer {
         let interaction_id = format!("approval:{}:{}", task_id, tool_call_id);
         let (session_name, conversation_title) =
             Self::resolve_context_names(app, &session_id, &conversation_id).await;
@@ -200,7 +235,7 @@ impl AgentInteractionManager {
             tool_call_id: tool_call_id.clone(),
             tool_name: tool_name.to_string(),
             arguments,
-            risk_level: risk,
+            disposition: risk,
             reasons: model_reasons.map(|r| r.to_vec()),
             metadata,
         };
@@ -228,16 +263,10 @@ impl AgentInteractionManager {
         {
             let state = app.state::<crate::AppState>();
             let ns = state.settings.read().await.notification_settings.clone();
-            let risk_label = match risk {
-                RiskLevel::ReadOnly => "只读",
-                RiskLevel::LowRisk => "低风险",
-                RiskLevel::Moderate => "中风险",
-                RiskLevel::HighRisk => "高风险",
-                RiskLevel::Destructive => "破坏性",
-            };
+            let disposition_label = risk.label();
             let body = format!(
-                "[{}] 工具: {}\n风险等级: {}\n点击查看详情",
-                session_name, tool_name, risk_label
+                "[{}] 工具: {}\n处置: {}\n点击查看详情",
+                session_name, tool_name, disposition_label
             );
             send_notification(
                 app,
@@ -253,14 +282,15 @@ impl AgentInteractionManager {
         }
 
         // 无限制等待用户响应或通道关闭（取消/断连）
-        let approved = match rx.await {
+        let answer = match rx.await {
             Ok(v) => v,
-            Err(_) => false,
+            // 通道被丢弃（任务/会话取消）按"拒绝但不带理由"处理。
+            Err(_) => ApprovalAnswer::rejected(None),
         };
 
         // 出队并激活下一个
         self.remove_and_advance(app, &task_id, &interaction_id);
-        approved
+        answer
     }
 
     /// 请求提问并等待用户回答
@@ -335,6 +365,7 @@ impl AgentInteractionManager {
         task_id: &str,
         tool_call_id: &str,
         approved: bool,
+        reason: Option<String>,
     ) -> bool {
         let interaction_id = format!("approval:{}:{}", task_id, tool_call_id);
         let sender = {
@@ -355,7 +386,12 @@ impl AgentInteractionManager {
         };
 
         if let Some(tx) = sender {
-            let _ = tx.send(approved);
+            let answer = if approved {
+                ApprovalAnswer::approved()
+            } else {
+                ApprovalAnswer::rejected(reason)
+            };
+            let _ = tx.send(answer);
             true
         } else {
             false
@@ -425,7 +461,7 @@ impl AgentInteractionManager {
                 if let Some(responder) = item.responder.take() {
                     match responder {
                         InteractionResponder::Approval(tx) => {
-                            let _ = tx.send(false);
+                            let _ = tx.send(ApprovalAnswer::rejected(None));
                         }
                         InteractionResponder::Question(tx) => {
                             let _ = tx.send(Vec::new());
@@ -460,7 +496,7 @@ impl AgentInteractionManager {
                 if let Some(responder) = item.responder.take() {
                     match responder {
                         InteractionResponder::Approval(tx) => {
-                            let _ = tx.send(false);
+                            let _ = tx.send(ApprovalAnswer::rejected(None));
                         }
                         InteractionResponder::Question(tx) => {
                             let _ = tx.send(Vec::new());
@@ -491,5 +527,32 @@ mod tests {
     fn manager_initializes_empty() {
         let mgr = AgentInteractionManager::new();
         assert_eq!(mgr.inner.read().queue.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod approval_answer_tests {
+    use super::ApprovalAnswer;
+
+    #[test]
+    fn rejected_normalizes_blank_reason_to_none() {
+        assert_eq!(ApprovalAnswer::rejected(Some("   ".into())).reason, None);
+        assert_eq!(ApprovalAnswer::rejected(Some(String::new())).reason, None);
+        assert_eq!(ApprovalAnswer::rejected(None).reason, None);
+        assert!(!ApprovalAnswer::rejected(None).approved);
+    }
+
+    #[test]
+    fn rejected_keeps_a_real_reason() {
+        let a = ApprovalAnswer::rejected(Some(" 有风险 ".into()));
+        assert_eq!(a.reason.as_deref(), Some("有风险"));
+        assert!(!a.approved);
+    }
+
+    #[test]
+    fn approved_never_carries_a_reason() {
+        let a = ApprovalAnswer::approved();
+        assert!(a.approved);
+        assert!(a.reason.is_none());
     }
 }

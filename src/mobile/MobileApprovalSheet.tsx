@@ -1,5 +1,6 @@
-import type { ToolCallInfo } from '@/lib/types';
-import { RISK_LEVEL_LABELS } from '@/lib/constants';
+import { useEffect, useState } from 'react';
+import type { Disposition, ToolCallInfo } from '@/lib/types';
+import { DISPOSITION_LABELS } from '@/lib/constants';
 import FileChangeView from '@/components/agent/FileChangeView';
 import MobileSheet from './ui/MobileSheet';
 import { cleanExecuteCommandArgs } from '@/components/agent/argumentFormat';
@@ -9,7 +10,11 @@ interface MobileApprovalSheetProps {
   toolCall: ToolCallInfo;
   open: boolean;
   onApprove: () => void;
-  onReject: () => void;
+  /// 拒绝。`reason` 是用户填写的理由（可空），会原样转达给模型 —— 不说理由时
+  /// 模型只知道"被拒了"，于是换个写法再试，用户被迫反复拒绝。
+  onReject: (reason?: string) => void;
+  /// 拒绝并把整个任务停掉（用户压根不想让它继续试）。
+  onRejectAndStop?: (reason?: string) => void;
   sessionName?: string;
   conversationTitle?: string;
   isCurrentContext?: boolean;
@@ -18,12 +23,11 @@ interface MobileApprovalSheetProps {
   onMinimize?: (e?: React.MouseEvent) => void;
 }
 
-const RISK_TONE: Record<string, string> = {
-  ReadOnly: 'bg-zinc-700/60 text-zinc-300',
-  LowRisk: 'bg-emerald-500/15 text-emerald-300',
-  Moderate: 'bg-amber-500/15 text-amber-300',
-  HighRisk: 'bg-orange-500/15 text-orange-300',
-  Destructive: 'bg-red-500/15 text-red-300',
+const DISPOSITION_TONE: Record<Disposition, string> = {
+  Allow: 'bg-emerald-500/15 text-emerald-300',
+  Approval: 'bg-amber-500/15 text-amber-300',
+  ForceApproval: 'bg-orange-500/15 text-orange-300',
+  Deny: 'bg-red-500/15 text-red-300',
 };
 
 /**
@@ -35,6 +39,7 @@ export default function MobileApprovalSheet({
   open,
   onApprove,
   onReject,
+  onRejectAndStop,
   sessionName,
   conversationTitle,
   isCurrentContext = true,
@@ -42,12 +47,18 @@ export default function MobileApprovalSheet({
   queueLength = 1,
   onMinimize,
 }: MobileApprovalSheetProps) {
+  const [reason, setReason] = useState('');
+  // 队首换成下一条时理由必须清空 —— 理由是给「那条命令」的，留在框里就会原样
+  // 发给下一条（队列前进时是同一个组件实例，状态不会被重置）。
+  useEffect(() => {
+    setReason('');
+  }, [toolCall.id]);
   const isEditFile = toolSpec(toolCall.name)?.approvalView === 'diff';
   const isExecuteCommand = toolSpec(toolCall.name)?.payload === 'command';
   const path =
     typeof toolCall.arguments?.path === 'string' ? toolCall.arguments.path : '';
   const cleanedCmd = isExecuteCommand ? cleanExecuteCommandArgs(toolCall.arguments) : null;
-  const riskTone = RISK_TONE[toolCall.riskLevel] ?? RISK_TONE.Moderate;
+  const dispositionTone = DISPOSITION_TONE[toolCall.disposition];
   // 多机操控：命令带 host = 跨机执行，审批必须醒目提示目标机器（安全护栏）。
   const targetHost =
     typeof toolCall.arguments?.host === 'string' && toolCall.arguments.host.trim()
@@ -64,10 +75,15 @@ export default function MobileApprovalSheet({
           <span className="flex items-center gap-2">
             需要操作批准
             <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${riskTone}`}
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dispositionTone}`}
             >
-              {RISK_LEVEL_LABELS[toolCall.riskLevel]}
+              {DISPOSITION_LABELS[toolCall.disposition]}
             </span>
+            {toolCall.disposition === 'ForceApproval' && (
+              <span className="text-[11px] text-orange-300/90">
+                Auto 模式也会询问
+              </span>
+            )}
           </span>
           <div className="flex items-center gap-2">
             {queueLength > 1 && (
@@ -91,21 +107,41 @@ export default function MobileApprovalSheet({
         </div>
       }
       footer={
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onReject}
-            className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm font-medium text-zinc-200 active:bg-zinc-700"
-          >
-            拒绝
-          </button>
-          <button
-            type="button"
-            onClick={onApprove}
-            className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
-          >
-            批准
-          </button>
+        <div className="space-y-2.5">
+          {/* 拒绝理由：可选，但填了模型才有依据调整方向 */}
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="可选：说明拒绝原因，会转达给 Agent"
+            aria-label="拒绝原因"
+            className="w-full rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-600"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onReject(reason.trim() || undefined)}
+              className="flex-1 rounded-xl bg-zinc-800 px-4 py-3 text-sm font-medium text-zinc-200 active:bg-zinc-700"
+            >
+              拒绝
+            </button>
+            <button
+              type="button"
+              onClick={onApprove}
+              className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
+            >
+              批准
+            </button>
+          </div>
+          {onRejectAndStop && (
+            <button
+              type="button"
+              onClick={() => onRejectAndStop(reason.trim() || undefined)}
+              className="w-full text-xs text-zinc-500 active:text-red-400 py-1"
+            >
+              拒绝并停止任务
+            </button>
+          )}
         </div>
       }
     >

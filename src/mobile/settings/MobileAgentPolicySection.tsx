@@ -3,7 +3,7 @@ import { Trash2, ChevronDown } from 'lucide-react';
 import type { CommandCheckResult, CommandListMode, LlmRegistry } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
-import { SYSTEM_PROMPT_MAX_CHARS } from '@/lib/constants';
+import { DISPOSITION_LABELS, SYSTEM_PROMPT_MAX_CHARS } from '@/lib/constants';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import {
@@ -88,7 +88,7 @@ export function MobileAgentPolicySection() {
       setTestResult({
         allowed: false,
         requiresConfirmation: false,
-        riskLevel: 'Moderate',
+        disposition: 'Approval',
         reason: `测试失败：${getErrorMessage(err)}`,
       });
     } finally {
@@ -360,7 +360,8 @@ export function MobileAgentPolicySection() {
               )}
             </div>
             <div className="mt-0.5 text-xs opacity-80">
-              风险等级：{testResult.riskLevel} · {testResult.reason}
+              处置：{DISPOSITION_LABELS[testResult.disposition]} ·{' '}
+              {testResult.reason}
             </div>
           </div>
         )}

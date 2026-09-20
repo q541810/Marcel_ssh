@@ -31,7 +31,7 @@ describe('interactionStore', () => {
         toolCallId: 'c1',
         toolName: 'execute_command',
         arguments: { command: 'ls -la' },
-        riskLevel: 'Moderate',
+        disposition: 'Approval',
       },
     };
 
@@ -69,7 +69,13 @@ describe('interactionStore', () => {
 
   it('delegates reject to tauri.agentRejectOperation', async () => {
     await useInteractionStore.getState().reject('t1', 'c1');
-    expect(tauri.agentRejectOperation).toHaveBeenCalledWith('t1', 'c1');
+    expect(tauri.agentRejectOperation).toHaveBeenCalledWith('t1', 'c1', undefined);
+  });
+
+  /// 拒绝理由要一路送到后端 —— 它是模型唯一能看到的「为什么不让我做」。
+  it('passes the rejection reason through', async () => {
+    await useInteractionStore.getState().reject('t1', 'c1', '别动生产库');
+    expect(tauri.agentRejectOperation).toHaveBeenCalledWith('t1', 'c1', '别动生产库');
   });
 
   it('delegates answerQuestion to tauri.agentAnswerQuestion', async () => {

@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 
-use crate::agent::interaction::AgentInteractionManager;
-use crate::agent::risk::RiskLevel;
+use crate::agent::interaction::{AgentInteractionManager, ApprovalAnswer};
+use crate::agent::risk::Disposition;
 
 /// Manages user approval flow for tool execution.
 ///
@@ -23,7 +23,8 @@ impl ApprovalManager {
     }
 
     /// Ask user for approval via the unified interaction queue.
-    /// Returns `true` if approved, `false` if rejected or timed out.
+    ///
+    /// 取消 / 通道丢弃都按"拒绝但不带理由"处理（见 `ApprovalAnswer::rejected`）。
     pub async fn request_approval(
         &self,
         task_id: String,
@@ -32,10 +33,10 @@ impl ApprovalManager {
         tool_call_id: String,
         tool_name: &str,
         arguments: serde_json::Value,
-        risk: RiskLevel,
+        risk: Disposition,
         model_reasons: Option<&[String]>,
         metadata: Option<serde_json::Value>,
-    ) -> bool {
+    ) -> ApprovalAnswer {
         self.interaction_mgr
             .request_approval(
                 &self.app,

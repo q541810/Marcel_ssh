@@ -10,7 +10,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::command_exec::{CancelReason, JobStatus};
 use crate::error::AppError;
@@ -102,8 +102,8 @@ impl AgentTool for JobOutputTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(
@@ -195,8 +195,8 @@ impl AgentTool for JobKillTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::Moderate
+    fn disposition(&self) -> Disposition {
+        Disposition::Approval
     }
 
     async fn execute(
@@ -277,8 +277,8 @@ impl AgentTool for JobListTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(

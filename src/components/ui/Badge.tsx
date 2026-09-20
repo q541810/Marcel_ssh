@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import type { RiskLevel } from '@/lib/types';
-import { RISK_LEVEL_COLORS } from '@/lib/constants';
+import type { Disposition } from '@/lib/types';
+import { DISPOSITION_COLORS } from '@/lib/constants';
 
 type BadgeSize = 'sm' | 'md' | 'lg';
 
 interface Props {
-  variant?: RiskLevel | 'default';
+  variant?: Disposition | 'default';
   size?: BadgeSize;
   children: ReactNode;
 }
@@ -20,7 +20,7 @@ const defaultStyle = 'bg-zinc-700 text-zinc-300';
 
 export default function Badge({ variant = 'default', size = 'sm', children }: Props) {
   const colorClass =
-    variant === 'default' ? defaultStyle : RISK_LEVEL_COLORS[variant];
+    variant === 'default' ? defaultStyle : DISPOSITION_COLORS[variant];
 
   return (
     <span

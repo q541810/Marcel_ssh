@@ -57,7 +57,11 @@ export interface PluginAgentToolDef {
   kind?: ToolKind;
   handler?: string;
   parameters?: unknown;
-  riskLevel?: RiskLevel;
+  /**
+   * 插件作者在 manifest 里声明的默认处置档位。**键名保持 `riskLevel`**——这是
+   * 已发布的插件契约，改了会让所有现有插件失效。四档新值和旧的五档值都能写。
+   */
+  riskLevel?: Disposition | LegacyDisposition;
 }
 
 /**
@@ -363,6 +367,27 @@ export type AgentStatus =
   | 'failed'
   | 'cancelled';
 
+/**
+ * 后端 `agent/task.rs` 的 `TurnState` 镜像：**变体名与落库字符串一一对应**
+ * （Rust 侧 `#[serde(rename_all = "lowercase")]` + `as_str()`）。
+ *
+ * 它是「这一轮到底怎么停下来的」：写在回合首条 user 消息行上
+ * （`messages.turn_state`），回合折叠据此决定要不要把过程收起来 ——
+ * **只有 `completed` 收**（判定见 `agentTurnFold.ts` 的 `turnStopVetoed`）。
+ *
+ * 类型由下面这份**运行时清单**派生，清单与 Rust 源码的一致性由
+ * `turnState.test.ts` 读源码比对盯着（改了 Rust 变体、这里没跟上就会红）。
+ */
+export const TURN_STATES = [
+  'running',
+  'completed',
+  'cancelled',
+  'failed',
+  'interrupted',
+] as const;
+
+export type TurnState = (typeof TURN_STATES)[number];
+
 export interface AgentTask {
   id: string;
   sessionId: string;
@@ -442,6 +467,15 @@ export interface AgentMessage {
   /** 持久化消息的 DB row id（`messages.id`，统一 id 域）：load 时填充，
    *  压缩事件据此按 id 定位卡片插入点（取代位置数数与指纹验证）。 */
   dbId?: string;
+  /**
+   * 回合收尾状态 —— 只出现在**回合首条 user 消息**上（其余消息恒为 undefined）。
+   *
+   * 「这一轮到底怎么停下来的」：`completed` 才算正常结束，回合折叠只在这一种
+   * 情况下把过程收起来；`cancelled` / `failed` / `interrupted` / `running`
+   * （含上次进程崩溃留下的痕迹）一律保持展开。缺失 = 没有记录（旧数据、本回合
+   * 没锚定到 user 行）→ 不否决，维持按消息形态判定的既有行为。
+   */
+  turnState?: TurnState;
 }
 
 export interface ToolCallInfo {
@@ -449,7 +483,7 @@ export interface ToolCallInfo {
   name: string;
   arguments: Record<string, unknown>;
   result?: string;
-  riskLevel: RiskLevel;
+  disposition: Disposition;
   approved?: boolean;
   /** Reasons from the model approval step, shown when the model routed to human. */
   reasons?: string[];
@@ -457,7 +491,20 @@ export interface ToolCallInfo {
   metadata?: Record<string, unknown>;
 }
 
-export type RiskLevel = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
+/**
+ * 一次工具调用的处置结果 —— 风险评估的唯一输出，也是后端 `Disposition` 的镜像。
+ * 顺序即严重程度（`Allow` 最轻、`Deny` 最重）。
+ */
+export type Disposition = 'Allow' | 'Approval' | 'ForceApproval' | 'Deny';
+
+/**
+ * 旧的五档严重度，已弃用。
+ *
+ * 后端仍接受这些值并自动映射到 {@link Disposition}（`ReadOnly`/`LowRisk`→`Allow`、
+ * `Moderate`→`Approval`、`HighRisk`/`Destructive`→`ForceApproval`），所以已经装好的
+ * 插件清单、以及数据库里的历史工具调用记录都不用改。新写的插件请直接用四档。
+ */
+export type LegacyDisposition = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk' | 'Destructive';
 
 // Settings
 
@@ -873,7 +920,7 @@ export interface ActiveInteractionPayload {
     toolCallId: string;
     toolName: string;
     arguments: Record<string, unknown>;
-    riskLevel: RiskLevel;
+    disposition: Disposition;
     reasons?: string[];
     metadata?: Record<string, unknown>;
   };
@@ -914,6 +961,11 @@ export interface AgentConversation {
    * 到这里）：`undefined`/null = 未设置，跟随模型自身默认。
    */
   reasoningEffort?: string | null;
+  /**
+   * 用户置顶：置顶的会话在列表里浮到最上方（日期分组之前），不受 `updatedAt`
+   * 影响。切换置顶**不改 `updatedAt`**，所以取消置顶不会打乱时间序。
+   */
+  pinned?: boolean;
 }
 
 export interface StoredMessage {
@@ -927,6 +979,9 @@ export interface StoredMessage {
   reasoningContent?: string | null;
   /** JSON array of relative image paths */
   imagePathsJson?: string | null;
+  /** 回合收尾状态（`TurnState`）：只写在回合首条 user 消息行上，
+   *  `null`/缺失 = 没有记录。后端已把不认识的字符串折成 `null`。 */
+  turnState?: TurnState | null;
 }
 
 /** 活跃消息段加载结果契约 */
@@ -986,7 +1041,7 @@ export interface UpdateCapabilities {
 export interface CommandCheckResult {
   allowed: boolean;
   requiresConfirmation: boolean;
-  riskLevel: RiskLevel;
+  disposition: Disposition;
   reason: string;
 }
 

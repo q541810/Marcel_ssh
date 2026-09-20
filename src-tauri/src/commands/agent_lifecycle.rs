@@ -131,20 +131,25 @@ pub async fn agent_approve_operation(
 ) -> Result<(), AppError> {
     state
         .agent_interaction
-        .respond_approval(&app, &task_id, &operation_id, true);
+        .respond_approval(&app, &task_id, &operation_id, true, None);
     Ok(())
 }
 
 #[tauri::command]
+/// 拒绝一次待审批的操作。
+///
+/// `reason` 可选，会**原样转达给模型** —— 不说理由时模型只知道"被拒了"，于是换个
+/// 写法再试，用户被迫反复拒绝。说了理由它才有依据调整方向。
 pub async fn agent_reject_operation(
     app: AppHandle,
     state: State<'_, AppState>,
     task_id: String,
     operation_id: String,
+    reason: Option<String>,
 ) -> Result<(), AppError> {
     state
         .agent_interaction
-        .respond_approval(&app, &task_id, &operation_id, false);
+        .respond_approval(&app, &task_id, &operation_id, false, reason);
     Ok(())
 }
 
@@ -178,6 +183,8 @@ mod tests {
             created_at: chrono::Utc::now(),
             parent_task_id: parent.map(String::from),
             model_id: None,
+            turn_anchor_id: None,
+            parent_history_upto: None,
         }
     }
 

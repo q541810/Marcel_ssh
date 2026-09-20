@@ -1,4 +1,5 @@
 import { useCallback, useState, useEffect } from 'react';
+import { useTaskStore } from '@/stores/taskStore';
 import { useInteractionStore } from '@/stores/interactionStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConversationStore } from '@/stores/conversationStore';
@@ -11,6 +12,7 @@ export default function MobileGlobalInteractionOverlay() {
   const approve = useInteractionStore((s) => s.approve);
   const reject = useInteractionStore((s) => s.reject);
   const answerQuestion = useInteractionStore((s) => s.answerQuestion);
+  const stopTask = useTaskStore((s) => s.stopTask);
 
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
@@ -82,7 +84,7 @@ export default function MobileGlobalInteractionOverlay() {
           id: current.approval.toolCallId,
           name: current.approval.toolName,
           arguments: current.approval.arguments,
-          riskLevel: current.approval.riskLevel,
+          disposition: current.approval.disposition,
           reasons: current.approval.reasons,
           metadata: current.approval.metadata,
         }}
@@ -92,10 +94,17 @@ export default function MobileGlobalInteractionOverlay() {
             void approve(current.taskId, current.approval.toolCallId);
           }
         }}
-        onReject={() => {
+        onReject={(reason?: string) => {
           if (current.approval) {
-            void reject(current.taskId, current.approval.toolCallId);
+            void reject(current.taskId, current.approval.toolCallId, reason);
           }
+        }}
+        onRejectAndStop={async (reason?: string) => {
+          if (!current.approval) return;
+          // 顺序要紧：先拒绝（理由要走交互队列送出去），再停任务。
+          // 反过来的话 stopTask 会先把待审批请求按「拒绝但无理由」清掉，理由就丢了。
+          await reject(current.taskId, current.approval.toolCallId, reason);
+          await stopTask(current.taskId);
         }}
         sessionName={current.sessionName}
         conversationTitle={current.conversationTitle}

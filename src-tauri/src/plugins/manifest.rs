@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::agent::RiskLevel;
+use crate::agent::Disposition;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -154,8 +154,10 @@ pub struct PluginAgentToolDef {
     pub handler: Option<String>,
     #[serde(default)]
     pub parameters: serde_json::Value,
-    #[serde(default = "default_risk")]
-    pub risk_level: RiskLevel,
+    /// 插件作者声明的默认处置档位。JSON 键保持 `riskLevel`（已发布的插件契约
+    /// 不动），但四档新值和旧的五档值都能解析，`disposition` 这个键名也认。
+    #[serde(default = "default_risk", alias = "disposition")]
+    pub risk_level: Disposition,
 }
 
 /// Plugin agent tool execution mode.
@@ -169,8 +171,8 @@ pub enum ToolKind {
     Local,
 }
 
-fn default_risk() -> RiskLevel {
-    RiskLevel::Moderate
+fn default_risk() -> Disposition {
+    Disposition::Approval
 }
 
 fn default_tool_kind() -> ToolKind {
@@ -255,7 +257,7 @@ mod tests {
             kind: ToolKind::Local,
             handler: None,
             parameters: serde_json::Value::Null,
-            risk_level: RiskLevel::LowRisk,
+            risk_level: Disposition::Approval,
         };
         assert!(def.validate().is_err());
     }
@@ -269,7 +271,7 @@ mod tests {
             kind: ToolKind::Local,
             handler: Some("fs.append".into()),
             parameters: serde_json::Value::Null,
-            risk_level: RiskLevel::LowRisk,
+            risk_level: Disposition::Approval,
         };
         assert!(def.validate().is_ok());
     }
@@ -283,7 +285,7 @@ mod tests {
             kind: ToolKind::Ssh,
             handler: None,
             parameters: serde_json::Value::Null,
-            risk_level: RiskLevel::ReadOnly,
+            risk_level: Disposition::Allow,
         };
         assert!(def.validate().is_ok());
     }
@@ -367,7 +369,7 @@ mod tests {
         }"#;
         let def = serde_json::from_str::<PluginAgentToolDef>(raw).unwrap();
         assert_eq!(def.kind, ToolKind::Local);
-        assert_eq!(def.risk_level, RiskLevel::HighRisk);
+        assert_eq!(def.risk_level, Disposition::ForceApproval);
     }
 
     #[test]

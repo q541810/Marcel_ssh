@@ -17,4 +17,4 @@ pub mod tool_dispatcher;
 pub mod tools;
 pub mod transfer;
 
-pub use risk::RiskLevel;
+pub use risk::Disposition;

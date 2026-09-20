@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::Manager;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
@@ -139,8 +139,8 @@ impl AgentTool for QuestionTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(

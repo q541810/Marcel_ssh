@@ -1,9 +1,9 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::agent::risk::{assess_risk, RiskLevel};
+use crate::agent::risk::{Disposition, SecurityPolicy};
+use crate::agent::tool_dispatcher::decide_command;
 use crate::agent::task::AgentMode;
-use crate::config::settings::CommandListMode;
 use crate::error::AppError;
 use crate::AppState;
 
@@ -13,7 +13,7 @@ use crate::AppState;
 pub struct CommandCheckResult {
     pub allowed: bool,
     pub requires_confirmation: bool,
-    pub risk_level: RiskLevel,
+    pub disposition: Disposition,
     pub reason: String,
 }
 
@@ -24,75 +24,33 @@ pub async fn agent_default_approval_prompt() -> String {
     crate::agent::templates::TemplateManager.render_approval_base()
 }
 
-/// 仅用于 Agent 审批流的风险预估（allowlist/denylist），**不替代执行前的完整评估**。
-/// 命令真正执行前的完整评估在 `agent/tools/bash.rs` 中完成
-/// （`RiskAssessor::assess_command()` 包含 fork bomb 检测、blocked commands/patterns、
-/// protected paths、dd 阻断等，任一命中即拒绝执行）。
-/// 注意：本命令自身走 `assess_risk`（纯分级、不做策略否决），返回值只用于审批前的展示预估。
+/// 设置页「命令测试」用的预演：这条命令在当前配置下会被怎么处置。
+///
+/// 它调用 [`crate::agent::tool_dispatcher::decide_command`] —— 和真正执行时
+/// **同一份判定**，所以这里显示的结论就是实际会发生的事。这里以前自己抄了一份
+/// 名单逻辑、而且完全不看风险评估，测出来的结论和跑起来的行为可以不一样。
 #[tauri::command]
 pub async fn agent_check_command(
     state: State<'_, AppState>,
     command: String,
     mode: AgentMode,
 ) -> Result<CommandCheckResult, AppError> {
-    let trimmed = command.trim();
-    let risk = assess_risk(trimmed);
+    let settings = state.settings.read().await;
+    let policy = SecurityPolicy::from_user_settings(
+        &settings.custom_protected_paths,
+        settings.command_timeout_secs,
+    );
+    let decision = decide_command(
+        command.trim(),
+        &mode,
+        &settings.agent_mode_settings,
+        Some(&policy),
+    );
 
-    match mode {
-        AgentMode::Plan | AgentMode::Agent => {
-            let settings = state.settings.read().await;
-            let policy = &settings.agent_mode_settings;
-            let base = trimmed
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .rsplit('/')
-                .next()
-                .unwrap_or("");
-            let in_list = policy.command_list.iter().any(|c| c == base);
-
-            match policy.list_mode {
-                CommandListMode::Allowlist => {
-                    if in_list {
-                        Ok(CommandCheckResult {
-                            allowed: true,
-                            requires_confirmation: policy.confirm_each_command,
-                            risk_level: risk,
-                            reason: format!("'{}' 在白名单中", base),
-                        })
-                    } else {
-                        Ok(CommandCheckResult {
-                            allowed: true,
-                            requires_confirmation: true,
-                            risk_level: risk,
-                            reason: format!("'{}' 不在白名单中，需要用户确认", base),
-                        })
-                    }
-                }
-                CommandListMode::Denylist => {
-                    if in_list {
-                        Ok(CommandCheckResult {
-                            allowed: true,
-                            requires_confirmation: true,
-                            risk_level: risk,
-                            reason: format!("'{}' 在黑名单中，需要用户确认", base),
-                        })
-                    } else {
-                        Ok(CommandCheckResult {
-                            allowed: true,
-                            requires_confirmation: policy.confirm_each_command,
-                            risk_level: risk,
-                            reason: format!("'{}' 不在黑名单中", base),
-                        })
-                    }
-                }
-            }
-        }
-        AgentMode::Auto => Ok(CommandCheckResult {
-            allowed: true,
-            requires_confirmation: false,
-            risk_level: risk,
-            reason: "AUTO 模式自动同意所有命令".into(),
-        }),
-    }
+    Ok(CommandCheckResult {
+        allowed: decision.disposition != Disposition::Deny,
+        requires_confirmation: decision.requires_confirmation,
+        disposition: decision.disposition,
+        reason: decision.reason,
+    })
 }

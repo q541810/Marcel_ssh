@@ -7,7 +7,7 @@ use russh_sftp::protocol::OpenFlags;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
@@ -433,8 +433,8 @@ impl AgentTool for ReadFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(
@@ -531,8 +531,8 @@ impl AgentTool for WriteFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::Moderate
+    fn disposition(&self) -> Disposition {
+        Disposition::Approval
     }
 
     async fn execute(
@@ -620,8 +620,8 @@ impl AgentTool for EditFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::Moderate
+    fn disposition(&self) -> Disposition {
+        Disposition::Approval
     }
 
     async fn execute(
@@ -728,8 +728,8 @@ impl AgentTool for ListDirectoryTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(

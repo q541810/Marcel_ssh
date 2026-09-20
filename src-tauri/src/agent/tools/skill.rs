@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
@@ -95,8 +95,8 @@ impl AgentTool for SkillTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(

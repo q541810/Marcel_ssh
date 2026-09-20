@@ -448,7 +448,7 @@ const { ok, data } = await res.json();
       "description": "获取服务器运行状态",
       "command": "top -bn1 | head -20",
       "parameters": {},
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     }
   ]
 }
@@ -472,18 +472,31 @@ const { ok, data } = await res.json();
     },
     "required": ["service"]
   },
-  "riskLevel": "HighRisk"
+  "riskLevel": "ForceApproval"
 }
 ```
 
-### 风险等级
+### 处置档位（`riskLevel`）
 
-| 等级 | 说明 |
+声明的是**这条命令默认该怎么处置**，四档：
+
+| 档位 | 说明 |
 |------|------|
-| `ReadOnly` | 只读操作 |
-| `LowRisk` | 低风险，可能创建临时文件 |
-| `Moderate` | 中等风险（默认） |
-| `HighRisk` | 高风险，风险评估后执行 |
+| `Allow` | 正常放行 |
+| `Approval` | 请求审批。用户点「确认」后执行；Auto 模式下跳过 |
+| `ForceApproval` | 强制审批。**Auto 模式下也会弹窗** —— 涉及系统级操作、受保护路径时用它 |
+| `Deny` | 直接拒绝。不执行，把原因回给模型 |
+
+默认 `Approval`。
+
+#### 旧的五档严重度仍然能解析（已弃用）
+
+`ReadOnly` / `LowRisk` / `Moderate` / `HighRisk` / `Destructive` 这五个旧值继续可用，
+加载时自动折进四档（`ReadOnly`、`LowRisk` → `Allow`；`Moderate` → `Approval`；
+`HighRisk`、`Destructive` → `ForceApproval`）。**已经装好的插件不用改**，但新写的请直接用四档。
+
+> 严格校验仍然生效：两边都不认的值（如 `"Medium"`、小写 `"moderate"`）在 manifest 加载时报错，
+> 不会静默降级。
 
 > **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 
@@ -510,7 +523,7 @@ const { ok, data } = await res.json();
       "handler": "fs.read",
       "command": "{\"path\":\"data.json\"}",
       "parameters": {},
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     }
   ],
   "capabilities": ["fs.read"]
@@ -1125,7 +1138,7 @@ server-monitor/
       "description": "获取服务器运行状态（CPU、内存、磁盘）",
       "command": "top -bn1 | head -20",
       "parameters": {},
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     }
   ]
 }
@@ -1256,7 +1269,7 @@ server-monitor/
       "handler": "fs.append",
       "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
       "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     },
     {
       "name": "memory_recall",
@@ -1265,7 +1278,7 @@ server-monitor/
       "handler": "fs.read",
       "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
       "parameters": {},
-      "riskLevel": "ReadOnly"
+      "riskLevel": "Allow"
     },
     {
       "name": "memory_update",
@@ -1274,7 +1287,7 @@ server-monitor/
       "handler": "fs.write",
       "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
       "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     },
     {
       "name": "memory_delete",
@@ -1283,7 +1296,7 @@ server-monitor/
       "handler": "fs.write",
       "command": "{\"path\":\"memories/{{__host_port__}}.jsonl\"}",
       "parameters": { "type": "object", "properties": { "content": { "type": "string" } }, "required": ["content"] },
-      "riskLevel": "LowRisk"
+      "riskLevel": "Approval"
     }
   ]
 }

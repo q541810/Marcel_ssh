@@ -198,7 +198,7 @@ describe('AgentMessage thinking display', () => {
               id: 'call-1',
               name: 'execute_command',
               arguments: { command: 'ls' },
-              riskLevel: 'LowRisk' as const,
+              disposition: 'Allow' as const,
             },
           ],
         })}

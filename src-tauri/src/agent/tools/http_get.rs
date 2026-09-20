@@ -21,7 +21,7 @@ use serde_json::json;
 use std::time::Duration;
 use tauri::Manager;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::browser_cdp;
 use crate::agent::tools::web_result::{
     detect_challenge, is_blank_content, FallbackNote, WebBackend,
@@ -146,8 +146,8 @@ impl AgentTool for HttpGetTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     async fn execute(

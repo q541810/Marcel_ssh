@@ -50,7 +50,7 @@ describe('isPlanToolMessage', () => {
       role: 'assistant',
       content: 'thinking',
       timestamp: '2026-01-01T00:00:00Z',
-      toolCall: { id: 'tc1', name: 'create_plan', arguments: {}, riskLevel: 'LowRisk' },
+      toolCall: { id: 'tc1', name: 'create_plan', arguments: {}, disposition: 'Allow' },
     };
     expect(isPlanToolMessage(assistantMsg)).toBe(false);
   });

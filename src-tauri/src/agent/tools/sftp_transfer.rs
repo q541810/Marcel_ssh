@@ -14,7 +14,7 @@ use std::path::{Component, Path, PathBuf};
 use tauri::Manager;
 use tokio::fs;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 
@@ -468,8 +468,8 @@ impl AgentTool for UploadFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::LowRisk
+    fn disposition(&self) -> Disposition {
+        Disposition::Approval
     }
 
     async fn execute(
@@ -810,8 +810,8 @@ impl AgentTool for DownloadFileTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::Moderate
+    fn disposition(&self) -> Disposition {
+        Disposition::Approval
     }
 
     async fn execute(

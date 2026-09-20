@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import type { ActiveInteractionPayload } from '@/lib/types';
-import { RISK_LEVEL_LABELS } from '@/lib/constants';
+import { DISPOSITION_LABELS } from '@/lib/constants';
 import Badge from '@/components/ui/Badge';
 import { Maximize2, Check, X, ShieldAlert, HelpCircle } from 'lucide-react';
 import { registerCapsuleTarget } from '@/stores/capsuleFlyAnimation';
@@ -33,7 +33,7 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
   const isQuestion = interaction.kind === 'question' && interaction.question;
 
   const toolName = interaction.approval?.toolName;
-  const riskLevel = interaction.approval?.riskLevel;
+  const disposition = interaction.approval?.disposition;
   const questionCount = interaction.question?.questions.length ?? 0;
 
   return (
@@ -60,9 +60,9 @@ export const InteractionFloatingCapsule: React.FC<InteractionFloatingCapsuleProp
             <span className="text-xs font-semibold text-zinc-100 truncate max-w-[200px]">
               {isApproval ? `需要批准：${toolName}` : `回答提问 (${questionCount} 项)`}
             </span>
-            {riskLevel && (
-              <Badge variant={riskLevel} size="sm">
-                {RISK_LEVEL_LABELS[riskLevel]}
+            {disposition && (
+              <Badge variant={disposition} size="sm">
+                {DISPOSITION_LABELS[disposition]}
               </Badge>
             )}
             {(interaction.queueLength ?? 1) > 1 && (

@@ -39,7 +39,7 @@ function buildFoldableSegment(toolCount = 4): ReturnType<typeof segmentTurns>[0]
   const calls: AgentMessage = {
     id: 'calls', role: 'assistant', content: '', timestamp: new Date().toISOString(),
     toolCalls: Array.from({ length: toolCount }, (_, i) => ({
-      id: `c${i}`, name: 'bash', arguments: { command: 'ls' }, riskLevel: 'Moderate' as const,
+      id: `c${i}`, name: 'bash', arguments: { command: 'ls' }, disposition: 'Approval' as const,
     })),
   };
   const tools = Array.from({ length: toolCount }, (_, i) => toolMsg(`t${i}`));

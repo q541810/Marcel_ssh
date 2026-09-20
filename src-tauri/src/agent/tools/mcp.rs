@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tauri::Manager;
 
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
 use crate::mcp::protocol::McpToolInfo;
@@ -43,11 +43,11 @@ impl AgentTool for McpTool {
         }
     }
 
-    fn risk_level(&self) -> RiskLevel {
+    fn disposition(&self) -> Disposition {
         if self.server.trusted {
-            RiskLevel::LowRisk
+            Disposition::Approval
         } else {
-            RiskLevel::Moderate
+            Disposition::Approval
         }
     }
 
@@ -137,17 +137,17 @@ mod tests {
     }
 
     #[test]
-    fn risk_level_untrusted() {
+    fn disposition_untrusted() {
         let server = make_server("s1", false);
         let tool = McpTool::new("mcp__s1__read".into(), server, make_info("read"));
-        assert_eq!(tool.risk_level(), RiskLevel::Moderate);
+        assert_eq!(tool.disposition(), Disposition::Approval);
     }
 
     #[test]
-    fn risk_level_trusted() {
+    fn disposition_trusted() {
         let server = make_server("s1", true);
         let tool = McpTool::new("mcp__s1__read".into(), server, make_info("read"));
-        assert_eq!(tool.risk_level(), RiskLevel::LowRisk);
+        assert_eq!(tool.disposition(), Disposition::Approval);
     }
 
     #[test]

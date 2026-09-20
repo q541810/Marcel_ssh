@@ -22,7 +22,7 @@ use serde_json::json;
 use std::time::Duration;
 use zeroize::Zeroize;
 
-use crate::agent::risk::{self, RiskLevel, RiskAssessor};
+use crate::agent::risk::{Disposition, RiskAssessor};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;
 use crate::error::AppError;
@@ -81,24 +81,32 @@ impl BashTool {
             }
         };
 
-        // Static safety check. Higher-level policy (allow/deny lists, user
-        // approval) is applied by `commands/agent.rs`.
-        let assessor = match ctx.policy.as_ref() {
-            Some(p) => RiskAssessor::new((**p).clone()),
-            None => RiskAssessor::default(),
-        };
-        if let Err(e) = assessor.assess_command(command) {
+        // 执行前的风险评估 —— **兜底的那一道**。
+        //
+        // 权威判定在 `tool_dispatcher::decide_command`：它拿着同一个策略、调同一个
+        // `assess_command`，所以两边不可能得出不同结论，正常情况下这里根本不会命中。
+        // 保留它是因为 dispatcher 依赖 `ToolSemantics` 声明去取命令文本 —— 万一哪天
+        // 声明丢了、或者工具被别的路径直接调起来，这里也得拦住。安全闸门要往
+        // 「不放行」的方向倒。
+        let assessor = RiskAssessor::from_optional(ctx.policy.as_deref());
+        let assessment = assessor.assess_command(command);
+        if assessment.disposition == Disposition::Deny {
+            let reason = assessment
+                .reason
+                .clone()
+                .unwrap_or_else(|| "判定为灾难性操作".to_string());
             return Ok(ToolOutput::fail(
                 format!("$ {}", command),
-                format!("BLOCKED by risk assessment: {}", e),
+                format!(
+                    "BLOCKED: 命令未执行 —— {}。\n请改用更精确的目标路径重试。",
+                    reason
+                ),
             )
             .with_metadata(attach_target(json!({
                 "blocked": true,
-                "reason": e.to_string(),
+                "reason": reason,
             }))));
         }
-
-        let risk = risk::assess_risk(command);
 
         // Auto-inject password for sudo commands when running as non-root
         let mut sudo_password: Option<String> = None;
@@ -123,8 +131,8 @@ impl BashTool {
         };
 
         log::info!(
-            "bash: risk={:?} cmd={} bg={} final={}",
-            risk,
+            "bash: disposition={:?} cmd={} bg={} final={}",
+            assessment.disposition,
             command,
             run_in_background,
             if final_command != command {
@@ -214,7 +222,7 @@ impl BashTool {
                 Ok(
                     ToolOutput::ok(format!("$ {}", command), truncated).with_metadata(
                         attach_target(
-                            json!({ "risk": format!("{:?}", risk), "was_timeout": was_timeout }),
+                            json!({ "disposition": assessment.disposition.label(), "was_timeout": was_timeout }),
                         ),
                     ),
                 )
@@ -243,9 +251,12 @@ impl AgentTool for BashTool {
     fn description(&self) -> &str {
         "Execute a shell command on the remote server via the user's login shell \
          (usually bash). Returns combined stdout+stderr. Long output is truncated. \
-         The command is statically analyzed by a risk assessment before execution; \
-         some patterns (e.g. `rm -rf /`, `mkfs`, dd-to-block-device, shell evasion) \
-         are always rejected. Timeout is configured by the user (default 120s).\n\
+         The command is statically analyzed by a risk assessment before execution: \
+         catastrophic patterns (e.g. `rm -rf /`, mkfs/dd/wipefs onto a real block \
+         device, or forms the analyzer cannot parse such as `$( )`/backticks) are \
+         rejected outright; system-level writes and protected-path writes instead \
+         require the user's approval (including in Auto mode). Timeout is configured \
+         by the user (default 120s).\n\
          Set `run_in_background: true` for long-running commands (compilations, \
          large downloads, servers/daemons, ongoing tasks) to receive a `job_id` \
          immediately and manage it via `job_output`, `job_kill`, and `job_list`.\n\
@@ -283,9 +294,12 @@ impl AgentTool for BashTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        // Baseline. Real risk is computed per-invocation via [`risk::assess_risk`].
-        RiskLevel::Moderate
+    fn disposition(&self) -> Disposition {
+        // 命令类工具的真实档位由命令文本决定（dispatcher 按文本现算，再与这里取严）。
+        // 所以这条声明是**下限**，不是"现算会覆盖它"的占位：命令文本拿不到时（语义
+        // 声明丢了、或工具被别的路径直接调起来）至少还得有人点头 —— 兜底要往
+        // 「不放行」的方向倒。详见 `tool_dispatcher::resolve_disposition`。
+        Disposition::Approval
     }
 
     async fn execute(

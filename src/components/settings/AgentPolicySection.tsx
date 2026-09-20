@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
+import { DISPOSITION_LABELS } from '@/lib/constants';
 import type { CommandListMode, CommandCheckResult, LlmRegistry } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
@@ -152,7 +153,7 @@ export function AgentPolicySection() {
       setTestResult({
         allowed: false,
         requiresConfirmation: false,
-        riskLevel: 'Moderate',
+        disposition: 'Approval',
         reason: `测试失败：${getErrorMessage(err)}`,
       });
     } finally {
@@ -354,7 +355,8 @@ export function AgentPolicySection() {
                   )}
                 </div>
                 <div className="text-xs opacity-80 mt-0.5">
-                  风险等级：{testResult.riskLevel} · {testResult.reason}
+                  处置：{DISPOSITION_LABELS[testResult.disposition]} ·{' '}
+                  {testResult.reason}
                 </div>
               </div>
             )}

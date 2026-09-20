@@ -1,114 +1,72 @@
-use std::cmp;
+use super::checker::{is_listing_only, is_mkfs, is_read_only_system_query, DISK_COMMANDS};
+use super::disposition::Assessment;
+use super::parser::ParsedSegment;
 
-use crate::agent::RiskLevel;
-use crate::error::AppError;
+/// 系统级命令：动的是整台机器的全局状态（服务、用户、防火墙、挂载、进程、权限）。
+///
+/// 这类命令不管在什么模式下都得有人点头 —— 它们是「强制审批」这一档的主要来源。
+/// 判据是"影响范围超出当前工作目录"，不是"命令名听起来危险"。
+pub const SYSTEM_LEVEL_COMMANDS: &[&str] = &[
+    "reboot",
+    "shutdown",
+    "poweroff",
+    "halt",
+    "init",
+    "mount",
+    "umount",
+    "useradd",
+    "userdel",
+    "usermod",
+    "groupadd",
+    "groupdel",
+    "passwd",
+    "su",
+    "sudo",
+    "chroot",
+    "systemctl",
+    "service",
+    "iptables",
+    "ip6tables",
+    "nft",
+    "ufw",
+    "firewall-cmd",
+    "crontab",
+    "at",
+    "chmod",
+    "chown",
+    "chgrp",
+    "kill",
+    "killall",
+    "pkill",
+];
 
-use super::parser::{parse_segment, split_command_chain, ParseError};
-
-/// Shared parsing + risk classification for a command string.
-/// Handles split_command_chain, parse_segment, embedded_eval recursion,
-/// assess_segment_risk + sudo elevation. Returns original segments, tokens, and max risk.
-pub fn parse_and_classify(
-    cmd: &str,
-) -> Result<(Vec<String>, Vec<Vec<String>>, RiskLevel), AppError> {
-    let segments = split_command_chain(cmd).map_err(|e| match e {
-        ParseError::SubshellDetected => AppError::Agent(
-            "Command contains command/process substitution which cannot be \
-             safely analyzed; use explicit commands instead."
-                .into(),
-        ),
-        ParseError::UnbalancedQuote => AppError::Agent("Command has unbalanced quotes".into()),
-        ParseError::ShellWordsError(s) => {
-            AppError::Agent(format!("Failed to parse command: {}", s))
-        }
-    })?;
-
-    let mut max_risk = RiskLevel::ReadOnly;
-    let mut all_segments: Vec<String> = Vec::new();
-    let mut all_tokens: Vec<Vec<String>> = Vec::new();
-    for seg in &segments {
-        let parsed = parse_segment(seg).map_err(|e| match e {
-            ParseError::SubshellDetected => {
-                AppError::Agent("Command contains command/process substitution".into())
-            }
-            ParseError::UnbalancedQuote => AppError::Agent("Command has unbalanced quotes".into()),
-            ParseError::ShellWordsError(s) => {
-                AppError::Agent(format!("Failed to parse command: {}", s))
-            }
-        })?;
-        all_segments.push(seg.to_string());
-        all_tokens.push(parsed.tokens.clone());
-
-        let r = if let Some((kind, inner)) = &parsed.embedded_eval {
-            if kind == "source" || kind == "." {
-                RiskLevel::HighRisk
-            } else if let Some(s) = inner {
-                cmp::max(RiskLevel::Moderate, assess_risk(s))
-            } else {
-                RiskLevel::HighRisk
-            }
-        } else {
-            let mut r = assess_segment_risk(&parsed);
-            if parsed.sudo_wrapped && r < RiskLevel::HighRisk {
-                r = RiskLevel::HighRisk;
-            }
-            r
-        };
-        if r > max_risk {
-            max_risk = r;
-        }
+/// 单段命令的**基础档位**：只看命令名与 `sudo` 包裹，不看策略、不看路径参数。
+///
+/// 返回 `Allow` 不代表"这条命令随便跑" —— 它只表示**这一层没有意见**，档位交给
+/// 后面的命令名单去定（白名单命中就放行、黑名单命中就要审批）。所以这里刻意不再
+/// 分"低风险 / 中风险"：那两级算出来也没人拿它做不同的决定，只是徒增维护点。
+///
+/// 反过来，返回 `ForceApproval` 是**这一层的最终意见**：不管名单怎么配、不管
+/// 是不是 Auto 模式，都要有人确认。
+pub fn base_assessment(parsed: &ParsedSegment) -> Assessment {
+    let base = parsed.base_cmd.as_str();
+    if parsed.sudo_wrapped {
+        return Assessment::forced("命令经 sudo 提权执行");
     }
-    Ok((all_segments, all_tokens, max_risk))
-}
-
-/// Free-function risk assessment used by tools needing a quick estimate.
-pub fn assess_risk(cmd: &str) -> RiskLevel {
-    let trimmed = cmd.trim();
-    if trimmed.is_empty() {
-        return RiskLevel::ReadOnly;
-    }
-    match parse_and_classify(trimmed) {
-        Ok((_, _, risk)) => risk,
-        Err(_) => RiskLevel::HighRisk,
-    }
-}
-
-fn assess_segment_risk(parsed: &super::parser::ParsedSegment) -> RiskLevel {
-    let base_cmd = parsed.base_cmd.as_str();
-
-    let base_risk = match base_cmd {
-        "" => RiskLevel::ReadOnly,
-        "ls" | "cat" | "pwd" | "whoami" | "hostname" | "uname" | "date" | "uptime" | "df"
-        | "du" | "free" | "top" | "ps" | "id" | "env" | "head" | "tail" | "wc" | "find"
-        | "grep" | "egrep" | "fgrep" | "which" | "file" | "stat" | "lsof" | "netstat" | "ss"
-        | "ifconfig" | "ip" | "dig" | "nslookup" | "ping" | "traceroute" | "curl" | "wget"
-        | "less" | "more" | "sort" | "uniq" | "diff" | "md5sum" | "sha256sum" | "readlink"
-        | "realpath" | "type" | "man" | "help" => RiskLevel::ReadOnly,
-        "echo" | "printf" => RiskLevel::ReadOnly,
-        "mkdir" | "touch" | "cp" | "ln" | "tar" | "gzip" | "gunzip" | "zip" | "unzip" | "bzip2"
-        | "xz" | "rsync" => RiskLevel::LowRisk,
-        "mv" | "sed" | "awk" | "tee" | "nano" | "vim" | "vi" | "apt" | "apt-get" | "yum"
-        | "dnf" | "pip" | "pip3" | "npm" | "npx" | "yarn" | "cargo" | "systemctl" | "service"
-        | "docker" | "docker-compose" | "podman" | "git" | "crontab" | "at" => RiskLevel::Moderate,
-        "rm" | "chmod" | "chown" | "chgrp" | "kill" | "killall" | "pkill" | "iptables"
-        | "ip6tables" | "nft" | "ufw" | "firewall-cmd" | "useradd" | "userdel" | "usermod"
-        | "groupadd" | "groupdel" | "passwd" | "su" | "sudo" | "chroot" | "mount" | "umount"
-        | "reboot" | "shutdown" | "poweroff" | "halt" | "init" => RiskLevel::HighRisk,
-        "mkfs" | "fdisk" | "parted" | "dd" | "shred" | "wipefs" | "sgdisk" | "gdisk" => {
-            RiskLevel::Destructive
+    if SYSTEM_LEVEL_COMMANDS.contains(&base) {
+        // `systemctl status` / `service x status` / 裸 `mount` / `crontab -l` 这类
+        // 查询形态什么也不改，别把它们和 `restart` / `umount` 一起抬档。
+        if is_read_only_system_query(base, &parsed.args) {
+            return Assessment::allow();
         }
-        _ => {
-            if base_cmd.starts_with("mkfs.") {
-                RiskLevel::Destructive
-            } else {
-                RiskLevel::Moderate
-            }
-        }
-    };
-
-    if !parsed.redirect_targets.is_empty() && base_risk < RiskLevel::Moderate {
-        return RiskLevel::Moderate;
+        return Assessment::forced(format!("`{}` 是系统级命令，影响整台机器", base));
     }
-
-    base_risk
+    if is_mkfs(base) || DISK_COMMANDS.contains(&base) {
+        // `fdisk -l` / `parted --list` 只是把分区表打出来看，没有写盘动作。
+        if is_listing_only(base, &parsed.args) {
+            return Assessment::allow();
+        }
+        return Assessment::forced(format!("`{}` 直接操作磁盘，数据无法恢复", base));
+    }
+    Assessment::allow()
 }
