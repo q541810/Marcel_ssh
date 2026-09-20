@@ -212,7 +212,7 @@ describe('toolDisplayName / 分组判定', () => {
     expect(isSubagentTool('bash')).toBe(false);
   });
 
-  it('流式输出判定（决定用户中断时的文案：close 通道 vs 可能已完成）', () => {
+  it('流式输出判定（决定用户中断时的文案：已停止等待并关闭通道 vs 可能已完成）', () => {
     expect(isStreamingTool('bash')).toBe(true);
     expect(isStreamingTool('execute_command')).toBe(true);
     expect(isStreamingTool('read_file')).toBe(false);

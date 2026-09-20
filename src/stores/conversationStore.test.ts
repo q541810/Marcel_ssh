@@ -488,7 +488,7 @@ describe('conversationStore', () => {
       expect(m.toolResult?.success).toBe(false);
       expect(m.toolResult?.result).toContain('partial stdout');
       expect(m.toolResult?.result).toContain('用户中断');
-      expect(m.toolResult?.result).toContain('已停止等待输出并向远端发送 close');
+      expect(m.toolResult?.result).toContain('已停止等待输出并关闭 SSH 通道');
     });
 
     it('marks executing non-streaming tool messages with non-streaming note', () => {

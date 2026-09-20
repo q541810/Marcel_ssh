@@ -61,7 +61,8 @@ pub enum SubmitOutcome {
     Completed { output: String },
     /// 超时（executor 已宽限关闭通道），`output` 为已收到的部分输出。
     TimedOut { output: String },
-    /// 被取消（executor 已宽限关闭通道，尽力终止远端进程）。
+    /// 被取消（executor 已宽限关闭通道并停止等待；远端进程不保证随之结束，
+    /// 见 `executor` 模块注释）。
     Cancelled { reason: CancelReason },
     /// 执行失败（会话不存在 / 开通道失败 / 断连检测等）。
     Failed { error: AppError },
@@ -309,7 +310,8 @@ impl CommandExecutionManager {
 
         // 取消信号直达 executor：它对通道的竞争（数据 / 超时 / 取消）
         // 是 biased 且取消优先的，取消后会宽限关闭通道再返回——
-        // 「取消 = 显式 close 尽力终止远端」这一语义在本层闭环。
+        // 「取消 = 停止等待并关闭通道」这一语义在本层闭环；远端进程是否
+        // 随之结束不由我们决定（见 executor 模块注释）。
         let outcome = match self
             .inner
             .transport

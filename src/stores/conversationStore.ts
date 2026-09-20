@@ -1292,7 +1292,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // - isExecuting=false, modelApproval 清除
     // - wasAborted=true
     // - 流式工具（bash，前端通过 toolOutput 事件已累积部分 result）：
-    //   追加「用户中断：已停止等待输出并向远端发送 close…」提示
+    //   追加「用户中断：已停止等待输出并关闭 SSH 通道…」提示
     // - 非流式工具（前端 result 为空）：用「工具可能已执行完成」提示
     // 文案与后端 agent_loop 检查点4 的中断保持逐字节一致（同一份语义，
     // 前后端任何路径触发都不能让用户看到两套说辞）。
@@ -1308,7 +1308,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ? msgs.map((m) => {
                 if (m.role !== 'tool' || !(m.isExecuting || m.modelApproval)) return m;
                 const isStreaming = isStreamingTool(m.toolResult?.toolName ?? '');
-                const STREAMING_SUFFIX = '\n\n[用户中断：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]';
+                const STREAMING_SUFFIX = '\n\n[用户中断：已停止等待输出并关闭 SSH 通道，但远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时，才可能因管道断开（SIGPIPE）退出；静默运行、重定向了输出、被 nohup/setsid/& 脱离的命令会继续在服务器上运行。必要时用 ps/pgrep 确认并按需 kill 清理。]';
                 const NON_STREAMING_SUFFIX = '\n\n[用户手动中断，已停止等待结果；工具可能已执行完成]';
                 const existing = m.toolResult?.result ?? '';
                 // 已有流式输出时追加，否则整体替换为提示

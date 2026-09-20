@@ -86,7 +86,7 @@ export interface ToolPresentation {
   /**
    * 输出通过 `toolOutput` 事件流式到达前端（后端 `command_exec` ticket 上的
    * `.streaming(...)`）。用户中断时两套文案的区别就在这：流式工具能说「已停止
-   * 等待输出并向远端 close 关闭通道」，非流式工具只能说「可能已执行完成」。
+   * 等待输出并关闭 SSH 通道」，非流式工具只能说「可能已执行完成」。
    *
    * ⚠️ 这是**后端事实的前端镜像**，没有任何跨语言护栏：真值在
    * `src-tauri/src/agent/tools/bash.rs` 的 `ticket.streaming(...)` 调用点

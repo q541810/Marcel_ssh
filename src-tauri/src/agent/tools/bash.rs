@@ -215,7 +215,7 @@ impl BashTool {
                 let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
                 if was_timeout {
                     truncated.push_str(&format!(
-                        "\n\n[命令超时（{} 秒）：已停止等待输出并向远端发送 close 关闭通道；普通命令通常已随之终止，但创建后台/守护进程（nohup、setsid、&）的命令可能仍在远端运行。]",
+                        "\n\n[命令超时（{} 秒）：已停止等待输出并关闭 SSH 通道，但远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时，才可能因管道断开（SIGPIPE）退出；静默运行、重定向了输出、被 nohup/setsid/& 脱离的命令会继续在服务器上运行。必要时用 ps/pgrep 确认并按需 kill 清理。]",
                         timeout_secs
                     ));
                 }

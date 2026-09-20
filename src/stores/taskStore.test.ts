@@ -148,7 +148,7 @@ describe('taskStore', () => {
       expect(toolMsg.toolResult?.wasAborted).toBe(true);
       expect(toolMsg.toolResult?.success).toBe(false);
       expect(toolMsg.toolResult?.result).toContain('用户中断');
-      expect(toolMsg.toolResult?.result).toContain('已停止等待输出并向远端发送 close');
+      expect(toolMsg.toolResult?.result).toContain('已停止等待输出并关闭 SSH 通道');
 
       // The mark happened BEFORE cleanupTaskListeners
       const clearOrder: string[] = [];

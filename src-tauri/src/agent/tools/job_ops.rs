@@ -175,7 +175,9 @@ impl AgentTool for JobKillTool {
     }
 
     fn description(&self) -> &str {
-        "Request cancellation/termination of a running background job by its job ID."
+        "Request cancellation of a running background job by its job ID. Stops waiting \
+         for its output and closes the SSH channel; the remote process is not guaranteed \
+         to stop."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -224,9 +226,9 @@ impl AgentTool for JobKillTool {
         let summary = format!("job_kill({}) -> {}", job_id, info.status);
         let output = format!(
             "Job '{}' is now {}. Reason: {}\n\
-             已停止等待输出并向远端发送 close：普通命令通常已随之终止；\
-             若作业创建了后台/守护进程（nohup、setsid、&），进程可能仍在远端运行，\
-             必要时可用 bash 执行 pkill 清理。",
+             已停止等待输出并关闭 SSH 通道，但远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时，\
+             才可能因管道断开（SIGPIPE）退出；静默运行、重定向了输出、被 nohup/setsid/& 脱离的进程会继续在服务器上运行。\
+             job_kill 只结算我们这侧的作业状态，不核对远端是否真的退出；必要时用 bash 执行 ps/pgrep 确认并按需 kill 清理。",
             job_id, info.status, reason
         );
 
