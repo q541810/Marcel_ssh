@@ -281,6 +281,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         useConversationStore
           .getState()
           .clearAllAssistantFlags(t.conversationId);
+        // 回合收尾状态：手动停止 = 「不是模型自然结束」，该回合不再折叠
+        // （过程留在眼前）。后端的 agent loop 也会把 cancelled 落库，但**这里
+        // 必须自己写**：上面 cleanupTaskListeners 已把本任务的流通道拆掉，
+        // 后端晚到的任何事件都收不到了（见上面注释）。
+        useConversationStore
+          .getState()
+          .markTailTurnState(t.conversationId, "cancelled");
       }
       set((state) => {
         const tasks = { ...state.tasks };

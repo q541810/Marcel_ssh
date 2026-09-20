@@ -1,4 +1,5 @@
-import type { StoredMessage, AgentMessage, RiskLevel } from '@/lib/types';
+import type { StoredMessage, AgentMessage } from '@/lib/types';
+import { normalizeDisposition } from '@/lib/disposition';
 
 // ───────────────────────── Conversion Strategies ─────────────────────────
 
@@ -110,7 +111,7 @@ class AssistantMessageStrategy implements MessageConversionStrategy {
         id: string;
         name: string;
         arguments: Record<string, unknown>;
-        risk_level?: RiskLevel;
+        disposition?: unknown; risk_level?: unknown;
       }> = Array.isArray(raw) ? raw : [raw];
 
       if (persistedCalls.length > 0) {
@@ -121,7 +122,7 @@ class AssistantMessageStrategy implements MessageConversionStrategy {
           id: c.id,
           name: c.name,
           arguments: c.arguments || {},
-          riskLevel: c.risk_level || ('Moderate' as RiskLevel),
+          disposition: normalizeDisposition(c.disposition ?? c.risk_level),
         }));
       }
     } catch {
@@ -164,7 +165,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
     id?: string;
     name: string;
     arguments?: Record<string, unknown>;
-    risk_level?: RiskLevel;
+    disposition?: unknown; risk_level?: unknown;
     summary?: string;
     success?: boolean;
     blocked?: boolean;
@@ -182,7 +183,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
     id?: string;
     name: string;
     arguments?: Record<string, unknown>;
-    risk_level?: RiskLevel;
+    disposition?: unknown; risk_level?: unknown;
   }> {
     return Array.isArray(raw) && raw.length > 0 && typeof raw[0].name === 'string';
   }
@@ -192,7 +193,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       id?: string;
       name: string;
       arguments?: Record<string, unknown>;
-      risk_level?: RiskLevel;
+      disposition?: unknown; risk_level?: unknown;
       summary?: string;
       success?: boolean;
       blocked?: boolean;
@@ -223,7 +224,7 @@ class ToolResultStrategy implements MessageConversionStrategy {
       id?: string;
       name: string;
       arguments?: Record<string, unknown>;
-      risk_level?: RiskLevel;
+      disposition?: unknown; risk_level?: unknown;
     }>,
     message: StoredMessage,
     base: AgentMessage
@@ -284,6 +285,9 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     imagePaths: parseImagePaths(m.imagePathsJson),
     // 统一 id 域：DB row id 贯穿三层（load 时填充，压缩事件据此定位插卡）
     dbId: m.id,
+    // 回合收尾状态（只写在回合首条 user 行上）。后端已把不认识的字符串折成
+    // null —— 这里 `null` → `undefined`，与 live 写入（没有记录）同一形态。
+    turnState: m.turnState ?? undefined,
   };
 
   // 压缩摘要落库消息：还原为 CompactionCard 展示（done 卡，默认展开摘要）

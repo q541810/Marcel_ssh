@@ -38,6 +38,25 @@ describe('storedMessageToAgentMessage', () => {
     });
   });
 
+  describe('回合收尾状态（turn_state）', () => {
+    it('把锚点行上的收尾状态映射到消息字段（供折叠判定使用）', () => {
+      const result = storedMessageToAgentMessage(
+        createStoredMessage({ turnState: 'cancelled' }),
+      );
+      expect(result.turnState).toBe('cancelled');
+    });
+
+    it('null（旧数据 / 未锚定）→ undefined，与 live 未写入时同一形态', () => {
+      expect(
+        storedMessageToAgentMessage(createStoredMessage({ turnState: null }))
+          .turnState,
+      ).toBeUndefined();
+      expect(
+        storedMessageToAgentMessage(createStoredMessage()).turnState,
+      ).toBeUndefined();
+    });
+  });
+
   describe('compaction summary messages (persisted display)', () => {
     it('reconstructs compaction card data from a persisted summary', () => {
       const stored = createStoredMessage({
@@ -189,7 +208,7 @@ describe('storedMessageToAgentMessage', () => {
       expect(result.toolCalls![0].id).toBe('call-1');
       expect(result.toolCalls![0].name).toBe('execute_command');
       expect(result.toolCalls![0].arguments).toEqual({ command: 'ls -la' });
-      expect(result.toolCalls![0].riskLevel).toBe('Moderate');
+      expect(result.toolCalls![0].disposition).toBe('Approval'); // 老的 'Moderate' 归一到四档的 Approval
     });
 
     it('应把并行 tool calls 全部保留在 assistant.toolCalls', () => {

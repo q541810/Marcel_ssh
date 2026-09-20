@@ -257,6 +257,55 @@ describe('taskStore', () => {
       expect(useTaskStore.getState().activeTaskId).toBeNull();
     });
 
+    it('把尾回合标成 cancelled —— 手动停止的回合不再折叠（过程留在眼前）', async () => {
+      agentStopTask.mockResolvedValue(undefined);
+      const prompt: AgentMessage = {
+        id: 'u1',
+        role: 'user',
+        content: '跑一下',
+        timestamp: new Date().toISOString(),
+      };
+      const runningTool: AgentMessage = {
+        id: 'tool-1',
+        role: 'tool',
+        content: 'executing',
+        timestamp: new Date().toISOString(),
+        isExecuting: true,
+        toolResult: {
+          toolName: 'execute_command',
+          summary: '',
+          result: '',
+          success: true,
+          blocked: false,
+        },
+      };
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: { 'conv-1': [prompt, runningTool] },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      // 状态写在回合锚点（首条 user）上，别的消息不带
+      const msgs = useConversationStore.getState().messages['conv-1'];
+      expect(msgs[0].turnState).toBe('cancelled');
+      expect(msgs[1].turnState).toBeUndefined();
+    });
+
     it('marks tool messages even when agentStopTask throws', async () => {
       agentStopTask.mockRejectedValue(new Error('backend gone'));
       useConversationStore.setState({

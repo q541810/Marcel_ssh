@@ -19,8 +19,9 @@ use futures::FutureExt;
 use tauri::AppHandle;
 
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
+use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::system_prompt::build_system_prompt;
-use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan};
+use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, TurnState};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
     mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
@@ -348,6 +349,25 @@ impl AgentManager {
             &prompt_extra,
         )?;
 
+        // 子任务：冻结"父会话回读窗口"的上界 —— 派发这一刻父会话最后一条已落库
+        // 消息（主 agent 此刻的上下文末尾）。子代理 `read_history(scope=parent)`
+        // 靠它把可读范围钉死在"派发我之前"。记不下来就留 None：工具会明确报错，
+        // 而不是把窗口放开成"不限上界"。
+        let parent_history_upto: Option<String> = spec
+            .role
+            .parent_task_id()
+            .and_then(|pid| {
+                let tasks = self.state.agent_tasks.read();
+                tasks.get(pid).map(|t| t.conversation_id.clone())
+            })
+            .and_then(|parent_conversation_id| {
+                self.state
+                    .conversation_db
+                    .history_tail_anchor(&parent_conversation_id)
+                    .ok()
+                    .flatten()
+            });
+
         // 所有可能失败的组装步骤完成后再提交运行态。spawn 返回 Err 时，
         // 不会留下前端拿不到 task_id、后端却永久视为 running 的幽灵任务。
         self.state.agent_tasks.write().insert(
@@ -364,6 +384,10 @@ impl AgentManager {
                 parent_task_id: spec.role.parent_task_id().map(String::from),
                 // 本任务实际使用的模型 id：子 agent 派发时据此继承父模型
                 model_id: Some(resolved.model_id.clone()),
+                // 回合锚点由 agent loop 开头 `begin_turn` 回填（那里才落库
+                // user 消息）；此处先置空。
+                turn_anchor_id: None,
+                parent_history_upto,
             },
         );
         if spec.role == AgentRole::Main {
@@ -421,7 +445,13 @@ impl AgentManager {
                     None
                 }
             };
-            finalize_task(&state_cleanup, &task_id_owned, &result);
+            if let Some(turn_state) = finalize_task(&state_cleanup, &task_id_owned, &result) {
+                log::info!(
+                    "Agent task {} 收尾状态: {}",
+                    task_id_owned,
+                    turn_state.as_str()
+                );
+            }
             prune_terminal_tasks(&state_cleanup, 200);
             result
         });
@@ -737,20 +767,59 @@ fn build_agent_messages(
     Ok(messages)
 }
 
-/// 统一的任务收尾：更新终态 + 清理作业结算通道 + 级联清理子资源。
+/// 统一的任务收尾：更新终态 + **记录回合收尾状态** + 清理作业结算通道 +
+/// 级联清理子资源。
 /// （取消表的注销不在这里：由 spawned future 持有的 `Registration` 在 Drop 时
 /// 完成，见 `spawn` 里的注释。）
 /// 停止路径已置 Cancelled 则保留；自然结束=Completed，其余（LLM 失败 /
 /// 达最大轮数 / panic）=Failed。
-fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
-    if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
-        // 吸收规则在 `AgentTask::transition_to` 里（Cancelled 不接受后续写入）。
-        task.transition_to(if result.is_some() {
-            AgentStatus::Completed
-        } else {
-            AgentStatus::Failed
-        });
-    }
+///
+/// 返回本回合的收尾状态（`TurnState`）——它是「这一轮到底怎么停的」的唯一
+/// 记录点：写在回合锚点行（agent loop 开头 `begin_turn` 标成 running 的那行）
+/// 上，回合折叠据此决定要不要把过程收起来（只有 `Completed` 才收）。
+/// 任务记录已被剪掉 / 锚点缺失 / 写库失败都不影响任务终态与界面：返回 None。
+fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) -> Option<TurnState> {
+    // 任务记录已被剪枝（只可能发生在本函数之外的清理竞态）时也要走完下面的
+    // 通道清理与级联回收 —— 所以这里只把「写库要用的三样东西」取出来，
+    // 不用 `?` 提前返回。
+    let resolved = {
+        let mut tasks = state.agent_tasks.write();
+        match tasks.get_mut(task_id) {
+            Some(task) => {
+                // 吸收规则在 `AgentTask::transition_to` 里（Cancelled 不接受后续写入）。
+                task.transition_to(if result.is_some() {
+                    AgentStatus::Completed
+                } else {
+                    AgentStatus::Failed
+                });
+                // 写入之后**按真实状态**定档：停止命令先置 Cancelled，上面那次
+                // 写入可能被吸收掉，问返回值会把「用户停止」误判成完成/失败。
+                Some((
+                    TurnState::from_status(&task.status),
+                    task.conversation_id.clone(),
+                    task.turn_anchor_id.clone(),
+                ))
+            }
+            None => None,
+        }
+    };
+
+    let turn_state = match resolved {
+        Some((turn, conversation_id, anchor_id)) => {
+            match anchor_id {
+                Some(anchor_id) => {
+                    ConversationPersister::new(state.conversation_db.clone(), conversation_id)
+                        .end_turn(&anchor_id, turn)
+                }
+                None => log::debug!(
+                    "任务 {} 没有回合锚点（未落库 user 消息），跳过收尾状态写入",
+                    task_id
+                ),
+            }
+            Some(turn)
+        }
+        None => None,
+    };
     // 释放该 task 的作业结算通知通道（挂起中的 agent loop 若因取消/失败
     // 退出，此处确保通道不泄漏；正常路径 loop 已自行 break，这里幂等）。
     state.command_exec.remove_task_settlement_channel(task_id);
@@ -765,6 +834,7 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) {
         // 传输本身；进行中的传输收到 cancel 后自行清理 .part/sidecar）。
         crate::agent::transfer::cancel_task_transfers(&mh_state, &mh_task).await;
     });
+    turn_state
 }
 
 fn prune_terminal_tasks(state: &AppState, max_terminal: usize) {

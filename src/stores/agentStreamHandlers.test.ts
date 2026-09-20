@@ -18,6 +18,7 @@ import {
   type StreamHandler,
 } from '@/stores/agentStreamHandlers';
 import type { AgentMessage, AgentTaskPlan, ToolResultPayload } from '@/lib/types';
+import { useConversationStore } from '@/stores/conversationStore';
 import { mockHandler } from './streamHandlerMock';
 
 
@@ -342,6 +343,22 @@ describe('agentStreamHandlers', () => {
       expect(handler._taskStatuses[taskId]).toBe('completed');
     });
 
+    it('把尾回合标成 completed（覆盖重载留下的 running，回合才能正常折叠）', () => {
+      // 任务跑着的时候重载过会话 → 锚点上是从库里读到的 running
+      useConversationStore.setState({
+        messages: {
+          [convId]: [
+            { id: 'u1', role: 'user', content: '跑一下', timestamp: '', turnState: 'running' },
+            { id: 'a1', role: 'assistant', content: '好了', timestamp: '' },
+          ],
+        },
+      });
+
+      handleDone(mockHandler({ [convId]: [] }), taskId, convId, 'loading-done');
+
+      expect(useConversationStore.getState().messages[convId][0].turnState).toBe('completed');
+    });
+
     it('removes loading placeholder', () => {
       const handler = mockHandler({
         [convId]: [
@@ -385,6 +402,26 @@ describe('agentStreamHandlers', () => {
   });
 
   describe('handleError', () => {
+    it('把尾回合标成 failed —— 出错停的回合不折叠（错误提示不会被折叠吞掉）', () => {
+      useConversationStore.setState({
+        messages: {
+          [convId]: [
+            { id: 'u1', role: 'user', content: '跑一下', timestamp: '' },
+            { id: 'a1', role: 'assistant', content: '半截文本', timestamp: '' },
+          ],
+        },
+      });
+
+      handleError(mockHandler({ [convId]: [] }), taskId, convId, 'loading-err', {
+        type: 'error',
+        message: 'boom',
+      });
+
+      const msgs = useConversationStore.getState().messages[convId];
+      expect(msgs[0].turnState).toBe('failed');
+      expect(msgs[1].turnState).toBeUndefined();
+    });
+
     it('sets task to failed and adds system error message', () => {
       const handler = mockHandler({ [convId]: [] });
 

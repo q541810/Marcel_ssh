@@ -13,11 +13,15 @@
  *   messageCount = 有回复内容的 assistant 消息数（含 thinking/含 tool_calls）；
  *   subagentCount = toolResult.toolName 为 subagent（或历史 task）的 tool 消息数。
  * - compaction 卡片 / system 消息 / user 是「不折叠锚点」：过程区不含它们。
+ * - **收尾状态优先**：回合首条 user 消息上带 `turnState`（后端在 agent loop
+ *   停止时记录并持久化的停止原因）时，只有 `completed` 允许折叠；停下来
+ *   的原因不是「模型自然结束」——用户手动停止、任务失败、崩溃留下的痕迹 ——
+ *   一律保持展开（`turnStopVetoed`）。没有记录（旧数据）则维持按形态判定。
  *
  * 本模块只做「分段 + 计数」，不做任何渲染/状态 —— 纯函数，便于单测。
  */
 
-import type { AgentMessage } from "@/lib/types";
+import type { AgentMessage, TurnState } from "@/lib/types";
 import { isSubagentTool } from "@/lib/toolCatalog";
 
 /** 过程 tool 消息达到该条数才把回合收成折叠（默认折叠阈值，对齐
@@ -70,6 +74,48 @@ function isSubagentToolResult(msg: AgentMessage): boolean {
   return msg.role === 'tool' && !!msg.toolResult && isSubagentTool(msg.toolResult.toolName);
 }
 
+/**
+ * 回合是否被「非正常停止」否决折叠。
+ *
+ * 判据是后端记录在**回合首条 user 消息**上的收尾状态（`messages.turn_state`，
+ * 前端 live 阶段由 stopTask / handleDone / handleError 同步写入同一字段）：
+ * - `undefined`（没有记录：旧数据、没锚定到 user 行）→ **不否决**，维持按
+ *   消息形态判定的既有行为（兼容旧会话，不清空不重置任何东西）；
+ * - `completed` → 不否决（模型自然结束，正常收起来）；
+ * - 其余（`running` / `cancelled` / `failed` / `interrupted`）→ 否决。
+ *
+ * 为什么不信消息形态：被打断的回合末条消息也常常「长得像答案」（模型在
+ * 中途输出的文本、被截断的回复），按形态判定会在用户刚按下停止的那一刻把
+ * 过程收走 —— 这层记录就是用来去掉这个猜测的。
+ */
+export function turnStopVetoed(state: TurnState | undefined): boolean {
+  return state !== undefined && state !== 'completed';
+}
+
+/**
+ * 把收尾状态写到**尾回合的锚点**（该对话最后一条 user 消息）上，返回新数组。
+ *
+ * 用在 live 阶段（事件/停止动作落下时）：后端把同样的状态持久化进
+ * `messages.turn_state`，重启后由 load 路径填回同一个字段 —— 两边写的是同一
+ * 个位置（回合首条 user 消息），所以 live 与重载后的折叠判定天然一致。
+ *
+ * 找不到 user 消息（该对话没加载 / 还没发出过消息）→ 原样返回（不造空回合）。
+ */
+export function withTailTurnState(
+  messages: AgentMessage[],
+  state: TurnState,
+): AgentMessage[] {
+  let idx = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'user') {
+      idx = i;
+      break;
+    }
+  }
+  if (idx === -1 || messages[idx].turnState === state) return messages;
+  return messages.map((m, i) => (i === idx ? { ...m, turnState: state } : m));
+}
+
 /** 回合内所有消息（含开头的 user）。 */
 function collectTurn(
   messages: readonly AgentMessage[],
@@ -103,6 +149,10 @@ function turnKey(turn: readonly AgentMessage[], start: number): string {
  * @param opts.tailActive 尾回合（最后一条 user 之后的回合）是否处于运行中
  *   （对应 isRunning）；true 时该尾回合强制不可折叠。
  * @returns 回合段数组（保持原顺序）。
+ *
+ * 除形态规则外，每个回合还要过一遍**收尾状态**（回合首条 user 上的
+ * `turnState`，后端在 agent loop 停止时记录并持久化）：非 `completed`
+ * 的回合不折叠 —— 见 `turnStopVetoed`。
  */
 export function segmentTurns(
   messages: readonly AgentMessage[],
@@ -183,9 +233,11 @@ export function segmentTurns(
     // 任务尚未结束（尾回合且正在跑）→ 不折叠：模型可能继续输出 tool 或
     // 更多文本，现在折叠会在任务中途把过程收走（“干一半收起”）。
     // 过程中间夹 system（compaction 卡等永显锚点）→ 也不折叠。
+    // 收尾状态不是「正常结束」（手动停止 / 失败 / 崩溃痕迹）→ 同样不折叠。
     const foldable = !(isTail && tailActive)
       && toolCallCount >= TOOL_FOLD_MIN
-      && !before.some((m) => m.role === "system");
+      && !before.some((m) => m.role === "system")
+      && !turnStopVetoed(turn[userIndex]?.turnState);
 
     segments.push({
       key: turnKey(turn, i),

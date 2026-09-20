@@ -87,6 +87,86 @@ impl AgentStatus {
     }
 }
 
+/// 一个「回合」（一条 user 消息起的连续消息段）的收尾状态。
+///
+/// 它是「这一轮到底是怎么停下来的」的**唯一来源**，记录在回合首条 user 消息
+/// 行上（`messages.turn_state`）。为什么要落到库上：前端的回合折叠本来只能
+/// 按消息形态推断「回合结束」（末条纯文本 assistant = 答案），于是**被打断的
+/// 回合**也会被当成正常结束收起来 —— 用户停止 / LLM 出错 / 应用崩溃后，
+/// 过程被收走，重载后连错误提示都一起消失。现在折叠前先看这里：只有
+/// `Completed` 才收。
+///
+/// `Running` 是**回合开始时的写入**（见 `ConversationPersister::begin_turn`）：
+/// 进程若在收尾写入之前死掉（崩溃 / 强杀 / 断电），行上就留在 `Running` ——
+/// 崩溃没有机会自己来写「我崩了」。下一次在该会话开启新回合时它被收敛成
+/// `Interrupted`（见 `ConversationDb::begin_turn_state`），语义才归位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TurnState {
+    /// 回合进行中（也可能是上次进程没来得及收尾 —— 下次开新回合时收敛）。
+    Running,
+    /// 模型自然结束（agent loop 走到 Done）。
+    Completed,
+    /// 用户手动停止。
+    Cancelled,
+    /// 失败：LLM 报错 / 达到最大轮数 / 任务 panic。
+    Failed,
+    /// 上次运行期间进程消失（崩溃 / 强杀），没有任何收尾写入。
+    Interrupted,
+}
+
+impl TurnState {
+    /// 落库字符串（`messages.turn_state`）。前端按同一套字符串匹配，所以
+    /// 与 serde 的一致性由 `tests::turn_state_str_matches_serde` 盯着。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    /// 从库里的字符串读回来。
+    ///
+    /// **不认识的字符串 → `None`**：旧库没有这一列、将来新增变体（降级运行）
+    /// 都可能读到别的值。绝不能把「不认识的收尾状态」当成正常结束，但也
+    /// 不能炸 —— 回落成「没有记录」，由前端按消息形态判定（改动前的行为）。
+    pub fn from_db_str(raw: &str) -> Option<Self> {
+        match raw {
+            "running" => Some(Self::Running),
+            "completed" => Some(Self::Completed),
+            "cancelled" => Some(Self::Cancelled),
+            "failed" => Some(Self::Failed),
+            "interrupted" => Some(Self::Interrupted),
+            _ => None,
+        }
+    }
+
+    /// 任务终态 → 回合收尾状态。
+    ///
+    /// 走的是任务**收尾后的真实状态**（`AgentTask::transition_to` 里
+    /// `Cancelled` 是吸收态：停止命令先置 `Cancelled`、agent loop 退出时的
+    /// 收尾写入不能把它改回已完成/失败，所以「被停止」必须问状态而不是问
+    /// 返回值）。
+    ///
+    /// `match` 不写 `_ =>`：`AgentStatus` 加状态位时这里必须回答新状态属于
+    /// 哪一种收尾。非终态映射到 `Running` 是**保守兜底**（本函数只在收尾
+    /// 调用，走到那里状态必然已终态；真出现非终态就是没走终态写入 ——
+    /// 前端不折叠，比误收起来强）。
+    pub fn from_status(status: &AgentStatus) -> Self {
+        match status {
+            AgentStatus::Completed => Self::Completed,
+            AgentStatus::Cancelled => Self::Cancelled,
+            AgentStatus::Failed => Self::Failed,
+            AgentStatus::Planning | AgentStatus::Executing | AgentStatus::WaitingApproval => {
+                Self::Running
+            }
+        }
+    }
+}
+
 /// Status of an individual item in the agent task plan.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -144,6 +224,23 @@ pub struct AgentTask {
     /// 保证「父用 A 模型 → 派发的子 agent 默认也用 A」。
     #[serde(default)]
     pub model_id: Option<String>,
+    /// 本任务所属回合的锚点：回合首条 user 消息的 `messages` 行 id
+    /// （agent loop 开头 `ConversationPersister::begin_turn` 回填该行的
+    /// `turn_state = running`）。收尾时按它写入终态 —— 崩溃则留在 running。
+    /// `None` = 没有可锚定的 user 消息行（空 prompt 等），本回合不记录收尾状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_anchor_id: Option<String>,
+    /// 仅子任务：派发那一刻父会话**最后一条已落库消息**的 id —— 子代理回读主 agent
+    /// 历史的**上界**（"派发那一刻之前"）。
+    ///
+    /// 下界不在这里冻结：读时取父会话"当前"最新压缩卡（见 `HistoryWindow`）。
+    /// 于是父会话之后再压缩只会让子代理的窗口变小 —— 那仍然只含主 agent 当前
+    /// 上下文里有的部分，且永远不会漏进归档原文，也不会因旧卡被吸收而锚点失效。
+    ///
+    /// `None` = 不是子任务，或派发时没能记下（此时回读父会话历史一律明确报错，
+    /// 绝不当成"不限上界"）。主任务恒为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_history_upto: Option<String>,
 }
 
 impl AgentTask {
@@ -181,6 +278,8 @@ mod tests {
             created_at: chrono::Utc::now(),
             parent_task_id: None,
             model_id: None,
+            turn_anchor_id: None,
+            parent_history_upto: None,
         }
     }
 
@@ -250,5 +349,56 @@ mod tests {
         // 已 Failed 再写 Completed 仍会写入（与旧行为一致）
         assert!(task.transition_to(AgentStatus::Completed));
         assert_eq!(task.status, AgentStatus::Completed);
+    }
+
+    /// `as_str()` 与 serde 序列化必须给出同一套字符串 —— 前者落库，分叉了就是
+    /// 「库里写 cancelled、别处读 Cancelled」。
+    #[test]
+    fn turn_state_str_matches_serde() {
+        let cases = [
+            (TurnState::Running, "running"),
+            (TurnState::Completed, "completed"),
+            (TurnState::Cancelled, "cancelled"),
+            (TurnState::Failed, "failed"),
+            (TurnState::Interrupted, "interrupted"),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(state.as_str(), expected);
+            assert_eq!(
+                serde_json::to_string(&state).unwrap(),
+                format!("\"{expected}\"")
+            );
+            // 落库 → 读回是同一条（库里只有小写这一种写法）
+            assert_eq!(TurnState::from_db_str(expected), Some(state));
+        }
+        // 旧库的值（NULL 走 Option）与未知串 → None：不炸、也不冒充正常结束
+        assert_eq!(TurnState::from_db_str(""), None);
+        assert_eq!(TurnState::from_db_str("Completed"), None);
+        assert_eq!(TurnState::from_db_str("whatever"), None);
+    }
+
+    /// 任务终态 → 回合收尾状态：每个变体都要有明确归属（`from_status` 的
+    /// `match` 不写 `_ =>`，新增状态位编译不过；这条补的是「归属写错了」）。
+    #[test]
+    fn turn_state_from_status_classifies_every_status() {
+        let cases = [
+            (AgentStatus::Completed, TurnState::Completed),
+            (AgentStatus::Cancelled, TurnState::Cancelled),
+            (AgentStatus::Failed, TurnState::Failed),
+            // 非终态不可达（只在收尾调用）→ 保守映射成 Running = 前端不折叠
+            (AgentStatus::Planning, TurnState::Running),
+            (AgentStatus::Executing, TurnState::Running),
+            (AgentStatus::WaitingApproval, TurnState::Running),
+        ];
+        for (status, expected) in &cases {
+            assert_eq!(TurnState::from_status(status), *expected, "{status:?}");
+        }
+        // 只有 Completed 算正常结束 —— 「谁能折叠」钉死在代码旁边
+        let foldable: Vec<AgentStatus> = cases
+            .iter()
+            .filter(|(_, s)| *s == TurnState::Completed)
+            .map(|(status, _)| status.clone())
+            .collect();
+        assert_eq!(foldable, vec![AgentStatus::Completed]);
     }
 }

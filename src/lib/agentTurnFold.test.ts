@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { AgentMessage } from '@/lib/types';
+import type { AgentMessage, TurnState } from '@/lib/types';
 import {
   segmentTurns,
   turnFoldLabel,
+  turnStopVetoed,
+  withTailTurnState,
   TOOL_FOLD_MIN,
   type TurnSegment,
 } from '@/lib/agentTurnFold';
@@ -21,7 +23,7 @@ function assistantToolCalls(id: string, n: number): AgentMessage {
     id, role: 'assistant', content: '', timestamp: new Date().toISOString(),
     toolCalls: Array.from({ length: n }, (_, i) => ({
       id: `${id}-c${i}`, name: 'bash',
-      arguments: { command: 'ls' }, riskLevel: 'Moderate' as const,
+      arguments: { command: 'ls' }, disposition: 'Approval' as const,
     })),
   };
 }
@@ -220,6 +222,99 @@ describe('segmentTurns', () => {
     expect(segs[0].foldable).toBe(true);
     // 回合2 是尾回合且任务在跑 → 不折叠（半截也无答案）
     expect(segs[1].foldable).toBe(false);
+  });
+});
+
+/** 长回合骨架（tool 数达标、以纯文本答案收尾），可选给首条 user 挂收尾状态。 */
+function longTurn(
+  uid: string,
+  aid: string,
+  turnState?: TurnState,
+): AgentMessage[] {
+  const u: AgentMessage = { ...user(uid), ...(turnState ? { turnState } : {}) };
+  const calls = assistantToolCalls(`${aid}-tc`, 4);
+  const tools = Array.from({ length: 4 }, (_, i) => tool(`${aid}-t${i}`));
+  const answer = assistantText(aid, `answer ${aid}`);
+  return [u, calls, ...tools, answer];
+}
+
+describe('回合收尾状态（停止原因）否决折叠', () => {
+  it('completed = 模型自然结束 → 正常折叠', () => {
+    const seg = segmentTurns(longTurn('u', 'a', 'completed'))[0];
+    expect(seg.foldable).toBe(true);
+  });
+
+  it('非正常结束（手动停止 / 失败 / 崩溃痕迹 / 进行中）一律不折叠', () => {
+    // running 也否决：重载时读到 running = 那次任务没有正常收尾
+    // （还活着的话由 tailActive 兜着，这里的 running 是崩溃留下的）
+    for (const state of ['cancelled', 'failed', 'interrupted', 'running'] as TurnState[]) {
+      const seg = segmentTurns(longTurn('u', 'a', state))[0];
+      expect(seg.foldable, `${state} 不该折叠`).toBe(false);
+      // 不折叠 ≠ 不计数：过程完整可见，控制行数据照旧算得出来
+      expect(seg.toolCallCount).toBe(4);
+      expect(seg.answerIndex).not.toBeNull();
+    }
+  });
+
+  it('没有记录（旧会话 / 未锚定）= 不否决，维持按形态判定的既有行为', () => {
+    const seg = segmentTurns(longTurn('u', 'a'))[0];
+    expect(seg.foldable).toBe(true);
+  });
+
+  it('被后续 user 封顶的中间回合同样受否决约束（不止尾回合）', () => {
+    const first = longTurn('u1', 'a1', 'cancelled');
+    const second = longTurn('u2', 'a2', 'completed');
+    const segs = segmentTurns([...first, ...second]);
+    expect(segs).toHaveLength(2);
+    expect(segs[0].foldable).toBe(false);
+    expect(segs[1].foldable).toBe(true);
+  });
+
+  it('否决只看回合首条 user 上的状态（别处的同名字段不生效）', () => {
+    // 状态只写在锚点行上：答案上带了同名值不该影响判定
+    const turn = longTurn('u', 'a');
+    turn[turn.length - 1] = { ...turn[turn.length - 1], turnState: 'cancelled' };
+    expect(segmentTurns(turn)[0].foldable).toBe(true);
+  });
+});
+
+describe('turnStopVetoed', () => {
+  it('只有 completed 与「没有记录」放行', () => {
+    expect(turnStopVetoed(undefined)).toBe(false);
+    expect(turnStopVetoed('completed')).toBe(false);
+    expect(turnStopVetoed('running')).toBe(true);
+    expect(turnStopVetoed('cancelled')).toBe(true);
+    expect(turnStopVetoed('failed')).toBe(true);
+    expect(turnStopVetoed('interrupted')).toBe(true);
+  });
+});
+
+describe('withTailTurnState', () => {
+  const conv = () => [user('u1'), assistantText('a1', 'x'), user('u2'), tool('t1')];
+
+  it('写在最后一条 user（尾回合锚点）上，不改动别的消息', () => {
+    const base = conv();
+    const next = withTailTurnState(base, 'cancelled');
+    expect(next).not.toBe(base);
+    expect(next[2].turnState).toBe('cancelled');
+    expect(next[0].turnState).toBeUndefined();
+    expect(next[1]).toBe(base[1]); // 其余消息保持同一对象引用
+  });
+
+  it('已是同一状态 → 原数组返回（不给 store/React 造无谓变更）', () => {
+    const base = withTailTurnState(conv(), 'failed');
+    expect(withTailTurnState(base, 'failed')).toBe(base);
+  });
+
+  it('没有 user 消息（未加载 / 空会话）→ 原样返回，不造空回合', () => {
+    const noUser = [assistantText('a1', 'x'), tool('t1')];
+    expect(withTailTurnState(noUser, 'failed')).toBe(noUser);
+  });
+
+  it('覆盖式写入：running → completed 会被改成 completed', () => {
+    // 任务跑着的时候重载过会话（锚点从库里读到 running），自然结束后要能覆盖
+    const base = withTailTurnState(conv(), 'running');
+    expect(withTailTurnState(base, 'completed')[2].turnState).toBe('completed');
   });
 });
 

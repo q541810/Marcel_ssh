@@ -573,6 +573,11 @@ export function handleDone(
 
   handler.updateTaskStatus(taskId, 'completed');
 
+  // 回合收尾状态：Done = 模型自然结束（后端的收尾写入也会落成 completed），
+  // 该回合按正常路径折叠。**写在这里是为了覆盖「任务跑着的时候重载过会话」**
+  // 的情形 —— 那种情况下锚点上带着从库里读到的 running，不覆盖就会永远不折叠。
+  useConversationStore.getState().markTailTurnState(conversationId, 'completed');
+
   // 若完成的不是用户当前正在看的对话，将该对话标记为未读完成（展示小绿点）
   const activeConvId = useConversationStore.getState().activeConversationId;
   if (activeConvId !== conversationId) {
@@ -623,6 +628,12 @@ export function handleError(
   state.pendingThinkingDelta = '';
 
   handler.updateTaskStatus(taskId, 'failed');
+
+  // 回合收尾状态：这一轮是**出错停的**，不是模型自然结束 —— 过程不收起来。
+  // 顺带解决一个老问题：如果折叠判定只看消息形态，末条「长得像答案」的
+  // assistant（错误前流出的那半截文本）会让整个回合折叠，而折叠态下
+  // 答案之后的消息（就是下面这条错误提示）根本不渲染 —— 错误会凭空消失。
+  useConversationStore.getState().markTailTurnState(conversationId, 'failed');
 
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = convMsgs

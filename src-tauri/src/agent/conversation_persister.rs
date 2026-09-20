@@ -2,6 +2,7 @@ use chrono::Utc;
 
 use crate::agent::context::CompactionOutcome;
 use crate::agent::conversation::ConversationDb;
+use crate::agent::task::TurnState;
 use crate::llm::provider::{LlmMessage, LlmRole};
 
 /// 压缩卡片内容前缀（与前端 `parseCompactionSummary` 同源；改任一侧需同步）。
@@ -47,7 +48,9 @@ impl ConversationPersister {
 
     /// Persist the last user message；成功时把 DB row id 回填到该消息的 `db_id`
     /// （压缩的 `tail_db_id` 指针依赖它——用户消息必须能作为卡片定位锚点）。
-    pub fn save_last_user_msg(&self, messages: &mut [LlmMessage]) {
+    ///
+    /// 返回落库行的 id（没有可落的 user 消息 → `None`）。
+    pub fn save_last_user_msg(&self, messages: &mut [LlmMessage]) -> Option<String> {
         if let Some(idx) = messages.iter().rposition(|m| m.role == LlmRole::User) {
             let has_images = messages[idx]
                 .image_paths
@@ -55,7 +58,7 @@ impl ConversationPersister {
                 .map(|p| !p.is_empty())
                 .unwrap_or(false);
             if messages[idx].content.is_empty() && !has_images {
-                return;
+                return None;
             }
             let image_paths_json = messages[idx].image_paths.as_ref().and_then(|paths| {
                 if paths.is_empty() {
@@ -77,8 +80,57 @@ impl ConversationPersister {
                 )
                 .ok();
             if let Some(stored) = saved {
-                messages[idx].db_id = Some(stored.id);
+                messages[idx].db_id = Some(stored.id.clone());
+                return Some(stored.id);
             }
+        }
+        None
+    }
+
+    /// 回合开始：落库最后一条 user 消息（= 回合锚点）并把该行标成 `running`。
+    ///
+    /// 返回锚点行 id，调用方（agent loop）要把它记在任务上，收尾时才知道往
+    /// 哪一行写终态（`end_turn`）。`None` = 没有可锚定的 user 行（正常不会发生
+    /// ——空 prompt 且无图），本回合不记录收尾状态，前端回落按形态判定。
+    pub fn begin_turn(&self, messages: &mut [LlmMessage]) -> Option<String> {
+        let anchor_id = self.save_last_user_msg(messages)?;
+        if let Err(e) = self
+            .conv_db
+            .begin_turn_state(&self.conversation_id, &anchor_id)
+        {
+            // 记录失败不阻断任务：只是这一回合没有收尾状态可查（前端回落按
+            // 形态判定，与改动前一致）。
+            log::warn!(
+                "begin_turn: failed to mark turn state for {} ({}): {}",
+                self.conversation_id,
+                anchor_id,
+                e
+            );
+        }
+        Some(anchor_id)
+    }
+
+    /// 回合收尾：把终态写到锚点行上。
+    ///
+    /// `anchor_id` = `begin_turn` 返回的行 id（任务上记的那个）。锚点行可能
+    /// 已被回滚删除 → 无操作（回合都没了）。写失败只记日志：库问题不该改变
+    /// 任务的终态与界面表现。
+    pub fn end_turn(&self, anchor_id: &str, state: TurnState) {
+        match self.conv_db.set_message_turn_state(anchor_id, state) {
+            Ok(true) => {}
+            Ok(false) => log::debug!(
+                "end_turn: anchor row {} 已不存在（会话 {}），跳过写入 {:?}",
+                anchor_id,
+                self.conversation_id,
+                state
+            ),
+            Err(e) => log::warn!(
+                "end_turn: failed to record {:?} for {} ({}): {}",
+                state,
+                self.conversation_id,
+                anchor_id,
+                e
+            ),
         }
     }
 
@@ -216,6 +268,56 @@ mod tests {
             })
             .to_string(),
         )
+    }
+
+    /// 回合开始/收尾这一对：落库 user 消息 → 锚点标 running → 收尾写终态。
+    /// 顺带钉住两个边界：没有可锚定的 user 消息（空 prompt 且无图）不记录状态；
+    /// 锚点行被删（回滚）后收尾不炸。
+    #[test]
+    fn begin_and_end_turn_record_state_on_the_user_row() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+
+        let mut messages = vec![
+            LlmMessage::user("第一轮"),
+            LlmMessage::assistant("好的"),
+            LlmMessage::user("第二轮"),
+        ];
+        let anchor = persister.begin_turn(&mut messages).expect("anchor");
+        // 锚点 = 落库的最后一条 user 消息（回合首条 user），并回填 db_id
+        assert_eq!(messages[2].db_id.as_deref(), Some(anchor.as_str()));
+        let rows = db.load_messages(&conv.id).expect("load");
+        assert_eq!(rows.len(), 1, "只落最后一条 user 消息");
+        assert_eq!(rows[0].content, "第二轮");
+        assert_eq!(rows[0].turn_state.as_deref(), Some("running"));
+
+        persister.end_turn(&anchor, TurnState::Cancelled);
+        let rows = db.load_messages(&conv.id).expect("load");
+        assert_eq!(rows[0].turn_state.as_deref(), Some("cancelled"));
+
+        // 锚点被回滚删除 → 收尾静默跳过（不 panic、不影响其它行）
+        db.delete_messages_from_timestamp(&conv.id, &rows[0].timestamp)
+            .expect("rollback");
+        persister.end_turn(&anchor, TurnState::Completed);
+        assert!(db.load_messages(&conv.id).expect("load").is_empty());
+    }
+
+    /// 没有可锚定的 user 消息（空 prompt 且无图）→ 不记录收尾状态，
+    /// 前端回落按消息形态判定（与改动前完全一致）。
+    #[test]
+    fn begin_turn_without_user_message_records_nothing() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().expect("db"));
+        let conv = db.create_conversation("conn_1", "Test").expect("create");
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone());
+
+        let mut messages = vec![LlmMessage::assistant("上一轮的收尾文本")];
+        assert!(persister.begin_turn(&mut messages).is_none());
+        assert!(db.load_messages(&conv.id).expect("load").is_empty());
+
+        let mut empty = vec![LlmMessage::user("")];
+        assert!(persister.begin_turn(&mut empty).is_none());
+        assert!(db.load_messages(&conv.id).expect("load").is_empty());
     }
 
     #[test]
