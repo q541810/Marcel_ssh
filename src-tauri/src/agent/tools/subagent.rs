@@ -24,7 +24,7 @@ use serde_json::json;
 use tauri::Manager;
 
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
-use crate::agent::risk::RiskLevel;
+use crate::agent::risk::Disposition;
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
@@ -124,8 +124,10 @@ impl AgentTool for SubagentTool {
          of several independent angles at once.\n\
          \n\
          HOW to delegate: give a COMPLETE, self-contained prompt (targets, questions \
-         to answer, expected output format) — the subagent does NOT see your \
-         conversation history. You can invoke several `subagent` tools concurrently in \
+         to answer, expected output format) — the subagent does NOT see the history \
+         that comes AFTER dispatch; it CAN read your conversation up to the dispatch \
+         moment via `read_history(scope=parent)`, but that is not a substitute for a \
+         self-contained prompt. You can invoke several `subagent` tools concurrently in \
          one turn to explore different areas in parallel; each runs in its own \
          conversation. You receive only the report — integrate the conclusions into \
          your reply, do not echo the process. The subagent's full process stays \
@@ -175,8 +177,8 @@ impl AgentTool for SubagentTool {
         })
     }
 
-    fn risk_level(&self) -> RiskLevel {
-        RiskLevel::ReadOnly
+    fn disposition(&self) -> Disposition {
+        Disposition::Allow
     }
 
     fn is_concurrent_safe(&self) -> bool {

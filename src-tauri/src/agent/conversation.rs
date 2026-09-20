@@ -6,6 +6,9 @@ use rusqlite::{Connection, OptionalExtension, Result as RusqliteResult};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent::conversation_persister::COMPACTION_CARD_PREFIX;
+use crate::agent::task::TurnState;
+
 /// `messages` 表的**全部列**，顺序 = `map_stored_message` 里 `row.get(N)` 的顺序。
 ///
 /// 这里是唯一的列清单：SELECT 列、INSERT 列与占位符、UPSERT 的 SET 子句都由它拼
@@ -27,6 +30,7 @@ const MESSAGES_COLUMNS: &[&str] = &[
     "tool_calls_json",
     "reasoning_content",
     "image_paths_json",
+    "turn_state",
 ];
 
 /// `SELECT <全部列> FROM messages` 用的列清单（拼一次复用，别每处各写一遍）。
@@ -104,6 +108,11 @@ pub struct Conversation {
     /// 自身默认。此字段只表达「当前生效模型的档位」，持久化的是整张映射。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// 用户置顶：置顶的对话在列表里浮到最上方（日期分组之前），不受
+    /// `updated_at` 影响。切换置顶**不动 `updated_at`**，否则取消置顶会把
+    /// 对话的日期分组顺序搅乱（见 `set_conversation_pinned`）。
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +131,13 @@ pub struct StoredMessage {
     pub reasoning_content: Option<String>,
     /// JSON array of relative image paths under `images/` (user messages).
     pub image_paths_json: Option<String>,
+    /// 回合收尾状态（`agent::task::TurnState` 的落库字符串）。
+    ///
+    /// **只写在回合首条 user 消息行上**（其余行恒为 NULL）：一行代表整个回合。
+    /// `None` = 没有记录 —— 旧数据、或本回合没锚定到 user 行；前端据此回落
+    /// 「按消息形态判定」的既有行为（不清空、不重置任何东西）。
+    /// 读到不认识的字符串同样回落 `None`（见 `TurnState::from_db_str`）。
+    pub turn_state: Option<String>,
 }
 
 /// 活跃消息段加载结果（用于首次加载会话时从最新 Compaction Checkpoint 开始切片）。
@@ -134,6 +150,204 @@ pub struct ActiveMessagesResult {
     pub has_earlier: bool,
     /// 截断锚点的 Checkpoint 消息 ID（若无压缩卡片则为 None）
     pub checkpoint_id: Option<String>,
+}
+
+// ───────────────────── 历史回读（agent 侧只读入口） ─────────────────────
+//
+// 压缩从不删原文：它只把一段历史从**内存里**的 LLM 消息数组里 splice 掉、
+// 换上一张 `【上下文已压缩】` 卡片行，并吸收掉上一张卡。原文照常躺在 `messages`
+// 表里（用户往上滚就能看到），所以「读回被压掉的原文」只是给已有数据加一个只读
+// 入口 —— 不新增表、不新增列、不迁移。
+//
+// 归档边界复用既有唯一定义：**最新一张压缩卡之前的行 = 归档原文，卡片及之后 =
+// 当前上下文**（`load_active_messages` 与前端 `buildLlmHistory` 同一条规则）。
+// 压缩恒从头部开始 ⇒ 新卡必然吸收旧卡 ⇒ 一个会话在任何时刻最多一张卡。
+
+/// 行序游标：`messages` 的 `(created_at ASC, rowid ASC)` 位置。
+/// 与 `load_earlier_messages` 用的是同一套比较语义。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MsgPos {
+    created_at: String,
+    rowid: i64,
+}
+
+impl MsgPos {
+    /// 是否严格早于另一位置（决定行序的完整比较）。
+    fn before(&self, other: &MsgPos) -> bool {
+        (self.created_at.as_str(), self.rowid) < (other.created_at.as_str(), other.rowid)
+    }
+}
+
+/// 归档边界的那张压缩卡（带行序位置）。
+#[derive(Debug, Clone)]
+struct BoundaryCard {
+    id: String,
+    created_at: String,
+    rowid: i64,
+    timestamp: String,
+    content: String,
+}
+
+/// 回读窗口的下界起点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowStart {
+    /// 不限下界（从会话最早一条开始）。
+    Earliest,
+    /// 从该会话**读取那一刻**的最新压缩卡所在行开始（含卡片本身）。
+    ///
+    /// 子代理读父会话用这个：父会话之后再压缩只会让窗口变小 —— 那仍然只含
+    /// 主 agent 当前上下文里有的部分，且**永远不会漏进归档原文**，也不会
+    /// 因为旧卡被新卡吸收而锚点失效（下界是读时现算的，不是派发时冻结的）。
+    LatestCard,
+}
+
+/// 回读窗口（**闭区间**）：`start` 是下界，`upto_message_id` 是上界（含该行）。
+/// 两端都表达成"行序位置"，调用方不必懂 `(created_at, rowid)` 那套比较规则。
+#[derive(Debug, Clone)]
+pub struct HistoryWindow {
+    pub start: WindowStart,
+    /// 上界：这条消息所在行（含）。`None` = 不限（到会话最新一条）。
+    /// 子代理读父会话时冻结在"派发那一刻"的最后一条已落库消息上。
+    pub upto_message_id: Option<String>,
+}
+
+/// 已解析成行序位置的窗口。
+#[derive(Debug, Clone, Default)]
+struct ResolvedWindow {
+    from: Option<MsgPos>,
+    upto: Option<MsgPos>,
+}
+
+impl ResolvedWindow {
+    /// 绑定用的四个值（None → SQL 里的 NULL → 该侧不限）。
+    fn bindings(&self) -> (Option<&str>, Option<i64>, Option<&str>, Option<i64>) {
+        (
+            self.from.as_ref().map(|p| p.created_at.as_str()),
+            self.from.as_ref().map(|p| p.rowid),
+            self.upto.as_ref().map(|p| p.created_at.as_str()),
+            self.upto.as_ref().map(|p| p.rowid),
+        )
+    }
+
+    /// 位置是否落在窗口内（锚点越界要**明确报错**，不能静默返回空）。
+    fn contains(&self, pos: &MsgPos) -> bool {
+        if let Some(from) = &self.from {
+            if pos.before(from) {
+                return false;
+            }
+        }
+        if let Some(upto) = &self.upto {
+            if upto.before(pos) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// 窗口条件的 SQL 片段。`:win_*` 为 NULL 时对应侧短路为真。
+/// 列名带 `messages.` 前缀：调用方可能把它拼进带 JOIN 的查询。
+const HISTORY_WINDOW_SQL: &str = "
+      AND (:win_from_created IS NULL
+           OR messages.created_at > :win_from_created
+           OR (messages.created_at = :win_from_created AND messages.rowid >= :win_from_rowid))
+      AND (:win_upto_created IS NULL
+           OR messages.created_at < :win_upto_created
+           OR (messages.created_at = :win_upto_created AND messages.rowid <= :win_upto_rowid))";
+
+/// 一条消息的轻量标识（回读概览与检索命中用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MsgBrief {
+    pub id: String,
+    pub role: String,
+    pub timestamp: String,
+}
+
+/// 归档边界的压缩卡。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardBrief {
+    pub id: String,
+    pub timestamp: String,
+    /// 卡片正文（含 `已整理 N 条历史消息（约 M tokens）` 与摘要全文）。
+    pub content: String,
+}
+
+/// 本会话历史概览（需求：agent 得先知道"前面还有什么"）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryOverview {
+    pub total: i64,
+    /// 归档段条数 = 边界卡之前的行数；无卡 = 0
+    pub archived: i64,
+    /// 当前上下文段条数 = total - archived
+    pub active: i64,
+    pub oldest: Option<MsgBrief>,
+    pub newest: Option<MsgBrief>,
+    /// 归档段最后一条（配合 `oldest` 给出归档段的时间范围）
+    pub archived_newest: Option<MsgBrief>,
+    /// 归档边界 = 最新一张压缩卡；无卡 = None（本会话没被压缩过）
+    pub boundary_card: Option<CardBrief>,
+}
+
+/// 检索命中（需求：返回可挑选的短清单，不是把历史倒出来）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryHit {
+    pub id: String,
+    pub role: String,
+    pub timestamp: String,
+    /// 命中处前后约 50 字的片段
+    pub snippet: String,
+}
+
+/// 一次定向回读的结果。
+#[derive(Debug, Clone)]
+pub struct HistoryRead {
+    /// 按时间升序（锚点前若干条 + 锚点 + 锚点后若干条）
+    pub messages: Vec<StoredMessage>,
+    /// 锚点之前（窗口内）是否还有更多
+    pub has_more_before: bool,
+    /// 锚点之后（窗口内）是否还有更多
+    pub has_more_after: bool,
+}
+
+/// 子对话条目（主 agent 核对子代理过程时先看这个）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubConversationInfo {
+    pub id: String,
+    pub title: String,
+    pub created_at: chrono::DateTime<Utc>,
+    pub message_count: i64,
+}
+
+/// 历史回读的错误。**必须与「查不到」区分开**：静默返回空会让 agent 以为
+/// "历史里没有这段内容"，从而做出错误判断。
+#[derive(Debug)]
+pub enum HistoryError {
+    Db(rusqlite::Error),
+    /// 引用的行不存在：已被撤回删除，或旧压缩卡已被新卡吸收
+    Missing(String),
+    /// 引用的行存在，但不在本次可读窗口内（例如子代理去读被压缩掉的归档原文）
+    OutOfWindow(String),
+}
+
+impl std::fmt::Display for HistoryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Db(e) => write!(f, "history read db error: {e}"),
+            Self::Missing(id) => write!(f, "message not found: {id}"),
+            Self::OutOfWindow(id) => write!(f, "message out of readable window: {id}"),
+        }
+    }
+}
+
+impl From<rusqlite::Error> for HistoryError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Db(e)
+    }
 }
 
 /// 会话完整快照（元数据 + 全部消息），用于跨设备同步。
@@ -194,7 +408,8 @@ impl ConversationDb {
                 updated_at TEXT NOT NULL,
                 parent_conversation_id TEXT,
                 model_id TEXT,
-                efforts_json TEXT
+                efforts_json TEXT,
+                pinned INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -275,6 +490,16 @@ impl ConversationDb {
             log::info!("Migration complete: image_paths_json column added");
         }
 
+        // Migration: add turn_state —— 回合收尾状态（写在回合首条 user 消息行上，
+        // 见 `agent::task::TurnState`）。旧库 ALTER 加列；旧数据的 NULL = 「没有
+        // 记录」，前端按消息形态判定（与加这一列之前完全一致）。
+        if !column_exists(&conn, "messages", "turn_state") {
+            log::info!("Migrating conversation database: adding turn_state column");
+            conn.execute("ALTER TABLE messages ADD COLUMN turn_state TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: turn_state column added");
+        }
+
         // Migration: add parent_conversation_id for subagent (subagent tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
@@ -309,6 +534,18 @@ impl ConversationDb {
             conn.execute("ALTER TABLE conversations ADD COLUMN efforts_json TEXT", [])
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete: efforts_json column added");
+        }
+
+        // Migration: add pinned for user-pinned conversations.
+        // 旧库 ALTER 加列；新库建表已带列。缺省 0 = 未置顶（旧数据的列表顺序保持原样）。
+        if !column_exists(&conn, "conversations", "pinned") {
+            log::info!("Migrating conversation database: adding pinned column");
+            conn.execute(
+                "ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: pinned column added");
         }
 
         // Migration: plan_snapshots for older DBs that already had plans table only
@@ -388,16 +625,17 @@ impl ConversationDb {
             parent_conversation_id: parent_conversation_id.map(String::from),
             model_id: None,
             reasoning_effort: None,
+            pinned: false,
         })
     }
 
     pub fn list_conversations(&self, connection_id: &str) -> RusqliteResult<Vec<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id, pinned
              FROM conversations
              WHERE connection_id = ?1
-             ORDER BY updated_at DESC",
+             ORDER BY pinned DESC, updated_at DESC",
         )?;
 
         let conversations = stmt
@@ -417,6 +655,7 @@ impl ConversationDb {
                     parent_conversation_id: row.get(5).ok(),
                     model_id: row.get(6).ok(),
                     reasoning_effort: None,
+                    pinned: row.get(7)?,
                 })
             })?
             .collect::<RusqliteResult<Vec<_>>>()?;
@@ -547,24 +786,29 @@ impl ConversationDb {
     ) -> RusqliteResult<ActiveMessagesResult> {
         let conn = self.conn.lock().unwrap();
 
-        // 1. 查询最新的 Compaction Checkpoint 消息 (role = 'system' 且以 '【上下文已压缩】' 开头)
+        // 1. 查询最新的 Compaction Checkpoint 消息 (role = 'system' 且以压缩卡前缀开头)。
+        //    前缀从 COMPACTION_CARD_PREFIX 来：写卡的地方与认卡的地方只能有一份字面量，
+        //    否则改一处会静默失去归档边界（卡片被当成普通 system 消息）。
         let mut check_stmt = conn.prepare(
             "SELECT id, created_at, rowid FROM messages 
              WHERE conversation_id = ?1 
                AND role = 'system' 
-               AND content LIKE '【上下文已压缩】%'
+               AND content LIKE ?2 ESCAPE '\\'
              ORDER BY created_at DESC, rowid DESC 
              LIMIT 1",
         )?;
 
         let checkpoint = check_stmt
-            .query_row([conversation_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })
+            .query_row(
+                rusqlite::params![conversation_id, format!("{COMPACTION_CARD_PREFIX}%")],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
             .optional()?;
 
         match checkpoint {
@@ -656,6 +900,374 @@ impl ConversationDb {
         Ok(messages)
     }
 
+    // ───────────────────── 历史回读（只读，agent 侧入口） ─────────────────────
+    //
+    // 每个方法都是「一次持锁 + 一个事务」把「解析锚点/窗口」与「取行」做完：
+    // 压缩只可能在整次回读之前或之后发生，不会出现锚点用旧卡、取行用新卡的
+    // 半新半旧拼接。工具侧每个 action 只调一个方法，同理。
+
+    /// 本会话历史概览：总数、归档段（边界卡之前）条数与时间范围、边界卡。
+    pub fn history_overview(&self, conversation_id: &str) -> RusqliteResult<HistoryOverview> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+
+        let total: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+            [conversation_id],
+            |r| r.get(0),
+        )?;
+        let oldest = Self::boundary_message(&tx, conversation_id, true)?;
+        let newest = Self::boundary_message(&tx, conversation_id, false)?;
+        let card = Self::boundary_card(&tx, conversation_id)?;
+
+        let (archived, archived_newest) = match &card {
+            Some(card) => {
+                let count: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM messages
+                     WHERE conversation_id = ?1
+                       AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))",
+                    rusqlite::params![conversation_id, card.created_at, card.rowid],
+                    |r| r.get(0),
+                )?;
+                let last = tx
+                    .query_row(
+                        "SELECT id, role, timestamp FROM messages
+                         WHERE conversation_id = ?1
+                           AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
+                         ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                        rusqlite::params![conversation_id, card.created_at, card.rowid],
+                        |r| {
+                            Ok(MsgBrief {
+                                id: r.get(0)?,
+                                role: r.get(1)?,
+                                timestamp: r.get(2)?,
+                            })
+                        },
+                    )
+                    .optional()?;
+                (count, last)
+            }
+            None => (0, None),
+        };
+
+        let overview = HistoryOverview {
+            total,
+            archived,
+            active: total - archived,
+            oldest,
+            newest,
+            archived_newest,
+            boundary_card: card.as_ref().map(|c| CardBrief {
+                id: c.id.clone(),
+                timestamp: c.timestamp.clone(),
+                content: c.content.clone(),
+            }),
+        };
+        tx.finish()?;
+        Ok(overview)
+    }
+
+    /// 在窗口内按关键词检索（大小写不敏感子串），返回按时间升序的命中清单。
+    /// 空关键词返回空列表。
+    pub fn search_history(
+        &self,
+        conversation_id: &str,
+        keyword: &str,
+        window: Option<&HistoryWindow>,
+        limit: usize,
+    ) -> Result<Vec<HistoryHit>, HistoryError> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Ok(vec![]);
+        }
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let win = Self::resolve_history_window(&tx, conversation_id, window)?;
+        let (fc, fr, uc, ur) = win.bindings();
+        let pattern = format!("%{}%", escape_like(keyword));
+        let sql = format!(
+            "SELECT id, role, content, timestamp FROM messages
+             WHERE conversation_id = :conv
+               AND content LIKE :pattern ESCAPE '\\' COLLATE NOCASE
+               {HISTORY_WINDOW_SQL}
+             ORDER BY created_at ASC, rowid ASC
+             LIMIT :limit"
+        );
+        let hits = {
+            let mut stmt = tx.prepare(&sql)?;
+            let rows = stmt
+                .query_map(
+                    rusqlite::named_params! {
+                        ":conv": conversation_id,
+                        ":pattern": pattern,
+                        ":limit": limit as i64,
+                        ":win_from_created": fc,
+                        ":win_from_rowid": fr,
+                        ":win_upto_created": uc,
+                        ":win_upto_rowid": ur,
+                    },
+                    |row| {
+                        let content: String = row.get(2)?;
+                        Ok(HistoryHit {
+                            id: row.get(0)?,
+                            role: row.get(1)?,
+                            timestamp: row.get(3)?,
+                            snippet: make_match_snippet(&content, keyword),
+                        })
+                    },
+                )?
+                .collect::<RusqliteResult<Vec<_>>>()?;
+            rows
+        };
+        tx.finish()?;
+        Ok(hits)
+    }
+
+    /// 以某条消息（或某张压缩卡）为锚点定向取原文：前 `before` 条 + 锚点本身 +
+    /// 后 `after` 条，全部限定在窗口内。
+    ///
+    /// 锚点不在窗口内 → [`HistoryError::OutOfWindow`]；锚点不存在（已被撤回删除、
+    /// 或旧卡被新卡吸收）→ [`HistoryError::Missing`]。两者都**不返回空列表**。
+    pub fn read_history(
+        &self,
+        conversation_id: &str,
+        window: Option<&HistoryWindow>,
+        anchor_id: &str,
+        before: usize,
+        after: usize,
+    ) -> Result<HistoryRead, HistoryError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let win = Self::resolve_history_window(&tx, conversation_id, window)?;
+        let anchor = Self::msg_pos(&tx, conversation_id, anchor_id)?
+            .ok_or_else(|| HistoryError::Missing(anchor_id.to_string()))?;
+        if !win.contains(&anchor) {
+            return Err(HistoryError::OutOfWindow(anchor_id.to_string()));
+        }
+
+        let (before_rows, has_more_before) =
+            Self::fetch_side(&tx, conversation_id, &anchor, &win, false, before)?;
+        let (after_rows, has_more_after) =
+            Self::fetch_side(&tx, conversation_id, &anchor, &win, true, after)?;
+        let anchor_row = Self::load_message_by_id(&tx, conversation_id, anchor_id)?
+            .ok_or_else(|| HistoryError::Missing(anchor_id.to_string()))?;
+
+        let mut messages = before_rows;
+        messages.push(anchor_row);
+        messages.extend(after_rows);
+        tx.finish()?;
+        Ok(HistoryRead {
+            messages,
+            has_more_before,
+            has_more_after,
+        })
+    }
+
+    /// 子代理可读父会话的**上界**：派发瞬间父会话最后一条已落库消息 id。
+    ///
+    /// 只冻结上界（"派发那一刻之前"）；下界（压缩卡）在读取时现取，
+    /// 于是父会话之后再压缩只会让子代理的窗口变小 —— 那仍然只含主 agent
+    /// 当前上下文里有的部分，且永远不会漏进归档原文，也不会因旧卡被吸收而失效。
+    pub fn history_tail_anchor(&self, conversation_id: &str) -> RusqliteResult<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id FROM messages
+             WHERE conversation_id = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            [conversation_id],
+            |r| r.get(0),
+        )
+        .optional()
+    }
+
+    /// 本会话派发过的子对话（按创建时间升序）。
+    pub fn list_sub_conversations(
+        &self,
+        parent_conversation_id: &str,
+    ) -> RusqliteResult<Vec<SubConversationInfo>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.title, c.created_at, COUNT(m.id)
+             FROM conversations c
+             LEFT JOIN messages m ON m.conversation_id = c.id
+             WHERE c.parent_conversation_id = ?1
+             GROUP BY c.id, c.title, c.created_at
+             ORDER BY c.created_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([parent_conversation_id], |row| {
+                Ok(SubConversationInfo {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    created_at: row
+                        .get::<_, String>(2)?
+                        .parse()
+                        .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+                    message_count: row.get(3)?,
+                })
+            })?
+            .collect::<RusqliteResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// 消息 id → 行序位置；行不存在返回 None。
+    fn msg_pos(
+        conn: &Connection,
+        conversation_id: &str,
+        message_id: &str,
+    ) -> RusqliteResult<Option<MsgPos>> {
+        conn.query_row(
+            "SELECT created_at, rowid FROM messages WHERE conversation_id = ?1 AND id = ?2",
+            [conversation_id, message_id],
+            |r| {
+                Ok(MsgPos {
+                    created_at: r.get(0)?,
+                    rowid: r.get(1)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// 把窗口两端的 id 解析成行序位置；引用的行不存在 → 明确报错。
+    fn resolve_history_window(
+        conn: &Connection,
+        conversation_id: &str,
+        window: Option<&HistoryWindow>,
+    ) -> Result<ResolvedWindow, HistoryError> {
+        let Some(window) = window else {
+            return Ok(ResolvedWindow::default());
+        };
+        let mut resolved = ResolvedWindow::default();
+        if window.start == WindowStart::LatestCard {
+            // 读时现算：没有卡片（从未压缩）⇒ 无下界，会话全部可读
+            resolved.from = Self::boundary_card(conn, conversation_id)?
+                .map(|c| MsgPos { created_at: c.created_at, rowid: c.rowid });
+        }
+        if let Some(id) = window.upto_message_id.as_deref() {
+            resolved.upto = Some(
+                Self::msg_pos(conn, conversation_id, id)?
+                    .ok_or_else(|| HistoryError::Missing(id.to_string()))?,
+            );
+        }
+        Ok(resolved)
+    }
+
+    /// 会话里最早/最新的一条消息。
+    fn boundary_message(
+        conn: &Connection,
+        conversation_id: &str,
+        oldest: bool,
+    ) -> RusqliteResult<Option<MsgBrief>> {
+        let order = if oldest { "ASC" } else { "DESC" };
+        conn.query_row(
+            &format!(
+                "SELECT id, role, timestamp FROM messages
+                 WHERE conversation_id = ?1
+                 ORDER BY created_at {order}, rowid {order} LIMIT 1"
+            ),
+            [conversation_id],
+            |r| {
+                Ok(MsgBrief {
+                    id: r.get(0)?,
+                    role: r.get(1)?,
+                    timestamp: r.get(2)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// 归档边界 = 最新一张压缩卡（带行序位置，供比较用）。无卡 → None。
+    fn boundary_card(
+        conn: &Connection,
+        conversation_id: &str,
+    ) -> RusqliteResult<Option<BoundaryCard>> {
+        let pattern = format!("{COMPACTION_CARD_PREFIX}%");
+        conn.query_row(
+            "SELECT id, created_at, rowid, timestamp, content FROM messages
+             WHERE conversation_id = ?1
+               AND role = 'system'
+               AND content LIKE ?2 ESCAPE '\\'
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            rusqlite::params![conversation_id, pattern],
+            |r| {
+                Ok(BoundaryCard {
+                    id: r.get(0)?,
+                    created_at: r.get(1)?,
+                    rowid: r.get(2)?,
+                    timestamp: r.get(3)?,
+                    content: r.get(4)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// 按 id 取一条消息（整行）。
+    fn load_message_by_id(
+        conn: &Connection,
+        conversation_id: &str,
+        message_id: &str,
+    ) -> RusqliteResult<Option<StoredMessage>> {
+        conn.query_row(
+            &format!(
+                "SELECT {} FROM messages WHERE conversation_id = ?1 AND id = ?2",
+                messages_select_columns()
+            ),
+            [conversation_id, message_id],
+            Self::map_stored_message,
+        )
+        .optional()
+    }
+
+    /// 从锚点向某一侧取 `rows` 条（多取一条当探针判断还有没有更多），
+    /// 返回 (按时间升序的行, 是否还有更多)。
+    fn fetch_side(
+        conn: &Connection,
+        conversation_id: &str,
+        anchor: &MsgPos,
+        win: &ResolvedWindow,
+        forward: bool,
+        rows: usize,
+    ) -> RusqliteResult<(Vec<StoredMessage>, bool)> {
+        let (order, cmp) = if forward { ("ASC", ">") } else { ("DESC", "<") };
+        let sql = format!(
+            "SELECT {}
+             FROM messages
+             WHERE conversation_id = :conv
+               AND (created_at {cmp} :anchor_created
+                    OR (created_at = :anchor_created AND rowid {cmp} :anchor_rowid))
+               {HISTORY_WINDOW_SQL}
+             ORDER BY created_at {order}, rowid {order}
+             LIMIT :limit",
+            messages_select_columns()
+        );
+        let (fc, fr, uc, ur) = win.bindings();
+        let mut stmt = conn.prepare(&sql)?;
+        let mut out = stmt
+            .query_map(
+                rusqlite::named_params! {
+                    ":conv": conversation_id,
+                    ":anchor_created": anchor.created_at.as_str(),
+                    ":anchor_rowid": anchor.rowid,
+                    ":limit": (rows + 1) as i64,
+                    ":win_from_created": fc,
+                    ":win_from_rowid": fr,
+                    ":win_upto_created": uc,
+                    ":win_upto_rowid": ur,
+                },
+                Self::map_stored_message,
+            )?
+            .collect::<RusqliteResult<Vec<_>>>()?;
+        let has_more = out.len() > rows;
+        out.truncate(rows);
+        if !forward {
+            out.reverse();
+        }
+        Ok((out, has_more))
+    }
+
     fn map_stored_message(row: &rusqlite::Row<'_>) -> RusqliteResult<StoredMessage> {
         Ok(StoredMessage {
             id: row.get(0)?,
@@ -670,6 +1282,12 @@ impl ConversationDb {
             tool_calls_json: row.get(6).ok(),
             reasoning_content: row.get(7).ok(),
             image_paths_json: row.get(8).ok(),
+            // 未知串 → None（降级运行读到未来版本写的值时不冒充正常结束）
+            turn_state: row
+                .get::<_, Option<String>>(9)
+                .ok()
+                .flatten()
+                .filter(|raw| TurnState::from_db_str(raw).is_some()),
         })
     }
 
@@ -763,6 +1381,9 @@ impl ConversationDb {
                 tool_calls_json,
                 reasoning_content,
                 image_paths_json,
+                // 回合收尾状态不在这里写：只有回合首条 user 行需要，由
+                // `begin_turn_state` / `set_message_turn_state` 事后 UPDATE。
+                None::<&str>,
             ),
         )?;
         drop(conn);
@@ -779,7 +1400,53 @@ impl ConversationDb {
             tool_calls_json: tool_calls_json.map(String::from),
             reasoning_content: reasoning_content.map(String::from),
             image_paths_json: image_paths_json.map(String::from),
+            turn_state: None,
         })
+    }
+
+    /// 回合开始：把锚点行（回合首条 user 消息）标成 `running`。
+    ///
+    /// 为什么必须**在回合开始时**先写一笔：进程崩溃 / 被强杀时没有任何机会跑
+    /// 收尾写入，行上留在 `running` 就是「这一轮没有正常收尾」的持久证据；
+    /// 只在收尾时才写的话，崩溃与「旧版本留下的、压根没有记录的行」无法区分。
+    ///
+    /// 同一次调用顺手把本会话里**别的** `running` 行收敛成 `interrupted`：
+    /// 这个会话既然还能开出新回合，那些行早已不属于任何在跑的任务 —— 只可能
+    /// 是上次进程异常退出留下的。收敛放在这里而不是启动时全库扫一遍，是为了
+    /// 不跟「另一个实例正在跑同一会话」互踩：作用域限定在本会话、本回合之外。
+    pub fn begin_turn_state(&self, conversation_id: &str, message_id: &str) -> RusqliteResult<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE messages SET turn_state = ?1
+             WHERE conversation_id = ?2 AND turn_state = ?3 AND id <> ?4",
+            (
+                TurnState::Interrupted.as_str(),
+                conversation_id,
+                TurnState::Running.as_str(),
+                message_id,
+            ),
+        )?;
+        tx.execute(
+            "UPDATE messages SET turn_state = ?1 WHERE id = ?2",
+            (TurnState::Running.as_str(), message_id),
+        )?;
+        tx.commit()
+    }
+
+    /// 回合收尾：把终态写到锚点行上。返回是否命中了行 —— 锚点可能已被回滚
+    /// 删除（回合本身都没了），那就不写、也不报错。
+    pub fn set_message_turn_state(
+        &self,
+        message_id: &str,
+        state: TurnState,
+    ) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE messages SET turn_state = ?1 WHERE id = ?2",
+            (state.as_str(), message_id),
+        )?;
+        Ok(rows > 0)
     }
 
     /// 提交一次上下文压缩（单事务，原文全保留、仅插卡片 + 吸收旧卡）：
@@ -824,6 +1491,7 @@ impl ConversationDb {
                 card_content,
                 card_timestamp,
                 card_created_at,
+                None::<&str>,
                 None::<&str>,
                 None::<&str>,
                 None::<&str>,
@@ -997,7 +1665,7 @@ impl ConversationDb {
     pub fn get_conversation(&self, conversation_id: &str) -> RusqliteResult<Option<Conversation>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id
+            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id, pinned
              FROM conversations
              WHERE id = ?1",
         )?;
@@ -1017,6 +1685,7 @@ impl ConversationDb {
                 parent_conversation_id: row.get(5).ok(),
                 model_id: row.get(6).ok(),
                 reasoning_effort: None,
+                pinned: row.get(7)?,
             })
         })?;
         match rows.next() {
@@ -1038,6 +1707,24 @@ impl ConversationDb {
         let rows = conn.execute(
             "UPDATE conversations SET model_id = ?1 WHERE id = ?2",
             (model_id, conversation_id),
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// 设置/取消会话置顶。返回是否真的有会话被更新。
+    ///
+    /// 刻意**不更新 `updated_at`**：置顶是列表视图的元数据，不是内容变更。
+    /// 若顺手 touch，取消置顶会把对话打到日期分组最前面，用户的时间序就乱了
+    /// （同 `skills::store::apply_user_order` 的口径）。
+    pub fn set_conversation_pinned(
+        &self,
+        conversation_id: &str,
+        pinned: bool,
+    ) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE conversations SET pinned = ?1 WHERE id = ?2",
+            (pinned as i64, conversation_id),
         )?;
         Ok(rows > 0)
     }
@@ -1066,14 +1753,15 @@ impl ConversationDb {
     pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 title = excluded.title,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
-                parent_conversation_id = excluded.parent_conversation_id",
+                parent_conversation_id = excluded.parent_conversation_id,
+                pinned = excluded.pinned",
             (
                 &conv.id,
                 &conv.connection_id,
@@ -1081,6 +1769,7 @@ impl ConversationDb {
                 conv.created_at.to_rfc3339(),
                 conv.updated_at.to_rfc3339(),
                 &conv.parent_conversation_id,
+                conv.pinned as i64,
             ),
         )?;
         Ok(())
@@ -1176,6 +1865,9 @@ impl ConversationDb {
                     &m.tool_calls_json,
                     &m.reasoning_content,
                     &m.image_paths_json,
+                    // 跨设备同步的回合收尾状态照搬（同一台设备上被判定过的
+                    // 回合，同步到别处不能突然变成「可以折叠」）
+                    &m.turn_state,
                 ),
             )?;
         }
@@ -1773,6 +2465,60 @@ mod tests {
         assert_eq!(conversations[0].title, "New Title");
     }
 
+    /// 置顶：切换生效、不产生内容变更（updated_at 不动）、列表里浮到最前。
+    #[test]
+    fn test_set_conversation_pinned() {
+        let db = create_test_db();
+
+        let older = db.create_conversation("conn_1", "Older").expect("c1");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let newer = db.create_conversation("conn_1", "Newer").expect("c2");
+
+        // 默认列表按 updated_at 倒序：新的在前
+        let listed = db.list_conversations("conn_1").expect("list");
+        assert_eq!(listed[0].id, newer.id);
+        assert!(!listed[0].pinned);
+
+        // 置顶旧的那个 → 浮到最前，且 updated_at 保持原值（置顶不是内容变更）
+        assert!(db.set_conversation_pinned(&older.id, true).expect("pin"));
+        let listed = db.list_conversations("conn_1").expect("list");
+        assert_eq!(listed[0].id, older.id);
+        assert!(listed[0].pinned);
+        assert_eq!(listed[0].updated_at, older.updated_at);
+        assert_eq!(listed[1].id, newer.id);
+
+        // 取消置顶 → 回到时间序
+        assert!(db.set_conversation_pinned(&older.id, false).expect("unpin"));
+        let listed = db.list_conversations("conn_1").expect("list");
+        assert_eq!(listed[0].id, newer.id);
+        assert!(!listed[0].pinned);
+
+        // 不存在的会话：返回 false，不报错
+        assert!(!db.set_conversation_pinned("ghost", true).expect("ghost"));
+    }
+
+    /// 置顶要落盘：重开库仍在（否则重启就白置顶了）。
+    #[test]
+    fn test_conversation_pinned_survives_db_reopen() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("conversations.db");
+        let id = {
+            let db = ConversationDb::new(&db_path).expect("open");
+            let conv = db.create_conversation("conn_1", "Pinned").expect("create");
+            db.set_conversation_pinned(&conv.id, true).expect("pin");
+            conv.id
+        };
+
+        let db = ConversationDb::new(&db_path).expect("reopen");
+        let loaded = db.get_conversation(&id).expect("get").expect("exists");
+        assert!(loaded.pinned);
+        let listed = db.list_conversations("conn_1").expect("list");
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].pinned);
+    }
+
     #[test]
     fn test_touch_conversation() {
         let db = create_test_db();
@@ -2075,10 +2821,37 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, "conv-old");
 
+        // 旧库迁移后 pinned 列可用且缺省为 false（未置顶，列表顺序保持原样）
+        assert!(!convs[0].pinned);
+        assert!(db.set_conversation_pinned("conv-old", true).expect("pin"));
+        let pinned = db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists");
+        assert!(pinned.pinned);
+        assert!(db.set_conversation_pinned("conv-old", false).expect("unpin"));
+        assert!(!db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists")
+            .pinned);
         // 历史消息保留
         let msgs = db.load_messages("conv-old").expect("load");
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].content, "hello");
+        // 旧库迁移后 turn_state 列可用：旧数据缺省为空（= 「没有记录」，
+        // 前端回落按消息形态判定 —— 不动既有会话的折叠表现）
+        assert!(msgs[0].turn_state.is_none());
+        db.begin_turn_state("conv-old", "msg-old")
+            .expect("begin turn");
+        db.set_message_turn_state("msg-old", TurnState::Completed)
+            .expect("end turn");
+        assert_eq!(
+            db.load_messages("conv-old").expect("load")[0]
+                .turn_state
+                .as_deref(),
+            Some("completed")
+        );
     }
 
     #[test]
@@ -2588,6 +3361,147 @@ mod tests {
         }
     }
 
+    /// 回合收尾状态：写进锚点行后，每条读取路径都要能读到（漏列 = 静默变 None
+    /// —— 前端会把它当成「没有记录」而按形态折叠，正是本次要修的那个问题在
+    /// 另一个层面的复现）。同时钉住两件默认行为：普通 INSERT 的行没有收尾状态、
+    /// 未知字符串读回来是 None（不冒充「正常结束」）。
+    #[test]
+    fn turn_state_roundtrips_through_every_read_path() {
+        let db = create_test_db();
+        let conv = db
+            .create_conversation("conn_1", "turn-state")
+            .expect("conv");
+        let anchor = db
+            .save_message(
+                &conv.id,
+                "user",
+                "跑一下",
+                "2026-01-01T00:00:00Z",
+                None,
+                None,
+            )
+            .expect("anchor");
+        // 普通 INSERT 的行没有回合收尾状态
+        assert!(anchor.turn_state.is_none());
+        let later = db
+            .save_message(
+                &conv.id,
+                "assistant",
+                "好的",
+                "2026-01-01T00:00:01Z",
+                None,
+                None,
+            )
+            .expect("later");
+        db.save_message(
+            &conv.id,
+            "system",
+            "【上下文已压缩】测试卡片",
+            "2026-01-01T00:00:02Z",
+            None,
+            None,
+        )
+        .expect("card");
+
+        db.begin_turn_state(&conv.id, &anchor.id).expect("begin");
+        db.set_message_turn_state(&anchor.id, TurnState::Cancelled)
+            .expect("end");
+
+        // ① 全量 + ② limit 分支 + ③ 卡片之后的切片 + ④ 翻页取更早
+        let all = db.load_messages(&conv.id).expect("load");
+        assert_eq!(all[0].turn_state.as_deref(), Some("cancelled"));
+        assert!(all[1].turn_state.is_none(), "状态只写在锚点行上");
+        let active = db.load_active_messages(&conv.id).expect("active");
+        assert_eq!(
+            active
+                .messages
+                .iter()
+                .find(|m| m.id == anchor.id)
+                .and_then(|m| m.turn_state.clone())
+                .as_deref(),
+            None,
+            "锚点在压缩卡之前 → 该切片里本就不含锚点行"
+        );
+        let earlier = db
+            .load_earlier_messages(&conv.id, &later.id)
+            .expect("earlier");
+        assert_eq!(
+            earlier.first().and_then(|m| m.turn_state.as_deref()),
+            Some("cancelled"),
+            "翻页路径漏列会让这里变成 None"
+        );
+
+        // 未知字符串不冒充正常结束
+        db.set_message_turn_state(&anchor.id, TurnState::Completed)
+            .expect("set completed");
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE messages SET turn_state = 'whatever' WHERE id = ?1",
+                [&anchor.id],
+            )
+            .expect("inject unknown");
+        }
+        assert!(
+            db.load_messages(&conv.id).expect("load")[0]
+                .turn_state
+                .is_none(),
+            "不认识的收尾状态读回来必须是 None"
+        );
+        // 不存在的行：不写也不报错（锚点被回滚删除的情形）
+        assert!(!db
+            .set_message_turn_state("ghost-row", TurnState::Failed)
+            .expect("ghost"));
+    }
+
+    /// 崩溃的持久证据：回合开始时行上写 `running`，收尾才被终态覆盖。
+    /// 下一次在同一会话开新回合时，遗留的 `running` 收敛成 `interrupted`
+    /// （崩溃没有机会自己来写），并且**只动本会话**。
+    #[test]
+    fn begin_turn_state_resolves_stale_running_within_the_conversation() {
+        let db = create_test_db();
+        let a = db.create_conversation("conn_1", "A").expect("conv a");
+        let b = db.create_conversation("conn_1", "B").expect("conv b");
+        let save = |conv: &str, text: &str| {
+            db.save_message(conv, "user", text, "2026-01-01T00:00:00Z", None, None)
+                .expect("msg")
+                .id
+        };
+        let a1 = save(&a.id, "第一轮");
+        let b1 = save(&b.id, "另一个会话");
+        let state_of = |conv: &str, id: &str| {
+            db.load_messages(conv)
+                .expect("load")
+                .into_iter()
+                .find(|m| m.id == id)
+                .and_then(|m| m.turn_state)
+        };
+
+        db.begin_turn_state(&a.id, &a1).expect("begin a1");
+        db.begin_turn_state(&b.id, &b1).expect("begin b1");
+        assert_eq!(state_of(&a.id, &a1).as_deref(), Some("running"));
+
+        // A 会话里又开了一轮（上一轮的 running 是上次进程死掉留下的）
+        let a2 = save(&a.id, "第二轮");
+        db.begin_turn_state(&a.id, &a2).expect("begin a2");
+        assert_eq!(
+            state_of(&a.id, &a1).as_deref(),
+            Some("interrupted"),
+            "上一轮的 running 收敛成 interrupted"
+        );
+        assert_eq!(state_of(&a.id, &a2).as_deref(), Some("running"));
+        assert_eq!(
+            state_of(&b.id, &b1).as_deref(),
+            Some("running"),
+            "别的会话的在跑回合不受影响"
+        );
+
+        // 收尾覆盖掉 running
+        db.set_message_turn_state(&a2, TurnState::Failed)
+            .expect("end a2");
+        assert_eq!(state_of(&a.id, &a2).as_deref(), Some("failed"));
+    }
+
     /// 列清单不许再被**整份抄回** SQL 字面量里。
     ///
     /// `MESSAGES_COLUMNS` 的意义是「一份清单」：SELECT 列、INSERT 列与占位符、UPSERT
@@ -2613,7 +3527,11 @@ mod tests {
         // 后者在本文件出现 **3 次** —— 真属性、本函数的文档注释、以及下面这行 split
         // 自己。取首个匹配虽然碰巧是生产那个，但那是**巧合**（只要有人在文件更前面
         // 的注释里写到这个词，扫描就会被截断而静默失效）。
-        let source = include_str!("conversation.rs");
+        // 换行归一化：`include_str!` 读的是**文件原始字节**，而 Windows 工作区
+        // （`core.autocrlf=true`）检出的是 CRLF，下面这个用 LF 写的切分点就永远匹配
+        // 不上 —— 后果不是"少切一段"，而是 production 变成整份文件、测试 fixture 里
+        // 那行旧 schema INSERT 被当成违规，护栏固定报红（实测：LF 工作区通过、CRLF 失败）。
+        let source = include_str!("conversation.rs").replace("\r\n", "\n");
         let production = source
             .split("
 #[cfg(test)]
@@ -2652,5 +3570,453 @@ mod tests")
             !haystack.contains(&squeeze(&insert_needle)),
             "源码里出现了手写的 INSERT 列清单（应由 messages_insert_clause() 生成）"
         );
+    }
+
+    // ───────────────────────── 历史回读（只读） ─────────────────────────
+
+    /// 造一个"被压缩过一次"的会话，返回 (db, conversation_id, 归档原文 id 列表, 卡片 id, 活跃 id 列表)。
+    ///
+    /// 结构（行序）：u1 a1 t1 [卡片] u2 a2 —— 与 `load_active_messages` 的
+    /// "卡片之前 = 归档、卡片及之后 = 当前上下文"完全对齐。
+    fn seed_compacted_conversation(db: &ConversationDb) -> (String, Vec<String>, String, Vec<String>) {
+        let conv = db.create_conversation("conn_1", "history").expect("conv");
+        let mut archived = Vec::new();
+        for (i, (role, content)) in [
+            ("user", "部署前的原始需求：把 nginx 换成 caddy"),
+            ("assistant", "明白，先做只读检查"),
+            ("tool", "systemctl status nginx 的输出：inactive (dead)"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let m = db
+                .save_message(
+                    &conv.id,
+                    role,
+                    content,
+                    &format!("2026-01-01T00:0{i}:00Z"),
+                    None,
+                    None,
+                )
+                .expect("archived msg");
+            archived.push(m.id);
+        }
+
+        // 走真实的压缩落库入口建卡。`card_created_at` 必须取**被压末行的
+        // created_at**（persister 就是这么写的）：卡片靠它排在被压区间紧后面，
+        // 行序乱了归档边界就跟着错。
+        let rows = db.load_messages(&conv.id).expect("load before card");
+        let tail = rows.last().expect("tail row");
+        db.commit_compaction(
+            &conv.id,
+            &[],
+            &format!(
+                "{COMPACTION_CARD_PREFIX}已整理 3 条历史消息（约 120 tokens）\n\n原始需求是把 nginx 换成 caddy。"
+            ),
+            &tail.created_at.to_rfc3339(),
+            &tail.timestamp,
+        )
+        .expect("commit card");
+        let card_id = db
+            .load_messages(&conv.id)
+            .expect("load after card")
+            .into_iter()
+            .find(|m| m.content.starts_with(COMPACTION_CARD_PREFIX))
+            .expect("card row")
+            .id;
+
+        let mut active = Vec::new();
+        for (i, (role, content)) in [
+            ("user", "现在看一下 caddy 的配置"),
+            ("assistant", "配置如下……"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let m = db
+                .save_message(
+                    &conv.id,
+                    role,
+                    content,
+                    &format!("2026-01-01T00:1{i}:00Z"),
+                    None,
+                    None,
+                )
+                .expect("active msg");
+            active.push(m.id);
+        }
+
+        (conv.id, archived, card_id, active)
+    }
+
+    /// 概览：总数 / 归档段（条数与时间范围）/ 当前上下文段 / 边界卡。
+    #[test]
+    fn history_overview_reports_archive_boundary() {
+        let db = create_test_db();
+        let (conv_id, archived, card_id, active) = seed_compacted_conversation(&db);
+
+        let ov = db.history_overview(&conv_id).expect("overview");
+        assert_eq!(ov.total, 6, "3 条归档 + 卡片 + 2 条当前上下文");
+        assert_eq!(ov.archived, 3, "卡片之前的 3 条 = 归档");
+        assert_eq!(ov.active, 3, "卡片及之后 = 当前上下文（卡片本身算上下文里有的）");
+        assert_eq!(ov.oldest.as_ref().expect("oldest").id, archived[0]);
+        assert_eq!(ov.newest.as_ref().expect("newest").id, active[1]);
+        assert_eq!(
+            ov.archived_newest.as_ref().expect("archived_newest").id,
+            archived[2],
+            "归档段最后一条 = 卡片紧邻的前一行（时间范围要用它）"
+        );
+        let card = ov.boundary_card.expect("boundary card");
+        assert_eq!(card.id, card_id);
+        assert!(card.content.starts_with(COMPACTION_CARD_PREFIX));
+    }
+
+    /// 没被压缩过的会话：归档段为 0，边界卡为 None —— 不报错、不编造。
+    #[test]
+    fn history_overview_without_compaction() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "plain").expect("conv");
+        db.save_message(&conv.id, "user", "只有一条", "2026-01-01T00:00:00Z", None, None)
+            .expect("msg");
+
+        let ov = db.history_overview(&conv.id).expect("overview");
+        assert_eq!(ov.total, 1);
+        assert_eq!(ov.archived, 0);
+        assert_eq!(ov.active, 1);
+        assert!(ov.boundary_card.is_none());
+        assert!(ov.archived_newest.is_none());
+
+        // 空会话也不炸
+        let empty = db.create_conversation("conn_1", "empty").expect("empty");
+        let ov = db.history_overview(&empty.id).expect("overview empty");
+        assert_eq!(ov.total, 0);
+        assert!(ov.oldest.is_none() && ov.newest.is_none());
+    }
+
+    /// **验收：能检索到只出现在压缩前那一段的关键词**（该关键词在卡片与后续消息里都不存在）。
+    #[test]
+    fn search_history_finds_keyword_only_in_archive() {
+        let db = create_test_db();
+        let (conv_id, archived, _, _) = seed_compacted_conversation(&db);
+
+        // 关键词只出现在归档原文（那条命令输出）里：卡片摘要与当前上下文都没有它
+        let hits = db
+            .search_history(&conv_id, "inactive (dead)", None, 20)
+            .expect("search");
+        assert_eq!(hits.len(), 1, "只有归档原文里出现过");
+        assert_eq!(hits[0].id, archived[2]);
+        assert!(hits[0].snippet.contains("inactive (dead)"));
+        assert_eq!(hits[0].role, "tool");
+
+        // 同一句话在归档原文与卡片摘要里各出现一次 ⇒ 两条命中，归档那条也在（不筛掉归档）
+        let hits = db
+            .search_history(&conv_id, "nginx 换成 caddy", None, 20)
+            .expect("search card");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, archived[0], "先命中的是归档原文");
+        assert_eq!(hits[1].role, "system", "后命中的是卡片摘要");
+
+        // 空关键词：空列表（不是全量）
+        assert!(db
+            .search_history(&conv_id, "   ", None, 20)
+            .expect("empty kw")
+            .is_empty());
+
+        // 搜不到的关键词：空列表 + 不报错
+        assert!(db
+            .search_history(&conv_id, "绝对不存在的词", None, 20)
+            .expect("no hit")
+            .is_empty());
+    }
+
+    /// **验收：检索能被窗口裁掉归档段**（子代理看到的父会话里搜不到归档内容）。
+    #[test]
+    fn search_history_respects_window() {
+        let db = create_test_db();
+        let (conv_id, _, card_id, _) = seed_compacted_conversation(&db);
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: None,
+        };
+
+        let hits = db
+            .search_history(&conv_id, "inactive (dead)", Some(&window), 20)
+            .expect("search");
+        assert!(hits.is_empty(), "归档段被窗口裁掉 ⇒ 搜不到");
+
+        // 断言窗口不是把所有东西都裁掉了：搜上下文里的词仍然命中
+        let hits = db
+            .search_history(&conv_id, "caddy 的配置", Some(&window), 20)
+            .expect("search 2");
+        assert_eq!(hits.len(), 1);
+    }
+
+    /// **验收：压缩之后能拿回压缩前某条消息的完整原文**（逐字相等，不是摘要）。
+    #[test]
+    fn read_history_returns_verbatim_archived_original() {
+        let db = create_test_db();
+        let (conv_id, archived, _, _) = seed_compacted_conversation(&db);
+
+        let read = db
+            .read_history(&conv_id, None, &archived[2], 0, 0)
+            .expect("read");
+        assert_eq!(read.messages.len(), 1, "before/after 都为 0 ⇒ 只读这一条");
+        assert_eq!(read.messages[0].id, archived[2]);
+        assert_eq!(
+            read.messages[0].content, "systemctl status nginx 的输出：inactive (dead)",
+            "必须是当时真实内容，逐字相等"
+        );
+        // 标志位说的是"该侧窗口内还有没有更多行"（翻页用），不是"你请求的条数被截断了"：
+        // 这条锚点前后都还有东西（前 2 条归档、后面是卡片与当前上下文）
+        assert!(read.has_more_before && read.has_more_after);
+    }
+
+    /// 带上下文：前若干条 + 锚点 + 后若干条，按时间升序；还有更多时给标志位。
+    #[test]
+    fn read_history_around_anchor_reports_more_flags() {
+        let db = create_test_db();
+        let (conv_id, archived, _, active) = seed_compacted_conversation(&db);
+
+        // 以归档第 2 条为锚点，前后各 1 条
+        let read = db
+            .read_history(&conv_id, None, &archived[1], 1, 1)
+            .expect("read around");
+        let ids: Vec<&str> = read.messages.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec![archived[0].as_str(), archived[1].as_str(), archived[2].as_str()]);
+        assert!(!read.has_more_before, "已经到会话最早一条");
+        assert!(read.has_more_after, "后面还有（含卡片与当前上下文）");
+
+        // 往前取到会话开头之外：请求 10 条只给得到 1 条，且 has_more_before=false
+        let read = db
+            .read_history(&conv_id, None, &archived[1], 10, 0)
+            .expect("read before all");
+        assert_eq!(read.messages.len(), 2);
+        assert!(!read.has_more_before);
+
+        // 最新一条之后没有任何东西
+        let read = db
+            .read_history(&conv_id, None, &active[1], 0, 5)
+            .expect("read after tail");
+        assert_eq!(read.messages.len(), 1);
+        assert!(!read.has_more_after);
+    }
+
+    /// **验收：子代理窗口取不到归档原文，也取不到窗口外的任何行**；
+    /// 窗口本身包含边界卡（主 agent 上下文里有的东西，子代理应该看得到摘要）。
+    #[test]
+    fn read_history_window_excludes_archive_and_includes_card() {
+        let db = create_test_db();
+        let (conv_id, archived, card_id, active) = seed_compacted_conversation(&db);
+
+        // 上界冻结在"派发那一刻"（这里取所有行，便于单独验证下界效果）
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: None,
+        };
+
+        // 归档原文：明确报错"不在可读范围"，而不是返回空
+        let err = db
+            .read_history(&conv_id, Some(&window), &archived[0], 0, 0)
+            .expect_err("归档行必须被窗口挡住");
+        assert!(matches!(err, HistoryError::OutOfWindow(_)), "{err:?}");
+
+        // 边界卡本身可读（它代表主 agent 当前上下文里的历史摘要）
+        let read = db
+            .read_history(&conv_id, Some(&window), &card_id, 0, 0)
+            .expect("card readable");
+        assert_eq!(read.messages.len(), 1);
+        assert!(read.messages[0].content.starts_with(COMPACTION_CARD_PREFIX));
+
+        // 活跃段可读
+        let read = db
+            .read_history(&conv_id, Some(&window), &active[0], 0, 1)
+            .expect("active readable");
+        assert_eq!(read.messages.len(), 2);
+
+        // 窗口里检索同样取不到归档
+        let hits = db
+            .search_history(&conv_id, "systemctl", Some(&window), 20)
+            .expect("search window");
+        assert!(hits.is_empty());
+    }
+
+    /// 窗口上界：冻结在派发那一刻 ⇒ 之后新增的消息读不到（需求 8 的"派发那一刻之前"）。
+    #[test]
+    fn read_history_window_stops_at_upto_anchor() {
+        let db = create_test_db();
+        let (conv_id, _, card_id, active) = seed_compacted_conversation(&db);
+        // 派发瞬间最后一条落库消息 = active[0]
+        let window = HistoryWindow {
+            start: WindowStart::LatestCard,
+            upto_message_id: Some(active[0].clone()),
+        };
+
+        let read = db
+            .read_history(&conv_id, Some(&window), &active[0], 0, 5)
+            .expect("read bounded");
+        assert_eq!(read.messages.len(), 1, "上界之后的消息不可见");
+        assert!(!read.has_more_after);
+
+        let err = db
+            .read_history(&conv_id, Some(&window), &active[1], 0, 0)
+            .expect_err("上界之后的消息应报错");
+        assert!(matches!(err, HistoryError::OutOfWindow(_)), "{err:?}");
+    }
+
+    /// **失败必须明确**：不存在的行、被吸收的旧卡，都返回 Err，绝不静默给空。
+    #[test]
+    fn read_history_errors_are_explicit() {
+        let db = create_test_db();
+        let (conv_id, _, _, _) = seed_compacted_conversation(&db);
+
+        let err = db
+            .read_history(&conv_id, None, "不存在的消息 id", 0, 0)
+            .expect_err("不存在的行");
+        assert!(matches!(err, HistoryError::Missing(_)), "{err:?}");
+
+        // 窗口上界引用了不存在的行（例如父会话把那条消息撤回了）→ Missing，而不是"没有历史"
+        let window = HistoryWindow {
+            start: WindowStart::Earliest,
+            upto_message_id: Some("已被撤回的消息 id".into()),
+        };
+        let err = db
+            .search_history(&conv_id, "nginx", Some(&window), 20)
+            .expect_err("上界行已不存在");
+        assert!(matches!(err, HistoryError::Missing(_)), "{err:?}");
+
+        // 别的会话的 id 在本会话里找不到 → 也是 Missing（调用方负责给出"不在可读范围"的文案）
+        let other = db.create_conversation("conn_1", "other").expect("other");
+        let foreign = db
+            .save_message(&other.id, "user", "别人的消息", "2026-01-01T00:00:00Z", None, None)
+            .expect("foreign");
+        let err = db
+            .read_history(&conv_id, None, &foreign.id, 0, 0)
+            .expect_err("跨会话 id");
+        assert!(matches!(err, HistoryError::Missing(_)), "{err:?}");
+    }
+
+    /// 派发上界锚点：最后一条已落库消息；空会话 → None。
+    #[test]
+    fn history_tail_anchor_points_at_last_row() {
+        let db = create_test_db();
+        let (conv_id, _, _, active) = seed_compacted_conversation(&db);
+        assert_eq!(
+            db.history_tail_anchor(&conv_id).expect("anchor"),
+            Some(active[1].clone())
+        );
+
+        let empty = db.create_conversation("conn_1", "empty").expect("empty");
+        assert!(db.history_tail_anchor(&empty.id).expect("anchor empty").is_none());
+    }
+
+    /// 子对话清单（主 agent 核对前先看有哪些）。
+    #[test]
+    fn list_sub_conversations_reports_children_only() {
+        let db = create_test_db();
+        let parent = db.create_conversation("conn_1", "main").expect("parent");
+        let other = db.create_conversation("conn_1", "also main").expect("other");
+        let sub1 = db
+            .create_sub_conversation("conn_1", "查一下磁盘", &parent.id)
+            .expect("sub1");
+        let sub2 = db
+            .create_sub_conversation("conn_1", "查一下端口", &parent.id)
+            .expect("sub2");
+        db.save_message(&sub1.id, "user", "任务", "2026-01-01T00:00:00Z", None, None)
+            .expect("msg");
+        db.create_sub_conversation("conn_1", "别人的子对话", &other.id)
+            .expect("foreign sub");
+
+        let subs = db.list_sub_conversations(&parent.id).expect("list");
+        assert_eq!(subs.len(), 2, "只看本会话派发的子对话");
+        assert_eq!(subs[0].id, sub1.id);
+        assert_eq!(subs[0].title, "查一下磁盘");
+        assert_eq!(subs[0].message_count, 1);
+        assert_eq!(subs[1].id, sub2.id);
+        assert_eq!(subs[1].message_count, 0);
+    }
+
+    /// **验收：回读期间同时发生压缩，结果不能是半新半旧的拼接。**
+    ///
+    /// 写线程反复"插入新卡 + 吸收旧卡"（与 persister 同序），读线程反复做
+    /// 概览 + 全窗口回读。整次回读持同一把锁 + 一个事务 ⇒ 每次结果都必须自洽：
+    /// 消息数恒定、原文逐条按序完整、结果里最多一张卡（绝不出现新旧卡同框或重复行）。
+    #[test]
+    fn concurrent_compaction_never_yields_torn_read() {
+        use std::sync::Arc;
+
+        let db = Arc::new(create_test_db());
+        let (conv_id, archived, card_id, _) = seed_compacted_conversation(&db);
+        let oldest = archived[0].clone();
+        // 参与回读的原文（不含卡）内容快照：压缩不碰原文
+        let expected: Vec<String> = db
+            .load_messages(&conv_id)
+            .expect("load")
+            .into_iter()
+            .filter(|m| !m.content.starts_with(COMPACTION_CARD_PREFIX))
+            .map(|m| m.content)
+            .collect();
+
+        let writer_db = Arc::clone(&db);
+        let writer_conv = conv_id.clone();
+        let mut prev_card = card_id.clone();
+        let writer = std::thread::spawn(move || {
+            for i in 0..40 {
+                let card_content = format!("{COMPACTION_CARD_PREFIX}第 {i} 次压缩");
+                // 与被压区间末行对齐：卡片要排在被压区间紧后面
+                writer_db
+                    .commit_compaction(
+                        &writer_conv,
+                        std::slice::from_ref(&prev_card),
+                        &card_content,
+                        "2026-01-01T00:02:00Z",
+                        "2026-01-01T00:02:00Z",
+                    )
+                    .expect("commit");
+                prev_card = writer_db
+                    .load_messages(&writer_conv)
+                    .expect("reload")
+                    .into_iter()
+                    .find(|m| m.content == card_content)
+                    .expect("new card")
+                    .id;
+            }
+        });
+
+        let reader_db = Arc::clone(&db);
+        let reader_conv = conv_id.clone();
+        let reader = std::thread::spawn(move || {
+            for _ in 0..40 {
+                let ov = reader_db.history_overview(&reader_conv).expect("overview");
+                assert_eq!(
+                    ov.archived + ov.active,
+                    ov.total,
+                    "归档段 + 活跃段必须等于总数（半新半旧的标志）"
+                );
+
+                let read = reader_db
+                    .read_history(&reader_conv, None, &oldest, 0, 100)
+                    .expect("read");
+                let cards = read
+                    .messages
+                    .iter()
+                    .filter(|m| m.content.starts_with(COMPACTION_CARD_PREFIX))
+                    .count();
+                assert!(cards <= 1, "一次回读里不该出现两张卡（新旧拼接）：{cards}");
+                let bodies: Vec<String> = read
+                    .messages
+                    .iter()
+                    .filter(|m| !m.content.starts_with(COMPACTION_CARD_PREFIX))
+                    .map(|m| m.content.clone())
+                    .collect();
+                assert_eq!(bodies, expected, "原文必须逐条完整且顺序不变，不允许缺行或错位");
+                assert!(
+                    !read.has_more_after,
+                    "只有 6 行、窗口开到 100，不该说还有更多"
+                );
+            }
+        });
+
+        writer.join().expect("writer");
+        reader.join().expect("reader");
     }
 }

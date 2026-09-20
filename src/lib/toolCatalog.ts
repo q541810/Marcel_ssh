@@ -155,6 +155,12 @@ const ICON_FOLDER = [
   'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
 ];
 const ICON_MAGNIFIER = ['M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'];
+/** 回读历史：时钟 + 回拨箭头（"把时间拨回去看原文"）。 */
+const ICON_HISTORY = [
+  'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8',
+  'M3 3v5h5',
+  'M12 7v5l4 2',
+];
 /** 联网搜索：放大镜 + 地球经纬（与 read_file/search_files 区分开）。 */
 const ICON_GLOBE_SEARCH = [
   'M21 21l-4.35-4.35',
@@ -249,6 +255,28 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
     group: 'exploration',
     preview: (args) =>
       `${asArgString(args.pattern) ?? ''} ${asArgString(args.path) ?? ''}`.trim(),
+  },
+  {
+    // 回读会话历史（含被压缩掉的原文）。**刻意不放进 exploration 分组**：
+    // "agent 回去翻旧账了"是用户会想问一句为什么的动作，折叠进探索组会让这段
+    // 推理的来源看不见。
+    name: 'read_history',
+    iconPaths: ICON_HISTORY,
+    preview: (args) => {
+      const action = asArgString(args.action) ?? '';
+      const scope = asArgString(args.scope);
+      const prefix =
+        scope === 'sub' ? '子对话 ' : scope === 'parent' ? '主 agent ' : '';
+      if (action === 'search') {
+        return `${prefix}检索「${clip(asArgString(args.keyword) ?? '')}」`;
+      }
+      if (action === 'read') {
+        const before = Number(args.before ?? 0) || 0;
+        const after = Number(args.after ?? 0) || 0;
+        return `${prefix}读 ${before + after + 1} 条`;
+      }
+      return `${prefix}历史概览`;
+    },
   },
   {
     name: 'web_search',

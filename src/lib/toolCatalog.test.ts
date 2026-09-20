@@ -357,6 +357,7 @@ describe('已登记的消费方不再自带工具名判定（白名单制，见�
   const BACKEND_BUILTIN_TOOLS = [
     'connection_info',
     'bash',
+    'read_history',
     'read_file',
     'list_directory',
     'search_files',
