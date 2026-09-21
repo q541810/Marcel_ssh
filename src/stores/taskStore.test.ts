@@ -188,6 +188,65 @@ describe('taskStore', () => {
       useConversationStore.setState({ markAbortedToolFlags: origMark });
     });
 
+    it('本地收尾发在停止命令之前——后端取消路径的终态事件再也抢不到前面', async () => {
+      // 竞态回归：后端取消路径会发 StreamEvent::Cancelled。它若抢在拆通道之前
+      // 落地，就会被当成模型自然结束处理（删掉在飞卡片、把回合写成 completed
+      // → 折叠把过程卡片吞掉）。所以收尾必须发生在 agent_stop_task 之前。
+      let cleanedAtStopCall: boolean | undefined;
+      let cardExecutingAtStopCall: boolean | undefined;
+      let turnStateAtStopCall: string | undefined;
+      agentStopTask.mockImplementation(async () => {
+        const msgs = useConversationStore.getState().messages['conv-1'];
+        cleanedAtStopCall = cleanupTaskListenersMock.mock.calls.length > 0;
+        cardExecutingAtStopCall = msgs.find((m) => m.id === 'tool-in-flight')?.isExecuting;
+        turnStateAtStopCall = msgs[0]?.turnState;
+      });
+      useConversationStore.setState({
+        activeConversationId: 'conv-1',
+        messages: {
+          'conv-1': [
+            { id: 'u1', role: 'user', content: '改版本号', timestamp: '' },
+            {
+              id: 'tool-in-flight',
+              role: 'tool',
+              content: '',
+              timestamp: '',
+              isExecuting: true,
+              toolResult: {
+                toolName: 'bash',
+                summary: '$ ls',
+                result: '',
+                success: true,
+                blocked: false,
+                toolCallId: 'call-1',
+              },
+            },
+          ],
+        },
+      });
+      useTaskStore.setState({
+        tasks: {
+          'task-1': {
+            id: 'task-1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: new Date().toISOString(),
+          },
+        },
+        activeTaskId: 'task-1',
+      });
+
+      await useTaskStore.getState().stopTask('task-1');
+
+      expect(cleanedAtStopCall).toBe(true);
+      expect(cardExecutingAtStopCall).toBe(false);
+      expect(turnStateAtStopCall).toBe('cancelled');
+      expect(cleanupTaskListenersMock).toHaveBeenCalledWith('task-1');
+    });
+
     it('marks non-streaming tool messages as aborted with non-streaming note', async () => {
       agentStopTask.mockResolvedValue(undefined);
       const runningTool: AgentMessage = {

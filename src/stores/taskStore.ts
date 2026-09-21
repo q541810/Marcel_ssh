@@ -243,70 +243,72 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   stopTask: async (taskId: string) => {
-    try {
-      await tauri.agentStopTask(taskId);
-    } finally {
-      // 先同步标记在飞的工具卡片，再拆 listener。**不能等事件**：下面的
-      // cleanupTaskListeners 会把通道关掉，晚到的 toolResult（以及那几条取消退出
-      // 才发的 StreamEvent::Done）都到不了，所以卡片状态只能在这里同步写。
-      //
-      // 两条收尾时机（都要求这里同步标记，理由不同）：
-      // - 走 command_exec 的命令（agent bash）：后端会**立刻**打断 ——
-      //   agent_stop_task → cancel_with_reason(Task) → executor 的 select! 是
-      //   `biased`，取消优先于数据与超时，工具以「命令已取消」返回。
-      // - 其他工具（读文件 / 联网 / 子 agent / 插件…）：无法在飞途中打断，要等它
-      //   返回后循环才在收尾检查点停下。
-      //
-      // 后端也会把同样的中断说明持久化进 LLM 历史，保证对话链完整。
-      // 级联：收集该任务及其全部后代子agent（subagent 工具派发）。停止主任务会
-      // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
-      // 子任务收到 Done 会被 handleDone 误标为 completed（实际是被取消的）。
-      const ids = [taskId];
-      let i = 0;
-      while (i < ids.length) {
-        const parent = ids[i++];
-        for (const [id, t] of Object.entries(get().tasks)) {
-          if (t.parentTaskId === parent && !ids.includes(id)) ids.push(id);
-        }
+    // ── 先同步收尾（标记在飞的卡片 + 拆通道 + 落回合状态），**再**发停止命令 ──
+    // 顺序不能反，两条理由都是「晚到的终态事件收不得」：
+    // 1. 后端取消路径也会发终态事件（`StreamEvent::Cancelled`）。它要是抢在拆通道
+    //    之前落地，就会被当成模型自然结束处理：在飞的工具卡片按"没跑完的调用"
+    //    删掉、回合收尾状态写成 completed（→ 回合可折叠 → 过程卡片从界面上消失，
+    //    而模型侧其实仍看得到）。拆通道必须赶在它前面。
+    // 2. 晚到的 `toolResult` 同理收不到，卡片状态只能在这里同步写。
+    //
+    // 两条收尾时机（都要求这里同步标记，理由不同）：
+    // - 走 command_exec 的命令（agent bash）：后端会**立刻**打断 ——
+    //   agent_stop_task → cancel_with_reason(Task) → executor 的 select! 是
+    //   `biased`，取消优先于数据与超时，工具以「命令已取消」返回。
+    // - 其他工具（读文件 / 联网 / 子 agent / 插件…）：无法在飞途中打断，要等它
+    //   返回后循环才在收尾检查点停下。
+    //
+    // 后端也会把同样的中断说明持久化进 LLM 历史，保证对话链完整。
+    // 级联：收集该任务及其全部后代子agent（subagent 工具派发）。停止主任务会
+    // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
+    // 子任务收到终态事件会被误标为 completed（实际是被取消的）。
+    const ids = [taskId];
+    let i = 0;
+    while (i < ids.length) {
+      const parent = ids[i++];
+      for (const [id, t] of Object.entries(get().tasks)) {
+        if (t.parentTaskId === parent && !ids.includes(id)) ids.push(id);
       }
-      // 只处理运行中的任务（限定到各自所属对话，不误伤其他对话的工具卡片）。
-      // 已终态的任务跳过：避免把「子任务已自然完成、主任务仍在等结果」误标成取消。
-      const runningIds: string[] = [];
-      for (const id of ids) {
-        const t = get().tasks[id];
-        if (!t || !isTaskBusy(t.status)) continue;
-        runningIds.push(id);
-        useConversationStore.getState().markAbortedToolFlags(t.conversationId);
-        cleanupTaskListeners(id);
-        useConversationStore
-          .getState()
-          .clearAllAssistantFlags(t.conversationId);
-        // 回合收尾状态：手动停止 = 「不是模型自然结束」，该回合不再折叠
-        // （过程留在眼前）。后端的 agent loop 也会把 cancelled 落库，但**这里
-        // 必须自己写**：上面 cleanupTaskListeners 已把本任务的流通道拆掉，
-        // 后端晚到的任何事件都收不到了（见上面注释）。
-        useConversationStore
-          .getState()
-          .markTailTurnState(t.conversationId, "cancelled");
-      }
-      set((state) => {
-        const tasks = { ...state.tasks };
-        let nextActive = state.activeTaskId;
-        let found = false;
-        for (const id of runningIds) {
-          const task = tasks[id];
-          if (!task) continue;
-          tasks[id] = { ...task, status: "cancelled" };
-          found = true;
-          if (state.activeTaskId === id) nextActive = null;
-        }
-        if (!found) return state;
-        return {
-          tasks,
-          activeTaskId: nextActive,
-        };
-      });
     }
+    // 只处理运行中的任务（限定到各自所属对话，不误伤其他对话的工具卡片）。
+    // 已终态的任务跳过：避免把「子任务已自然完成、主任务仍在等结果」误标成取消。
+    const runningIds: string[] = [];
+    for (const id of ids) {
+      const t = get().tasks[id];
+      if (!t || !isTaskBusy(t.status)) continue;
+      runningIds.push(id);
+      useConversationStore.getState().markAbortedToolFlags(t.conversationId);
+      cleanupTaskListeners(id);
+      useConversationStore
+        .getState()
+        .clearAllAssistantFlags(t.conversationId);
+      // 回合收尾状态：手动停止 = 「不是模型自然结束」，该回合不再折叠
+      // （过程留在眼前）。后端的 agent loop 也会把 cancelled 落库，但**这里
+      // 必须自己写**：上面 cleanupTaskListeners 已把本任务的流通道拆掉，
+      // 后端晚到的任何事件都收不到了（见上面注释）。
+      useConversationStore
+        .getState()
+        .markTailTurnState(t.conversationId, "cancelled");
+    }
+    set((state) => {
+      const tasks = { ...state.tasks };
+      let nextActive = state.activeTaskId;
+      let found = false;
+      for (const id of runningIds) {
+        const task = tasks[id];
+        if (!task) continue;
+        tasks[id] = { ...task, status: "cancelled" };
+        found = true;
+        if (state.activeTaskId === id) nextActive = null;
+      }
+      if (!found) return state;
+      return {
+        tasks,
+        activeTaskId: nextActive,
+      };
+    });
+    // 本地已收尾，命令失败照旧上抛（界面不会卡在「正在停止」）。
+    await tauri.agentStopTask(taskId);
   },
 
 
