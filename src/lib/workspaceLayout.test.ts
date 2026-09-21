@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
-  displayedWidthToBaseWidth,
+  baseWidthBounds,
   normalizeWorkspaceLayout,
+  resolvePanelBaseBounds,
   resolveWorkspaceLayout,
   WORKSPACE_LAYOUT_LIMITS,
 } from './workspaceLayout';
@@ -113,17 +114,6 @@ describe('workspaceLayout', () => {
     expect(layout.agentWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.agent.min);
   });
 
-  it('converts displayed width back to a persistable base width', () => {
-    const baseWidth = displayedWidthToBaseWidth(360, 1200, WORKSPACE_LAYOUT_LIMITS.sidebar.min, WORKSPACE_LAYOUT_LIMITS.sidebar.max);
-    const layout = resolveWorkspaceLayout({
-      containerWidth: 1200,
-      settings: { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: baseWidth, agentOpen: false },
-    });
-
-    expect(layout.sidebarWidth).toBe(360);
-    expect(displayedWidthToBaseWidth(2000, 1200, WORKSPACE_LAYOUT_LIMITS.agent.min, WORKSPACE_LAYOUT_LIMITS.agent.max)).toBe(WORKSPACE_LAYOUT_LIMITS.agent.max);
-  });
-
   it('normalizes legacy ratio settings into base widths', () => {
     const layout = normalizeWorkspaceLayout({ sidebarRatio: 0.22, agentRatio: 0.3 });
 
@@ -131,5 +121,179 @@ describe('workspaceLayout', () => {
     expect(layout.agentBaseWidth).toBe(343);
     expect(layout.sidebarOpen).toBe(true);
     expect(layout.agentOpen).toBe(true);
+  });
+});
+
+describe('面板拖动的可拖范围', () => {
+  const containers = [1136, 1280, 1440, 1920, 2560];
+  const sides = ['sidebar', 'agent'] as const;
+  const baseKeyOf = (side: (typeof sides)[number]) =>
+    side === 'sidebar' ? ('sidebarBaseWidth' as const) : ('agentBaseWidth' as const);
+  const widthKeyOf = (side: (typeof sides)[number]) =>
+    side === 'sidebar' ? ('sidebarWidth' as const) : ('agentWidth' as const);
+  const otherKeyOf = (side: (typeof sides)[number]) =>
+    side === 'sidebar' ? ('agentWidth' as const) : ('sidebarWidth' as const);
+
+  const layoutFor = (containerWidth: number, side: (typeof sides)[number], base: number) =>
+    resolveWorkspaceLayout({
+      containerWidth,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, [baseKeyOf(side)]: base },
+    });
+
+  const boundsFor = (containerWidth: number, side: (typeof sides)[number]) =>
+    resolvePanelBaseBounds({ side, containerWidth, settings: DEFAULT_WORKSPACE_LAYOUT });
+
+  it('拖动起点永远落在可拖区间内（按下不会先跳一下）', () => {
+    const stored = normalizeWorkspaceLayout(DEFAULT_WORKSPACE_LAYOUT);
+    for (const containerWidth of containers) {
+      for (const side of sides) {
+        const bounds = boundsFor(containerWidth, side);
+        const base = side === 'sidebar' ? stored.sidebarBaseWidth : stored.agentBaseWidth;
+        expect(base).toBeGreaterThanOrEqual(bounds.min);
+        expect(base).toBeLessThanOrEqual(bounds.max);
+      }
+    }
+  });
+
+  it('松手落盘再读回来，整个布局逐像素不变（拖动中看到的 = 松手后得到的）', () => {
+    for (const containerWidth of containers) {
+      for (const side of sides) {
+        const bounds = boundsFor(containerWidth, side);
+        for (let base = bounds.min; base <= bounds.max; base += 1) {
+          const during = layoutFor(containerWidth, side, base);
+          // 落盘 → 归一化 → 重新求解：走过去又走回来，结果必须和拖动中一致
+          const persisted = normalizeWorkspaceLayout({
+            ...DEFAULT_WORKSPACE_LAYOUT,
+            [baseKeyOf(side)]: base,
+          });
+          expect(resolveWorkspaceLayout({ containerWidth, settings: persisted })).toEqual(during);
+        }
+      }
+    }
+  });
+
+  it('区间内拖动不会让另一个侧栏变窄', () => {
+    for (const containerWidth of containers) {
+      const rest = resolveWorkspaceLayout({ containerWidth, settings: DEFAULT_WORKSPACE_LAYOUT });
+      for (const side of sides) {
+        const bounds = boundsFor(containerWidth, side);
+        const otherKey = otherKeyOf(side);
+        for (let base = bounds.min; base <= bounds.max; base += 1) {
+          expect(layoutFor(containerWidth, side, base)[otherKey]).toBeGreaterThanOrEqual(rest[otherKey]);
+        }
+      }
+    }
+  });
+
+  it('显示宽度随基准单调，拖动手感连续', () => {
+    for (const containerWidth of containers) {
+      for (const side of sides) {
+        const bounds = boundsFor(containerWidth, side);
+        let previous = -1;
+        for (let base = bounds.min; base <= bounds.max; base += 1) {
+          const width = layoutFor(containerWidth, side, base)[widthKeyOf(side)];
+          expect(width).toBeGreaterThanOrEqual(previous);
+          previous = width;
+        }
+      }
+    }
+  });
+
+  it('区间最左端就是面板自己的显示下限', () => {
+    for (const containerWidth of containers) {
+      for (const side of sides) {
+        const bounds = boundsFor(containerWidth, side);
+        if (!bounds.draggable) continue;
+        expect(bounds.minDisplayed).toBe(WORKSPACE_LAYOUT_LIMITS[side].min);
+        expect(layoutFor(containerWidth, side, bounds.min)[widthKeyOf(side)]).toBe(
+          WORKSPACE_LAYOUT_LIMITS[side].min,
+        );
+      }
+    }
+  });
+
+  it('拖到最窄松手不再弹回（旧版在 2560 下侧栏会从 220 弹到 289）', () => {
+    const sidebar = resolveWorkspaceLayout({
+      containerWidth: 2560,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: boundsFor(2560, 'sidebar').min },
+    });
+    const agent = resolveWorkspaceLayout({
+      containerWidth: 2560,
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: boundsFor(2560, 'agent').min },
+    });
+
+    expect(sidebar.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
+    expect(agent.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+  });
+
+  it('窄窗口里加宽要先收窄另一侧：墙只吃中栏的空间', () => {
+    // 1280 下默认布局两侧都贴着墙，拖动只能让面板变窄
+    const tight = resolveWorkspaceLayout({ containerWidth: 1280, settings: DEFAULT_WORKSPACE_LAYOUT });
+    const tightBounds = boundsFor(1280, 'sidebar');
+    expect(tightBounds.maxDisplayed).toBe(tight.sidebarWidth);
+
+    // 把 agent 收到下限之后，侧栏才有加宽的空间（新腾出来的是中栏让出的）
+    const narrowedAgent = { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: 222 };
+    const afterNarrow = resolveWorkspaceLayout({ containerWidth: 1280, settings: narrowedAgent });
+    const roomyBounds = resolvePanelBaseBounds({
+      side: 'sidebar',
+      containerWidth: 1280,
+      settings: narrowedAgent,
+    });
+    const widened = resolveWorkspaceLayout({
+      containerWidth: 1280,
+      settings: { ...narrowedAgent, sidebarBaseWidth: roomyBounds.max },
+    });
+
+    expect(afterNarrow.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(widened.sidebarWidth).toBeGreaterThan(tight.sidebarWidth);
+    expect(widened.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(widened.mainWidth).toBe(WORKSPACE_LAYOUT_LIMITS.main.min);
+  });
+
+  it('面板关掉或处在设置页时没有可拖范围', () => {
+    const closed = resolvePanelBaseBounds({
+      side: 'sidebar',
+      containerWidth: 1920,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+      sidebarOpen: false,
+    });
+    expect(closed.draggable).toBe(false);
+    expect(closed.maxDisplayed).toBe(closed.minDisplayed);
+
+    // 侧栏关掉之后 agent 的墙就开了：它不必再让出侧栏占的那一份
+    const agentWithSidebarClosed = resolvePanelBaseBounds({
+      side: 'agent',
+      containerWidth: 1920,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+      sidebarOpen: false,
+    });
+    const agentWithSidebarOpen = resolvePanelBaseBounds({
+      side: 'agent',
+      containerWidth: 1920,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+    });
+    expect(agentWithSidebarClosed.maxDisplayed).toBe(WORKSPACE_LAYOUT_LIMITS.agent.max);
+    expect(agentWithSidebarOpen.maxDisplayed).toBeLessThan(agentWithSidebarClosed.maxDisplayed);
+
+    const exclusive = resolvePanelBaseBounds({
+      side: 'agent',
+      containerWidth: 1920,
+      settings: DEFAULT_WORKSPACE_LAYOUT,
+      isExclusive: true,
+    });
+    expect(exclusive.draggable).toBe(false);
+    expect(exclusive.maxDisplayed).toBe(exclusive.minDisplayed);
+  });
+
+  it('基准区间由显示区间反推，保证两套坐标互逆', () => {
+    expect(baseWidthBounds(WORKSPACE_LAYOUT_LIMITS.sidebar.min, WORKSPACE_LAYOUT_LIMITS.sidebar.max)).toEqual({
+      min: 163,
+      max: 683,
+    });
+    expect(baseWidthBounds(WORKSPACE_LAYOUT_LIMITS.agent.min, WORKSPACE_LAYOUT_LIMITS.agent.max)).toEqual({
+      min: 222,
+      max: 1341,
+    });
   });
 });

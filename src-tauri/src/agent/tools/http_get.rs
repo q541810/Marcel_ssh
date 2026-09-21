@@ -23,9 +23,7 @@ use tauri::Manager;
 
 use crate::agent::risk::Disposition;
 use crate::agent::tools::browser_cdp;
-use crate::agent::tools::web_result::{
-    detect_challenge, is_blank_content, FallbackNote, WebBackend,
-};
+use crate::agent::tools::web_result::{is_blank_content, is_bot_block, FallbackNote, WebBackend};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::HttpFetchMode;
 use crate::error::AppError;
@@ -566,9 +564,10 @@ fn browser_page_to_fetched(page: browser_cdp::BrowserPage, format: OutputFormat)
     // HTTP response; anything else (blocked, refused, error interstitial) stays
     // `None` rather than being reported as a 200.
     let http_error = page.status.is_some_and(|code| !(200..300).contains(&code));
-    let challenge =
-        detect_challenge(&page.html, title.as_deref()).map(|challenge| challenge.vendor);
     let blank_content = is_blank_content(&content);
+    // Gated on whether the page had anything to read, like the HTML path: a page
+    // that rendered text is a page, whatever words happen to appear in it.
+    let challenge = is_bot_block(&page.html, title.as_deref()).map(|challenge| challenge.vendor);
 
     FetchedPage {
         requested_url: page.requested_url,
@@ -651,8 +650,12 @@ async fn fetch_page_http(url: &str, format: OutputFormat) -> Result<FetchedPage,
     let markdown_bytes = content.len();
     let redirected = normalize_url_for_compare(url) != normalize_url_for_compare(&final_url);
     let http_error = !status.is_success();
-    let challenge = detect_challenge(&body, title.as_deref()).map(|c| c.vendor);
     let blank_content = is_blank_content(&content);
+    // Only a page with nothing to read can be a block page. Matching markers alone
+    // condemned every article that merely mentions a captcha — the page was
+    // reported as "intercepted by a bot-verification page" while its own text sat
+    // in the same response, and the whole fetch counted as a failure.
+    let challenge = is_bot_block(&body, title.as_deref()).map(|c| c.vendor);
 
     Ok(FetchedPage {
         requested_url: url.to_string(),
@@ -692,7 +695,7 @@ fn is_html(content_type: &str, body: &str) -> bool {
         || body.contains("<!doctype")
 }
 
-fn html_to_markdown(html: &str) -> String {
+pub fn html_to_markdown(html: &str) -> String {
     html2md::parse_html(html)
 }
 
@@ -1060,6 +1063,35 @@ fn normalize_url_for_compare(url: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Serve one HTTP response on a loopback port, returning its URL and the
+    /// server thread. Keeps the live-path tests from repeating the socket dance.
+    fn serve_once(
+        status: &str,
+        content_type: &str,
+        body: &str,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let response = format!(
+            "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            status,
+            content_type,
+            body.len(),
+            body
+        );
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 2048];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (format!("http://{}/page", addr), handle)
+    }
+
     /// A successful plain-HTTP page, for tests that only care about one field.
     fn fetched(content: &str) -> FetchedPage {
         FetchedPage {
@@ -1418,6 +1450,64 @@ mod tests {
             crate::config::settings::HttpFetchMode::default(),
             crate::config::settings::HttpFetchMode::Browser
         );
+    }
+
+    /// The regression: a page that merely *mentions* a challenge must be returned
+    /// as content.
+    ///
+    /// Driven through the real `fetch_page_http` against a local server, because
+    /// the bug was in the assembled path — conversion, blank detection and marker
+    /// matching all had to agree — not in any one helper.
+    #[tokio::test]
+    async fn a_page_that_mentions_a_captcha_is_content_not_a_block() {
+        let (url, handle) = serve_once(
+            "200 OK",
+            "text/html; charset=utf-8",
+            r#"<!DOCTYPE html><html><head><title>如何配置验证码</title></head><body>
+               <main><h1>Cloudflare 的验证码拦截是怎么工作的</h1>
+               <p>这篇文档说明 captcha 与 Cloudflare 的 challenge-platform 在自行架站时的
+               配置方式，正文足够长，会被可读内容提取器选中。文中反复出现这些词是正常的，
+               因为它讲的就是这些机制本身，而不是被它们拦住了。</p>
+               <p>第二段继续补充正文，确保这段内容明显超过一句验证提示的长度，从而落在
+               拦截页与正常内容页之间那条界线正确的一侧。</p>
+               <p>第三段同样只是为了让样本具备一篇真实文档该有的体量。</p></main></body></html>"#,
+        );
+
+        let page = fetch_page_http(&url, OutputFormat::Markdown)
+            .await
+            .expect("fetch local");
+        assert!(
+            !page.blank_content,
+            "the extractor must find the article body, not nothing"
+        );
+        assert_eq!(
+            page.challenge, None,
+            "readable content outweighs the words inside it"
+        );
+        assert!(
+            page.content.contains("Cloudflare"),
+            "the body must reach the model: {}",
+            page.content
+        );
+        handle.join().expect("server thread");
+    }
+
+    /// The other half: when the response really is an interstitial, it is still
+    /// named as one, so the honest failure survives the gate.
+    #[tokio::test]
+    async fn an_interstitial_with_no_body_is_still_reported_as_a_block() {
+        let (url, handle) = serve_once(
+            "200 OK",
+            "text/html; charset=utf-8",
+            r#"<html><head><title>百度安全验证</title></head>
+               <body><div id="waf">请完成安全验证</div></body></html>"#,
+        );
+
+        let page = fetch_page_http(&url, OutputFormat::Markdown)
+            .await
+            .expect("fetch local");
+        assert_eq!(page.challenge, Some("百度安全验证"));
+        handle.join().expect("server thread");
     }
 
     #[tokio::test]

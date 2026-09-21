@@ -341,7 +341,7 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
  * 但跨语言无法自动比对，所以两边都要手改。
  */
 export const CHECKPOINT_PREAMBLE =
-  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint.';
+  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.';
 
 const SUMMARY_OPEN_TAG = '<compacted-summary>';
 const SUMMARY_CLOSE_TAG = '</compacted-summary>';

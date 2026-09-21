@@ -8,6 +8,10 @@ import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
 import { openExternalLink } from '@/lib/externalLinks';
 import { buildTerminalFontFamily, onBundledNerdFontReady } from '@/lib/terminalFont';
+import {
+  attachAltScreenTouchScroll,
+  createRemoteScrollForwarder,
+} from '@/lib/terminalScrollGesture';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { attachClickLocate } from './terminalClickLocate';
 
@@ -204,6 +208,17 @@ class TerminalInstanceManager {
       },
     });
     instance.domListeners.push(() => clickLocate.dispose());
+
+    // Touch screens (Windows 平板等)：备用屏幕（tmux / vim / less）里 xterm 自己的
+    // 触摸路径空转——那里没有回滚缓冲。把这个手势转发成远端认得的滚轮 / 方向键，
+    // 与移动端同一条通路。普通缓冲不接管（xterm 原生 follow-finger 照旧）。
+    const remoteScroll = createRemoteScrollForwarder(() => terminal);
+    const altScreenTouchScroll = attachAltScreenTouchScroll({
+      container,
+      getTerminal: () => terminal,
+      forward: remoteScroll.forward,
+    });
+    instance.domListeners.push(() => altScreenTouchScroll.dispose());
 
     this.instances.set(sessionId, instance);
     return instance;

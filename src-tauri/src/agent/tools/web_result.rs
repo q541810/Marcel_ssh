@@ -30,6 +30,15 @@ pub struct Challenge {
 /// These are only ever consulted when a page produced *no* usable content (no
 /// parsed results, or content that converted to nothing). A page that merely
 /// discusses verification therefore cannot be misclassified as being one.
+///
+/// **A marker must be checked against real pages of the engine it names before it
+/// is added here.** Bing ships both of its anti-bot mechanisms — `arkoselabs` and
+/// `powchallenge` — inside *every* SERP, including ones returning eight results,
+/// so neither can tell an intercepted page from a served one; both were removed
+/// after being measured that way. A fingerprint present on the pages it is
+/// supposed to clear is not evidence of anything. The remaining entries came back
+/// 0/3 across three live queries, and a genuinely gated page is caught by
+/// [`is_bot_block`]'s "the marker is the whole page" rule regardless.
 const CHALLENGE_MARKERS: &[(&str, &str)] = &[
     // Baidu — the exact interstitial seen in a real failure report.
     ("百度安全验证", "百度安全验证"),
@@ -46,9 +55,6 @@ const CHALLENGE_MARKERS: &[(&str, &str)] = &[
     ("checking your browser before accessing", "Cloudflare"),
     ("attention required! | cloudflare", "Cloudflare"),
     ("ddos protection by cloudflare", "Cloudflare"),
-    // Arkose Labs (used by Bing) and Bing's own proof-of-work gate.
-    ("arkoselabs", "Arkose Labs"),
-    ("powchallenge", "人机验证"),
     // Google
     ("unusual traffic", "Google 异常流量拦截"),
     ("/sorry/index", "Google 异常流量拦截"),
@@ -90,6 +96,62 @@ fn is_invisible_format_char(ch: char) -> bool {
         ch,
         '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
     )
+}
+
+/// The shared gate in front of [`detect_challenge`].
+///
+/// A challenge marker is only evidence when it *is* the page. Interstitials are
+/// the marker and nothing else — measured across the shapes this list covers
+/// (百度安全验证, Cloudflare, Bing's proof-of-work), the converted body runs 15–50
+/// characters, while the shortest real article that merely discusses a captcha
+/// converted to 67 and ordinary ones to thousands. Requiring the body to be short
+/// sits comfortably between the two.
+///
+/// Skipping this gate is what made `http_get` condemn any page that so much as
+/// mentions a captcha — a tutorial about them, a CDN's own block page, a form
+/// with a challenge widget — while the real page text sat in the same response
+/// and the whole fetch was counted as a failure.
+///
+/// `response` is the page as it arrived; markup is converted first, because "how
+/// much is there to read" is a question about the page's text, not its angle
+/// brackets, and a length taken over markup measures the scripts instead.
+pub fn is_bot_block(response: &str, title: Option<&str>) -> Option<Challenge> {
+    let text = readable_text(response);
+    if !is_blank_content(&text) && text.chars().count() > INTERSTITIAL_TEXT_MAX {
+        return None;
+    }
+    detect_challenge(response, title)
+}
+
+/// Ceiling on the converted body of a page whose text is a challenge notice.
+///
+/// Deliberately generous against the observed 15–50: a marker page may carry a
+/// little explanatory text, and the cost of letting one through is a page shown
+/// as what it is, whereas the cost of the ceiling being too tight is a genuine
+/// block reported as ordinary content.
+const INTERSTITIAL_TEXT_MAX: usize = 200;
+
+/// The page's text, for the "is this page nothing but the marker" question.
+///
+/// Markup goes through the same conversion the tools use for output, so the gate
+/// and the content the model receives are two views of one extraction rather than
+/// two opinions. A response that is not markup is already text.
+fn readable_text(response: &str) -> String {
+    if looks_like_markup(response) {
+        crate::agent::tools::http_get::html_to_markdown(response)
+    } else {
+        response.to_string()
+    }
+}
+
+/// Whether a response is a document rather than plain text or data.
+fn looks_like_markup(response: &str) -> bool {
+    let lower = response.to_ascii_lowercase();
+    lower.contains("<html")
+        || lower.contains("<!doctype")
+        || lower.contains("<body")
+        || lower.contains("<div")
+        || lower.contains("<head")
 }
 
 /// Which backend produced a result, for reporting.
@@ -168,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_cloudflare_and_arkose_interstitials() {
+    fn detects_cloudflare_and_google_interstitials() {
         let cloudflare =
             r#"<html><body><div class="cf-chl-opt">Just a moment...</div></body></html>"#;
         assert_eq!(
@@ -178,13 +240,111 @@ mod tests {
             })
         );
 
-        let arkose =
-            r#"<html><body><script src="https://arkoselabs.com/v2/x"></script></body></html>"#;
+        let google =
+            r#"<html><body><h1>Our systems have detected unusual traffic</h1></body></html>"#;
         assert_eq!(
-            detect_challenge(arkose, None),
+            detect_challenge(google, None),
             Some(Challenge {
-                vendor: "Arkose Labs"
+                vendor: "Google 异常流量拦截"
             })
+        );
+    }
+
+    /// Both of Bing's anti-bot mechanisms ride along on *every* SERP, so neither
+    /// can fingerprint an intercepted page. Measured 2026-09-21 against three live
+    /// cn.bing.com queries: `arkoselabs` 0/3 as a bare word but present as the
+    /// script URL, `powchallenge` 3/3 — it names a JS bundle
+    /// (`A:rms:answers:GlobalsScript:PoWChallengeSolver`) that every result page
+    /// loads. Using either one matched real results pages instead of catching
+    /// blocks, and both were removed from the marker table.
+    #[test]
+    fn bings_always_present_antibot_bundles_are_not_interceptions() {
+        let serp = r#"<html><head><title>tokio rust - 搜索</title>
+            <script src="https://client-api.arkoselabs.com/v2/xxx/api.js"></script>
+            <script>var rms={'A:rms:answers:GlobalsScript:PoWChallengeSolver':'/rp/x.js'};</script>
+            </head><body><ol id="b_results"><li class="b_algo">
+            <h2><a href="https://tokio.rs/">Tokio</a></h2></li></ol></body></html>"#;
+
+        // The marker table matches case-insensitively, so the control has to look
+        // the same way — otherwise it would "prove" absence of a marker that is
+        // sitting right there in a different case.
+        let haystack = serp.to_ascii_lowercase();
+        assert!(
+            haystack.contains("arkoselabs"),
+            "fixture must carry the Arkose marker"
+        );
+        assert!(
+            haystack.contains("powchallenge"),
+            "fixture must carry the PoW marker"
+        );
+        assert_eq!(
+            detect_challenge(serp, Some("tokio rust - 搜索")),
+            None,
+            "markers present on every Bing response are not evidence of a challenge"
+        );
+    }
+
+    /// The gate itself, on both sides of the boundary.
+    ///
+    /// Each rejecting case is paired with a control proving the marker genuinely
+    /// is in the haystack — otherwise the assertion would pass on a fixture that
+    /// simply never contained one, and the gate would look load-bearing when it
+    /// is not.
+    #[test]
+    fn a_marker_only_counts_when_it_is_the_page() {
+        // Interstitials: the marker is all there is. Measured bodies run 15–50
+        // characters; these are the real shapes this list exists for.
+        for (name, html) in [
+            (
+                "百度安全验证",
+                r#"<html><head><title>百度安全验证</title></head><body><div id="waf">请完成安全验证</div></body></html>"#,
+            ),
+            (
+                "Cloudflare",
+                r#"<html><head><title>Just a moment...</title></head><body><div class="cf-chl-opt">Just a moment...</div></body></html>"#,
+            ),
+            (
+                "Google 异常流量拦截",
+                r#"<html><head><title>Sorry...</title></head><body><div><h1>Our systems have detected unusual traffic from your computer network.</h1></div></body></html>"#,
+            ),
+        ] {
+            let vendor = is_bot_block(html, None).map(|c| c.vendor);
+            assert!(
+                vendor.is_some(),
+                "{name}: a real interstitial must be named"
+            );
+            println!("{name} -> {vendor:?}");
+        }
+
+        // The regression: a page that genuinely discusses the marker has its own
+        // body, and must be returned as content. Which marker it happens to hit
+        // is not the point — that one is hit at all is the control, so this case
+        // cannot pass merely because the fixture contained no marker.
+        let article = "<html><head><title>如何解决验证码</title></head><body><main>\
+            <h1>滑块验证码的绕过思路</h1>\
+            <p>这篇讲的是自行架站的防护配置，正文很长，属于正常内容页面而不是拦截页。\
+            文中会多次提到验证码、Cloudflare 以及人机验证这些词，因为讨论的就是它们。</p>\
+            <p>再补一段，确保转换后的正文明显超过一句验证提示的长度：拦截页整页只有那句话，\
+            而一篇文章总有若干段落，长度差着两个数量级，这正是判别依据。</p>\
+            <p>第三段用来把正文长度推到足够高，避免样本本身太短而让用例失去意义。</p>\
+            </main></body></html>";
+        let matched = detect_challenge(article, Some("如何解决验证码")).map(|c| c.vendor);
+        assert!(
+            matched.is_some(),
+            "control: this document must really contain a marker"
+        );
+        assert_eq!(
+            is_bot_block(article, Some("如何解决验证码")),
+            None,
+            "a page with its own content is not a block page, even though it \
+             matched {:?}",
+            matched
+        );
+
+        // A page with no marker at all is never a block, whatever its length.
+        assert_eq!(
+            is_bot_block("<html><body><main><p>ok</p></main></body></html>", None),
+            None
         );
     }
 

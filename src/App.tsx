@@ -32,11 +32,14 @@ import { useTauriEvent } from '@/hooks/useTauriEvent';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
-  displayedWidthToBaseWidth,
   normalizeWorkspaceLayout,
+  resolvePanelBaseBounds,
   resolveWorkspaceLayout,
-  WORKSPACE_LAYOUT_LIMITS,
+  resolveWorkspaceScale,
+  type PanelBaseBounds,
+  type PanelSide,
 } from '@/lib/workspaceLayout';
+import SplitHandle from '@/components/layout/SplitHandle';
 import { registerBuiltinViews } from '@/plugins/builtinViews';
 import PluginWebviewSlot from '@/plugins/PluginWebviewSlot';
 import { initPluginIpc } from '@/plugins/pluginIpc';
@@ -59,6 +62,24 @@ registerBuiltinViews();
 
 const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 const AGENT_PANEL_COLLAPSE_MS = 300;
+/** 方向键连按：视觉立刻跟，落盘留到停手（和拖动一样，手势结束才写）。 */
+const NUDGE_COMMIT_MS = 240;
+
+/**
+ * 一次拖动的全部状态。放 ref 而不是 state：指针移动期间只需要 setState 更新宽度，
+ * 事件靠 Pointer 捕获直接回到把手，不挂 document 监听、不进 effect 依赖。
+ * 宽度以**基准宽度**为单位推进（不是屏幕像素），松手存的就是推进到的那个值，
+ * 所以「松手后停在松手前的位置」是构造出来的，不是对齐出来的。
+ */
+interface ResizeSession {
+  side: PanelSide;
+  pointerId: number;
+  pointerStartX: number;
+  baseStart: number;
+  baseCurrent: number;
+  bounds: PanelBaseBounds;
+  scale: number;
+}
 
 export default function App() {
   const activeId = useViewStore((s) => s.activeId);
@@ -72,12 +93,13 @@ export default function App() {
   const mainRowWidthRef = useRef(0);
   const windowResizingRef = useRef(false);
   const windowResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sidebarResizeStartRef = useRef<{ x: number; width: number } | null>(null);
-  const agentResizeStartRef = useRef<{ x: number; width: number } | null>(null);
+  const resizeSessionRef = useRef<ResizeSession | null>(null);
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingNudgeRef = useRef<{ side: PanelSide; base: number } | null>(null);
   const [layoutWidth, setLayoutWidth] = useState(0);
-  const [dragSidebarWidth, setDragSidebarWidth] = useState<number | null>(null);
-  const [dragAgentWidth, setDragAgentWidth] = useState<number | null>(null);
-  const [resizingSide, setResizingSide] = useState<'sidebar' | 'agent' | null>(null);
+  /** 拖动/方向键期间的基准宽度覆盖值；落盘生效后被撤掉，布局回到设置里的值。 */
+  const [dragBase, setDragBase] = useState<{ side: PanelSide; base: number } | null>(null);
+  const [resizingSide, setResizingSide] = useState<PanelSide | null>(null);
   const [isWindowResizing, setIsWindowResizing] = useState(false);
   const agentPanelUnmountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -204,25 +226,83 @@ export default function App() {
     };
   }, []);
 
+  // 拖动期间把候选基准宽度并进设置再求解：面板宽度、中栏、邻栏全部由同一个
+  // resolveWorkspaceLayout 算出来，所以拖动中看到的布局就是松手后的布局。
+  const dragBasePatch = useMemo(
+    () =>
+      dragBase === null
+        ? null
+        : dragBase.side === 'sidebar'
+          ? { sidebarBaseWidth: dragBase.base }
+          : { agentBaseWidth: dragBase.base },
+    [dragBase],
+  );
+
   const resolvedLayout = resolveWorkspaceLayout({
     containerWidth: layoutWidth,
-    settings: workspaceLayout,
+    settings: dragBasePatch ? { ...workspaceLayout, ...dragBasePatch } : workspaceLayout,
     sidebarOpen,
     agentOpen: agentPanelOpen,
     isExclusive,
   });
 
-  const sidebarWidth = dragSidebarWidth ?? resolvedLayout.sidebarWidth;
-  const agentPanelWidth = dragAgentWidth ?? resolvedLayout.agentWidth;
+  const sidebarWidth = resolvedLayout.sidebarWidth;
+  const agentPanelWidth = resolvedLayout.agentWidth;
   const agentPanelVisible = effectiveAgentPanelOpen && agentPanelWidth > 0;
   const isResizing = resizingSide !== null;
 
+  // 可拖范围（拿 resolveWorkspaceLayout 自己当预言机扫出来的），只在窗口尺寸 /
+  // 设置变化时重算——拖动期间不重算，区间对一次手势保持稳定。
+  const sidebarBounds = useMemo(
+    () =>
+      resolvePanelBaseBounds({
+        side: 'sidebar',
+        containerWidth: layoutWidth,
+        settings: workspaceLayout,
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+      }),
+    [agentPanelOpen, isExclusive, layoutWidth, sidebarOpen, workspaceLayout],
+  );
+  const agentBounds = useMemo(
+    () =>
+      resolvePanelBaseBounds({
+        side: 'agent',
+        containerWidth: layoutWidth,
+        settings: workspaceLayout,
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+      }),
+    [agentPanelOpen, isExclusive, layoutWidth, sidebarOpen, workspaceLayout],
+  );
+
   const persistWorkspaceLayout = useCallback((patch: Partial<WorkspaceLayoutSettings>) => {
-    const next = normalizeWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...workspaceLayout, ...patch });
-    updateSettings({ workspaceLayout: next }).catch((err) => {
+    // 从 store 现取而不是用渲染闭包：update() 是「先落盘再改内存」，
+    // 连续两次调整时闭包里的 workspaceLayout 可能还没有上一条的结果。
+    const current = useSettingsStore.getState().settings.workspaceLayout;
+    const next = normalizeWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...current, ...patch });
+    return updateSettings({ workspaceLayout: next }).catch((err) => {
       console.error('Failed to save workspace layout:', err);
     });
-  }, [updateSettings, workspaceLayout]);
+  }, [updateSettings]);
+
+  /** 落盘一次面板基准宽度，并在 store 真的拿到新值之后再撤掉本地覆盖值。 */
+  const commitPanelBase = useCallback(
+    (side: PanelSide, base: number) => {
+      void persistWorkspaceLayout(
+        side === 'sidebar' ? { sidebarBaseWidth: base } : { agentBaseWidth: base },
+      ).then(() => {
+        // 等 store 更新完再撤覆盖：早一步撤会先按旧宽度渲染一帧，看起来就是「松手闪一下」。
+        // 期间若已经开出新的一次调整，就把它留给那一次收尾。
+        setDragBase((current) =>
+          current && current.side === side && current.base === base ? null : current,
+        );
+      });
+    },
+    [persistWorkspaceLayout],
+  );
 
   const handleToggleSidebar = () => {
     persistWorkspaceLayout({ sidebarOpen: !sidebarOpen });
@@ -232,84 +312,117 @@ export default function App() {
     persistWorkspaceLayout({ agentOpen: !agentPanelOpen });
   };
 
-  const handleSidebarResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!effectiveSidebarOpen || isExclusive) return;
-    e.preventDefault();
-    sidebarResizeStartRef.current = { x: e.clientX, width: sidebarWidth };
-    setResizingSide('sidebar');
-  }, [effectiveSidebarOpen, isExclusive, sidebarWidth]);
+  const startPanelResize = useCallback(
+    (side: PanelSide, e: React.PointerEvent<HTMLDivElement>) => {
+      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
+      if (e.button !== 0 || isExclusive || !bounds.draggable) return;
+      // 只捕获指针、不 preventDefault：焦点与选区的守卫在 SplitHandle 的 mousedown 上
+      // （取消 pointerdown 有引擎会连 click / dblclick 一起掐掉）。
+      e.currentTarget.setPointerCapture(e.pointerId);
+      const layout = normalizeWorkspaceLayout(workspaceLayout);
+      const baseStart = side === 'sidebar' ? layout.sidebarBaseWidth : layout.agentBaseWidth;
+      resizeSessionRef.current = {
+        side,
+        pointerId: e.pointerId,
+        pointerStartX: e.clientX,
+        baseStart,
+        baseCurrent: baseStart,
+        bounds,
+        scale: resolveWorkspaceScale(layoutWidth),
+      };
+      setResizingSide(side);
+    },
+    [agentBounds, isExclusive, layoutWidth, sidebarBounds, workspaceLayout],
+  );
 
-  const handleAgentResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    if (!agentPanelVisible || isExclusive) return;
-    e.preventDefault();
-    agentResizeStartRef.current = { x: e.clientX, width: agentPanelWidth };
-    setResizingSide('agent');
-  }, [agentPanelWidth, agentPanelVisible, isExclusive]);
+  const movePanelResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const session = resizeSessionRef.current;
+    if (!session || e.pointerId !== session.pointerId) return;
+    const delta =
+      session.side === 'sidebar' ? e.clientX - session.pointerStartX : session.pointerStartX - e.clientX;
+    // 指针位移 ÷ 缩放 = 基准位移；自由空间里两次缩放正好抵消，面板与指针 1:1 跟手
+    const base = Math.min(
+      session.bounds.max,
+      Math.max(session.bounds.min, Math.round(session.baseStart + delta / session.scale)),
+    );
+    if (base === session.baseCurrent) return;
+    session.baseCurrent = base;
+    setDragBase({ side: session.side, base });
+  }, []);
 
-  useEffect(() => {
-    if (!resizingSide) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (resizingSide === 'sidebar' && sidebarResizeStartRef.current) {
-        const delta = e.clientX - sidebarResizeStartRef.current.x;
-        const width = Math.min(
-          WORKSPACE_LAYOUT_LIMITS.sidebar.max,
-          Math.max(WORKSPACE_LAYOUT_LIMITS.sidebar.min, sidebarResizeStartRef.current.width + delta),
-        );
-        setDragSidebarWidth(width);
+  const endPanelResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const session = resizeSessionRef.current;
+      if (!session || e.pointerId !== session.pointerId) return;
+      resizeSessionRef.current = null;
+      setResizingSide(null);
+      if (session.baseCurrent === session.baseStart) {
+        // 只是点了一下：撤掉覆盖值，别让没动过的宽度顶住布局
+        setDragBase((current) => (current && current.side === session.side ? null : current));
         return;
       }
+      commitPanelBase(session.side, session.baseCurrent);
+    },
+    [commitPanelBase],
+  );
 
-      if (resizingSide === 'agent' && agentResizeStartRef.current) {
-        const delta = agentResizeStartRef.current.x - e.clientX;
-        const width = Math.min(
-          WORKSPACE_LAYOUT_LIMITS.agent.max,
-          Math.max(WORKSPACE_LAYOUT_LIMITS.agent.min, agentResizeStartRef.current.width + delta),
-        );
-        setDragAgentWidth(width);
-      }
-    };
+  const nudgePanelResize = useCallback(
+    (side: PanelSide, delta: number) => {
+      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
+      const layout = normalizeWorkspaceLayout(workspaceLayout);
+      const current =
+        dragBase && dragBase.side === side
+          ? dragBase.base
+          : side === 'sidebar'
+            ? layout.sidebarBaseWidth
+            : layout.agentBaseWidth;
+      const base = Math.min(
+        bounds.max,
+        Math.max(bounds.min, current + Math.round(delta / resolveWorkspaceScale(layoutWidth))),
+      );
+      if (base === current) return;
+      setDragBase({ side, base });
+      pendingNudgeRef.current = { side, base };
+      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+      nudgeTimerRef.current = setTimeout(() => {
+        nudgeTimerRef.current = null;
+        const pending = pendingNudgeRef.current;
+        pendingNudgeRef.current = null;
+        if (pending) commitPanelBase(pending.side, pending.base);
+      }, NUDGE_COMMIT_MS);
+    },
+    [agentBounds, commitPanelBase, dragBase, layoutWidth, sidebarBounds, workspaceLayout],
+  );
 
-    const handleMouseUp = () => {
-      if (resizingSide === 'sidebar' && dragSidebarWidth !== null) {
-        persistWorkspaceLayout({
-          sidebarBaseWidth: displayedWidthToBaseWidth(
-            dragSidebarWidth,
-            layoutWidth,
-            WORKSPACE_LAYOUT_LIMITS.sidebar.min,
-            WORKSPACE_LAYOUT_LIMITS.sidebar.max,
-          ),
-        });
-      }
-      if (resizingSide === 'agent' && dragAgentWidth !== null) {
-        persistWorkspaceLayout({
-          agentBaseWidth: displayedWidthToBaseWidth(
-            dragAgentWidth,
-            layoutWidth,
-            WORKSPACE_LAYOUT_LIMITS.agent.min,
-            WORKSPACE_LAYOUT_LIMITS.agent.max,
-          ),
-        });
-      }
-      sidebarResizeStartRef.current = null;
-      agentResizeStartRef.current = null;
-      setDragSidebarWidth(null);
-      setDragAgentWidth(null);
-      setResizingSide(null);
-    };
+  const resetPanelWidth = useCallback(
+    (side: PanelSide) => {
+      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
+      const fallback =
+        side === 'sidebar'
+          ? DEFAULT_WORKSPACE_LAYOUT.sidebarBaseWidth
+          : DEFAULT_WORKSPACE_LAYOUT.agentBaseWidth;
+      const base = Math.min(bounds.max, Math.max(bounds.min, fallback));
+      setDragBase({ side, base });
+      commitPanelBase(side, base);
+    },
+    [agentBounds, commitPanelBase, sidebarBounds],
+  );
 
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+  // 拖动期间把光标钉死：终端（xterm 自带 cursor: text）之类的内容会盖掉 body 上的继承值，
+  // 拖到夹紧位置、指针离开把手之后光标就不该再变成 I 形。
+  useEffect(() => {
+    const className = 'marcel-resizing-x';
+    if (resizingSide) document.body.classList.add(className);
+    else document.body.classList.remove(className);
+    return () => document.body.classList.remove(className);
+  }, [resizingSide]);
 
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, [dragAgentWidth, dragSidebarWidth, layoutWidth, persistWorkspaceLayout, resizingSide]);
+  useEffect(
+    () => () => {
+      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     appReady().catch(console.error);
@@ -444,10 +557,20 @@ export default function App() {
           </aside>
 
           {effectiveSidebarOpen && (
-            <div
-              className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-              onMouseDown={handleSidebarResizeMouseDown}
-              style={{ touchAction: 'none' }}
+            <SplitHandle
+              label="调整侧边栏宽度"
+              value={sidebarWidth}
+              min={sidebarBounds.minDisplayed}
+              max={sidebarBounds.maxDisplayed}
+              active={resizingSide === 'sidebar'}
+              draggable={sidebarBounds.draggable && !isExclusive}
+              growDirection={1}
+              onPointerDown={(e) => startPanelResize('sidebar', e)}
+              onPointerMove={movePanelResize}
+              onPointerUp={endPanelResize}
+              onPointerCancel={endPanelResize}
+              onNudge={(delta) => nudgePanelResize('sidebar', delta)}
+              onReset={() => resetPanelWidth('sidebar')}
             />
           )}
 
@@ -485,10 +608,21 @@ export default function App() {
           >
             {agentPanelMounted && agentPanelVisible && (
               <>
-                <div
-                  className="w-1 cursor-col-resize hover:bg-indigo-500/50 transition-colors z-10 flex-shrink-0"
-                  onMouseDown={handleAgentResizeMouseDown}
-                  style={{ touchAction: 'none' }}
+                <SplitHandle
+                  label="调整 Agent 面板宽度"
+                  value={agentPanelWidth}
+                  min={agentBounds.minDisplayed}
+                  max={agentBounds.maxDisplayed}
+                  active={resizingSide === 'agent'}
+                  draggable={agentBounds.draggable && !isExclusive}
+                  // 把手在面板左缘：左方向键把面板拉宽
+                  growDirection={-1}
+                  onPointerDown={(e) => startPanelResize('agent', e)}
+                  onPointerMove={movePanelResize}
+                  onPointerUp={endPanelResize}
+                  onPointerCancel={endPanelResize}
+                  onNudge={(delta) => nudgePanelResize('agent', delta)}
+                  onReset={() => resetPanelWidth('agent')}
                 />
                 <aside
                   data-region="agent"

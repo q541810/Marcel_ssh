@@ -25,6 +25,7 @@ use serde_json::json;
 use tauri::Manager;
 
 use crate::agent::risk::Disposition;
+use crate::agent::tools::browser_cdp;
 use crate::agent::tools::web_result::{detect_challenge, FallbackNote};
 use crate::agent::tools::{truncate_output, AgentTool, ToolContext, ToolOutput};
 use crate::config::keychain;
@@ -77,7 +78,27 @@ const SEARCH_TIP: &str =
 /// wedged Chromium could otherwise keep the agent waiting through every step in
 /// sequence. Capping the attempt guarantees the retry and the fallback get a
 /// turn in bounded time.
-const BROWSER_ATTEMPT_BUDGET: Duration = Duration::from_secs(45);
+///
+/// The cap has to clear the steps it wraps, or it does not bound a slow attempt —
+/// it truncates one. A navigation that legitimately needs the whole
+/// [`browser_cdp::SERP_NAV_BUDGET`] and then waits the whole
+/// [`browser_cdp::SERP_SELECTOR_BUDGET`] for the result container arrives at
+/// 48s+; a 45s cap cut that attempt off *after the browser had the page*, and the
+/// agent was handed a degraded scrape of a search the browser could have served.
+/// [`BROWSER_ATTEMPT_BUDGET_FITS_COMPONENT_BUDGETS`] pins the inequality.
+const BROWSER_ATTEMPT_BUDGET: Duration = Duration::from_secs(70);
+
+/// Compile-time proof that one browser attempt can run its longest legitimate
+/// path. `assert!` over constants is const-evaluable, so a future edit to either
+/// inner budget that would reintroduce the truncation fails the build instead of
+/// silently degrading every slow search.
+#[allow(dead_code)]
+const BROWSER_ATTEMPT_BUDGET_FITS_COMPONENT_BUDGETS: () = assert!(
+    BROWSER_ATTEMPT_BUDGET.as_secs()
+        >= browser_cdp::SERP_NAV_BUDGET.as_secs() + browser_cdp::SERP_SELECTOR_BUDGET.as_secs(),
+    "a browser attempt must fit a full navigation plus the result-container wait, \
+     or the cap truncates attempts that were still making progress"
+);
 /// Cap on the fallback attempt. The HTML backend already has a 15s HTTP timeout.
 const HTML_ATTEMPT_BUDGET: Duration = Duration::from_secs(25);
 const RETRY_BACKOFF: Duration = Duration::from_millis(300);
@@ -314,7 +335,13 @@ async fn run_browser_search(
                     attempt,
                     BROWSER_ATTEMPT_BUDGET.as_secs_f32()
                 ));
-                last_failure = Some("browser attempt exceeded its time budget".to_string());
+                // A budget overrun is not a browser fault, and saying so matters:
+                // this string is what the user reads as the reason they are now
+                // getting a lower-quality scrape.
+                last_failure = Some(format!(
+                    "the browser did not return within its {:.0}s budget (it may simply be slow)",
+                    BROWSER_ATTEMPT_BUDGET.as_secs_f32()
+                ));
                 // The budget is already spent; retrying would only double it.
                 break;
             }
@@ -365,10 +392,16 @@ fn join_attempts(attempts: &[String]) -> String {
 
 /// Decide whether an empty result list means "no hits" or "not a results page".
 ///
-/// Parsed results always win. Otherwise the page is checked for a verification
-/// interstitial, and only a page carrying a real results-page marker is accepted
-/// as a genuine zero-hit answer — anything else is reported as an interception
-/// rather than dressed up as "no results found".
+/// The engine's own verdict comes first. A page carrying a real results-page
+/// marker that lists no hits **is** the answer to the query; asking a marker
+/// table whether it looks like an interstitial after that can only overwrite a
+/// correct answer with a wrong one. That is not hypothetical — every live
+/// cn.bing.com SERP carries anti-bot bootstrap markup, so a genuine zero-hit page
+/// used to be reported as "the engine blocked this request" and came with advice
+/// to reconfigure the app for a search that had simply found nothing.
+///
+/// Parsed results always win over both, and a page that is neither a results page
+/// nor an interstitial is still reported as the interception it is.
 pub(crate) fn classify_empty_results(
     results: &[SearchResult],
     html: &str,
@@ -379,13 +412,13 @@ pub(crate) fn classify_empty_results(
     if !results.is_empty() {
         return None;
     }
+    if looks_like_serp {
+        return None;
+    }
     if let Some(challenge) = detect_challenge(html, title) {
         return Some(Interception::Challenge {
             vendor: challenge.vendor,
         });
-    }
-    if looks_like_serp {
-        return None;
     }
     Some(Interception::NotAResultsPage {
         detail: describe_page(),
@@ -800,6 +833,47 @@ mod tests {
         assert!(
             classify_empty_results(&[result("T")], html, None, false, || "d".into()).is_none(),
             "parsed results must win over a stray marker"
+        );
+    }
+
+    /// A genuine zero-hit SERP is the engine's answer, so anti-bot markup that
+    /// every real SERP carries must not overwrite it.
+    ///
+    /// The fixture is shaped like the live cn.bing.com response measured on
+    /// 2026-09-21: `b_results` present, no `li.b_algo` items, and the Arkose
+    /// bootstrap served with every response — results-bearing ones included.
+    #[test]
+    fn classify_empty_keeps_a_zero_hit_serp_that_carries_antibot_markup() {
+        let html = r#"<html><head>
+            <title>zzzz - 搜索</title>
+            <script src="https://client-api.arkoselabs.com/v2/xxx/api.js"></script>
+            </head><body>
+            <ol id="b_results"><li class="b_no">没有与此相关的结果</li></ol>
+            </body></html>"#;
+        assert!(html.contains("arkoselabs"), "fixture must carry the marker");
+
+        assert!(
+            classify_empty_results(&[], html, Some("zzzz - 搜索"), true, || "d".into()).is_none(),
+            "a results page with no hits is a zero-hit answer, not an interception"
+        );
+    }
+
+    /// The other half, unchanged: when the engine really did send an interstitial
+    /// instead of a results page, it must still be reported as one.
+    #[test]
+    fn classify_empty_reports_an_interstitial_that_is_not_a_results_page() {
+        let html = r#"<html><head><title>百度安全验证</title></head>
+            <body><div>请完成安全验证</div></body></html>"#;
+        assert_eq!(
+            classify_empty_results(&[], html, Some("百度安全验证"), false, || "d".into())
+                .map(|i| i.kind()),
+            Some("challenge")
+        );
+
+        let wrong_page = r#"<html><body>something went wrong</body></html>"#;
+        assert_eq!(
+            classify_empty_results(&[], wrong_page, None, false, || "d".into()).map(|i| i.kind()),
+            Some("not-a-results-page")
         );
     }
 

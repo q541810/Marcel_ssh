@@ -57,6 +57,13 @@ impl BashTool {
             return Ok(ToolOutput::fail("bash", "Error: empty command"));
         }
 
+        // 必填参数（`description`）。正常情况下 dispatcher 的预检已经在弹审批之前
+        // 拦下了，走到这里说明工具被别的路径直接调起来（多机换机、测试等）——
+        // 兜底要给出和预检**同一句话**。
+        if let Some(message) = missing_required_argument(&params) {
+            return Err(AppError::Agent(message));
+        }
+
         let run_in_background = params
             .get("run_in_background")
             .and_then(|v| v.as_bool())
@@ -65,7 +72,9 @@ impl BashTool {
         let description = params
             .get("description")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
 
@@ -155,7 +164,7 @@ impl BashTool {
             if let Some(task_id) = &ctx.task_id {
                 ticket = ticket.cancellable(task_id, "Agent 命令已取消");
             }
-            let job_info = ctx.submit_background(ticket, description.clone()).await?;
+            let job_info = ctx.submit_background(ticket, Some(description.clone())).await?;
 
             // Zeroize password and rewritten command immediately
             if let Some(ref mut p) = sudo_password {
@@ -242,6 +251,27 @@ impl Default for BashTool {
     }
 }
 
+/// bash 的必填参数检查（`command` 之外的 `description`）。
+///
+/// 提成一个函数，是为了让「弹审批之前」的预检（[`AgentTool::validate_arguments`]）与
+/// `execute_inner` 说的是同一句话 —— 两处各写一份，改了这处忘那处，用户看到的提示
+/// 就会对不上。
+///
+/// `description` 为什么必填：审批弹窗要把它显示在命令上方，让用户不用读 shell 语法
+/// 就能判断这条命令在干什么。缺了它，那道审批就只剩一串命令本身。
+fn missing_required_argument(params: &serde_json::Value) -> Option<String> {
+    match params.get("description").and_then(|v| v.as_str()) {
+        Some(text) if !text.trim().is_empty() => None,
+        // 区分"没给"和"给了空白"对模型没用，提示里一并说清就行
+        _ => Some(
+            "缺少必填参数 \"description\"：用一句话说清这条命令在做什么、为什么（5-10 字，\
+             例如「重启 nginx 以加载新配置」）。它会显示在用户看到的审批弹窗上，\
+             是用户判断这条命令的依据。补上后重新调用 bash。"
+                .to_string(),
+        ),
+    }
+}
+
 #[async_trait]
 impl AgentTool for BashTool {
     fn name(&self) -> &str {
@@ -279,7 +309,7 @@ impl AgentTool for BashTool {
                 },
                 "description": {
                     "type": "string",
-                    "description": "Clear, concise description of what this command does in active voice, 5-10 words (shown in UI). Example: 'Build release binary' or 'Run database migration'."
+                    "description": "REQUIRED. What this command does and why, in active voice, 5-10 words. The user reads it on the approval dialog to judge the command without parsing shell syntax, so make it concrete about both the action and its purpose. Example: 'Restart nginx to pick up the new config' or 'List disk usage by directory'. When run_in_background is true it also becomes the job's description."
                 },
                 "timeout_ms": {
                     "type": "integer",
@@ -290,8 +320,15 @@ impl AgentTool for BashTool {
                     "description": format!("Optional. Target machine's readable name: the current machine or one from the multi-host selected set (e.g. 'web-prod-01'). When omitted, runs on the current session's machine. Desktop only; on mobile passing host returns an error. {}", super::HOST_MATCH_RULE)
                 }
             },
-            "required": ["command"]
+            "required": ["command", "description"]
         })
+    }
+
+    fn validate_arguments(&self, params: &serde_json::Value) -> Result<(), String> {
+        match missing_required_argument(params) {
+            Some(message) => Err(message),
+            None => Ok(()),
+        }
     }
 
     fn disposition(&self) -> Disposition {
@@ -508,6 +545,58 @@ mod tests {
         assert_eq!(ticket.display_command, original);
         assert!(!ticket.display_command.contains("secret-password"));
         assert_eq!(ticket.task_id.as_deref(), Some("agent-task-1"));
+    }
+
+    // ── 必填参数：命令说明（会被审批弹窗显示给用户） ──
+
+    #[test]
+    fn schema_declares_description_as_required() {
+        let schema = BashTool::new().parameters_schema();
+        let required = schema["required"].as_array().expect("required 必须是数组");
+        let required: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required.contains(&"command"));
+        assert!(
+            required.contains(&"description"),
+            "description 必须是必填：审批弹窗要靠它给用户一条判断依据，缺了就没得看"
+        );
+        assert!(schema["properties"]["description"].is_object());
+    }
+
+    #[test]
+    fn validate_arguments_rejects_missing_or_blank_description() {
+        let tool = BashTool::new();
+        for args in [
+            serde_json::json!({"command": "ls"}),
+            serde_json::json!({"command": "ls", "description": ""}),
+            serde_json::json!({"command": "ls", "description": "   "}),
+            serde_json::json!({"command": "ls", "description": 42}),
+        ] {
+            let err = tool
+                .validate_arguments(&args)
+                .expect_err("缺说明必须被拦下");
+            assert!(err.contains("description"), "提示里要点名缺的是哪个参数：{err}");
+        }
+    }
+
+    #[test]
+    fn validate_arguments_accepts_a_real_description() {
+        let tool = BashTool::new();
+        assert!(tool
+            .validate_arguments(&serde_json::json!({
+                "command": "systemctl restart nginx",
+                "description": "重启 nginx 以加载新配置",
+            }))
+            .is_ok());
+    }
+
+    #[test]
+    fn preflight_and_execute_share_one_message() {
+        // 预检（弹审批之前）与 execute 兜底必须说同一句话：两处各写一份，
+        // 改了这处忘那处，用户看到的提示就会对不上。
+        let params = serde_json::json!({"command": "ls"});
+        let from_preflight = BashTool::new().validate_arguments(&params).unwrap_err();
+        let from_execute = missing_required_argument(&params).expect("应当判定为缺失");
+        assert_eq!(from_preflight, from_execute);
     }
 
     #[test]

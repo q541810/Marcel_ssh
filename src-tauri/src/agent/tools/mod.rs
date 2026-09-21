@@ -442,6 +442,22 @@ pub trait AgentTool: Send + Sync {
         false
     }
 
+    /// 参数预检：**在弹审批之前**跑一遍，返回 `Err(给模型看的一句话)` 表示这次调用
+    /// 不该继续。默认通过。
+    ///
+    /// 为什么必须在弹审批之前：审批对话框在 `execute()` 之前打开（见
+    /// `tool_dispatcher` 的审批分支）。属于"参数不合格"的失败若留到 execute 里才报，
+    /// 用户会先点一次批准、再看到工具失败、然后模型补参数重来又弹一次 —— 白点一次
+    /// 批准，而且不明白刚才批准的东西为什么没执行。同一个理由也适用于模型审批：
+    /// 注定失败的调用不值得占用它一次。
+    ///
+    /// 实现者注意：**别在这里做慢操作**。它跑在每次工具调用的关键路径上，语义是
+    /// "参数对不对"，不是"能不能跑通"（要预演的走
+    /// [`ToolSemantics::preview_before_approval`]）。
+    fn validate_arguments(&self, _params: &serde_json::Value) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Whether this tool is safe to execute concurrently with adjacent concurrent-safe tools.
     /// Default is `false` (strictly sequential execution to preserve causal dependencies).
     /// Pure, read-only isolated subagents (`SubagentTool`) override this to `true`.
@@ -762,6 +778,19 @@ pub(crate) fn prompt_section_of(tool_name: &str) -> Option<PromptSection> {
         .find(|spec| spec.name == tool_name)
         .and_then(|spec| spec.prompt_section)
 }
+
+/// 只在「本会话真有读不到的东西」时才出现的工具名。
+///
+/// 这类工具的价值是有条件的：会话一次都没压缩过、也没派发过子对话时，历史本来就
+/// 在上下文里，它一个字都读不到——却要为每次请求付整份说明的钱（`read_history`
+/// 是 700 余字符），还多给模型一条"不信任自己上下文、回去翻一遍"的路径。
+///
+/// 门控放在**请求侧**按这份清单过滤，注册表照旧全量构建：注册表是任务启动时建
+/// 一次、整任务共用的，而压缩可能发生在任务中途，所以"这次该不该给"只能在每次
+/// 发请求前问一次（调用点见 `agent_loop` 与 `AgentManager::current_tool_definitions`）。
+///
+/// 声明驱动：谁被门控只在这里写一遍，不散落到 builder / 循环 / 提示词拼装处。
+pub(crate) const STATE_GATED_TOOLS: &[&str] = &["read_history"];
 
 /// 全平台共用的内置工具声明。
 ///
@@ -1392,6 +1421,25 @@ mod tests {
         }
     }
 
+    /// 被状态门控的工具必须是声明表里真实存在的名字，且不声明提示词段。
+    ///
+    /// 前者防"工具改了名却忘了改这里"（那会静默地不再被门控）；后者防门控连带
+    /// 改变系统提示词的结构——提示词段是按**已下发**的工具推导的，门控一个带段的
+    /// 工具会让同一会话在不同轮次拿到不同的提示词结构。
+    #[test]
+    fn state_gated_tools_are_declared_and_section_free() {
+        for name in STATE_GATED_TOOLS {
+            let spec = builtin_tool_specs()
+                .into_iter()
+                .find(|s| s.name == *name)
+                .unwrap_or_else(|| panic!("{name} 不在内置声明表里"));
+            assert!(
+                spec.prompt_section.is_none(),
+                "{name} 声明了提示词段，门控它会连带改变提示词结构"
+            );
+        }
+    }
+
     /// 各「模式 × 角色」的工具集契约。
     ///
     /// 只断言**已有工具**的归位，不做「总数等于 N」的穷举 —— 那样每加一个工具都要
@@ -1744,6 +1792,30 @@ mod tests {
         r.register(Arc::new(DummyTool));
         assert_eq!(r.get("bash").unwrap().description(), "dummy");
         assert_ne!(old_desc, "dummy");
+    }
+
+    #[test]
+    fn validate_arguments_defaults_to_passing_for_tools_that_do_not_opt_in() {
+        // 预检是 **opt-in** 的：没实现它的工具（含插件工具、动态工具）行为必须零变化。
+        // 这条同时是"别把预检越权扩大成全局参数校验"的护栏。
+        let r = ToolRegistry::with_builtins();
+        for name in ["read_file", "write_file", "search_files", "subagent", "job_kill"] {
+            let tool = r.get(name).unwrap_or_else(|| panic!("没有工具 {name}"));
+            assert!(
+                tool.validate_arguments(&serde_json::json!({})).is_ok(),
+                "{name} 没声明预检，就该默认通过"
+            );
+        }
+    }
+
+    #[test]
+    fn bash_opts_into_the_preflight() {
+        let r = ToolRegistry::with_builtins();
+        let bash = r.get("bash").expect("bash 已注册");
+        assert!(
+            bash.validate_arguments(&serde_json::json!({"command": "ls"})).is_err(),
+            "bash 应声明预检，缺 description 时在弹审批之前就被拦下"
+        );
     }
 
     // ── Local handler registry tests (Task 2.4) ──

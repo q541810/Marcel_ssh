@@ -39,11 +39,15 @@ afterEach(() => {
   container.remove();
 });
 
-function render(withMinimize = true, withRejectAndStop = true) {
+function render(
+  withMinimize = true,
+  withRejectAndStop = true,
+  toolCall: ToolCallInfo = TOOL_CALL,
+) {
   act(() => {
     root.render(
       <ApprovalDialog
-        toolCall={TOOL_CALL}
+        toolCall={toolCall}
         onApprove={onApprove}
         onReject={onReject}
         open={true}
@@ -333,5 +337,51 @@ describe('拒绝并停止任务', () => {
       b.textContent?.trim(),
     );
     expect(labels).not.toContain('拒绝并停止任务');
+  });
+});
+
+/**
+ * 命令说明（bash 的必填 description）。
+ *
+ * 这一行是用户判断"要不要批准"的主要依据之一，所以两件事都要钉住：
+ * 有说明时必须显示、且标注它是 agent 自述（不是系统判定）；没说明时不留空行
+ * （旧会话、其他命令类工具都没有这个字段）。
+ */
+describe('Agent 说明', () => {
+  const withDescription = (description: unknown): ToolCallInfo => ({
+    ...TOOL_CALL,
+    arguments: { command: 'systemctl restart nginx', description },
+  });
+
+  it('有说明时显示在命令上方，并标注来源', () => {
+    render(true, true, withDescription('重启 nginx 以加载新配置'));
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Agent 说明');
+    expect(text).toContain('重启 nginx 以加载新配置');
+
+    // 位置：说明要排在命令前面（用户先读它再读命令）
+    const labelAt = text.indexOf('Agent 说明');
+    const cmdAt = text.indexOf('systemctl restart nginx');
+    expect(labelAt).toBeGreaterThan(-1);
+    expect(cmdAt).toBeGreaterThan(labelAt);
+  });
+
+  it('说明不再重复出现在参数 JSON 里', () => {
+    render(true, true, withDescription('重启 nginx 以加载新配置'));
+
+    const text = container.textContent ?? '';
+    const occurrences = text.split('重启 nginx 以加载新配置').length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it('没有说明时不显示这一行，也不留空白', () => {
+    render();
+    expect(container.textContent ?? '').not.toContain('Agent 说明');
+  });
+
+  it('空白说明等同于没有', () => {
+    render(true, true, withDescription('   '));
+    expect(container.textContent ?? '').not.toContain('Agent 说明');
   });
 });

@@ -333,11 +333,25 @@ mod tests {
 
     /// 压缩前言在前端 `messageConversion.ts` 有一份逐字节副本（跨语言无法自动
     /// 比对），这里钉死渲染结果，防止模板被误改后两边悄悄分叉。
+    ///
+    /// 末句是**能力公告**：压缩那一刻起模型就该知道被压掉的原文能取回，否则它会
+    /// 去重跑已经不可复现的现场，或者直接问用户。公告和 `read_history` 出现在工具
+    /// 清单里是同一件事的两半（门控见 `tools::STATE_GATED_TOOLS`）。
     #[test]
     fn checkpoint_preamble_matches_frontend_copy() {
         assert_eq!(
             checkpoint_preamble(),
-            "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint."
+            "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available."
+        );
+    }
+
+    /// 公告必须点名那个工具，且与工具清单里的名字逐字一致——写成别的名字等于
+    /// 让模型去找一个不存在的工具。
+    #[test]
+    fn checkpoint_preamble_announces_the_tool_it_names() {
+        assert!(
+            checkpoint_preamble().contains(crate::agent::tools::STATE_GATED_TOOLS[0]),
+            "公告里点名的工具必须是被状态门控的那一个"
         );
     }
 

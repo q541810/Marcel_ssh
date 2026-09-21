@@ -243,6 +243,16 @@ export default function ApprovalDialog({
             </div>
           ) : isExecuteCommand && cleanedCmd?.main ? (
             <div className="space-y-2">
+              {/* agent 对这条命令的说明。标注来源是刻意的：它可能把一条危险命令
+                  说成「只读检查」，写清这是 agent 自述，用户才不会把它当成系统判定。 */}
+              {cleanedCmd.description && (
+                <div>
+                  <span className="text-sm text-zinc-400">Agent 说明：</span>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-200 whitespace-pre-wrap break-words">
+                    {cleanedCmd.description}
+                  </p>
+                </div>
+              )}
               <span className="text-sm text-zinc-400">参数：</span>
               <div className="mt-1 rounded-lg bg-zinc-950 border border-zinc-700 overflow-hidden">
                 <div className="flex items-start gap-2 px-3 py-2">

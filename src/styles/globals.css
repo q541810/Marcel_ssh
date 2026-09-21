@@ -911,3 +911,14 @@ button,
     animation-duration: 1ms;
   }
 }
+
+/*
+ * 拖动侧栏分隔条期间把光标钉死。
+ * cursor 是继承属性，但终端（.xterm 自带 cursor: text）、按钮等自己声明过 cursor 的元素
+ * 会盖掉 body 上的值；拖到夹紧位置、指针离开 4px 把手之后，光标就会在拖动中途变样。
+ */
+body.marcel-resizing-x,
+body.marcel-resizing-x * {
+  cursor: col-resize !important;
+  user-select: none;
+}

@@ -1,4 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// 平台判定要能按用例切换：本文件跑在 node 环境（无 window/localStorage），
+// 真实提示推断不出手机端，只能替换掉 `@/platform` 的这两个入口。
+const platform = vi.hoisted(() => ({ mobile: false }));
+vi.mock('@/platform', () => ({
+  collectPlatformHints: () => ({}),
+  isMobilePlatform: () => platform.mobile,
+}));
+
 import {
   backendLabel,
   formatPageStatus,
@@ -80,6 +89,49 @@ describe('readWebToolStatus', () => {
     })!;
     expect(status.degraded).toBe(true);
     expect(webToolChips(status).map((c) => c.label)).toContain('已降级');
+  });
+
+  it('treats the browser→html rewrite as unavailable, not degraded, on mobile', () => {
+    // 手机端没有本机浏览器可走 CDP，后端把设置里的 browser 落到裸抓上；而手机上
+    // 根本选不到「本机浏览器」，Android 全新安装的默认值又正好是 browser。把它报成
+    // 降级，等于每次搜索都让用户去改一个他改不了的设置。
+    platform.mobile = true;
+    try {
+      const status = readWebToolStatus('web_search', {
+        provider: 'html',
+        requested_mode: 'browser',
+      })!;
+      expect(status.degraded).toBe(false);
+      expect(webToolChips(status).map((c) => c.label)).not.toContain('已降级');
+      expect(webToolNotice(status)).toBeNull();
+    } finally {
+      platform.mobile = false;
+    }
+  });
+
+  it('still reports a real browser fallback on mobile', () => {
+    // 平台提供不了的归平台，真正的降级由显式 fallback 负责，不受上面那条影响。
+    platform.mobile = true;
+    try {
+      const status = readWebToolStatus('web_search', {
+        provider: 'html',
+        requested_mode: 'browser',
+        fallback: { from: 'browser', to: 'html', reason: 'browser boot: timed out' },
+      })!;
+      expect(status.degraded).toBe(true);
+      expect(webToolChips(status).map((c) => c.label)).toContain('已降级');
+    } finally {
+      platform.mobile = false;
+    }
+  });
+
+  it('keeps browser→html a degradation on desktop, where that mode is available', () => {
+    platform.mobile = false;
+    const status = readWebToolStatus('web_search', {
+      provider: 'html',
+      requested_mode: 'browser',
+    })!;
+    expect(status.degraded).toBe(true);
   });
 
   it('does not report degradation for legacy data missing requested_mode', () => {

@@ -90,8 +90,10 @@ pub async fn agent_compact_conversation(
     // 同一个 `build_registry`，工具集将来怎么变都自动跟上）：摘要调用与常规请求的
     // tools 段因而一致，模型也能据此理解历史里的工具调用（减少信息丢失）。
     // 手动压缩跑在会话空闲时，凭设置里持久化的当前模式取清单。
+    // 状态门控（read_history 该不该出现）按**压缩前**那一刻的会话状态判：摘要要
+    // 解释的是压缩之前那段历史，而那段历史是在压缩前的工具集下产生的。
     let tools = AgentManager::new(state.inner().clone())
-        .current_tool_definitions()
+        .current_tool_definitions(&conversation_id)
         .await;
 
     let mut messages: Vec<LlmMessage> = history;

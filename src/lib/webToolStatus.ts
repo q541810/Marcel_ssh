@@ -16,6 +16,7 @@
  * `@/lib/toolCatalog` 的表为准（本模块只消费它）。
  */
 
+import { collectPlatformHints, isMobilePlatform } from '@/platform';
 import { toolSpec } from '@/lib/toolCatalog';
 
 /** 已知后端标签（后端 `web_result::WebBackend` / `web_search` 的 provider 取值）。 */
@@ -136,6 +137,23 @@ export function isWebTool(toolName: string): boolean {
   return toolSpec(toolName)?.web === true;
 }
 
+/**
+ * 配置的后端在本平台是否根本不存在。
+ *
+ * 手机端没有本机浏览器可走 CDP，后端的 `resolve_search_config` / `resolve_fetch_mode`
+ * 会把设置里的 `browser` 落到裸抓上。这不是降级：用户在手机上**无从选择**本机浏览器
+ * （`MobileAgentToolsSection` 只提供裸抓与 API），而 Android 全新安装的默认值就是
+ * `browser`，于是每次搜索都会顶着「已降级 / 设置要求：本机浏览器」的标记，提示用户去改
+ * 一个他改不了的设置。这里把它归为「平台本来就提供不了」，由显式 `fallback` 负责真正的
+ * 降级判定。
+ *
+ * 桌面端不进这个分支：那里的 `browser` 是可选可用的，provider 不符就是降级。
+ */
+function modeUnavailableOnThisPlatform(requested: string, provider: string): boolean {
+  if (!isMobilePlatform(collectPlatformHints())) return false;
+  return requested === 'browser' && provider === 'html';
+}
+
 function readStatus(metadata: unknown): WebToolStatus {
   const meta = isRecord(metadata) ? metadata : {};
   const provider = str(meta.provider);
@@ -149,7 +167,12 @@ function readStatus(metadata: unknown): WebToolStatus {
   //  - 后端显式声明 fallback（整批换后端 / 部分页面换后端）；
   //  - provider 与 requested_mode 不一致（例如设置里选了浏览器却由裸抓服务）。
   // requested_mode 是后加的字段，旧数据缺失时只依赖显式 fallback，不会误报降级。
-  const degraded = !!fallback || (!!provider && !!requestedMode && provider !== requestedMode);
+  const modeMismatch =
+    !!provider &&
+    !!requestedMode &&
+    provider !== requestedMode &&
+    !modeUnavailableOnThisPlatform(requestedMode, provider);
+  const degraded = !!fallback || modeMismatch;
 
   return {
     provider,

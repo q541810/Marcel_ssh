@@ -1203,6 +1203,30 @@ impl ConversationDb {
         .optional()
     }
 
+    /// 本会话此刻是否已经存在"读不到的东西"：出现过压缩（有归档卡），或派发过子对话。
+    /// 决定 `read_history` 是否进本次请求的工具清单（见 `tools::STATE_GATED_TOOLS`）。
+    ///
+    /// 单调性：边界卡只会被新卡吸收、不会消失，所以压缩这一侧只增不减；子对话被
+    /// 删除后判据会回落，但那时这个工具本来也读不到任何东西。
+    ///
+    /// 与 `history_overview` 分开是因为这是每轮请求前都要问一次的问题，不该为它
+    /// 跑一次六条语句的概览。
+    pub fn has_readable_history(&self, conversation_id: &str) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("{COMPACTION_CARD_PREFIX}%");
+        conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM messages
+                  WHERE conversation_id = ?1 AND role = 'system'
+                    AND content LIKE ?2 ESCAPE '\\'
+             ) OR EXISTS(
+                 SELECT 1 FROM conversations WHERE parent_conversation_id = ?1
+             )",
+            rusqlite::params![conversation_id, pattern],
+            |r| r.get(0),
+        )
+    }
+
     /// 本会话派发过的子对话（按创建时间升序）。
     pub fn list_sub_conversations(
         &self,
@@ -4290,6 +4314,54 @@ mod tests")
 
         let empty = db.create_conversation("conn_1", "empty").expect("empty");
         assert!(db.history_tail_anchor(&empty.id).expect("anchor empty").is_none());
+    }
+
+    /// 状态门控的判据：只有会话里真的存在"读不到的东西"（压缩过、或派发过子对话）
+    /// 才为真。它是 `read_history` 能否进工具清单的唯一依据（见
+    /// `tools::STATE_GATED_TOOLS`）——为此要治的正是"没压缩过却常驻占位"那种会话。
+    #[test]
+    fn has_readable_history_needs_an_archive_or_a_child() {
+        let db = create_test_db();
+
+        // 全新会话：历史全在上下文里，没有任何读不到的东西
+        let fresh = db.create_conversation("conn_1", "fresh").expect("fresh");
+        assert!(!db.has_readable_history(&fresh.id).expect("fresh"));
+
+        // 有消息、但没压缩过也没派发过子对话 —— 仍然为假
+        db.save_message(
+            &fresh.id,
+            "user",
+            "帮我看看 nginx",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("save");
+        assert!(!db.has_readable_history(&fresh.id).expect("fresh with msgs"));
+
+        // 派发过子对话 → 真（主 agent 要能核对子代理的过程）
+        let sub = db
+            .create_sub_conversation("conn_1", "查磁盘", &fresh.id)
+            .expect("sub");
+        assert!(db.has_readable_history(&fresh.id).expect("has child"));
+
+        // 子对话被删掉后判据回落（文档里写明的已知回落：那时这工具本来也读不到东西）
+        db.delete_conversation(&sub.id).expect("delete sub");
+        assert!(!db.has_readable_history(&fresh.id).expect("child gone"));
+
+        // 压缩过 → 真，且**持续**为真：归档卡只会被新卡吸收，不会消失
+        let (compacted, _, _, _) = seed_compacted_conversation(&db);
+        assert!(db.has_readable_history(&compacted).expect("compacted"));
+        db.save_message(
+            &compacted,
+            "user",
+            "继续",
+            "2026-01-02T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("save after compaction");
+        assert!(db.has_readable_history(&compacted).expect("still compacted"));
     }
 
     /// 子对话清单（主 agent 核对前先看有哪些）。

@@ -49,8 +49,15 @@ const BROWSER_BOOT_TIMEOUT: Duration = Duration::from_secs(12);
 const SETTLE_AFTER_READY: Duration = Duration::from_millis(500);
 /// Cadence of the navigation readiness probe.
 const NAV_POLL_INTERVAL: Duration = Duration::from_millis(120);
+/// How long a search navigation may take before the document must be usable.
+///
+/// Named because `web_search` sizes its own attempt cap around it: an attempt
+/// that cannot fit a full navigation plus a full result-container wait does not
+/// bound a slow search, it truncates one. See
+/// `web_search::BROWSER_ATTEMPT_BUDGET_FITS_COMPONENT_BUDGETS`.
+pub const SERP_NAV_BUDGET: Duration = Duration::from_secs(30);
 /// How long to wait for the Bing SERP result container to appear.
-const SERP_SELECTOR_WAIT: Duration = Duration::from_secs(18);
+pub const SERP_SELECTOR_BUDGET: Duration = Duration::from_secs(18);
 /// Upper bound on browser restarts while serving one batch of URLs.
 const MAX_SESSION_RESTARTS: usize = 2;
 
@@ -191,7 +198,7 @@ impl Default for CdpTimeouts {
             connect: Duration::from_secs(8),
             handshake: Duration::from_secs(5),
             call: Duration::from_secs(20),
-            nav: Duration::from_secs(30),
+            nav: SERP_NAV_BUDGET,
         }
     }
 }
@@ -467,7 +474,7 @@ pub async fn fetch_bing_serp(
     let result = async {
         let mut facts = page.navigate_and_wait(&url).await?;
         let found_result_container = page
-            .wait_for_selector("li.b_algo", SERP_SELECTOR_WAIT)
+            .wait_for_selector("li.b_algo", SERP_SELECTOR_BUDGET)
             .await?;
         if let Ok(refreshed) = page.read_page_facts().await {
             facts = refreshed;
@@ -699,6 +706,35 @@ enum ReadFailure {
     Io(String),
 }
 
+/// The one failure a stalled navigation reports, from either exit: the loop ran
+/// out with a probe in flight, or with no document ever becoming usable. Naming
+/// the last observed state is what makes "the browser could not load it" and "the
+/// page loaded but never settled" tell themselves apart in a bug report.
+fn navigation_budget_exhausted(url: &str, timeouts: &CdpTimeouts, last: &PageFacts) -> CdpFailure {
+    fail(
+        CdpStage::Navigate,
+        format!(
+            "{} did not become usable within {:.0}s (last state: href={} readyState={} status={})",
+            url,
+            timeouts.nav.as_secs_f32(),
+            if last.href.is_empty() {
+                "?"
+            } else {
+                &last.href
+            },
+            if last.ready_state.is_empty() {
+                "?"
+            } else {
+                &last.ready_state
+            },
+            match last.response_status {
+                Some(code) => code.to_string(),
+                None => "no-response".to_string(),
+            }
+        ),
+    )
+}
+
 struct CdpPage {
     stream: TcpStream,
     next_id: u64,
@@ -707,6 +743,15 @@ struct CdpPage {
     /// Set when a read failure left the stream mid-frame, so the session can no
     /// longer be trusted for further requests.
     poisoned: bool,
+    /// Overrides [`CdpTimeouts::call`] for the next request only.
+    ///
+    /// A bounded loop that probes the page repeatedly (the navigation readiness
+    /// poll) owns a deadline of its own, and a single probe must not outlive it:
+    /// with the call budget — 20s — longer than what a probe can usefully spend
+    /// inside a 30s navigation, one stalled probe eats most of the loop's budget
+    /// and the error arrives as a generic call timeout instead of the loop's own
+    /// "did not become usable". Invariant 2 above, applied to the loop.
+    call_deadline: Option<Instant>,
 }
 
 impl CdpPage {
@@ -806,6 +851,7 @@ impl CdpPage {
             read_buf: leftover,
             timeouts,
             poisoned: false,
+            call_deadline: None,
         };
         page.call("Page.enable", json!({})).await?;
         page.call("Runtime.enable", json!({})).await?;
@@ -849,27 +895,18 @@ impl CdpPage {
         let mut last = PageFacts::blank();
         loop {
             if Instant::now() >= deadline {
-                return Err(fail(
-                    CdpStage::Navigate,
-                    format!(
-                        "{} did not become usable within {:.0}s (last state: href={} readyState={} status={})",
-                        url,
-                        self.timeouts.nav.as_secs_f32(),
-                        if last.href.is_empty() { "?" } else { &last.href },
-                        if last.ready_state.is_empty() {
-                            "?"
-                        } else {
-                            &last.ready_state
-                        },
-                        match last.response_status {
-                            Some(code) => code.to_string(),
-                            None => "no-response".to_string(),
-                        }
-                    ),
-                ));
+                return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
             }
 
-            match self.read_page_facts().await {
+            // The probe shares the loop's deadline: a stalled `Runtime.evaluate`
+            // must not spend the call budget while the loop is clocking, or one
+            // slow probe consumes most of the navigation window and the failure
+            // surfaces as a generic call timeout rather than this loop's message.
+            self.call_deadline = Some(deadline);
+            let probe = self.read_page_facts().await;
+            self.call_deadline = None;
+
+            match probe {
                 Ok(facts) => {
                     if is_new_document(&facts.href) && is_usable_ready_state(&facts.ready_state) {
                         return Ok(facts);
@@ -879,8 +916,15 @@ impl CdpPage {
                 // During a navigation the execution context is torn down and
                 // recreated, so those errors just mean "keep polling". A dead
                 // session is different and must not be hidden.
-                Err(_transient) => {
-                    self.ensure_usable()?;
+                Err(transient) => {
+                    // The probe shares this loop's deadline, so a read that ran it
+                    // out is the navigation timing out — not a broken session.
+                    // Reporting it as one would name the wrong culprit and hide
+                    // which step actually stalled.
+                    if Instant::now() >= deadline {
+                        return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
+                    }
+                    self.ensure_usable().map_err(|_| transient)?;
                 }
             }
 
@@ -1020,7 +1064,13 @@ impl CdpPage {
 
         // One deadline governs the whole round trip. An inner read timeout would
         // preempt it and report a generic failure instead of naming `method`.
-        let deadline = Instant::now() + self.timeouts.call;
+        // `call_deadline` lets an enclosing loop tighten it for this call only.
+        let tightened = self.call_deadline;
+        let deadline = tightened.unwrap_or_else(|| Instant::now() + self.timeouts.call);
+        let budget = match tightened {
+            Some(_) => "the remaining budget of the step that issued it".to_string(),
+            None => format!("{:.0}s", self.timeouts.call.as_secs_f32()),
+        };
         loop {
             let text = match self.read_text_frame(deadline).await {
                 Ok(text) => text,
@@ -1028,11 +1078,7 @@ impl CdpPage {
                     self.poisoned = true;
                     return Err(fail(
                         CdpStage::Read,
-                        format!(
-                            "CDP response timed out for {} after {:.0}s",
-                            method,
-                            self.timeouts.call.as_secs_f32()
-                        ),
+                        format!("CDP response timed out for {} after {}", method, budget),
                     ));
                 }
                 Err(ReadFailure::PeerClosed) => {
@@ -1224,6 +1270,85 @@ mod tests {
             .get("expression")
             .and_then(|v| v.as_str())
             .is_some_and(|e| e.contains("readyState"))
+    }
+
+    /// The regression: a stalled readiness probe must not spend the call budget
+    /// while the navigation loop is clocking.
+    ///
+    /// Before the loop owned the probe's deadline, one probe could run for the
+    /// whole 20s call budget inside a 30s navigation window, so a 20s navigation
+    /// budget was really "one stalled probe, then a generic call timeout". The
+    /// inner budgets below are deliberately inverted against the production
+    /// values — a 30s call against a 1.2s navigation — so the assertion fails on
+    /// the old code for the same reason production would stall.
+    #[tokio::test]
+    async fn a_stalled_probe_cannot_outlive_the_navigation_budget() {
+        let fake = FakeCdp::start(Arc::new(move |method, params, _| match method {
+            "Page.navigate" => Reply::Ok(json!({"frameId": "F", "loaderId": "L"})),
+            "Runtime.evaluate" if is_facts_probe(params) => Reply::Never,
+            _ => Reply::Ok(json!({})),
+        }));
+
+        let timeouts = CdpTimeouts {
+            call: Duration::from_secs(30),
+            nav: Duration::from_millis(1200),
+            ..fast()
+        };
+        let mut page = CdpPage::connect_with(&fake.ws_url(), timeouts)
+            .await
+            .expect("connect");
+
+        let started = Instant::now();
+        let err = page
+            .navigate_and_wait("https://stalled.example/")
+            .await
+            .expect_err("a stalled probe must not become a navigation success");
+        let elapsed = started.elapsed();
+
+        assert_eq!(err.stage, CdpStage::Navigate, "{err}");
+        assert!(err.to_string().contains("did not become usable"), "{err}");
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "the probe escaped the navigation budget ({:?} for a 1.2s budget)",
+            elapsed
+        );
+        assert!(
+            page.is_poisoned(),
+            "a probe abandoned mid-flight retires the session, exactly as a call timeout does"
+        );
+    }
+
+    /// The loop's own deadline still wins when it runs out with no probe in
+    /// flight — the tightened budget must not replace the navigation message.
+    #[tokio::test]
+    async fn a_never_usable_document_reports_the_navigation_not_a_call_timeout() {
+        let fake = FakeCdp::start(Arc::new(move |method, params, _| match method {
+            "Page.navigate" => Reply::Ok(json!({"frameId": "F", "loaderId": "L"})),
+            "Runtime.evaluate" if is_facts_probe(params) => {
+                eval_ok(facts("https://slow.example/", "loading", None))
+            }
+            _ => Reply::Ok(json!({})),
+        }));
+
+        let timeouts = CdpTimeouts {
+            call: Duration::from_secs(30),
+            nav: Duration::from_millis(900),
+            ..fast()
+        };
+        let mut page = CdpPage::connect_with(&fake.ws_url(), timeouts)
+            .await
+            .expect("connect");
+
+        let err = page
+            .navigate_and_wait("https://slow.example/")
+            .await
+            .expect_err("a document that never becomes usable is a navigation failure");
+        assert_eq!(err.stage, CdpStage::Navigate, "{err}");
+        assert!(err.to_string().contains("did not become usable"), "{err}");
+        assert!(
+            !page.is_poisoned(),
+            "this document kept answering; only the time ran out"
+        );
     }
 
     #[test]

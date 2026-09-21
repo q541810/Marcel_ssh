@@ -157,9 +157,13 @@ impl AgentManager {
     /// 当前模式）：供手动压缩（无运行中任务）复用，让摘要调用与常规请求的 tools 段
     /// 一致。走 `spawn` 同一个 `build_registry`，工具集将来怎么变都自动跟上。
     ///
+    /// 与常规请求同样过一遍状态门控（见 `apply_state_gate`）。这里问的是**压缩前**
+    /// 那一刻的状态——摘要要解释的是压缩之前那段历史里的工具调用；首次压缩时那段
+    /// 历史里不可能有 `read_history` 调用（工具当时还没出现），所以不会因此失配。
+    ///
     /// 模式来源：前端切换模式时经 `taskStore.setMode` 写入 `defaultAgentMode`，
     /// 即下一次请求实际会用的模式；未知值回落 `Agent`，只影响工具清单不影响安全边界。
-    pub async fn current_tool_definitions(&self) -> Vec<ToolDefinition> {
+    pub async fn current_tool_definitions(&self, conversation_id: &str) -> Vec<ToolDefinition> {
         let (enabled_skills, enabled_mcp_servers, experimental_settings) =
             self.resolve_tool_inputs().await;
         let mode = {
@@ -177,7 +181,12 @@ impl AgentManager {
                 &plugin_registry_guard,
             )
             .await;
-        build_definitions(&registry, &mode)
+        let expose = self
+            .state
+            .conversation_db
+            .has_readable_history(conversation_id)
+            .unwrap_or(true);
+        apply_state_gate(build_definitions(&registry, &mode), expose)
     }
 
     /// 组装并启动一个 agent 实例。负责：
@@ -609,6 +618,47 @@ fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<Tool
     }
 }
 
+/// 按会话状态过滤「该下发的工具清单」：`has_readable_history` 为假时去掉
+/// [`crate::agent::tools::STATE_GATED_TOOLS`] 里的工具。
+///
+/// 为什么是过滤而不是在注册表里不注册：注册表在任务启动时全量构建、整任务共用，
+/// 而"这个会话有没有读不到的东西"会随压缩**在任务中途翻转**。所以
+/// - `spawn` 交给循环的必须是**未过滤**的清单（循环每轮自己再过滤一次，
+///   否则第 0 轮就少了那个工具、之后再也加不回来——过滤只能删不能加）；
+/// - 循环在**每次发请求前**问一次状态；压缩这一步本身用的仍是压缩前那一刻的
+///   清单（摘要要解释的是压缩**之前**那段历史里的工具调用）。
+///
+/// "只增不减"由判据的单调性保证（见 `ConversationDb::has_readable_history`）。
+/// 判据算不出来时调用方按"宁可早给"传 `true`：少给一次工具会让模型失去一个它
+/// 需要的能力，比多付一份说明严重得多。
+pub(crate) fn apply_state_gate(
+    mut defs: Vec<ToolDefinition>,
+    has_readable_history: bool,
+) -> Vec<ToolDefinition> {
+    if has_readable_history {
+        return defs;
+    }
+    defs.retain(|d| !crate::agent::tools::STATE_GATED_TOOLS.contains(&d.name.as_str()));
+    defs
+}
+
+/// 某一轮请求该下发的工具清单：在未门控的 `base` 上按会话当前状态过一遍门控。
+///
+/// 这是循环每轮实际调用的那一步，单独抽出来是为了能直接用真实的会话库测它——
+/// 判据、过滤、以及"子代理恒有"这三件事的**组合**只有在同一个函数里才可测。
+///
+/// `is_subtask` 恒为 `true`：子代理读主 agent 派发时刻的上下文，跟父会话压不压缩
+/// 无关，这个能力对它有用于第一轮。
+pub(crate) fn tools_for_round(
+    base: &[ToolDefinition],
+    is_subtask: bool,
+    conv_db: &crate::agent::conversation::ConversationDb,
+    conversation_id: &str,
+) -> Vec<ToolDefinition> {
+    let expose = is_subtask || conv_db.has_readable_history(conversation_id).unwrap_or(true);
+    apply_state_gate(base.to_vec(), expose)
+}
+
 /// 把会话级思考强度注入 LLM 配置（纯函数，便于单测）。
 ///
 /// 语义：
@@ -904,6 +954,85 @@ mod tests {
 
     fn exp() -> ExperimentalSettings {
         ExperimentalSettings::default()
+    }
+
+    /// 状态门控只做一件事：判据为假时摘掉 [`STATE_GATED_TOOLS`] 里的工具，别的
+    /// 一个都不动；判据为真时原样返回（这是"只增不减"能成立的一半）。
+    #[test]
+    fn state_gate_removes_only_gated_tools() {
+        let def = |name: &str| ToolDefinition {
+            name: name.to_string(),
+            description: "d".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        };
+        let all = vec![def("bash"), def("read_history"), def("read_file")];
+
+        let gated: Vec<String> = apply_state_gate(all.clone(), false)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(gated, vec!["bash", "read_file"], "只该摘掉被门控的那一个");
+
+        let open = apply_state_gate(all.clone(), true);
+        assert_eq!(open.len(), all.len(), "判据为真时不该动清单");
+    }
+
+    /// 循环每轮实际调用的那一步的组合行为：新会话不给、压缩过或派发过子对话才给、
+    /// 子代理恒给。这三件事只有放在同一个函数里才能这样一次测完。
+    #[test]
+    fn tools_for_round_gates_read_history_by_conversation_state() {
+        use crate::agent::conversation::ConversationDb;
+        use crate::agent::conversation_persister::COMPACTION_CARD_PREFIX;
+
+        let def = |name: &str| ToolDefinition {
+            name: name.to_string(),
+            description: "d".to_string(),
+            parameters: serde_json::json!({ "type": "object" }),
+        };
+        let base = vec![def("bash"), def("read_history")];
+        let names = |v: Vec<ToolDefinition>| -> Vec<String> {
+            v.into_iter().map(|d| d.name).collect()
+        };
+
+        let db = ConversationDb::in_memory().expect("db");
+        let fresh = db.create_conversation("conn_1", "fresh").expect("fresh");
+
+        // 全新会话：没有任何读不到的东西 ⇒ 不给（这正是要治的那种会话）
+        assert_eq!(
+            names(tools_for_round(&base, false, &db, &fresh.id)),
+            vec!["bash"]
+        );
+
+        // 子代理恒给：它读主 agent 派发时刻的上下文，与父会话压不压缩无关
+        assert_eq!(
+            names(tools_for_round(&base, true, &db, &fresh.id)),
+            vec!["bash", "read_history"]
+        );
+
+        // 派发过子对话 ⇒ 给（主 agent 要能核对子代理的过程）
+        let child = db
+            .create_sub_conversation("conn_1", "查磁盘", &fresh.id)
+            .expect("child");
+        assert_eq!(
+            names(tools_for_round(&base, false, &db, &fresh.id)),
+            vec!["bash", "read_history"]
+        );
+        db.delete_conversation(&child.id).expect("delete child");
+
+        // 压缩过 ⇒ 给。归档卡按内容前缀认，这里直接落一行卡验判据
+        db.save_message(
+            &fresh.id,
+            "system",
+            &format!("{COMPACTION_CARD_PREFIX}已整理 3 条历史消息（约 100 tokens）"),
+            "2026-01-02T00:00:00Z",
+            None,
+            None,
+        )
+        .expect("card");
+        assert_eq!(
+            names(tools_for_round(&base, false, &db, &fresh.id)),
+            vec!["bash", "read_history"]
+        );
     }
 
     #[test]

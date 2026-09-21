@@ -45,11 +45,14 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function render(withRejectAndStop = true) {
+function render(
+  withRejectAndStop = true,
+  toolCall: ToolCallInfo = TOOL_CALL,
+) {
   act(() => {
     root.render(
       <MobileApprovalSheet
-        toolCall={TOOL_CALL}
+        toolCall={toolCall}
         open={true}
         onApprove={onApprove}
         onReject={onReject}
@@ -139,5 +142,44 @@ describe('MobileApprovalSheet 的拒绝理由', () => {
     expect(input.value).toBe('');
     act(() => byLabel('拒绝').click());
     expect(onReject).toHaveBeenCalledWith(undefined);
+  });
+});
+
+/**
+ * 命令说明（bash 的必填 description）—— 与桌面端 ApprovalDialog 对称断言。
+ * 双端共用 `cleanExecuteCommandArgs`，但渲染是各写一份，所以两边都要钉。
+ */
+describe('Agent 说明（移动端）', () => {
+  const withDescription = (description: unknown): ToolCallInfo => ({
+    ...TOOL_CALL,
+    arguments: { command: 'rm -rf /srv/prod', description },
+  });
+
+  it('有说明时显示，并排在命令前面', () => {
+    render(true, withDescription('清理生产环境的旧构建产物'));
+
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('Agent 说明');
+    expect(text).toContain('清理生产环境的旧构建产物');
+    expect(text.indexOf('Agent 说明')).toBeLessThan(
+      text.indexOf('rm -rf /srv/prod'),
+    );
+  });
+
+  it('说明不再重复出现在参数 JSON 里', () => {
+    render(true, withDescription('清理生产环境的旧构建产物'));
+    const occurrences =
+      (document.body.textContent ?? '').split('清理生产环境的旧构建产物').length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it('没有说明时不显示这一行', () => {
+    render();
+    expect(document.body.textContent ?? '').not.toContain('Agent 说明');
+  });
+
+  it('空白说明等同于没有', () => {
+    render(true, withDescription('  '));
+    expect(document.body.textContent ?? '').not.toContain('Agent 说明');
   });
 });

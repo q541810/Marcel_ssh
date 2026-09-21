@@ -38,6 +38,7 @@ import { resolveTerminalPanelMode } from './sessionUi';
 import { resolveTerminalAppearance } from './mobileSettingsModel';
 import { onBundledNerdFontReady } from '@/lib/terminalFont';
 import { attachXtermMomentumScroll } from './terminalMomentum';
+import { createRemoteScrollForwarder } from '@/lib/terminalScrollGesture';
 import { attachTouchSelection } from './terminalSelection';
 import { attachTapLocate } from './terminalTapLocate';
 
@@ -161,10 +162,13 @@ export default function MobileTerminalHost({
       term.refresh(0, term.rows - 1);
     });
 
-    // xterm touch has no fling; add lift-off inertia via scrollLines.
+    // xterm touch has no fling; add lift-off inertia via scrollLines。备用屏幕
+    // （tmux / vim / less）里本地滚不动，同一个手势改由远端程序自己滚。
+    const remoteScroll = createRemoteScrollForwarder(() => termRef.current);
     const momentum = attachXtermMomentumScroll({
       container: el,
       getTerminal: () => termRef.current,
+      forwardRemoteScroll: remoteScroll.forward,
     });
 
     // xterm selection is mouse-driven; add long-press word select + drag.

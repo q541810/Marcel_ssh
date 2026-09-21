@@ -4,6 +4,12 @@
  * This module adds lift-off fling via public scrollLines API.
  */
 
+import {
+  createLineAccumulator,
+  measureRowHeightPx,
+  type ScrollPoint,
+} from '@/lib/terminalScrollGesture';
+
 export interface VelocitySample {
   t: number;
   /** pageY; higher = finger lower on screen */
@@ -83,28 +89,6 @@ export const DEFAULT_FLING_CONFIG: Readonly<FlingConfig> = {
   velocityWindowMs: 100,
 };
 
-export interface LineAccumulatorResult {
-  lines: number;
-  residualPx: number;
-}
-
-/** Convert pixel motion + residual into whole terminal lines. */
-export function consumeLines(
-  deltaPx: number,
-  residualPx: number,
-  rowHeightPx: number,
-): LineAccumulatorResult {
-  if (!(rowHeightPx > 0)) {
-    return { lines: 0, residualPx: residualPx + deltaPx };
-  }
-  const total = residualPx + deltaPx;
-  const lines = total > 0 ? Math.floor(total / rowHeightPx) : Math.ceil(total / rowHeightPx);
-  return {
-    lines,
-    residualPx: total - lines * rowHeightPx,
-  };
-}
-
 export function shouldStartFling(args: {
   velocityPxPerMs: number;
   travelY: number;
@@ -133,15 +117,24 @@ export interface MomentumScrollHandle {
   stop: () => void;
 }
 
+/** Minimal terminal surface this gesture needs (structural, so tests can fake it). */
+export interface MomentumScrollTerminal {
+  scrollLines: (amount: number) => void;
+  rows: number;
+  hasSelection: () => boolean;
+  buffer: { active: { viewportY: number; type: 'normal' | 'alternate' } };
+}
+
 export interface AttachMomentumScrollOptions {
-  getTerminal: () => {
-    scrollLines: (amount: number) => void;
-    rows: number;
-    hasSelection: () => boolean;
-    buffer: { active: { viewportY: number } };
-  } | null;
+  getTerminal: () => MomentumScrollTerminal | null;
   /** Root that contains .xterm (usually the open() host element). */
   container: HTMLElement;
+  /**
+   * 备用屏幕里本地没有回滚缓冲，`term.scrollLines()` 是空转（xterm 自己的
+   * follow-finger 也一起空转）：follow-finger 与甩动都改交给它转发给远端程序
+   * （tmux / vim / less 自己滚），见 terminalScrollGesture。
+   */
+  forwardRemoteScroll?: (lines: number, at: ScrollPoint) => void;
   config?: Partial<FlingConfig>;
   /** clock for tests */
   now?: () => number;
@@ -168,8 +161,15 @@ export function attachXtermMomentumScroll(
   let tracking = false;
   let flingRaf: number | null = null;
   let velocity = 0;
-  let residual = 0;
   let lastFrameT = 0;
+  /** 最近一次手指落点：备用屏幕里它就是滚轮报告的位置（多窗格时决定滚哪个）。 */
+  let lastPoint: ScrollPoint = { clientX: 0, clientY: 0 };
+  /** 上一次 touchmove 的 clientY，用来算备用屏幕里的手指位移。 */
+  let lastFingerY: number | null = null;
+
+  const accumulator = createLineAccumulator(() =>
+    measureRowHeightPx(options.container, options.getTerminal()?.rows ?? 0),
+  );
 
   const stop = () => {
     if (flingRaf !== null) {
@@ -177,17 +177,22 @@ export function attachXtermMomentumScroll(
       flingRaf = null;
     }
     velocity = 0;
-    residual = 0;
+    accumulator.reset();
   };
 
-  const rowHeight = (term: NonNullable<ReturnType<typeof options.getTerminal>>) => {
-    const viewport = options.container.querySelector(
-      '.xterm-viewport',
-    ) as HTMLElement | null;
-    if (viewport && term.rows > 0 && viewport.clientHeight > 0) {
-      return viewport.clientHeight / term.rows;
-    }
-    return 16;
+  /**
+   * 备用屏幕里本地滚不动（没有回滚缓冲），交给远端程序自己滚。
+   * @returns 是否已按远端滚动处理（false = 照旧走本地 scrollLines）。
+   */
+  const forwardToRemote = (
+    term: MomentumScrollTerminal,
+    lines: number,
+    at: ScrollPoint,
+  ): boolean => {
+    const forward = options.forwardRemoteScroll;
+    if (!forward || term.buffer.active.type !== 'alternate') return false;
+    forward(lines, at);
+    return true;
   };
 
   const tick = (t: number) => {
@@ -205,10 +210,8 @@ export function attachXtermMomentumScroll(
       frictionPerMs: cfg.frictionPerMs,
     });
     velocity = stepped.velocityPxPerMs;
-    const rh = rowHeight(term);
-    const { lines, residualPx } = consumeLines(stepped.deltaPx, residual, rh);
-    residual = residualPx;
-    if (lines !== 0) {
+    const lines = accumulator.add(stepped.deltaPx);
+    if (lines !== 0 && !forwardToRemote(term, lines, lastPoint)) {
       const before = term.buffer.active.viewportY;
       term.scrollLines(lines);
       const after = term.buffer.active.viewportY;
@@ -229,12 +232,15 @@ export function attachXtermMomentumScroll(
     if (ev.touches.length !== 1) {
       tracking = false;
       samples = [];
+      lastFingerY = null;
       return;
     }
     const touch = ev.touches[0]!;
     tracking = true;
     startX = touch.pageX;
     startY = touch.pageY;
+    lastFingerY = touch.clientY;
+    lastPoint = { clientX: touch.clientX, clientY: touch.clientY };
     samples = [{ t: now(), y: touch.pageY }];
   };
 
@@ -245,6 +251,16 @@ export function attachXtermMomentumScroll(
     samples.push({ t, y: touch.pageY });
     // Cap sample buffer
     if (samples.length > 32) samples = samples.slice(-24);
+
+    lastPoint = { clientX: touch.clientX, clientY: touch.clientY };
+    // 备用屏幕（tmux / vim / less）：xterm 自己的 follow-finger 在那边是空转，
+    // 这里代替它把手指位移折算成行数转给远端程序。
+    const term = options.getTerminal();
+    const previousY = lastFingerY;
+    lastFingerY = touch.clientY;
+    if (!term || previousY === null) return;
+    const lines = accumulator.add(previousY - touch.clientY);
+    if (lines !== 0) forwardToRemote(term, lines, lastPoint);
   };
 
   const onTouchEnd = (ev: TouchEvent) => {
@@ -270,6 +286,7 @@ export function attachXtermMomentumScroll(
     const travelX = end.pageX - startX;
     const v = estimateScrollVelocity(samples, cfg.velocityWindowMs);
     samples = [];
+    lastFingerY = null;
     if (
       !shouldStartFling({
         velocityPxPerMs: v,
@@ -282,7 +299,6 @@ export function attachXtermMomentumScroll(
       return;
     }
     velocity = v;
-    residual = 0;
     lastFrameT = t;
     flingRaf = raf(tick);
   };
@@ -290,6 +306,7 @@ export function attachXtermMomentumScroll(
   const onTouchCancel = () => {
     tracking = false;
     samples = [];
+    lastFingerY = null;
     stop();
   };
 

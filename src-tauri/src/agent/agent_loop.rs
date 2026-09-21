@@ -177,7 +177,10 @@ pub(crate) async fn run_agent_loop(
     task_id: String,
     llm_manager: LlmManager,
     mut messages: Vec<LlmMessage>,
-    tools: Vec<ToolDefinition>,
+    // 注册表全量构建出的工具清单（**未**过状态门控）。每轮发请求前再过一遍
+    // `manager::apply_state_gate`——会话中途发生压缩时，`read_history` 从那一轮
+    // 起才该出现（见 `tools::STATE_GATED_TOOLS`）。
+    base_tools: Vec<ToolDefinition>,
     mode: AgentMode,
     approval_mode: Option<AgentMode>,
     agent_settings: AgentModeSettings,
@@ -298,6 +301,21 @@ pub(crate) async fn run_agent_loop(
             messages.push(LlmMessage::system(plan_context));
         }
 
+        // 本轮该下发的工具清单：注册表是任务启动时全量构建、整任务共用的，而
+        // "这个会话有没有读不到的东西"会随压缩在任务中途翻转（见
+        // `tools::STATE_GATED_TOOLS`），所以每轮按当前状态过一遍门控。
+        // 判据算不出来时按"宁可早给"给全量——少给一次工具会让模型失去一个它
+        // 需要的能力，比多付一份说明严重得多。
+        let current_tools = || {
+            crate::agent::manager::tools_for_round(
+                &base_tools,
+                is_subtask,
+                &persister.conv_db,
+                &conversation_id,
+            )
+        };
+        let mut tools = current_tools();
+
         // 0.5 运行时上下文治理（pressure 触发，对齐 DSH compaction）：
         //     估算 token 超窗口阈值（context_window × 0.8）时，先修剪旧工具结果，
         //     再对旧轮次做 LLM 摘要替换。压缩全过程经 on_event 实时发前端事件
@@ -326,6 +344,12 @@ pub(crate) async fn run_agent_loop(
                 outcome.shadowed_tokens,
                 persisted
             );
+        }
+
+        // 这次压缩刚给本会话造出归档段：同一次请求就该带上 read_history，不拖到
+        // 下一轮——模型越早知道能回读原文，越不会去重跑已经不可复现的现场。
+        if run.outcome.is_some() {
+            tools = current_tools();
         }
 
         // 1. Call LLM (streaming) — with cancellation support

@@ -225,6 +225,16 @@ export default function MobileApprovalSheet({
           </div>
         ) : isExecuteCommand && cleanedCmd?.main ? (
           <div>
+            {/* agent 对这条命令的说明。标注来源是刻意的：它可能把一条危险命令
+                说成「只读检查」，写清这是 agent 自述，用户才不会把它当成系统判定。 */}
+            {cleanedCmd.description && (
+              <div className="mb-2">
+                <div className="mb-1 text-xs text-zinc-500">Agent 说明</div>
+                <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-zinc-200">
+                  {cleanedCmd.description}
+                </p>
+              </div>
+            )}
             <div className="mb-1 text-xs text-zinc-500">参数</div>
             <div className="overflow-hidden rounded-lg border border-zinc-700 bg-zinc-950">
               <div className="flex items-start gap-2 px-3 py-2">

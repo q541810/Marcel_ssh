@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   attachXtermMomentumScroll,
-  consumeLines,
   estimateScrollVelocity,
   shouldStartFling,
   stepFling,
@@ -65,29 +64,6 @@ describe('stepFling', () => {
     });
     expect(r.deltaPx).toBe(0);
     expect(r.velocityPxPerMs).toBe(1);
-  });
-});
-
-describe('consumeLines', () => {
-  it('accumulates residual across small steps', () => {
-    const a = consumeLines(10, 0, 16);
-    expect(a.lines).toBe(0);
-    expect(a.residualPx).toBe(10);
-    const b = consumeLines(10, a.residualPx, 16);
-    expect(b.lines).toBe(1);
-    expect(b.residualPx).toBe(4);
-  });
-
-  it('handles negative motion (scroll up)', () => {
-    const r = consumeLines(-20, 0, 16);
-    expect(r.lines).toBe(-1);
-    expect(r.residualPx).toBeCloseTo(-4, 5);
-  });
-
-  it('tolerates invalid row height', () => {
-    const r = consumeLines(10, 5, 0);
-    expect(r.lines).toBe(0);
-    expect(r.residualPx).toBe(15);
   });
 });
 
@@ -183,8 +159,9 @@ describe('attachXtermMomentumScroll', () => {
     return container;
   }
 
-  function makeHarness() {
+  function makeHarness(options: { bufferType?: 'normal' | 'alternate' } = {}) {
     const container = makeContainer();
+    const forwardRemoteScroll = vi.fn();
 
     let viewportY = 50;
     const scrollLines = vi.fn((n: number) => {
@@ -196,7 +173,7 @@ describe('attachXtermMomentumScroll', () => {
       hasSelection: () => false,
       buffer: {
         get active() {
-          return { viewportY };
+          return { viewportY, type: options.bufferType ?? ('normal' as const) };
         },
       },
     };
@@ -206,6 +183,7 @@ describe('attachXtermMomentumScroll', () => {
     const handle = attachXtermMomentumScroll({
       container: container as unknown as HTMLElement,
       getTerminal: () => term,
+      forwardRemoteScroll,
       now: () => t,
       raf: (cb) => {
         frames.push(cb);
@@ -229,7 +207,7 @@ describe('attachXtermMomentumScroll', () => {
       time: number,
     ) => {
       t = time;
-      const touch = { pageX, pageY };
+      const touch = { pageX, pageY, clientX: pageX, clientY: pageY };
       container.dispatchEvent(type, {
         touches: type === 'touchend' ? [] : [touch],
         changedTouches: [touch],
@@ -245,7 +223,14 @@ describe('attachXtermMomentumScroll', () => {
       }
     };
 
-    return { handle, scrollLines, fire, runFrames, getY: () => viewportY };
+    return {
+      handle,
+      scrollLines,
+      forwardRemoteScroll,
+      fire,
+      runFrames,
+      getY: () => viewportY,
+    };
   }
 
   it('flings after a fast upward flick and calls scrollLines', () => {
@@ -283,6 +268,46 @@ describe('attachXtermMomentumScroll', () => {
     fire('touchstart', 10, 100, 1100);
     runFrames(10);
     expect(scrollLines.mock.calls.length).toBe(mid);
+    handle.dispose();
+  });
+
+  it('keeps local scrolling in the normal buffer', () => {
+    const { handle, scrollLines, forwardRemoteScroll, fire, runFrames } = makeHarness();
+    fire('touchstart', 10, 300, 1000);
+    fire('touchmove', 10, 250, 1020);
+    fire('touchend', 10, 140, 1055);
+    runFrames(5);
+    expect(scrollLines).toHaveBeenCalled();
+    expect(forwardRemoteScroll).not.toHaveBeenCalled();
+    handle.dispose();
+  });
+
+  it('forwards follow-finger travel to the remote in the alternate buffer', () => {
+    const { handle, scrollLines, forwardRemoteScroll, fire } = makeHarness({
+      bufferType: 'alternate',
+    });
+    fire('touchstart', 10, 300, 1000);
+    // 手指上移 32px，视口 320px / 20 行 = 16px 一行 → 2 行，方向为正（往新内容滚）
+    fire('touchmove', 10, 268, 1016);
+    expect(forwardRemoteScroll).toHaveBeenCalledWith(2, { clientX: 10, clientY: 268 });
+    expect(scrollLines).not.toHaveBeenCalled();
+    handle.dispose();
+  });
+
+  it('forwards the lift-off fling in the alternate buffer instead of scrolling locally', () => {
+    const { handle, scrollLines, forwardRemoteScroll, fire, runFrames } = makeHarness({
+      bufferType: 'alternate',
+    });
+    fire('touchstart', 10, 300, 1000);
+    fire('touchmove', 10, 250, 1020);
+    fire('touchmove', 10, 180, 1040);
+    fire('touchend', 10, 140, 1055);
+    runFrames(8);
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(forwardRemoteScroll.mock.calls.length).toBeGreaterThan(0);
+    for (const call of forwardRemoteScroll.mock.calls) {
+      expect(call[0]).toBeGreaterThan(0);
+    }
     handle.dispose();
   });
 });

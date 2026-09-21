@@ -294,6 +294,16 @@ impl ToolDispatcher {
 
         let requires_default_approval = tool.requires_approval_by_default();
 
+        // 0.4 必填参数预检：参数不合格的调用既不弹审批、也不占用模型审批。
+        //     与上面写前必须已读同一个道理——用户不该为一次注定失败的调用点批准，
+        //     点完还得看它失败、等模型补参数后**再点一次**。
+        if let Err(message) = tool.validate_arguments(&tc.arguments) {
+            return DispatchResult::from_tool_output(
+                ToolOutput::fail(tc.name.clone(), message),
+                effective_disposition,
+            );
+        }
+
         // 0.5 / 0.6 写前必须已读：注定失败的写会直接失败并提示先读取，不进入审批
         // 流程（不值得让用户为一次注定失败的调用点确认）。强度由声明决定：
         //   Edit      —— 改写既有文件，目标必须已读过；
