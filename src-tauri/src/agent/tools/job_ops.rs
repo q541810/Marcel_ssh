@@ -73,8 +73,9 @@ impl AgentTool for JobOutputTool {
     }
 
     fn description(&self) -> &str {
-        "Read output from a running or completed background job. Supports incremental \
-         streaming via offset tracking and optional blocking wait until new output or settlement."
+        "Read output from a running or completed background job on the remote server. \
+         Supports incremental streaming via offset tracking and optional blocking wait \
+         until new output or settlement."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -175,9 +176,9 @@ impl AgentTool for JobKillTool {
     }
 
     fn description(&self) -> &str {
-        "Request cancellation of a running background job by its job ID. Stops waiting \
-         for its output and closes the SSH channel; the remote process is not guaranteed \
-         to stop."
+        "Request cancellation of a running background job on the remote server by its \
+         job ID. Stops waiting for its output and closes the SSH channel; the remote \
+         process is not guaranteed to stop."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -263,7 +264,7 @@ impl AgentTool for JobListTool {
     }
 
     fn description(&self) -> &str {
-        "List running or recent background jobs in the current SSH session with their IDs, descriptions, and statuses."
+        "List running or recent background jobs on the remote server (current SSH session) with their IDs, descriptions, and statuses."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

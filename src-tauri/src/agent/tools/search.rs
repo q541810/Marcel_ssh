@@ -33,9 +33,10 @@ impl AgentTool for SearchFilesTool {
     }
 
     fn description(&self) -> &str {
-        "Recursively search for a pattern in files under a directory (grep -rnI). \
-         By default the pattern is a fixed string; pass `regex=true` for extended regex. \
-         Binary files are skipped. Results are capped at 200 matches by default."
+        "Recursively search for a pattern in files under a directory on the remote \
+         server (grep -rnI). By default the pattern is a fixed string; pass `regex=true` \
+         for extended regex. Binary files are skipped. Results are capped at 200 matches \
+         by default."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

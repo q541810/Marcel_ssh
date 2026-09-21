@@ -32,9 +32,10 @@ impl AgentTool for OpenCloudPageTool {
     }
 
     fn description(&self) -> &str {
-        "Open the Genshin Impact cloud gaming page (https://ys.mihoyo.com/cloud/) in the system's default browser. \
-         Use this when the user asks to see the cloud page, says '哎，云朵？', or wants \
-         to play Genshin Impact via cloud gaming."
+        "Open the Genshin Impact cloud gaming page (https://ys.mihoyo.com/cloud/) in the \
+         default browser on the user's own computer (not the server). Use this when the \
+         user asks to see the cloud page, says '哎，云朵？', or wants to play Genshin \
+         Impact via cloud gaming."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

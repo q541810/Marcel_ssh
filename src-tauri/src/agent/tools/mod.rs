@@ -705,18 +705,43 @@ pub enum PromptSection {
     Subagent,
 }
 
+/// 工具作用在哪一侧。
+///
+/// 模型最容易在这里想错：系统提示词曾断言过"你的操作均在远程服务器上进行"
+/// （`templates/agent/角色.hbs` 里那句历史遗留），而 `http_get` / `web_search`
+/// 其实从运行 Marcel SSH 的这台电脑发起、`render_html` 只在应用内渲染。
+///
+/// **权威写在各工具自己的 `description()` 里**——它是模型每轮都会读到的、
+/// 且与工具同生共死（不注册就不出现，不会说隔夜话）的那一处。这里只声明事实，
+/// 供 `acting_tools_state_their_side` 测试核对描述有没有跟上。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSide {
+    /// 经 SSH 在远端服务器上执行（命令、远端文件、远端系统信息）。
+    Remote,
+    /// 在用户本机执行（本机浏览器、从本机发起的网络请求）。
+    Local,
+    /// 两端都有：文件在用户本机与远端之间搬运。
+    Both,
+    /// 不作用于任何一台机器：应用内的弹窗、计划、会话库、渲染。
+    App,
+}
+
 /// 一个内置工具的完整声明。
 ///
 /// 三个模式 builder 都从声明表过滤生成，所以「要不要在 Plan 模式出现」
 /// （`modes`）、「子 agent 能不能拿到」（`roles`）、「挂在哪个实验性开关后面」
 /// （`switch`）、「参数里哪个是命令/路径」（`semantics`）、「要不要提示词段」
-/// （`prompt_section`）都只在这里写一遍，不必再去 builder / dispatcher /
-/// 提示词拼装处找对应的 `if`。
+/// （`prompt_section`）、「作用在哪一侧」（`side`）都只在这里写一遍，不必再去
+/// builder / dispatcher / 提示词拼装处找对应的 `if`。
 #[derive(Clone, Copy)]
 struct BuiltinToolSpec {
     /// 工具名，必须与 `AgentTool::name()` 完全一致。同名条目允许出现两条，
     /// 只要 `modes` 不重叠 —— Plan 模式的 `ask_user` 就是这样（见下）。
     name: &'static str,
+    /// 作用在哪一侧。**必填**（不是 `Option`、没有默认值）是刻意的：新工具
+    /// 不声明就编译不过；声明了但描述里没写，由 `acting_tools_state_their_side`
+    /// 测试拦下。两处都拦不住才是这次想修的漏。
+    side: ToolSide,
     modes: ToolModes,
     roles: ToolRoles,
     /// 需要在「设置 → 实验性功能」里打开的开关；`None` = 无条件可用。
@@ -746,6 +771,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // ── 只读 / 通用 ──
     BuiltinToolSpec {
         name: "connection_info",
+        side: ToolSide::App,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -755,6 +781,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "bash",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -766,6 +793,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         // 回读会话历史原文（含被压缩掉的归档原文）：本机只读，不需要审批；
         // 范围与上限由工具自己把关（见 tools/history.rs）。
         name: "read_history",
+        side: ToolSide::App,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -775,6 +803,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "read_file",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -784,6 +813,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "list_directory",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -793,6 +823,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "search_files",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -802,6 +833,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "system_info",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -812,6 +844,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // ── 后台作业 ──
     BuiltinToolSpec {
         name: "job_output",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -821,6 +854,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "job_kill",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -830,6 +864,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "job_list",
+        side: ToolSide::Remote,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: None,
@@ -842,6 +877,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // 所以 Plan 用的实例开 `reject_plan_mode_switch_questions`。
     BuiltinToolSpec {
         name: "ask_user",
+        side: ToolSide::App,
         modes: ToolModes::PLAN,
         roles: ToolRoles::Both,
         switch: None,
@@ -851,6 +887,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "ask_user",
+        side: ToolSide::App,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
@@ -861,6 +898,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // ── 写工具：Plan 模式不提供 ──
     BuiltinToolSpec {
         name: "write_file",
+        side: ToolSide::Remote,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
@@ -870,6 +908,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "edit_file",
+        side: ToolSide::Remote,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
@@ -880,6 +919,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // ── 编排：子 agent 是「单任务执行者」，不派发子 agent、不维护 todolist ──
     BuiltinToolSpec {
         name: "create_plan",
+        side: ToolSide::App,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::MainOnly,
         switch: None,
@@ -889,6 +929,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "update_plan_item",
+        side: ToolSide::App,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::MainOnly,
         switch: None,
@@ -898,6 +939,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "edit_plan",
+        side: ToolSide::App,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::MainOnly,
         switch: None,
@@ -907,6 +949,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "subagent",
+        side: ToolSide::App,
         modes: ToolModes::ALL,
         roles: ToolRoles::MainOnly,
         switch: None,
@@ -917,6 +960,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // ── 实验性：联网能力 ──
     BuiltinToolSpec {
         name: "web_search",
+        side: ToolSide::Local,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: Some(ToolSwitch::WebSearch),
@@ -926,6 +970,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "http_get",
+        side: ToolSide::Local,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: Some(ToolSwitch::HttpFetch),
@@ -936,6 +981,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
     // 需要联网打开云厂商控制台；离线不可用，也不属于只读调研，故不进 Plan 模式。
     BuiltinToolSpec {
         name: "open_cloud_page",
+        side: ToolSide::Local,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: Some(ToolSwitch::CloudPage),
@@ -954,6 +1000,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
 static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
     BuiltinToolSpec {
         name: "render_html",
+        side: ToolSide::App,
         modes: ToolModes::ALL,
         roles: ToolRoles::Both,
         switch: Some(ToolSwitch::HtmlRender),
@@ -963,6 +1010,7 @@ static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "upload_file",
+        side: ToolSide::Both,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
@@ -972,6 +1020,7 @@ static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
     },
     BuiltinToolSpec {
         name: "download_file",
+        side: ToolSide::Both,
         modes: ToolModes::EXECUTE,
         roles: ToolRoles::Both,
         switch: None,
@@ -1225,6 +1274,65 @@ mod tests {
             host_params >= 2,
             "带 host 参数的工具数异常：{}",
             host_params
+        );
+    }
+
+    /// 作用于机器的工具，必须在自己的 `description()` 里写明作用侧。
+    ///
+    /// 「模型知道这个工具动的是哪台机器」由三处合起来保证：
+    /// 1. `templates/agent/角色.hbs` 只纠正"操作全在远端"这个心智模型 —— 它**不能
+    ///    点名工具**（无工具段的构建里出现工具名会碎掉模板测试），所以它只能说
+    ///    "以工具说明为准"；
+    /// 2. 各工具自己的描述是**权威**：模型每轮请求都会读到工具 schema，且描述与
+    ///    工具同生共死（不注册就不出现，不会说隔夜话）；
+    /// 3. 这条测试拦住第三件事——新工具加了、`side` 声明了、描述忘了写。
+    ///
+    /// `side` 必填只保证"声明过"，声明的兑现靠这里。`ToolSide::App` 不要求：
+    /// 它压根不碰机器，硬要它写一句"我在应用内跑"只会变成凑词。
+    ///
+    /// 这是**下限**检查：远端侧只要求描述里出现指向远端的词，不钉具体措辞——
+    /// 它拦的是"整篇描述一个字没提作用侧"，不是审文案。
+    #[test]
+    fn acting_tools_state_their_side() {
+        const REMOTE: &[&str] = &["remote", "远端", "远程"];
+        const LOCAL: &[&str] = &[
+            "this computer",
+            "where marcel ssh runs",
+            "user's own computer",
+            "本机",
+            "这台电脑",
+        ];
+        let has_any = |hay: &str, words: &[&str]| words.iter().any(|w| hay.contains(*w));
+
+        let mut checked = 0;
+        for spec in builtin_tool_specs() {
+            let wanted: &[(&str, &[&str])] = match spec.side {
+                ToolSide::App => continue,
+                ToolSide::Remote => &[("远端", REMOTE)],
+                ToolSide::Local => &[("本机", LOCAL)],
+                ToolSide::Both => &[("远端", REMOTE), ("本机", LOCAL)],
+            };
+            // 直接构造工具读描述，不走注册表：注册表按模式/角色/开关过滤，
+            // 那样会漏掉「这次没被注册」的那些（例如开关关掉的 web_search）。
+            let desc = (spec.build)().description().to_lowercase();
+            for (label, words) in wanted {
+                assert!(
+                    has_any(&desc, words),
+                    "工具 {} 声明作用于{}侧，但它的 description() 里没有任何对应的词（{}）。\n作用在哪一侧的权威在各工具自己的描述里，补上描述再改声明：\n{}",
+                    spec.name,
+                    label,
+                    words.join(" / "),
+                    desc
+                );
+            }
+            checked += 1;
+        }
+        // 桌面构建下应为 10 Remote + 3 Local + 2 Both。这个下限只防"声明表没读全
+        // 导致测试空转"。
+        assert!(
+            checked >= 10,
+            "只核对到 {} 个作用于机器的工具，声明表可能没读全",
+            checked
         );
     }
 

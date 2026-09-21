@@ -140,7 +140,7 @@ impl AgentTool for RenderHtmlTool {
     }
 
     fn description(&self) -> &str {
-        "Show an interactive HTML visualization directly in the conversation. Proactively use it for charts, simulations, comparisons, parameter exploration, algorithm walkthroughs, dashboards, and UI mockups whenever visual presentation would improve understanding; the user need not explicitly ask for a visualization. `fragment` is literal inline body markup only (no document skeleton); optional `title` names it and `mode` is inline or wide. The page appears while you generate it. Before the first call, follow the enabled Visualize skill for the design system, motion contract, chart recipes, CSP limits, and response rules."
+        "Show an interactive HTML visualization directly in the conversation — it is rendered inside the app, nothing is written to the server. Proactively use it for charts, simulations, comparisons, parameter exploration, algorithm walkthroughs, dashboards, and UI mockups whenever visual presentation would improve understanding; the user need not explicitly ask for a visualization. `fragment` is literal inline body markup only (no document skeleton); optional `title` names it and `mode` is inline or wide. The page appears while you generate it. Before the first call, follow the enabled Visualize skill for the design system, motion contract, chart recipes, CSP limits, and response rules."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

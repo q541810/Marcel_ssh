@@ -97,6 +97,8 @@ impl AgentTool for HttpGetTool {
          Use this to read detailed content from URLs returned by the `web_search` tool. \
          Backend follows Settings → 网页获取方式: browser uses local Chrome/Edge, \
          html uses bare HTTP GET. \
+         Requests are sent from this computer (where Marcel SSH runs), not from the \
+         remote server. \
          IMPORTANT: When you need to read multiple pages, ALWAYS use the `urls` array \
          instead of calling this tool repeatedly. Returns readable Markdown by default, \
          preserving headings, lists, code blocks, tables, links, and basic HTTP metadata. \

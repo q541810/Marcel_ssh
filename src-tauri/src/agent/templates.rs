@@ -43,6 +43,10 @@
 //! - 需求澄清 / 沟通风格 / 结论放哪 / 上下文管理 → `templates/agent/沟通.hbs`
 //!   （仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
 //! - 人设、主动性、惯例、后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`
+//! - **工具作用在哪一侧**（远端 / 用户本机 / 两端 / 应用内）→ 各工具自己的
+//!   `description()`，权威在那里；提示词里只允许说"以工具说明为准"，不得复述
+//!   工具清单（`tools::ToolSide` 必填 + `acting_tools_state_their_side` 测试：
+//!   新增工具不声明 `side` 编译不过，声明了但描述没写测试会红）
 //! - 子 agent 行为约束 → `templates/agent/子agent_只读.hbs` / `子agent_执行.hbs`
 //!   （桌面/移动的工具清单差异走 `can_transfer` 分支，不要再写 cfg 副本）
 //! - 多机操控与 host 规则 → `templates/agent/多机.hbs`（工具侧只复用

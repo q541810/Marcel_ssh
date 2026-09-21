@@ -601,10 +601,10 @@ impl AgentTool for EditFileTool {
     }
 
     fn description(&self) -> &str {
-        "Precisely edit a file by replacing an exact occurrence of `old_content` \
-         with `new_content`. Fails if `old_content` is missing or appears more \
-         than once (unless `replace_all` is true). Always read the file first \
-         to obtain `old_content` verbatim."
+        "Precisely edit a file on the remote server by replacing an exact occurrence \
+         of `old_content` with `new_content`. Fails if `old_content` is missing or \
+         appears more than once (unless `replace_all` is true). Always read the file \
+         first to obtain `old_content` verbatim."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
