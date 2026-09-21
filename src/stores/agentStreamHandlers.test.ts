@@ -6,6 +6,7 @@ import {
   handleTextDelta,
   handleThinkingDelta,
   handleDone,
+  handleCancelled,
   handleError,
   handleRetrying,
   handleCompactionStart,
@@ -19,6 +20,9 @@ import {
 } from '@/stores/agentStreamHandlers';
 import type { AgentMessage, AgentTaskPlan, ToolResultPayload } from '@/lib/types';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useTaskStore } from '@/stores/taskStore';
+import { createDefaultStreamHandler } from '@/stores/storeStreamAdapter';
+import { segmentTurns } from '@/lib/agentTurnFold';
 import { mockHandler } from './streamHandlerMock';
 
 
@@ -949,6 +953,118 @@ describe('agentStreamHandlers', () => {
       const card = handler._messages[convId][1];
       expect(card.compaction?.status).toBe('running');
       expect(getStreamState(taskId).compactionMessageId).toBe(card.id);
+    });
+  });
+
+  /**
+   * 取消终止（`StreamEvent::Cancelled`）：后端取消路径发的终态事件。
+   * 与 `handleDone` 的差别必须钉住 —— 把取消当自然结束处理就会出现
+   * 「卡片没了但 agent 还能看到」：在飞卡片被删 + 回合被标 completed 折叠。
+   *
+   * 这一段用**真实 adapter + 真实 store**（不用 mockHandler）：本特性的要害正是
+   * 「在飞卡片 / 回合收尾状态 / 任务状态」三处落到同一份真实状态上，假 handler
+   * 会把它们分别记在私有 map 里，测不到真实装配。
+   */
+  describe('handleCancelled', () => {
+    /** 停止瞬间的真实形态：过场正文与工具卡交替，最后一张在飞。 */
+    function stoppedTurnMessages(): AgentMessage[] {
+      const tool = (id: string, executing: boolean): AgentMessage => ({
+        id,
+        role: 'tool',
+        content: '',
+        timestamp: '',
+        isExecuting: executing,
+        toolResult: {
+          toolName: 'bash',
+          summary: '$ ls',
+          result: '',
+          success: true,
+          blocked: false,
+          toolCallId: `call-${id}`,
+        },
+      });
+      return [
+        { id: 'u1', role: 'user', content: '改版本号', timestamp: '' },
+        { id: 'a1', role: 'assistant', content: '先看仓库。', timestamp: '' },
+        tool('t1', false),
+        { id: 'a2', role: 'assistant', content: '再看提交记录。', timestamp: '' },
+        tool('t2', false),
+        tool('t3', false),
+        { id: 'a4', role: 'assistant', content: '再看打包脚本。', timestamp: '' },
+        tool('t4', true), // 在飞
+        { id: 'skel', role: 'assistant', content: '', timestamp: '', isLoading: true },
+      ];
+    }
+
+    function seedStopMoment() {
+      useConversationStore.setState({
+        messages: { [convId]: stoppedTurnMessages() },
+        activeConversationId: convId,
+      });
+      useTaskStore.setState({
+        tasks: {
+          [taskId]: {
+            id: taskId,
+            sessionId: 's1',
+            conversationId: convId,
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: '',
+          },
+        },
+      });
+    }
+
+    const convMsgs = () => useConversationStore.getState().messages[convId];
+
+    function tailFoldable(): boolean {
+      const segs = segmentTurns(convMsgs(), { tailActive: false });
+      return segs[segs.length - 1].foldable;
+    }
+
+    it('保留在飞的工具卡片（标成已中断）而不是删掉', () => {
+      seedStopMoment();
+
+      handleCancelled(createDefaultStreamHandler(), taskId, convId, 'skel');
+
+      const inFlight = convMsgs().find((m) => m.id === 't4');
+      expect(inFlight).toBeDefined();
+      expect(inFlight!.isExecuting).toBe(false);
+      expect(inFlight!.toolResult?.wasAborted).toBe(true);
+      expect(inFlight!.toolResult?.result).toContain('已停止等待输出并关闭 SSH 通道');
+    });
+
+    it('回合收尾状态写 cancelled → 过程不被折叠吞掉；任务记 cancelled', () => {
+      seedStopMoment();
+
+      handleCancelled(createDefaultStreamHandler(), taskId, convId, 'skel');
+
+      expect(convMsgs()[0].turnState).toBe('cancelled');
+      expect(useTaskStore.getState().tasks[taskId].status).toBe('cancelled');
+      // 长回合（>= 3 张工具卡）本来"长得像"可以折叠 —— 收尾状态必须否决它
+      expect(tailFoldable()).toBe(false);
+    });
+
+    it('留下正文、清掉骨架与空 assistant 残留（与 Done 同一套清理）', () => {
+      seedStopMoment();
+
+      handleCancelled(createDefaultStreamHandler(), taskId, convId, 'skel');
+
+      expect(convMsgs().some((m) => m.isLoading)).toBe(false);
+      expect(convMsgs().some((m) => m.id === 'skel')).toBe(false);
+      expect(convMsgs().find((m) => m.id === 'a4')?.content).toBe('再看打包脚本。');
+    });
+
+    it('对照：同形态下 Done（模型自然结束）才收走卡片、标 completed、允许折叠', () => {
+      seedStopMoment();
+
+      handleDone(createDefaultStreamHandler(), taskId, convId, 'skel');
+
+      expect(convMsgs().some((m) => m.id === 't4')).toBe(false); // 在飞卡片被删
+      expect(convMsgs()[0].turnState).toBe('completed');
+      expect(useTaskStore.getState().tasks[taskId].status).toBe('completed');
+      expect(tailFoldable()).toBe(true);
     });
   });
 });

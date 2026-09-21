@@ -857,6 +857,10 @@ export type LlmStreamEvent =
   | { type: 'toolCallDelta'; id: string; argumentsDelta: string }
   | { type: 'usage'; usage: TokenUsage }
   | { type: 'done' }
+  // 取消终止：agent loop 因取消（手动停止 / 拒绝并停止 / 会话级联取消）退出。
+  // 与 'done' 分开是语义要求——'done' = 模型自然结束，前端据此删掉在飞的工具
+  // 卡片、把回合收尾状态写成 completed（进而折叠）；取消时这两件事都是错的。
+  | { type: 'cancelled' }
   | { type: 'error'; message: string }
   | { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string }
   // Context compaction visibility — LLM summarization of old history is in

@@ -16,6 +16,7 @@ import {
   handleTextDelta,
   handleThinkingDelta,
   handleDone,
+  handleCancelled,
   handleError,
   handleRetrying,
   handleToolOutput,
@@ -312,6 +313,14 @@ export async function attachStreamListener(taskId: string, conversationId: strin
 
       if (hasEventType(ev, 'done')) {
         handleDone(handler, taskId, conversationId, loadingAssistantId);
+        cleanupTaskListeners(taskId);
+        return;
+      }
+
+      if (hasEventType(ev, 'cancelled')) {
+        // 取消终止（后端取消路径）：**不能**走 handleDone——那会把在飞的工具
+        // 卡片当成"没跑完的调用"删掉、把回合写成 completed 进而折叠。
+        handleCancelled(handler, taskId, conversationId, loadingAssistantId);
         cleanupTaskListeners(taskId);
         return;
       }

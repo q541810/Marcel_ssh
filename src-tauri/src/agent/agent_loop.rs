@@ -286,7 +286,7 @@ pub(crate) async fn run_agent_loop(
         if is_task_cancelled(&state, &task_id) {
             log::info!("Agent task {} cancelled, stopping loop", task_id);
             emit_final_plan_normalized(&app, &state, &task_id);
-            emit_event(&app, &event_name, StreamEvent::Done);
+            emit_event(&app, &event_name, StreamEvent::Cancelled);
             return None;
         }
 
@@ -390,7 +390,7 @@ pub(crate) async fn run_agent_loop(
                 if let AppError::Cancelled(_) = e {
                     log::info!("Agent task {} cancelled during LLM call", task_id);
                     emit_final_plan_normalized(&app, &state, &task_id);
-                    emit_event(&app, &event_name, StreamEvent::Done);
+                    emit_event(&app, &event_name, StreamEvent::Cancelled);
                     return None;
                 }
                 let err_msg = e.to_string();
@@ -445,7 +445,7 @@ pub(crate) async fn run_agent_loop(
                     // 压缩期间用户取消 → 走取消路径而非错误路径
                     if is_task_cancelled(&state, &task_id) {
                         emit_final_plan_normalized(&app, &state, &task_id);
-                        emit_event(&app, &event_name, StreamEvent::Done);
+                        emit_event(&app, &event_name, StreamEvent::Cancelled);
                         return None;
                     }
                 }
@@ -588,6 +588,8 @@ pub(crate) async fn run_agent_loop(
                         "Agent {} cancelled while waiting for jobs, exiting",
                         task_id
                     );
+                    emit_final_plan_normalized(&app, &state, &task_id);
+                    emit_event(&app, &event_name, StreamEvent::Cancelled);
                     return None;
                 }
 
@@ -667,6 +669,8 @@ pub(crate) async fn run_agent_loop(
                     // 用户取消：直接结束（job 由取消级联清理）。
                     _ = &mut cancelled => {
                         log::info!("Agent {} cancelled during job wait, exiting", task_id);
+                        emit_final_plan_normalized(&app, &state, &task_id);
+                        emit_event(&app, &event_name, StreamEvent::Cancelled);
                         return None;
                     }
                 }
@@ -676,6 +680,8 @@ pub(crate) async fn run_agent_loop(
             // 不得走 Done/Completed 路径。
             if is_task_cancelled(&state, &task_id) {
                 log::info!("Agent {} cancelled after job guard, exiting", task_id);
+                emit_final_plan_normalized(&app, &state, &task_id);
+                emit_event(&app, &event_name, StreamEvent::Cancelled);
                 return None;
             }
             emit_final_plan_normalized(&app, &state, &task_id);
@@ -830,7 +836,7 @@ pub(crate) async fn run_agent_loop(
                 task_id
             );
             emit_final_plan_normalized(&app, &state, &task_id);
-            emit_event(&app, &event_name, StreamEvent::Done);
+            emit_event(&app, &event_name, StreamEvent::Cancelled);
             return None;
         }
     }

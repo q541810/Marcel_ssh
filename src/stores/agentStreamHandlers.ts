@@ -611,6 +611,55 @@ export function handleDone(
   // （conversationStore.switchConversation → clearActiveTask）时自然更新。
 }
 
+/**
+ * 取消终止：agent loop 因**取消**退出（手动停止 / 拒绝并停止 / 会话级联取消），
+ * 不是模型自然结束。
+ *
+ * 与 `handleDone` 的差别只在三处「自然结束」的假设上：
+ * 1. 在飞的工具卡片**保留**并标成已中断（`handleDone` 按「没跑完的调用」删掉它；
+ *    取消时那张卡片是用户正盯着看的，后端也已为它落了「已中断」的 tool 行）；
+ * 2. 回合收尾状态写 `cancelled`（不是 `completed`）—— 回合折叠据此否决折叠，
+ *    否则停止的回合会被收成一行控制条、过程卡片从界面上消失，而模型侧其实
+ *    仍看得到（这正是「卡片没了但 agent 能看到」）；
+ * 3. 任务记 `cancelled`、不点未读完成绿点。
+ *
+ * 骨架 / 空 assistant / retrying 指示的清理与 `handleDone` 相同（纯展示残留）。
+ * delta 同样先 flush：取消之后不会再有新事件，残留 buffer 会卡住不渲染。
+ */
+export function handleCancelled(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  loadingAssistantId: string,
+) {
+  flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
+
+  handler.updateTaskStatus(taskId, 'cancelled');
+  // 在飞工具卡片 → 已中断（与停止按钮 markAbortedToolFlags 同一份文案）
+  useConversationStore.getState().markAbortedToolFlags(conversationId);
+  useConversationStore.getState().markTailTurnState(conversationId, 'cancelled');
+
+  handler.updateMessages(conversationId, (convMsgs) => {
+    const newMsgs = convMsgs.filter((m) => {
+      // 等待首字/等待下一轮的骨架：取消后不会再有内容填进来
+      if (m.role === 'assistant' && m.isLoading) return false;
+      // 空 assistant（骨架被清掉标志后的残留）
+      if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.toolCalls?.length && !m.reasoningContent) return false;
+      // 注意：**不**删 `m.role === 'tool' && m.isExecuting` 的卡片（见函数头 1.）
+      if (m.role === 'system' && m.isRetrying) return false;
+      return true;
+    });
+    return newMsgs.map((m) => {
+      if (m.role === 'assistant' && (m.isThinking || m.isLoading)) {
+        return { ...m, isThinking: false, isLoading: false };
+      }
+      return m;
+    });
+  });
+
+  // 不在此处清空 activeTaskId（同 handleDone 的理由）。
+}
+
 export function handleError(
   handler: StreamHandler,
   taskId: string,

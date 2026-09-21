@@ -27,6 +27,7 @@ vi.mock('@/stores/agentStreamHandlers', () => ({
   handleTextDelta: vi.fn(),
   handleThinkingDelta: vi.fn(),
   handleDone: vi.fn(),
+  handleCancelled: vi.fn(),
   handleError: vi.fn(),
   handleRetrying: vi.fn(),
   handleToolOutput: vi.fn(),
