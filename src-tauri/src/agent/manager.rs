@@ -13,21 +13,27 @@
 //! 调用方（`commands/agent_lifecycle`、`agent/tools/subagent`）负责「决定要
 //! 跑什么」（spec）与前后的事件/对话准备，不各自实现组装与 spawn。
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use futures::FutureExt;
+use parking_lot::RwLock as PlRwLock;
 use tauri::AppHandle;
 
 use crate::agent::agent_loop::{run_agent_loop, LoopContext};
-use crate::agent::conversation_persister::ConversationPersister;
+use crate::agent::conversation_persister::{ConversationPersister, PromptOrigin};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, TurnState};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{
     mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
 };
-use crate::config::settings::ExperimentalSettings;
+use crate::config::settings::{CommandApprovalEngine, ExperimentalSettings};
+use crate::config::keychain;
 use crate::error::AppError;
+use crate::llm::jev::JevConfig;
 use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmConfig, LlmMessage, LlmRole, ToolDefinition};
 use crate::mcp::store::McpServerConfig;
@@ -111,6 +117,104 @@ impl AgentTaskHandle {
             }
         }
     }
+}
+
+// ── 「组装期间收到的停止」墓碑 ──
+
+/// 墓碑有效期（安全网）。
+///
+/// 正常路径下墓碑活不过一次 `spawn`：`spawn` 开头就把它取走、注册取消表后再认领，
+/// 所以只有「任务根本没起来 / 前端发了停止却没有对应的启动」才会留下它。留个上限
+/// 免得这类请求永久堆积，也避免 task_id 复用（极端情况下前端可能重发同一个 id）
+/// 在很久之后被一枚旧墓碑误伤。
+const PENDING_CANCEL_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+/// 墓碑条数上限：组装窗口是秒级、来源只有用户点击；超量丢最旧的，
+/// 保证这张表不会无限增长（真被塞满也只是退化回「组装期停止可能丢」）。
+const PENDING_CANCEL_MAX: usize = 64;
+
+/// `task_id → 请求停止的时间点`。进程级表：`AppState` 里没有这一类槽位，
+/// 而墓碑只服务于「同一次 spawn 的组装窗口」这一瞬间。
+fn pending_cancels() -> &'static std::sync::Mutex<std::collections::VecDeque<(String, Instant)>> {
+    static TABLE: OnceLock<std::sync::Mutex<std::collections::VecDeque<(String, Instant)>>> =
+        OnceLock::new();
+    TABLE.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
+}
+
+/// 记下一枚「还没出生就被要求停止」的墓碑（同 id 去重、顺带清理过期条目）。
+fn record_pending_cancel(task_id: &str) {
+    let now = Instant::now();
+    let mut table = pending_cancels().lock().unwrap_or_else(|e| e.into_inner());
+    table.retain(|(id, at)| id != task_id && now.duration_since(*at) < PENDING_CANCEL_TTL);
+    table.push_back((task_id.to_string(), now));
+    while table.len() > PENDING_CANCEL_MAX {
+        table.pop_front();
+    }
+}
+
+/// 认领（一次性消费）某任务的停止请求。
+///
+/// **过期的墓碑不算命中**：它是一条陈旧的请求（上一次运行留下的），认领会把
+/// 这一次才起来的同名任务开场就收掉。命中与清理在同一次遍历里完成。
+fn take_pending_cancel(task_id: &str) -> bool {
+    let now = Instant::now();
+    let mut table = pending_cancels().lock().unwrap_or_else(|e| e.into_inner());
+    let mut hit = false;
+    table.retain(|(id, at)| {
+        let fresh = now.duration_since(*at) < PENDING_CANCEL_TTL;
+        if id == task_id {
+            if fresh {
+                hit = true;
+            }
+            return false; // 认领即消费（过期的也一并摘掉）
+        }
+        fresh
+    });
+    hit
+}
+
+/// 记录一次「停止这个任务」的请求——**无论任务在不在册都不丢**。
+///
+/// 为什么需要它：`spawn` 在把任务写进 `agent_tasks` 之前要读设置、解析模型
+/// （密钥链）、构建工具注册表（对每个启用的 MCP server 刷新工具，不可达的
+/// server 单次上限 30s）、拼 system prompt——配了 MCP 的任务每次启动可以耗掉
+/// 几十秒。前端点「停止」时任务可能**还没在册**，若那时只回一句 `Task not
+/// found`，这次停止就被整个丢掉：任务随后照常启动、照常跑完，远端命令、审批
+/// 弹窗、消息落库一样不少，用户以为自己已经停下了它。
+///
+/// 所以：
+/// - 任务在册 → 置取消态（`transition_to`，Cancelled 是吸收态、重复写幂等）
+///   并置位取消信号；级联（子 agent / 后台作业 / 待审批交互）仍由调用方负责，
+///   那是一整套停止语义，不塞进这里。
+/// - 任务不在册 → 记一枚墓碑，等 `spawn` 注册完取消表后认领。
+///
+/// **不要在持有 `agent_tasks` 写锁时调用**：本函数要读写同一把锁
+/// （`parking_lot::RwLock` 不可重入，同线程再取读锁会死锁）。调用点先
+/// `drop(tasks)` 再调。
+pub(crate) fn request_cancel(state: &AppState, task_id: &str) {
+    if state.agent_tasks.read().contains_key(task_id) {
+        apply_pending_cancel(&state.agent_tasks, &state.task_cancel, task_id);
+        return;
+    }
+    record_pending_cancel(task_id);
+}
+
+/// 应用一次停止：任务收成 `Cancelled` 并发出取消信号。
+///
+/// 抽成自由函数（只依赖任务表与取消表，不依赖整个 `AppState`）是为了让「取消
+/// 表已有接收端」这条顺序约束可测——顺序错就退化成「用户以为停了，任务照常在
+/// 后台跑完」。任务记录已被剪掉时不写状态（无从写起），但信号照发。
+fn apply_pending_cancel(
+    tasks: &std::sync::Arc<PlRwLock<HashMap<String, AgentTask>>>,
+    cancel: &crate::cancel::CancellationRegistry,
+    task_id: &str,
+) {
+    if let Some(task) = tasks.write().get_mut(task_id) {
+        // Cancelled 是吸收态：重复置位是幂等空操作。
+        task.transition_to(AgentStatus::Cancelled);
+    }
+    // 必须在取消表注册**之后**调用：表里没有接收端时 send 会丢，而 agent loop
+    // 只在取消信号上中断正在进行的 LLM 调用（任务状态是每轮开头才查）。
+    cancel.cancel(task_id);
 }
 
 /// 统一管理 agent 的组装与生命周期。
@@ -204,6 +308,11 @@ impl AgentManager {
         spec: AgentSpec,
     ) -> Result<AgentTaskHandle, AppError> {
         let task_id = spec.task_id.clone();
+
+        // 组装开始前就存在的停止请求：**当场消费掉**。它落在这里的两种情形都是
+        // 「任务还没起来就被要求停止」——记下来，注册完取消表后立刻收场。消费（而
+        // 不是留给后面再取）还保证墓碑不会陪着一路组装的失败路径长期残留。
+        let cancel_requested_before_spawn = take_pending_cancel(&task_id);
 
         // ── 1. 读取设置 ──
         let (llm_registry, mut agent_settings) = {
@@ -452,6 +561,27 @@ impl AgentManager {
         // （`llm/manager.rs` 的 `select!` 里 `rx.changed()` 的 Err 同样命中取消
         // 分支）—— 任务会在开跑前把自己取消掉。
         let cancel_registration = self.state.task_cancel.register(&task_id);
+
+        // 组装期间用户点过停止（见 `request_cancel`）？认领这枚墓碑：任务收成
+        // `Cancelled` 并置位取消信号，agent loop 第一轮开头就按取消退出——不发
+        // 请求、不执行任何工具，收尾走 `TurnState::Cancelled`。
+        //
+        // 位置很讲究：必须在 `register` **之后**（信号要发给在册的那条通道，
+        // 注册前 send 会因为表里没有接收端而丢），又不能靠把 `agent_tasks.insert`
+        // 提前来实现（提交放最后是为了不留「前端拿不到 task_id、后端却永久
+        // running」的幽灵任务，见上面的注释）。
+        //
+        // 两次取用分开写（不用 `||` 短路）：组装**期间**记下的那枚墓碑也必须
+        // 被消费掉，否则它会留在表里，之后被同一 id 的另一次启动误领。
+        let cancel_requested_during_spawn = take_pending_cancel(&task_id);
+        if cancel_requested_before_spawn || cancel_requested_during_spawn {
+            log::info!(
+                "Agent task {} 在组装期间已被要求停止，注册取消表后立即收场",
+                task_id
+            );
+            // 任务记录此刻已提交 → 走「在册」那条路（置取消态 + 发信号）。
+            request_cancel(&self.state, &task_id);
+        }
 
         let loop_ctx = LoopContext {
             ssh: self.state.ssh_manager.clone(),
@@ -1007,6 +1137,111 @@ mod tests {
 
     fn exp() -> ExperimentalSettings {
         ExperimentalSettings::default()
+    }
+
+    fn make_task(id: &str) -> AgentTask {
+        AgentTask {
+            id: id.to_string(),
+            session_id: "s1".to_string(),
+            conversation_id: "c1".to_string(),
+            prompt: "p".to_string(),
+            mode: AgentMode::Agent,
+            status: AgentStatus::Planning,
+            has_plan: false,
+            created_at: chrono::Utc::now(),
+            parent_task_id: None,
+            model_id: None,
+            turn_anchor_id: None,
+            parent_history_upto: None,
+        }
+    }
+
+    /// 墓碑表是进程级的，测试各用唯一 id 互不干扰。
+    fn unique_id(tag: &str) -> String {
+        format!("test-{tag}-{}", uuid::Uuid::new_v4())
+    }
+
+    /// 「组装期间收到的停止」不能丢：记下之后必须能被 `spawn` 侧取走，且取走是
+    /// **一次性**的（同一个 id 被重复认领会把后来的任务莫名其妙地取消掉）。
+    #[test]
+    fn pending_cancel_is_recorded_and_claimed_once() {
+        let id = unique_id("tomb");
+        assert!(!take_pending_cancel(&id), "没请求过就不该命中");
+        record_pending_cancel(&id);
+        assert!(take_pending_cancel(&id), "组装期间收到的停止必须能被认领");
+        assert!(!take_pending_cancel(&id), "认领是一次性的");
+    }
+
+    #[test]
+    fn pending_cancel_dedupes_same_task_and_isolates_others() {
+        let (a, b) = (unique_id("a"), unique_id("b"));
+        record_pending_cancel(&a);
+        record_pending_cancel(&a); // 重复请求只是重复置位
+        record_pending_cancel(&b);
+        assert!(take_pending_cancel(&b));
+        assert!(take_pending_cancel(&a), "重复请求不应把墓碑自己顶掉");
+        assert!(!take_pending_cancel(&b), "不同 task 的请求互不干扰");
+    }
+
+    /// 过期墓碑（对应的启动再也没来）必须被清理，否则 task_id 一旦被复用，
+    /// 新任务会带着一枚旧墓碑起来，开场即被取消。
+    #[test]
+    fn expired_pending_cancel_is_dropped() {
+        let id = unique_id("expired");
+        {
+            let mut table = pending_cancels().lock().unwrap_or_else(|e| e.into_inner());
+            table.push_back((
+                id.clone(),
+                Instant::now() - PENDING_CANCEL_TTL - std::time::Duration::from_secs(1),
+            ));
+        }
+        assert!(!take_pending_cancel(&id), "过期墓碑不该再被认领");
+        assert!(
+            !pending_cancels()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|(i, _)| i == &id),
+            "清理应把过期条目摘掉（不能无限堆积）"
+        );
+    }
+
+    /// 认领时该做两件事：把任务收成 `Cancelled`（最终显示「已停止」而不是
+    /// 完成/失败），并把取消信号发给**在册**的那条通道（agent loop 只在信号上
+    /// 中断进行中的 LLM 调用）。少做任何一件，用户点下的停止都会退化成
+    /// 「任务照常在后台跑完」。
+    #[test]
+    fn applying_pending_cancel_marks_cancelled_and_signals() {
+        let id = unique_id("apply");
+        let tasks =
+            std::sync::Arc::new(PlRwLock::new(HashMap::from([(id.clone(), make_task(&id))])));
+        let cancel = crate::cancel::CancellationRegistry::new();
+        // spawn 在认领之前已经注册：接收端必须拿得到这次信号
+        let registration = cancel.register(&id);
+        let rx = registration.receiver();
+        assert!(!*rx.borrow(), "认领之前不该有取消信号");
+
+        apply_pending_cancel(&tasks, &cancel, &id);
+        assert!(
+            tasks.read().get(&id).unwrap().status.is_cancelled(),
+            "任务必须收成 Cancelled（收尾据此把回合标成 cancelled、不再走 Completed）"
+        );
+        assert!(*rx.borrow(), "取消信号必须发给在册通道");
+    }
+
+    /// 任务记录已被剪掉（只可能发生在清理竞态里）时不炸：没有状态可写，
+    /// 但已有注册的取消信号仍要发出去。
+    #[test]
+    fn applying_pending_cancel_tolerates_missing_task_record() {
+        let id = unique_id("ghost");
+        let tasks = std::sync::Arc::new(PlRwLock::new(HashMap::new()));
+        let cancel = crate::cancel::CancellationRegistry::new();
+        let registration = cancel.register(&id);
+        let rx = registration.receiver();
+
+        apply_pending_cancel(&tasks, &cancel, &id);
+        assert!(tasks.read().get(&id).is_none());
+        assert!(*rx.borrow(), "记录没了也要把取消信号发出去");
     }
 
     /// 状态门控只做一件事：判据为假时摘掉 [`STATE_GATED_TOOLS`] 里的工具，别的

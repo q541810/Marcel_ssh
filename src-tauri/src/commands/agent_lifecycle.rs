@@ -84,7 +84,7 @@ pub async fn agent_stop_task(
         collect_descendant_tasks(&tasks, &task_id)
     };
 
-    {
+    let requested_while_absent = {
         let mut tasks = state.agent_tasks.write();
         let mut found = false;
         for tid in &tasks_to_cancel {
@@ -95,9 +95,18 @@ pub async fn agent_stop_task(
                 found = true;
             }
         }
-        if !found {
-            return Err(AppError::Agent(format!("Task not found: {}", task_id)));
-        }
+        !found
+    };
+
+    // 任务还没在册：组装期间点停止（`spawn` 要先做设置/MCP/skill 读取与模型解析
+    // 才把任务写进表，配了不可达的 MCP 时这个窗口可达数十秒）。这里必须把取消
+    // 请求**记下来**并当成功返回，而不是回一句 Task not found——那会变成前端看不见
+    // 的 rejection，任务随后照常启动、照常跑完。
+    // 注意：必须在释放上面的写锁之后再调用（本函数要再取同一把锁）。
+    if requested_while_absent {
+        crate::agent::manager::request_cancel(state.inner(), &task_id);
+        log::info!("Stop requested before task {} was registered; recording it", task_id);
+        return Ok(());
     }
 
     // 解除挂起交互：经 AgentInteractionManager 取消并在队列中淘汰，通知前端更新
