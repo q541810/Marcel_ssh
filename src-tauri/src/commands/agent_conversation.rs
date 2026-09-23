@@ -91,6 +91,28 @@ fn effort_for_model<'a>(
         .cloned()
 }
 
+/// 会话当前**生效的上下文窗口**（tokens；0 = 未配置）。
+///
+/// 与 `agent::manager` 启动任务时的规则**同一套**（`resolved.context_window > 0`
+/// 优先，否则全局 `agentModeSettings.contextWindow`），只是这里每次读会话时现算
+/// ——窗口不落库，用户改了设置立刻生效，占用环不会基于旧窗口算百分比。
+/// 生效模型解析不出来（注册表为空等）→ 全局值。
+fn effective_context_window(
+    registry: &crate::llm::registry::LlmRegistry,
+    effective_model_id: Option<&str>,
+    global_context_window: u64,
+) -> u64 {
+    let model_window = effective_model_id
+        .and_then(|id| registry.find_model(id))
+        .map(|m| m.context_window)
+        .unwrap_or(0);
+    if model_window > 0 {
+        model_window
+    } else {
+        global_context_window
+    }
+}
+
 /// 把会话级模型记忆 / 思考强度记忆（内存）覆盖到会话元数据上返回给前端。
 ///
 /// DB 的 `Conversation.model_id` 列已停用（启动迁移后清空），但前端 UI
@@ -100,9 +122,12 @@ fn effort_for_model<'a>(
 /// 读取点语义与后端路由完全一致，且 DB 列保持干净。
 /// `reasoningEffort` 语义：**当前生效模型**的档位（会话×模型 双维记忆里
 /// 取生效模型那一维），模型切换后随 list/get 自动变为新模型自己的档位。
+/// `contextWindow` 语义：当前生效模型声明的窗口（未声明则全局设置），
+/// 同样是读时派生、不落库。
 async fn overlay_session_model(state: &AppState, mut conv: Conversation) -> Conversation {
     let settings = state.settings.read().await;
     let registry = &settings.llm_registry;
+    let global_window = settings.agent_mode_settings.context_window;
     let mem = state.session_models.read();
     let session_model_id = mem.get(&conv.id).filter(|s| !s.is_empty()).cloned();
     let eff_model_id = effective_model_id(registry, &mem, &conv.id);
@@ -112,12 +137,34 @@ async fn overlay_session_model(state: &AppState, mut conv: Conversation) -> Conv
     drop(efforts);
     conv.model_id = session_model_id;
     conv.reasoning_effort = effort;
+    conv.context_window = Some(effective_context_window(
+        registry,
+        eff_model_id.as_deref(),
+        global_window,
+    ));
+    conv.usage = conversation_usage(state, &conv.id).unwrap_or_else(|| conv.usage.clone());
     conv
+}
+
+/// 会话的界面读数（本会话 + 各子对话的累计）。读失败时返回 `None`，
+/// 调用方保留行上原本的值（宁可少算子 agent，也不能让会话打不开）。
+fn conversation_usage(
+    state: &AppState,
+    conversation_id: &str,
+) -> Option<crate::agent::conversation::ConversationUsage> {
+    match state.conversation_db.usage_with_sub_conversations(conversation_id) {
+        Ok(u) => Some(u),
+        Err(e) => {
+            log::warn!("读取会话用量失败（{}）: {}", conversation_id, e);
+            None
+        }
+    }
 }
 
 async fn overlay_session_models(state: &AppState, convs: Vec<Conversation>) -> Vec<Conversation> {
     let settings = state.settings.read().await;
     let registry = &settings.llm_registry;
+    let global_window = settings.agent_mode_settings.context_window;
     let mem = state.session_models.read();
     let efforts = state.session_efforts.read();
     let mut out = Vec::with_capacity(convs.len());
@@ -127,6 +174,12 @@ async fn overlay_session_models(state: &AppState, convs: Vec<Conversation>) -> V
         let effort = effort_for_model(&efforts, &c.id, eff_model_id.as_deref());
         c.model_id = session_model_id;
         c.reasoning_effort = effort;
+        c.context_window = Some(effective_context_window(
+            registry,
+            eff_model_id.as_deref(),
+            global_window,
+        ));
+        c.usage = conversation_usage(state, &c.id).unwrap_or_else(|| c.usage.clone());
         out.push(c);
     }
     out

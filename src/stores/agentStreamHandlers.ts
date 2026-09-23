@@ -2,7 +2,7 @@ import type {
   AgentMessage,
   ToolResultPayload,
   AgentTaskPlan,
-  TokenUsage,
+  ContextUsageEvent,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
 } from '@/lib/types';
@@ -48,8 +48,11 @@ export interface StreamHandler {
     prompt: string;
     parentConversationId: string;
   }): string | null;
-  /** 累加 token 用量（usage 事件触发的累计写）。 */
-  accumulateTokenUsage(usage: TokenUsage): void;
+  /**
+   * 记一轮的用量读数（`contextUsage` 事件）：按**事件所属会话**分桶，
+   * 覆盖不累加（事件带的是后端写库后的累计值，见 `lib/tokenUsage.ts`）。
+   */
+  recordContextUsage(conversationId: string, ev: ContextUsageEvent): void;
 }
 
 // ---------------------------------------------------------------------------

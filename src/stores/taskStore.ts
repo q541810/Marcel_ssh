@@ -4,7 +4,8 @@ import type {
   AgentMessage,
   AgentMode,
   AgentTaskPlan,
-  TokenUsage,
+  ConversationUsage,
+  ContextUsageEvent,
 } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { getErrorMessage } from "@/lib/errors";
@@ -15,8 +16,17 @@ import {
   cleanupTaskListeners,
 } from "./agentStreamManager";
 import { useConversationStore } from "./conversationStore";
+import { resetAutoContinues } from "./wakeBudget";
 import { isTaskBusy } from "@/lib/agentStatus";
 import { useSettingsStore } from "./settingsStore";
+import { usageFromContextEvent } from "@/lib/tokenUsage";
+
+/** 一个会话的 token 用量读数（实时事件写进来，重启后由会话数据兜底）。 */
+export interface ConversationUsageEntry {
+  usage: ConversationUsage;
+  /** 生效上下文窗口（0 = 未配置）。后端 overlay 给的，前端不自己解析。 */
+  windowTokens: number;
+}
 
 export interface TaskState {
   tasks: Record<string, AgentTask>;
@@ -25,7 +35,20 @@ export interface TaskState {
   inputDraft: string;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
-  taskTokenUsage: TokenUsage | null;
+  /**
+   * 各会话的 token 用量读数，key = conversationId。
+   *
+   * 只装**实时事件**写进来的值（按会话分桶，子 agent 的事件进它自己的子会话
+   * 桶）；重启后打开会话时读的是会话数据里的落库用量，由
+   * `lib/tokenUsage.ts` 的 `conversationUsageView` 做「事件优先、落库兜底」的合成。
+   *
+   * 为什么只覆盖不累加：事件带的是**后端写库后**的累计值（与重启后读到的
+   * 是同一个数字），累加会把每一轮算两遍。
+   *
+   * 刻意不做删除清理：条目大小约百字节、会话 id 不复用，上限就是「本次运行
+   * 跑过任务的会话数」。
+   */
+  usageByConversation: Record<string, ConversationUsageEntry>;
   unreadCompletedConversations: string[];
 
   startTask: (
@@ -54,7 +77,14 @@ export interface TaskState {
     plan: AgentTaskPlan | null,
     planTaskId: string | null,
   ) => void;
-  accumulateTokenUsage: (usage: TokenUsage) => void;
+  /**
+   * 记一轮 LLM 请求后的用量快照（`contextUsage` 事件）。
+   *
+   * `conversationId` 来自**订阅该任务那条流时**用的会话 id（子 agent 是它自己
+   * 的子会话），所以父子天然分桶、不重不漏。只覆盖不累加 —— 事件带的是后端
+   * 写库后的累计值，前端的活就是把它显示出来。
+   */
+  recordContextUsage: (conversationId: string, ev: ContextUsageEvent) => void;
 
   clearActiveTask: () => void;
   clearActiveTaskIf: (taskId: string) => void;
@@ -71,7 +101,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   inputDraft: "",
   plans: {},
   plansDirty: false,
-  taskTokenUsage: null,
+  usageByConversation: {},
   unreadCompletedConversations: [],
 
   startTask: async (
@@ -448,31 +478,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
   },
 
-  accumulateTokenUsage: (usage: TokenUsage) => {
-    set((state) => {
-      const taskUsage = state.taskTokenUsage
-        ? {
-            promptTokens:
-              state.taskTokenUsage.promptTokens + usage.promptTokens,
-            completionTokens:
-              state.taskTokenUsage.completionTokens + usage.completionTokens,
-            totalTokens: state.taskTokenUsage.totalTokens + usage.totalTokens,
-            reasoningTokens:
-              state.taskTokenUsage.reasoningTokens !== undefined ||
-              usage.reasoningTokens !== undefined
-                ? (state.taskTokenUsage.reasoningTokens ?? 0) +
-                  (usage.reasoningTokens ?? 0)
-                : undefined,
-            cachedReadTokens:
-              state.taskTokenUsage.cachedReadTokens !== undefined ||
-              usage.cachedReadTokens !== undefined
-                ? (state.taskTokenUsage.cachedReadTokens ?? 0) +
-                  (usage.cachedReadTokens ?? 0)
-                : undefined,
-          }
-        : { ...usage };
-      return { taskTokenUsage: taskUsage };
-    });
+  recordContextUsage: (conversationId, ev) => {
+    set((state) => ({
+      usageByConversation: {
+        ...state.usageByConversation,
+        [conversationId]: {
+          usage: usageFromContextEvent(ev),
+          windowTokens: ev.contextWindow,
+        },
+      },
+    }));
   },
 
   clearActiveTask: () => {

@@ -1,4 +1,4 @@
-import type { AgentTask } from '@/lib/types';
+import type { AgentTask, JobInfo } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
 import { useConversationStore } from '@/stores/conversationStore';
 import { isTaskActive, isTaskBusy } from '@/lib/agentStatus';
@@ -88,4 +88,50 @@ export function getSessionAgentStatus(
  */
 export function getActiveRunningTasks(tasks: Record<string, AgentTask>): AgentTask[] {
   return Object.values(tasks).filter((t) => !!t.sessionId && isTaskBusy(t.status));
+}
+
+/**
+ * 「任务与作业中心」入口（计数胶囊）的判定与内容。
+ *
+ * 桌面 `AgentPanel` 与移动端 `MobileAgentHost` 共用这一份：两处各写一遍条件
+ * 时，新加的状态位（如下面这类「需要用户知道结局的作业」）极易只加到一端。
+ *
+ * 需要用户知道结局的作业 = 重启恢复出来的 `interrupted` 作业：通道随上次
+ * 退出断了、之后的输出看不到，远端进程是否还在跑未知（`failed` 不属于这一类
+ * ——它的失败当时已经回灌进对话，不欠交代）。而重启后的典型场景恰好是
+ * 「没有任何任务在跑、也没有作业在跑」，只看 running 的话这些作业就永远
+ * 没有入口（抽屉打不开、也看不到）。
+ */
+export function taskCenterEntry(
+  tasks: Record<string, AgentTask>,
+  jobs: Record<string, JobInfo>,
+  activeConversationId: string | null,
+): {
+  visible: boolean;
+  runningTasks: AgentTask[];
+  runningJobs: JobInfo[];
+  /** 需要用户知道结局的作业（已中断、没人告诉他结局的那一类）。 */
+  attentionJobs: JobInfo[];
+  /** 打开抽屉时该停在哪个页签：有运行中任务看任务，否则看作业。 */
+  initialTab: 'agents' | 'jobs';
+} {
+  const runningTasks = getActiveRunningTasks(tasks);
+  const jobList = Object.values(jobs);
+  const runningJobs = jobList.filter((j) => j.status === 'running');
+  const attentionJobs = jobList.filter((j) => j.status === 'interrupted');
+
+  const visible =
+    runningTasks.length > 1 ||
+    (runningTasks.length === 1 &&
+      runningTasks[0].conversationId !== activeConversationId) ||
+    runningJobs.length > 0 ||
+    attentionJobs.length > 0;
+
+  return {
+    visible,
+    runningTasks,
+    runningJobs,
+    attentionJobs,
+    initialTab: runningTasks.length > 0 ? 'agents' : 'jobs',
+  };
 }

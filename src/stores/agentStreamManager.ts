@@ -5,7 +5,7 @@ import type {
   PlanStreamEvent,
   ModelApprovalStartPayload,
   ModelApprovalDonePayload,
-  TokenUsage,
+  ContextUsageEvent,
   SubTaskStartPayload,
   SubTaskResultMetadata,
   AgentTask,
@@ -363,15 +363,31 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       }
 
       if (hasEventType(ev, 'usage')) {
-        const usageEv = ev as unknown as { type: 'usage'; usage: TokenUsage };
-        handler.accumulateTokenUsage(usageEv.usage);
+        // provider 报的**单轮原始用量**：只透传给插件（`plugin://events`），
+        // 不再进界面统计。界面的数字来自 `contextUsage`（后端写库后的会话累计）
+        // —— 两条路各算一遍，迟早会漂。
+        return;
+      }
+
+      if (hasEventType(ev, 'contextUsage')) {
+        // 按**订阅这条流时用的会话 id**落桶：子 agent 的流订阅时用的是它自己
+        // 的子会话 id，所以父子天然分开；而后端给的读数里子会话已经并进父会话，
+        // 这里再累加就会算两遍。
+        handler.recordContextUsage(conversationId, ev as unknown as ContextUsageEvent);
         return;
       }
 
       console.warn('[agent] unknown event type', ev);
     },
   );
-  streamListeners.set(taskId, unlisten);
+
+  if (disposed) {
+    // 取消比注册先到：当场回收，不给已经不存在的调用方留监听器
+    // （也不能把 unlisten 写回表里 —— 那条任务已被收尾）。
+    fn();
+    return;
+  }
+  unlisten = fn;
 }
 
 export async function attachPlanListener(taskId: string) {

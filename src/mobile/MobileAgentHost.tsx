@@ -6,7 +6,7 @@ import { Pencil, Pin, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
 import { useJobStore } from "@/stores/jobStore";
-import { getConversationAgentStatus, getActiveRunningTasks } from "@/stores/agentStatusSelectors";
+import { getConversationAgentStatus, taskCenterEntry } from "@/stores/agentStatusSelectors";
 import { AgentStatusIndicator } from "@/components/agent/AgentStatusIndicator";
 import MobileActiveAgentsSheet from "./MobileActiveAgentsSheet";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
@@ -26,6 +26,9 @@ import type { AgentMessage, AgentMode } from "@/lib/types";
 import AgentMessageList from "@/components/agent/AgentMessageList";
 import PlanList from "@/components/agent/PlanList";
 import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
+import { ContextMeterRing } from "@/components/agent/ContextMeterRing";
+import { TokenUsagePanel } from "@/components/agent/TokenUsagePanel";
+import { contextMeterView, formatPercent } from "@/lib/tokenUsage";
 import { ModelPicker } from "@/components/agent/ModelPicker";
 import { ReasoningEffortPicker } from "@/components/agent/ReasoningEffortPicker";
 import { effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
@@ -129,6 +132,7 @@ export default function MobileAgentHost({
     setConversationEffort,
     syncActiveToConnection,
     rollbackToMessage,
+    activeUsageView,
   } = useAgent();
 
   // 当前会话（含会话级模型记忆 overlay）：提前到 vision 依赖之前
@@ -141,6 +145,9 @@ export default function MobileAgentHost({
   const registry = useSettingsStore((s) => s.settings.llmRegistry);
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
 
+  // 占用环读数（百分比、未配置窗口的降级都由 `lib/tokenUsage.ts` 定，与桌面端同一份）
+  const meter = contextMeterView(activeUsageView?.usage, activeUsageView?.windowTokens);
+
   const [modeOpen, setModeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const modePresence = useAnimatedPresence(modeOpen);
@@ -148,6 +155,8 @@ export default function MobileAgentHost({
   /** 未连接时的只读历史浏览面板（对齐桌面 AgentPanel 的 ChatHistoryModal 分支） */
   const [historyBrowserOpen, setHistoryBrowserOpen] = useState(false);
   const [activeAgentsSheetOpen, setActiveAgentsSheetOpen] = useState(false);
+  /** Token 用量面板（输入框行那个占用环点开）。 */
+  const [usageSheetOpen, setUsageSheetOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [rollbackHint, setRollbackHint] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
@@ -184,15 +193,16 @@ export default function MobileAgentHost({
     );
     return (subTask?.mode === "agent" ? "agent" : "plan") as "plan" | "agent";
   }, [activeConversationId, tasks]);
-  const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
   // 后台作业（跨会话）：header 胶囊与任务/作业中心的显示入口依赖它——
-  // 即使没有任何运行中任务，只要本会话仍有后台作业在跑，入口就必须可见
-  //（对齐桌面 AgentPanel：runningJobs.length > 0 时也显示胶囊）。
+  // 「有需要用户知道结局的作业」（重启恢复出来的 interrupted）同样要给入口：
+  // 那种状态下没有任何 running，只看 running 的话抽屉就永远打不开。
+  // 判定与桌面 AgentPanel 共用 `taskCenterEntry`（见其注释）。
   const jobs = useJobStore((s) => s.jobs);
-  const runningJobs = useMemo(
-    () => Object.values(jobs).filter((j) => j.status === "running"),
-    [jobs],
+  const taskCenter = useMemo(
+    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null),
+    [tasks, jobs, activeConversationId],
   );
+  const [agentsSheetTab, setAgentsSheetTab] = useState<"agents" | "jobs">("agents");
 
   const sessionConversations = useMemo(
     () =>
@@ -742,25 +752,49 @@ export default function MobileAgentHost({
           </div>
         </div>
         <MobileMultiHostPicker disabled={!canInteract || !ids} />
-        {(runningTasks.length > 1 ||
-          (runningTasks.length === 1 &&
-            runningTasks[0].conversationId !== activeConversationId) ||
-          runningJobs.length > 0) && (
+        {taskCenter.visible && (
           <button
             type="button"
-            onClick={() => setActiveAgentsSheetOpen(true)}
+            onClick={() => {
+              setAgentsSheetTab(taskCenter.initialTab);
+              setActiveAgentsSheetOpen(true);
+            }}
             className={`flex items-center gap-1 px-2 py-1 active:scale-95 border rounded-full text-xs font-medium transition-all ${
-              runningJobs.length > 0
-                ? "bg-sky-500/10 border-sky-500/30 text-sky-300"
-                : "bg-indigo-500/10 border-indigo-500/30 text-indigo-300"
+              taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
+                ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                : taskCenter.runningJobs.length > 0
+                  ? "bg-sky-500/10 border-sky-500/30 text-sky-300"
+                  : "bg-indigo-500/10 border-indigo-500/30 text-indigo-300"
             }`}
-            title="查看所有运行中的任务与后台作业"
+            title={
+              taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
+                ? "有上次运行留下的作业：结局未知，点开查看"
+                : "查看所有运行中的任务与后台作业"
+            }
           >
-            <AgentStatusIndicator status="running" size="xs" />
+            {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 ? (
+              <svg
+                className="h-3 w-3 flex-shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                />
+              </svg>
+            ) : (
+              <AgentStatusIndicator status="running" size="xs" />
+            )}
             <span>
-              {runningTasks.length > 0 && `${runningTasks.length} 个任务`}
-              {runningTasks.length > 0 && runningJobs.length > 0 && " · "}
-              {runningJobs.length > 0 && `${runningJobs.length} 个作业`}
+              {taskCenter.runningTasks.length > 0 && `${taskCenter.runningTasks.length} 个任务`}
+              {taskCenter.runningTasks.length > 0 && taskCenter.runningJobs.length > 0 && " · "}
+              {taskCenter.runningJobs.length > 0 && `${taskCenter.runningJobs.length} 个作业`}
+              {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 &&
+                `${taskCenter.attentionJobs.length} 个作业已中断`}
             </span>
           </button>
         )}
@@ -1025,6 +1059,19 @@ export default function MobileAgentHost({
         </div>
       </MobileSheet>
 
+      <MobileSheet
+        open={usageSheetOpen}
+        onClose={() => setUsageSheetOpen(false)}
+        title="Token 用量"
+      >
+        <div className="px-4 pb-4 text-sm">
+          <TokenUsagePanel
+            usage={activeUsageView?.usage}
+            windowTokens={activeUsageView?.windowTokens ?? 0}
+          />
+        </div>
+      </MobileSheet>
+
       <MobileChatHistorySheet
         open={historyBrowserOpen}
         onClose={() => setHistoryBrowserOpen(false)}
@@ -1033,6 +1080,7 @@ export default function MobileAgentHost({
       <MobileActiveAgentsSheet
         open={activeAgentsSheetOpen}
         onClose={() => setActiveAgentsSheetOpen(false)}
+        initialTab={agentsSheetTab}
       />
 
       {isSubConversation ? (
@@ -1231,6 +1279,24 @@ export default function MobileAgentHost({
               );
             })()}
             <div className="flex-1 min-w-2" />
+            {/* 上下文占用环：与桌面端同一个组件（未配置窗口时不画弧）。
+                放在输入框行、发送键左侧 —— 手机顶栏已经很挤，且这里拇指够得着。
+                点开是底部面板，明细与桌面弹层共用同一份字段表。 */}
+            <button
+              type="button"
+              onClick={() => setUsageSheetOpen(true)}
+              className="mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 transition-transform duration-150 active:scale-95 active:bg-zinc-800"
+              title={
+                meter.percent != null
+                  ? `上下文占用 ${formatPercent(meter.percent)}%`
+                  : meter.windowTokens === 0
+                    ? 'Token 用量（未配置上下文窗口）'
+                    : 'Token 用量'
+              }
+              aria-label="Token 用量"
+            >
+              <ContextMeterRing percent={meter.percent} size={18} />
+            </button>
             <button
               type="button"
               onClick={() => (isRunning ? handleStop() : void handleSend())}

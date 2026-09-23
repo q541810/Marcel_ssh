@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useAgentStore } from '@/stores/agentStore';
 import { bus } from '@/plugins/injection/bus';
 import { isTaskBusy } from '@/lib/agentStatus';
+import { conversationUsageView } from '@/lib/tokenUsage';
 import type { AgentMode } from '@/lib/types';
 
 export function useAgent() {
@@ -13,7 +14,7 @@ export function useAgent() {
     activeTaskId: s.activeTaskId,
     mode: s.mode,
     inputDraft: s.inputDraft,
-    taskTokenUsage: s.taskTokenUsage,
+    usageByConversation: s.usageByConversation,
     startTask: s.startTask,
     stopTask: s.stopTask,
     setMode: s.setMode,
@@ -33,6 +34,13 @@ export function useAgent() {
   }));
 
   const activeTask = store.activeTaskId ? (store.tasks[store.activeTaskId] ?? null) : null;
+
+  // 当前会话的用量读数：实时事件优先、落库数据兜底（重启后打开会话走后者）。
+  // 合成规则只在 `lib/tokenUsage.ts` 里写一遍，桌面与移动端共用。
+  const activeUsageView = conversationUsageView(
+    store.activeConversationId ? store.usageByConversation[store.activeConversationId] : undefined,
+    store.activeConversationId ? store.conversations[store.activeConversationId] : undefined,
+  );
 
   const messages = store.activeConversationId
     ? (store.messagesMap[store.activeConversationId] ?? [])
@@ -152,7 +160,8 @@ export function useAgent() {
     isRunning,
     mode: store.mode,
     inputDraft: store.inputDraft,
-    taskTokenUsage: store.taskTokenUsage,
+    /** 当前会话的用量读数（含子 agent）；无会话/无数据时为 null。 */
+    activeUsageView,
     conversations: store.conversations,
     activeConversationId: store.activeConversationId,
     sendPrompt,

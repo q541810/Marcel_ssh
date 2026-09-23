@@ -3,7 +3,7 @@
 //! `content`/`reasoning_content`/tool 参数一视同仁。
 //! 只用于压缩触发判断与定价，不参与任何持久化/事件。
 
-use crate::llm::provider::{LlmMessage, ToolDefinition};
+use crate::llm::provider::{LlmMessage, LlmRole, ToolDefinition};
 
 /// 统一文本密度：每 4 字符约 1 token（对齐 DSH）。
 pub const CHARS_PER_TOKEN: usize = 4;
@@ -73,6 +73,37 @@ pub fn estimate_header(system: Option<&str>, tools: &[ToolDefinition]) -> usize 
 /// （DSH 的 system 只在 request header、surface 无 system，只计一次）。
 pub fn estimate_total(msgs: &[LlmMessage], tools: &[ToolDefinition]) -> usize {
     estimate_header(None, tools) + estimate_messages(msgs)
+}
+
+/// 一次请求的上下文构成估算（对齐 DSH `ContextBreakdownProjection` 的三分段）。
+/// 三段互斥，相加恒等于 [`estimate_total`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ContextBreakdown {
+    /// 系统提示词：`messages[0]` 是 system 时的那一条（msl 的 system 走消息列表）。
+    pub system: usize,
+    /// 工具 schema（请求 header）。
+    pub tools: usize,
+    /// 其余对话消息。
+    pub messages: usize,
+}
+
+/// 把一次请求的估算拆成 system / tools / messages 三段。
+///
+/// 与 [`estimate_total`] 同口径：system 只算一次（作为 `messages[0]`），
+/// header 只追加 tools schema。仅用于展示「上下文都花在哪了」，不参与压缩判定。
+pub fn context_breakdown(msgs: &[LlmMessage], tools: &[ToolDefinition]) -> ContextBreakdown {
+    let tools_tokens = estimate_header(None, tools);
+    let is_system_first = matches!(msgs.first(), Some(first) if first.role == LlmRole::System);
+    let (system, rest_start) = if is_system_first {
+        (estimate_message(&msgs[0]), 1)
+    } else {
+        (0, 0)
+    };
+    ContextBreakdown {
+        system,
+        tools: tools_tokens,
+        messages: estimate_messages(&msgs[rest_start..]),
+    }
 }
 
 #[cfg(test)]
@@ -167,5 +198,58 @@ mod tests {
             estimate_messages(&msgs),
             estimate_message(&msgs[0]) + estimate_message(&msgs[1])
         );
+    }
+
+    fn sample_tools() -> Vec<ToolDefinition> {
+        vec![ToolDefinition {
+            name: "read_file".into(),
+            description: "read a file".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }]
+    }
+
+    /// 三段互斥且不漏：相加恒等于总估算（界面按这个等式画分段条，
+    /// 一旦漏算某段，分段条宽度加起来就对不上百分比）。
+    #[test]
+    fn context_breakdown_sums_to_estimate_total() {
+        let msgs = vec![
+            LlmMessage::system("you are an agent"),
+            LlmMessage::user("abc"),
+            LlmMessage::assistant("def"),
+        ];
+        let tools = sample_tools();
+        let b = context_breakdown(&msgs, &tools);
+        assert_eq!(b.system, estimate_message(&msgs[0]));
+        assert_eq!(b.tools, estimate_header(None, &tools));
+        assert_eq!(b.messages, estimate_message(&msgs[1]) + estimate_message(&msgs[2]));
+        assert_eq!(b.system + b.tools + b.messages, estimate_total(&msgs, &tools));
+    }
+
+    /// 首条不是 system（工具轮次的尾部窗口等）：system 段为 0，全部算进 messages，
+    /// 不能把任意首条都当成 system 白拿走一段。
+    #[test]
+    fn context_breakdown_without_leading_system() {
+        let msgs = vec![LlmMessage::user("a"), LlmMessage::assistant("b")];
+        let b = context_breakdown(&msgs, &[]);
+        assert_eq!(b.system, 0);
+        assert_eq!(b.messages, estimate_messages(&msgs));
+        assert_eq!(b.system + b.tools + b.messages, estimate_total(&msgs, &[]));
+    }
+
+    #[test]
+    fn context_breakdown_of_empty_request_is_zero() {
+        let b = context_breakdown(&[], &[]);
+        assert_eq!(b, ContextBreakdown::default());
+        assert_eq!(b.system + b.tools + b.messages, 0);
+    }
+
+    /// 只有 system、没有 tools：tools 段必须是 0 而不是给个结构开销底数。
+    #[test]
+    fn context_breakdown_tools_are_zero_without_tool_definitions() {
+        let msgs = vec![LlmMessage::system("hi")];
+        let b = context_breakdown(&msgs, &[]);
+        assert_eq!(b.tools, 0);
+        assert_eq!(b.system, estimate_message(&msgs[0]));
+        assert_eq!(b.messages, 0);
     }
 }

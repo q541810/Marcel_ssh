@@ -586,4 +586,56 @@ describe('taskStore', () => {
       expect(cleanupTaskListenersMock).toHaveBeenCalledWith('main-1');
     });
   });
+
+  describe('recordContextUsage（用量按会话落桶）', () => {
+    const ev = (promptTokens: number, usedTokens: number, window = 200_000) => ({
+      type: 'contextUsage' as const,
+      promptTokens,
+      completionTokens: 10,
+      totalTokens: promptTokens + 10,
+      contextWindow: window,
+      usedTokens,
+      estimated: false,
+      systemTokens: 100,
+      toolsTokens: 200,
+      messageTokens: usedTokens - 300,
+    });
+
+    beforeEach(() => {
+      useTaskStore.setState({ usageByConversation: {} });
+    });
+
+    it('覆盖不累加：同一会话的新事件直接替换（事件带的是后端写库后的累计值）', () => {
+      useTaskStore.getState().recordContextUsage('conv-1', ev(100, 1000));
+      useTaskStore.getState().recordContextUsage('conv-1', ev(300, 2000));
+      const entry = useTaskStore.getState().usageByConversation['conv-1'];
+      expect(entry.usage.promptTokens).toBe(300); // 不是 400
+      expect(entry.usage.lastContext?.usedTokens).toBe(2000);
+      expect(entry.windowTokens).toBe(200_000);
+    });
+
+    it('不同会话各自独立：子会话的事件不污染主会话读数', () => {
+      useTaskStore.getState().recordContextUsage('main', ev(100, 1000));
+      useTaskStore.getState().recordContextUsage('sub', ev(500, 3000, 64_000));
+      const all = useTaskStore.getState().usageByConversation;
+      expect(all['main'].usage.promptTokens).toBe(100);
+      expect(all['sub'].usage.promptTokens).toBe(500);
+      expect(all['main'].windowTokens).toBe(200_000);
+      expect(all['sub'].windowTokens).toBe(64_000);
+    });
+
+    it('折成落库形状：平的字段进 lastContext，可选字段缺失保持 undefined', () => {
+      useTaskStore.getState().recordContextUsage('conv-1', ev(100, 1000));
+      const usage = useTaskStore.getState().usageByConversation['conv-1'].usage;
+      expect(usage.reasoningTokens).toBeUndefined();
+      expect(usage.cachedReadTokens).toBeUndefined();
+      expect(usage.lastContext).toEqual({
+        usedTokens: 1000,
+        estimated: false,
+        systemTokens: 100,
+        toolsTokens: 200,
+        messageTokens: 700,
+      });
+    });
+  });
 });

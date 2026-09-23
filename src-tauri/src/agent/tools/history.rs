@@ -21,7 +21,8 @@ use serde_json::json;
 use tauri::Manager;
 
 use crate::agent::conversation::{
-    Conversation, ConversationDb, HistoryError, HistoryWindow, StoredMessage, WindowStart,
+    Conversation, ConversationDb, ConversationUsage, HistoryError, HistoryWindow, StoredMessage,
+    WindowStart,
 };
 use crate::agent::conversation_persister::COMPACTION_CARD_PREFIX;
 use crate::agent::risk::Disposition;
@@ -1130,6 +1131,10 @@ mod tests {
             model_id: None,
             reasoning_effort: None,
             pinned: false,
+            // 会话用量与生效窗口：本用例不关心，给默认值（否则 test-cfg 编译不过，
+            // 整棵测试树都跑不起来）。
+            usage: ConversationUsage::default(),
+            context_window: None,
         }
     }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import MobileSheet from './ui/MobileSheet';
 import type { AgentTask, JobInfo } from '@/lib/types';
 import { useTaskStore } from '@/stores/taskStore';
@@ -13,13 +13,19 @@ import { ChevronRight } from 'lucide-react';
 interface MobileActiveAgentsSheetProps {
   open: boolean;
   onClose: () => void;
+  /**
+   * 打开时停在哪个页签（入口侧决定，与桌面 `AgentTasksDrawer` 同名同义）：
+   * 由「只有需要用户知道结局的作业」打开时别停在空的「Agent 任务」页。
+   */
+  initialTab?: 'agents' | 'jobs';
 }
 
 export default function MobileActiveAgentsSheet({
   open,
   onClose,
+  initialTab,
 }: MobileActiveAgentsSheetProps) {
-  const [activeTab, setActiveTab] = useState<'agents' | 'jobs'>('agents');
+  const [activeTab, setActiveTab] = useState<'agents' | 'jobs'>(initialTab ?? 'agents');
   const tasks = useTaskStore((s) => s.tasks);
   const jobs = useJobStore((s) => s.jobs);
   const killJob = useJobStore((s) => s.killJob);
@@ -30,6 +36,11 @@ export default function MobileActiveAgentsSheet({
   const switchConversation = useConversationStore((s) => s.switchConversation);
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
+
+  // 页签状态跨开关保留：每次打开按入口给的那一侧对齐。
+  useEffect(() => {
+    if (open && initialTab) setActiveTab(initialTab);
+  }, [open, initialTab]);
 
   const runningTasks = getActiveRunningTasks(tasks);
   const jobList = Object.values(jobs).sort((a, b) => b.startedAtMillis - a.startedAtMillis);
@@ -213,6 +224,9 @@ export default function MobileActiveAgentsSheet({
             jobList.map((job) => {
               const sessionLabel = getJobSessionLabel(job.sessionId);
               const isRunning = job.status === 'running';
+              // 上一次应用运行留下、随应用退出中断的作业：没有可终止的东西，
+              // 也不会再有新输出——给用户一句解释，别让他以为还在跑。
+              const isInterrupted = job.status === 'interrupted';
 
               return (
                 <div
@@ -237,6 +251,8 @@ export default function MobileActiveAgentsSheet({
                         ? 'text-sky-400 bg-sky-950/60 border border-sky-800/50'
                         : job.status === 'completed'
                         ? 'text-emerald-400 bg-emerald-950/40 border border-emerald-800/40'
+                        : isInterrupted
+                        ? 'text-amber-400 bg-amber-950/40 border border-amber-800/40'
                         : 'text-zinc-400 bg-zinc-800'
                     }`}>
                       {job.status}
@@ -248,8 +264,16 @@ export default function MobileActiveAgentsSheet({
                   <div className="bg-black/40 rounded p-1.5 font-mono text-[11px] text-zinc-400 truncate mb-2">
                     $ {job.command}
                   </div>
+                  {isInterrupted && (
+                    <p className="text-[10px] text-amber-400/80 leading-relaxed mb-2">
+                      上一次应用运行留下的作业：应用退出时通道就关闭了，之后的输出看不到；远端进程是否还在运行，要在服务器上确认。
+                    </p>
+                  )}
                   <div className="flex items-center justify-between pt-2 border-t border-zinc-800/50 text-[10px] text-zinc-500">
-                    <span>输出: {job.totalOutputBytes} 字节</span>
+                    <span>
+                      输出: {job.totalOutputBytes} 字节
+                      {job.detail ? ` · ${job.detail}` : ''}
+                    </span>
                     {isRunning && (
                       <button
                         type="button"

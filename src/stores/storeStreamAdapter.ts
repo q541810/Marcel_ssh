@@ -1,4 +1,4 @@
-import type { AgentMode, AgentStatus, TokenUsage } from '@/lib/types';
+import type { AgentMode, AgentStatus } from '@/lib/types';
 import { useTaskStore } from './taskStore';
 import { useConversationStore } from './conversationStore';
 import type { StreamHandler } from './agentStreamHandlers';
@@ -60,8 +60,8 @@ export function createDefaultStreamHandler(): StreamHandler {
         args.parentConversationId,
       );
     },
-    accumulateTokenUsage(usage: TokenUsage) {
-      useTaskStore.getState().accumulateTokenUsage(usage);
+    recordContextUsage(conversationId, ev) {
+      useTaskStore.getState().recordContextUsage(conversationId, ev);
     },
   };
 }

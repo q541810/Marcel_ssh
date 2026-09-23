@@ -11,9 +11,11 @@ import { Pin } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
 import { useJobStore } from "@/stores/jobStore";
-import { getConversationAgentStatus, getActiveRunningTasks } from "@/stores/agentStatusSelectors";
+import { getConversationAgentStatus, taskCenterEntry } from "@/stores/agentStatusSelectors";
 import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { AgentTasksDrawer } from "./AgentTasksDrawer";
+import { ContextMeterRing } from "./ContextMeterRing";
+import { TokenUsagePanel } from "./TokenUsagePanel";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -33,6 +35,7 @@ import {
 import { groupConversationsWithPinned } from "@/lib/dateGrouping";
 import { getErrorMessage } from "@/lib/errors";
 import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
+import { contextMeterView, formatPercent } from "@/lib/tokenUsage";
 import type { AgentMode, AgentMessage } from "@/lib/types";
 import {
   type PendingImage,
@@ -140,7 +143,7 @@ export default function AgentPanel() {
     setConversationModel,
     setConversationEffort,
     rollbackToMessage,
-    taskTokenUsage,
+    activeUsageView,
     syncActiveToConnection,
   } = useAgent();
 
@@ -860,8 +863,15 @@ export default function AgentPanel() {
   );
 
   const jobs = useJobStore((s) => s.jobs);
-  const runningTasks = useMemo(() => getActiveRunningTasks(tasks), [tasks]);
-  const runningJobs = useMemo(() => Object.values(jobs).filter((j) => j.status === 'running'), [jobs]);
+  // 占用环读数（百分比 / 未配置窗口的降级都由 `lib/tokenUsage.ts` 定，
+  // 与移动端共用同一份口径）
+  const meter = contextMeterView(activeUsageView?.usage, activeUsageView?.windowTokens);
+  // 任务与作业中心入口的判定与内容（与移动端共用一份，见 taskCenterEntry）
+  const taskCenter = useMemo(
+    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null),
+    [tasks, jobs, activeConversationId],
+  );
+  const [tasksDrawerTab, setTasksDrawerTab] = useState<'agents' | 'jobs'>('agents');
 
   return (
     <div
@@ -877,14 +887,20 @@ export default function AgentPanel() {
               <button
                 type="button"
                 onClick={() => setTokenPopoverOpen((v) => !v)}
-                className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-medium transition-colors ${
-                  tokenPopoverOpen
-                    ? "bg-indigo-600 text-white"
-                    : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600 hover:text-zinc-200"
+                className={`flex h-5 w-5 items-center justify-center rounded-full transition-colors ${
+                  tokenPopoverOpen ? 'bg-indigo-600/30' : 'hover:bg-zinc-700/70'
                 }`}
-                title="Token 用量"
+                title={
+                  meter.percent != null
+                    ? `上下文占用 ${formatPercent(meter.percent)}%`
+                    : meter.windowTokens === 0
+                      ? 'Token 用量（未配置上下文窗口）'
+                      : 'Token 用量'
+                }
+                aria-label="Token 用量"
+                aria-expanded={tokenPopoverOpen}
               >
-                T
+                <ContextMeterRing percent={meter.percent} />
               </button>
               {tokenPopoverOpen && (
               <>
@@ -892,107 +908,68 @@ export default function AgentPanel() {
                   className="fixed inset-0 z-40"
                   onClick={() => setTokenPopoverOpen(false)}
                 />
-                <div className="absolute top-full left-0 mt-2 w-56 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl z-50 py-2 animate-fadeIn">
-                  <div className="px-3 py-1 text-xs font-semibold text-zinc-300 border-b border-zinc-700 pb-1.5 mb-1">
+                {/* `text-xs` 是这块面板的字号基准：内部尺寸都用 em 相对它算，
+                    移动端那张 sheet 用 text-sm，两端各自贴合各自的字号体系 */}
+                <div className="absolute top-full left-0 mt-2 w-64 text-xs bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl z-50 p-3 animate-fadeIn">
+                  <div className="mb-2 border-b border-zinc-700 pb-1.5 text-xs font-semibold text-zinc-300">
                     Token 用量
                   </div>
-                  <div className="px-3 py-0.5 text-xs text-zinc-400 space-y-0.5">
-                    <div className="flex justify-between">
-                      <span>本次输入</span>
-                      <span className="text-zinc-200 tabular-nums">
-                        {taskTokenUsage
-                          ? taskTokenUsage.promptTokens.toLocaleString()
-                          : "—"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>本次输出</span>
-                      <span className="text-zinc-200 tabular-nums">
-                        {taskTokenUsage
-                          ? taskTokenUsage.completionTokens.toLocaleString()
-                          : "—"}
-                      </span>
-                    </div>
-                    {taskTokenUsage?.reasoningTokens != null && (
-                      <div className="flex justify-between">
-                        <span>本次推理</span>
-                        <span className="text-zinc-200 tabular-nums">
-                          {taskTokenUsage.reasoningTokens.toLocaleString()}
-                        </span>
-                      </div>
-                    )}
-                    {taskTokenUsage?.cachedReadTokens != null && (
-                      <>
-                        <div className="flex justify-between">
-                          <span>缓存读取</span>
-                          <span className="text-zinc-200 tabular-nums">
-                            {taskTokenUsage.cachedReadTokens.toLocaleString()}
-                          </span>
-                        </div>
-                        {taskTokenUsage.promptTokens > 0 &&
-                          (() => {
-                            const rate =
-                              (taskTokenUsage.cachedReadTokens /
-                                taskTokenUsage.promptTokens) *
-                              100;
-                            return (
-                              <div className="flex flex-col gap-0.5">
-                                <div className="flex justify-between">
-                                  <span>缓存命中率</span>
-                                  <span className="text-zinc-200 tabular-nums">
-                                    {Math.round(rate)}%
-                                  </span>
-                                </div>
-                                {rate > 0 && (
-                                  <div className="w-full h-1.5 bg-zinc-700 rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full bg-indigo-500 rounded-full transition-all"
-                                      style={{
-                                        width: `${Math.min(rate, 100)}%`,
-                                      }}
-                                    />
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })()}
-                      </>
-                    )}
-                  </div>
-                  <div className="flex justify-between border-t border-zinc-700 pt-1 font-semibold text-zinc-200">
-                    <span>合计</span>
-                    <span className="tabular-nums">
-                      {taskTokenUsage
-                        ? taskTokenUsage.totalTokens.toLocaleString()
-                        : "—"}
-                    </span>
-                  </div>
+                  <TokenUsagePanel
+                    usage={activeUsageView?.usage}
+                    windowTokens={activeUsageView?.windowTokens ?? 0}
+                  />
                 </div>
               </>
             )}
           </div>
         </div>
 
-          {/* Running indicator capsule: Visible when concurrent tasks > 1 OR running task is in another conversation OR background jobs are running */}
-          {(runningTasks.length > 1 ||
-            (runningTasks.length === 1 &&
-              runningTasks[0].conversationId !== activeConversationId) ||
-            runningJobs.length > 0) && (
+          {/* 计数胶囊：并发任务 > 1、运行中任务在别的对话、有后台作业在跑，
+              或**只有**需要用户知道结局的作业（重启恢复出来的 interrupted，
+              那种状态下没有任何 running，唯一的入口就是这里）。 */}
+          {taskCenter.visible && (
             <button
               type="button"
-              onClick={() => setTasksDrawerOpen(true)}
+              onClick={() => {
+                setTasksDrawerTab(taskCenter.initialTab);
+                setTasksDrawerOpen(true);
+              }}
               className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
-                runningJobs.length > 0
-                  ? 'bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-300'
-                  : 'bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300'
+                taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
+                  ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
+                  : taskCenter.runningJobs.length > 0
+                    ? 'bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-300'
+                    : 'bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300'
               }`}
-              title="查看所有运行中的 Agent 任务与后台作业"
+              title={
+                taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
+                  ? '有上次运行留下的作业：结局未知，点开查看'
+                  : '查看所有运行中的 Agent 任务与后台作业'
+              }
             >
-              <AgentStatusIndicator status="running" size="xs" />
+              {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 ? (
+                <svg
+                  className="w-3 h-3 flex-shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                  />
+                </svg>
+              ) : (
+                <AgentStatusIndicator status="running" size="xs" />
+              )}
               <span>
-                {runningTasks.length > 0 && `${runningTasks.length} 个任务`}
-                {runningTasks.length > 0 && runningJobs.length > 0 && ' · '}
-                {runningJobs.length > 0 && `${runningJobs.length} 个后台作业`}
+                {taskCenter.runningTasks.length > 0 && `${taskCenter.runningTasks.length} 个任务`}
+                {taskCenter.runningTasks.length > 0 && taskCenter.runningJobs.length > 0 && ' · '}
+                {taskCenter.runningJobs.length > 0 && `${taskCenter.runningJobs.length} 个后台作业`}
+                {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 &&
+                  `${taskCenter.attentionJobs.length} 个作业已中断`}
               </span>
               <svg className="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -1675,6 +1652,7 @@ export default function AgentPanel() {
       <AgentTasksDrawer
         open={tasksDrawerOpen}
         onClose={() => setTasksDrawerOpen(false)}
+        initialTab={tasksDrawerTab}
       />
     </div>
   );

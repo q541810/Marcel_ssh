@@ -101,6 +101,27 @@ fn build_job_settlement_notice(jobs: &[crate::command_exec::JobInfo]) -> String 
     lines.join("\n")
 }
 
+/// 一轮请求结束后的上下文快照（占用环那几个数）。
+///
+/// provider 报了用量 → 用它的 prompt 总量（**精确值**）；没报 → 退回本地估算
+/// 并置 `estimated`（界面加 `~`，不能把估算讲成精确值）。三段构成**始终是估算**
+/// —— provider 不给这个拆分，这也是为什么前端分段条只有长度可信。
+fn round_context_snapshot(
+    round: Option<&crate::llm::provider::TokenUsage>,
+    breakdown: crate::agent::context::meter::ContextBreakdown,
+) -> crate::agent::conversation::LastContext {
+    let estimated_total = (breakdown.system + breakdown.tools + breakdown.messages) as u64;
+    crate::agent::conversation::LastContext {
+        used_tokens: round
+            .map(|u| u.prompt_tokens as u64)
+            .unwrap_or(estimated_total),
+        estimated: round.is_none(),
+        system_tokens: breakdown.system as u64,
+        tools_tokens: breakdown.tools as u64,
+        message_tokens: breakdown.messages as u64,
+    }
+}
+
 /// 把单个压缩生命周期事件实时转发为前端 stream 事件（压缩可感知/可监视）。
 /// 压缩期间摘要文本增量也会经 `Progress` 事件实时推送，前端据此显示进度。
 pub(crate) fn forward_compaction_event(
@@ -406,25 +427,49 @@ pub(crate) async fn run_agent_loop(
             tools = current_tools();
         }
 
+        // 这一轮请求的上下文构成估算（system / 工具 schema / 对话消息）。
+        // 只用于界面展示「上下文都花在哪了」，不参与任何压缩判定；取在发请求
+        // **之前**，与真正发出去的 messages/tools 同一份。
+        let breakdown = crate::agent::context::meter::context_breakdown(&messages, &tools);
+
         // 1. Call LLM (streaming) — with cancellation support
         let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
         let app_fwd = app.clone();
         let evn = event_name.clone();
+        // 本轮 provider 是否报了用量（以及报了什么）：流结束时据此决定
+        // 「精确值」还是「本地估算」，见下面的 ContextUsage。
+        let round_usage: std::sync::Arc<std::sync::Mutex<Option<crate::llm::provider::TokenUsage>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let round_usage_fwd = round_usage.clone();
         let forwarder = tokio::spawn(async move {
-            let mut in_thinking = false;
+            // 跨片状态必须活到整条流结束（标签字面量会被分片切开，见
+            // `thinking_filter`）。`filtered` 已经是「可上屏正文」——
+            // 思维内容与待定的标签前缀都不会出现在里面。
+            let mut thinking_filter = ThinkingFilterState::default();
             while let Some(ev) = rx.recv().await {
                 match ev {
                     StreamEvent::TextDelta { ref text } => {
-                        let (filtered, new_in_thinking) = filter_thinking_tags(text, in_thinking);
-                        in_thinking = new_in_thinking;
-                        if !filtered.is_empty() && !in_thinking {
+                        let filtered = filter_thinking_tags(text, &mut thinking_filter);
+                        if !filtered.is_empty() {
                             emit_event(&app_fwd, &evn, StreamEvent::TextDelta { text: filtered });
                         }
+                    }
+                    StreamEvent::Usage { ref usage } => {
+                        // `Usage` 照原样透传（插件的单轮原始数据），同时留一份给
+                        // ContextUsage 用。
+                        *round_usage_fwd.lock().unwrap() = Some(usage.clone());
+                        emit_event(&app_fwd, &evn, ev);
                     }
                     other => {
                         emit_event(&app_fwd, &evn, other);
                     }
                 }
+            }
+            // 流收尾：补发仍待定的尾巴（只可能是标签字面量的半截，例如整条流
+            // 以 `<` 结尾）。吞掉它就等于悄悄改了模型的可见输出。
+            let tail = thinking_filter.take_pending();
+            if !tail.is_empty() {
+                emit_event(&app_fwd, &evn, StreamEvent::TextDelta { text: tail });
             }
         });
 
@@ -433,6 +478,40 @@ pub(crate) async fn run_agent_loop(
             .await;
         drop(tx);
         let _ = forwarder.await;
+
+        // 1.5 用量记账（放在这里 = 成功/报错/重试/取消四条路都会记上）：
+        //     provider 这一轮报了用量就用精确值，没报就退回本地估算并置
+        //     `estimated`（界面加 `~`，别把估算讲成精确值）。先写库再发事件，
+        //     事件带的就是库里的数字——前端只覆盖不累加，重启后读到的同一个。
+        {
+            let round = round_usage.lock().unwrap().clone();
+            let last = round_context_snapshot(round.as_ref(), breakdown);
+            match persister
+                .conv_db
+                .record_usage(&conversation_id, round.as_ref(), last)
+            {
+                Ok(Some(usage)) => emit_event(
+                    &app,
+                    &event_name,
+                    StreamEvent::ContextUsage {
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                        reasoning_tokens: usage.reasoning_tokens,
+                        cached_read_tokens: usage.cached_read_tokens,
+                        context_window: agent_settings.context_window,
+                        used_tokens: last.used_tokens,
+                        estimated: last.estimated,
+                        system_tokens: last.system_tokens,
+                        tools_tokens: last.tools_tokens,
+                        message_tokens: last.message_tokens,
+                    },
+                ),
+                // 会话行没了（用户把会话删了）：不新建行、也不发数字
+                Ok(None) => {}
+                Err(e) => log::warn!("记录 token 用量失败（会话 {}）: {}", conversation_id, e),
+            }
+        }
 
         let assistant_msg = match result {
             Ok(msg) => {
@@ -1531,5 +1610,40 @@ mod tests {
         assert!(notice.contains("job_3"));
         assert!(notice.contains("cargo test"));
         assert!(notice.contains("执行失败"));
+    }
+
+    fn breakdown(system: usize, tools: usize, messages: usize) -> crate::agent::context::meter::ContextBreakdown {
+        crate::agent::context::meter::ContextBreakdown {
+            system,
+            tools,
+            messages,
+        }
+    }
+
+    /// provider 报了用量：用它的 prompt 总量，**不许**标成估算。
+    #[test]
+    fn context_snapshot_prefers_provider_usage() {
+        let round = crate::llm::provider::TokenUsage {
+            prompt_tokens: 84_213,
+            completion_tokens: 30,
+            total_tokens: 84_243,
+            ..Default::default()
+        };
+        let snap = round_context_snapshot(Some(&round), breakdown(3000, 12_000, 69_213));
+        assert_eq!(snap.used_tokens, 84_213);
+        assert!(!snap.estimated);
+        // 构成始终是估算（provider 不给这个拆分）
+        assert_eq!(snap.system_tokens, 3000);
+        assert_eq!(snap.tools_tokens, 12_000);
+        assert_eq!(snap.message_tokens, 69_213);
+    }
+
+    /// provider 没报用量（有些中转会忽略 `include_usage`）：退回本地估算并标
+    /// `estimated` —— 环仍有数，但界面会加 `~`，不会把估算讲成精确值。
+    #[test]
+    fn context_snapshot_falls_back_to_estimate() {
+        let snap = round_context_snapshot(None, breakdown(100, 200, 300));
+        assert_eq!(snap.used_tokens, 600);
+        assert!(snap.estimated);
     }
 }

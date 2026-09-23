@@ -884,6 +884,33 @@ export interface TokenUsage {
 }
 
 // LLM stream events
+
+/**
+ * `contextUsage` 事件的载荷。
+ *
+ * 每轮 LLM 请求结束后发一次，带的是**写库之后**的会话累计（含子 agent）与
+ * 这一轮请求的上下文快照。前端对它**只覆盖不累加** —— 事件里的数字与重启后
+ * 从会话数据读到的落库值是同一个，累加会把每一轮算两遍。
+ */
+export interface ContextUsageEvent {
+  type: 'contextUsage';
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** 缺失 = 该渠道从未报过（与 0 区分）。 */
+  reasoningTokens?: number;
+  cachedReadTokens?: number;
+  /** 生效窗口（0 = 未配置：不画占用弧，只显示已用值）。 */
+  contextWindow: number;
+  /** 这一轮请求的 prompt 总量。 */
+  usedTokens: number;
+  /** true = provider 没报用量，走本地估算（界面加 `~`）。 */
+  estimated: boolean;
+  systemTokens: number;
+  toolsTokens: number;
+  messageTokens: number;
+}
+
 export type LlmStreamEvent =
   | { type: 'textDelta'; text: string }
   | { type: 'thinkingDelta'; text: string }
@@ -906,6 +933,11 @@ export type LlmStreamEvent =
   // attempted=false：未开始就跳过（无区间/结构异常），前端不留痕；
   // attempted=true：摘要已跑但失败（截断/未遵循指令/校验不过），前端低调交代。
   | { type: 'compactionSkipped'; reason: string; attempted: boolean }
+  // 本会话的 token 用量快照：每轮 LLM 请求结束后一次，带的是**写库之后**的
+  // 数字（会话累计 + 这一轮请求的上下文快照）。与 `usage` 事件分工不同：
+  // `usage` 是 provider 报的**单轮原始值**（透传给插件用），这个才是界面口径，
+  // 前端对它**只覆盖不累加**。
+  | ContextUsageEvent
   // Tool result — emitted as a separate event on the same channel
   | { type: 'toolResult' } & ToolResultPayload
   // Model approval progress — shows a distinct step on the tool card
@@ -1055,6 +1087,44 @@ export interface AgentConversation {
    * 影响。切换置顶**不改 `updatedAt`**，所以取消置顶不会打乱时间序。
    */
   pinned?: boolean;
+  /**
+   * **生效的上下文窗口**（tokens；`undefined`/0 = 未配置）。
+   *
+   * 读时 overlay 派生值、不落库：模型级 `contextWindow` 优先，否则全局
+   * `agentModeSettings.contextWindow`。前端**不要**自己解析窗口 —— 与后端的
+   * 压缩阈值（窗口 × 0.8）必须基于同一个数字，两套算法迟早会漂。
+   */
+  contextWindow?: number;
+  /**
+   * token 用量（落库在 `conversations.usage_json`）。
+   *
+   * 字段整块缺失 = 从未记过用量（老会话 / 还没跑过）→ 界面显示 `—`，
+   * 不要当成 0。累计口径是「本会话 + 各子对话」（含子 agent），由后端求和
+   * 后给出，前端不要再自己加一遍。
+   */
+  usage?: ConversationUsage;
+}
+
+/** 最近一次 LLM 请求的上下文快照（占用环用的就是它）。 */
+export interface LastContextUsage {
+  usedTokens: number;
+  /** true = provider 没报用量，这几个数是本地估算（界面加 `~`）。 */
+  estimated: boolean;
+  systemTokens: number;
+  toolsTokens: number;
+  messageTokens: number;
+}
+
+/** 会话级 token 用量（后端 `ConversationUsage` 的线形状）。 */
+export interface ConversationUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** 缺失 = 该渠道从未报过这个字段（与 0 区分）。 */
+  reasoningTokens?: number;
+  /** 同上（OpenAI 兼容协议的缓存读取）。 */
+  cachedReadTokens?: number;
+  lastContext?: LastContextUsage;
 }
 
 export interface StoredMessage {
