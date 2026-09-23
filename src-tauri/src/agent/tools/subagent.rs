@@ -96,6 +96,36 @@ fn is_plan_parent_write_subagent_blocked(
     mode == "agent" && mh_enabled && parent_mode == Some(AgentMode::Plan)
 }
 
+/// 子 agent 的产出该如何回给父 agent。
+#[derive(Debug, Clone, PartialEq)]
+enum SubagentOutcome {
+    /// 有实际结论文本 → 成功结果。
+    Report(String),
+    /// 跑完了但一个字的结论都没有（空 / 纯空白）：不是「调研结论」，
+    /// 绝不能当成功回给父 agent。
+    Empty,
+    /// 被取消（用户停止 / 父任务级联停止）。
+    Cancelled,
+    /// 失败（LLM 错误 / 达到最大轮数 / panic）。
+    Failed,
+}
+
+/// 把「agent loop 的返回值 + 子任务终态」归成一种结果。
+///
+/// 空串必须单独归一类：子 agent 哑火（正文为空、或整段都在思维标签里被
+/// `strip_thinking_tags` 清空）时 loop 曾把空串当最终报告返回，父 agent 收到
+/// 「子agent完成：…」却什么结论都没有——比明确报失败更糟（父 agent 会拿它去
+/// 编结论）。终态里的 `status` 只用来区分「取消」与「失败」（取消是用户动作，
+/// 不是失败）。
+fn classify_subagent_result(result: Option<String>, status: &AgentStatus) -> SubagentOutcome {
+    match result {
+        Some(text) if !text.trim().is_empty() => SubagentOutcome::Report(text),
+        Some(_) => SubagentOutcome::Empty,
+        None if status.is_cancelled() => SubagentOutcome::Cancelled,
+        None => SubagentOutcome::Failed,
+    }
+}
+
 #[async_trait]
 impl AgentTool for SubagentTool {
     fn name(&self) -> &str {
@@ -440,8 +470,8 @@ impl AgentTool for SubagentTool {
             base
         };
 
-        match result {
-            Some(text) => {
+        match classify_subagent_result(result, &status) {
+            SubagentOutcome::Report(text) => {
                 let output = truncate_chars(&text, MAX_TASK_OUTPUT_CHARS);
                 log::info!(
                     "Subtask {} completed: {} chars returned to parent",
@@ -458,30 +488,42 @@ impl AgentTool for SubagentTool {
                     ),
                 )
             }
-            None => {
-                if status.is_cancelled() {
-                    log::info!("Subtask {} cancelled", sub_task_id);
-                    Ok(ToolOutput::fail(
-                        format!("子agent已取消：{}", description),
-                        "子agent已被取消，未返回调研结果。",
-                    )
-                    .with_metadata(result_meta(json!({
-                        "subTaskId": sub_task_id,
-                        "subConversationId": sub_conversation_id,
-                        "status": "cancelled",
-                    }))))
-                } else {
-                    log::warn!("Subtask {} failed (no result)", sub_task_id);
-                    Ok(ToolOutput::fail(
-                        format!("子agent失败：{}", description),
-                        "子agent执行失败（LLM 错误或达到最大轮数），未返回调研结果。",
-                    )
-                    .with_metadata(result_meta(json!({
-                        "subTaskId": sub_task_id,
-                        "subConversationId": sub_conversation_id,
-                        "status": "failed",
-                    }))))
-                }
+            SubagentOutcome::Empty => {
+                log::warn!("Subtask {} returned an empty report", sub_task_id);
+                Ok(ToolOutput::fail(
+                    format!("子agent未返回结论：{}", description),
+                    "子agent结束了，但没有返回任何结论（正文为空，或整段都在思维标签里）。\
+                     不要把它当成调研结果：需要结论时重新派发，并在 prompt 里明确要求以正文给出最终报告。",
+                )
+                .with_metadata(result_meta(json!({
+                    "subTaskId": sub_task_id,
+                    "subConversationId": sub_conversation_id,
+                    "status": "failed",
+                }))))
+            }
+            SubagentOutcome::Cancelled => {
+                log::info!("Subtask {} cancelled", sub_task_id);
+                Ok(ToolOutput::fail(
+                    format!("子agent已取消：{}", description),
+                    "子agent已被取消，未返回调研结果。",
+                )
+                .with_metadata(result_meta(json!({
+                    "subTaskId": sub_task_id,
+                    "subConversationId": sub_conversation_id,
+                    "status": "cancelled",
+                }))))
+            }
+            SubagentOutcome::Failed => {
+                log::warn!("Subtask {} failed (no result)", sub_task_id);
+                Ok(ToolOutput::fail(
+                    format!("子agent失败：{}", description),
+                    "子agent执行失败（LLM 错误或达到最大轮数），未返回调研结果。",
+                )
+                .with_metadata(result_meta(json!({
+                    "subTaskId": sub_task_id,
+                    "subConversationId": sub_conversation_id,
+                    "status": "failed",
+                }))))
             }
         }
     }
@@ -515,6 +557,42 @@ mod tests {
         let s = "中文中文中文中文";
         let out = truncate_chars(s, 3);
         assert_eq!(out, "中文中…");
+    }
+
+    /// 子 agent 哑火（正文为空 / 整段都在思维标签里被清空）时 loop 会返回
+    /// `Some("")`：那**不是**调研结论，绝不能当成功回给父 agent。
+    #[test]
+    fn empty_report_is_a_failure_not_a_success() {
+        for empty in ["", "   ", "\n\t "] {
+            assert_eq!(
+                classify_subagent_result(Some(empty.to_string()), &AgentStatus::Completed),
+                SubagentOutcome::Empty,
+                "{empty:?} 不该被当成调研结果"
+            );
+        }
+        // 有正文才是结果（原样返回）
+        assert_eq!(
+            classify_subagent_result(Some("结论".to_string()), &AgentStatus::Completed),
+            SubagentOutcome::Report("结论".to_string())
+        );
+    }
+
+    /// None 的分流：取消是用户动作（不是失败），其余都是失败。
+    #[test]
+    fn missing_result_splits_cancel_from_failure() {
+        assert_eq!(
+            classify_subagent_result(None, &AgentStatus::Cancelled),
+            SubagentOutcome::Cancelled
+        );
+        assert_eq!(
+            classify_subagent_result(None, &AgentStatus::Failed),
+            SubagentOutcome::Failed
+        );
+        assert_eq!(
+            classify_subagent_result(None, &AgentStatus::Completed),
+            SubagentOutcome::Failed,
+            "有终态却没文本 → 失败（绝不能当成完成）"
+        );
     }
 
     #[test]

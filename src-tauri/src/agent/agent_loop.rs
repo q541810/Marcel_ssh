@@ -146,6 +146,52 @@ pub(crate) fn forward_compaction_event(
     }
 }
 
+/// 非截断「哑火」（无可见正文、也无工具调用）之后允许的补问次数。
+///
+/// 哑火与截断不是一回事：截断是「模型没说完」（下一轮补完是合理的），哑火是
+/// 模型这一轮什么都没说——再 `continue` 很可能下一轮还是空。所以哑火用**有界**
+/// 补问把它拉回来：补问一次仍哑火就按失败收场（既不能落一条空 assistant 行，
+/// 也不能把「什么都没说」记成 Completed 并通知用户「任务已成功完成」）。
+const EMPTY_REPLY_MAX_RETRIES: usize = 1;
+
+/// 哑火补问文本（落库 + 进消息链，与作业结算通知同一条生命周期）。
+const EMPTY_REPLY_NUDGE: &str =
+    "你上一条回复没有任何可见正文：内容为空，或整段都包在思维标签里——思维内容用户看不到。\
+     请用正文直接给出你的回答或结论，不要只写在思维标签里。";
+
+/// 无工具调用的 assistant 回复的处置方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextReply {
+    /// 有可见正文：照常落库、进消息链。
+    Visible,
+    /// 截断（`finish_reason == "length"`）且无可见正文：本片不落库、不进消息链，
+    /// 直接下一轮让模型补完（截断是「没说完」，不是「什么都没说」）。
+    TruncatedEmpty,
+    /// 非截断且无可见正文：模型哑火。不落库（空 assistant 行会与 live store
+    /// 漂移），也**不能**当自然结束。
+    Empty,
+}
+
+/// 判定一次「无工具调用」的回复该怎么处置，并给出清理后的正文。
+///
+/// 判据必须落在**清理后**的正文上：整段内容都在思维标签里（或纯空白）的回复
+/// 会被 `strip_thinking_tags` 清成空串，而 `finish_reason` 正常是 `stop` ——
+/// 只看「截断且为空」会把这种哑火放进自然结束路径。
+fn classify_text_reply(raw_content: &str, truncated: bool) -> (TextReply, String) {
+    let cleaned = strip_thinking_tags(raw_content);
+    if cleaned.trim().is_empty() {
+        return (
+            if truncated {
+                TextReply::TruncatedEmpty
+            } else {
+                TextReply::Empty
+            },
+            cleaned,
+        );
+    }
+    (TextReply::Visible, cleaned)
+}
+
 /// Groups all parameters needed by the agent loop into a single context struct.
 pub(crate) struct LoopContext {
     pub ssh: SshManager,
@@ -225,6 +271,9 @@ pub(crate) async fn run_agent_loop(
     let max_rounds = agent_settings.max_tool_rounds.max(10);
     // 上下文超限恢复预算：每成功一轮重置（对齐 DSH maxOverflowRetries 语义）
     let mut overflow_retries = 0usize;
+    // 连续哑火（无可见正文、无工具调用）计数：模型产出可见正文或工具调用即清零，
+    // 上限见 `EMPTY_REPLY_MAX_RETRIES`。
+    let mut empty_reply_retries = 0usize;
 
     // Wrap the manager in Arc so the dispatcher's command approver can share
     // it without cloning the underlying HTTP client / config.
@@ -493,7 +542,7 @@ pub(crate) async fn run_agent_loop(
         // 3. Check if assistant returned tool calls
         let tool_calls = assistant_msg.tool_calls.clone().unwrap_or_default();
         if tool_calls.is_empty() {
-            let cleaned_content = strip_thinking_tags(&assistant_msg.content);
+            let (reply, cleaned_content) = classify_text_reply(&assistant_msg.content, truncated);
             let mut cleaned_msg = LlmMessage {
                 content: cleaned_content.clone(),
                 ..assistant_msg
@@ -502,13 +551,64 @@ pub(crate) async fn run_agent_loop(
             // 直接下一轮。save_msg 必须在此检查之后：否则空 content 会落库成一条空
             // assistant 行（save_message 无条件 INSERT），与 live store（前端收不到
             // 空文本）漂移——重启后出现空消息，压缩 count-walk 也与前端投影对不上。
-            if truncated && cleaned_content.is_empty() {
+            if reply == TextReply::TruncatedEmpty {
                 log::warn!(
                     "Agent {} truncated at token cap with empty text; skipping message and continuing",
                     task_id
                 );
                 continue;
             }
+            // 非截断的哑火（正文为空 / 纯空白 / 整段都在思维标签里）：同样不落库、
+            // 不进消息链；但它也**不是自然结束**——顺着往下走会把「什么都没说」
+            // 记成 Completed 并给用户发「任务已成功完成」。有界补问一次，仍哑火
+            // 就按失败收场（Failed + 失败通知），绝不谎报完成。
+            if reply == TextReply::Empty {
+                empty_reply_retries += 1;
+                if empty_reply_retries > EMPTY_REPLY_MAX_RETRIES {
+                    let msg = format!(
+                        "模型连续 {} 次没有返回任何可见正文（内容为空，或整段都包在思维标签里），任务终止",
+                        empty_reply_retries
+                    );
+                    log::warn!("Agent {} {}", task_id, msg);
+                    emit_final_plan_normalized(&app, &state, &task_id);
+                    emit_event(
+                        &app,
+                        &event_name,
+                        StreamEvent::Error {
+                            message: msg.clone(),
+                        },
+                    );
+                    if !is_subtask {
+                        let ns = state.settings.read().await.notification_settings.clone();
+                        send_notification(
+                            &app,
+                            NotificationKind::AgentTaskFailed,
+                            &ns,
+                            "Agent 任务失败",
+                            &msg,
+                        );
+                    }
+                    return None;
+                }
+                log::warn!(
+                    "Agent {} empty visible reply ({}/{}); asking the model for a visible answer",
+                    task_id,
+                    empty_reply_retries,
+                    EMPTY_REPLY_MAX_RETRIES
+                );
+                // 补问落库再进消息链：与作业结算通知同一条生命周期（重启后仍在，
+                // 历史投影与前端一致）。
+                if let Some(db_id) = persister.save_msg("user", EMPTY_REPLY_NUDGE, None, None) {
+                    let mut m = LlmMessage::user(EMPTY_REPLY_NUDGE);
+                    m.db_id = Some(db_id);
+                    messages.push(m);
+                } else {
+                    messages.push(LlmMessage::user(EMPTY_REPLY_NUDGE));
+                }
+                continue;
+            }
+            // 有可见正文：哑火预算清零（一次正常回复说明模型回到了正轨）
+            empty_reply_retries = 0;
             // 保存并回填 DB row id：压缩的 tail_db_id 指针依赖它
             if let Some(db_id) = persister.save_msg(
                 "assistant",
@@ -700,6 +800,8 @@ pub(crate) async fn run_agent_loop(
         }
 
         // 3. 将带 tool_calls 的 assistant 消息写入 history。
+        //    工具调用轮是「模型在工作」的另一种证据：哑火预算清零。
+        empty_reply_retries = 0;
         //    完整持久化 tool_calls 列表，跨 task 重建 history 时才能把并行调用
         //    保留在同一条 assistant 上，避免被拆成多条假 assistant。
         //    reasoning_content 一并落库：DeepSeek thinking 模式要求带 tool_calls
@@ -1091,8 +1193,9 @@ async fn execute_single_tool(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_job_settlement_notice, group_tool_calls_into_batches, PersistedAssistantToolCall,
-        PersistedToolResult, MAX_CONCURRENT_TOOL_EXECUTIONS,
+        build_job_settlement_notice, classify_text_reply, group_tool_calls_into_batches,
+        round_context_snapshot, PersistedAssistantToolCall, PersistedToolResult, TextReply,
+        MAX_CONCURRENT_TOOL_EXECUTIONS,
     };
     use crate::agent::risk::Disposition;
     use crate::agent::tools::{AgentTool, ToolContext, ToolOutput, ToolRegistry};
