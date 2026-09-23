@@ -257,6 +257,21 @@ function enforceToolProtocol(output: LlmHistoryItem[]): LlmHistoryItem[] {
 let syncActiveGeneration = 0;
 
 /**
+ * **显式**切换对话的代际令牌（历史列表点选 / 任务卡片跳转）。
+ *
+ * 与 `syncActiveGeneration` 分开：那一枚是「切 tab 触发的同步」，它读的是
+ * `activeConversationBySession` 绑定关系 —— 而绑定关系要等显式切换真正落地
+ * 才更新，共用一枚令牌会让切 tab 的同步把用户刚点的对话丢掉（同步选出来的
+ * 是另一条）。所以：
+ * - `switchConversation` 进入时自增、`set` 前校验：慢的那次结果直接作废，
+ *   否则先点消息多的 A、再点 B，A 的加载晚归就会把 active 盖回 A；
+ *   自增顺带作废在飞的 sync（它算的是切换前的绑定，结论同样过期）；
+ * - `loadConversation` 只读不自增（它还是连接恢复流程内部用的加载器），
+ *   在校验不过时放弃落地 —— 别盖掉期间发生的显式切换。
+ */
+let activeSelectionGeneration = 0;
+
+/**
  * 该对话下是否存在正在运行的任务（主 agent 或子 agent）。
  * sessionId 非空排除重启恢复的占位 task。
  */
@@ -378,6 +393,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   switchConversation: async (conversationId: string, sessionId?: string) => {
+    const myGeneration = ++activeSelectionGeneration;
+    // 显式切换 = 最新意图：作废在飞的 sync（它拿的是切换前的绑定，结论已过期）
+    syncActiveGeneration++;
     // map 缺失时（如重启后从 task 卡片跳转子对话）补拉元数据，
     // 保证输入区能识别子对话并渲染"返回主对话"条。
     const known = get().conversations[conversationId];
@@ -389,6 +407,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
       known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
+    // 期间又点了别的对话（或另一个入口改了 active）：本次结果整份作废
+    //（消息缓存也一并丢 —— 宁可下次重载，也不给「慢的那次」留覆盖的机会）。
+    // 后面全是同步写，所以这一处校验够用。
+    if (activeSelectionGeneration !== myGeneration) return;
     const msgs: AgentMessage[] = running
       ? (get().messages[conversationId] ?? [])
       : clearIntermediateReasoning((activeRes?.messages ?? []).map(storedMessageToAgentMessage));
@@ -421,6 +443,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   loadConversation: async (conversationId: string, sessionId?: string) => {
+    // 与 switchConversation 共用同一枚令牌，但**只读不自增**：它也是
+    // `loadConnectionConversations` 内部用的加载器（连接恢复流程），自增会把
+    // 用户刚点的对话丢掉（令牌只留最后一次进入的）。这里要挡的是另一件事：
+    // 本次加载期间发生过显式切换 → 结果已过期，别再无条件改 active
+    //（`syncActiveToConnection` 的注释里那句「不走 loadConversation，它会无条件
+    // 改 active，竞态下会盖掉更新的 tab」说的就是它）。
+    const myGeneration = activeSelectionGeneration;
     const known = get().conversations[conversationId];
     const running = conversationHasRunningTask(conversationId);
     const [activeRes, storedPlans, meta] = await Promise.all([
@@ -428,6 +457,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       running ? Promise.resolve(null) : tauri.agentLoadPlansByConversation(conversationId),
       known ? Promise.resolve(null) : tauri.agentGetConversation(conversationId).catch(() => null),
     ]);
+    if (activeSelectionGeneration !== myGeneration) return;
     const msgs: AgentMessage[] = running
       ? (get().messages[conversationId] ?? [])
       : clearIntermediateReasoning((activeRes?.messages ?? []).map(storedMessageToAgentMessage));

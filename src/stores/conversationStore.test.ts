@@ -2010,4 +2010,82 @@ describe('conversationStore', () => {
       expect(msgs.map((m) => m.id)).toEqual(['u1', 'a1', 'u2']);
     });
   });
+
+  describe('显式切换对话的代际守卫', () => {
+    const now = new Date().toISOString();
+
+    function storedMsg(id: string, conversationId: string, content: string) {
+      return {
+        id,
+        conversationId,
+        role: 'user',
+        content,
+        timestamp: now,
+        createdAt: now,
+      };
+    }
+
+    function seedTwoConversations() {
+      useConversationStore.setState({
+        conversations: {
+          'conv-a': { id: 'conv-a', connectionId: 'conn-1', title: 'A', createdAt: now, updatedAt: now },
+          'conv-b': { id: 'conv-b', connectionId: 'conn-1', title: 'B', createdAt: now, updatedAt: now },
+        },
+        messages: {},
+        activeConversationId: null,
+        activeConversationByConnection: {},
+        activeConversationBySession: {},
+      });
+    }
+
+    it('连点两条：加载慢的那条晚归也不许把 active 盖回去', async () => {
+      seedTwoConversations();
+      let resolveA: ((value: unknown) => void) | undefined;
+      agentLoadActiveMessages.mockImplementation((convId: string) => {
+        if (convId === 'conv-a') {
+          return new Promise((resolve) => {
+            resolveA = resolve;
+          });
+        }
+        return Promise.resolve({ messages: [storedMsg('b-msg', 'conv-b', 'B')], hasEarlier: false, checkpointId: null });
+      });
+
+      const switchA = useConversationStore.getState().switchConversation('conv-a');
+      const switchB = useConversationStore.getState().switchConversation('conv-b');
+      await switchB;
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-b');
+
+      // A 的加载这才返回：它已经被后来的 B 取代，整份结果作废
+      resolveA?.({ messages: [storedMsg('a-msg', 'conv-a', 'A')], hasEarlier: false, checkpointId: null });
+      await switchA;
+
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-b');
+      expect(useConversationStore.getState().messages['conv-b'].map((m) => m.id)).toEqual(['b-msg']);
+      // 过期的那次连消息缓存都不写（宁可下次重载，也不给慢的那次留覆盖机会）
+      expect(useConversationStore.getState().messages['conv-a']).toBeUndefined();
+    });
+
+    it('loadConversation 期间发生显式切换：过期的加载不落地', async () => {
+      seedTwoConversations();
+      let resolveLoad: ((value: unknown) => void) | undefined;
+      agentLoadActiveMessages.mockImplementation((convId: string) => {
+        if (convId === 'conv-a') {
+          return new Promise((resolve) => {
+            resolveLoad = resolve;
+          });
+        }
+        return Promise.resolve({ messages: [storedMsg('b-msg', 'conv-b', 'B')], hasEarlier: false, checkpointId: null });
+      });
+
+      // 连接恢复流程（loadConnectionConversations 内部走的就是 loadConversation）
+      const loading = useConversationStore.getState().loadConversation('conv-a');
+      // 加载途中用户点了另一条
+      await useConversationStore.getState().switchConversation('conv-b');
+      resolveLoad?.({ messages: [storedMsg('a-msg', 'conv-a', 'A')], hasEarlier: false, checkpointId: null });
+      await loading;
+
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-b');
+      expect(useConversationStore.getState().messages['conv-a']).toBeUndefined();
+    });
+  });
 });

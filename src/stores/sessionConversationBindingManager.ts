@@ -109,6 +109,10 @@ class SessionConversationBindingManager {
       sessionStore.setActiveSession(occupying.sessionId);
 
       const convStore = useConversationStore.getState();
+      // 绑定先行：切 session 会立刻触发 AgentPanel 的 syncActiveToSession，
+      // 而它读的是这份绑定关系。晚写的话那条同步会按旧绑定自己挑一条对话，
+      // 并且它比本次切换更晚进入（代际更新）→ 用户点的这条会被丢掉。
+      convStore.bindConversationToSession(occupying.sessionId, conversationId);
       await convStore.switchConversation(conversationId, occupying.sessionId);
 
       return { switchedSession: true, targetSessionId: occupying.sessionId };
