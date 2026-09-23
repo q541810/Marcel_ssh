@@ -489,6 +489,8 @@ const { ok, data } = await res.json();
 
 默认 `Approval`。
 
+> 声明值只是**下限**：`kind=ssh` 工具渲染出的命令若自身命中系统级操作 / 受保护路径的判定，最终档位同样升到 `ForceApproval`（即 Auto 模式下也会弹窗）；反过来声明 `Allow` 也不能把危险命令说成安全。
+
 #### 旧的五档严重度仍然能解析（已弃用）
 
 `ReadOnly` / `LowRisk` / `Moderate` / `HighRisk` / `Destructive` 这五个旧值继续可用，
@@ -500,6 +502,20 @@ const { ok, data } = await res.json();
 
 > **注意**：Agent 工具仅在 Agent 模式和 Auto 模式下可用，Plan 模式下不注册。
 
+### Agent 工具的权限（capability）
+
+每次调用工具前都会**实时**重查一次授权（拿插件**当前**的 manifest 与**当前**的设置来判，不认注册时那份声明快照）：
+
+| 工具类型 | 要求的 capability |
+|---------|------------------|
+| `kind=ssh`（默认） | **`ssh.exec`** —— 它等价于 IPC 的 `ssh_exec`，所以取自同一份「命令 → capability」映射（`plugins/capability.rs`），不是在别处另写一个名字 |
+| `kind=local` | 由 handler 决定：`fs.read` handler → `fs.read`，`fs.append` → `fs.write`（完整列表见 [API 参考 - 通用本地 handler](./plugin-api.md#通用本地-handler)） |
+
+下面两种都会拦住这次调用，并把原因**作为工具结果回给模型**（不是静默失败）：
+
+- 插件没在 `plugin.json` 的 `capabilities` 里**声明**它；
+- 用户在设置页把它**收回**了（授权表语义见 [API 参考 - 授权模型](./plugin-api.md#授权模型)）。
+
 ### 本地工具（`kind=local`）
 
 除了在远程服务器执行 SSH 命令（`kind=ssh`，默认），插件工具还可以声明 `kind=local` 在**用户本机**执行，调用内核注册的通用 handler。典型用途：读写插件目录下的本地文件、查询当前会话信息。
@@ -508,7 +524,7 @@ const { ok, data } = await res.json();
 |--|-------------------|--------------|
 | 执行位置 | 远程 SSH 服务器 | 用户本机 |
 | 必填字段 | `command`（SSH 命令模板） | `handler`（内核 handler 名）+ `command`（JSON 固定参数） |
-| capability | 由 IPC 命令决定 | 由 handler 决定（如 `fs.read` handler 需声明 `fs.read`） |
+| capability | 等价于 IPC 的 `ssh_exec` → **`ssh.exec`** | 由 handler 决定（如 `fs.read` handler → `fs.read`） |
 | 适用场景 | 服务器运维命令 | 本地文件 IO、会话查询 |
 
 示例：用 `fs.read` handler 读取插件目录下的 `data.json`，模型无法指定路径。
@@ -533,7 +549,7 @@ const { ok, data } = await res.json();
 要点：
 
 - **`command` 字段在 `kind=local` 时是 JSON 对象字符串**，解析后作为 fixed_params 与模型参数合并，**fixed_params 优先**——把 `path` 写死在 `command` 里、不暴露给 `parameters` schema，可从根本上防止模型写到任意路径
-- **capability 检查**：插件必须声明 handler 要求的 capability，否则工具调用被拒绝（详见 [API 参考 - 通用本地 handler](./plugin-api.md#通用本地-handler)）
+- **capability 检查**：插件必须声明 handler 要求的 capability，**且用户没有在设置页收回它**（两层都过才执行，见 [Agent 工具的权限](#agent-工具的权限capability)），否则工具调用被拒绝并把原因回给模型（详见 [API 参考 - 通用本地 handler](./plugin-api.md#通用本地-handler)）
 - **handler 列表**：当前内核注册了 6 个通用 handler（`fs.read`/`fs.write`/`fs.append`/`session.info`/`connection.info`/`host_port`），任何插件都可调用，无需自己实现
 - **上下文变量**：`command` 字段的字符串值支持 `{{__host_port__}}` 等模板变量，可让 path 自动带上当前连接标识（详见 [API 参考 - 模板上下文变量](./plugin-api.md#模板上下文变量)）
 
@@ -1098,6 +1114,7 @@ marcel.onCleanup(() => marcel.overlay.dismiss(btn));
 | IPC 无响应 | 未声明对应 capability、`pluginId` 不匹配 |
 | 资源加载失败 | 路径含 `../`（被拒绝）、文件不存在 |
 | Agent 工具不生效 | 当前处于 Plan 模式，需切换到 Agent/Auto |
+| Agent 工具报 capability 不足 | 未声明该 capability（`kind=ssh` 要 `ssh.exec`），或用户在设置页收回了它（见 [Agent 工具的权限](#agent-工具的权限capability)） |
 | 事件订阅无效果 | 未声明 `events` capability、事件模式拼写错误 |
 
 ---

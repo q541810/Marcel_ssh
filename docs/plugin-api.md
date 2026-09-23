@@ -171,7 +171,7 @@
 
 `kind=local` 工具的 `command` 字段被解析为 JSON 对象作为 fixed_params，与模型传入的 params 合并后传给 handler。fixed_params 优先级高，可防止模型覆盖 `path` 等敏感字段。`command` 字段中的字符串值支持 [模板上下文变量](#模板上下文变量) 替换（如 `{"path":"memories/{{__host_port__}}.jsonl"}`）。
 
-> `kind=local` 时，handler 调用前会做 capability 检查（插件必须声明对应 handler 要求的 capability）；handler 未注册时该工具被跳过并写 warn 日志，不影响其他工具加载。
+> `kind=local` 时，handler 调用前会做 capability 检查：插件必须**声明**对应 handler 要求的 capability，**且用户没有在设置页收回它**（两层都过才执行，授权表语义与 agent 工具共用，见[授权模型](#授权模型)），未通过就不执行并把原因回给模型；handler 未注册时该工具被跳过并写 warn 日志，不影响其他工具加载。
 
 ---
 
@@ -861,6 +861,8 @@ await listen('plugin-event-my-plugin', (e) => {
 - 用户可在设置页逐项授权/收回
 - 未声明的 capability 无法使用
 - 首次安装时所有声明的 capability 默认授权
+- 精确规则：某个插件在授权表（`authorizedCapabilities`）里**没有条目** = 它声明的全部 capability 都算已授权；**一旦有了条目**（用户在设置页收回任意一项就会为它建条目，全部恢复后又删掉条目），就只有列出的那几项生效
+- Agent 工具（`agentTools`）走的是同一套检查：`kind=ssh` 要求 `ssh.exec`，`kind=local` 要求 handler 的 capability（见[插件开发 - Agent 工具的权限](./plugin-development.md#agent-工具的权限capability)）
 
 ---
 

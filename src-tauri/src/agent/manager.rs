@@ -675,12 +675,7 @@ impl AgentManager {
                 if !role.is_subtask() {
                     let manifests = plugin_registry.enabled_manifests();
                     for m in &manifests {
-                        register_plugin_tools(
-                            &mut registry,
-                            &m.id,
-                            &m.capabilities,
-                            &m.agent_tools,
-                        );
+                        register_plugin_tools(&mut registry, &m.id, &m.agent_tools);
                     }
                     let mut set = tokio::task::JoinSet::new();
                     for server in enabled_mcp_servers {
