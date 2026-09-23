@@ -4,11 +4,25 @@ use tauri::AppHandle;
 
 use crate::agent::task::{AgentTaskPlan, PlanItem, PlanItemStatus};
 use crate::emit_event;
+use crate::llm::provider::{LlmMessage, LlmRole};
 use crate::AppState;
 
 /// 每轮 agent loop 注入的「当前计划状态」system 消息前缀。
 /// 构建与清理共用同一前缀，避免多轮累积污染 history。
 pub(crate) const PLAN_CONTEXT_PREFIX: &str = "当前计划:";
+
+/// 是否是「计划上下文注入」——每轮开头由 agent loop 生成、随请求临时插入的那条
+/// 消息，**不属于会话历史**。
+///
+/// 两个调用点必须共用这一个判据（别处再写一遍前缀判断就会分叉）：
+/// - agent loop 每轮开头清理上一轮的注入（历史版本曾用 `User` 角色注入，所以
+///   两种角色都算，免得老会话里残留的注入被当成用户新发言）；
+/// - 压缩选保留尾部时把它排除在预算之外（见 `agent::context` 的
+///   `is_transient_injection`）——否则 `retain = 0`（上下文超限恢复）时它会占住
+///   唯一的保留位，把最新用户指令整条挤进被压区间。
+pub(crate) fn is_plan_context_message(m: &LlmMessage) -> bool {
+    matches!(m.role, LlmRole::System | LlmRole::User) && m.content.starts_with(PLAN_CONTEXT_PREFIX)
+}
 
 /// 把 plan 序列化存盘。在 create/update/edit 改完内存 plan 后调用。
 /// 失败只记日志，不影响主流程（plan 持久化是 best-effort）。
@@ -205,12 +219,10 @@ pub(crate) fn build_plan_context(state: &AppState, task_id: &str) -> Option<Stri
     let plans = state.plans.read();
     let plan = plans.get(task_id)?;
 
-    let all_terminal = plan.items.iter().all(|item| {
-        matches!(
-            item.status,
-            PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped
-        )
-    });
+    let all_terminal = plan
+        .items
+        .iter()
+        .all(|item| is_terminal_status(&item.status));
     if all_terminal {
         return None;
     }
@@ -236,6 +248,65 @@ pub(crate) fn build_plan_context(state: &AppState, task_id: &str) -> Option<Stri
     }
     lines.push("请先完成当前步骤，然后调用 update_plan_item 标记状态为 \"completed\"、\"failed\" 或 \"skipped\"。".to_string());
 
+    Some(lines.join("\n"))
+}
+
+/// 自然结束前的计划收尾提醒。
+///
+/// 任务准备结束（模型给出最终文本、名下无 running 作业）但计划里仍有非终态项时，
+/// 返回一段提醒文本让模型先收尾计划。
+///
+/// **有界**：同一个任务只提醒一次（复用 `reflection_reminded` —— 与
+/// `handle_update_plan_item` 的反思拦截共用「本任务已提醒过」这一个语义，不新开
+/// 计数器）。提醒过之后模型再想结束就放行：把「有计划就不许结束」做成硬拦截会把
+/// 任务卡死（模型可能已经推进不动那一步了），带一份没写完的计划给出结论，比让
+/// 用户永远等下去好。
+///
+/// `has_plan` 是本任务「有没有计划」的内存镜像（写侧：`handle_create_plan` 与
+/// `restore_latest_plan`），先看它再抢 `plans` 的写锁——绝大多数任务没有计划。
+pub(crate) fn plan_finish_reminder(state: &AppState, task_id: &str) -> Option<String> {
+    let has_plan = state
+        .agent_tasks
+        .read()
+        .get(task_id)
+        .is_some_and(|t| t.has_plan);
+    let mut plans = state.plans.write();
+    let reminder = take_plan_finish_reminder(has_plan, plans.get_mut(task_id))?;
+    drop(plans);
+    // 提醒标记随 plan 落盘（best-effort，与反思拦截一致）：进程在提醒之后崩掉时，
+    // 恢复出来的计划不会把这次提醒重放一遍。
+    if let Some(p) = state.plans.read().get(task_id) {
+        persist_plan(state, task_id, p);
+    }
+    Some(reminder)
+}
+
+/// [`plan_finish_reminder`] 的判定与状态推进（纯函数，边界直接可测）：
+/// - 无计划（`has_plan == false`）或 plan 已被剪掉 → 不提醒；
+/// - 没有 item，或 item 全已终态 → 不提醒；
+/// - 本任务已提醒过（`reflection_reminded`）→ 放行（不提醒）；
+/// - 否则置位并返回提醒文本。
+fn take_plan_finish_reminder(has_plan: bool, plan: Option<&mut AgentTaskPlan>) -> Option<String> {
+    if !has_plan {
+        return None;
+    }
+    let plan = plan?;
+    if plan.items.is_empty() || is_plan_complete(plan) || plan.reflection_reminded {
+        return None;
+    }
+    plan.reflection_reminded = true;
+
+    let mut lines = vec!["你打算给出最终答复，但计划里还有未收尾的步骤：".to_string()];
+    for item in plan.items.iter().filter(|i| !is_terminal_status(&i.status)) {
+        lines.push(format!("- [{}] {}", item.id, item.title));
+    }
+    lines.push(
+        "请先收尾再给最终答复：\n\
+         - 做完了的：用工具留下可验证的证据，然后 update_plan_item 标 \"completed\"\n\
+         - 确实不再需要 / 做不了的：标 \"skipped\" 或 \"failed\" 并写清原因，或用 edit_plan 调整它\n\
+         - 不要放着不动就直接结束：用户会看到「已完成」和一份没收尾的计划并存"
+            .to_string(),
+    );
     Some(lines.join("\n"))
 }
 
@@ -458,7 +529,9 @@ pub(crate) async fn handle_update_plan_item(
     }
     let error_msg = plan.items[item_index].error.clone();
 
-    // 反思拦截：本次改为终态 && 改完所有 item 都终态 && 没提醒过
+    // 反思拦截：本次改为终态 && 改完所有 item 都终态 && 没提醒过。
+    // 标记由「本次拦截」与「自然结束前的计划收尾提醒」（`plan_finish_reminder`）
+    // 共用：已经提醒过一次就不再拦截，让模型把最后一步收掉。
     if is_terminal_transition && !plan.reflection_reminded && is_plan_complete(plan) {
         // 回滚本次状态变更（status 和 error 都恢复原值）
         plan.items[item_index].status = original_status.clone();
@@ -591,14 +664,23 @@ fn advance_current_index(plan: &mut AgentTaskPlan) {
     plan.current_index = plan.items.len();
 }
 
+/// 单条 item 是否已到终态（completed / failed / skipped）。
+///
+/// 「计划收尾了没有」只在这一处定义：`build_plan_context`（要不要注入计划）、
+/// `is_plan_complete`（要不要发 PlanCompleted）、`plan_finish_reminder`（能不能
+/// 结束任务）全走它，新增状态位时只有这一处要回答。
+fn is_terminal_status(status: &PlanItemStatus) -> bool {
+    matches!(
+        status,
+        PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped
+    )
+}
+
 /// Check whether all plan items are in a terminal state.
 fn is_plan_complete(plan: &AgentTaskPlan) -> bool {
-    plan.items.iter().all(|item| {
-        matches!(
-            item.status,
-            PlanItemStatus::Completed | PlanItemStatus::Failed | PlanItemStatus::Skipped
-        )
-    })
+    plan.items
+        .iter()
+        .all(|item| is_terminal_status(&item.status))
 }
 
 /// 处理 `edit_plan` 工具输出：按 ops 批量调整 plan 结构（增删改 item）。
@@ -721,5 +803,103 @@ pub(crate) async fn handle_edit_plan(
     drop(plans);
     if let Some(p) = state.plans.read().get(task_id) {
         persist_plan(state, task_id, p);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan_with(statuses: &[PlanItemStatus]) -> AgentTaskPlan {
+        AgentTaskPlan {
+            task_id: "t1".into(),
+            items: statuses
+                .iter()
+                .enumerate()
+                .map(|(i, status)| PlanItem {
+                    id: (i + 1).to_string(),
+                    title: format!("步骤{}", i + 1),
+                    status: status.clone(),
+                    error: None,
+                })
+                .collect(),
+            current_index: 0,
+            next_item_seq: statuses.len() + 1,
+            reflection_reminded: false,
+        }
+    }
+
+    /// 计划还有非终态项 → 提醒一次（并把未收尾的步骤列出来）；置位之后再问就
+    /// 不提醒了——这就是「有界」：只打扰一次，之后模型要结束就放行。
+    #[test]
+    fn finish_reminder_fires_once_when_plan_unfinished() {
+        let mut plan = plan_with(&[PlanItemStatus::Completed, PlanItemStatus::Pending]);
+        let reminder = take_plan_finish_reminder(true, Some(&mut plan)).expect("应提醒");
+        assert!(
+            reminder.contains("步骤2"),
+            "未收尾的步骤要列出来：{reminder}"
+        );
+        assert!(
+            !reminder.contains("步骤1"),
+            "已收尾的步骤不用再列：{reminder}"
+        );
+        assert!(plan.reflection_reminded, "提醒过要置位");
+        assert_eq!(
+            take_plan_finish_reminder(true, Some(&mut plan)),
+            None,
+            "同一个任务只提醒一次"
+        );
+    }
+
+    /// 全终态 / 空计划 / 无计划 / 计划被剪掉都不提醒，且**不该白白置位**
+    /// （置位会吃掉那个任务唯一的一次提醒）。
+    #[test]
+    fn finish_reminder_stays_silent_when_nothing_to_wrap_up() {
+        let mut done = plan_with(&[
+            PlanItemStatus::Completed,
+            PlanItemStatus::Skipped,
+            PlanItemStatus::Failed,
+        ]);
+        assert_eq!(take_plan_finish_reminder(true, Some(&mut done)), None);
+        assert!(!done.reflection_reminded);
+
+        let mut empty = plan_with(&[]);
+        assert_eq!(take_plan_finish_reminder(true, Some(&mut empty)), None);
+        assert!(!empty.reflection_reminded);
+
+        // has_plan=false（没接线时的恒态）→ 不提醒：有计划的路径才走这套
+        let mut pending = plan_with(&[PlanItemStatus::InProgress]);
+        assert_eq!(take_plan_finish_reminder(false, Some(&mut pending)), None);
+        assert!(!pending.reflection_reminded);
+
+        assert_eq!(take_plan_finish_reminder(true, None), None);
+    }
+
+    /// 提醒标记是「本任务已提醒过」的共享语义：反思拦截已经置位时，收尾提醒
+    /// 不再重复打扰（同一任务只提醒一次）。
+    #[test]
+    fn finish_reminder_respects_the_shared_reminded_flag() {
+        let mut plan = plan_with(&[PlanItemStatus::Pending]);
+        plan.reflection_reminded = true;
+        assert_eq!(take_plan_finish_reminder(true, Some(&mut plan)), None);
+    }
+
+    /// 注入判据：前缀 + system/user 角色（历史版本用 User 注入过）。
+    /// 每轮开头的清理与压缩选保留尾部共用这一份判据。
+    #[test]
+    fn plan_context_message_predicate() {
+        assert!(is_plan_context_message(&LlmMessage::system(format!(
+            "{PLAN_CONTEXT_PREFIX} 1. 步骤"
+        ))));
+        assert!(is_plan_context_message(&LlmMessage::user(format!(
+            "{PLAN_CONTEXT_PREFIX} 1. 步骤"
+        ))));
+        assert!(!is_plan_context_message(&LlmMessage::assistant(format!(
+            "{PLAN_CONTEXT_PREFIX} 1. 步骤"
+        ))));
+        assert!(!is_plan_context_message(&LlmMessage::system(
+            "普通系统提示"
+        )));
+        assert!(!is_plan_context_message(&LlmMessage::user("普通用户消息")));
     }
 }

@@ -1,20 +1,23 @@
-use std::time::Duration;
 use tauri::AppHandle;
 use tokio::sync::mpsc;
 
 use crate::agent::conversation::ConversationDb;
-use crate::agent::conversation_persister::ConversationPersister;
+use crate::agent::conversation_persister::{ConversationPersister, PromptOrigin, ROLE_NOTICE};
 use crate::agent::plan_handler::{
-    build_plan_context, emit_final_plan_normalized, handle_plan_tool_output, PLAN_CONTEXT_PREFIX,
+    build_plan_context, emit_final_plan_normalized, handle_plan_tool_output,
+    is_plan_context_message, plan_finish_reminder,
 };
 use crate::agent::risk::Disposition;
 use crate::agent::task::AgentMode;
-use crate::agent::thinking_filter::{filter_thinking_tags, strip_thinking_tags};
+use crate::agent::thinking_filter::{
+    filter_thinking_tags, strip_thinking_tags, ThinkingFilterState,
+};
 use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
 use crate::error::AppError;
+use crate::llm::jev::JevConfig;
 use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmConfig, LlmMessage, LlmRole, ToolCall, ToolDefinition};
 use crate::llm::streaming::StreamEvent;
@@ -366,12 +369,9 @@ pub(crate) async fn run_agent_loop(
         }
 
         // 0. 注入 plan 上下文：用临时 system 消息（不是 user），避免模型当成用户新发言。
-        //    按前缀清掉上一轮注入；同时清掉旧版本可能残留的 User 角色 plan 消息。
-        messages.retain(|m| {
-            let is_plan_inject = m.content.starts_with(PLAN_CONTEXT_PREFIX)
-                && (m.role == LlmRole::System || m.role == LlmRole::User);
-            !is_plan_inject
-        });
+        //    按前缀清掉上一轮注入；同时清掉旧版本可能残留的 User 角色 plan 消息
+        //    （判据来自 `plan_handler`：压缩选保留尾部用的是同一个）。
+        messages.retain(|m| !is_plan_context_message(m));
         if let Some(plan_context) = build_plan_context(&state, &task_id) {
             messages.push(LlmMessage::system(plan_context));
         }

@@ -20,7 +20,9 @@
 //! 正确性不变量（全部经测试保证）：
 //! - 只改写旧 Tool 消息 content 或 splice 替换完整平衡区间；协议配对不破坏。
 //! - 摘要失败/取消/shrink 校验不过 → messages 零改动，主循环继续。
-//! - 最新用户指令（retain 尾部）永不被压。
+//! - 最新用户指令（retain 尾部）永不被压 —— 选区间时把调用方每轮重新生成的
+//!   瞬态注入（计划上下文，见 [`is_transient_injection`]）排除在尾部预算与
+//!   边界判定之外，它不再能顶掉那个保留位。
 
 pub mod meter;
 pub mod pairing;
@@ -103,6 +105,24 @@ pub struct CompactionRun {
     /// 生命周期事件（开始/完成/跳过），按发生顺序排列。
     /// 注：`Progress` 文本流只经 `on_event` 实时回调，不收集在此列表。
     pub events: Vec<CompactionEvent>,
+}
+
+/// 是否是「调用方每轮重新生成的瞬态注入消息」——当前只有计划上下文
+/// （`plan_handler::build_plan_context` 每轮开头 push 的那条临时 system 消息）。
+///
+/// 为什么选区间时要单独认出它：它不是会话内容，下一轮开头就会被替换。而
+/// `retain = 0`（上下文超限恢复）时尾循环第一个碰到的就是消息流最后一条，若
+/// 那条是瞬态注入，保留位会落在它身上——**最新用户指令的逐字文本**整条落进被
+/// 压区间（摘要指令要求逐字引用 Primary Request，但长命令 / 标识符的转写会
+/// 失真）。判据复用 `plan_handler::is_plan_context_message`，与 agent loop
+/// 每轮开头的清理共用同一份权威定义，不在这里另写前缀判断。
+fn is_transient_injection(m: &LlmMessage) -> bool {
+    crate::agent::plan_handler::is_plan_context_message(m)
+}
+
+/// 与 `msgs` 等长的瞬态注入标记（选区间时排除在保留尾部之外）。
+fn transient_mask(msgs: &[LlmMessage]) -> Vec<bool> {
+    msgs.iter().map(is_transient_injection).collect()
 }
 
 /// 判断一条 LLM 错误消息是否属于"上下文超限"（各 provider 措辞不同，启发式匹配）。
@@ -378,7 +398,11 @@ pub async fn compact_if_needed(
                     };
                 }
             };
-            let Some(mut range) = region::select_compactable_range(msgs, &cuts, 0) else {
+            // 瞬态注入（计划上下文）不参与保留尾部：它下一秒就被替换，
+            // 占住保留位会把最新用户指令整条挤进被压区间。
+            let transient = transient_mask(msgs);
+            let Some(mut range) = region::select_compactable_range(msgs, &cuts, 0, &transient)
+            else {
                 record_event(
                     &mut events,
                     on_event,
@@ -539,7 +563,11 @@ pub async fn compact_if_needed(
                         break;
                     }
                 };
-                let Some(range) = region::select_compactable_range(msgs, &cuts, retain_tokens)
+                // 瞬态注入（计划上下文）不参与保留尾部；每次压缩都会改写消息流，
+                // 标记必须跟着当前 `msgs` 重算。
+                let transient = transient_mask(msgs);
+                let Some(range) =
+                    region::select_compactable_range(msgs, &cuts, retain_tokens, &transient)
                 else {
                     if result.is_none() {
                         record_event(
@@ -836,6 +864,22 @@ mod tests {
         ] {
             assert!(!is_context_overflow_error(text), "should not match: {text}");
         }
+    }
+
+    /// 瞬态注入判据必须认出 agent loop 每轮 push 的计划上下文（前缀来自
+    /// `plan_handler` 的权威定义）：选保留尾部就靠它，认不出来时超限恢复会把
+    /// 最新用户指令压掉。角色上 system/user 都算（历史版本用 User 注入过）。
+    #[test]
+    fn transient_mask_marks_only_the_plan_injection() {
+        use crate::agent::plan_handler::PLAN_CONTEXT_PREFIX;
+        let msgs = vec![
+            LlmMessage::system("system prompt"),
+            LlmMessage::user("把 nginx 重启并复测"),
+            LlmMessage::assistant("好的"),
+            LlmMessage::system(&format!("{}{}", PLAN_CONTEXT_PREFIX, "1. 重启 nginx")),
+            LlmMessage::user(&format!("{}{}", PLAN_CONTEXT_PREFIX, "1. 重启 nginx")),
+        ];
+        assert_eq!(transient_mask(&msgs), vec![false, false, false, true, true]);
     }
 
     #[test]

@@ -8,7 +8,9 @@ pub enum AgentMode {
     /// (read_file, list_directory, search_files, system_info, connection_info,
     /// bash, ask_user, web_search, http_get, skills) to research
     /// and plan. No write/edit/create tools. Plugin and MCP tools are not
-    /// registered. Command execution is gated by allow/deny lists.
+    /// registered. Command execution is silent like `Auto` unless the user turns
+    /// on `plan_mode_requires_approval` — see
+    /// `tool_dispatcher::effective_approval_mode`.
     Plan,
     /// AI may invoke tools; command execution is gated by allow/deny lists
     /// configured in `AgentSettings`.
@@ -198,9 +200,21 @@ pub struct AgentTaskPlan {
     /// 下一个新增 item 的序号，用于生成 `item-{seq}` id。
     /// 删除 item 时不复用旧 id，避免 id 漂移导致 LLM 混淆。
     pub next_item_seq: usize,
-    /// 反思提醒是否已触发过一次。
-    /// 第一次把所有 item 标记为终态时，会回滚状态并提醒 LLM 反思。
-    /// LLM 再次调用 update_plan_item 把最后一个 item 标记为终态时，不再拦截。
+    /// 「本任务已经提醒过一次」的标记，两个提醒共用：
+    /// - `plan_handler::handle_update_plan_item` 的反思拦截（标记最后一个 item
+    ///   为终态时回滚 + 提醒）；
+    /// - agent loop 自然结束前的计划收尾提醒（`plan_handler::plan_finish_reminder`，
+    ///   只提醒一次，提醒过就放行，绝不把任务卡死）。
+    ///
+    /// **按任务算、刻意不落盘**（serde 两侧都跳过）：它是「这一轮跑起来之后提醒过
+    /// 没有」的运行时状态，不是计划内容。存进去的话，模型改出终稿后计划会以
+    /// 「非终态 + 已提醒」落盘，同会话的下一个任务恢复它时 `!reflection_reminded`
+    /// 恒假——那份计划此后再也不会触发任何提醒。新任务一律从 `false` 开始。
+    ///
+    /// **必须带 `#[serde(default)]`**：这是后加字段，旧版本落盘的 plan JSON 里
+    /// 没有它。缺了默认值，`restore_latest_plan` / 快照恢复 / 前端 load 都会
+    /// 反序列化失败并把整份计划静默丢掉。
+    #[serde(default, skip_serializing, skip_deserializing)]
     pub reflection_reminded: bool,
 }
 
@@ -349,6 +363,64 @@ mod tests {
         // 已 Failed 再写 Completed 仍会写入（与旧行为一致）
         assert!(task.transition_to(AgentStatus::Completed));
         assert_eq!(task.status, AgentStatus::Completed);
+    }
+
+    /// 旧版本落盘的 plan JSON 里没有 `reflectionReminded`（后加字段）——
+    /// 反序列化必须成功且 items 原样，否则 `restore_latest_plan` / 撤回快照
+    /// 恢复 / 前端 load 都会把整份计划静默丢掉（那不是「兼容旧数据」，是丢
+    /// 用户数据）。
+    #[test]
+    fn legacy_plan_json_without_reflection_reminded_still_restores() {
+        let raw = r#"{
+            "taskId": "t1",
+            "items": [
+                {"id": "1", "title": "看看磁盘", "status": "completed", "error": null},
+                {"id": "2", "title": "清理日志", "status": "pending", "error": null}
+            ],
+            "currentIndex": 1,
+            "nextItemSeq": 3
+        }"#;
+        let plan: AgentTaskPlan = serde_json::from_str(raw).expect("旧 plan 必须能恢复");
+        assert_eq!(plan.items.len(), 2);
+        assert_eq!(plan.items[1].title, "清理日志");
+        assert_eq!(plan.items[1].status, PlanItemStatus::Pending);
+        assert!(!plan.reflection_reminded, "旧数据一律从 false 开始");
+        assert_eq!(plan.next_item_seq, 3);
+    }
+
+    /// 提醒标记按任务重新开始：内存里置位后落盘、再读回来必须是 `false`。
+    /// 否则同会话的下一个任务恢复出一份「非终态 + 已提醒」的计划，
+    /// `!reflection_reminded` 恒假——那份计划再也不会触发任何提醒。
+    #[test]
+    fn reflection_reminded_does_not_survive_persistence() {
+        let plan = AgentTaskPlan {
+            task_id: "t1".into(),
+            items: vec![PlanItem {
+                id: "1".into(),
+                title: "步骤".into(),
+                status: PlanItemStatus::InProgress,
+                error: None,
+            }],
+            current_index: 0,
+            next_item_seq: 2,
+            reflection_reminded: true,
+        };
+        let json = serde_json::to_string(&plan).expect("serialize");
+        assert!(
+            !json.contains("reflectionReminded"),
+            "运行时标记不该落盘：{json}"
+        );
+        let back: AgentTaskPlan = serde_json::from_str(&json).expect("deserialize");
+        assert!(!back.reflection_reminded);
+        assert_eq!(back.items.len(), 1, "落盘往返不该动计划内容");
+
+        // 旧数据里显式写了 true 也一律忽略（语义在新任务里重新开始）
+        let raw_with_flag = r#"{
+            "taskId": "t1", "items": [], "currentIndex": 0,
+            "nextItemSeq": 1, "reflectionReminded": true
+        }"#;
+        let plan: AgentTaskPlan = serde_json::from_str(raw_with_flag).expect("deserialize");
+        assert!(!plan.reflection_reminded);
     }
 
     /// `as_str()` 与 serde 序列化必须给出同一套字符串 —— 前者落库，分叉了就是
