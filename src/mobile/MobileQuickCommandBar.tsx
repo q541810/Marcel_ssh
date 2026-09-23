@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useQuickCommandStore } from '@/stores/quickCommandStore';
+import { getErrorMessage } from '@/lib/errors';
 import {
   resolveMobileQuickCommands,
   toExecutableQuickCommand,
@@ -43,8 +44,11 @@ export default function MobileQuickCommandBar({
 
   const handleRun = (cmd: MobileQuickCommand) => {
     if (!sessionId || executingId) return;
+    // store.execute 落完 store 错误后原样 rethrow（抛的是结构化 AppError 对象，
+    // 不是 Error），onError 是 MobileTerminalHost 的 setIoError —— 直接 String()
+    // 会让用户看到 "[object Object]"。与桌面 QuickCommandPanel 一样走 getErrorMessage。
     void execute(toExecutableQuickCommand(cmd), sessionId).catch((err) => {
-      onError?.(err instanceof Error ? err.message : String(err));
+      onError?.(getErrorMessage(err));
     });
   };
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import { getErrorMessage } from '@/lib/errors';
 import type { McpServer, McpServerInput } from '@/lib/types';
 
 type Step = 'choose' | 'json' | 'form';
@@ -115,7 +116,10 @@ export default function McpServerModal({ open, server, onClose, onSave }: Props)
       await onSave({ name: name.trim(), url: url.trim(), headers: finalHeaders, enabled, trusted });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // onSave 来自 mcpStore（addServer/updateServer）：它落完 store 错误后原样
+      // rethrow 结构化 AppError 对象。原来这里是 `err instanceof Error ? … : String(err)`，
+      // 于是 UI 上会出现 "[object Object]"。
+      setError(getErrorMessage(err));
     } finally {
       setSaving(false);
     }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { subscribeTauriEvent } from '@/lib/tauriEvent';
+import { getErrorMessage } from '@/lib/errors';
 import { pluginWebviewSetBounds } from '@/lib/tauri';
 import { getElementRect } from './rectSync';
 import { acquire, hide, destroy } from './pluginWebviewPool';
@@ -109,7 +110,7 @@ export default function PluginWebviewSlot({ provider }: Props) {
       })
       .catch((err) => {
         console.error('[plugin-slot] acquire failed:', err);
-        setError(String(err));
+        setError(getErrorMessage(err));
         setErrorPhase('load');
       });
 

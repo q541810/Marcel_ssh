@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getErrorMessage } from "./errors";
 import type {
   ActiveMessagesResult,
   AppBootstrapData,
@@ -508,7 +509,10 @@ export async function validateCustomProtectedPaths(
     await invoke("config_validate_custom_protected_paths", { paths });
     return null;
   } catch (e) {
-    return String(e);
+    // 返回值直接被设置页当错误文案显示（AgentPolicySection / MobileAgentPolicySection），
+    // 所以必须走统一的取文案入口：结构化 AppError 是 `{kind, message}` 对象，
+    // `String(e)` 会渲染成字面量 "[object Object]"。
+    return getErrorMessage(e);
   }
 }
 
