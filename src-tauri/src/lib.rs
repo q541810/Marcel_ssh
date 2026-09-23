@@ -117,8 +117,9 @@ pub struct AppState {
     /// Prevents the same remote file being opened twice concurrently (which would
     /// have the two local copies clobber each other and race on sync-back).
     pub sysopen_active_paths: std::sync::Arc<PlRwLock<HashMap<(String, String), String>>>,
-    /// Non-fatal warning about settings load (e.g. file backed up). Surfaced to
-    /// the frontend via `config_get_settings` so it can show a notification.
+    /// Non-fatal warning about config load (settings / skills; e.g. file backed
+    /// up). Surfaced to the frontend via `config_get_settings` so it can show a
+    /// notification.
     pub settings_warning: std::sync::Arc<PlRwLock<Option<String>>>,
     /// Plugin registry: single source of truth for plugin manifests + state.
     /// Reloads on startup and whenever settings change (enable/disable plugin,
@@ -268,7 +269,7 @@ impl AppState {
                 log::warn!("无法加载应用设置，使用默认值：{}", e);
                 // The file exists but is unreadable/incompatible.
                 // Back it up before any save overwrites it silently.
-                let bak_path = backup_settings_on_load_failure(&settings_backup_src);
+                let bak_path = backup_config_on_load_failure(&settings_backup_src);
                 let msg = match bak_path {
                     Some(path) => format!(
                         "配置文件加载失败: {}。旧文件已备份到 {}，当前使用默认设置。",
@@ -277,15 +278,15 @@ impl AppState {
                     ),
                     None => format!("配置文件加载失败: {}。当前使用默认设置。", e),
                 };
-                settings_warning = Some(msg);
+                append_load_warning(&mut settings_warning, msg);
                 AppSettings::default()
             }
             Err(join_err) => {
                 log::warn!("应用设置加载任务失败：{}", join_err);
-                settings_warning = Some(format!(
-                    "应用设置加载任务失败: {}。当前使用默认设置。",
-                    join_err
-                ));
+                append_load_warning(
+                    &mut settings_warning,
+                    format!("应用设置加载任务失败: {}。当前使用默认设置。", join_err),
+                );
                 AppSettings::default()
             }
         };
@@ -394,29 +395,64 @@ impl AppState {
             Err(e) => log::warn!("读取会话旧模型选择失败（忽略，回落全局最近使用）: {}", e),
         }
 
-        let skill_store = match skills_res {
-            Ok(Ok(store)) => store,
+        // 加载失败时 `skills_load_failed = true`：文件读不动或内容不兼容，
+        // 这时**不能**让接着的内置注入落盘覆盖它（见下方注入块）。
+        let (skill_store, skills_load_failed) = match skills_res {
+            Ok(Ok(store)) => (store, false),
             Ok(Err(e)) => {
                 log::warn!("Failed to load skills, using defaults: {}", e);
-                SkillStore::new()
+                // 文件存在但解析失败：先隔离成备份再走空 store。必须在这里做——
+                // 紧随其后的内置 skill 注入会在启动期落盘覆盖 skills.json，
+                // 没有备份就等于把用户全部 skill 当场销毁。
+                let bak_path =
+                    backup_config_on_load_failure(&SkillStore::default_file(&config_dir));
+                let msg = match bak_path {
+                    Some(path) => format!(
+                        "技能配置加载失败: {}。旧文件已备份到 {}，本次未加载任何技能。",
+                        e,
+                        path.display()
+                    ),
+                    None => format!("技能配置加载失败: {}。本次未加载任何技能。", e),
+                };
+                append_load_warning(&mut settings_warning, msg);
+                (SkillStore::new(), true)
             }
             Err(join_err) => {
                 log::warn!("Skills 加载任务失败：{}", join_err);
-                SkillStore::new()
+                // 加载任务崩了（文件状态未知）：同样不落盘，避免覆盖掉可能是
+                // 用户数据的原文件。
+                append_load_warning(
+                    &mut settings_warning,
+                    format!("技能配置加载任务失败: {}。本次未加载任何技能。", join_err),
+                );
+                (SkillStore::new(), true)
             }
         };
 
         // 内置教学 skill：注入缺失项 / 覆盖旧版内容（enabled 状态保留）。
         // 内容以二进制内嵌版本为准，保证应用升级后用户吃到最新教学内容。
+        //
+        // 加载失败时**不落盘**（内存里照常注入，UI/工具不受影响）：空 store
+        // 落盘会把刚隔离出来的原文件替换成「只剩内置项」，而持久化的内容里
+        // 一个用户 skill 都没有。等用户自己触发一次保存（那时内存已合并好
+        // 新内容）再写，与 connections / quick_commands / mcp「启动期不写盘」
+        // 的既有做法一致。
         let skill_store = {
             let mut store = skill_store;
             let changed = crate::skills::builtin::ensure_builtin_skills(&mut store);
             if !changed.is_empty() {
-                let path = SkillStore::default_file(&config_dir);
-                if let Err(e) = store.save_to_path(&path) {
-                    log::warn!("内置 skill 注入后持久化失败: {}", e);
+                if skills_load_failed {
+                    log::warn!(
+                        "内置 skill 已注入 {} 项，但 skills.json 本次加载失败，暂不落盘（原文件保持原样）",
+                        changed.len()
+                    );
+                } else {
+                    let path = SkillStore::default_file(&config_dir);
+                    if let Err(e) = store.save_to_path(&path) {
+                        log::warn!("内置 skill 注入后持久化失败: {}", e);
+                    }
+                    log::info!("内置 skill 已注入/更新 {} 项", changed.len());
                 }
-                log::info!("内置 skill 已注入/更新 {} 项", changed.len());
             }
             store
         };
@@ -525,28 +561,31 @@ fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<st
 
     // Timestamped snapshot — pruned so failures over many launches don't pile up.
     let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-    let ts_path = settings_file.with_extension(format!("json.{}.bak", ts));
-    let _ = std::fs::copy(settings_file, &ts_path);
+    let ts_path = file.with_extension(format!("json.{}.bak", ts));
+    let _ = std::fs::copy(file, &ts_path);
 
-    // Prune excess timestamped backups (oldest first).
+    // Prune excess timestamped backups (oldest first). 只清 `<name>.json.*`，
+    // 不会碰到别的配置文件的快照。
+    let prefix = file
+        .file_name()
+        .map(|n| format!("{}.", n.to_string_lossy()))
+        .unwrap_or_default();
     if let Ok(dir) = std::fs::read_dir(parent) {
         let mut stamped: Vec<_> = dir
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("settings.json.")
+                !prefix.is_empty() && e.file_name().to_string_lossy().starts_with(prefix.as_str())
             })
             .filter_map(|e| {
                 let m = e.metadata().ok()?;
                 Some((e.path(), m.modified().ok()?))
             })
             .collect();
-        if stamped.len() > MAX_TIMESTAMPED_SETTINGS_BACKUPS {
+        if stamped.len() > MAX_TIMESTAMPED_CONFIG_BACKUPS {
             stamped.sort_by_key(|(_, t)| *t);
             for (path, _) in stamped
                 .iter()
-                .take(stamped.len() - MAX_TIMESTAMPED_SETTINGS_BACKUPS)
+                .take(stamped.len() - MAX_TIMESTAMPED_CONFIG_BACKUPS)
             {
                 let _ = std::fs::remove_file(path);
             }
@@ -557,6 +596,18 @@ fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<st
         Some(bak_path)
     } else {
         None
+    }
+}
+
+/// 追加一条非致命加载警告：settings 与 skills 可能同一次启动都失败，
+/// 两个提示都要留住（[`AppState::settings_warning`] 只有一个槽位）。
+fn append_load_warning(slot: &mut Option<String>, msg: String) {
+    match slot {
+        Some(prev) => {
+            prev.push('\n');
+            prev.push_str(&msg);
+        }
+        None => *slot = Some(msg),
     }
 }
 
@@ -915,4 +966,99 @@ pub fn run() {
                 let _ = app.emit("mobile://lifecycle", "resumed");
             }
         });
+}
+
+#[cfg(test)]
+mod config_backup_tests {
+    use super::*;
+
+    /// 每个测试独立临时目录，避免互相污染。
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "marcel-config-backup-{}-{}",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    /// 损坏的 skills.json：加载失败时先把原文件隔离成备份，且原文件保持原样
+    /// （隔离是复制，不是移动/删除）—— 后续的内置注入落盘不得凭空白覆盖用户数据。
+    #[test]
+    fn corrupt_skills_file_is_backed_up_with_content_preserved() {
+        let dir = temp_dir("skills");
+        let path = dir.join("skills.json");
+        // 缺 id / prompt / createdAt / updatedAt 的 skill 项 → 解析失败
+        let corrupt = r#"{"skills":[{"name":"只有名字"}]}"#;
+        std::fs::write(&path, corrupt).unwrap();
+
+        assert!(
+            crate::skills::store::SkillStore::load_from_path(&path).is_err(),
+            "该内容必须被判为加载失败（测试前置条件）"
+        );
+
+        let bak = backup_config_on_load_failure(&path).expect("备份必须成功");
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), corrupt);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            corrupt,
+            "原文件保持原样"
+        );
+        let stamped = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with("skills.json.") && name != "skills.json.bak"
+            })
+            .count();
+        assert!(stamped >= 1, "必须留下带时间戳的快照");
+    }
+
+    /// 时间戳快照按文件名各自成组：裁剪只针对自己那一族，别的配置文件的快照
+    /// 不得被牵连删除；同一文件的快照数量有上限（连续启动失败不会无限堆积）。
+    #[test]
+    fn timestamped_snapshots_are_pruned_per_file_name() {
+        let dir = temp_dir("prune");
+        let skills = dir.join("skills.json");
+        std::fs::write(&skills, "{ broken").unwrap();
+        let other = dir.join("settings.json.20200101_000000.bak");
+        std::fs::write(&other, "keep me").unwrap();
+
+        for _ in 0..(MAX_TIMESTAMPED_CONFIG_BACKUPS + 3) {
+            backup_config_on_load_failure(&skills);
+        }
+
+        let skills_snapshots = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with("skills.json.") && name != "skills.json.bak"
+            })
+            .count();
+        assert!(
+            skills_snapshots <= MAX_TIMESTAMPED_CONFIG_BACKUPS,
+            "快照数量必须被裁剪，实际 {}",
+            skills_snapshots
+        );
+        assert!(other.exists(), "别的配置文件的快照不得被删掉");
+    }
+
+    /// settings 与 skills 同一次启动都失败时两条提示都要留住
+    /// （`settings_warning` 只有一个槽位，后写的不能把前一条顶掉）。
+    #[test]
+    fn load_warnings_append_instead_of_overwriting() {
+        let mut slot = None;
+        append_load_warning(&mut slot, "设置失败".into());
+        append_load_warning(&mut slot, "技能失败".into());
+        let text = slot.expect("至少有一条警告");
+        assert!(
+            text.contains("设置失败") && text.contains("技能失败"),
+            "两条警告都必须保留: {}",
+            text
+        );
+    }
 }
