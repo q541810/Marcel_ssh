@@ -182,6 +182,35 @@ pub fn save_web_search_api_key(api_key: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Store the TypeSafe (Jev) API key in the system keychain.
+///
+/// 全局一份凭据（不像 LLM 渠道按 `channel_id` 分）：命令审批引擎只有一个，
+/// 不像模型服务那样可以配多个渠道。
+pub fn save_jev_api_key(api_key: &str) -> Result<(), AppError> {
+    let entry = store_impl::entry(SERVICE, "jev_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    entry
+        .set_password(api_key)
+        .map_err(|e| AppError::Config(format!("保存 TypeSafe API Key 到密钥链失败：{}", e)))?;
+    Ok(())
+}
+
+/// Retrieve the TypeSafe (Jev) API key. Returns `Ok(None)` if not found.
+pub fn get_jev_api_key() -> Result<Option<String>, AppError> {
+    let entry = store_impl::entry(SERVICE, "jev_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    store_impl::get_optional_password(&entry)
+        .map_err(|e| AppError::Config(format!("读取 TypeSafe API Key 失败：{}", e)))
+}
+
+/// Remove the TypeSafe (Jev) API key. Missing entries are treated as success.
+pub fn delete_jev_api_key() -> Result<(), AppError> {
+    let entry = store_impl::entry(SERVICE, "jev_api_key")
+        .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
+    store_impl::delete_if_exists(&entry)
+        .map_err(|e| AppError::Config(format!("删除 TypeSafe API Key 失败：{}", e)))
+}
+
 /// Retrieve the web search API key. Returns `Ok(None)` if not found.
 pub fn get_web_search_api_key() -> Result<Option<String>, AppError> {
     let entry = store_impl::entry(SERVICE, "web_search_api_key")

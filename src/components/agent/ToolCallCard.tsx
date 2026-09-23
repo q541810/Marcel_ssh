@@ -60,6 +60,41 @@ function openSubConversation(metadata: Record<string, unknown> | undefined) {
   }
 }
 
+/**
+ * 审批判定的来源标注：哪个引擎判的、把握多大。
+ *
+ * 只做展示，不改变任何判定结果。置信度写「分布集中度」而不是「可信度」——
+ * 官方对 Jev 的 `confidence` 定义是概率分布的集中程度，不是这次判定正确的
+ * 概率，更不构成执行许可。措辞写错会让用户以为自己看到了准确率。
+ */
+function ApprovalMeta({
+  engine,
+  confidence,
+}: {
+  engine?: 'model' | 'jev';
+  confidence?: number;
+}) {
+  const isJev = engine === 'jev';
+  if (!isJev && confidence === undefined) return null;
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-zinc-500 mb-0.5">
+      {isJev && (
+        <span className="rounded bg-zinc-700/60 px-1.5 py-px text-zinc-300">
+          Jev 判定
+        </span>
+      )}
+      {confidence !== undefined && (
+        <span
+          className="tabular-nums"
+          title="Jev 的置信度表示概率分布的集中程度（分布越集中越高），不是判定正确的概率，也不代表这条命令可以执行。"
+        >
+          分布集中度 {Math.round(confidence * 100)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props) {
   const [expanded, setExpanded] = useState(autoExpand ?? false);
   const wasExecutingRef = useRef(message.isExecuting);
@@ -319,6 +354,10 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         {message.modelApproval?.status === 'done' && message.modelApproval.decision === 'route_to_human' && (
           <div className="border-t border-zinc-700/50 px-3 py-1.5">
             <div className="text-xs text-amber-400 font-medium mb-0.5">模型建议人工审批</div>
+            <ApprovalMeta
+              engine={message.modelApproval.engine}
+              confidence={message.modelApproval.confidence}
+            />
             {message.modelApproval.reasons && message.modelApproval.reasons.length > 0 && (
               <ul className="text-xs text-amber-300/80 space-y-0.5 list-disc list-inside">
                 {message.modelApproval.reasons.map((r, i) => <li key={i}>{r}</li>)}
@@ -329,6 +368,10 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         {message.modelApproval?.status === 'done' && message.modelApproval.decision === 'block' && (
           <div className="border-t border-zinc-700/50 px-3 py-1.5">
             <div className="text-xs text-red-400 font-medium mb-0.5">模型阻止</div>
+            <ApprovalMeta
+              engine={message.modelApproval.engine}
+              confidence={message.modelApproval.confidence}
+            />
             {message.modelApproval.reasons && message.modelApproval.reasons.length > 0 && (
               <ul className="text-xs text-red-300/80 space-y-0.5 list-disc list-inside">
                 {message.modelApproval.reasons.map((r, i) => <li key={i}>{r}</li>)}

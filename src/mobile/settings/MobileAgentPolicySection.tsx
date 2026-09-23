@@ -5,15 +5,18 @@ import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import { DISPOSITION_LABELS, SYSTEM_PROMPT_MAX_CHARS } from '@/lib/constants';
 import Toggle from '@/components/ui/Toggle';
+import SegmentedControl from '@/components/ui/SegmentedControl';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import {
   DEFAULT_APPROVAL_PROMPT_FALLBACK,
+  needsUrlScheme,
   preCheckCustomPath,
 } from '@/components/settings/AgentPolicySection';
 import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
 import { modelFullLabel, modelLabel } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 const BUILT_IN_PROTECTED: ReadonlyArray<{ path: string; reason: string }> = [
   { path: '/etc', reason: '系统配置' },
@@ -42,6 +45,30 @@ export function MobileAgentPolicySection() {
   const [testResult, setTestResult] = useState<CommandCheckResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [approvalModelPickerOpen, setApprovalModelPickerOpen] = useState(false);
+
+  // Jev 引擎的 API Key（原始 Key 只进密钥链，永不回传前端）。
+  const hasJevApiKey = useSettingsStore((s) => s.hasJevApiKey);
+  const [jevKeyDraft, setJevKeyDraft] = useState('');
+  const persistJevKey = async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('******') || trimmed === '********') return;
+    try {
+      await tauri.saveJevApiKey(trimmed);
+      useSettingsStore.setState({ hasJevApiKey: true });
+      setJevKeyDraft('');
+    } catch (err) {
+      console.error('保存 TypeSafe API Key 失败:', err);
+    }
+  };
+  const clearJevKey = async () => {
+    try {
+      await tauri.deleteJevApiKey();
+      useSettingsStore.setState({ hasJevApiKey: false });
+      setJevKeyDraft('');
+    } catch (err) {
+      console.error('清除 TypeSafe API Key 失败:', err);
+    }
+  };
 
   const customPaths = settings.customProtectedPaths ?? [];
   const [draftPath, setDraftPath] = useState('');
@@ -133,6 +160,18 @@ export function MobileAgentPolicySection() {
         }
       />
       <MobileSettingRow
+        label="Plan 模式也需要审批"
+        description="默认关闭，与 AUTO 一致；开启后走命令名单与逐条确认"
+        trailing={
+          <Toggle
+            checked={agent.planModeRequiresApproval ?? false}
+            onChange={(checked) =>
+              updateAgent({ planModeRequiresApproval: checked })
+            }
+          />
+        }
+      />
+      <MobileSettingRow
         label="编辑文件审批"
         description="edit_file 执行前需要确认"
         trailing={
@@ -158,6 +197,107 @@ export function MobileAgentPolicySection() {
       >
         {agent.enableModelCommandApproval && (
           <div className="mt-2 space-y-1.5">
+            <span className="text-xs text-zinc-400">审批引擎</span>
+            <SegmentedControl
+              ariaLabel="命令审批引擎"
+              value={agent.commandApprovalEngine ?? 'model'}
+              onChange={(v) => updateAgent({ commandApprovalEngine: v })}
+              options={[
+                {
+                  value: 'model',
+                  label: '跟随会话模型',
+                  title: '用本会话的模型做审批判定（旧行为）',
+                },
+                {
+                  value: 'jev',
+                  label: 'Jev',
+                  title: 'TypeSafe 的决策模型：更快、更便宜，需要单独配 API Key',
+                },
+              ]}
+            />
+            {agent.commandApprovalEngine === 'jev' ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="password"
+                    value={jevKeyDraft || (hasJevApiKey ? '********' : '')}
+                    onChange={(e) => setJevKeyDraft(e.target.value)}
+                    onBlur={() => void persistJevKey(jevKeyDraft)}
+                    placeholder={
+                      hasJevApiKey
+                        ? '已保存，输入新 Key 可覆盖'
+                        : '输入 TypeSafe API Key'
+                    }
+                    autoComplete="off"
+                    className={inputClass}
+                  />
+                  {hasJevApiKey && (
+                    <button
+                      type="button"
+                      onClick={() => void clearJevKey()}
+                      className="flex-shrink-0 rounded-lg border border-zinc-700 px-3 py-2.5 text-xs text-zinc-400 active:bg-zinc-700"
+                    >
+                      清除
+                    </button>
+                  )}
+                </div>
+                {!hasJevApiKey && (
+                  <p className="text-xs text-amber-400/90">
+                    还没配 Key。没配之前每条 bash 都会被明确拦下并提示，不会静默回退到会话模型。
+                  </p>
+                )}
+                <span className="text-xs text-zinc-400">模型 ID</span>
+                <input
+                  type="text"
+                  value={agent.jevModelId ?? ''}
+                  onChange={(e) => updateAgent({ jevModelId: e.target.value })}
+                  placeholder="留空使用内置默认（钉版本号）"
+                  className={inputClass}
+                />
+                <p className="text-xs text-zinc-500">
+                  建议填具体版本号（如 jev-1.13.0）而不是 jev-latest 别名——别名会随官方发布前移。
+                </p>
+                <span className="text-xs text-zinc-400">API 地址</span>
+                <input
+                  type="text"
+                  value={agent.jevBaseUrl ?? ''}
+                  onChange={(e) => updateAgent({ jevBaseUrl: e.target.value })}
+                  placeholder="留空使用官方地址 api.typesafe.ai"
+                  className={inputClass}
+                />
+                <p className="text-xs text-zinc-500">
+                  只在走代理、私有网关或本地 mock 时填（路径 /v1/systemone 不变）。留空 = 保持官方地址。
+                </p>
+                {needsUrlScheme(agent.jevBaseUrl) && (
+                  <p className="text-xs text-amber-400/90">
+                    地址看起来缺了 http:// 或 https://，照这样请求会失败并把每条 bash 拦下。
+                  </p>
+                )}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-xs text-zinc-400">Jev 判据</span>
+                  <button
+                    type="button"
+                    onClick={() => updateAgent({ jevApprovalPrompt: '' })}
+                    className="text-xs text-zinc-500 active:text-zinc-300"
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <textarea
+                  value={agent.jevApprovalPrompt || ''}
+                  onChange={(e) =>
+                    updateAgent({ jevApprovalPrompt: e.target.value })
+                  }
+                  rows={6}
+                  placeholder="留空使用内置判据。这里填的是「要判断什么」，不要写输出格式——Jev 返回的是类型化选项，不生成文本。"
+                  className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
+                />
+                <p className="text-xs text-zinc-500">
+                  判定结果与理由会连同对话上下文和这条命令一起发送到 TypeSafe（api.typesafe.ai）——这是一台第三方服务器，命令里若带 token 或密码请注意。
+                </p>
+              </>
+            ) : (
+              <>
             <button
               type="button"
               onClick={() => setApprovalModelPickerOpen(true)}
@@ -198,6 +338,8 @@ export function MobileAgentPolicySection() {
               placeholder={DEFAULT_APPROVAL_PROMPT_FALLBACK}
               className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none focus:border-indigo-500"
             />
+              </>
+            )}
           </div>
         )}
       </MobileSettingRow>

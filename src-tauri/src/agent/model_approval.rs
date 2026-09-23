@@ -16,6 +16,17 @@
 //! agent's normal model + retry path (`LlmManager::send_message`); if the
 //! call still fails after retries, the error is surfaced as a blocked tool
 //! result by the dispatcher.
+//!
+//! # 两个引擎
+//!
+//! `CommandApprover` 有两种实现，由设置的「审批引擎」选择：
+//!
+//! - [`ModelApprover`]（本文件）——走会话模型，自由文本判定 + JSON 解析。
+//! - `JevApprover`（`agent/jev_approval.rs`）——走 TypeSafe 的 Jev（System One
+//!   决策模型），结构化判定 + 概率分布。
+//!
+//! 上下文抽取口径由 [`recent_turns`] 统一持有：chat 引擎把它渲染成文本，
+//! Jev 引擎把它渲染成结构化 state。上限只定义一次，避免两边漂移。
 
 use std::sync::Arc;
 
@@ -38,6 +49,35 @@ pub(crate) enum ModelApprovalDecision {
     Block(Vec<String>),
 }
 
+/// 一次审批判定的完整结果：决策本身 + 判定元信息。
+///
+/// `confidence` / `engine` 只用于**展示**——决策语义完全由 `decision` 决定，
+/// 低置信度不会改变它。这是刻意的：两个引擎在判定语义上必须等价，差异只有
+/// 速度、成本和理由形态。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ApprovalJudgement {
+    pub decision: ModelApprovalDecision,
+    /// 模型对自己这个判定的把握。`None` = 该引擎不提供（chat 引擎恒为 `None`）。
+    ///
+    /// ⚠️ 官方对 Jev 的 `confidence` 定义是「概率分布的集中程度」，
+    /// **不是**「这次判定正确的概率」，也不是「可以据此执行」的许可。
+    /// 展示时必须按这个口径措辞，否则会误导用户。
+    pub confidence: Option<f32>,
+    /// 产出这条判定的引擎：`"model"` | `"jev"`。
+    pub engine: &'static str,
+}
+
+impl ApprovalJudgement {
+    /// chat 引擎的结果（无置信度）。
+    pub(crate) fn from_model(decision: ModelApprovalDecision) -> Self {
+        Self {
+            decision,
+            confidence: None,
+            engine: "model",
+        }
+    }
+}
+
 /// Pluggable command approver so the dispatch logic is unit-testable.
 #[async_trait]
 pub(crate) trait CommandApprover: Send + Sync {
@@ -45,7 +85,7 @@ pub(crate) trait CommandApprover: Send + Sync {
         &self,
         command: &str,
         recent_messages: &[LlmMessage],
-    ) -> Result<ModelApprovalDecision, AppError>;
+    ) -> Result<ApprovalJudgement, AppError>;
 }
 
 /// LLM-backed command approver. Reuses the agent's normal model + retry path.
@@ -71,7 +111,7 @@ impl CommandApprover for ModelApprover {
         &self,
         command: &str,
         recent_messages: &[LlmMessage],
-    ) -> Result<ModelApprovalDecision, AppError> {
+    ) -> Result<ApprovalJudgement, AppError> {
         let context = build_context(recent_messages);
 
         let user_prompt = format!(
@@ -104,20 +144,50 @@ impl CommandApprover for ModelApprover {
         let tools: Vec<ToolDefinition> = vec![];
 
         let resp = self.manager.send_message(&messages, &tools, None).await?;
-        parse_decision(&resp.content)
+        parse_decision(&resp.content).map(ApprovalJudgement::from_model)
     }
 }
 
-/// Build a compact context string from recent messages.
+/// 一段近期上下文（内容已按上限截断）。
+pub(crate) struct ContextTurn {
+    /// 稳定角色标识：`user` / `assistant` / `tool`。
+    ///
+    /// 刻意用英文稳定键而不是中文标签：chat 引擎把它渲染成中文（`build_context`），
+    /// Jev 引擎直接把它作为结构化 state 里的字段值（Jev 的强项是英文，
+    /// 而 state 里真正需要保持原文的是对话内容本身，不是角色名）。
+    pub role: &'static str,
+    pub content: String,
+}
+
+fn role_key(role: &LlmRole) -> &'static str {
+    match role {
+        LlmRole::User => "user",
+        LlmRole::Assistant => "assistant",
+        LlmRole::Tool => "tool",
+        LlmRole::System => "system",
+    }
+}
+
+fn role_key_zh(role: &str) -> &'static str {
+    match role {
+        "user" => "用户",
+        "assistant" => "助手",
+        "tool" => "工具结果",
+        _ => "系统",
+    }
+}
+
+/// 抽取「原始任务 + 最近若干轮」的上下文，按统一上限截断。
 ///
-/// Keeps the original user task + recent turns, truncating large tool outputs
-/// so the approval call stays cheap and the model doesn't guess without context.
-fn build_context(messages: &[LlmMessage]) -> String {
+/// 这是**两个审批引擎共用的唯一上下文抽取口径**：chat 引擎把它渲染成文本，
+/// Jev 引擎把它渲染成结构化 state 的 `conversation` 数组。截断上限只在这里
+/// 定义一次，避免两个引擎各留一份而漂移。
+///
+/// system 消息一律不进上下文（系统提示词不该泄进审批请求）。
+pub(crate) fn recent_turns(messages: &[LlmMessage]) -> Vec<ContextTurn> {
     const MAX_TOOL_OUTPUT: usize = 500;
     const MAX_OTHER_CONTENT: usize = 1000;
     const MAX_ROUNDS: usize = 5;
-
-    let mut parts: Vec<String> = Vec::new();
 
     let non_system: Vec<&LlmMessage> = messages
         .iter()
@@ -137,26 +207,33 @@ fn build_context(messages: &[LlmMessage]) -> String {
     } else {
         0
     };
-    let recent = &non_system[start..];
 
-    if !recent.is_empty() {
-        parts.push("[近期对话]".to_string());
-        for m in recent {
-            let role = match m.role {
-                LlmRole::User => "用户",
-                LlmRole::Assistant => "助手",
-                LlmRole::Tool => "工具结果",
-                LlmRole::System => "系统",
-            };
+    non_system[start..]
+        .iter()
+        .map(|m| {
             let cap = if m.role == LlmRole::Tool {
                 MAX_TOOL_OUTPUT
             } else {
                 MAX_OTHER_CONTENT
             };
-            parts.push(format!("{role}: {}", truncate(&m.content, cap)));
-        }
-    }
+            ContextTurn {
+                role: role_key(&m.role),
+                content: truncate(&m.content, cap),
+            }
+        })
+        .collect()
+}
 
+/// Build a compact context string from recent messages（chat 引擎用）。
+fn build_context(messages: &[LlmMessage]) -> String {
+    let turns = recent_turns(messages);
+    if turns.is_empty() {
+        return String::new();
+    }
+    let mut parts = vec!["[近期对话]".to_string()];
+    for t in &turns {
+        parts.push(format!("{}: {}", role_key_zh(t.role), t.content));
+    }
     parts.join("\n")
 }
 

@@ -866,6 +866,8 @@ pub fn run() {
             commands::keychain::config_delete_llm_channel_api_key,
             commands::keychain::config_save_web_search_api_key,
             commands::keychain::config_delete_web_search_api_key,
+            commands::keychain::config_save_jev_api_key,
+            commands::keychain::config_delete_jev_api_key,
             commands::skill::skill_list,
             commands::skill::skill_add,
             commands::skill::skill_update,

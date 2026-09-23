@@ -318,7 +318,8 @@ fn denial_carries_an_actionable_reason() {
 /// 看不懂就不猜 —— 而且**不能放行**。
 ///
 /// 这条曾经断言 `Allow`，理由是"交给命令名单那一步保守要求审批"。那个理由只在
-/// Plan / Agent 成立：`decide_command` 的 Auto 分支根本不调命令名单，于是
+/// 会走命令名单的模式下成立（现在只剩 Agent，以及被显式打开了「Plan 模式也需要
+/// 审批」的 Plan）：`decide_command` 的 Auto 分支根本不调命令名单，于是
 /// `echo $(rm -rf /)` 在 Auto 下无判定、无弹窗、直接发给远端 shell。HEAD 是靠
 /// `assess_command` 返回 `Err` 在每个模式都硬拦的，四档改造把这层拦丢了。
 #[test]

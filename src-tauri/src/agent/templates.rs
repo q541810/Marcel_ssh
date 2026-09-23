@@ -18,8 +18,9 @@
 //! | 插件扩展指令 | `templates/agent/插件指令.hbs` | 有插件 `systemPromptSection` | system prompt |
 //! | 压缩前言 / 压缩指令 | `templates/context/压缩前言.hbs`、`压缩指令.hbs` | 每次上下文压缩 | 摘要专用 LLM 调用（带常规请求同一份 tools schema） |
 //! | 技能平台说明 | `templates/skill/平台说明.hbs` | 调用内置教学 skill | skill 工具结果 |
-//! | 命令审批 | `templates/approval/审批.hbs` | 启用模型审批且用户未自定义 | 审批专用 LLM 调用 |
-//! | 审批（Plan 追加） | `templates/approval/审批规划.hbs` | 同上 + Plan 模式 | 审批专用 LLM 调用 |
+//! | 命令审批 | `templates/approval/审批.hbs` | 启用模型审批且用户未自定义 | 审批专用 LLM 调用（chat 引擎） |
+//! | 审批（Plan 追加） | `templates/approval/审批规划.hbs` | 同上 + Plan 模式 | 审批专用 LLM 调用（**两个引擎共用**） |
+//! | 命令审批（Jev） | `templates/approval/审批Jev.hbs` | 启用模型审批 + 引擎选 Jev + 用户未自定义 | Jev 的 `instructions`（不走 chat） |
 //!
 //! 前 12 段由 `render_agent_prompt` 组装；其余各自在调用点用 `render_fragment`
 //! 渲染（它们不是同一个 LLM 调用，或不属于 system prompt）。
@@ -57,8 +58,16 @@
 //!   再写八段，`<analysis>` 在回注前由 `summarizer::sanitize_summary` 剥离，
 //!   不进上下文/不落库/不展示）
 //! - 技能里的平台措辞 → `templates/skill/平台说明.hbs`
-//! - 命令审批判据 → `templates/approval/审批.hbs`（前端经 `agent_default_approval_prompt` 取用，
-//!   不再自带副本）
+//! - 命令审批判据 → 分两个引擎，各自的判据模板不同，但**不变的规则由护栏测试
+//!   钉住**（`approval_invariants_shared_by_both_engines`）：
+//!   - chat 引擎 → `templates/approval/审批.hbs`（含 JSON 输出格式）
+//!   - Jev 引擎 → `templates/approval/审批Jev.hbs`（无 JSON：Jev 返回类型化选项，
+//!     不生成文本，所以没有"从散文里抠 JSON"那一步）
+//!   - Plan 模式追加 → `templates/approval/审批规划.hbs`，**两个引擎共用同一份**
+//!     （它是纯约束描述、不含输出格式），不得再写第二份
+//!   - 用户在设置里填的「审批提示词」两个引擎都覆盖各自的上面那一份；
+//!     Plan 追加段始终生效
+//!   - 前端经 `agent_default_approval_prompt` 取用，不再自带副本
 //!
 //! 段落之间的分隔由本文件统一生成（见 `render_agent_prompt` 的 join），
 //! 模板文件首尾的空行没有语义，不必维护。
@@ -149,6 +158,10 @@ impl TemplateManager {
         let _ = reg.register_template_string(
             "审批规划",
             include_str!("../../templates/approval/审批规划.hbs"),
+        );
+        let _ = reg.register_template_string(
+            "审批Jev",
+            include_str!("../../templates/approval/审批Jev.hbs"),
         );
         reg
     }
@@ -260,9 +273,25 @@ impl TemplateManager {
     }
 
     /// Render the plan-mode addition for the approval prompt.
+    ///
+    /// 两个审批引擎共用这一份：它是纯约束描述、不含任何输出格式，所以既适合
+    /// 追加在 chat 引擎的 system prompt 后，也适合作为 Jev 的 `instructions` 追加段。
+    /// **不要再写第二份**——同一条「Plan 模式不得改系统」的规则只能有一个来源。
     pub fn render_approval_plan(&self) -> String {
         Self::build_approval_registry()
             .render("审批规划", &json!({}))
+            .unwrap_or_default()
+    }
+
+    /// Render the built-in `instructions` for the Jev approval engine.
+    ///
+    /// Jev 不是 chat 模型：它没有 system prompt、不生成文本，判定的可选值由
+    /// Choice 的 `criteria` 定义，这里渲染的是「要判断什么」的问题本身。
+    /// 因此这份模板里**不得出现 JSON 输出格式说明**（那是 chat 引擎的事，
+    /// 对 Jev 只会变成噪音指令）。护栏测试 `approval_jev_template_has_no_json_format`。
+    pub fn render_approval_jev(&self) -> String {
+        Self::build_approval_registry()
+            .render("审批Jev", &json!({}))
             .unwrap_or_default()
     }
 
@@ -710,6 +739,59 @@ mod tests {
         assert!(base.contains("approve"));
 
         let plan = TemplateManager.render_approval_plan();
+        assert!(plan.contains("Plan 模式"));
+    }
+
+    /// 两个审批引擎（chat / Jev）的判据模板各写一遍，但**这两条不变式必须同时
+    /// 存在于两者之中**：只能判定不能改写命令、有异议就拦下。护栏的意义是
+    /// 以后改了一个忘了另一个时测试会红——否则「模型不能改写命令」这条权限边界
+    /// 会在某个引擎上悄悄消失。
+    #[test]
+    fn approval_invariants_shared_by_both_engines() {
+        let chat = TemplateManager.render_approval_base();
+        let jev = TemplateManager.render_approval_jev();
+
+        assert!(
+            jev.contains("命令"),
+            "Jev 判据模板渲染为空或内容异常: {jev:?}"
+        );
+
+        for (name, text) in [("审批.hbs", &chat), ("审批Jev.hbs", &jev)] {
+            // 不变式 1：模型只能判定，不能改写命令。
+            assert!(
+                text.contains("只能判定") && text.contains("改写命令"),
+                "{name} 缺少「只能判定不能改写命令」这条权限边界"
+            );
+            // 不变式 2：有异议就拦下（而不是放行后再说）。
+            assert!(
+                text.contains("异议") && text.contains("阻止"),
+                "{name} 缺少「有异议就阻止执行」这条判据"
+            );
+        }
+    }
+
+    /// Jev 不生成文本、返回的是类型化选项，所以它的判据模板里**不能出现
+    /// JSON 输出格式说明**——那是 chat 引擎的契约，喂给 Jev 只会变成噪音指令。
+    /// （这是把两份模板分开的直接原因，用测试钉住，防止以后有人"顺手统一"。）
+    #[test]
+    fn approval_jev_template_has_no_json_format() {
+        let jev = TemplateManager.render_approval_jev();
+        assert!(
+            !jev.contains("{\"decision\""),
+            "Jev 判据模板不得包含 JSON 输出格式"
+        );
+        assert!(
+            !jev.contains("输出严格的 JSON"),
+            "Jev 判据模板不得要求输出 JSON"
+        );
+    }
+
+    /// Plan 追加段被两个引擎共用，因此它必须保持「纯约束」——不含任何输出格式，
+    /// 否则它就只能给其中一个引擎用，共用前提被破坏。
+    #[test]
+    fn approval_plan_fragment_is_engine_agnostic() {
+        let plan = TemplateManager.render_approval_plan();
+        assert!(!plan.contains("JSON"), "Plan 追加段不得包含输出格式说明");
         assert!(plan.contains("Plan 模式"));
     }
 

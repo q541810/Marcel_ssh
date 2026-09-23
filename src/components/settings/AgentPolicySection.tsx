@@ -1,17 +1,23 @@
 import { useState, useRef, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
 import { DISPOSITION_LABELS } from '@/lib/constants';
-import type { CommandListMode, CommandCheckResult, LlmRegistry } from '@/lib/types';
+import type {
+  CommandListMode,
+  CommandCheckResult,
+  LlmRegistry,
+} from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import Select from '@/components/ui/Select';
+import SegmentedControl from '@/components/ui/SegmentedControl';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { ValidatedInput } from './ValidatedInput';
 import { modelOptionsByChannel } from '@/lib/llmRegistry';
 import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 export const DEFAULT_APPROVAL_PROMPT_FALLBACK =
   '（未能从后端读取内置审批提示词；留空即使用内置提示词。）';
@@ -31,6 +37,19 @@ export function preCheckCustomPath(
   if (!trimmed) return null;
   if (existing.includes(trimmed)) return `路径已存在：${trimmed}`;
   return null;
+}
+
+/**
+ * 用户填的自定义 API 地址是否「可疑到一定会失败」：非空、但缺 `http://`/`https://`。
+ *
+ * 只提示、不拦截，而且**不替用户改值**：后端刻意不校验 scheme、也不因为格式可疑
+ * 就静默回落官方地址（静默回落会让用户以为请求打到了自己的网关）。所以这里只
+ * 提前警告一句，免得他填完才发现每条 bash 都被拦下。
+ */
+export function needsUrlScheme(raw: string | undefined): boolean {
+  const v = (raw ?? '').trim();
+  if (!v) return false;
+  return !/^https?:\/\//i.test(v);
 }
 
 function ListModeButton({
@@ -93,9 +112,42 @@ export function AgentPolicySection() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedSummary = useMemo(() => {
     const secs = settings.commandTimeoutSecs ?? 120;
-    const approval = agent.enableModelCommandApproval ? '开' : '关';
+    const approval = agent.enableModelCommandApproval
+      ? agent.commandApprovalEngine === 'jev'
+        ? '开（Jev）'
+        : '开'
+      : '关';
     return `${secs}s · 模型审批：${approval}`;
-  }, [settings.commandTimeoutSecs, agent.enableModelCommandApproval]);
+  }, [
+    settings.commandTimeoutSecs,
+    agent.enableModelCommandApproval,
+    agent.commandApprovalEngine,
+  ]);
+
+  // Jev 引擎的 API Key（原始 Key 只进密钥链，永不回传前端）。
+  const hasJevApiKey = useSettingsStore((s) => s.hasJevApiKey);
+  const [jevKeyDraft, setJevKeyDraft] = useState('');
+  const persistJevKey = async (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.includes('******') || trimmed === '********') return;
+    try {
+      await tauri.saveJevApiKey(trimmed);
+      useSettingsStore.setState({ hasJevApiKey: true });
+      setJevKeyDraft('');
+    } catch (err) {
+      console.error('保存 TypeSafe API Key 失败:', err);
+    }
+  };
+  const clearJevKey = async () => {
+    try {
+      await tauri.deleteJevApiKey();
+      useSettingsStore.setState({ hasJevApiKey: false });
+      setJevKeyDraft('');
+    } catch (err) {
+      console.error('清除 TypeSafe API Key 失败:', err);
+    }
+  };
+  const jevEngine = agent.commandApprovalEngine === 'jev';
 
   // Custom protected paths
   const customPaths = settings.customProtectedPaths ?? [];
@@ -166,7 +218,7 @@ export function AgentPolicySection() {
       <Card
         id="settings-command-policy"
         title="命令执行策略"
-        description="控制 Agent 模式下的命令安全边界"
+        description="控制 Agent / Plan 模式下的命令安全边界"
       >
         <SettingItem
           id="cmd-confirm"
@@ -180,6 +232,25 @@ export function AgentPolicySection() {
             onChange={(checked) => updateAgent({ confirmEachCommand: checked })}
             label="即使通过列表过滤，仍要求用户确认每条命令"
           />
+        </SettingItem>
+        <SettingItem
+          id="cmd-plan-mode-approval"
+          label="Plan 模式也需要审批"
+          description="Plan 模式是否也走命令名单与人工审批"
+          sectionId="settings-command-policy"
+          keywords={['plan', '计划模式', '审批', '命令执行策略', 'Agent']}
+        >
+          <Toggle
+            checked={agent.planModeRequiresApproval ?? false}
+            onChange={(checked) =>
+              updateAgent({ planModeRequiresApproval: checked })
+            }
+            label="Plan 模式下执行命令时需要用户确认"
+          />
+          <p className="text-xs text-zinc-500 mt-2">
+            默认关闭：Plan 与 AUTO 一样不弹人工审批，只有系统级命令、受保护路径等
+            强制审批档仍会询问。开启后 Plan 恢复走命令名单与「每条都手动确认」。
+          </p>
         </SettingItem>
         <SettingItem
           id="cmd-edit-file"
@@ -511,6 +582,14 @@ export function AgentPolicySection() {
                   '审批',
                   '命令执行策略',
                   'Agent',
+                  // 引擎 / 判据这些字眼只出现在子节点里，而设置搜索只索引
+                  // label + description + keywords —— 不补的话按界面上看到的
+                  // 词（jev / 引擎 / TypeSafe）一个也搜不到。
+                  'Jev',
+                  'TypeSafe',
+                  '引擎',
+                  '审批引擎',
+                  '判据',
                 ]}
               >
                 <div className="w-80 space-y-2">
@@ -523,6 +602,138 @@ export function AgentPolicySection() {
                   />
                   {agent.enableModelCommandApproval && (
                     <div className="pl-1 space-y-2">
+                      <div className="space-y-1.5">
+                        <span className="text-xs text-zinc-400">审批引擎</span>
+                        <SegmentedControl
+                          ariaLabel="命令审批引擎"
+                          value={agent.commandApprovalEngine ?? 'model'}
+                          onChange={(v) =>
+                            updateAgent({ commandApprovalEngine: v })
+                          }
+                          options={[
+                            {
+                              value: 'model',
+                              label: '跟随会话模型',
+                              title: '用本会话的模型做审批判定（旧行为）',
+                            },
+                            {
+                              value: 'jev',
+                              label: 'Jev',
+                              title: 'TypeSafe 的决策模型：更快、更便宜，需要单独配 API Key',
+                            },
+                          ]}
+                        />
+                      </div>
+                      <p className="text-xs text-zinc-500">
+                        {jevEngine
+                          ? 'Jev 是 TypeSafe 的决策模型：一次请求直接返回类型化判定与概率，比走会话模型更快、更便宜。需要单独配置 API Key。'
+                          : '用本会话的模型（或下面指定的审核模型）做审批判定。'}
+                      </p>
+
+                      {jevEngine ? (
+                        <>
+                          <div className="flex-1 flex gap-2 items-center">
+                            <input
+                              type="password"
+                              value={jevKeyDraft || (hasJevApiKey ? '********' : '')}
+                              onChange={(e) => setJevKeyDraft(e.target.value)}
+                              onBlur={() => void persistJevKey(jevKeyDraft)}
+                              placeholder={
+                                hasJevApiKey
+                                  ? '已保存，输入新 Key 可覆盖'
+                                  : '输入 TypeSafe API Key'
+                              }
+                              autoComplete="off"
+                              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-sm font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                            />
+                            {hasJevApiKey && (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => void clearJevKey()}
+                              >
+                                清除
+                              </Button>
+                            )}
+                          </div>
+                          {!hasJevApiKey && (
+                            <p className="text-xs text-amber-400/90">
+                              还没配 Key。没配之前每条 bash 都会被明确拦下并提示，
+                              不会静默回退到会话模型。
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-400 flex-shrink-0 w-24">
+                              模型 ID
+                            </span>
+                            <input
+                              type="text"
+                              value={agent.jevModelId ?? ''}
+                              onChange={(e) =>
+                                updateAgent({ jevModelId: e.target.value })
+                              }
+                              placeholder="留空使用内置默认（钉版本号）"
+                              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <p className="text-xs text-zinc-500">
+                            建议填具体版本号（如 <code>jev-1.13.0</code>）而不是
+                            <code>jev-latest</code> 别名——别名会随官方发布前移，
+                            审批行为不该在你不知情时改变。
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-400 flex-shrink-0 w-24">
+                              API 地址
+                            </span>
+                            <input
+                              type="text"
+                              value={agent.jevBaseUrl ?? ''}
+                              onChange={(e) =>
+                                updateAgent({ jevBaseUrl: e.target.value })
+                              }
+                              placeholder="留空使用官方地址 api.typesafe.ai"
+                              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          <p className="text-xs text-zinc-500">
+                            只在需要走代理、私有网关或本地 mock 时填；填了之后请求
+                            打到的就是你这里的地址（路径 <code>/v1/systemone</code>
+                            不变）。留空 = 保持官方地址。
+                          </p>
+                          {needsUrlScheme(agent.jevBaseUrl) && (
+                            <p className="text-xs text-amber-400/90">
+                              地址看起来缺了 <code>http://</code> 或{' '}
+                              <code>https://</code>，照这样请求会失败并把每条 bash
+                              拦下——补上协议头。
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-xs text-zinc-400">Jev 判据</span>
+                            <button
+                              type="button"
+                              onClick={() => updateAgent({ jevApprovalPrompt: '' })}
+                              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                            >
+                              恢复默认
+                            </button>
+                          </div>
+                          <textarea
+                            value={agent.jevApprovalPrompt || ''}
+                            onChange={(e) =>
+                              updateAgent({ jevApprovalPrompt: e.target.value })
+                            }
+                            rows={6}
+                            placeholder="留空使用内置判据。这里填的是「要判断什么」，不要写输出格式——Jev 返回的是类型化选项，不生成文本。"
+                            className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
+                          />
+                          <p className="text-xs text-zinc-500">
+                            判定结果与理由会连同对话上下文和这条命令一起发送到
+                            TypeSafe（api.typesafe.ai）——这是一台第三方服务器，
+                            命令里若带 token 或密码请注意。
+                          </p>
+                        </>
+                      ) : (
+                        <>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-zinc-400 flex-shrink-0 w-24">
                           审批模型
@@ -585,6 +796,8 @@ export function AgentPolicySection() {
                         placeholder={DEFAULT_APPROVAL_PROMPT_FALLBACK}
                         className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-indigo-500 resize-none"
                       />
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

@@ -231,6 +231,10 @@ pub(crate) async fn run_agent_loop(
     approval_mode: Option<AgentMode>,
     agent_settings: AgentModeSettings,
     approval_cfg: Option<LlmConfig>,
+    // Jev 引擎的客户端配置（API Key + 钉住的模型 ID + 全局 NetPolicy）。
+    // `None` = 没配 Key；引擎选了 Jev 时审批者仍会构造，但每次调用明确报错，
+    // 不静默回退到会话模型。
+    jev_cfg: Option<JevConfig>,
     ctx: LoopContext,
 ) -> Option<String> {
     let event_name = format!("agent://stream/{}", task_id);
@@ -327,6 +331,7 @@ pub(crate) async fn run_agent_loop(
         registry.clone(),
         llm_manager.clone(),
         approval_cfg,
+        jev_cfg,
     );
 
     'round: for round in 0..max_rounds {

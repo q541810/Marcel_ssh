@@ -11,7 +11,12 @@ const DEFAULT_AGENT_MODE_SETTINGS: AgentModeSettings = {
   listMode: 'denylist',
   commandList: ['rm', 'mkfs', 'dd', 'shutdown', 'reboot'],
   confirmEachCommand: true,
+  planModeRequiresApproval: false,
   enableModelCommandApproval: false,
+  commandApprovalEngine: 'model',
+  jevModelId: '',
+  jevBaseUrl: '',
+  jevApprovalPrompt: '',
   modelApprovalPrompt: '',
   systemPrompt: '',
   maxToolRounds: 500,
@@ -121,6 +126,8 @@ interface SettingsState {
   hasApiKey: boolean;
   /** True if a web search API key is stored in the system keychain. */
   hasWebSearchApiKey: boolean;
+  /** True if a TypeSafe（Jev）API Key is stored in the system keychain. */
+  hasJevApiKey: boolean;
   /** 各渠道密钥是否存在（多渠道模型服务）。key = channelId。 */
   channelKeyStatus: Record<string, boolean>;
   /** Non-fatal warning from the backend (e.g. settings.json was backed up). */
@@ -133,6 +140,12 @@ interface SettingsState {
     settings: AppSettings;
     hasApiKey: boolean;
     hasWebSearchApiKey: boolean;
+    /**
+     * 必填：启动快照是读取该真值的**唯一**路径（`hydrateFromBootstrap` 会把
+     * `loaded` 置真，随后的 `load()` 直接短路）。声明成可选会让后端漏发字段时
+     * 静默退化成「没配 Key」，并藏起清除按钮。
+     */
+    hasJevApiKey: boolean;
     channelKeyStatus?: ChannelKeyStatus[];
     warning?: string | null;
   }) => void;
@@ -183,6 +196,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loaded: false,
   hasApiKey: false,
   hasWebSearchApiKey: false,
+  hasJevApiKey: false,
   channelKeyStatus: {},
   warning: null,
   preview: null,
@@ -193,7 +207,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ...DEFAULT_SETTINGS,
       ...fromDisk,
       terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
-      agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
+      // 审批引擎等新字段：旧数据缺字段时用默认值兜底。
+      // 「兼容旧数据 = 保持原样 + 默认值填充」——`commandApprovalEngine` 缺省
+      // 走 `model`，行为与引入 Jev 之前一致，不改变任何用户现状。
+      agentModeSettings: {
+        ...DEFAULT_AGENT_MODE_SETTINGS,
+        ...(fromDisk.agentModeSettings ?? {}),
+      },
       llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
       experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
       fileManagerPaths: fromDisk.fileManagerPaths ?? {},
@@ -215,6 +235,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       loaded: true,
       hasApiKey: data.hasApiKey,
       hasWebSearchApiKey: data.hasWebSearchApiKey ?? false,
+      hasJevApiKey: data.hasJevApiKey ?? false,
       channelKeyStatus: toKeyStatusMap(data.channelKeyStatus),
       warning: data.warning ?? null,
     });
@@ -230,7 +251,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ...DEFAULT_SETTINGS,
         ...fromDisk,
         terminalColors: fromDisk.terminalColors ?? DEFAULT_TERMINAL_COLORS,
-        agentModeSettings: fromDisk.agentModeSettings ?? DEFAULT_AGENT_MODE_SETTINGS,
+        agentModeSettings: {
+          ...DEFAULT_AGENT_MODE_SETTINGS,
+          ...(fromDisk.agentModeSettings ?? {}),
+        },
         llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
         experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
@@ -251,6 +275,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         loaded: true,
         hasApiKey: resp.hasApiKey,
         hasWebSearchApiKey: resp.hasWebSearchApiKey ?? false,
+        hasJevApiKey: resp.hasJevApiKey ?? false,
         channelKeyStatus: toKeyStatusMap(resp.channelKeyStatus),
         warning: resp.warning ?? null,
       });

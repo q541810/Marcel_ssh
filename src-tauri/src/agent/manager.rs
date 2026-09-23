@@ -313,6 +313,42 @@ impl AgentManager {
         } else {
             None
         };
+
+        // ── 3.5 Jev 审批引擎配置：只在「审批开启 + 引擎 = Jev」时读密钥链。
+        //    读不到 Key **不炸任务**，也不静默回退成会话模型——`None` 交给
+        //    `ToolDispatcher::build_jev_approver`，它照常构造审批者，
+        //    每次 bash 都返回一句明确的「去设置填 Key」错误。静默回退会让用户
+        //    以为自己受 Jev 保护，其实没有，比直接失败糟。
+        //    重试/超时参数取全局 `NetPolicy` **本身**（不是抄一份字段），
+        //    与 `build_resolved` 灌进 `LlmConfig` 的是同一份数据。
+        let jev_cfg = if agent_settings.enable_model_command_approval
+            && agent_settings.command_approval_engine == CommandApprovalEngine::Jev
+        {
+            match keychain::get_jev_api_key() {
+                Ok(Some(key)) if !key.trim().is_empty() => Some(
+                    JevConfig::new(
+                        key,
+                        agent_settings.jev_model_id.clone(),
+                        llm_registry.net_policy.clone(),
+                    )
+                    // 空 = 保持官方地址（`with_base_url` 的语义是「空即不动」，
+                    // 不是「空即清空」）。
+                    .with_base_url(&agent_settings.jev_base_url),
+                ),
+                Ok(_) => {
+                    log::warn!(
+                        "命令审批引擎为 Jev，但密钥链里没有 TypeSafe API Key——审批调用会明确报错"
+                    );
+                    None
+                }
+                Err(e) => {
+                    log::warn!("读取 TypeSafe API Key 失败: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let plugin_registry_guard = self.state.plugin_registry.read().await;
         let registry = self
             .build_registry(
@@ -444,6 +480,7 @@ impl AgentManager {
                 approval_mode_owned,
                 agent_settings,
                 approval_cfg,
+                jev_cfg,
                 loop_ctx,
             ))
             .catch_unwind()

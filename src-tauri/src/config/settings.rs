@@ -76,6 +76,70 @@ impl Default for CommandListMode {
     }
 }
 
+/// 命令审批用哪个引擎（`enableModelCommandApproval` 打开后才生效）。
+///
+/// 线上格式是与 TS 侧共享的两个小写字符串（`"model"` / `"jev"`），`Deserialize`
+/// 手写而不用 derive：**未知取值不能炸掉整个 settings.json**（未来版本加了第三种
+/// 引擎后用户回退到本版本时，派生实现会让整个配置文件解析失败 → 用户设置被备份
+/// 并重置），依据与原因同 [`UpdateMode`] 那段注释。`Serialize` 仍走 derive，
+/// 线上取值由 `approval_engine_serde_values_are_stable` 钉住。
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CommandApprovalEngine {
+    /// 走会话模型（或「命令审核」槽位指定的模型），自由文本判定 + JSON 解析。
+    /// **旧数据的默认值**——settings.json 里没有这个键时落在这里，
+    /// 于是行为与引入 Jev 之前逐字节一致。
+    Model,
+    /// 走 TypeSafe 的 Jev（System One 决策模型）：一次 POST 返回类型化选项与概率，
+    /// 不需要 API Key 之外的模型配置。
+    Jev,
+}
+
+impl CommandApprovalEngine {
+    /// 未知取值（更高版本写入的引擎）→ 会话模型引擎：这是引入 Jev 之前的行为，
+    /// 且不需要用户额外配置任何东西，是两者里最保守的选择。
+    fn from_wire(raw: &str) -> Self {
+        match raw {
+            "model" => CommandApprovalEngine::Model,
+            "jev" => CommandApprovalEngine::Jev,
+            other => {
+                log::warn!(
+                    "未知的命令审批引擎 {:?}（可能来自更高版本），按会话模型引擎处理",
+                    other
+                );
+                CommandApprovalEngine::Model
+            }
+        }
+    }
+}
+
+impl Default for CommandApprovalEngine {
+    fn default() -> Self {
+        Self::Model
+    }
+}
+
+impl<'de> Deserialize<'de> for CommandApprovalEngine {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // 反序列化成 Value 再取字符串：字段缺失不会走到这里（serde default 兜底），
+        // 类型不对（数字/对象/数组）也退回保守取值，而不是让整个配置文件解析失败。
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            Some(s) => Self::from_wire(s),
+            None => {
+                log::warn!(
+                    "命令审批引擎字段类型异常（{:?}），按会话模型引擎处理",
+                    value
+                );
+                CommandApprovalEngine::Model
+            }
+        })
+    }
+}
+
 /// Settings for the AGENT mode's command-execution policy.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -89,10 +153,40 @@ pub struct AgentModeSettings {
     /// command that passes the list filter. When false, listed commands run
     /// silently — useful when the user has carefully curated the lists.
     pub confirm_each_command: bool,
+    /// 当 true 时，Plan 模式也走命令名单与「每条都手动确认」的人审（旧行为）。
+    ///
+    /// 默认 false：Plan 的命令审批语义与 Auto 一致 —— 不弹人工审批，只有
+    /// `ForceApproval`（系统级命令 / 受保护路径 / sudo…）与 `Deny` 两档照旧拦。
+    /// 规划阶段绝大多数命令是只读研究，逐条弹窗是纯摩擦。
+    #[serde(default)]
+    pub plan_mode_requires_approval: bool,
     /// When true, bash will later run an extra model-based approval
     /// check before execution.
     #[serde(default)]
     pub enable_model_command_approval: bool,
+    /// 审批引擎。仅在 `enable_model_command_approval` 为 true 时生效。
+    /// 缺该键（旧 settings.json）时取 `Model`，行为不变。
+    #[serde(default)]
+    pub command_approval_engine: CommandApprovalEngine,
+    /// Jev 引擎使用的模型 ID。默认**钉版本号**而不是 `jev-latest` 别名：
+    /// 官方文档明说别名会随发布前移，而审批是安全闸门，行为不该悄悄变。
+    /// 空值会在构造时回落 `llm::jev::JEV_DEFAULT_MODEL`。
+    #[serde(default)]
+    pub jev_model_id: String,
+    /// Jev 的 API 根地址（企业代理 / 私有网关 / 本地 mock）。**空 = 用官方地址。**
+    ///
+    /// 与模型服务渠道的 `base_url` 同一个意思：只改「请求打到哪台机器」，
+    /// 不改请求契约。空值**不覆盖**默认地址（不是「清空」）——兼容旧数据 =
+    /// 保持原样。
+    #[serde(default)]
+    pub jev_base_url: String,
+    /// Jev 引擎的判据（作为 Choice 的 `instructions`，空 = 用内置模板）。
+    ///
+    /// 与 `model_approval_prompt` **分开存放**是刻意的：chat 的自定义提示词通常
+    /// 带「输出严格的 JSON {...}」这类格式要求，而 Jev 不生成文本，喂过去只会
+    /// 变成噪音指令、静默劣化判定质量。两个引擎的判据形状不同，不能共用一个输入框。
+    #[serde(default)]
+    pub jev_approval_prompt: String,
     /// Optional model name override for the model-based command approval step.
     /// When empty, the main LLM model is used. Set to a smaller/faster model
     /// name to reduce approval latency and cost.
@@ -136,7 +230,12 @@ impl Default for AgentModeSettings {
                 "reboot".into(),
             ],
             confirm_each_command: default_true(),
+            plan_mode_requires_approval: false,
             enable_model_command_approval: false,
+            command_approval_engine: CommandApprovalEngine::default(),
+            jev_model_id: String::new(),
+            jev_base_url: String::new(),
+            jev_approval_prompt: String::new(),
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
@@ -767,6 +866,95 @@ mod tests {
         assert_eq!(s.list_mode, CommandListMode::Denylist);
         assert!(!s.command_list.is_empty());
         assert!(s.command_list.contains(&"rm".to_string()));
+    }
+
+    /// 旧 settings.json（没有 Jev 那三个键）必须落回「会话模型引擎」，
+    /// 也就是与引入 Jev 之前**完全一样**的行为。
+    ///
+    /// 这是「兼容 = 保持原样」的硬护栏：反序列化一旦误判成 Jev，用户会在
+    /// 毫无察觉的情况下把所有 bash 审批切到一个他还没配 Key 的引擎上。
+    #[test]
+    fn settings_without_jev_fields_fall_back_to_model_engine() {
+        let old = r#"{
+            "listMode": "denylist",
+            "commandList": ["rm"],
+            "confirmEachCommand": true,
+            "enableModelCommandApproval": true,
+            "modelApprovalModel": "",
+            "modelApprovalPrompt": "我的老提示词",
+            "systemPrompt": "",
+            "maxToolRounds": 500,
+            "contextWindow": 0,
+            "confirmEditFile": true
+        }"#;
+        let s: AgentModeSettings = serde_json::from_str(old).expect("旧配置必须能反序列化");
+        assert_eq!(
+            s.command_approval_engine,
+            CommandApprovalEngine::Model,
+            "缺 commandApprovalEngine 时必须是会话模型引擎"
+        );
+        assert_eq!(s.jev_model_id, "", "不得替用户凭空填上一个 Jev 型号");
+        assert_eq!(s.jev_approval_prompt, "");
+        // 旧字段原样保留，不被新字段挤掉。
+        assert!(s.enable_model_command_approval);
+        assert_eq!(s.model_approval_prompt, "我的老提示词");
+    }
+
+    /// 新键的序列化取值必须稳定——前端 TS 映射与它逐字对齐。
+    #[test]
+    fn approval_engine_serde_values_are_stable() {
+        assert_eq!(
+            serde_json::to_string(&CommandApprovalEngine::Model).unwrap(),
+            "\"model\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CommandApprovalEngine::Jev).unwrap(),
+            "\"jev\""
+        );
+        assert_eq!(
+            serde_json::from_str::<CommandApprovalEngine>("\"jev\"").unwrap(),
+            CommandApprovalEngine::Jev
+        );
+    }
+
+    /// 未知取值（更高版本写入的第三种引擎）不能让整个 settings.json 解析失败，
+    /// 按引入 Jev 之前的「会话模型引擎」处理（同
+    /// `unknown_update_mode_degrades_to_notify_without_failing`）。
+    #[test]
+    fn unknown_command_approval_engine_degrades_to_model_without_failing() {
+        let json =
+            "{\"fontSize\":15,\"agentModeSettings\":{\"commandApprovalEngine\":\"llm-judge\"}}";
+        let parsed: AppSettings = serde_json::from_str(json).expect("unknown engine should load");
+        assert_eq!(
+            parsed.agent_mode_settings.command_approval_engine,
+            CommandApprovalEngine::Model
+        );
+        assert_eq!(parsed.font_size, 15, "同文件其他字段照常生效");
+    }
+
+    /// 类型异常（数字）同样退化到会话模型引擎，不炸整个配置。
+    #[test]
+    fn malformed_command_approval_engine_type_degrades_to_model() {
+        let json = "{\"agentModeSettings\":{\"commandApprovalEngine\":3}}";
+        let parsed: AppSettings = serde_json::from_str(json).expect("malformed engine should load");
+        assert_eq!(
+            parsed.agent_mode_settings.command_approval_engine,
+            CommandApprovalEngine::Model
+        );
+    }
+
+    /// 容错反序列化不得把合法取值也一起吞掉：jev 必须原样读出，
+    /// 且同文件其他审批字段照常生效。
+    #[test]
+    fn known_command_approval_engine_values_still_parse() {
+        let json = r#"{"agentModeSettings":{"commandApprovalEngine":"jev","jevModelId":"jev-x","modelApprovalPrompt":"p"}}"#;
+        let parsed: AppSettings = serde_json::from_str(json).expect("known engine should load");
+        assert_eq!(
+            parsed.agent_mode_settings.command_approval_engine,
+            CommandApprovalEngine::Jev
+        );
+        assert_eq!(parsed.agent_mode_settings.jev_model_id, "jev-x");
+        assert_eq!(parsed.agent_mode_settings.model_approval_prompt, "p");
     }
 
     #[test]

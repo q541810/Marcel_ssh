@@ -5,6 +5,7 @@ pub mod conversation;
 pub mod conversation_persister;
 pub mod image_store;
 pub mod interaction;
+pub mod jev_approval;
 pub mod manager;
 pub mod model_approval;
 pub mod plan_handler;

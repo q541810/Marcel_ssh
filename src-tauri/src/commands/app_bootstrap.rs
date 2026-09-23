@@ -18,6 +18,12 @@ pub struct AppBootstrapData {
     pub has_api_key: bool,
     /// 密钥链中是否已存储 Web Search API Key
     pub has_web_search_api_key: bool,
+    /// 密钥链中是否已存储 TypeSafe（Jev）API Key
+    ///
+    /// 与 `has_web_search_api_key` 成对：前端只在启动快照这一条路上 hydrate 设置
+    /// （随后 `settingsStore.load()` 因 `loaded` 已置真而短路），所以这里漏发就等于
+    /// 整个会话都读不到真值——设置页会误报「还没配 Key」，并藏起清除按钮。
+    pub has_jev_api_key: bool,
     /// 各渠道密钥是否存在（多渠道模型服务）
     #[serde(default)]
     pub channel_key_status: Vec<crate::commands::settings::ChannelKeyStatus>,
@@ -47,6 +53,7 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
         })
         || keychain::get_llm_api_key().ok().flatten().is_some();
     let has_web_search_api_key = keychain::get_web_search_api_key().ok().flatten().is_some();
+    let has_jev_api_key = keychain::get_jev_api_key().ok().flatten().is_some();
     let channel_key_status = crate::commands::settings::compute_channel_key_status(&settings);
     let settings_warning = state.settings_warning.write().take();
 
@@ -57,6 +64,7 @@ pub async fn app_get_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
         settings,
         has_api_key,
         has_web_search_api_key,
+        has_jev_api_key,
         channel_key_status,
         settings_warning,
         connections,

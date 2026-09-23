@@ -978,6 +978,10 @@ export function handleModelApprovalDone(
           status: 'done' as const,
           decision: ev.decision as 'route_to_human' | 'block',
           reasons: ev.reasons,
+          // 判定元信息只用于展示（「Jev 判定」标注 + 分布集中度）。
+          // 它不参与任何判定分支——低置信度不会改变这里的 decision。
+          engine: ev.engine,
+          confidence: ev.confidence,
         },
       };
     }

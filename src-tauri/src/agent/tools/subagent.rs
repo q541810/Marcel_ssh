@@ -402,9 +402,12 @@ impl AgentTool for SubagentTool {
         // Auto 父任务派发的子 agent 是「全自主」的一部分——主用户选 Auto 即
         // 接受全程不打扰，因此 **任何模式** 的子 agent（含 mode="agent" 读写
         // 执行子 agent）都继承 Some(Auto)：命令静默执行，仅保留风险评估的
-        // 硬拦截与工具默认审批（requires_default_approval）。
+        // 硬拦截与工具默认审批（requires_default_approval）。这条覆盖优先于
+        // 「Plan 模式也需要审批」设置：Auto 父任务的子 agent 恒静默。
         // Plan/Agent 父任务保持 None：子 agent 走自身 mode 的审批语义——
-        //   - Plan 子 agent：只读工具集，命令逐条人审；
+        //   - Plan 子 agent（只读调研）：默认与 Auto 一样不弹人审（plan 模式
+        //     的默认口径，由 `plan_mode_requires_approval` 决定，见
+        //     `tool_dispatcher::effective_approval_mode`）；
         //   - mode="agent" 读写子 agent：破坏性命令人审（安全护栏，不能因
         //     换机/读写而放养；Auto 父除外——见上）。
         let approval_mode = state

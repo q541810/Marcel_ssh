@@ -33,6 +33,11 @@ pub struct SettingsResponse {
     /// True if a web search API key is stored in the keychain.
     #[serde(default)]
     pub has_web_search_api_key: bool,
+    /// True if a TypeSafe (Jev) API key is stored in the keychain.
+    /// 前端据此决定「命令审批引擎 = Jev」时是否提示去填 Key，避免只显示一个
+    /// 空输入框让人猜。原始 Key 永不回传 WebView。
+    #[serde(default)]
+    pub has_jev_api_key: bool,
     /// 每个渠道的密钥是否存在（多渠道模型服务）。
     #[serde(default)]
     pub channel_key_status: Vec<ChannelKeyStatus>,
@@ -75,6 +80,7 @@ pub async fn config_get_settings(state: State<'_, AppState>) -> Result<SettingsR
     let settings = state.settings.read().await.clone();
     let has_api_key = keychain::get_llm_api_key().ok().flatten().is_some();
     let has_web_search_api_key = keychain::get_web_search_api_key().ok().flatten().is_some();
+    let has_jev_api_key = keychain::get_jev_api_key().ok().flatten().is_some();
     let channel_key_status = compute_channel_key_status(&settings);
     // Take the warning so the user only sees it once (after a single load).
     let warning = state.settings_warning.write().take();
@@ -82,6 +88,7 @@ pub async fn config_get_settings(state: State<'_, AppState>) -> Result<SettingsR
         settings,
         has_api_key,
         has_web_search_api_key,
+        has_jev_api_key,
         channel_key_status,
         warning,
     })

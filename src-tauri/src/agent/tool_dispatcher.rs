@@ -1,14 +1,20 @@
 use serde::Serialize;
 
 use crate::agent::approval::ApprovalManager;
-use crate::agent::model_approval::{CommandApprover, ModelApprovalDecision, ModelApprover};
+use crate::agent::jev_approval::JevApprover;
+use crate::agent::model_approval::{
+    ApprovalJudgement, CommandApprover, ModelApprovalDecision, ModelApprover,
+};
 use crate::agent::risk::{split_command_chain, Disposition, RiskAssessor, SecurityPolicy};
 use crate::agent::task::AgentMode;
 use crate::agent::tools::{PathWrite, ToolContext, ToolOutput, ToolRegistry};
-use crate::config::settings::{AgentModeSettings, CommandListMode};
+use crate::config::settings::{AgentModeSettings, CommandApprovalEngine, CommandListMode};
 use crate::emit_event;
+use crate::error::AppError;
+use crate::llm::jev::JevConfig;
 use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmConfig, LlmMessage, ToolCall};
+use crate::llm::registry::NetPolicy;
 use crate::AppState;
 
 /// Event containing a tool call result, sent to the frontend.
@@ -50,6 +56,17 @@ struct ModelApprovalDoneEvent {
     /// "approve" | "route_to_human" | "block" | "error"
     decision: String,
     reasons: Vec<String>,
+    /// 产出这次判定的引擎：`"model"` | `"jev"`。`None` = 判定失败，没有引擎信息。
+    /// 前端据此在审批弹窗上标注「Jev 判定」，让用户知道自己在依赖谁。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engine: Option<String>,
+    /// 模型对自己这次判定的把握（0–1）。**只有 Jev 会给出**（chat 引擎恒为 `None`）。
+    ///
+    /// ⚠️ 官方定义是「概率分布的集中程度」，不是「判定正确的概率」，也不构成
+    /// 执行许可。前端展示时必须按这个口径措辞，否则会误导用户。
+    /// 它不参与任何判定分支——低置信度不会改变 approve/route_to_human/block。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    confidence: Option<f32>,
 }
 
 /// Result of executing a single tool call (UI/event view).
@@ -113,6 +130,41 @@ impl DispatchResult {
     }
 }
 
+/// 审批者构造失败时的替身：**每条命令都明确报错**，绝不无声放行。
+///
+/// 与「选了 Jev 却没配 Key」同一处理哲学（见 `build_jev_approver`）：那种情况下
+/// `JevApprover::evaluate` 也是直接 `Err`，让 `dispatch` 把命令拦下、把原因回给
+/// 用户与模型。构造失败（HTTP 客户端建不起来）同样不能变成"没有审批"——
+/// `dispatch` 里 `if let Some(ref approver)` 一旦拿不到 approver 就整段跳过，
+/// 那是最不该出现的静默失败模式。
+struct UnavailableApprover {
+    /// 给用户看的完整原因（含下一步该怎么办）。
+    reason: String,
+}
+
+impl UnavailableApprover {
+    fn new(cause: String) -> Self {
+        Self {
+            reason: format!(
+                "命令审批引擎（Jev）初始化失败，为避免命令在无人审批的情况下执行，本次任务的命令都会被拦下：{}。\
+                 请检查网络/代理设置后重新开始任务，或把「设置 → Agent → 命令模型审批」的引擎改回「跟随会话模型」。",
+                cause
+            ),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CommandApprover for UnavailableApprover {
+    async fn evaluate(
+        &self,
+        _command: &str,
+        _recent_messages: &[LlmMessage],
+    ) -> Result<ApprovalJudgement, AppError> {
+        Err(AppError::Config(self.reason.clone()))
+    }
+}
+
 /// Dispatches tool calls through the registry with mode-aware security policy.
 pub(crate) struct ToolDispatcher {
     mode: AgentMode,
@@ -137,6 +189,7 @@ pub(crate) struct ToolDispatcher {
 }
 
 impl ToolDispatcher {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mode: AgentMode,
         approval_mode: Option<AgentMode>,
@@ -147,46 +200,36 @@ impl ToolDispatcher {
         registry: std::sync::Arc<ToolRegistry>,
         llm_manager: std::sync::Arc<LlmManager>,
         approval_cfg: Option<LlmConfig>,
+        jev_cfg: Option<JevConfig>,
     ) -> Self {
         let enable = agent_settings.enable_model_command_approval;
+        // 审批提示词是否按「Plan 模式只读」渲染：取决于本任务实际工具
+        // 定位（自身 mode）。Auto 父派发的静默子 agent 自身仍是 Plan
+        // 只读工具集，这里自然为 true——plan 提示词约束"不得修改系统"
+        // 对只读调研场景更保守，与 approval_mode 静默放行互补。
+        // 两个引擎共用同一个判定（Plan 追加段也共用同一份模板）。
+        let is_plan_mode = matches!(mode, AgentMode::Plan);
+
+        // 审批者**要么在、要么整个功能被设置关掉**：两个构造函数返回的就是
+        // approver 本身（返回值类型里没有 `None`），所以"开关开着却没有审批"
+        // 在类型上不可能。这是刻意的：静默降级成"没有审批"等于把关卡整段跳过。
         let approver: Option<std::sync::Arc<dyn CommandApprover>> = if enable {
-            // 审批专用配置由 AgentManager 按「命令审核槽位」解析（空/失效自动回落
-            // 主模型）。extra_body 已在解析后剥离：自由参数（thinking、top_p 等）
-            // 针对主对话模型调参，不应影响审批决策。
-            let approval_manager = match approval_cfg {
-                Some(cfg) => match LlmManager::new(cfg) {
-                    Ok(m) => {
-                        log::info!("模型审批使用独立模型: {}", m.config().model);
-                        std::sync::Arc::new(m)
-                    }
-                    Err(e) => {
-                        log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
-                        llm_manager.clone()
-                    }
-                },
-                None => {
-                    // 无独立配置：用主模型（剥离 extra_body）。
-                    let mut cfg = llm_manager.config().clone();
-                    cfg.extra_body = None;
-                    match LlmManager::new(cfg) {
-                        Ok(m) => std::sync::Arc::new(m),
-                        Err(e) => {
-                            log::warn!("模型审批 manager 创建失败，回退主 manager: {}", e);
-                            llm_manager.clone()
-                        }
-                    }
-                }
+            let approver = match agent_settings.command_approval_engine {
+                CommandApprovalEngine::Jev => Self::build_jev_approver(
+                    jev_cfg,
+                    &agent_settings.jev_model_id,
+                    &agent_settings.jev_base_url,
+                    &agent_settings.jev_approval_prompt,
+                    is_plan_mode,
+                ),
+                CommandApprovalEngine::Model => Self::build_model_approver(
+                    approval_cfg,
+                    llm_manager,
+                    &agent_settings.model_approval_prompt,
+                    is_plan_mode,
+                ),
             };
-            // 审批提示词是否按「Plan 模式只读」渲染：取决于本任务实际工具
-            // 定位（自身 mode）。Auto 父派发的静默子 agent 自身仍是 Plan
-            // 只读工具集，这里自然为 true——plan 提示词约束"不得修改系统"
-            // 对只读调研场景更保守，与 approval_mode 静默放行互补。
-            let is_plan_mode = matches!(mode, AgentMode::Plan);
-            Some(std::sync::Arc::new(ModelApprover::new(
-                approval_manager,
-                agent_settings.model_approval_prompt.clone(),
-                is_plan_mode,
-            )))
+            Some(approver)
         } else {
             None
         };
@@ -200,6 +243,102 @@ impl ToolDispatcher {
             registry,
             approver,
             read_files: parking_lot::RwLock::new(std::collections::HashSet::new()),
+        }
+    }
+
+    /// 审批判定实际使用的模式：`approval_mode` 覆盖优先（Auto 父任务派发的子
+    /// agent），否则跟随本任务 `mode`；Plan 再按设置折成 Auto（见
+    /// [`effective_approval_mode`]）。
+    fn resolved_approval_mode(&self) -> AgentMode {
+        effective_approval_mode(
+            self.approval_mode.as_ref().unwrap_or(&self.mode),
+            &self.agent_settings,
+        )
+    }
+
+    /// 会话模型引擎（旧行为，逐字节保持不变）。
+    fn build_model_approver(
+        approval_cfg: Option<LlmConfig>,
+        llm_manager: std::sync::Arc<LlmManager>,
+        custom_prompt: &str,
+        is_plan_mode: bool,
+    ) -> std::sync::Arc<dyn CommandApprover> {
+        // 审批专用配置由 AgentManager 按「命令审核槽位」解析（空/失效自动回落
+        // 主模型）。extra_body 已在解析后剥离：自由参数（thinking、top_p 等）
+        // 针对主对话模型调参，不应影响审批决策。
+        let approval_manager = match approval_cfg {
+            Some(cfg) => match LlmManager::new(cfg) {
+                Ok(m) => {
+                    log::info!("模型审批使用独立模型: {}", m.config().model);
+                    std::sync::Arc::new(m)
+                }
+                Err(e) => {
+                    log::warn!("模型审批专用模型创建失败，回退主模型: {}", e);
+                    llm_manager.clone()
+                }
+            },
+            None => {
+                // 无独立配置：用主模型（剥离 extra_body）。
+                let mut cfg = llm_manager.config().clone();
+                cfg.extra_body = None;
+                match LlmManager::new(cfg) {
+                    Ok(m) => std::sync::Arc::new(m),
+                    Err(e) => {
+                        log::warn!("模型审批 manager 创建失败，回退主 manager: {}", e);
+                        llm_manager.clone()
+                    }
+                }
+            }
+        };
+        std::sync::Arc::new(ModelApprover::new(
+            approval_manager,
+            custom_prompt.to_string(),
+            is_plan_mode,
+        ))
+    }
+
+    /// Jev 引擎。
+    ///
+    /// `jev_cfg` 为 `None` = 用户选了 Jev 但还没配 API Key。这种情况下**仍然
+    /// 构造 approver**（用空 Key 的配置），让每条 bash 都拿到一句明确的
+    /// 「去设置里填 Key」错误，而不是静默回退到会话模型——静默回退会让用户
+    /// 以为自己受 Jev 保护，其实没有。
+    fn build_jev_approver(
+        jev_cfg: Option<JevConfig>,
+        model_id: &str,
+        base_url: &str,
+        custom_prompt: &str,
+        is_plan_mode: bool,
+    ) -> std::sync::Arc<dyn CommandApprover> {
+        let cfg = match jev_cfg {
+            Some(cfg) => cfg,
+            None => {
+                log::warn!("命令审批引擎为 Jev 但未配置 TypeSafe API Key，每次 bash 将明确报错");
+                JevConfig::new(String::new(), model_id.to_string(), NetPolicy::default())
+            }
+        };
+        // 带根地址：配错地址时每条 bash 都会失败并指明打到了哪台机器，
+        // 日志里也得能看出实际用的是官方地址还是自定义网关。
+        let cfg = cfg.with_base_url(base_url);
+        log::info!(
+            "命令审批引擎: Jev ({} @ {}{})",
+            cfg.model_id,
+            cfg.endpoint_url(),
+            if cfg.is_custom_base_url() {
+                "，自定义根地址"
+            } else {
+                ""
+            }
+        );
+        match JevApprover::new(cfg, custom_prompt.to_string(), is_plan_mode) {
+            Ok(a) => std::sync::Arc::new(a),
+            Err(e) => {
+                // 构造失败（HTTP 客户端建不起来）属于极端情况。这里**不静默降级
+                // 成"没有审批"**：返回一个每次调用都明确报错的替身，让每条命令
+                // 都拿到"审批没能进行"，而不是在无人审批的情况下执行。
+                log::error!("Jev 审批者创建失败，本任务的命令都将被拦下: {}", e);
+                std::sync::Arc::new(UnavailableApprover::new(e.to_string()))
+            }
         }
     }
 
@@ -252,11 +391,11 @@ impl ToolDispatcher {
                     .unwrap_or(false)
             })
             .unwrap_or(false);
-        let approval_mode = self.approval_mode.as_ref().unwrap_or(&self.mode);
+        let resolved_approval_mode = self.resolved_approval_mode();
         let command_decision = declares_command.then(|| {
             decide_command(
                 command.unwrap_or(""),
-                approval_mode,
+                &resolved_approval_mode,
                 &self.agent_settings,
                 ctx.policy.as_deref(),
             )
@@ -344,7 +483,7 @@ impl ToolDispatcher {
         //    命令类工具的结论来自 `decide_command`（它把风险评估和名单一起算完，
         //    `deny` 已经在上面短路掉了）；其余工具按自己声明的档位走。
         let assessed_needs_confirm = needs_human_confirmation(
-            approval_mode,
+            &resolved_approval_mode,
             command_decision.as_ref(),
             effective_disposition,
             requires_default_approval,
@@ -381,63 +520,80 @@ impl ToolDispatcher {
                 let eval_result = approver.evaluate(cmd, recent_messages).await;
 
                 match eval_result {
-                    Ok(ModelApprovalDecision::Block(rs)) => {
-                        emit_event(
-                            &ctx.app_handle,
-                            event_name,
-                            ModelApprovalDoneEvent {
-                                event_type: "modelApprovalDone".to_string(),
-                                tool_call_id: tc.id.clone(),
-                                decision: "block".to_string(),
-                                reasons: rs.clone(),
-                            },
-                        );
-                        let reason = if rs.is_empty() {
-                            "模型审批阻止".to_string()
-                        } else {
-                            format!("模型审批阻止: {}", rs.join("; "))
-                        };
-                        let hint = "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
-                        return DispatchResult::blocked(
-                            format!("$ {}", cmd),
-                            format!("{}{}", reason, hint),
-                            effective_disposition,
-                        );
-                    }
-                    Ok(ModelApprovalDecision::RouteToHuman(rs)) => {
-                        emit_event(
-                            &ctx.app_handle,
-                            event_name,
-                            ModelApprovalDoneEvent {
-                                event_type: "modelApprovalDone".to_string(),
-                                tool_call_id: tc.id.clone(),
-                                decision: "route_to_human".to_string(),
-                                reasons: rs.clone(),
-                            },
-                        );
-                        // Auto 模式下跳过人审，直接执行；Agent/Plan 模式弹窗。
-                        // 判定同样遵循 approval_mode：Auto 父派发的只读子
-                        // agent（自身 Plan）在 route_to_human 时也不转人审。
-                        // 例外：强制审批档。Auto 拦不住它，模型说"要转人审"
-                        // 时当然更不能把它咽掉。
-                        if *approval_mode != AgentMode::Auto
-                            || effective_disposition.survives_auto()
-                        {
-                            final_needs_confirm = true;
-                            model_reasons = if rs.is_empty() { None } else { Some(rs) };
+                    Ok(judgement) => {
+                        // 判定元信息只用于**展示**（弹窗上标注这次是谁判的、
+                        // 把握多大）。下面的分支只看 `decision`——置信度不参与
+                        // 任何判定，两个引擎的决策语义因此完全等价。
+                        let engine = Some(judgement.engine.to_string());
+                        let confidence = judgement.confidence;
+                        match judgement.decision {
+                            ModelApprovalDecision::Block(rs) => {
+                                emit_event(
+                                    &ctx.app_handle,
+                                    event_name,
+                                    ModelApprovalDoneEvent {
+                                        event_type: "modelApprovalDone".to_string(),
+                                        tool_call_id: tc.id.clone(),
+                                        decision: "block".to_string(),
+                                        reasons: rs.clone(),
+                                        engine,
+                                        confidence,
+                                    },
+                                );
+                                let reason = if rs.is_empty() {
+                                    "模型审批阻止".to_string()
+                                } else {
+                                    format!("模型审批阻止: {}", rs.join("; "))
+                                };
+                                let hint = "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
+                                return DispatchResult::blocked(
+                                    format!("$ {}", cmd),
+                                    format!("{}{}", reason, hint),
+                                    effective_disposition,
+                                );
+                            }
+                            ModelApprovalDecision::RouteToHuman(rs) => {
+                                emit_event(
+                                    &ctx.app_handle,
+                                    event_name,
+                                    ModelApprovalDoneEvent {
+                                        event_type: "modelApprovalDone".to_string(),
+                                        tool_call_id: tc.id.clone(),
+                                        decision: "route_to_human".to_string(),
+                                        reasons: rs.clone(),
+                                        engine,
+                                        confidence,
+                                    },
+                                );
+                                // Auto 模式下跳过人审，直接执行；Agent 模式弹窗
+                                // （Plan 默认也走这一支，除非开了「Plan 模式也需要
+                                // 审批」——判定同样遵循 `resolved_approval_mode`：
+                                // Auto 父派发的只读子 agent 在 route_to_human 时也
+                                // 不转人审）。例外：强制审批档。Auto 拦不住它，模型
+                                // 说"要转人审"时当然更不能把它咽掉。
+                                if resolved_approval_mode != AgentMode::Auto
+                                    || effective_disposition.survives_auto()
+                                {
+                                    final_needs_confirm = true;
+                                    model_reasons =
+                                        if rs.is_empty() { None } else { Some(rs) };
+                                }
+                            }
+                            ModelApprovalDecision::Approve => {
+                                emit_event(
+                                    &ctx.app_handle,
+                                    event_name,
+                                    ModelApprovalDoneEvent {
+                                        event_type: "modelApprovalDone".to_string(),
+                                        tool_call_id: tc.id.clone(),
+                                        decision: "approve".to_string(),
+                                        reasons: vec![],
+                                        engine,
+                                        confidence,
+                                    },
+                                );
+                            }
                         }
-                    }
-                    Ok(ModelApprovalDecision::Approve) => {
-                        emit_event(
-                            &ctx.app_handle,
-                            event_name,
-                            ModelApprovalDoneEvent {
-                                event_type: "modelApprovalDone".to_string(),
-                                tool_call_id: tc.id.clone(),
-                                decision: "approve".to_string(),
-                                reasons: vec![],
-                            },
-                        );
                     }
                     Err(e) => {
                         let err_msg = e.to_string();
@@ -449,6 +605,8 @@ impl ToolDispatcher {
                                 tool_call_id: tc.id.clone(),
                                 decision: "error".to_string(),
                                 reasons: vec![err_msg.clone()],
+                                engine: None,
+                                confidence: None,
                             },
                         );
                         return DispatchResult::blocked(
@@ -659,6 +817,26 @@ pub(crate) fn resolve_disposition(
     worst
 }
 
+/// 审批判定实际使用的模式 —— **Plan 默认与 Auto 同档**。
+///
+/// 规划阶段绝大多数命令是只读研究（`ls` / `grep` / `tail`…），逐条弹窗是纯摩擦，
+/// 所以关掉「Plan 模式也需要审批」时 Plan 复用 Auto 那一套判定，而不是另写一份：
+/// 这样「强制审批档连 Auto 都拦得住」这条护栏对 Plan 同样成立，`Deny` 的提前
+/// 短路也照旧（两者都不看模式）。打开开关则原样返回 `Plan`，走命令名单。
+///
+/// 幂等 —— `decide_command` / `needs_human_confirmation` 内部也调它，所以设置页的
+/// 「命令测试」直接传 `Plan` 进来时，结论与真实执行一致（那两处曾经不一致过）。
+///
+/// 折的范围是**整个审批层**，不止 bash：Plan 工具集里唯一声明 `Approval` 的非命令类
+/// 工具（`job_kill`）同样随之静默，与它在 Auto 下一致。`ForceApproval` / `Deny` 两档
+/// 不受影响（它们本来就不看模式）。
+pub(crate) fn effective_approval_mode(mode: &AgentMode, settings: &AgentModeSettings) -> AgentMode {
+    match mode {
+        AgentMode::Plan if !settings.plan_mode_requires_approval => AgentMode::Auto,
+        other => other.clone(),
+    }
+}
+
 /// 给一条命令下结论：**风险评估 + 命令名单一起算，这是唯一一份实现**。
 ///
 /// dispatcher 用它决定要不要拦、要不要弹窗，设置页的「命令测试」也用它 —— 那两处
@@ -676,6 +854,9 @@ pub(crate) fn decide_command(
     policy: Option<&SecurityPolicy>,
 ) -> CommandDecision {
     let assessment = RiskAssessor::from_optional(policy).assess_command(cmd);
+    // Plan 默认折成 Auto（见 `effective_approval_mode`）：命令名单这一层不参与，
+    // 与真实执行时走的是同一个判定，不能只有 dispatcher 那边折。
+    let mode = &effective_approval_mode(mode, settings);
 
     match assessment.disposition {
         Disposition::Deny => CommandDecision {
@@ -692,6 +873,7 @@ pub(crate) fn decide_command(
             requires_confirmation: true,
         },
         _ => {
+            // 能在这里看到 `Plan`，只可能是「Plan 模式也需要审批」开着。
             let needs_confirm = match mode {
                 AgentMode::Plan | AgentMode::Agent => command_list_requires_confirm(cmd, settings),
                 AgentMode::Auto => false,
@@ -739,6 +921,12 @@ pub(crate) fn rejection_message(reason: Option<&str>) -> String {
 /// 而 `dispatch` 依赖 SSH 会话与 AppHandle、单测跑不起来 —— 留在里面就只能靠读
 /// 代码确认「Auto 到底拦不拦得住强制审批」，而那正是最容易悄悄退化的地方
 /// （把 Auto 分支改回只看 `requires_default_approval`，这里会立刻变红）。
+///
+/// 判据是**最终档位**（`resolve_disposition` 的产物），不是命令文本单独算出来的
+/// 那份：`command_decision` 的入参里没有插件 manifest 声明，所以「声明了强制审批
+/// + 命令文本只算放行」这种组合在 `d.requires_confirmation` 上是 `false`，只看它
+/// 就等于把声明整条丢掉。`Deny` 不在此列 —— `dispatch` 在调用本函数之前已经把它
+/// 短路掉了（那种档位不该给出"能批准"的弹窗）。
 pub(crate) fn needs_human_confirmation(
     approval_mode: &AgentMode,
     command_decision: Option<&CommandDecision>,
@@ -747,9 +935,16 @@ pub(crate) fn needs_human_confirmation(
     settings: &AgentModeSettings,
     approval_switch_on: bool,
 ) -> bool {
+    // 与 `decide_command` 同一处折法（幂等）：两处若只折一处，就会出现「档位算静默、
+    // 这里却弹窗」的错位。
+    let approval_mode = &effective_approval_mode(approval_mode, settings);
+
     match approval_mode {
+        // 能在这里看到 `Plan`，只可能是「Plan 模式也需要审批」开着。
         AgentMode::Plan | AgentMode::Agent => match command_decision {
-            Some(d) => d.requires_confirmation,
+            Some(d) => {
+                d.requires_confirmation || effective_disposition == Disposition::ForceApproval
+            }
             None => {
                 requires_default_approval
                     || match effective_disposition {
@@ -762,9 +957,9 @@ pub(crate) fn needs_human_confirmation(
         },
         // Auto 模式不是"万事不商量"：强制审批档连 Auto 都拦得住，这正是它与
         // 「请求审批」的唯一差别。`requires_default_approval` 是外置工具（MCP）
-        // 自己提的要求，同样带上。
+        // 自己提的要求，同样带上。默认设置下的 Plan 也走这一支（见上）。
         AgentMode::Auto => match command_decision {
-            Some(d) => d.requires_confirmation,
+            Some(d) => d.requires_confirmation || effective_disposition.survives_auto(),
             None => effective_disposition.survives_auto() || requires_default_approval,
         },
     }
@@ -817,7 +1012,12 @@ mod tests {
             list_mode: CommandListMode::Denylist,
             command_list: vec!["rm".into(), "mkfs".into(), "dd".into()],
             confirm_each_command: false,
+            plan_mode_requires_approval: false,
             enable_model_command_approval: false,
+            command_approval_engine: CommandApprovalEngine::Model,
+            jev_model_id: String::new(),
+            jev_base_url: String::new(),
+            jev_approval_prompt: String::new(),
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
@@ -918,6 +1118,75 @@ mod tests {
         ));
     }
 
+    /// **回归：插件声明的强制审批曾被弹窗判定整条丢弃。**
+    ///
+    /// `decide_command` 的入参里没有 manifest 声明，所以声明了 `ForceApproval` 的插件
+    /// 工具算出来仍是「命令文本只算放行」；这里以前在 `Some(d)` 分支只看
+    /// `d.requires_confirmation`，于是 Auto 模式、以及 Agent 模式关掉「逐条确认」之后，
+    /// 那条声明的强制审批命令**不弹窗直接执行**（只有 `Deny` 靠更早的短路侥幸逃过）。
+    /// 这条测试打的就是那一跳：允许放行的命令判定 + 强制审批声明。
+    #[test]
+    fn declared_force_approval_reaches_the_prompt_even_when_the_command_is_benign() {
+        for mode in [AgentMode::Auto, AgentMode::Agent] {
+            let mut s = default_settings();
+            // 让「逐条确认」不参与兜底：Agent 模式下必须靠声明本身拦住。
+            s.confirm_each_command = false;
+
+            // 只读查询：不在黑名单、逐条确认也关着 → 命令文本判定为放行。
+            let d = decide_command("ls -la", &mode, &s, None);
+            assert_eq!(
+                d.disposition,
+                Disposition::Allow,
+                "{mode:?} 下命令文本算放行"
+            );
+            assert!(!d.requires_confirmation, "命令文本本身不要求确认");
+
+            // 插件 manifest 声明 ForceApproval（`kind=ssh` 工具）→ 最终档位取严。
+            let effective =
+                resolve_disposition(Some(d.disposition), Disposition::ForceApproval, false);
+            assert_eq!(effective, Disposition::ForceApproval);
+
+            assert!(
+                needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
+                "{mode:?} 下插件声明的强制审批必须弹窗"
+            );
+        }
+    }
+
+    /// 内建 `bash` 的行为**不变**：它声明的档位是 `Approval`（见 `tools/bash.rs`），
+    /// 所以命令文本算到 `ForceApproval` 时 `d.requires_confirmation` 本来就为真 ——
+    /// 新增的「最终档位」判据给的是同一个结论，而普通命令也不会突然开始弹窗。
+    #[test]
+    fn builtin_bash_prompting_is_unchanged() {
+        // bash 的声明值；命令类工具的真实档位由命令文本现算后再与它取严。
+        let declared = Disposition::Approval;
+
+        for mode in [AgentMode::Plan, AgentMode::Agent, AgentMode::Auto] {
+            let mut s = default_settings();
+            s.confirm_each_command = false;
+
+            // 系统级命令：命令文本自己就要人点头 → 三档都弹窗（改动前后一致）。
+            let d = decide_command("systemctl restart nginx", &mode, &s, None);
+            assert_eq!(d.disposition, Disposition::ForceApproval);
+            assert!(d.requires_confirmation);
+            let effective = resolve_disposition(Some(d.disposition), declared, false);
+            assert!(
+                needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
+                "{mode:?} 下系统级命令必须弹窗"
+            );
+
+            // 普通命令：名单不命中 + 关掉逐条确认 → 仍然静默放行（变了就是回归）。
+            let d = decide_command("ls -la", &mode, &s, None);
+            assert_eq!(d.disposition, Disposition::Allow);
+            let effective = resolve_disposition(Some(d.disposition), declared, false);
+            assert_eq!(effective, Disposition::Approval, "bash 的声明是档位下限");
+            assert!(
+                !needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
+                "{mode:?} 下普通命令不该因为这次加固突然弹窗"
+            );
+        }
+    }
+
     /// 只读的非命令类工具（`read_history` 这种：`Disposition::Allow` + 没有命令参数
     /// + 不要求默认审批）在三档模式下都**不弹窗** —— 它不是命令、也不碰路径，
     /// 不该被逐条确认拖住。
@@ -969,6 +1238,103 @@ mod tests {
             &s,
             false
         ));
+    }
+
+    /// **Plan 默认与 Auto 同档，「Plan 模式也需要审批」打开后回到 Agent 那一套。**
+    ///
+    /// 诉求是「Plan 下执行 bash 默认不需要审批（和 Auto 一样），但要能关回去」。
+    /// 两侧都要钉：默认静默时 Plan 的结论必须与 Auto **逐项相等**（不是"也静默"
+    /// 就算 —— 强制审批档的判定得一起搬过来），打开开关后必须回到走名单的旧行为。
+    /// 只测一侧等于给一半的护栏。
+    #[test]
+    fn plan_mode_is_silent_by_default_and_the_setting_gates_it_back() {
+        // bash 的声明值（`tools/bash.rs`）：命令文本现算后再与它取严。
+        let declared = Disposition::Approval;
+
+        let mut silent = default_settings();
+        // 默认设置里 `confirm_each_command` 就是 true —— 摩擦的来源。
+        silent.confirm_each_command = true;
+        let mut gated = silent.clone();
+        gated.plan_mode_requires_approval = true;
+
+        for cmd in ["ls -la", "grep -rn TODO /var/log"] {
+            // 开关关着：Plan 与 Auto 逐项相等，且不弹窗。
+            let plan = decide_command(cmd, &AgentMode::Plan, &silent, None);
+            let auto = decide_command(cmd, &AgentMode::Auto, &silent, None);
+            assert_eq!(plan.disposition, auto.disposition, "`{cmd}` 的档位要与 Auto 一致");
+            assert_eq!(plan.requires_confirmation, auto.requires_confirmation);
+            assert_eq!(plan.disposition, Disposition::Allow);
+            assert!(
+                !needs_human_confirmation(
+                    &AgentMode::Plan,
+                    Some(&plan),
+                    resolve_disposition(Some(plan.disposition), declared, false),
+                    false,
+                    &silent,
+                    false
+                ),
+                "`{cmd}` 在 Plan 下不该弹窗"
+            );
+
+            // 开关打开：回到「走名单 + 逐条确认」。
+            let plan = decide_command(cmd, &AgentMode::Plan, &gated, None);
+            assert_eq!(plan.disposition, Disposition::Approval, "开关打开后走名单");
+            assert!(plan.requires_confirmation);
+            assert!(
+                needs_human_confirmation(
+                    &AgentMode::Plan,
+                    Some(&plan),
+                    resolve_disposition(Some(plan.disposition), declared, false),
+                    false,
+                    &gated,
+                    false
+                ),
+                "`{cmd}` 开着开关时必须弹窗"
+            );
+        }
+
+        // 硬闸不看这个开关：系统级命令两种设置下都是强制审批 + 弹窗。
+        for settings in [&silent, &gated] {
+            let d = decide_command("systemctl restart nginx", &AgentMode::Plan, settings, None);
+            assert_eq!(d.disposition, Disposition::ForceApproval);
+            assert!(d.requires_confirmation, "强制审批档自己就要确认");
+            assert!(needs_human_confirmation(
+                &AgentMode::Plan,
+                Some(&d),
+                resolve_disposition(Some(d.disposition), declared, false),
+                false,
+                settings,
+                false
+            ));
+        }
+
+        // 开关只对 Plan 生效：Agent / Auto 的档位与弹窗判定前后一模一样。
+        for cmd in ["ls -la", "systemctl restart nginx"] {
+            for mode in [AgentMode::Agent, AgentMode::Auto] {
+                let before = decide_command(cmd, &mode, &silent, None);
+                let after = decide_command(cmd, &mode, &gated, None);
+                assert_eq!(before.disposition, after.disposition, "{mode:?} 不受开关影响");
+                assert_eq!(
+                    needs_human_confirmation(
+                        &mode,
+                        Some(&before),
+                        resolve_disposition(Some(before.disposition), declared, false),
+                        false,
+                        &silent,
+                        false
+                    ),
+                    needs_human_confirmation(
+                        &mode,
+                        Some(&after),
+                        resolve_disposition(Some(after.disposition), declared, false),
+                        false,
+                        &gated,
+                        false
+                    ),
+                    "{mode:?} 的弹窗判定不受开关影响"
+                );
+            }
+        }
     }
 
     /// 名单决定 `Approval` / `Allow` 这一档：命中就审、不命中就放。
@@ -1107,7 +1473,12 @@ mod tests {
             list_mode: CommandListMode::Allowlist,
             command_list: vec!["ls".into(), "cat".into()],
             confirm_each_command: false,
+            plan_mode_requires_approval: false,
             enable_model_command_approval: false,
+            command_approval_engine: CommandApprovalEngine::Model,
+            jev_model_id: String::new(),
+            jev_base_url: String::new(),
+            jev_approval_prompt: String::new(),
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
@@ -1128,7 +1499,12 @@ mod tests {
             list_mode: CommandListMode::Allowlist,
             command_list: vec!["ls".into()],
             confirm_each_command: false,
+            plan_mode_requires_approval: false,
             enable_model_command_approval: false,
+            command_approval_engine: CommandApprovalEngine::Model,
+            jev_model_id: String::new(),
+            jev_base_url: String::new(),
+            jev_approval_prompt: String::new(),
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
@@ -1159,7 +1535,12 @@ mod tests {
             list_mode: CommandListMode::Denylist,
             command_list: vec![],
             confirm_each_command: true,
+            plan_mode_requires_approval: false,
             enable_model_command_approval: false,
+            command_approval_engine: CommandApprovalEngine::Model,
+            jev_model_id: String::new(),
+            jev_base_url: String::new(),
+            jev_approval_prompt: String::new(),
             model_approval_model: String::new(),
             model_approval_prompt: String::new(),
             system_prompt: String::new(),
@@ -1194,6 +1575,48 @@ mod tests {
         assert!(command_list_requires_confirm("ls $(rm -rf /)", &s));
         // Backtick subshell
         assert!(command_list_requires_confirm("ls `rm -rf /`", &s));
+    }
+
+    // ── 审批者构造：闸门不许无声消失 ──
+
+    /// **回归：`build_jev_approver` 构造失败曾返回 `None`，那等于该任务没有模型审批。**
+    ///
+    /// `dispatch` 里是 `if let Some(ref approver)`，拿不到 approver 就整段跳过（注释
+    /// 写着"不静默降级"，行为却正相反）。现在构造失败给出一个每次调用都明确报错的
+    /// 替身：命令被拦下并带上原因，与"选了 Jev 却没配 Key"走同一条路。
+    /// `build_*_approver` 的返回类型里也不再是 `Option`，这条不变式由类型保证。
+    #[tokio::test]
+    async fn failed_approver_construction_blocks_instead_of_vanishing() {
+        let approver = UnavailableApprover::new("Jev HTTP 客户端初始化失败".to_string());
+        let err = approver
+            .evaluate("ls -la", &[])
+            .await
+            .expect_err("替身必须拒绝每一次判定");
+
+        let msg = err.to_string();
+        assert!(msg.contains("Jev HTTP 客户端初始化失败"), "实际是 {msg}");
+        assert!(
+            msg.contains("拦下"),
+            "要让用户知道命令没被执行，实际是 {msg}"
+        );
+        assert!(msg.contains("设置"), "要给出下一步，实际是 {msg}");
+    }
+
+    /// 另一条「闸门必须还在」的路：选了 Jev 但没配 Key。它的 approver 也得每次
+    /// 明确报错，而不是回退成放行 —— 由 `build_jev_approver` 的返回类型（没有
+    /// `None`）保证构造出口只有这一个。
+    #[tokio::test]
+    async fn unconfigured_jev_approver_reports_itself_on_every_call() {
+        let approver = ToolDispatcher::build_jev_approver(None, "", "", "", false);
+        let err = approver
+            .evaluate("ls -la", &[])
+            .await
+            .expect_err("没配 Key 必须明确报错");
+        assert!(
+            err.to_string().contains("TypeSafe API Key"),
+            "实际是 {}",
+            err
+        );
     }
 
     // ── read-before-edit ──

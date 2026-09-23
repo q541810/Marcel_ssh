@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { useSettingsStore } from '@/stores/settingsStore';
+import type { AppSettings } from '@/lib/types';
 
 vi.mock('@/lib/tauri', () => ({
   getSettings: vi.fn(),
@@ -13,6 +14,7 @@ describe('settingsStore', () => {
       loaded: false,
       hasApiKey: false,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
       preview: null,
     });
   });
@@ -43,6 +45,7 @@ describe('settingsStore', () => {
     expect(am.listMode).toBe('denylist');
     expect(am.commandList).toContain('rm');
     expect(am.confirmEachCommand).toBe(true);
+    expect(am.planModeRequiresApproval).toBe(false);
     expect(am.enableModelCommandApproval).toBe(false);
     expect(am.modelApprovalPrompt).toBe('');
     expect(am.confirmEditFile).toBe(true);
@@ -72,6 +75,7 @@ describe('settingsStore', () => {
       },
       hasApiKey: false,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
     });
     const r = useSettingsStore.getState().settings.llmRegistry;
     expect(r.slots).toEqual({
@@ -105,6 +109,7 @@ describe('settingsStore', () => {
       },
       hasApiKey: false,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
     });
     const models = useSettingsStore.getState().settings.llmRegistry.models;
     expect(models).toHaveLength(1);
@@ -136,6 +141,7 @@ describe('settingsStore', () => {
       },
       hasApiKey: false,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
     });
     expect(useSettingsStore.getState().settings.llmRegistry.lastUsedModelId).toBe('m-1');
   });
@@ -165,6 +171,7 @@ describe('settingsStore', () => {
       },
       hasApiKey: false,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
     });
     expect(useSettingsStore.getState().settings.llmRegistry.lastUsedModelId).toBeUndefined();
   });
@@ -228,6 +235,7 @@ describe('settingsStore', () => {
       },
       hasApiKey: true,
       hasWebSearchApiKey: false,
+      hasJevApiKey: false,
       warning: 'test-warning',
     });
 
@@ -236,5 +244,110 @@ describe('settingsStore', () => {
     expect(state.hasApiKey).toBe(true);
     expect(state.settings.fontSize).toBe(18);
     expect(state.warning).toBe('test-warning');
+  });
+
+  it('审批引擎默认是 model 引擎，且不预设 Jev 型号与根地址', () => {
+    const am = useSettingsStore.getState().settings.agentModeSettings;
+    expect(am.commandApprovalEngine).toBe('model');
+    expect(am.jevModelId).toBe('');
+    expect(am.jevBaseUrl).toBe('');
+    expect(am.jevApprovalPrompt).toBe('');
+  });
+
+  /**
+   * 「兼容旧数据 = 保持原样」在前端这一层的硬护栏。
+   *
+   * 旧 settings.json 里没有审批引擎这三个键。一旦这里被误判成 Jev，用户会在
+   * 毫无察觉的情况下把所有 bash 审批切到一个他还没配 Key 的引擎上——而且旧配置
+   * 里的 chat 提示词会被当成 Jev 判据，判定质量静默劣化。
+   */
+  it('旧配置缺审批引擎字段时落回 model，其余字段原样保留', () => {
+    const legacyAgent = {
+      listMode: 'denylist',
+      commandList: ['rm'],
+      confirmEachCommand: true,
+      enableModelCommandApproval: true,
+      modelApprovalPrompt: '老提示词',
+      systemPrompt: '',
+      maxToolRounds: 500,
+      contextWindow: 0,
+      confirmEditFile: true,
+      // 刻意不含 commandApprovalEngine / jevModelId / jevApprovalPrompt
+    } as unknown as AppSettings['agentModeSettings'];
+
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        agentModeSettings: legacyAgent,
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+      hasJevApiKey: false,
+    });
+
+    const am = useSettingsStore.getState().settings.agentModeSettings;
+    expect(am.commandApprovalEngine).toBe('model');
+    expect(am.jevModelId).toBe('');
+    expect(am.jevBaseUrl).toBe('');
+    expect(am.jevApprovalPrompt).toBe('');
+    // 旧字段一个都没被新字段挤掉。
+    expect(am.enableModelCommandApproval).toBe(true);
+    expect(am.modelApprovalPrompt).toBe('老提示词');
+    expect(am.commandList).toEqual(['rm']);
+  });
+
+  it('自定义根地址在 hydrate 后保留（不能被默认值覆盖回空）', () => {
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        agentModeSettings: {
+          ...useSettingsStore.getState().settings.agentModeSettings,
+          enableModelCommandApproval: true,
+          commandApprovalEngine: 'jev',
+          jevBaseUrl: 'https://jev-gw.corp.example.com',
+        },
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+      hasJevApiKey: false,
+    });
+    expect(
+      useSettingsStore.getState().settings.agentModeSettings.jevBaseUrl,
+    ).toBe('https://jev-gw.corp.example.com');
+  });
+
+  it('已配置的 Jev 引擎与型号在 hydrate 后保留', () => {
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: {
+        ...useSettingsStore.getState().settings,
+        agentModeSettings: {
+          ...useSettingsStore.getState().settings.agentModeSettings,
+          enableModelCommandApproval: true,
+          commandApprovalEngine: 'jev',
+          jevModelId: 'jev-1.13.0',
+          jevApprovalPrompt: '我的判据',
+        },
+      },
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+      hasJevApiKey: true,
+    });
+
+    const state = useSettingsStore.getState();
+    const am = state.settings.agentModeSettings;
+    expect(am.commandApprovalEngine).toBe('jev');
+    expect(am.jevModelId).toBe('jev-1.13.0');
+    expect(am.jevApprovalPrompt).toBe('我的判据');
+    expect(state.hasJevApiKey).toBe(true);
+  });
+
+  it('启动快照说没配 Key 时，store 如实反映（不乐观推断）', () => {
+    useSettingsStore.getState().hydrateFromBootstrap({
+      settings: useSettingsStore.getState().settings,
+      hasApiKey: false,
+      hasWebSearchApiKey: false,
+      hasJevApiKey: false,
+    });
+    expect(useSettingsStore.getState().hasJevApiKey).toBe(false);
   });
 });

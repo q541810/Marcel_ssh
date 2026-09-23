@@ -482,6 +482,8 @@ export async function getSettings(): Promise<{
   settings: AppSettings;
   hasApiKey: boolean;
   hasWebSearchApiKey?: boolean;
+  /** TypeSafe（Jev）API Key 是否存在。原始 Key 永不回传前端。 */
+  hasJevApiKey?: boolean;
   /** 各渠道密钥是否存在（多渠道模型服务）。 */
   channelKeyStatus?: ChannelKeyStatus[];
   warning?: string;
@@ -742,6 +744,15 @@ export async function saveWebSearchApiKey(apiKey: string): Promise<void> {
 
 export async function deleteWebSearchApiKey(): Promise<void> {
   return invoke("config_delete_web_search_api_key");
+}
+
+/** 保存 TypeSafe（Jev）API Key 到系统密钥链。原始 Key 不回传前端。 */
+export async function saveJevApiKey(apiKey: string): Promise<void> {
+  return invoke("config_save_jev_api_key", { apiKey });
+}
+
+export async function deleteJevApiKey(): Promise<void> {
+  return invoke("config_delete_jev_api_key");
 }
 
 // Background Jobs（统一命令执行体系：job_list / job_kill）

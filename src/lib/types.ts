@@ -497,6 +497,10 @@ export interface AgentMessage {
     status: 'checking' | 'done';
     decision?: 'approve' | 'route_to_human' | 'block';
     reasons?: string[];
+    /** 产出这次判定的引擎。缺省 = 判定失败，没有引擎信息。 */
+    engine?: CommandApprovalEngine;
+    /** 模型对这次判定的「分布集中度」（0–1）。只有 Jev 会给，不构成执行许可。 */
+    confidence?: number;
   };
   /** Context compaction indicator — a system message tracking compaction visibility. */
   compaction?: {
@@ -554,11 +558,41 @@ export type LegacyDisposition = 'ReadOnly' | 'LowRisk' | 'Moderate' | 'HighRisk'
 
 export type CommandListMode = 'allowlist' | 'denylist';
 
+/**
+ * 命令审批引擎。`model` = 跟随会话模型（chat 路径），`jev` = TypeSafe 的 Jev
+ * （System One 决策模型）。两者判定语义等价，只差速度、成本与理由形态。
+ */
+export type CommandApprovalEngine = 'model' | 'jev';
+
 export interface AgentModeSettings {
   listMode: CommandListMode;
   commandList: string[];
   confirmEachCommand: boolean;
+  /**
+   * Plan 模式也走命令名单与「每条都手动确认」的人审（旧行为）。
+   *
+   * 默认 false：Plan 的命令审批语义与 AUTO 一致 —— 不弹人工审批，只有
+   * `ForceApproval`（系统级命令 / 受保护路径 / sudo…）与 `Deny` 两档照旧拦。
+   * 后端权威实现在 `tool_dispatcher::effective_approval_mode`。
+   */
+  planModeRequiresApproval: boolean;
   enableModelCommandApproval: boolean;
+  /** 审批引擎。仅在 `enableModelCommandApproval` 为 true 时生效。 */
+  commandApprovalEngine: CommandApprovalEngine;
+  /** Jev 引擎使用的模型 ID。空 = 用后端内置默认（钉版本号，不用 latest 别名）。 */
+  jevModelId: string;
+  /**
+   * Jev 的 API 根地址（企业代理 / 私有网关 / 本地 mock）。
+   * **空 = 用官方地址**——空是「不动」而不是「清空」，不得把请求打到一个空主机上。
+   */
+  jevBaseUrl: string;
+  /**
+   * Jev 引擎的判据（Choice 的 instructions）。空 = 用内置模板。
+   *
+   * 与 `modelApprovalPrompt` 分开存放是刻意的：chat 的自定义提示词通常带「输出严格
+   * 的 JSON」这类格式要求，而 Jev 不生成文本，喂过去只会变成噪音指令。
+   */
+  jevApprovalPrompt: string;
   /** Custom system prompt for the approval step. Empty = use built-in prompt. */
   modelApprovalPrompt: string;
   systemPrompt: string;
@@ -936,6 +970,13 @@ export interface ModelApprovalDonePayload {
   toolCallId: string;
   decision: 'approve' | 'route_to_human' | 'block' | 'error';
   reasons: string[];
+  /**
+   * 产出这次判定的引擎。Rust 侧是 `Option<String>` 且带 `skip_serializing_if`，
+   * 判定失败时不发这个键——所以这里必须可选，别抄成必填。
+   */
+  engine?: CommandApprovalEngine;
+  /** 模型对这次判定的「分布集中度」（0–1）。只有 Jev 会给。 */
+  confidence?: number;
 }
 
 // Question tool types
@@ -1214,6 +1255,14 @@ export interface AppBootstrapData {
   settings: AppSettings;
   hasApiKey: boolean;
   hasWebSearchApiKey: boolean;
+  /**
+   * 密钥链里是否已有 TypeSafe（Jev）API Key。
+   *
+   * 必须由后端在启动快照里发出：`hydrateFromBootstrap` 会把 `loaded` 置真、`load()`
+   * 随即短路，所以本会话内没有别的路径能读到真值。声明成必填是刻意的——后端漏发
+   * 会变成编译错误，而不是静默显示「还没配 Key」并藏起清除按钮。
+   */
+  hasJevApiKey: boolean;
   /** 各渠道密钥是否存在（多渠道模型服务）。 */
   channelKeyStatus?: ChannelKeyStatus[];
   settingsWarning?: string | null;
