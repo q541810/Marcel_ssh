@@ -437,6 +437,79 @@ mod tests {
         assert!(sub.contains("你是 Marcel SSH"));
     }
 
+    /// 「改行为就同步已有文档」这条规则必须**两种角色都拿到**：主 agent 与执行型
+    /// 子代理都会改文件，只读子代理拿到也无害（它不改东西，规则自然不触发）。
+    ///
+    /// 同时钉住它的反向半边——只同步**已有**文档、不主动新建、历史遗留的不一致
+    /// 只提不修。少了这一半，这条规则会退化成"到处造 md"，比不同步更糟。
+    #[test]
+    fn doc_sync_rule_reaches_both_audiences_with_the_no_new_files_brake() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+
+        for prompt in [
+            build(&vars, false, &[], false),
+            build_for(&vars, false, &[], true, ToolAudience::Sub),
+        ] {
+            assert!(
+                prompt.contains("把已经在描述它的那份文档一起改掉"),
+                "改了行为要同步已经在描述它的那份文档"
+            );
+            assert!(
+                prompt.contains("不要新建文档"),
+                "只同步已有文档，不主动新建 README / CHANGELOG"
+            );
+            assert!(
+                prompt.contains("不要擅自修改"),
+                "历史遗留的文档不一致只提不修"
+            );
+        }
+    }
+
+    /// 语言规则必须**覆盖"正文之外、用户会读到的文本"**，而且子 agent 也要拿到。
+    ///
+    /// 回归来源：这条规则原先只说「回答时优先使用中文」，于是模型把自己写在工具参数里、
+    /// 最终显示在审批弹窗上的命令说明写成英文——用户一直用中文提问也一样，因为模型
+    /// 不认为参数值属于"回答"。同一条规则也管计划标题、提问选项、后台作业描述。
+    ///
+    /// 两条断言各挡一种退化：把规则收窄回只管正文；把这个段挪进主 agent 专属段
+    /// （子 agent 同样会调 bash，它的说明也显示在用户看到的审批弹窗里）。
+    #[test]
+    fn language_rule_covers_user_visible_text_for_both_audiences() {
+        let vars = AgentPromptVars {
+            session_id: "s1".into(),
+            user_prompt: String::new(),
+            plugin_sections: vec![],
+        };
+
+        let language_section = |prompt: &str| -> String {
+            let start = prompt.find("## 语言").expect("提示词里应有「语言」段");
+            let rest = &prompt[start..];
+            let end = rest[3..]
+                .find("\n## ")
+                .map(|i| i + 3)
+                .unwrap_or(rest.len());
+            rest[..end].to_string()
+        };
+
+        let main_section = language_section(&build(&vars, false, &[], false));
+        let sub_section = language_section(&build_for(&vars, false, &[], true, ToolAudience::Sub));
+
+        for (who, section) in [("主 agent", &main_section), ("子 agent", &sub_section)] {
+            assert!(
+                section.contains("展示给用户"),
+                "{who} 的语言段必须说明它管的是「用户会读到的文本」，而不只是正文：{section}"
+            );
+            assert!(
+                section.contains("description"),
+                "{who} 的语言段要点名会被展示的参数（如 bash 的 description）作为例子：{section}"
+            );
+        }
+    }
+
     /// 段落分隔由组装层生成：任何一段的标题前面都必须有空行。守卫的是
     /// “模板文件首尾少留一个空行 → 两段粘在同一行”这类只在模型侧显形的问题。
     #[test]
