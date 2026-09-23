@@ -3,6 +3,8 @@ import { ChevronDown } from 'lucide-react';
 import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatConnLabel } from '@/lib/privacy';
 import MobileSheet from './ui/MobileSheet';
 import { registerBackHandler } from './backHandler';
 
@@ -28,6 +30,8 @@ export default function MobileMultiHostPicker({
     s.activeSessionId ? (s.sessions[s.activeSessionId] ?? null) : null,
   );
   const [open, setOpen] = useState(false);
+  // 隐私模式：机器清单里的 user@host:port 也要脱敏（与连接列表同一口径）
+  const privacyMode = usePrivacyMode();
 
   const currentConn = useMemo(() => {
     if (!activeSession?.configId) return null;
@@ -149,8 +153,13 @@ export default function MobileMultiHostPicker({
                 </span>
                 {currentConn ? (
                   <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
-                    {currentConn.group || '未分组'} · {currentConn.username}@
-                    {currentConn.host}:{currentConn.port}
+                    {currentConn.group || '未分组'} ·{' '}
+                    {formatConnLabel(
+                      currentConn.username,
+                      currentConn.host,
+                      currentConn.port,
+                      privacyMode,
+                    )}
                   </span>
                 ) : (
                   <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
@@ -220,8 +229,13 @@ export default function MobileMultiHostPicker({
                         {conn.name}
                       </span>
                       <span className="block truncate text-[10px] text-zinc-500">
-                        {conn.group || '未分组'} · {conn.username}@{conn.host}:
-                        {conn.port}
+                        {conn.group || '未分组'} ·{' '}
+                        {formatConnLabel(
+                          conn.username,
+                          conn.host,
+                          conn.port,
+                          privacyMode,
+                        )}
                       </span>
                     </span>
                   </button>

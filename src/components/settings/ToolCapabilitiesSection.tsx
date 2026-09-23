@@ -13,6 +13,8 @@ import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatConnLabel } from '@/lib/privacy';
 import * as tauri from '@/lib/tauri';
 
 /** 多机操控的机器集合复选。数据源 = 已保存连接；勾选结果直接进
@@ -26,6 +28,8 @@ function MachinePicker({
 }) {
   const connections = useConnectionStore((s) => s.connections);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  // 隐私模式：机器清单里的 user@host:port 也要脱敏（与连接列表同一口径）
+  const privacyMode = usePrivacyMode();
 
   // 挂载时拉取一次连接列表（渲染期不触发副作用——空列表时确保有数据可勾选）。
   useEffect(() => {
@@ -78,7 +82,8 @@ function MachinePicker({
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{conn.name}</span>
               <span className="block truncate text-[11px] text-zinc-500">
-                {conn.group || '未分组'} · {conn.username}@{conn.host}:{conn.port}
+                {conn.group || '未分组'} ·{' '}
+                {formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}
               </span>
             </span>
           </button>

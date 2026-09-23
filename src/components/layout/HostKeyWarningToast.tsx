@@ -1,5 +1,7 @@
 import { useRef } from 'react';
 import { useTauriEvent } from '@/hooks/useTauriEvent';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatAddress } from '@/lib/privacy';
 
 interface HostKeyWarningPayload {
   host: string;
@@ -17,9 +19,11 @@ interface HostKeyWarningPayload {
  */
 export default function HostKeyWarningToast() {
   const firedRef = useRef<string | null>(null);
+  const privacyMode = usePrivacyMode();
 
   useTauriEvent<HostKeyWarningPayload>('hostKeyWarning', (payload) => {
     const { host, port, message } = payload;
+    // 去重 key 用真实值（隐私模式只是不显示，不改变"这条警告发过没有"）
     const key = `${host}:${port}:${message}`;
     if (firedRef.current === key) return;
     firedRef.current = key;
@@ -35,7 +39,9 @@ export default function HostKeyWarningToast() {
         }
         if (granted) {
           sendNotification({
-            title: `Marcel SSH — ${host}:${port} 主机密钥未持久化`,
+            // 系统通知是最外向的展示面（通知中心会留存、锁屏也能看到），
+            // 主机与端口一律走 privacy.ts 的脱敏口径。
+            title: `Marcel SSH — ${formatAddress(host, port, privacyMode)} 主机密钥未持久化`,
             body: message,
           });
         }

@@ -9,6 +9,8 @@ import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatConnLabel } from '@/lib/privacy';
 import * as tauri from '@/lib/tauri';
 import { MobileChoiceGroup as ChoiceGroup } from '@/mobile/ui/MobileChoiceGroup';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -66,6 +68,8 @@ export function MobileAgentToolsSection() {
   const [searchKeyDraft, setSearchKeyDraft] = useState('');
   const connections = useConnectionStore((s) => s.connections);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  // 隐私模式：机器清单里的 user@host:port 也要脱敏（与连接列表同一口径）
+  const privacyMode = usePrivacyMode();
   useEffect(() => {
     if (connections.length === 0) void fetchConnections();
   }, [connections.length, fetchConnections]);
@@ -286,8 +290,13 @@ export function MobileAgentToolsSection() {
                         {conn.name}
                       </span>
                       <span className="block truncate text-[10px] text-zinc-500">
-                        {conn.group || '未分组'} · {conn.username}@{conn.host}:
-                        {conn.port}
+                        {conn.group || '未分组'} ·{' '}
+                        {formatConnLabel(
+                          conn.username,
+                          conn.host,
+                          conn.port,
+                          privacyMode,
+                        )}
                       </span>
                     </span>
                   </button>

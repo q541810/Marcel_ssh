@@ -8,6 +8,8 @@ import type {
 import * as tauri from '@/lib/tauri';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { getErrorMessage } from '@/lib/errors';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatConnLabel } from '@/lib/privacy';
 import MobileSheet from '../ui/MobileSheet';
 import Toggle from '@/components/ui/Toggle';
 
@@ -75,6 +77,8 @@ const inputClass =
 export function MobileQuickCommandSection() {
   const connections = useConnectionStore((s) => s.connections);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  // 隐私模式：连接选择项里的 user@host:port 也要脱敏（与连接列表同一口径）
+  const privacyMode = usePrivacyMode();
 
   const [commands, setCommands] = useState<QuickCommand[]>([]);
   const [loading, setLoading] = useState(false);
@@ -380,7 +384,8 @@ export function MobileQuickCommandSection() {
                     </option>
                     {connections.map((c) => (
                       <option key={c.id} value={c.id}>
-                        {c.name}（{c.username}@{c.host}）
+                        {c.name}（
+                        {formatConnLabel(c.username, c.host, c.port, privacyMode)}）
                       </option>
                     ))}
                     {/* Keep an orphaned key selectable so editing doesn't lose it. */}

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { useSettingsStore, DEFAULT_EXPERIMENTAL_SETTINGS } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
+import { formatConnLabel } from '@/lib/privacy';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 /**
@@ -29,6 +31,8 @@ export default function MultiHostPicker() {
   const activeSession = useSessionStore((s) =>
     s.activeSessionId ? (s.sessions[s.activeSessionId] ?? null) : null,
   );
+  // 隐私模式：机器清单里的 user@host:port 也要脱敏（与连接列表同一口径）
+  const privacyMode = usePrivacyMode();
 
   const [open, setOpen] = useState(false);
   const presence = useAnimatedPresence(open);
@@ -268,8 +272,13 @@ export default function MultiHostPicker() {
                   </span>
                   {currentConn ? (
                     <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
-                      {currentConn.group || '未分组'} · {currentConn.username}@
-                      {currentConn.host}:{currentConn.port}
+                      {currentConn.group || '未分组'} ·{' '}
+                      {formatConnLabel(
+                        currentConn.username,
+                        currentConn.host,
+                        currentConn.port,
+                        privacyMode,
+                      )}
                     </span>
                   ) : (
                     <span className="mt-0.5 block truncate text-[10px] text-indigo-300/70">
@@ -355,8 +364,13 @@ export default function MultiHostPicker() {
                       {conn.name}
                     </span>
                     <span className="block truncate text-[10px] text-zinc-500">
-                      {conn.group || '未分组'} · {conn.username}@{conn.host}:
-                      {conn.port}
+                      {conn.group || '未分组'} ·{' '}
+                      {formatConnLabel(
+                        conn.username,
+                        conn.host,
+                        conn.port,
+                        privacyMode,
+                      )}
                     </span>
                   </span>
                 </button>
