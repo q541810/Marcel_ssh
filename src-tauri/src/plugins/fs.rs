@@ -9,6 +9,24 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
+/// 插件清单文件名（写保护比较的唯一来源）。
+pub const PLUGIN_MANIFEST_FILE_NAME: &str = "plugin.json";
+
+/// `path`（插件根目录下的相对路径）是否指向插件清单 `plugin.json`。
+///
+/// 比较必须**大小写无关**：NTFS / APFS 默认大小写不敏感，`PLUGIN.JSON` 这类
+/// 变体会解析回真实的 `plugin.json`（`candidate.exists()` 命中 → `canonicalize()`
+/// 还原真实文件），按字面量比较等于给写保护开了个旁路。
+/// 尾部的 `/`、空格与点一并忽略：Win32 会丢掉路径结尾的空格与点，
+/// `PLUGIN.JSON ` 同样落在真实清单上。读取、写入、`preservePaths` 三处都走这里。
+pub fn is_manifest_relative_path(path: &str) -> bool {
+    let norm = path.replace('\\', "/");
+    let name = norm
+        .trim_end_matches('/')
+        .trim_end_matches(|c: char| c == ' ' || c == '.');
+    name.eq_ignore_ascii_case(PLUGIN_MANIFEST_FILE_NAME)
+}
+
 /// Check whether `candidate` resolves to a path inside `base_dir`.
 ///
 /// Both paths are canonicalised before comparison, so symlinks and
@@ -36,8 +54,7 @@ pub fn resolve_read_path(
     if !is_safe_relative_path(path) {
         return Err(AppError::Other("path traversal rejected".into()));
     }
-    let norm = path.replace('\\', "/");
-    if norm.trim_end_matches('/') == "plugin.json" {
+    if is_manifest_relative_path(path) {
         return Err(AppError::Other("plugin.json access rejected".into()));
     }
     let plugin_dir = config_dir.join("plugins").join(plugin_id);
@@ -67,8 +84,7 @@ pub fn resolve_write_path(
     if !is_safe_relative_path(path) {
         return Err(AppError::Other("path traversal rejected".into()));
     }
-    let norm = path.replace('\\', "/");
-    if norm.trim_end_matches('/') == "plugin.json" {
+    if is_manifest_relative_path(path) {
         return Err(AppError::Other("plugin.json write rejected".into()));
     }
     let plugin_dir = config_dir.join("plugins").join(plugin_id);
@@ -283,5 +299,69 @@ mod tests {
         assert!(!is_safe_relative_path(""));
         assert!(!is_safe_relative_path("a//b"));
         assert!(!is_safe_relative_path(".marcel-shipped.json"));
+    }
+
+    // ── plugin.json 写保护（大小写 / 尾部写法变体） ──
+
+    /// NTFS / APFS 默认大小写不敏感，`PLUGIN.JSON` 落回真实清单；Win32 还会
+    /// 丢掉结尾的空格与点。这些写法都必须被认成清单文件。
+    #[test]
+    fn manifest_name_is_recognised_in_any_case_or_trailing_separator() {
+        for variant in [
+            "plugin.json",
+            "PLUGIN.JSON",
+            "Plugin.Json",
+            "plugin.JSON",
+            "PLUGIN.json",
+            "plugin.json/",
+            "PLUGIN.JSON/",
+            "plugin.json ",
+            "PLUGIN.JSON.",
+        ] {
+            assert!(
+                is_manifest_relative_path(variant),
+                "{} 必须被识别为插件清单",
+                variant
+            );
+        }
+        for allowed in [
+            "plugin.json.bak",
+            "pluginjson",
+            "my-plugin.json",
+            "data/plugin.json",
+            "",
+        ] {
+            assert!(
+                !is_manifest_relative_path(allowed),
+                "{} 不是插件清单，不该误伤",
+                allowed
+            );
+        }
+    }
+
+    /// 读 / 写两处都必须拒绝大小写变体，且真实 manifest 不能被改动。
+    #[test]
+    fn manifest_case_variants_are_rejected_by_read_and_write() {
+        let tmp = TempDir::new().unwrap();
+        let plugin_dir = make_plugin(&tmp);
+        fs::write(plugin_dir.join("plugin.json"), "{}").unwrap();
+
+        for variant in ["PLUGIN.JSON", "Plugin.Json", "PLUGIN.JSON/"] {
+            assert!(
+                resolve_write_path(tmp.path(), "test-plugin", variant).is_err(),
+                "写入 {} 必须被拒",
+                variant
+            );
+            assert!(
+                resolve_read_path(tmp.path(), "test-plugin", variant).is_err(),
+                "读取 {} 必须被拒",
+                variant
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(plugin_dir.join("plugin.json")).unwrap(),
+            "{}",
+            "真实 manifest 不得被任何变体写坏"
+        );
     }
 }

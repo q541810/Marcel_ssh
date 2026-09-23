@@ -219,11 +219,11 @@ impl PluginManifest {
             if !crate::plugins::fs::is_safe_relative_path(raw) {
                 return Err(format!("preservePaths illegal path: {}", raw));
             }
-            let norm = raw.replace('\\', "/");
-            let norm_trim = norm.trim_end_matches('/');
-            if norm_trim == "plugin.json" {
+            if crate::plugins::fs::is_manifest_relative_path(raw) {
                 return Err("preservePaths must not include plugin.json".into());
             }
+            let norm = raw.replace('\\', "/");
+            let norm_trim = norm.trim_end_matches('/');
             if norm_trim == ".marcel-shipped.json" {
                 return Err("preservePaths must not include .marcel-shipped.json".into());
             }
@@ -428,6 +428,25 @@ mod tests {
             serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
         m.preserve_paths = vec!["plugin.json".into()];
         assert!(m.validate_preserve_paths().is_err());
+    }
+
+    /// 大小写 / 尾斜杠变体同样是 plugin.json（NTFS / APFS 上就是同一个文件），
+    /// 保留它就是允许更新/卸载时覆盖真清单。
+    #[test]
+    fn preserve_paths_rejects_plugin_json_case_variants() {
+        let mut m: PluginManifest =
+            serde_json::from_str(r#"{"id":"p","version":"1.0.0","name":"P"}"#).unwrap();
+        for variant in ["PLUGIN.JSON", "Plugin.Json", "plugin.JSON", "PLUGIN.JSON/"] {
+            m.preserve_paths = vec![variant.into()];
+            assert!(
+                m.validate_preserve_paths().is_err(),
+                "preservePaths 里的 {} 必须被拒",
+                variant
+            );
+        }
+        // 正常条目不受影响
+        m.preserve_paths = vec!["config.json".into(), "data/".into()];
+        assert!(m.validate_preserve_paths().is_ok());
     }
 
     #[test]
