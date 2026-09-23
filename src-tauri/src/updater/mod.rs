@@ -133,6 +133,25 @@ struct UpdaterInner {
 
 pub struct UpdaterState(Mutex<UpdaterInner>);
 
+impl UpdaterInner {
+    /// 抢占下载槽位：返回 `true` 表示调用方拿到了这次下载的所有权，必须随后
+    /// 起下载任务并在收尾时复位标志；`false` = 已有下载在跑。
+    ///
+    /// 「查 downloading + 置位」必须是一把锁里的原子动作，且**只能在这里做**：
+    /// 拆成「先查后置」的话，两个并发入口会同时判定「没人在下载」，
+    /// 各自起一个任务写同一份 `.part`。
+    fn try_reserve_download(&mut self) -> bool {
+        if self.downloading {
+            return false;
+        }
+        self.downloading = true;
+        // 上一次遗留的取消请求不能影响这次下载（正常路径已被下载循环取走，
+        // 这里是防御性复位）。
+        self.cancel_requested = false;
+        true
+    }
+}
+
 impl UpdaterState {
     fn new(initial: UpdateState, pending: Option<PendingInstall>) -> Self {
         Self(Mutex::new(UpdaterInner {
@@ -309,7 +328,11 @@ async fn tick(app: &AppHandle) {
                 release_url: rel.release_url.clone(),
             })
         }),
-        TickAction::StartDownload(rel) => start_download(app, rel),
+        TickAction::StartDownload(rel) => {
+            // 起不来（已有一个下载在跑）不是错误：状态与进度归先到者所有，
+            // 这里静默让路即可。
+            let _ = start_download(app, rel);
+        }
     }
 }
 
@@ -502,7 +525,8 @@ pub async fn start_update_download_impl(app: &AppHandle) -> Result<(), AppError>
             "该版本未提供自动更新包，请前往下载页手动安装".into(),
         ));
     }
-    start_download(app, offer);
+    // 抢占失败 = 已有下载在跑：对用户而言这就是「后台下载中」，不算错误。
+    let _ = start_download(app, offer);
     Ok(())
 }
 
@@ -549,22 +573,33 @@ enum DownloadOutcome {
     Cancelled,
 }
 
-fn start_download(app: &AppHandle, offer: LatestRelease) {
+/// 启动下载任务。返回 `true` 表示本次调用**真的起了**一个下载任务；
+/// `false` = 已有下载在跑，本次让路（调用方不得当成错误）。
+///
+/// 「是否已在下载」的判定与 spawn 决策必须在**同一临界区**里：`apply_state`
+/// 的闭包返回 `None` 只表示「状态不写」，若 spawn 仍无条件执行，两个并发
+/// 调用者（`tick` 的自动下载与设置页的「后台下载」都在 `check_for_update`
+/// 之后才落 `downloading`）会各起一个任务写同一个 `.part` —— 互相截断、
+/// 抢 rename 源，带宽翻倍，还可能把已经下好的包报成失败。
+fn start_download(app: &AppHandle, offer: LatestRelease) -> bool {
     // 闭包只改辅助字段（downloading），状态通过返回值表达 —— 见 apply_state 说明。
+    // 抢占结果用 Cell 带出闭包：闭包在锁内执行，所以「判定 + 置位 + 写状态」
+    // 是一次原子动作。
+    let reserved = std::cell::Cell::new(false);
     apply_state(app, |inner| {
-        if inner.downloading {
+        if !inner.try_reserve_download() {
             return None;
         }
-        inner.downloading = true;
-        // 上一次遗留的取消请求不能影响这次下载（正常路径已被下载循环取走，
-        // 这里是防御性复位）。
-        inner.cancel_requested = false;
+        reserved.set(true);
         Some(UpdateState::Downloading {
             version: offer.version.clone(),
             downloaded: 0,
             total: offer.assets.size.unwrap_or(0),
         })
     });
+    if !reserved.get() {
+        return false;
+    }
 
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -610,6 +645,7 @@ fn start_download(app: &AppHandle, offer: LatestRelease) {
         // 成功路径的 downloading 复位
         reset_downloading(&handle);
     });
+    true
 }
 
 /// 复位下载标志（不动状态）。
@@ -1424,5 +1460,74 @@ mod tests {
         assert!(dir.join(format!("{}.part", keep)).exists());
         assert!(dir.join(PENDING_FILE_NAME).exists());
         assert!(!dir.join("Marcel-SSH_1.4.0_x64-setup.exe").exists());
+    }
+
+    // ── 下载槽位抢占（并发入口） ──
+    //
+    // `tick` 的自动下载与「后台下载」按钮两条路径都可能到 start_download，
+    // 且各自的前置检查都在 `check_for_update()` 网络请求**之前**。抢占必须是
+    // 一把锁里的「查 + 置位」，否则两个任务会同时写同一份 `.part`。
+
+    fn idle_inner() -> UpdaterInner {
+        UpdaterInner {
+            state: UpdateState::Idle,
+            pending: None,
+            downloading: false,
+            cancel_requested: false,
+            manual_install_requested: false,
+            restart_after_install: false,
+        }
+    }
+
+    /// 并发抢占只有一个赢家。
+    #[test]
+    fn download_reservation_has_single_winner_under_concurrency() {
+        let inner = Mutex::new(idle_inner());
+        let winners = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    let mut guard = inner.lock().expect("锁不得中毒");
+                    if guard.try_reserve_download() {
+                        winners.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            winners.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "同时只能有一个下载任务"
+        );
+    }
+
+    /// 第二次抢占被拒；收尾复位后可重新抢占（失败重试路径）。
+    #[test]
+    fn second_reservation_is_rejected_and_resets_cancel() {
+        let mut inner = idle_inner();
+        inner.cancel_requested = true;
+        assert!(inner.try_reserve_download(), "第一次必须拿到下载权");
+        assert!(!inner.try_reserve_download(), "已有下载时必须让路");
+        assert!(!inner.cancel_requested, "上一次的取消请求必须被复位");
+
+        // 下载收尾（成功 / 失败 / 取消）复位标志 → 下一轮还能起
+        inner.downloading = false;
+        assert!(inner.try_reserve_download(), "收尾后必须可以再起一次");
+    }
+
+    /// 进度更新不得让第二个任务进来（槽位只由抢占/reset 改变）。
+    #[test]
+    fn progress_update_does_not_allow_second_task() {
+        let mut inner = idle_inner();
+        assert!(inner.try_reserve_download());
+        inner.state = UpdateState::Downloading {
+            version: "1.5.0".into(),
+            downloaded: 1024,
+            total: 2048,
+        };
+        assert!(
+            !inner.try_reserve_download(),
+            "进度更新不得放第二个任务进来"
+        );
     }
 }
