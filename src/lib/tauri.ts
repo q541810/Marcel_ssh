@@ -120,6 +120,11 @@ export async function agentStartTask(
   }[],
   taskId?: string,
   modelId?: string | null,
+  /**
+   * 这一轮 prompt 的来源：省略 = 用户自己打的字；`"job_notice"` = 后台作业的
+   * 结算告知（自动继续）。决定这条消息在会话里的身份与「算不算用户输入」。
+   */
+  origin?: 'job_notice',
 ): Promise<string> {
   return invoke<string>("agent_start_task", {
     sessionId,
@@ -129,6 +134,7 @@ export async function agentStartTask(
     history,
     taskId,
     modelId: modelId ?? null,
+    origin: origin ?? null,
   });
 }
 
@@ -770,6 +776,29 @@ export async function jobList(
     sessionId: sessionId ?? null,
     status: status ?? null,
   });
+}
+
+/** 一条待交给模型的作业结算告知：文本 + 它覆盖的作业 id（确认时要回传）。 */
+export interface JobNotice {
+  text: string;
+  jobIds: string[];
+}
+
+/**
+ * 取某会话「作业跑完了、但还没告诉过模型」的结局；没有则 null。
+ *
+ * **只读**：调它不会消费结局 —— 真的把告知交给模型之后要调
+ * `jobAckNotice` 确认（会话已关、应用正要退出时不能把结局吞掉）。
+ */
+export async function jobPendingNotice(
+  conversationId: string,
+): Promise<JobNotice | null> {
+  return invoke<JobNotice | null>("job_pending_notice", { conversationId });
+}
+
+/** 确认这些作业的结局已经交给模型（此后不再播报）。返回真的被确认的条数。 */
+export async function jobAckNotice(jobIds: string[]): Promise<number> {
+  return invoke<number>("job_ack_notice", { jobIds });
 }
 
 // LLM model discovery

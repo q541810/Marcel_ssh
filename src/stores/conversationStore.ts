@@ -1389,7 +1389,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         continue;
       }
 
-      if (m.role === 'user') {
+      if (m.role === 'user' || m.role === 'notice') {
+        // `notice` = 系统替后台作业写的结算告知（自动继续那一轮的 prompt）。
+        // 对模型而言它就是一条 user 消息 —— 与 DSH 把插件告知当 user 消息交给
+        // 模型同一语义（那边靠 message source 区分，这边靠落库 role）。
         const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
           role: 'user',
           content: m.content,

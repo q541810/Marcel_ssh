@@ -58,6 +58,16 @@ export interface TaskState {
     imageDataUrls?: string[],
     /** 撤回恢复图重发成功后要删除的旧落盘路径 */
     replaceImagePaths?: string[],
+    /**
+     * 开一轮的附加语义：
+     * - `conversationId`：**指定**开在哪条会话，跳过 `ensureConversation` 的
+     *   「当前活跃会话」启发式。自动继续必须用它：作业归属的会话可能不是
+     *   用户此刻正在看的那条，走启发式会开错会话、还会把界面劫持过去。
+     * - `jobNotice`：这一轮的 prompt 是系统替后台作业写的结算告知。它落库
+     *   role=notice（界面上是独立告知卡），且**不算用户输入**（自动继续的
+     *   额度只由真的用户输入重置）。
+     */
+    options?: { conversationId?: string; jobNotice?: boolean },
   ) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
@@ -110,8 +120,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     connectionId?: string,
     imageDataUrls?: string[],
     replaceImagePaths?: string[],
+    options?: { conversationId?: string; jobNotice?: boolean },
   ) => {
     const { mode } = get();
+    const isJobNotice = options?.jobNotice === true;
     const conversationStore = useConversationStore.getState();
     // 先按全局兜底模型判断能否附图（新会话 title 需要）；ensure 拿到真实
     // 会话后按「会话记忆 → 全局最近使用」的生效模型再精算一次。
@@ -120,11 +132,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
 
     const titleSeed = prompt.trim() || (images.length > 0 ? "[image]" : "");
-    const conversationId = await conversationStore.ensureConversation(
-      sessionId,
-      connectionId ?? "",
-      titleSeed || "新会话",
-    );
+    // 指定会话（自动继续）时不走 ensureConversation：它的选择依据是「当前
+    // 活跃会话」，会给别的会话开轮时开错地方，并把界面切过去。
+    const conversationId =
+      options?.conversationId ??
+      (await conversationStore.ensureConversation(
+        sessionId,
+        connectionId ?? "",
+        titleSeed || "新会话",
+      ));
+    // 用户真的说了一句话 → 自动继续的额度回满（对齐 DSH：只有人的输入回填
+    // 额度，系统自己写的结算告知不算，否则上限会被自己的通知一次次解封）。
+    if (!isJobNotice) {
+      resetAutoContinues(conversationId);
+    }
 
     // 精算：当前会话实际生效模型的视觉能力（会话记忆 → 全局最近使用）
     const conv = useConversationStore.getState().conversations[conversationId];
@@ -173,7 +194,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     const userMessage: AgentMessage = {
       id: userMessageId,
-      role: "user",
+      // 自动继续那一轮：这条是系统替作业写的告知，不是用户打的字。
+      role: isJobNotice ? "notice" : "user",
       content: prompt,
       timestamp: new Date().toISOString(),
       imagePaths,
@@ -206,10 +228,17 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       hasPlan: false,
       createdAt: new Date().toISOString(),
     };
+    // 自动继续给**别的**会话开轮时，不能抢 `activeTaskId`：它是全局单槽，
+    // 「正在跑的任务」的发送/停止按钮与回滚禁用都看它 —— 抢过来会把用户
+    // 正在看的会话变成「运行中」，按回车被静默吞掉（正是这次要修掉的那种
+    // 困惑）。给当前会话开轮（用户自己发消息）照旧占槽。
+    const conversationIsActive =
+      useConversationStore.getState().activeConversationId === conversationId;
     set((state) => ({
       tasks: { ...state.tasks, [taskId]: task },
-      activeTaskId: taskId,
-      taskTokenUsage: null,
+      activeTaskId: conversationIsActive ? taskId : state.activeTaskId,
+      // 用量读数**不在这里清**：它是按会话累计的落库值（跨任务接着算），
+      // 新一轮的第一个 `contextUsage` 事件会带着后端算好的累计值覆盖过来。
     }));
 
     try {
@@ -229,6 +258,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         llmHistory,
         taskId,
         convModelId,
+        isJobNotice ? "job_notice" : undefined,
       );
     } catch (err) {
       cleanupTaskListeners(taskId);

@@ -23,6 +23,7 @@ use serde::Serialize;
 use serde_json::json;
 use tauri::Manager;
 
+use crate::agent::conversation_persister::PromptOrigin;
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
 use crate::agent::risk::Disposition;
 use crate::agent::task::{AgentMode, AgentStatus};
@@ -435,6 +436,9 @@ impl AgentTool for SubagentTool {
             history: Vec::new(),
             model_override,
             prompt_extra: vec![sub_instruction],
+            // 子 agent 的 prompt 是父 agent 写的派发任务，但它在自己的子会话里
+            // 就是「这一轮用户说的话」——按用户输入落库（子会话没有唤醒轮）。
+            prompt_origin: PromptOrigin::User,
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {

@@ -80,13 +80,20 @@ fn is_task_cancelled(state: &AppState, task_id: &str) -> bool {
 /// 把一批已结算的后台作业渲染成一条给模型的 user 通知。
 /// 格式对齐 DSH completion notice：列出 job_id、描述与终态，
 /// 并指示用 `job_output` 读取输出。多条合并为一条（一次决策）。
-fn build_job_settlement_notice(jobs: &[crate::command_exec::JobInfo]) -> String {
+///
+/// **两个调用方共用这一份文本**：本轮内注入（模型还在跑，见本文件的自然
+/// 结束守卫）与跨轮唤醒（前端经 `job_pending_notice` 取走，开新一轮交给
+/// 模型）。两处各写一份必然分叉。
+pub(crate) fn build_job_settlement_notice(jobs: &[crate::command_exec::JobInfo]) -> String {
     let mut lines: Vec<String> = Vec::new();
     for j in jobs {
         let status = match j.status {
             crate::command_exec::JobStatus::Completed => "已完成",
             crate::command_exec::JobStatus::Killed => "已被终止",
             crate::command_exec::JobStatus::Failed => "执行失败",
+            // 恢复出来的历史作业本不该走到这里（它们的结算发生在
+            // 上一次运行）；穷尽列出，真出现时如实说。
+            crate::command_exec::JobStatus::Interrupted => "随应用退出中断",
             crate::command_exec::JobStatus::Running => "仍在运行", // 理论不可达
         };
         let desc = if j.description.is_empty() {
@@ -234,6 +241,10 @@ pub(crate) struct LoopContext {
     /// 子agent（subagent 工具派发的调研任务）标记：跳过系统通知，
     /// 避免子agent完成/失败与主任务的通知叠加打扰用户。
     pub is_subtask: bool,
+    /// 本轮 prompt 的来源（用户输入 / 作业结算告知）。决定它落库的身份，
+    /// 以及这一轮是不是「唤醒轮」（唤醒轮不触发计划收尾提醒——那个标记按
+    /// 任务算，唤醒一次就重来一遍，会把模型念烦）。
+    pub prompt_origin: PromptOrigin,
 }
 
 /// The main agentic loop:
@@ -273,9 +284,13 @@ pub(crate) async fn run_agent_loop(
         mut cancel_rx,
         config_dir,
         is_subtask,
+        prompt_origin,
     } = ctx;
 
-    let persister = ConversationPersister::new(conv_db, conversation_id.clone());
+    // 唤醒轮：prompt 是系统替后台作业写的结算告知，不是用户打的字。
+    let is_notice_turn = !prompt_origin.is_user_input();
+    let persister = ConversationPersister::new(conv_db, conversation_id.clone())
+        .with_prompt_origin(prompt_origin);
 
     // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
     // （db_id_known=true，自动 pressure 压缩据此收缩到前端能找到的区间末条）；
@@ -711,159 +726,71 @@ pub(crate) async fn run_agent_loop(
                 );
                 continue;
             }
-            // ── 自然结束守卫：模型已给出文本，但名下可能仍有后台作业 ──
-            // 语义（对齐 DSH completion notice）：
-            // 1. 名下还有 running job → **不允许结束**：任务保持 running
-            //    （前端按钮=停止），loop 静默挂起等待 job 结算信号或超时
-            //    提醒，绝不 emit Done。
-            // 2. job 结算（完成/失败/kill）→ 注入一条「作业已完成」通知
-            //    （落库，role=user），随后退出守卫进入下一轮，让模型
-            //    job_output 收集并给出最终结论。
-            // 3. job 超 300s / 450s / 600s 仍未结算 → 注入递进提醒（间隔
-            //    递增 150s，最多 3 次），同样退出守卫让模型决策；之后
-            //    静默挂起直到结算或用户停止。
-            // 4. 名下无 running job（全被模型 job_output 收走或结算完）→
-            //    break 守卫走正常 Done：此时模型本轮给出的文本就是最终
-            //    结论（所有 job 都已处理完），直接结束任务。
-            //
-            // 挂起期间**不调模型、不发任何事件**——任务状态保持 Executing，
-            // 用户看到的发送按钮仍是「停止」。
+            // ── 自然结束守卫：模型已给出文本，但可能刚有作业结算（对齐 DSH）──
+            // 1. 已有待通知的结算（作业在这场对话还活着的时候跑完）→ 注入一条
+            //    「作业已完成」通知（落库，role=notice）并回 'round，让模型把
+            //    结局读进来再给结论。这是 DSH 的 busy-owner 注入：只要模型还在
+            //    跑，就当场把通知塞给它，不攒到下一轮。
+            // 2. 名下仍有 running 作业 → **不持住回合**。DSH 的回合结束与作业
+            //    毫无关系（作业结算走「唤醒」：空闲时开新一轮把通知交给模型）。
+            //    这里持住过：任务停在 Executing、前端按钮一直是「停止」、用户
+            //    在输入框按回车被静默吞掉，而且超过 600 秒后就无限挂起 —— 一条
+            //    跑一小时的作业把整段对话锁一小时。现在正常收尾，作业的结局由
+            //    `command_exec` 的待播报告知 + 前端自动继续
+            //    （`src/stores/jobWake.ts`）投递。
+            // 3. 计划还有非终态项 → 收尾提醒一次（有界——本任务只提醒一次，
+            //    见 `plan_finish_reminder`；提醒过之后仍要结束就放行，绝不把
+            //    任务卡死）。唤醒轮不提醒：那个「已提醒」标记按任务算，唤醒一次
+            //    就重来一遍，模型会被反复念同一句话。
             let final_text = cleaned_content.clone();
-            let settled_rx = state.command_exec.subscribe_task_settlements(&task_id);
-            // 递进提醒节点：300s → 450s → 600s
-            const REMIND_AFTER_SECS: [u64; 3] = [300, 450, 600];
-            let mut remind_idx = 0usize;
 
-            'finish_guard: loop {
-                // (a) 已结算待通知作业：取出并注入为一条通知，然后
-                //     continue 'round——回 for round 下一轮，让模型看到
-                //     notice 并 job_output 收集（不能 break 走 Done）。
-                let settled_jobs = state.command_exec.take_settled_jobs_for_task(&task_id);
-                if !settled_jobs.is_empty() {
-                    let notice = build_job_settlement_notice(&settled_jobs);
+            // (a) 已结算待通知的作业：注入为一条通知，然后 continue 'round——
+            //     回 for round 下一轮，让模型看到 notice 并 job_output 收集
+            //     （不能 break 走 Done，那会把结局丢掉）。
+            let settled_jobs = state.command_exec.take_settled_jobs_for_task(&task_id);
+            if !settled_jobs.is_empty() {
+                let notice = build_job_settlement_notice(&settled_jobs);
+                log::info!(
+                    "Agent {} job settled notice: {}",
+                    task_id,
+                    notice.lines().next().unwrap_or_default()
+                );
+                // 落库 role=notice（不是 user）：它是系统写的告知，不是用户打的
+                // 字 —— 回读时显示成「系统告知」，与跨轮唤醒那条同一个身份。
+                if let Some(db_id) =
+                    persister.save_msg(ROLE_NOTICE, &notice, None, None)
+                {
+                    let mut m = LlmMessage::user(notice);
+                    m.db_id = Some(db_id);
+                    messages.push(m);
+                } else {
+                    messages.push(LlmMessage::user(notice));
+                }
+                continue 'round;
+            }
+
+            // (b) 结束前再看一眼计划：还有非终态项就先把模型叫回来收尾。
+            if !is_notice_turn {
+                if let Some(reminder) = plan_finish_reminder(&state, &task_id) {
                     log::info!(
-                        "Agent {} job settled notice: {}",
-                        task_id,
-                        notice.lines().next().unwrap_or_default()
+                        "Agent {} plan has unfinished items; asking the model to wrap up",
+                        task_id
                     );
-                    // 通知落库：与普通消息同生命周期，重启后仍可见。
-                    if let Some(db_id) = persister.save_msg("user", &notice, None, None) {
-                        let mut m = LlmMessage::user(notice);
+                    // 落库再进消息链：与作业结算通知同一条生命周期。
+                    if let Some(db_id) = persister.save_msg("user", &reminder, None, None) {
+                        let mut m = LlmMessage::user(reminder);
                         m.db_id = Some(db_id);
                         messages.push(m);
                     } else {
-                        messages.push(LlmMessage::user(notice));
+                        messages.push(LlmMessage::user(reminder));
                     }
                     continue 'round;
                 }
-
-                // (b) 名下仍 running 的作业：没有则真正结束（守卫后 for
-                //     round 会走正常 Done 路径——但注意：一旦进入本守卫，
-                //    running 为空意味着模型上一轮已处理完所有 job，且本轮
-                //    文本就是最终结论，可直接结束）。
-                let running = state.command_exec.running_jobs_for_task(&task_id).await;
-                if running.is_empty() {
-                    break 'finish_guard;
-                }
-
-                // (c) 有 running job 且无新结算 → 挂起等结算信号 / 取消 / 提醒。
-                if is_task_cancelled(&state, &task_id) {
-                    log::info!(
-                        "Agent {} cancelled while waiting for jobs, exiting",
-                        task_id
-                    );
-                    emit_final_plan_normalized(&app, &state, &task_id);
-                    emit_event(&app, &event_name, StreamEvent::Cancelled);
-                    return None;
-                }
-
-                let mut wait_until_remind = false;
-                let mut wait_secs = 0u64;
-                if remind_idx < REMIND_AFTER_SECS.len() {
-                    wait_secs = REMIND_AFTER_SECS[remind_idx];
-                    wait_until_remind = true;
-                }
-
-                let remind = async {
-                    if wait_until_remind {
-                        tokio::time::sleep(Duration::from_secs(wait_secs)).await;
-                        true
-                    } else {
-                        std::future::pending::<bool>().await
-                    }
-                };
-                let cancelled = async {
-                    let mut rx = cancel_rx.clone();
-                    rx.changed().await.ok()
-                };
-                tokio::pin!(remind);
-                tokio::pin!(cancelled);
-
-                // 结算通道被清理（task 停止/结束）时 changed() 返回 Err，
-                // 视为「没有活跃通道」→ 重新查 running 决定去向。
-                let changed = async {
-                    let mut rx = settled_rx.clone();
-                    rx.changed().await.is_ok()
-                };
-                tokio::pin!(changed);
-
-                tokio::select! {
-                    // 结算信号到达：重入守卫 drain 已结算作业。
-                    _ = &mut changed => {
-                        continue 'finish_guard;
-                    }
-                    // 提醒节点到达：注入提醒并退出守卫让模型决策。
-                    _ = &mut remind => {
-                        let running_now =
-                            state.command_exec.running_jobs_for_task(&task_id).await;
-                        if running_now.is_empty() {
-                            // 等待期间 job 恰好结算完：回到守卫顶部 drain，
-                            // 把结算通知注入给模型（不直接结束丢结果）。
-                            continue 'finish_guard;
-                        }
-                        let elapsed = REMIND_AFTER_SECS[remind_idx];
-                        remind_idx += 1;
-                        let list = running_now
-                            .iter()
-                            .map(|j| format!("- {}（{}）", j.job_id, j.description))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        let reminder = format!(
-                            "你派发的后台作业已超过 {} 秒仍未结束：\n{}\n\
-                             请用 job_output 查看进度；若不再需要，用 job_kill 终止；\
-                             或继续等待（结算时会自动通知你）。",
-                            elapsed, list
-                        );
-                        log::info!(
-                            "Agent {} job reminder #{} ({}s)",
-                            task_id,
-                            remind_idx,
-                            elapsed
-                        );
-                        if let Some(db_id) = persister.save_msg("user", &reminder, None, None) {
-                            let mut m = LlmMessage::user(reminder);
-                            m.db_id = Some(db_id);
-                            messages.push(m);
-                        } else {
-                            messages.push(LlmMessage::user(reminder));
-                        }
-                        // 注入提醒后进 for round 下一轮，让模型看到并决策。
-                        continue 'round;
-                    }
-                    // 用户取消：直接结束（job 由取消级联清理）。
-                    _ = &mut cancelled => {
-                        log::info!("Agent {} cancelled during job wait, exiting", task_id);
-                        emit_final_plan_normalized(&app, &state, &task_id);
-                        emit_event(&app, &event_name, StreamEvent::Cancelled);
-                        return None;
-                    }
-                }
             }
-            // 挂起期间被取消（任务停止级联清掉了 job 与通道）：
-            // 守卫可能因 running 清空而 break，此处兜底——取消的任务
-            // 不得走 Done/Completed 路径。
+
+            // (c) 收尾兜底：取消的任务不得走 Done/Completed 路径。
             if is_task_cancelled(&state, &task_id) {
-                log::info!("Agent {} cancelled after job guard, exiting", task_id);
+                log::info!("Agent {} cancelled at finish guard, exiting", task_id);
                 emit_final_plan_normalized(&app, &state, &task_id);
                 emit_event(&app, &event_name, StreamEvent::Cancelled);
                 return None;

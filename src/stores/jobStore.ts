@@ -30,6 +30,10 @@ function mapJob(raw: Record<string, unknown>): JobInfo {
     description: String(raw.description ?? ''),
     command: String(raw.command ?? ''),
     status: (raw.status as JobInfo['status']) ?? 'running',
+    ownerConversationId:
+      raw.owner_conversation_id != null ? String(raw.owner_conversation_id) : null,
+    // 结算细节（退出码 / 信号 / 失败原因）：缺省就是没记过，展示层不编造。
+    detail: raw.detail != null ? String(raw.detail) : null,
     startedAtMillis: Number(raw.started_at_millis ?? raw.startedAtMillis ?? Date.now()),
     finishedAtMillis:
       raw.finished_at_millis != null ? Number(raw.finished_at_millis) : null,

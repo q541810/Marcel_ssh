@@ -93,6 +93,18 @@ export function turnStopVetoed(state: TurnState | undefined): boolean {
 }
 
 /**
+ * 这条消息是不是「一轮的开头」。
+ *
+ * `user` 与 `notice` 都算：`notice` 是系统替后台作业写的结算告知，它自己就是
+ * 自动继续那一轮的 prompt（后端把它落库成 role=notice，不冒充用户打的字）。
+ * 若只认 `user`，那条告知会被并进**上一轮**的尾巴 —— 上一轮的折叠判定、
+ * 答案定位、过程计数全都被它带偏。
+ */
+export function isTurnStart(message: AgentMessage): boolean {
+  return message.role === 'user' || message.role === 'notice';
+}
+
+/**
  * 把收尾状态写到**尾回合的锚点**（该对话最后一条 user 消息）上，返回新数组。
  *
  * 用在 live 阶段（事件/停止动作落下时）：后端把同样的状态持久化进
@@ -107,7 +119,7 @@ export function withTailTurnState(
 ): AgentMessage[] {
   let idx = -1;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    if (messages[i].role === 'user') {
+    if (isTurnStart(messages[i])) {
       idx = i;
       break;
     }
@@ -124,12 +136,12 @@ function collectTurn(
 ): { turn: readonly AgentMessage[]; userIndex: number } {
   const turn = messages.slice(start, end);
   // user 可能不在回合最前（如 compaction 打断后新 user），取第一条 user。
-  const userIndex = turn.findIndex((m) => m.role === "user");
+  const userIndex = turn.findIndex((m) => isTurnStart(m));
   return { turn, userIndex };
 }
 
 function turnKey(turn: readonly AgentMessage[], start: number): string {
-  const firstUser = turn.find((m) => m.role === "user");
+  const firstUser = turn.find((m) => isTurnStart(m));
   if (firstUser?.id) return `u:${firstUser.id}`;
   // 兜底（理论上 user 总是存在）：用偏移量。
   return `i:${start}`;
@@ -163,7 +175,7 @@ export function segmentTurns(
   let i = 0;
   const n = messages.length;
   while (i < n) {
-    if (messages[i].role !== "user") {
+    if (!isTurnStart(messages[i])) {
       // 会话可能以 system / 孤立过程消息开头（历史加载、rollback 残留）。
       // 它们不构成回合，原样渲染、不参与折叠。
       segments.push({
@@ -182,7 +194,7 @@ export function segmentTurns(
     }
     // 回合 = 该 user 起到下一条 user 前（含半截被打断的过程）。
     let j = i + 1;
-    while (j < n && messages[j].role !== "user") j += 1;
+    while (j < n && !isTurnStart(messages[j])) j += 1;
     const { turn, userIndex } = collectTurn(messages, i, j);
     // 尾回合 = 该 user 之后没有更新的 user（回合延伸到消息流末尾）。
     const isTail = j >= n;

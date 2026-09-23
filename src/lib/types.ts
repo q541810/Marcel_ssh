@@ -450,7 +450,15 @@ export interface AgentTask {
 
 export interface AgentMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  /**
+   * `notice` = 系统替后台作业写的结算告知（自动继续那一轮的 prompt）。
+   *
+   * 它**不是用户打的字**：落库 role 也是 `notice`（后端 `ROLE_NOTICE`），
+   * 渲染成独立的告知卡而不是用户气泡 —— 混进用户气泡里会让人以为自己发过
+   * 这句话，而它也确实不该算「你说的话」（自动继续的额度只由真的用户输入
+   * 重置）。回合切分上它与 `user` 同等：都是一轮的开头。
+   */
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'notice';
   content: string;
   timestamp: string;
   toolCall?: ToolCallInfo;
@@ -1293,16 +1301,26 @@ export interface Skill {
 // 后端统一由 command_exec::CommandExecutionManager 管理（submit_background），
 // 事件载荷 job://started / job://updated 与 job_list / job_kill 返回 JobInfo。
 
-export type JobStatus = 'running' | 'completed' | 'killed' | 'failed';
+/**
+ * 作业状态。`interrupted` = 上一次应用运行时派发、应用退出时还没结束的作业
+ * （从台账恢复出来的记录）：这侧的通道随进程关闭了，之后的输出读不到，
+ * 远端进程是否还在跑未知。与 `killed` 的区别是没有人终止过它。
+ */
+export type JobStatus = 'running' | 'completed' | 'killed' | 'failed' | 'interrupted';
 
 export interface JobInfo {
   jobId: string;
   sessionId: string;
   taskId?: string | null;
+  /** 归属对话（子 agent 派发的作业记在父对话名下）；老记录可能缺省。 */
+  ownerConversationId?: string | null;
   description: string;
   command: string;
   status: JobStatus;
+  /** 结算细节：退出事实（`exit code: 3` / `signal: KILL`）、失败原因等。 */
+  detail?: string | null;
   startedAtMillis: number;
+  /** 中断发生在应用退出那一刻，没人来得及记结束时间 → 可能缺省。 */
   finishedAtMillis?: number | null;
   totalOutputBytes: number;
 }
@@ -1313,11 +1331,24 @@ export interface JobOutputResult {
   offset: number;
   status: JobStatus;
   /**
-   * 终止来源（仅 killed/断连结算时有值）：user=界面手动终止，
-   * agent=Agent job_kill，task=任务停止级联，disconnected=会话断开。
+   * 终止来源（仅 killed / interrupted / 断连结算时有值）：user=界面手动终止，
+   * agent=Agent job_kill，task=任务停止级联，disconnected=会话断开，
+   * runtime_restart=应用退出（不是谁终止的，没人发过信号）。
    * 旧数据/未知来源为 null/缺省，展示层保持中性文案。
    */
-  cancelReason?: 'user' | 'agent' | 'task' | 'disconnected' | null;
+  cancelReason?: 'user' | 'agent' | 'task' | 'disconnected' | 'runtime_restart' | null;
+  /** 结算细节（退出码 / 信号 / 失败原因）。 */
+  detail?: string | null;
+  /** 本次回读是否丢了内容（内存窗口滑出且溢出文件不可用）。 */
+  lossy?: boolean;
+  /**
+   * 丢掉的字节数：本次回读里接不上的那段空洞（前缀与尾巴之间缺掉的字节数）。
+   * 请求起点本身就落在空洞里时，它等于「请求起点到本次文本起点」的距离。
+   * `lossy=false` 时恒为 0。
+   */
+  skippedBytes?: number;
+  /** 完整输出的落点（本机应用私有目录），仅确实写下过内容时有值。 */
+  spillPath?: string | null;
 }
 
 /** 启动快照数据包契约（与后端 app_get_bootstrap 对齐） */

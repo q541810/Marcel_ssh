@@ -18,6 +18,7 @@ import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import StarPromptModal from '@/components/star/StarPromptModal';
 import GlobalInteractionOverlay from '@/components/agent/GlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
+import { initJobWake } from '@/stores/jobWake';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useAgentStore } from '@/stores/agentStore';
 import { useSkillStore } from '@/stores/skillStore';
@@ -144,6 +145,8 @@ export default function App() {
     attachTransferListeners();
     const detachInteractions = initInteractionListener();
     const detachJobs = useJobStore.getState().initEventListener();
+    // 作业跑完自动继续：作业结算 → 给那条会话开一轮把结局交给模型
+    const detachJobWake = initJobWake();
     // 启动恢复：拉取全部会话的后台作业（事件不会重放，重启前已存在的
     // 作业靠这次全量拉取回到 UI；只 upsert 合并，不覆盖事件实时状态）
     void useJobStore.getState().fetchJobs();
@@ -151,6 +154,7 @@ export default function App() {
       detachTransferListeners();
       detachInteractions();
       detachJobs();
+      detachJobWake();
     };
   }, []);
 

@@ -239,6 +239,8 @@ function AgentMessage({
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   const isTool = message.role === 'tool';
+  // 后台作业的结算告知（自动继续那一轮的 prompt）：系统写的，不是用户打的字。
+  const isNotice = message.role === 'notice';
   // 思考只在输出过程中显示（isThinking），回复完成后即消失（完成即删）；
   // 带 tool_calls 的消息 live 时 handleToolCallStart 已清 reasoningContent，
   // 无需单独条件。reasoningContent 字段始终保留供 LLM 回传
@@ -354,6 +356,35 @@ function AgentMessage({
                 </span>
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Job notice: system-authored, NOT the user's own words ───
+  //
+  // 后台作业跑完、这一轮已经结束，系统自动开一轮把结局交给模型，那条 prompt
+  // 就是它。渲染成独立的告知卡（不是用户气泡）：混在用户气泡里会让人以为
+  // 自己发过这句话，而且它也确实不算「你说的话」（自动继续的额度只由真的
+  // 用户输入重置）。第一行是作业结局的一行摘要，其余是需要模型做的事。
+  if (isNotice) {
+    const [summary, ...rest] = message.content.split('\n');
+    return (
+      <div className="my-1.5 flex justify-start">
+        <div className="flex max-w-[88%] items-start gap-2 rounded-xl border border-zinc-700/70 bg-zinc-800/40 px-3 py-2">
+          <span className="mt-[3px] flex-shrink-0 rounded border border-zinc-600/70 px-1.5 py-[1px] text-[10px] leading-4 text-zinc-400">
+            系统告知
+          </span>
+          <div className="min-w-0 text-[13px] leading-relaxed text-zinc-300">
+            <div className="break-words font-medium text-zinc-200 [overflow-wrap:anywhere]">
+              {highlightPlainText(summary ?? '', searchKeyword)}
+            </div>
+            {rest.length > 0 && (
+              <div className="mt-0.5 whitespace-pre-wrap break-words text-zinc-400 [overflow-wrap:anywhere]">
+                {highlightPlainText(rest.join('\n'), searchKeyword)}
+              </div>
+            )}
           </div>
         </div>
       </div>

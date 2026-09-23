@@ -8,9 +8,62 @@ use crate::llm::provider::{LlmMessage, LlmRole};
 /// 压缩卡片内容前缀（与前端 `parseCompactionSummary` 同源；改任一侧需同步）。
 pub const COMPACTION_CARD_PREFIX: &str = "【上下文已压缩】";
 
+/// 会话库里「后台作业结算告知」的 role（`messages.role`）。
+///
+/// 它**不是用户打的字**：系统替作业写的一句话，交给模型是为了让它把作业的结局
+/// 读进结论。之所以单独给一个 role（而不是继续混在 `user` 里）：
+/// - 界面上要一眼分清「我说的」和「系统告诉模型的」（否则用户会以为那是自己
+///   发过的消息，甚至会因为它而以为自己说过话）；
+/// - 自动继续的预算只由**真正的用户输入**重置（对齐 DSH：插件自己排的通知不许
+///   解封它刚花掉的额度），把身份辨认交给 role 比按内容猜可靠。
+///
+/// 前端按同一套字符串渲染与切回合（`AgentMessage.role`、`agentTurnFold`
+/// 的回合边界判定）——改这里必须同步那两处。
+pub const ROLE_NOTICE: &str = "notice";
+
+/// 这一轮 prompt 是谁产生的 —— 决定它落库时的 role，也就是它在会话里的身份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PromptOrigin {
+    /// 用户在界面里打的字（含图片附件）。
+    #[default]
+    User,
+    /// 后台作业的结算告知：系统写的，不是用户输入。
+    JobNotice,
+}
+
+impl PromptOrigin {
+    /// 落库 role。match 不写 `_ =>`：新增来源时必须回答「它在会话里长什么样」。
+    pub fn db_role(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::JobNotice => ROLE_NOTICE,
+        }
+    }
+
+    /// 这一轮的 prompt 算不算「用户输入」（自动继续的预算据此重置）。
+    pub fn is_user_input(self) -> bool {
+        match self {
+            Self::User => true,
+            Self::JobNotice => false,
+        }
+    }
+
+    /// 从 IPC 字符串解析。**认不出来一律回落到 [`Self::User`]**：旧前端不传、
+    /// 将来新增来源都可能读到别的值，而"认不出来"绝不能变成「把用户打的字悄悄
+    /// 标成系统告知」——那会让用户的消息在界面上换个样子、还不再重置预算。
+    pub fn from_ipc(raw: Option<&str>) -> Self {
+        match raw.map(str::trim) {
+            Some("job_notice") => Self::JobNotice,
+            _ => Self::User,
+        }
+    }
+}
+
 pub(crate) struct ConversationPersister {
     pub conv_db: std::sync::Arc<ConversationDb>,
     pub conversation_id: String,
+    /// 本任务这一轮 prompt 的来源（决定 `begin_turn` 落库的 role）。
+    prompt_origin: PromptOrigin,
 }
 
 impl ConversationPersister {
@@ -18,7 +71,14 @@ impl ConversationPersister {
         Self {
             conv_db,
             conversation_id,
+            prompt_origin: PromptOrigin::User,
         }
+    }
+
+    /// 换掉本轮 prompt 的来源（只有「唤醒轮」会用到：它的 prompt 是作业告知）。
+    pub fn with_prompt_origin(mut self, origin: PromptOrigin) -> Self {
+        self.prompt_origin = origin;
+        self
     }
 
     /// Auto-update conversation title from the first user message if title is still default or empty.
@@ -49,6 +109,10 @@ impl ConversationPersister {
     /// Persist the last user message；成功时把 DB row id 回填到该消息的 `db_id`
     /// （压缩的 `tail_db_id` 指针依赖它——用户消息必须能作为卡片定位锚点）。
     ///
+    /// **落库 role 取自 `prompt_origin`**（默认 `user`）：唤醒轮的 prompt 是作业
+    /// 结算告知，落成 [`ROLE_NOTICE`] 而不是冒充用户消息。role 不同不影响它是
+    /// 回合锚点——锚点是按 LLM 角色找的（这条消息在请求里就是一条 user 消息）。
+    ///
     /// 返回落库行的 id（没有可落的 user 消息 → `None`）。
     pub fn save_last_user_msg(&self, messages: &mut [LlmMessage]) -> Option<String> {
         if let Some(idx) = messages.iter().rposition(|m| m.role == LlmRole::User) {
@@ -71,7 +135,7 @@ impl ConversationPersister {
                 .conv_db
                 .save_message_with_images(
                     &self.conversation_id,
-                    "user",
+                    self.prompt_origin.db_role(),
                     &messages[idx].content,
                     &Utc::now().to_rfc3339(),
                     None,
@@ -88,6 +152,9 @@ impl ConversationPersister {
     }
 
     /// 回合开始：落库最后一条 user 消息（= 回合锚点）并把该行标成 `running`。
+    ///
+    /// 锚点行的 role 由 `prompt_origin` 决定（用户消息 / 作业告知），不影响它
+    /// 作为锚点：`turn_state` 就写在这一行上，前端靠它判定这一轮该不该折叠。
     ///
     /// 返回锚点行 id，调用方（agent loop）要把它记在任务上，收尾时才知道往
     /// 哪一行写终态（`end_turn`）。`None` = 没有可锚定的 user 行（正常不会发生

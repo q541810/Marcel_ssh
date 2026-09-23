@@ -78,11 +78,16 @@ pub struct AgentSpec {
     /// 追加到 system prompt 的角色约束段（子任务的调研约束）。
     /// 作为拼装组件传入，与基础段一样由模板拼装器统一拼接。
     pub prompt_extra: Vec<String>,
-    /// 审批语义覆盖：`None` = 跟随自身 `mode`（现状：Plan 模式子 agent 逐条
-    /// 人审）；`Some(Auto)` = 命令执行静默放行不弹人审（模型审批的
-    /// route_to_human 也不转人审），仅保留 风险评估硬拦截。Auto 父任务派发的
-    /// 只读调研子 agent 用它，避免主任务在 Auto 全自主时子 agent 的每条
-    /// 只读命令仍弹 Plan 审批窗。
+    /// 本轮 prompt 的来源（用户输入 / 作业结算告知）。决定它在会话里的身份
+    /// （落库 role，见 [`PromptOrigin`]）与「算不算用户输入」（自动继续的预算
+    /// 只由用户输入重置）。主任务由 IPC 给，子任务恒为用户输入。
+    pub prompt_origin: PromptOrigin,
+    /// 审批语义覆盖：`None` = 跟随自身 `mode`（Plan 模式默认与 Auto 一样不弹
+    /// 人审，除非设置了 `plan_mode_requires_approval`）；`Some(Auto)` = 命令执行
+    /// 静默放行不弹人审（模型审批的 route_to_human 也不转人审），仅保留 风险
+    /// 评估硬拦截。Auto 父任务派发的只读调研子 agent 用它，避免主任务在 Auto
+    /// 全自主时子 agent 的只读命令仍弹审批窗 —— 这条覆盖**优先于**上面的设置，
+    /// 用户把「Plan 模式也需要审批」打开后 Auto 父任务的子 agent 依然静默。
     pub approval_mode: Option<AgentMode>,
 }
 
@@ -459,6 +464,7 @@ impl AgentManager {
             cancel_rx: cancel_registration.receiver(),
             config_dir: self.state.config_dir.clone(),
             is_subtask: spec.role.is_subtask(),
+            prompt_origin: spec.prompt_origin,
         };
 
         let state_cleanup = self.state.clone();

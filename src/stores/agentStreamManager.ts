@@ -32,6 +32,7 @@ import {
 } from './agentStreamHandlers';
 import { createDefaultStreamHandler } from './storeStreamAdapter';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
+import { onTurnFinished } from './jobWake';
 import * as tauri from '@/lib/tauri';
 
 // ---------------------------------------------------------------------------
@@ -314,6 +315,7 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       if (hasEventType(ev, 'done')) {
         handleDone(handler, taskId, conversationId, loadingAssistantId);
         cleanupTaskListeners(taskId);
+        onTurnFinished(conversationId, taskId);
         return;
       }
 
@@ -322,12 +324,14 @@ export async function attachStreamListener(taskId: string, conversationId: strin
         // 卡片当成"没跑完的调用"删掉、把回合写成 completed 进而折叠。
         handleCancelled(handler, taskId, conversationId, loadingAssistantId);
         cleanupTaskListeners(taskId);
+        onTurnFinished(conversationId, taskId);
         return;
       }
 
       if (hasEventType(ev, 'error')) {
         handleError(handler, taskId, conversationId, loadingAssistantId, ev);
         cleanupTaskListeners(taskId);
+        onTurnFinished(conversationId, taskId);
         return;
       }
 

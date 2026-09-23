@@ -1,6 +1,7 @@
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
+use crate::agent::conversation_persister::PromptOrigin;
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
 use crate::error::AppError;
@@ -18,6 +19,11 @@ pub async fn agent_start_task(
     conversation_id: String,
     task_id: Option<String>,
     model_id: Option<String>,
+    // 这一轮 prompt 的来源：`None` / 未知值 = 用户自己打的字；
+    // `"job_notice"` = 后台作业的结算告知（前端自动继续时带上）。
+    // 它决定这条消息在会话里的身份（落库 role）与「算不算用户输入」——
+    // 认不出来一律当用户输入，见 `PromptOrigin::from_ipc`。
+    origin: Option<String>,
 ) -> Result<String, AppError> {
     // 前端可预生成 task_id 并先挂好事件 listener；旧调用方不传时仍由后端生成。
     let task_id = task_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -36,6 +42,7 @@ pub async fn agent_start_task(
         history,
         model_override,
         prompt_extra: Vec::new(),
+        prompt_origin: PromptOrigin::from_ipc(origin.as_deref()),
     };
     let manager = AgentManager::new(state.inner().clone());
     let handle = manager.spawn(&app, spec).await?;

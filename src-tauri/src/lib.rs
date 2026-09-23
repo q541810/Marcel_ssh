@@ -834,6 +834,8 @@ pub fn run() {
             commands::agent_attachment::agent_get_local_file_name,
             commands::job::job_list,
             commands::job::job_kill,
+            commands::job::job_pending_notice,
+            commands::job::job_ack_notice,
             commands::agent_lifecycle::agent_approve_operation,
             commands::agent_lifecycle::agent_reject_operation,
             commands::agent_lifecycle::agent_answer_question,
