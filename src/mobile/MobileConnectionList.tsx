@@ -26,7 +26,7 @@ import {
   getErrorMessage,
   parseAppError,
 } from '@/lib/errors';
-import { isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
+import { isPasswordRejected, isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
 import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig, SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
@@ -39,6 +39,20 @@ import { useLongPressDrag } from './useLongPressDrag';
 import { listSessionsToDisconnectBeforeNewConnect } from './sessionUi';
 import MobileConnectionForm from './MobileConnectionForm';
 import MobileSheet from './ui/MobileSheet';
+
+/**
+ * 密钥链写入失败的提示文案。
+ *
+ * 保存失败**不拦连接**（密钥链不可用时照样把这次连接连上，这是既有取舍），但必须
+ * 出声：以前只写 console，用户只看到"连上了"，并不知道这份凭证根本没记住。
+ *
+ * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面
+ * 的原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径
+ * 要一起改。
+ */
+function secretSaveFailedMessage(what: string, err: unknown): string {
+  return `${what}没能保存到本设备（${getErrorMessage(err)}）。本次连接照常进行，但下次连接和「重连」还得再输一次。`;
+}
 
 interface MobileConnectionListProps {
   onBack?: () => void;
@@ -214,20 +228,35 @@ export default function MobileConnectionList({
     }
   };
 
-  const promptForPassword = (conn: SavedConnection) => {
+  /**
+   * 追问 SSH 密码。`rejectedSaved` = 密钥链里存着的那份已经**被服务器拒了**，
+   * 这一问是"换一份"而不是"缺一份"——文案要说出来，否则浮层凭空弹出，用户会以为
+   * 自己从没存过密码。
+   */
+  const promptForPassword = (conn: SavedConnection, rejectedSaved = false) => {
     promptPassword({
       title: 'SSH 密码',
-      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
-      allowRemember: true,
-      onSubmit: async (password, remember) => {
-        if (remember) {
-          try {
-            await tauri.savePassword(conn.id, password);
-          } catch {
-            /* keychain optional */
-          }
+      description:
+        `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密码会加密保存在本设备，下次自动使用。` +
+        (rejectedSaved ? '上次保存的密码被服务器拒绝，请输入新的。' : ''),
+      onSubmit: async (password) => {
+        // 一律保存（没有"不记住"这个选项）：没存下来的密码会一路带来两个坏结果——
+        // 每次连接都要重新输，以及重连只会报"重连需要密码"。
+        // 保存失败不拦连接：密钥链不可用时照样把这次连接连上。
+        // 覆盖旧的也是同一条路：复问一次就把打错的那份顶掉。
+        let saveWarning: string | null = null;
+        try {
+          await tauri.savePassword(conn.id, password);
+        } catch (err) {
+          console.warn('保存密码到密钥链失败:', err);
+          // 出声：不然用户只看到"连上了"，并不知道这份密码根本没记住——
+          // 下次连接与重连还会再要一次，而他会以为自己早就存过了。
+          saveWarning = secretSaveFailedMessage('密码', err);
         }
         await doConnect(conn, password);
+        // 放在连接之后：doConnect 开头就清空这条错误带，先说会被它抹掉；
+        // 只有它没留下更该看的信息（连接本身失败）时才把"没记住"顶上来。
+        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
       },
     });
   };
@@ -235,17 +264,17 @@ export default function MobileConnectionList({
   const promptForPassphrase = (conn: SavedConnection) => {
     promptPassword({
       title: '私钥密码',
-      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
-      allowRemember: true,
-      onSubmit: async (passphrase, remember) => {
-        if (remember) {
-          try {
-            await tauri.savePassphrase(conn.id, passphrase);
-          } catch {
-            /* keychain optional */
-          }
+      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密钥密码会加密保存在本设备，下次自动使用。`,
+      onSubmit: async (passphrase) => {
+        let saveWarning: string | null = null;
+        try {
+          await tauri.savePassphrase(conn.id, passphrase);
+        } catch (err) {
+          console.warn('保存 passphrase 到密钥链失败:', err);
+          saveWarning = secretSaveFailedMessage('密钥密码', err);
         }
         await doConnect(conn, undefined, passphrase);
+        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
       },
     });
   };
@@ -288,6 +317,14 @@ export default function MobileConnectionList({
                   }
                 },
               });
+              return;
+            }
+            // 存的那份密码被服务器拒了：追问并覆盖它。不复问的话，这份打错一个字符的
+            // 密码会被每次连接和每次重连一直重放，用户再也等不到输入框（与私钥分支的
+            // 复问对称）。红条不给——浮层里已经写清"上次保存的密码被拒绝"，两条一起
+            // 说同一件事只会更吵。
+            if (isPasswordRejected(err)) {
+              promptForPassword(connection, true);
               return;
             }
             setLocalError(getErrorMessage(err));
@@ -428,6 +465,12 @@ export default function MobileConnectionList({
   };
 
   const displayError = localError ?? error;
+
+  /** 删除确认里的连接称谓：名字优先，没名字就退到脱敏口径的 user@host:port。 */
+  const deleteTargetLabel = deleteTarget
+    ? deleteTarget.name ||
+      formatConnLabel(deleteTarget.username, deleteTarget.host, deleteTarget.port, privacyMode)
+    : '';
 
   return (
     <div
@@ -586,6 +629,8 @@ export default function MobileConnectionList({
           setFormOpen(false);
           setEditingConnection(undefined);
         }}
+        // 浮层保存后即关闭，它自己那条提示活不到用户看见；交给本页这条既有红条说。
+        onSecretSaveError={setLocalError}
       />
 
       {/* Delete confirm sheet */}
@@ -596,10 +641,7 @@ export default function MobileConnectionList({
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
           <p className="pb-1 text-sm text-zinc-400">
-            删除连接「
-            {deleteTarget?.name ||
-              `${deleteTarget?.username}@${deleteTarget?.host}`}
-            」？此操作不可撤销。
+            删除连接「{deleteTargetLabel}」？此操作不可撤销。
           </p>
           <button
             type="button"

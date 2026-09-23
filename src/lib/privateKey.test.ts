@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   describeAlgorithm,
   isPassphraseProblem,
+  isPasswordRejected,
   keyAuthCode,
   shortFingerprint,
 } from './privateKey';
@@ -12,12 +13,14 @@ import {
  * - `error.rs`：`KeyAuthCode` 变体与序列化写法（决定 data.code 的字符串）
  * - `ssh/key_store.rs`：`StoredKeyMeta` 字段名（决定 IPC 上的 camelCase 名）
  * - `ssh/key_material.rs`：哪些情况产出"需要密码"这个判定
+ * - `ssh/manager.rs`：认证失败时产出哪个原因码（密码被拒也要结构化，否则前端无从复问）
  */
 const RUST = import.meta.glob(
   [
     '/src-tauri/src/error.rs',
     '/src-tauri/src/ssh/key_store.rs',
     '/src-tauri/src/ssh/key_material.rs',
+    '/src-tauri/src/ssh/manager.rs',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>;
@@ -25,6 +28,12 @@ const RUST = import.meta.glob(
 const errorRs = RUST['/src-tauri/src/error.rs'] ?? '';
 const keyStoreRs = RUST['/src-tauri/src/ssh/key_store.rs'] ?? '';
 const keyMaterialRs = RUST['/src-tauri/src/ssh/key_material.rs'] ?? '';
+const managerRs = RUST['/src-tauri/src/ssh/manager.rs'] ?? '';
+
+/** 去掉空白再比对：断的是"结构在不在"，不是排版。 */
+function flat(src: string): string {
+  return src.replace(/\s+/g, ' ');
+}
 
 /** 抽 `pub enum <name> { … }` 里的变体名（每个变体独占一行）。 */
 function parseEnumVariants(src: string, enumName: string): string[] {
@@ -78,6 +87,38 @@ describe('私钥失败原因的判定', () => {
   });
 });
 
+/**
+ * 密码被服务器拒绝 = 密钥链里那份密码是错的，唯一该重新追问的情况。
+ *
+ * 判据只认 `rejected` 这一档：`needs_passphrase` / `bad_passphrase` 是私钥那条流程的，
+ * 而网络不通、主机密钥变更这些原因重新要密码没用（用户照着提示也做不对下一步）。
+ */
+describe('密码被拒的判定', () => {
+  it('只对"服务器拒绝了这份凭据"为真', () => {
+    const keyAuth = (code: string) => ({ kind: 'KeyAuth', message: 'x', data: { code } });
+
+    expect(isPasswordRejected(keyAuth('rejected'))).toBe(true);
+
+    // 私钥流程那两档：密码框不该被它们触发
+    expect(isPasswordRejected(keyAuth('needs_passphrase'))).toBe(false);
+    expect(isPasswordRejected(keyAuth('bad_passphrase'))).toBe(false);
+    // 与密码无关的失败
+    expect(isPasswordRejected(keyAuth('key_not_found'))).toBe(false);
+    expect(isPasswordRejected(keyAuth('unsupported_key'))).toBe(false);
+  });
+
+  it('非结构化错误（网络错误、裸字符串）一律不追问', () => {
+    expect(isPasswordRejected({ kind: 'Ssh', message: '连接失败: Network is unreachable' })).toBe(
+      false,
+    );
+    expect(isPasswordRejected('boom')).toBe(false);
+    expect(isPasswordRejected(new Error('boom'))).toBe(false);
+    expect(isPasswordRejected(undefined)).toBe(false);
+    // 有 kind 但没有 code：不能因为 kind 对就当密码问题
+    expect(isPasswordRejected({ kind: 'KeyAuth', message: 'x' })).toBe(false);
+  });
+});
+
 describe('密钥信息的展示', () => {
   it('指纹截断到够辨认的长度且保留算法前缀', () => {
     const short = shortFingerprint('SHA256:AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd');
@@ -99,6 +140,7 @@ describe('与后端的契约', () => {
     expect(errorRs.length).toBeGreaterThan(0);
     expect(keyStoreRs.length).toBeGreaterThan(0);
     expect(keyMaterialRs.length).toBeGreaterThan(0);
+    expect(managerRs.length).toBeGreaterThan(0);
   });
 
   it('前端追问密码用到的两个 code 在后端确实存在，且按 snake_case 序列化', () => {
@@ -124,6 +166,22 @@ describe('与后端的契约', () => {
     // 前端读的是 parsed.data.code；后端序列化时若改名，这里会红
     expect(errorRs).toContain('AppError::KeyAuth { code, .. }');
     expect(errorRs).toContain('"code": code');
+  });
+
+  it('密码认证被拒也带原因码（否则前端只能把那份错密码一直重放）', () => {
+    // 密码分支若退回 AppError::Ssh("认证失败：…") 这种纯字符串，前端就再也认不出
+    // "该重新追问密码"，本组测试与 ConnectionList / MobileConnectionList 的复问一起红
+    expect(flat(managerRs)).toContain(
+      'AuthMethod::Password { .. } => AppError::KeyAuth { code: KeyAuthCode::Rejected',
+    );
+  });
+
+  it('带跳板机时原因码要活着到前端（只改写文案，不压成字符串）', () => {
+    // 目标机那一段的错误会被 map_target_err 加上「目标服务器 x」的前缀；连原因码一起
+    // 压成 AppError::Ssh 就等于把复问的机会丢掉（私钥的复问也一样会失效）
+    expect(flat(managerRs)).toContain(
+      'AppError::KeyAuth { code, message } if via_jump => AppError::KeyAuth { code,',
+    );
   });
 
   it('"需要密码"这个判定确实由加密检测产出（前端据此不再盲试）', () => {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { JumpAuthMethod, SavedConnection, StoredKeyMeta } from '@/lib/types';
 import { DEFAULT_PORT } from '@/lib/constants';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import { describeAlgorithm, shortFingerprint } from '@/lib/privateKey';
 import { useConnectionStore } from '@/stores/connectionStore';
 import Button from '@/components/ui/Button';
@@ -15,6 +16,24 @@ interface Props {
   onSave: (connection: SavedConnection) => void;
   onCancel: () => void;
   onTestConnection?: (connection: SavedConnection) => void;
+  /**
+   * 密钥链写入失败的出路。
+   *
+   * 表单保存后**立刻关闭**，自己那条提示活不到用户看见；所以失败要说给外面的既有
+   * 报错面（连接列表那条红条）。密钥链不可用不拦保存——连接本身照样存下来。
+   */
+  onSecretsSaveError: (message: string) => void;
+}
+
+/**
+ * 密钥链写入失败的提示文案。
+ *
+ * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面的
+ * 原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径要
+ * 一起改。
+ */
+function secretSaveFailedMessage(what: string, err: unknown): string {
+  return `${what}没能保存到本设备（${getErrorMessage(err)}）。下次连接和「重连」还得再输一次。`;
 }
 
 export default function ConnectionForm({
@@ -22,6 +41,7 @@ export default function ConnectionForm({
   onSave,
   onCancel,
   onTestConnection,
+  onSecretsSaveError,
 }: Props) {
   const [name, setName] = useState(connection?.name ?? '');
   const [host, setHost] = useState(connection?.host ?? '');
@@ -33,6 +53,17 @@ export default function ConnectionForm({
   const [passphrase, setPassphrase] = useState('');
   const [hasPassphrase, setHasPassphrase] = useState(false);
   const [passphraseDirty, setPassphraseDirty] = useState(false);
+  /**
+   * 登录密码：**私钥连接也能存一个**。
+   *
+   * 它不用来登录（登录用的是私钥），存在的唯一理由是 agent 执行 `sudo` 时把它
+   * 自动填给远端 —— bash 工具的 sudo 改写读的就是密钥链里 account = 连接 id 的
+   * 这条（`agent/tools/bash.rs::lookup_password`），而那条以前只有密码认证才会写，
+   * 于是私钥用户跑 sudo 必然失败（我们的 exec 通道没有 PTY，sudo 也没法回头问人）。
+   */
+  const [loginPassword, setLoginPassword] = useState('');
+  const [hasLoginPassword, setHasLoginPassword] = useState(false);
+  const [loginPasswordDirty, setLoginPasswordDirty] = useState(false);
   const [keys, setKeys] = useState<StoredKeyMeta[]>([]);
   const [keyManagerTarget, setKeyManagerTarget] = useState<'main' | 'jump' | null>(
     null,
@@ -40,6 +71,8 @@ export default function ConnectionForm({
   const [group, setGroup] = useState(connection?.group ?? '');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
+  /** 「重设密码」浮层上一次保存失败的原因（浮层留在原地让用户重试）。 */
+  const [passwordSaveError, setPasswordSaveError] = useState<string | null>(null);
 
   // Jump host
   const [useJump, setUseJump] = useState(connection?.useJump ?? false);
@@ -77,16 +110,22 @@ export default function ConnectionForm({
     };
   }, [keyManagerTarget]);
 
-  // 是否已保存密钥密码（编辑模式才问得出来）
+  // 已保存的密钥密码 / 登录密码（编辑模式才问得出来）
   useEffect(() => {
     if (!connection?.id) return;
     let cancelled = false;
     void (async () => {
       try {
-        const has = await tauri.hasPassphrase(connection.id);
-        if (!cancelled) setHasPassphrase(has);
+        const [passphrase, loginPassword] = await Promise.all([
+          tauri.hasPassphrase(connection.id),
+          tauri.hasPassword(connection.id),
+        ]);
+        if (!cancelled) {
+          setHasPassphrase(passphrase);
+          setHasLoginPassword(loginPassword);
+        }
       } catch (err) {
-        console.warn('检查已保存的密钥密码失败:', err);
+        console.warn('检查已保存的凭证失败:', err);
       }
     })();
     return () => {
@@ -179,6 +218,11 @@ export default function ConnectionForm({
     if (authMethod === 'PrivateKey' && passphrase) {
       await tauri.savePassphrase(id, passphrase);
     }
+    // 登录密码（私钥连接下供 agent 的 sudo 自动填充用）。与密钥密码是两个账号，
+    // 千万别写串：写错账号会让 sudo 静默失效、或者让连接拿密钥密码去当登录密码。
+    if (authMethod === 'PrivateKey' && loginPassword) {
+      await tauri.savePassword(id, loginPassword);
+    }
     if (!useJump) {
       // Best-effort cleanup when jump is turned off
       if (connection?.id) {
@@ -208,15 +252,36 @@ export default function ConnectionForm({
     }
   };
 
+  /** 删掉 account = 连接 id 的那条：密码认证下它就是登录密码，私钥连接下它是给
+   *  agent 的 sudo 自动填充用的登录密码——同一个账号，两个分支共用这一个清除动作。 */
+  const clearLoginPassword = async () => {
+    if (!connection?.id) return;
+    try {
+      await tauri.deletePassword(connection.id);
+      setHasLoginPassword(false);
+      setLoginPassword('');
+      setLoginPasswordDirty(false);
+    } catch (err) {
+      console.warn('清除已保存的登录密码失败:', err);
+    }
+  };
+
   const handleSave = async () => {
     if (!validate()) return;
     const saved = buildSaved();
+    let secretWarning: string | null = null;
     try {
       await persistSecrets(saved.id);
     } catch (err) {
       console.warn('保存凭证失败:', err);
+      // 凭证没进密钥链这件事必须让用户知道（否则他以为已经记住了，下次又得输）。
+      // 连接本身照存——这是既有的取舍：密钥链不可用不该挡着保存/连接。
+      secretWarning = secretSaveFailedMessage('凭证', err);
     }
     onSave(saved);
+    // 报给宿主放在 onSave **之后**：宿主可能在自己的 onSave 里清错误（连接列表就是），
+    // 先说再清等于没说。
+    if (secretWarning) onSecretsSaveError(secretWarning);
   };
 
   const handleTest = () => {
@@ -277,7 +342,8 @@ export default function ConnectionForm({
             <option value="Password">密码</option>
             <option value="PrivateKey">私钥</option>
           </select>
-          {authMethod === 'Password' && connection?.id && (
+          {/* 还没存过密码才给这个入口；存过则下面有「密码：已保存 / 修改 / 清除」 */}
+          {authMethod === 'Password' && connection?.id && !hasLoginPassword && (
             <Button
               variant="secondary"
               onClick={() => setPasswordPromptOpen(true)}
@@ -288,6 +354,35 @@ export default function ConnectionForm({
           )}
         </div>
       </div>
+
+      {/*
+        密码认证下已保存的凭证：密钥链里 account = 连接 id 的那条（登录时用的就是
+        它）。以前桌面只在私钥分支拿它当 sudo 登录密码、带「清除」，密码认证分支
+        既不写也不删——于是 PasswordPrompt 里「要清掉已保存的凭证，用连接设置里的
+        「清除」」在桌面密码认证场景指向一个不存在的控件。这里补上与移动端对称的
+        「已保存 / 修改 / 清除」。
+      */}
+      {authMethod === 'Password' && connection?.id && hasLoginPassword && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm text-zinc-400">密码：已保存</span>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              className="py-1.5 text-xs"
+              onClick={() => setPasswordPromptOpen(true)}
+            >
+              修改
+            </Button>
+            <Button
+              variant="ghost"
+              className="py-1.5 text-xs"
+              onClick={() => void clearLoginPassword()}
+            >
+              清除
+            </Button>
+          </div>
+        </div>
+      )}
 
       {authMethod === 'PrivateKey' && (
         <>
@@ -375,6 +470,49 @@ export default function ConnectionForm({
               }
               autoComplete="new-password"
             />
+          )}
+
+          {/* 登录密码：与 SSH 登录无关，只给 agent 执行 sudo 时用 */}
+          {hasLoginPassword && !loginPasswordDirty && !loginPassword ? (
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm text-zinc-400">登录密码：已保存</span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  className="py-1.5 text-xs"
+                  onClick={() => setLoginPasswordDirty(true)}
+                >
+                  修改
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="py-1.5 text-xs"
+                  onClick={() => void clearLoginPassword()}
+                >
+                  清除
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <Input
+                label="登录密码（可选）"
+                type="password"
+                value={loginPassword}
+                onChange={(e) => {
+                  setLoginPassword(e.target.value);
+                  setLoginPasswordDirty(true);
+                }}
+                placeholder={
+                  connection?.id ? '留空则保持不变' : '留空则不自动填充'
+                }
+                autoComplete="new-password"
+              />
+              <p className="mt-1 text-xs text-zinc-500">
+                本连接用私钥登录，用不到这个密码。填了之后，agent 执行
+                sudo 时会自动把它填给远端（我们自己的通道没有终端，sudo 没法回来问你）。
+              </p>
+            </div>
           )}
         </>
       )}
@@ -591,13 +729,30 @@ export default function ConnectionForm({
         <PasswordPrompt
           open={passwordPromptOpen}
           title="重设密码"
-          description="密码会加密保存到本设备，新连接自动使用。"
+          description={
+            '密码会加密保存到本设备，新连接自动使用。' +
+            (passwordSaveError ? `上次没能保存：${passwordSaveError}` : '')
+          }
           submitLabel="保存"
           onSubmit={(password) => {
-            tauri.savePassword(connection.id, password).catch(console.warn);
+            void tauri
+              .savePassword(connection.id, password)
+              .then(() => {
+                setHasLoginPassword(true);
+                setPasswordSaveError(null);
+                setPasswordPromptOpen(false);
+              })
+              .catch((err) => {
+                console.warn('保存密码到密钥链失败:', err);
+                // 浮层留在原地、把原因写进描述：用户刚输入的内容还在，直接再点一次
+                // 「保存」即可重试。关掉才算成功，绝不能"关了但没存上"。
+                setPasswordSaveError(secretSaveFailedMessage('密码', err));
+              });
+          }}
+          onCancel={() => {
+            setPasswordSaveError(null);
             setPasswordPromptOpen(false);
           }}
-          onCancel={() => setPasswordPromptOpen(false)}
         />
       )}
 

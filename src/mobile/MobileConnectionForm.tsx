@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { JumpAuthMethod, SavedConnection, StoredKeyMeta } from '@/lib/types';
 import { DEFAULT_PORT } from '@/lib/constants';
 import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import { describeAlgorithm, shortFingerprint } from '@/lib/privateKey';
 import { useConnectionStore } from '@/stores/connectionStore';
 import KeyManager from '@/components/connection/KeyManager';
@@ -13,6 +14,13 @@ interface MobileConnectionFormProps {
   connection?: SavedConnection;
   onSave: (connection: SavedConnection) => Promise<void> | void;
   onCancel: () => void;
+  /**
+   * 密钥链写入失败的出路。
+   *
+   * 浮层保存后**立刻关闭**，自己那条提示活不到用户看见；所以失败要说给外面的既有
+   * 报错面（连接列表那条红条）。密钥链不可用不拦保存——连接本身照样存下来。
+   */
+  onSecretSaveError: (message: string) => void;
 }
 
 const inputClass =
@@ -39,6 +47,17 @@ function Field({
 }
 
 /**
+ * 密钥链写入失败的提示文案。
+ *
+ * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面的
+ * 原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径要
+ * 一起改。
+ */
+function secretSaveFailedMessage(what: string, err: unknown): string {
+  return `${what}没能保存到本设备（${getErrorMessage(err)}）。下次连接和「重连」还得再输一次。`;
+}
+
+/**
  * Mobile create / edit form for a saved SSH connection.
  * Field model mirrors the desktop ConnectionForm (name/host/port/username/
  * auth/group + ProxyJump). Secrets go to the OS keychain via Rust-side IPC.
@@ -48,6 +67,7 @@ export default function MobileConnectionForm({
   connection,
   onSave,
   onCancel,
+  onSecretSaveError,
 }: MobileConnectionFormProps) {
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
@@ -66,6 +86,13 @@ export default function MobileConnectionForm({
   const [group, setGroup] = useState('');
   /** Optional main credential (password or key passphrase) saved to keychain. */
   const [secret, setSecret] = useState('');
+  /**
+   * 登录密码：私钥连接也能存（供 agent 执行 sudo 时自动填给远端）。
+   * 它不用来登录本连接 —— 见桌面 ConnectionForm 里同一字段的说明。
+   */
+  const [loginPassword, setLoginPassword] = useState('');
+  const [hasLoginPassword, setHasLoginPassword] = useState(false);
+  const [loginPasswordDirty, setLoginPasswordDirty] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -99,6 +126,9 @@ export default function MobileConnectionForm({
     setSecret('');
     setHasSecret(false);
     setSecretDirty(false);
+    setLoginPassword('');
+    setHasLoginPassword(false);
+    setLoginPasswordDirty(false);
     setErrors({});
     setSaving(false);
     setUseJump(connection?.useJump ?? false);
@@ -131,17 +161,28 @@ export default function MobileConnectionForm({
     };
   }, [open, keyManagerTarget]);
 
-  // 主凭证是否已保存（编辑模式才问得出来）
+  // 主凭证是否已保存（编辑模式才问得出来）。
+  // **依赖当前选择的认证方式，而不是保存时那个**：下面那一行的可见性来自
+  // hasSecret，标签与「清除」删的账号来自 authMethod——三者必须同源，否则把私钥
+  // 连接改成密码认证后，会沿用「密钥密码已存」这一可见性、显示成「密码 / 已保存
+  // 在本设备」、点清除却删掉 {id}（那条是本次改动新引入的 sudo 登录密码）。
   useEffect(() => {
     if (!open || !connection?.id) return;
     let cancelled = false;
     void (async () => {
       try {
-        const has =
-          connection.authMethod === 'Password'
-            ? await tauri.hasPassword(connection.id)
-            : await tauri.hasPassphrase(connection.id);
-        if (!cancelled) setHasSecret(has);
+        const isPassword = authMethod === 'Password';
+        const [has, hasLogin] = await Promise.all([
+          isPassword
+            ? tauri.hasPassword(connection.id)
+            : tauri.hasPassphrase(connection.id),
+          // 私钥连接下这个账号只服务 sudo 自动填充（用私钥登录用不到它）
+          isPassword ? Promise.resolve(false) : tauri.hasPassword(connection.id),
+        ]);
+        if (!cancelled) {
+          setHasSecret(has);
+          setHasLoginPassword(hasLogin);
+        }
       } catch {
         /* keychain optional */
       }
@@ -149,7 +190,7 @@ export default function MobileConnectionForm({
     return () => {
       cancelled = true;
     };
-  }, [open, connection]);
+  }, [open, connection, authMethod]);
 
   // Check saved jump credentials when editing a jump-enabled connection.
   useEffect(() => {
@@ -241,6 +282,11 @@ export default function MobileConnectionForm({
         await tauri.savePassphrase(id, secret);
       }
     }
+    // 登录密码：私钥连接下它只服务 agent 的 sudo 自动填充。与密钥密码是两个
+    // 密钥链账号（`{id}` vs `pk:{id}`），写串了会让 sudo 静默失效。
+    if (authMethod === 'PrivateKey' && loginPassword) {
+      await tauri.savePassword(id, loginPassword);
+    }
     if (!useJump) {
       // Best-effort cleanup when jump is turned off on an existing connection
       if (connection?.id) {
@@ -262,16 +308,23 @@ export default function MobileConnectionForm({
     if (!validate()) return;
     const saved = buildSaved();
     setSaving(true);
+    let secretWarning: string | null = null;
     try {
       try {
         await persistSecrets(saved.id);
-      } catch {
-        /* keychain optional; connection itself still saves */
+      } catch (err) {
+        console.warn('保存凭证失败:', err);
+        // 凭证没进密钥链这件事必须让用户知道（否则他以为已经记住了，下次又得输）。
+        // 连接本身照存——这是既有的取舍：密钥链不可用不该挡着保存/连接。
+        secretWarning = secretSaveFailedMessage('凭证', err);
       }
       await onSave(saved);
     } finally {
       setSaving(false);
     }
+    // 报给宿主放在 onSave **之后**：宿主可能在自己的 onSave 里清错误（连接列表就是），
+    // 先说再清等于没说。
+    if (secretWarning) onSecretSaveError(secretWarning);
   };
 
   const secretLabel =
@@ -363,9 +416,13 @@ export default function MobileConnectionForm({
           <select
             value={authMethod}
             onChange={(e) => {
-              setAuthMethod(e.target.value);
+              const next = e.target.value;
+              setAuthMethod(next);
               setSecret('');
               setSecretDirty(false);
+              // 旧值属于旧账号，先撤下（避免重取回来之前那一行还挂着「清除」），
+              // 再由上面的 effect 按新的认证方式重取。
+              setHasSecret(false);
             }}
             className={inputClass}
           >
@@ -484,6 +541,62 @@ export default function MobileConnectionForm({
             </p>
           </Field>
         )}
+
+        {/* 登录密码：与登录无关，只给 agent 执行 sudo 时自动填给远端 */}
+        {authMethod === 'PrivateKey' &&
+          (hasLoginPassword && !loginPasswordDirty && !loginPassword ? (
+            <Field label="登录密码">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-zinc-400">已保存在本设备</span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLoginPasswordDirty(true)}
+                    className="rounded-lg bg-zinc-800 px-3 py-2 text-xs text-zinc-200 active:bg-zinc-700"
+                  >
+                    修改
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void (async () => {
+                        if (!connection?.id) return;
+                        try {
+                          await tauri.deletePassword(connection.id);
+                          setHasLoginPassword(false);
+                          setLoginPassword('');
+                          setLoginPasswordDirty(false);
+                        } catch {
+                          /* keychain optional */
+                        }
+                      })()
+                    }
+                    className="rounded-lg px-3 py-2 text-xs text-red-400/80 active:bg-zinc-800"
+                  >
+                    清除
+                  </button>
+                </div>
+              </div>
+            </Field>
+          ) : (
+            <Field label="登录密码（可选）">
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(e) => {
+                  setLoginPassword(e.target.value);
+                  setLoginPasswordDirty(true);
+                }}
+                placeholder="留空则不自动填充"
+                autoComplete="new-password"
+                className={inputClass}
+              />
+              <p className="mt-1 text-[11px] leading-relaxed text-zinc-600">
+                本连接用私钥登录，用不到它。填了之后 agent 执行 sudo
+                时会自动填给远端。
+              </p>
+            </Field>
+          ))}
 
         <Field label="分组（可选）">
           <input

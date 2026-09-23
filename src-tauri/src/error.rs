@@ -1,9 +1,13 @@
 use serde::Serialize;
 
-/// 私钥认证失败的具体原因。
+/// 凭据（**私钥或密码**）认证失败的具体原因。
 ///
-/// 存在的理由：前端要据此决定**下一步该让用户做什么**——只有 `NeedsPassphrase`
-/// / `BadPassphrase` 才该弹密码框。此前所有私钥失败都退化成同一个字符串，于是
+/// 存在的理由：前端要据此决定**下一步该让用户做什么**。大部分取值只出现在私钥
+/// 流程，只有 `NeedsPassphrase` / `BadPassphrase` 该弹私钥密码框；`Rejected` 两条
+/// 流程共用——私钥流程里是"这把密钥被服务器拒了"，密码流程里是"这份密码被服务器
+/// 拒了"（见 `ssh/manager.rs` 的 `authenticate`）。前端在各自的流程里读同一个码做
+/// 各自该做的事：密码被拒要重新追问并覆盖密钥链里那份打错的（`src/lib/privateKey.ts`
+/// 的 `isPasswordRejected`）。此前所有私钥失败都退化成同一个字符串，于是
 /// "密钥文件根本不存在"也会弹密码框，用户输完还是失败。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,7 +24,8 @@ pub enum KeyAuthCode {
     UnsupportedKey,
     /// 连接引用的密钥已从密钥库删除
     KeyMissingFromStore,
-    /// 服务器拒绝了这把密钥
+    /// 服务器拒绝了这份凭据：私钥流程里是这把密钥，密码流程里是这份密码。
+    /// 两条流程共用这一档，前端据此决定"要不要让用户重输"（见枚举文档）。
     Rejected,
 }
 
@@ -59,7 +64,7 @@ pub enum AppError {
     Network(String),
     #[error("已取消: {0}")]
     Cancelled(String),
-    /// 私钥相关的失败，带机器可读的原因码（见 `KeyAuthCode`）。
+    /// 凭据（私钥或密码）认证失败，带机器可读的原因码（见 `KeyAuthCode`）。
     /// `message` 已是给用户看的中文文案，前端直接展示。
     #[error("{message}")]
     KeyAuth {
@@ -127,7 +132,7 @@ impl Serialize for AppError {
                     AppError::Sftp { code, .. } => {
                         m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
                     }
-                    // 私钥失败的原因码：前端据此决定要不要弹密码框
+                    // 凭据失败的原因码：前端据此决定下一步（弹私钥密码框 / 重问密码）
                     AppError::KeyAuth { code, .. } => {
                         m.serialize_entry("data", &serde_json::json!({ "code": code }))?;
                     }

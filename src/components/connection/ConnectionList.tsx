@@ -5,8 +5,8 @@ import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
-import { asHostKeyMismatch, parseAppError } from '@/lib/errors';
-import { isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
+import { asHostKeyMismatch, getErrorMessage, parseAppError } from '@/lib/errors';
+import { isPasswordRejected, isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
 import { formatConnLabel } from '@/lib/privacy';
 import {
   groupConnections,
@@ -82,6 +82,21 @@ function scrollableAncestor(el: HTMLElement | null): HTMLElement | null {
     node = node.parentElement;
   }
   return null;
+}
+
+/**
+ * 密钥链写入失败的提示文案。
+ *
+ * 保存失败**不拦连接**（密钥链不可用时照样把这次连接连上，这是既有取舍），但必须
+ * 出声：以前只写 console，用户只看到"连上了"，并不知道这份凭证根本没记住，下次
+ * 连接与「重连」还会再要一次，而他会以为自己早就存过了。
+ *
+ * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面
+ * 的原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径
+ * 要一起改。
+ */
+function secretSaveFailedMessage(what: string, err: unknown): string {
+  return `${what}没能保存到本设备（${getErrorMessage(err)}）。本次连接照常进行，但下次连接和「重连」还得再输一次。`;
 }
 
 export default function ConnectionList() {
@@ -723,20 +738,35 @@ export default function ConnectionList() {
     }
   };
 
-  const promptForPassword = (conn: SavedConnection) => {
+  /**
+   * 追问 SSH 密码。`rejectedSaved` = 密钥链里存着的那份已经**被服务器拒了**，
+   * 这一问是"换一份"而不是"缺一份"——文案要说出来，否则浮层凭空弹出，用户会以为
+   * 自己从没存过密码。
+   */
+  const promptForPassword = (conn: SavedConnection, rejectedSaved = false) => {
     promptPassword({
       title: 'SSH 密码',
-      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}`,
-      allowRemember: true,
-      onSubmit: async (password, remember) => {
-        if (remember) {
-          try {
-            await tauri.savePassword(conn.id, password);
-          } catch (err) {
-            console.warn('保存密码到密钥链失败:', err);
-          }
+      description:
+        `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密码会加密保存在本设备，下次自动使用。` +
+        (rejectedSaved ? '上次保存的密码被服务器拒绝，请输入新的。' : ''),
+      onSubmit: async (password) => {
+        // 一律保存（没有"不记住"这个选项）：没存下来的密码会一路带来两个坏结果——
+        // 每次连接都要重新输，以及标签上的「重连」只会报"重连需要密码"。
+        // 保存失败不拦连接：密钥链不可用时照样把这次连接连上。
+        // 覆盖旧的也是同一条路：复问一次就把打错的那份顶掉。
+        let saveWarning: string | null = null;
+        try {
+          await tauri.savePassword(conn.id, password);
+        } catch (err) {
+          console.warn('保存密码到密钥链失败:', err);
+          // 出声：不然用户只看到"连上了"，并不知道这份密码根本没记住——
+          // 下次连接与「重连」还会再要一次，而他会以为自己早就存过了。
+          saveWarning = secretSaveFailedMessage('密码', err);
         }
         await doConnect(conn, password);
+        // 放在连接之后：连接自己也可能往这条错误带上写字（移动端列表就是），
+        // 只有它没留下更该看的信息时才把"没记住"顶上来。
+        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
       },
     });
   };
@@ -744,17 +774,17 @@ export default function ConnectionList() {
   const promptForPassphrase = (conn: SavedConnection) => {
     promptPassword({
       title: '私钥密码',
-      description: `连接到 ${conn.username}@${conn.host}:${conn.port}`,
-      allowRemember: true,
-      onSubmit: async (passphrase, remember) => {
-        if (remember) {
-          try {
-            await tauri.savePassphrase(conn.id, passphrase);
-          } catch (err) {
-            console.warn('保存 passphrase 到密钥链失败:', err);
-          }
+      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密钥密码会加密保存在本设备，下次自动使用。`,
+      onSubmit: async (passphrase) => {
+        let saveWarning: string | null = null;
+        try {
+          await tauri.savePassphrase(conn.id, passphrase);
+        } catch (err) {
+          console.warn('保存 passphrase 到密钥链失败:', err);
+          saveWarning = secretSaveFailedMessage('密钥密码', err);
         }
         await doConnect(conn, undefined, passphrase);
+        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
       },
     });
   };
@@ -792,6 +822,13 @@ export default function ConnectionList() {
                   }
                 },
               });
+              return;
+            }
+            // 存的那份密码被服务器拒了：追问并覆盖它。不复问的话，这份打错一个字符的
+            // 密码会被每次连接和每次「重连」一直重放，用户再也等不到输入框（与私钥
+            // 分支的复问对称）。其他原因（网络不通、主机密钥变更）照实写 console。
+            if (isPasswordRejected(err)) {
+              promptForPassword(connection, true);
               return;
             }
             console.warn('连接失败:', err);
@@ -1140,6 +1177,8 @@ export default function ConnectionList() {
             setFormOpen(false);
             setEditingConnection(undefined);
           }}
+          // 表单保存后即关闭，自己那条提示活不到用户看见；交给列表这条既有红条说。
+          onSecretsSaveError={setLocalError}
         />
       </Modal>
 

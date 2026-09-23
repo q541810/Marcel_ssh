@@ -3,11 +3,15 @@ import * as tauri from '@/lib/tauri';
 import type { SavedConnection } from '@/lib/types';
 
 /**
- * 私钥连接的判断与展示口径，桌面与移动端共用（两处各写一套必然走样）。
+ * 后端"认证失败原因码"的判断口径，桌面与移动端共用（两处各写一套必然走样）。
  *
  * 这一层的存在是为了修掉一个具体的坑：以前**任何**私钥失败都会弹「私钥密码」框，
  * 于是"密钥文件根本不存在"也会追问密码，用户输完还是失败。现在后端把原因分成了
  * 结构化的 code（`AppError::KeyAuth`），前端只对真正需要密码的那两种追问。
+ *
+ * 密码认证走的是**同一个**原因码通道（`KeyAuthCode::Rejected`）：在私钥流程里它表示
+ * "这把密钥被服务器拒了"，在密码流程里表示"这份密码被服务器拒了"。两条流程各自只问
+ * 自己该问的——见 `isPassphraseProblem` 与 `isPasswordRejected`。
  */
 
 /** 后端 `KeyAuthCode` 里"该向用户要密码"的两种（其余都是别的问题）。 */
@@ -30,6 +34,21 @@ export function isPassphraseProblem(err: unknown): boolean {
 /** 失败的是不是私钥相关（无论哪种原因），用于选择提示措辞。 */
 export function isKeyAuthProblem(err: unknown): boolean {
   return keyAuthCode(err) !== null;
+}
+
+/**
+ * 这次失败是不是"密钥链里存着的那份密码被服务器拒了"——密码流程里唯一该重新追问的情况。
+ *
+ * 用 `rejected` 这一档（后端 `KeyAuthCode::Rejected` = 服务器拒绝了这份凭据）。只有先
+ * 知道是"密码不对"，才敢把浮层再弹一次；网络不通、主机密钥变更这些原因重新要密码是没用的，
+ * 用户照着提示也做不对下一步。复问时输入的新密码会覆盖密钥链里那份错的（`savePassword`），
+ * 所以打错一个字符不会再把这份错密码永久固化下去。
+ *
+ * 只在密码认证流程里调用：同一个码在私钥流程里表示"密钥被拒"，那边由
+ * `isPassphraseProblem` 负责。
+ */
+export function isPasswordRejected(err: unknown): boolean {
+  return keyAuthCode(err) === 'rejected';
 }
 
 /**

@@ -510,11 +510,18 @@ impl SshManager {
             }
         };
         if !auth_success.success() {
-            // 区分两次失败：密码被拒不等于密钥被拒，能照做的下一步完全不同
+            // 区分两次失败：密码被拒不等于密钥被拒，能照做的下一步完全不同。
+            //
+            // 两条都走**结构化原因码**（前端只认 `data.code`，中文字面量一律不作判据）：
+            // `Rejected` 在私钥路径里是"这把密钥被拒"，在密码路径里是"这份密码被拒"——
+            // 前端在各自流程里读同一个码、做各自该做的事：密码被拒要重新追问并覆盖密钥链
+            // 里那份打错的（`src/lib/privateKey.ts` 的 `isPasswordRejected`）。压成字符串
+            // 就等于把复问的机会丢掉，那份错密码会被永久重放。
             return Err(match auth_method {
-                AuthMethod::Password { .. } => {
-                    AppError::Ssh("认证失败：用户名或密码错误".into())
-                }
+                AuthMethod::Password { .. } => AppError::KeyAuth {
+                    code: KeyAuthCode::Rejected,
+                    message: "认证失败：用户名或密码错误".into(),
+                },
                 AuthMethod::PrivateKey { .. } => AppError::KeyAuth {
                     code: KeyAuthCode::Rejected,
                     message: "服务器拒绝了这把密钥。请确认它对应的公钥已加到服务器的 authorized_keys 里、用户名正确；如果你最近换过密钥文件，请在连接设置里重新导入——应用用的可能是导入时那份。"
@@ -804,9 +811,17 @@ fn strip_ssh_prefix(msg: &str) -> String {
 
 /// Map target-hop errors: preserve HostKeyMismatch; with jump, prefix
 /// `目标服务器 {host}`；direct keeps legacy wording for compatibility.
+///
+/// 带跳板机时**必须**把 `KeyAuth` 的原因码原样带着走（只改写文案）：原因码是前端
+/// 决定"要不要重新追问密码 / 私钥密码"的唯一依据，被压成 `AppError::Ssh` 字符串后
+/// 保存的错凭据就再也不会被追问了。
 fn map_target_err(e: AppError, host: &str, via_jump: bool) -> AppError {
     match e {
         AppError::HostKeyMismatch { .. } => e,
+        AppError::KeyAuth { code, message } if via_jump => AppError::KeyAuth {
+            code,
+            message: format!("目标服务器 {} 认证失败：{}", host, message),
+        },
         other if via_jump => AppError::Ssh(format!(
             "目标服务器 {} 连接失败：{}",
             host,

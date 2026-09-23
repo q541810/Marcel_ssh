@@ -4,21 +4,23 @@ import PasswordPrompt from '@/components/connection/PasswordPrompt';
 interface PromptConfig {
   title: string;
   description: string;
-  allowRemember?: boolean;
-  onSubmit: (password: string, remember: boolean) => void;
+  onSubmit: (password: string) => void;
 }
 
+/**
+ * 驱动「输入密码 / 密钥密码」这一个浮层。
+ *
+ * 没有「记住」选项：调用方拿到的凭证一律存进系统密钥链（见 PasswordPrompt 的注释）。
+ */
 export function useConnectWithPassword() {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [allowRemember, setAllowRemember] = useState(false);
-  const onSubmitRef = useRef<((password: string, remember: boolean) => void) | null>(null);
+  const onSubmitRef = useRef<((password: string) => void) | null>(null);
 
   const prompt = useCallback((config: PromptConfig) => {
     setTitle(config.title);
     setDescription(config.description);
-    setAllowRemember(config.allowRemember ?? false);
     onSubmitRef.current = config.onSubmit;
     setOpen(true);
   }, []);
@@ -27,9 +29,9 @@ export function useConnectWithPassword() {
     setOpen(false);
   }, []);
 
-  const handleSubmit = useCallback((password: string, remember: boolean) => {
+  const handleSubmit = useCallback((password: string) => {
     setOpen(false);
-    onSubmitRef.current?.(password, remember);
+    onSubmitRef.current?.(password);
   }, []);
 
   const Prompt = useMemo(() => (
@@ -37,11 +39,10 @@ export function useConnectWithPassword() {
       open={open}
       title={title}
       description={description}
-      allowRemember={allowRemember}
       onSubmit={handleSubmit}
       onCancel={dismiss}
     />
-  ), [open, title, description, allowRemember, handleSubmit, dismiss]);
+  ), [open, title, description, handleSubmit, dismiss]);
 
   return { prompt, dismiss, Prompt };
 }

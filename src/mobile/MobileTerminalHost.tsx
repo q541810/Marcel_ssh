@@ -6,8 +6,11 @@ import { CanvasAddon } from '@xterm/addon-canvas';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useHostKeyMismatch } from '@/hooks/useHostKeyMismatch';
+import { useConnectWithPassword } from '@/hooks/useConnectWithPassword';
+import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { useSessionLifecycle } from '@/hooks/useSessionLifecycle';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import * as tauri from '@/lib/tauri';
@@ -17,6 +20,9 @@ import {
   getErrorMessage,
   parseAppError,
 } from '@/lib/errors';
+import { isPasswordRejected } from '@/lib/privateKey';
+import { formatConnLabel } from '@/lib/privacy';
+import type { SavedConnection } from '@/lib/types';
 import MobileAuxKeyBar from './MobileAuxKeyBar';
 import MobileConnectionList from './MobileConnectionList';
 import MobileQuickCommandBar from './MobileQuickCommandBar';
@@ -62,6 +68,10 @@ export default function MobileTerminalHost({
   );
   const hostKeyMismatch = useHostKeyMismatch();
   const { onDisconnected } = useSessionLifecycle();
+  const connections = useConnectionStore((s) => s.connections);
+  const privacyMode = usePrivacyMode();
+  const { prompt: promptPassword, Prompt: PasswordPromptEl } =
+    useConnectWithPassword();
 
   const [forceList, setForceList] = useState(false);
   const [inputState, setInputState] = useState<TerminalInputState>({
@@ -519,26 +529,76 @@ export default function MobileTerminalHost({
     [disconnect, onDisconnected],
   );
 
-  const handleReconnect = useCallback(
-    (sessionId: string) => {
+  /**
+   * 重连（含主机密钥确认后的重试）。失败一律回到这里处理，两条路共用同一套判据。
+   */
+  const runReconnect = useCallback(
+    (sessionId: string, trust = false) => {
       setIoError(null);
-      void reconnect(sessionId).catch((err) => {
+      const savedConnectionOf = (): SavedConnection | undefined => {
+        const configId =
+          useSessionStore.getState().sessions[sessionId]?.configId;
+        return configId ? connections.find((c) => c.id === configId) : undefined;
+      };
+      void reconnect(sessionId, trust).catch((err) => {
         const mismatch = asHostKeyMismatch(parseAppError(err));
         if (mismatch) {
           hostKeyMismatch.prompt({
             data: mismatch,
-            onTrust: () => {
-              void reconnect(sessionId, true).catch((reErr) => {
-                setIoError(getErrorMessage(reErr));
-              });
+            onTrust: () => runReconnect(sessionId, true),
+          });
+          return;
+        }
+        // 存的那份密码被服务器拒了：`ssh_reconnect` 每次都从密钥链取回**同一份**密码
+        // 重放，不换一份的话点多少次「重连」都是同一个结果，且没有任何解释。这里就地
+        // 复问（与连接列表里"存的那份被拒 → 换一份"同一口径），新密码覆盖密钥链里
+        // 那份错的，再用它重连。
+        //
+        // 只在这条连接确实是密码认证时才追问：同一个原因码在私钥流程里表示"这把密钥
+        // 被拒"，那时要密码是答非所问（见 `src/lib/privateKey.ts`）。刻意不做两件事：
+        // 不加"记住"复选框、不做"先验后存"——都是既定的产品决策。
+        const saved = savedConnectionOf();
+        if (saved?.authMethod === 'Password' && isPasswordRejected(err)) {
+          promptPassword({
+            title: 'SSH 密码',
+            description:
+              `重连 ${formatConnLabel(saved.username, saved.host, saved.port, privacyMode)}。` +
+              '上次保存的密码被服务器拒绝，请输入新的；输入后会覆盖本机保存的那份。',
+            onSubmit: async (password) => {
+              try {
+                await tauri.savePassword(saved.id, password);
+              } catch (saveErr) {
+                console.warn('保存密码到密钥链失败:', saveErr);
+                // 没能覆盖那份错的 → 重连只会继续重放旧密码，别再骗用户点一次
+                setIoError(
+                  `新密码没能保存到本设备（${getErrorMessage(saveErr)}），重连仍会使用旧密码。请到连接列表里重新设置这条连接的密码。`,
+                );
+                return;
+              }
+              runReconnect(sessionId);
             },
           });
+          return;
+        }
+        if (isPasswordRejected(err)) {
+          // 凭据被拒，但拿不到这条连接的记录（已被删除 / 列表还没载入）→ 就地补不了，
+          // 只能把去处说清楚。
+          setIoError(
+            `重连失败：${getErrorMessage(err)}。到连接列表里重新设置密码或检查私钥，然后重试。`,
+          );
           return;
         }
         setIoError(getErrorMessage(err));
       });
     },
-    [reconnect, hostKeyMismatch.prompt],
+    [connections, privacyMode, promptPassword, reconnect, hostKeyMismatch.prompt],
+  );
+
+  const handleReconnect = useCallback(
+    (sessionId: string) => {
+      runReconnect(sessionId);
+    },
+    [runReconnect],
   );
 
   return (
@@ -568,6 +628,7 @@ export default function MobileTerminalHost({
         />
       )}
       {hostKeyMismatch.Modal}
+      {PasswordPromptEl}
 
       {!showList && panelMode === 'connecting' && (
         <div className="flex-shrink-0 border-b border-amber-900/40 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-200">
