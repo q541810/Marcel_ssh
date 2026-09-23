@@ -1,6 +1,6 @@
 import { useSessionStore } from './sessionStore';
 import { useConversationStore } from './conversationStore';
-import { useTaskStore } from './taskStore';
+import { useTaskStore, finalizeTaskLocally } from './taskStore';
 import { isTaskBusy } from '@/lib/agentStatus';
 import type { Session } from '@/lib/types';
 
@@ -181,23 +181,28 @@ class SessionConversationBindingManager {
       }
     }
 
-    // 会话断开时，清理属于该 sessionId 的孤儿 running / waiting_approval tasks，
-    // 并自动收敛 interaction 状态，防止断连后残留橙点/转圈
+    // 会话断开时，收尾属于该 sessionId 的孤儿 running / waiting_approval tasks：
+    // 界面上的转圈与「待审批」标注都由任务状态驱动，不收尾就会一直亮着。
+    //
+    // **必须**经 `finalizeTaskLocally`（而不是就地改 status）：断连只是
+    // 「没有人再看这条流」，任务的 agent loop 仍在后端跑、仍会继续发事件。
+    // 只改 status 会同时丢掉三件收尾 —— 在飞卡片永久转圈、流通道没人拆
+    // （晚到的终态事件会把**新回合**的锚点写成 completed、并删掉新任务正在飞
+    // 的工具卡）、回合收尾状态不写（折叠判定只能拿 running 去猜）。
+    //
+    // 这里**不**向后端下发停止命令，理由有两条：
+    // 1. 后端断连观察者刻意只取消交互与命令、不结束 agent loop（`lib.rs`），
+    //    前端单方面发停止会与那条既有语义打架；
+    // 2. 断的是**这一个** SSH 会话，多机任务的子 agent 可能跑在别的机器上
+    //    （`multi_host`），`agent_stop_task` 的级联会连它们一起误杀。
+    // 代价是后端的这条任务会继续跑到自己的收尾检查点，其产出仍会落库
+    // （重连后 load 得到完整历史）；前端不再接收它的事件，所以不会再污染
+    // 任何对话的内存态 —— 这正是收尾要先把通道拆掉的原因。
     const taskStore = useTaskStore.getState();
-    const tasks = taskStore.tasks;
-    let hasChanged = false;
-    const updatedTasks = { ...tasks };
-    for (const [tid, task] of Object.entries(tasks)) {
+    for (const [tid, task] of Object.entries(taskStore.tasks)) {
       if (task.sessionId === sessionId && isTaskBusy(task.status)) {
-        updatedTasks[tid] = { ...task, status: 'cancelled' };
-        hasChanged = true;
+        finalizeTaskLocally(tid, 'cancelled');
       }
-    }
-    if (hasChanged) {
-      useTaskStore.setState({
-        tasks: updatedTasks,
-        activeTaskId: taskStore.activeTaskId && updatedTasks[taskStore.activeTaskId]?.status === 'cancelled' ? null : taskStore.activeTaskId,
-      });
     }
   }
 }

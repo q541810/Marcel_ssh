@@ -104,6 +104,74 @@ export interface TaskState {
 
 const currentAssistantMessageId: Map<string, string> = new Map();
 
+/**
+ * 任务本地收尾（**唯一入口**）。
+ *
+ * 任何改写任务终态的路径都必须走它 —— 就地 `setState` 改 `status` 会同时
+ * 绕过收尾契约的三件事（历史教训：绕开 `stopTask` 去改任务状态 = 绕过收尾）：
+ * 1. `markAbortedToolFlags`：在飞的工具卡片标成「已中断」，否则永久转圈；
+ * 2. `cleanupTaskListeners`：拆流通道。不拆的话晚到的终态事件仍会被当成模型
+ *    自然结束处理（把回合写成 completed、把新任务正在飞的工具卡删掉）；
+ * 3. `markTailTurnState`：落回合收尾状态（只有 completed 允许折叠回合，
+ *    不写就只能拿 running 去猜）。后端也会落库，但收尾时通道已拆、
+ *    前端收不到任何事件，**这里必须自己写**。
+ *
+ * 级联：连同该任务的全部后代子任务（subagent 工具派发）一起收尾 —— 后端
+ * 取消/断连是整条线一起的，漏掉子任务会让它的终态事件被残留 listener 消费
+ * 而误标 completed。
+ * 幂等：只处理仍在运行中的任务，已终态的跳过（避免把「子任务已自然完成、
+ * 主任务仍在等结果」误标成取消）。
+ *
+ * 用它收尾的是「前端自己决定的终态」（用户停止 / 会话断连）；后端回灌的
+ * 权威结论不经这里 —— 那是各 `handleXxx` 事件处理器的职责，它们的卡片与
+ * 回合语义与本函数不同（completed 不算中断、failed 不是用户中断）。
+ *
+ * @returns 真正被收尾的 taskId（含级联到的子任务）
+ */
+export function finalizeTaskLocally(
+  taskId: string,
+  status: Extract<AgentTask["status"], "cancelled" | "failed">,
+): string[] {
+  // 收集该任务及其全部后代（BFS；每轮重读 tasks，子链可以任意深）
+  const ids = [taskId];
+  let i = 0;
+  while (i < ids.length) {
+    const parent = ids[i++];
+    for (const [id, t] of Object.entries(useTaskStore.getState().tasks)) {
+      if (t.parentTaskId === parent && !ids.includes(id)) ids.push(id);
+    }
+  }
+
+  // 只处理运行中的任务（限定到各自所属对话，不误伤其他对话的工具卡片）
+  const runningIds: string[] = [];
+  for (const id of ids) {
+    const task = useTaskStore.getState().tasks[id];
+    if (!task || !isTaskBusy(task.status)) continue;
+    runningIds.push(id);
+    const convStore = useConversationStore.getState();
+    // 顺序：先标记在飞卡片（拆通道之后就拿不到 toolResult 了），再拆通道，
+    // 最后落回合收尾状态。
+    convStore.markAbortedToolFlags(task.conversationId);
+    cleanupTaskListeners(id);
+    convStore.clearAllAssistantFlags(task.conversationId);
+    convStore.markTailTurnState(task.conversationId, status);
+  }
+
+  if (runningIds.length === 0) return runningIds;
+  useTaskStore.setState((state) => {
+    const tasks = { ...state.tasks };
+    let nextActive = state.activeTaskId;
+    for (const id of runningIds) {
+      const task = tasks[id];
+      if (!task) continue;
+      tasks[id] = { ...task, status };
+      if (state.activeTaskId === id) nextActive = null;
+    }
+    return { tasks, activeTaskId: nextActive };
+  });
+  return runningIds;
+}
+
 export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: {},
   activeTaskId: null,
@@ -319,54 +387,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     //   返回后循环才在收尾检查点停下。
     //
     // 后端也会把同样的中断说明持久化进 LLM 历史，保证对话链完整。
-    // 级联：收集该任务及其全部后代子agent（subagent 工具派发）。停止主任务会
-    // 级联停掉子任务，前端必须同步清理子任务 listener 并标记取消——否则
-    // 子任务收到终态事件会被误标为 completed（实际是被取消的）。
-    const ids = [taskId];
-    let i = 0;
-    while (i < ids.length) {
-      const parent = ids[i++];
-      for (const [id, t] of Object.entries(get().tasks)) {
-        if (t.parentTaskId === parent && !ids.includes(id)) ids.push(id);
-      }
-    }
-    // 只处理运行中的任务（限定到各自所属对话，不误伤其他对话的工具卡片）。
-    // 已终态的任务跳过：避免把「子任务已自然完成、主任务仍在等结果」误标成取消。
-    const runningIds: string[] = [];
-    for (const id of ids) {
-      const t = get().tasks[id];
-      if (!t || !isTaskBusy(t.status)) continue;
-      runningIds.push(id);
-      useConversationStore.getState().markAbortedToolFlags(t.conversationId);
-      cleanupTaskListeners(id);
-      useConversationStore
-        .getState()
-        .clearAllAssistantFlags(t.conversationId);
-      // 回合收尾状态：手动停止 = 「不是模型自然结束」，该回合不再折叠
-      // （过程留在眼前）。后端的 agent loop 也会把 cancelled 落库，但**这里
-      // 必须自己写**：上面 cleanupTaskListeners 已把本任务的流通道拆掉，
-      // 后端晚到的任何事件都收不到了（见上面注释）。
-      useConversationStore
-        .getState()
-        .markTailTurnState(t.conversationId, "cancelled");
-    }
-    set((state) => {
-      const tasks = { ...state.tasks };
-      let nextActive = state.activeTaskId;
-      let found = false;
-      for (const id of runningIds) {
-        const task = tasks[id];
-        if (!task) continue;
-        tasks[id] = { ...task, status: "cancelled" };
-        found = true;
-        if (state.activeTaskId === id) nextActive = null;
-      }
-      if (!found) return state;
-      return {
-        tasks,
-        activeTaskId: nextActive,
-      };
-    });
+    // 级联（任务及其全部后代子 agent）与「只动运行中任务」的判定都在
+    // `finalizeTaskLocally` 里 —— 会话断连等路径共用同一份收尾，见其注释。
+    finalizeTaskLocally(taskId, "cancelled");
     // 本地已收尾，命令失败照旧上抛（界面不会卡在「正在停止」）。
     await tauri.agentStopTask(taskId);
   },

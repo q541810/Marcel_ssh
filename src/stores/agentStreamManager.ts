@@ -199,6 +199,11 @@ export async function handleSubTaskFallback(
   if (existing && existing.status !== subTaskTerminalStatus(meta.status)) {
     handler.updateTaskStatus(meta.subTaskId, subTaskTerminalStatus(meta.status));
   }
+  // 收敛到终态后这个子任务不会再有事件：终态 = 拆通道（与 stopTask 同一条
+  // 契约）。子任务的终态事件丢在 listener 挂载之前（重启 / 注册竞态）时，
+  // 不拆就会留下一条永远收不到事件、也没人再摘的监听器。
+  // 骨架残留由下面的 DB 全量替换兜（此路径不依赖后续事件）。
+  cleanupTaskListeners(meta.subTaskId);
   // 骨架残留防御：仅当骨架 loading 消息还在时从 DB 全量替换
   // （toolResult 到达 = 子任务已终态；实时流已消费骨架的正常路径不覆盖）。
   try {
@@ -242,6 +247,7 @@ export function cleanupTaskListeners(taskId: string) {
     planListeners.delete(taskId);
   }
   streamHandlers.delete(taskId);
+  // 收尾前的最后一笔 flush 在 cleanupStreamState 里（所有收尾路径都经过它）。
   cleanupStreamState(taskId);
 }
 
@@ -251,7 +257,23 @@ export async function attachStreamListener(taskId: string, conversationId: strin
   const handler = createDefaultStreamHandler();
   streamHandlers.set(taskId, handler);
 
-  const unlisten = await listen<LlmStreamEvent | ToolResultPayload>(
+  // 退订句柄必须**同步**可用：`listen()` 是异步的，注册往返还没完成时任务就
+  // 可能被收尾（刚发出去就点停止 / 会话断连）。旧写法把 unlisten 押到 await
+  // 之后才入表，那次清理便只能删 handler、摘不掉监听器 —— 之后才入表的
+  // unlisten 再没人调用，监听器永久留在事件总线上，被取消的任务继续把事件
+  // 写进 store（已停任务的文本与卡片回魂）。
+  // `tauriEvent.ts` 的 `subscribeTauriEvent` 正是为这一类坑写的原语，这里用
+  // 同构的 disposed 标志兜住；差别只在于本函数还必须**等注册往返结束**才返回：
+  // 调用方（startTask）依赖「订阅已就绪」才去发会立刻产生事件的后端命令。
+  let unlisten: UnlistenFn | null = null;
+  let disposed = false;
+  streamListeners.set(taskId, () => {
+    disposed = true;
+    unlisten?.();
+    unlisten = null;
+  });
+
+  const fn = await listen<LlmStreamEvent | ToolResultPayload>(
     `agent://stream/${taskId}`,
     (event) => {
       const ev = event.payload;
@@ -403,7 +425,16 @@ export async function attachPlanListener(taskId: string) {
     streamHandlers.set(taskId, handler);
   }
 
-  const unlisten = await listen<PlanStreamEvent>(
+  // 与 attachStreamListener 同构：同步登记取消句柄，注册落地时若已取消则当场回收。
+  let unlisten: UnlistenFn | null = null;
+  let disposed = false;
+  planListeners.set(taskId, () => {
+    disposed = true;
+    unlisten?.();
+    unlisten = null;
+  });
+
+  const fn = await listen<PlanStreamEvent>(
     `agent://plan/${taskId}`,
     (event) => {
       const ev = event.payload;
@@ -436,5 +467,10 @@ export async function attachPlanListener(taskId: string) {
     },
   );
 
-  planListeners.set(taskId, unlisten);
+  if (disposed) {
+    // 同上：注册比取消晚到，当场回收。
+    fn();
+    return;
+  }
+  unlisten = fn;
 }

@@ -308,6 +308,18 @@ interface TaskStreamState {
 
 const taskStreamState: Map<string, TaskStreamState> = new Map();
 
+/**
+ * 该任务挂起 delta 的写入口（由 `scheduleFlush` 记录），收尾时用它补最后一笔。
+ *
+ * 记的是**攒下这批 delta 的那条通道本身**（handler + 对话 + 启动骨架 id），
+ * 不是收尾时按 taskId 反查：`cleanupStreamState` 是唯一保证会跑的收尾点，
+ * 它拿不到 handler，也不能假设任务还在 taskStore 里（手动压缩用的就是临时 id）。
+ */
+const taskStreamWriters: Map<
+  string,
+  { handler: StreamHandler; conversationId: string; loadingAssistantId: string }
+> = new Map();
+
 export function getStreamState(taskId: string): TaskStreamState {
   return taskStreamState.get(taskId) ?? {
     assistantMessageId: null,
@@ -325,6 +337,13 @@ export function getStreamState(taskId: string): TaskStreamState {
 
 export function cleanupStreamState(taskId: string) {
   const state = taskStreamState.get(taskId);
+  // 收尾前的最后一笔：把还没进 store 的 delta 同步提交。
+  // 收尾之后不会再有事件来触发 rAF flush，下面直接丢掉缓冲 —— 不补这一笔，
+  // 用户会看到刚停下的那个回合在最后一句中途截断（DB 与重新加载都是完整的，
+  // 缺的只有界面这句尾巴）。
+  // 放在这里而不是各条收尾路径里：**所有**收尾路径都经过本函数（手动停止 /
+  // 会话断连 / 终态事件 / 启动失败 / 手动压缩），补在别处漏一条就漏一处截断。
+  if (state) flushLeftoverDeltas(taskId, state);
   if (state?.flushRafId != null) {
     cancelAnimationFrame(state.flushRafId);
   }
@@ -335,6 +354,16 @@ export function cleanupStreamState(taskId: string) {
     }
   }
   taskStreamState.delete(taskId);
+  taskStreamWriters.delete(taskId);
+}
+
+/** 收尾补笔：把缓冲里剩下的 delta 写到它们本就该去的那个对话。 */
+function flushLeftoverDeltas(taskId: string, state: TaskStreamState) {
+  if (!state.pendingTextDelta && !state.pendingThinkingDelta) return;
+  const writer = taskStreamWriters.get(taskId);
+  // 没攒过 delta 就没有写入口 —— 也没东西可写。
+  if (!writer) return;
+  flushPendingDeltas(writer.handler, taskId, writer.conversationId, writer.loadingAssistantId);
 }
 
 export function setStreamState(taskId: string, state: TaskStreamState) {
@@ -448,7 +477,8 @@ export function handleToolResult(
 
 /**
  * 把 task 累积的 pending delta 合并提交到 store。
- * 由 scheduleFlush（rAF 触发）或 handleDone（强制同步）调用。
+ * 由 scheduleFlush（rAF 触发）/ handleDone（强制同步）/ **收尾路径**
+ * （`cleanupStreamState`，见那里的注释）调用。
  * 同步执行：调用后 buffer 清空，rAF 句柄释放。
  */
 function flushPendingDeltas(
@@ -527,6 +557,9 @@ function scheduleFlush(
   loadingAssistantId: string,
 ) {
   const state = getStreamState(taskId);
+  // 先记下写入口：收尾路径（cleanupStreamState）要在 rAF 被取消、handler 已
+  // 从 manager 的表里摘掉之后，靠它把残留 delta 补齐。
+  taskStreamWriters.set(taskId, { handler, conversationId, loadingAssistantId });
   if (state.flushRafId != null) return;
   state.flushRafId = requestAnimationFrame(() => {
     flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
