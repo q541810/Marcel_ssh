@@ -304,7 +304,25 @@ async fn spawn_connection(
 /// **只关自动拉起的**：用户手动打开的在线会话绝不受影响（判断依据 =
 /// 记账集合里的 session_id 当前仍在线）。
 pub async fn cleanup_task_targets(state: &AppState, task_id: &str) {
-    let session_ids = state.multi_host_targets.take_all(task_id).await;
+    cleanup_task_targets_except(state, task_id, &std::collections::HashSet::new()).await
+}
+
+/// 同 [`cleanup_task_targets`]，但**留下** `keep` 里的会话。
+///
+/// 用途：任务收尾时名下还有后台作业在跑（作业活得比回合久）——那些会话还得
+/// 给作业用，关掉会连坐杀掉作业（断连观察者会取消该会话上所有执行）。留下的
+/// 会话**仍留在记账表里**（`take_filtered` 不打收尾标记），由末条作业结算时的
+/// 回收钩子取走（见 `command_exec::set_task_drain_hook`）。
+pub async fn cleanup_task_targets_except(
+    state: &AppState,
+    task_id: &str,
+    keep: &std::collections::HashSet<String>,
+) {
+    let session_ids = if keep.is_empty() {
+        state.multi_host_targets.take_all(task_id).await
+    } else {
+        state.multi_host_targets.take_filtered(task_id, keep).await
+    };
     for sid in session_ids {
         // 若该会话仍由 manager 持有（未被别处主动断开），关闭它。
         if state.ssh_manager.is_connected(&sid).await {

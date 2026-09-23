@@ -114,6 +114,29 @@ mod tests {
         assert!(prompt.contains("write_file"));
     }
 
+    /// 后台作业那段必须与「回合不再被作业持住」这条新语义一致。
+    ///
+    /// 这条护栏钉的是**模型读到的契约**：旧文案承诺「你无法直接结束时，系统会
+    /// 等你处理完」—— 那是持住回合时代的说法，早已不成立（模型会据此把结论拖着
+    /// 不给、以为系统会替它等）。改回旧措辞、或抹掉承载新语义的那两处关键说明
+    /// （作业跑完会**再开一轮**交回、真被挡住才自己 wait），这里就红。
+    #[test]
+    fn job_section_matches_the_no_longer_held_turn_semantics() {
+        let prompt = build(false, &[], "", &[], false);
+        assert!(
+            !prompt.contains("系统会等你处理完"),
+            "旧文案承诺了系统会替模型等作业 —— 回合早就不再被作业持住了"
+        );
+        assert!(
+            prompt.contains("再开一轮"),
+            "要告诉模型作业跑完会由系统再开一轮把结局交给它"
+        );
+        assert!(
+            prompt.contains("wait=true"),
+            "要告诉模型真的被挡住时用 job_output 的 wait 自己等（单次有上限）"
+        );
+    }
+
     #[test]
     fn prompt_omits_plan_section_when_not_plan_mode() {
         let prompt = build(false, &[], "", &[], false);

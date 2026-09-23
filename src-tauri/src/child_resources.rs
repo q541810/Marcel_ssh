@@ -97,8 +97,40 @@ impl ChildResources {
             .unwrap_or_default()
     }
 
-    /// 从**任意** owner 名下摘掉一个子资源（用户单独取消某条资源时用）。
+    /// 取走 owner 名下**不在 `keep` 里**的子资源，`keep` 里的留在表里。
     ///
+    /// 与 [`Self::take_all`] 的关键差别：**不打收尾标记**。留下的那些之后还能
+    /// 被清理取走（owner 还没收尾），也不会拒绝新的注册 —— 这正是「资源比
+    /// owner 的终态活得更久」需要的语义（多机自动拉起的会话要给还在跑的
+    /// 后台作业用：任务收尾时留下它们，末条作业结算时再取走）。
+    ///
+    /// `keep` 为空时等价于 `take_all`，但不会打标记——需要收尾语义的调用方
+    /// 自己走 [`Self::take_all`]。
+    pub async fn take_filtered(&self, owner: &str, keep: &HashSet<String>) -> Vec<String> {
+        let mut inner = self.inner.write().await;
+        let (taken, emptied) = match inner.by_owner.get_mut(owner) {
+            Some(children) => {
+                let taken: Vec<String> = children
+                    .iter()
+                    .filter(|child| !keep.contains(*child))
+                    .cloned()
+                    .collect();
+                for child in &taken {
+                    children.remove(child);
+                }
+                (taken, children.is_empty())
+            }
+            None => (Vec::new(), false),
+        };
+        // 表项摘空就一起回收（与 `remove_child` 同规矩：留着空集合会让
+        // `by_owner` 随历史 owner 增长）。
+        if emptied {
+            inner.by_owner.remove(owner);
+        }
+        taken
+    }
+
+    /// 从**任意** owner 名下摘掉一个子资源（用户单独取消某条资源时用）。
     /// 只摘资源、**不碰收尾标记** —— owner 并没有终态，之后仍可继续注册。
     /// 返回是否找到（找不到是正常情况：它可能已经被父终态清理取走了）。
     pub async fn remove_child(&self, child: &str) -> bool {
@@ -219,6 +251,45 @@ mod tests {
         // task-2 不受影响
         assert!(res.register("task-2", "sess-c").await);
         assert_eq!(res.take_all("task-2").await.len(), 2);
+    }
+
+    /// `take_filtered` 留下的子资源**仍在表里、仍能被后续清理取走** —— 这正是
+    /// 「资源比 owner 的终态活得更久」（多机会话要给还在跑的后台作业用）所依赖
+    /// 的不变量。若它顺手打了收尾标记，留下的那些就再也没人回收了。
+    #[tokio::test]
+    async fn take_filtered_keeps_the_kept_ones_reachable() {
+        let res = ChildResources::new();
+        for id in ["sess-busy", "sess-idle"] {
+            assert!(res.register("task-1", id).await);
+        }
+
+        let keep: HashSet<String> = ["sess-busy".to_string()].into_iter().collect();
+        assert_eq!(res.take_filtered("task-1", &keep).await, vec!["sess-idle"]);
+        // 留下的还在表里（少一个才是漏，多一个才是错——按集合比）
+        assert_eq!(res.registered_count("task-1").await, 1);
+        // 收尾标记没被打：owner 之后仍可注册新资源（会话被再次拉起的情形）
+        assert!(res.register("task-1", "sess-late").await);
+        // 末条作业结算后的那次清理能把留下的都取走
+        let mut taken = res.take_all("task-1").await;
+        taken.sort();
+        assert_eq!(taken, vec!["sess-busy", "sess-late"]);
+        assert_eq!(res.registered_count("task-1").await, 0);
+    }
+
+    /// 摘空之后 owner 表项一起回收（与 `remove_child` 同规矩）。
+    #[tokio::test]
+    async fn take_filtered_clears_the_owner_entry_when_it_empties() {
+        let res = ChildResources::new();
+        assert!(res.register("task-1", "sess-a").await);
+        assert_eq!(
+            res.take_filtered("task-1", &HashSet::new()).await,
+            vec!["sess-a"],
+            "keep 空时应当把所有子资源都取走"
+        );
+        assert!(!res.has_owner("task-1").await, "摘空后表项必须回收");
+        // 但收尾标记**没**被打：owner 照样能重新注册
+        assert!(res.register("task-1", "sess-b").await);
+        assert_eq!(res.take_all("task-1").await, vec!["sess-b"]);
     }
 
     #[tokio::test]

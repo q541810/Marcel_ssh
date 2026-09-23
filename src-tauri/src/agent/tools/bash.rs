@@ -47,22 +47,19 @@ impl BashTool {
         ctx: &ToolContext,
         target_label: Option<String>,
     ) -> Result<ToolOutput, AppError> {
-        let command = params
-            .get("command")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| AppError::Agent("Missing 'command' parameter".into()))?
-            .trim();
-
-        if command.is_empty() {
-            return Ok(ToolOutput::fail("bash", "Error: empty command"));
-        }
-
-        // 必填参数（`description`）。正常情况下 dispatcher 的预检已经在弹审批之前
-        // 拦下了，走到这里说明工具被别的路径直接调起来（多机换机、测试等）——
-        // 兜底要给出和预检**同一句话**。
+        // 必填参数（`command` + `description`）。正常情况下 dispatcher 的预检已经在
+        // 弹审批之前拦下了，走到这里说明工具被别的路径直接调起来（多机换机、测试等）
+        // ——兜底要给出和预检**同一句话**（判据只有 `missing_required_argument` 一处，
+        // 它已经保证 command 是非空白字符串与空命令的情形）。
         if let Some(message) = missing_required_argument(&params) {
             return Err(AppError::Agent(message));
         }
+
+        let command = params
+            .get("command")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AppError::Agent(missing_command_message()))?
+            .trim();
 
         let run_in_background = params
             .get("run_in_background")
@@ -164,6 +161,11 @@ impl BashTool {
             if let Some(task_id) = &ctx.task_id {
                 ticket = ticket.cancellable(task_id, "Agent 命令已取消");
             }
+            // 归属对话：作业台账与访问围栏的键，跨应用重启仍然有效
+            // （子 agent 派发的作业记在派它的父对话名下）。
+            if let Some(owner) = &ctx.owner_conversation_id {
+                ticket = ticket.owned_by(owner);
+            }
             let job_info = ctx.submit_background(ticket, Some(description.clone())).await?;
 
             // Zeroize password and rewritten command immediately
@@ -220,9 +222,18 @@ impl BashTool {
         cmd.zeroize();
 
         match exec_result {
-            Ok((output, was_timeout)) => {
-                let mut truncated = truncate_output(output, MAX_OUTPUT_BYTES);
-                if was_timeout {
+            Ok(shaped) => {
+                let mut truncated = truncate_output(shaped.output, MAX_OUTPUT_BYTES);
+                // 退出事实紧跟在输出后面：模型必须能直接看出命令成功
+                // 没有（`grep -q`、`test -f` 成功时本来就没有输出）。
+                // 成功（退出码 0）不贴标记，省 token 也不制造噪音。
+                if shaped.exit.is_known() && !shaped.exit.is_success() {
+                    if !truncated.is_empty() && !truncated.ends_with('\n') {
+                        truncated.push('\n');
+                    }
+                    truncated.push_str(&format!("[{}]", shaped.exit.describe()));
+                }
+                if shaped.was_timeout {
                     truncated.push_str(&format!(
                         "\n\n[命令超时（{} 秒）：已停止等待输出并关闭 SSH 通道，但远端进程不保证已终止——只有它之后还往 stdout/stderr 写东西时，才可能因管道断开（SIGPIPE）退出；静默运行、重定向了输出、被 nohup/setsid/& 脱离的命令会继续在服务器上运行。必要时用 ps/pgrep 确认并按需 kill 清理。]",
                         timeout_secs
@@ -230,9 +241,12 @@ impl BashTool {
                 }
                 Ok(
                     ToolOutput::ok(format!("$ {}", command), truncated).with_metadata(
-                        attach_target(
-                            json!({ "disposition": assessment.disposition.label(), "was_timeout": was_timeout }),
-                        ),
+                        attach_target(json!({
+                            "disposition": assessment.disposition.label(),
+                            "was_timeout": shaped.was_timeout,
+                            "exit_code": shaped.exit.code,
+                            "exit_signal": shaped.exit.signal,
+                        })),
                     ),
                 )
             }
@@ -251,15 +265,31 @@ impl Default for BashTool {
     }
 }
 
-/// bash 的必填参数检查（`command` 之外的 `description`）。
+/// 「缺 `command`」时给模型的话。
+///
+/// 单独提出来的理由与 [`missing_required_argument`] 相同：预检与 `execute_inner`
+/// 的兜底必须是同一句话，不能各写一份。
+fn missing_command_message() -> String {
+    "缺少必填参数 \"command\"：要执行的那条 shell 命令。补上后重新调用 bash。".to_string()
+}
+
+/// bash 的必填参数检查（`command` 与 `description`）。
 ///
 /// 提成一个函数，是为了让「弹审批之前」的预检（[`AgentTool::validate_arguments`]）与
 /// `execute_inner` 说的是同一句话 —— 两处各写一份，改了这处忘那处，用户看到的提示
 /// 就会对不上。
 ///
+/// `command` 也必须在这里判：schema 声明的 required 是 `command` + `description`，
+/// 而它过去只在 `execute_inner` 里兜底 —— 于是「缺 command」的调用会被预检放行、
+/// 照样弹一次审批，用户点完批准才看到参数错，正是预检要消除的那次往返。
+///
 /// `description` 为什么必填：审批弹窗要把它显示在命令上方，让用户不用读 shell 语法
 /// 就能判断这条命令在干什么。缺了它，那道审批就只剩一串命令本身。
 fn missing_required_argument(params: &serde_json::Value) -> Option<String> {
+    match params.get("command").and_then(|v| v.as_str()) {
+        Some(text) if !text.trim().is_empty() => {}
+        _ => return Some(missing_command_message()),
+    }
     match params.get("description").and_then(|v| v.as_str()) {
         Some(text) if !text.trim().is_empty() => None,
         // 区分"没给"和"给了空白"对模型没用，提示里一并说清就行
@@ -281,6 +311,9 @@ impl AgentTool for BashTool {
     fn description(&self) -> &str {
         "Execute a shell command on the remote server via the user's login shell \
          (usually bash). Returns combined stdout+stderr. Long output is truncated. \
+         A failed command appends a machine-readable marker (`[exit code: N]`, \
+         `[signal: KILL]`); exit code 0 adds nothing — when output is empty and no \
+         marker appears, the command succeeded. \
          The command is statically analyzed by a risk assessment before execution: \
          catastrophic patterns (e.g. `rm -rf /`, mkfs/dd/wipefs onto a real block \
          device, or forms the analyzer cannot parse such as `$( )`/backticks) are \
@@ -309,7 +342,7 @@ impl AgentTool for BashTool {
                 },
                 "description": {
                     "type": "string",
-                    "description": "REQUIRED. What this command does and why, in active voice, 5-10 words. The user reads it on the approval dialog to judge the command without parsing shell syntax, so make it concrete about both the action and its purpose. Example: 'Restart nginx to pick up the new config' or 'List disk usage by directory'. When run_in_background is true it also becomes the job's description."
+                    "description": "REQUIRED. What this command does and why, 5-10 words, in the user's language — the same language you write replies in (Chinese-speaking user: 「重启 nginx 以加载新配置」; English-speaking user: 'Restart nginx to pick up the new config'). Do not default to English just because this value lives in a tool call. The user judges the command from it on the approval dialog without reading shell syntax, so make both the action and its purpose concrete. When run_in_background is true it also becomes the job's description."
                 },
                 "timeout_ms": {
                     "type": "integer",
@@ -576,6 +609,34 @@ mod tests {
                 .expect_err("缺说明必须被拦下");
             assert!(err.contains("description"), "提示里要点名缺的是哪个参数：{err}");
         }
+    }
+
+    #[test]
+    fn validate_arguments_rejects_missing_or_blank_command() {
+        let tool = BashTool::new();
+        for args in [
+            serde_json::json!({"description": "看一眼磁盘"}),
+            serde_json::json!({"command": "", "description": "看一眼磁盘"}),
+            serde_json::json!({"command": "   ", "description": "看一眼磁盘"}),
+            serde_json::json!({"command": 42, "description": "看一眼磁盘"}),
+            // 数组/对象形状：`as_str` 取不到，与"没给"同一条路径
+            serde_json::json!({"command": ["ls"], "description": "看一眼磁盘"}),
+        ] {
+            let err = tool
+                .validate_arguments(&args)
+                .expect_err("缺命令必须被拦下（否则会先弹审批、点完才报参数错）");
+            assert!(err.contains("command"), "提示里要点名缺的是哪个参数：{err}");
+        }
+    }
+
+    /// 预检与执行兜底必须是同一句话：两处各写一份的话，用户看到的提示会分叉。
+    #[test]
+    fn preflight_and_execute_agree_on_the_missing_command_message() {
+        let args = serde_json::json!({"description": "看一眼磁盘"});
+        let from_preflight = BashTool::new().validate_arguments(&args).unwrap_err();
+        let from_helper = missing_required_argument(&args).expect("应当判定为缺失");
+        assert_eq!(from_preflight, from_helper);
+        assert_eq!(from_preflight, missing_command_message());
     }
 
     #[test]

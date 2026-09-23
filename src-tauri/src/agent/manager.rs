@@ -910,16 +910,26 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) -> Op
         }
         None => None,
     };
-    // 释放该 task 的作业结算通知通道（挂起中的 agent loop 若因取消/失败
-    // 退出，此处确保通道不泄漏；正常路径 loop 已自行 break，这里幂等）。
-    state.command_exec.remove_task_settlement_channel(task_id);
     // 多机操控：任务终态关闭该任务自动拉起的全部目标会话（只在任务记账
     // 集合内，用户手动打开的会话绝不受影响）。异步 fire-and-forget——
     // 清理不阻塞任务收尾，且 spawn 里 catch_unwind 之外安全。
+    //
+    // **还有作业在跑的会话先留着**（对齐「作业活得比回合久」）：关掉它会连坐
+    // 杀掉作业（断连观察者会取消该会话上所有执行，见 command_exec 的断连
+    // 级联），而那些作业本来就该跑到结算、再由唤醒把结果交回模型。留下的
+    // 会话仍在记账表里，由末条作业结算时的回收钩子取走
+    // （`command_exec::set_task_drain_hook`，lib.rs 接线）。
     let mh_state = state.clone();
     let mh_task = task_id.to_string();
     tokio::spawn(async move {
-        crate::multi_host::cleanup_task_targets(&mh_state, &mh_task).await;
+        let busy_sessions: std::collections::HashSet<String> = mh_state
+            .command_exec
+            .running_jobs_for_task(&mh_task)
+            .await
+            .into_iter()
+            .map(|job| job.session_id)
+            .collect();
+        crate::multi_host::cleanup_task_targets_except(&mh_state, &mh_task, &busy_sessions).await;
         // Agent 传输级联取消：任务终态取消其名下仍进行的传输（只取消
         // 传输本身；进行中的传输收到 cancel 后自行清理 .part/sidecar）。
         crate::agent::transfer::cancel_task_transfers(&mh_state, &mh_task).await;

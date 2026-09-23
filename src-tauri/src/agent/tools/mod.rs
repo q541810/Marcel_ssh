@@ -150,6 +150,11 @@ pub struct ToolContext {
     /// 回读历史这类工具靠它知道"我在哪个会话里"——比从 `task_id` 反查
     /// `AppState.agent_tasks` 更直接，也不会在任务表里查不到时静默读到别的会话。
     pub conversation_id: Option<String>,
+    /// 本工具调用所属的**根对话**（agent_loop 构造时注入）：
+    /// 主 agent 就是自己的对话，子 agent 是派它的那个用户对话。
+    /// 后台作业按它归属——与 `conversation_id` 的区别在于子 agent：
+    /// 子 agent 的作业要算在父对话名下，否则父对话既看不到、重启后也认不回。
+    pub owner_conversation_id: Option<String>,
 }
 
 impl ToolContext {
@@ -175,7 +180,15 @@ impl ToolContext {
             command_exec: None,
             target_host_label: None,
             conversation_id: Some(conversation_id.into()),
+            owner_conversation_id: None,
         }
+    }
+
+    /// 声明归属对话（根对话）。子 agent 的上下文由此把作业记在父对话名下；
+    /// 不注入时按"不设限"处理（见 tools/job_ops.rs 的 tool_caller）。
+    pub fn with_owner_conversation(mut self, conversation_id: impl Into<String>) -> Self {
+        self.owner_conversation_id = Some(conversation_id.into());
+        self
     }
 
     /// Attach the owning agent task id (builder-style).
@@ -253,20 +266,42 @@ impl ToolContext {
         &self,
         ticket: crate::command_exec::CommandTicket,
     ) -> Result<(String, bool), AppError> {
+        let shaped = self.submit_full(ticket).await?;
+        Ok((shaped.output, shaped.was_timeout))
+    }
+
+    /// 同 [`Self::submit_shaped`]，但保留退出事实（退出码 / 信号）。
+    /// `bash` 用它把「命令到底成功没有」如实交给模型。
+    async fn submit_full(
+        &self,
+        ticket: crate::command_exec::CommandTicket,
+    ) -> Result<ExecTicketOutcome, AppError> {
         use crate::command_exec::SubmitOutcome;
         let mgr = self.command_exec.as_ref().ok_or_else(|| {
             // 不可能到达：无 manager 时调用方走 ssh 回退分支
             AppError::Agent("command_exec manager not configured".into())
         })?;
         match mgr.submit(&self.app_handle, ticket).await {
-            SubmitOutcome::Completed { output } => Ok((output, false)),
-            SubmitOutcome::TimedOut { output } => Ok((output, true)),
+            SubmitOutcome::Completed { output, exit } => Ok(ExecTicketOutcome {
+                output,
+                was_timeout: false,
+                exit,
+            }),
+            SubmitOutcome::TimedOut { output } => Ok(ExecTicketOutcome {
+                output,
+                was_timeout: true,
+                exit: Default::default(),
+            }),
             SubmitOutcome::Cancelled { reason } => Err(match reason {
                 crate::command_exec::CancelReason::User => AppError::Ssh("命令已取消".into()),
                 // Agent/Task 变体只出现在后台作业与任务级联路径；
                 // 前台命令穷尽匹配时按取消语义降级为同一文案。
                 crate::command_exec::CancelReason::Agent
                 | crate::command_exec::CancelReason::Task => AppError::Ssh("命令已取消".into()),
+                // 应用退出时通道随进程消失：前台命令同样只有这个结局。
+                crate::command_exec::CancelReason::RuntimeRestart => {
+                    AppError::Ssh("命令已取消（应用退出）".into())
+                }
                 crate::command_exec::CancelReason::Disconnected => {
                     AppError::Ssh("命令已取消（会话断开）".into())
                 }
@@ -303,7 +338,7 @@ impl ToolContext {
             )
             .timeout(Duration::from_secs(120));
             match mgr.submit(&self.app_handle, ticket).await {
-                crate::command_exec::SubmitOutcome::Completed { output } => return Ok(output),
+                crate::command_exec::SubmitOutcome::Completed { output, .. } => return Ok(output),
                 crate::command_exec::SubmitOutcome::TimedOut { .. } => {
                     return Err(AppError::Ssh(format!(
                         "命令在 120 秒后超时: {}",
@@ -373,16 +408,16 @@ impl ToolContext {
     /// 以完整 ticket 提交执行（`bash` 等需要区分「实际命令」与
     /// 「展示命令」的调用方使用；sudo 重写后的命令只进 `command`，
     /// 原始命令进 `display_command`，密码绝不入记录）。
-    /// 返回形状与 [`Self::exec_timed`] 一致。
     pub async fn exec_ticket(
         &self,
         ticket: crate::command_exec::CommandTicket,
-    ) -> Result<(String, bool), AppError> {
+    ) -> Result<ExecTicketOutcome, AppError> {
         if self.command_exec.is_some() {
-            return self.submit_shaped(ticket).await;
+            return self.submit_full(ticket).await;
         }
-        // 测试回退：ticket 的 streaming / display 差异在此路径不可用
-        match ticket.streaming {
+        // 测试回退：ticket 的 streaming / display 差异在此路径不可用，
+        // 也没有管理器捕获退出码（退出事实为空，不猜）。
+        let (output, was_timeout) = match ticket.streaming {
             Some(ref s) => {
                 self.ssh
                     .exec_command_streamed(
@@ -393,15 +428,30 @@ impl ToolContext {
                         &s.event_name,
                         &s.stream_id,
                     )
-                    .await
+                    .await?
             }
             None => {
                 self.ssh
                     .exec_command_timed(&self.session_id, &ticket.command, ticket.timeout)
-                    .await
+                    .await?
             }
-        }
+        };
+        Ok(ExecTicketOutcome {
+            output,
+            was_timeout,
+            exit: Default::default(),
+        })
     }
+}
+
+/// 前台命令执行的返回形状：输出、是否超时、退出事实。
+///
+/// 退出事实单独带出来，是因为「命令有没有成功」不能靠读输出去猜
+/// （`grep -q`、`test -f` 这类命令成功时本来就没有输出）。
+pub struct ExecTicketOutcome {
+    pub output: String,
+    pub was_timeout: bool,
+    pub exit: crate::command_exec::ExecExit,
 }
 
 /// Trait implemented by every agent tool.

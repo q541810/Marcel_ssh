@@ -1103,6 +1103,36 @@ fn group_tool_calls_into_batches<'a>(
     batches
 }
 
+/// 作业归属的**根对话**。
+///
+/// 主 agent 的作业算在自己的对话名下；子 agent（subagent 工具派发的调研/
+/// 执行任务）的作业算在派它的那个用户对话名下——子 agent 有自己独立的
+/// 对话记录，但作业是父对话那摊活的一部分：父对话要看得见、收得回，
+/// 重启后也要靠这个键认回来。沿 `parent_task_id` 往上找，带深度上限
+/// 防止任务表异常时打成死循环；查不到任务时退回本任务自己的对话。
+fn owner_conversation_for(state: &AppState, task_id: &str, fallback: &str) -> String {
+    const MAX_DEPTH: usize = 16;
+    let mut current = task_id.to_string();
+    for _ in 0..MAX_DEPTH {
+        let parent = {
+            let tasks = state.agent_tasks.read();
+            match tasks.get(&current) {
+                // 没有父任务 = 主任务：它的对话就是根对话。
+                Some(task) => match task.parent_task_id.clone() {
+                    Some(parent) => Some(parent),
+                    None => return task.conversation_id.clone(),
+                },
+                None => None,
+            }
+        };
+        match parent {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    fallback.to_string()
+}
+
 /// Executes a single tool call with context assembly, cancellation checks, plan override,
 /// and frontend event emission.
 async fn execute_single_tool(
@@ -1134,6 +1164,7 @@ async fn execute_single_tool(
             app.clone(),
         )
             .with_policy(policy)
+            .with_owner_conversation(owner_conversation_for(state, task_id, conversation_id))
             .with_task_id(task_id)
             .with_tool_call_id(&tc.id)
             .with_event_name(event_name)
@@ -1562,13 +1593,57 @@ mod tests {
             job_id: job_id.into(),
             session_id: "s1".into(),
             task_id: Some("task-1".into()),
+            owner_conversation_id: Some("conv-1".into()),
             description: description.into(),
             command: command.into(),
             status,
+            detail: None,
             started_at_millis: 0,
             finished_at_millis: Some(1),
             total_output_bytes: 0,
         }
+    }
+
+    /// 「整段内容都是思维标签」是一条真实路径：上游的
+    /// `is_effectively_empty_response` 看的是**原始** content（非空 → 不触发
+    /// 自动重试），`strip_thinking_tags` 把它清成空串。旧守卫只认「截断且为空」，
+    /// 于是这种哑火会落一条空 assistant 行、一路走到 Done（Completed）。
+    #[test]
+    fn text_reply_made_only_of_thinking_tags_is_empty() {
+        for raw in [
+            "<thinking>先看看磁盘再回答</thinking>",
+            "<think>只有思维</think>",
+            "<Thought>只有思维</Thought>",
+            // 未闭合的思维标签同样清成空（后面的内容都是思维）
+            "<thinking>没闭合的思维",
+            "",
+            "   \n\t ",
+        ] {
+            let (kind, cleaned) = classify_text_reply(raw, false);
+            assert_eq!(kind, TextReply::Empty, "{raw:?} 应判为哑火");
+            assert!(cleaned.trim().is_empty(), "{raw:?} 清理后应为空");
+        }
+        // 截断时同样一份输入走「跳过本片、下一轮补完」，而不是哑火补问
+        let (kind, _) = classify_text_reply("<thinking>没说完", true);
+        assert_eq!(kind, TextReply::TruncatedEmpty);
+    }
+
+    /// 有可见正文（哪怕被思维标签包着）必须照常落库/收尾——守卫不能过宽。
+    #[test]
+    fn text_reply_with_visible_text_stays_usable() {
+        for (raw, expected) in [
+            ("正文", "正文"),
+            ("正文 <thinking>思维</thinking> 结尾", "正文  结尾"),
+            ("<thinking>思维</thinking>正文", "正文"),
+        ] {
+            let (kind, cleaned) = classify_text_reply(raw, false);
+            assert_eq!(kind, TextReply::Visible, "{raw:?}");
+            assert_eq!(cleaned, expected);
+        }
+        // 截断但有正文：不是哑火
+        let (kind, cleaned) = classify_text_reply("被截断的正文", true);
+        assert_eq!(kind, TextReply::Visible);
+        assert_eq!(cleaned, "被截断的正文");
     }
 
     #[test]

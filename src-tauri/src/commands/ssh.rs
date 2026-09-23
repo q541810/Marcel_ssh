@@ -243,7 +243,7 @@ pub async fn ssh_exec(
 ) -> Result<String, AppError> {
     let ticket = CommandTicket::new(&session_id, &command, CommandSource::User);
     match state.command_exec.submit(&app, ticket).await {
-        SubmitOutcome::Completed { output } => Ok(output),
+        SubmitOutcome::Completed { output, .. } => Ok(output),
         SubmitOutcome::TimedOut { .. } => Err(AppError::Ssh(format!(
             "命令在 120 秒后超时: {}",
             crate::command_exec::executor::timeout_preview(&command)
@@ -284,7 +284,7 @@ pub async fn ssh_exec_long(
         .streaming("ssh-long-output", task_id.clone());
 
     match state.command_exec.submit(&app, ticket).await {
-        SubmitOutcome::Completed { output } => {
+        SubmitOutcome::Completed { output, .. } => {
             emit_event(&app, "ssh-long-done", &json!({ "taskId": &task_id }));
             Ok(output)
         }
@@ -297,7 +297,10 @@ pub async fn ssh_exec_long(
             Err(AppError::Ssh("命令在超时后未完成".into()))
         }
         SubmitOutcome::Cancelled { reason } => match reason {
-            CancelReason::User | CancelReason::Agent | CancelReason::Task => {
+            CancelReason::User
+            | CancelReason::Agent
+            | CancelReason::Task
+            | CancelReason::RuntimeRestart => {
                 emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("命令已取消".into()))
             }

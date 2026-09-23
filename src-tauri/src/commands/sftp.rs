@@ -563,7 +563,7 @@ pub async fn sftp_compress_archive(
         .streaming("ssh-long-output", task_id.clone());
 
     match state.command_exec.submit(&app, ticket).await {
-        SubmitOutcome::Completed { output } => {
+        SubmitOutcome::Completed { output, .. } => {
             // 检查 OK/FAILED 标记
             if output.lines().any(|line| line.trim() == "OK") {
                 emit_event(&app, "ssh-long-done", &json!({ "taskId": &task_id }));
@@ -593,7 +593,10 @@ pub async fn sftp_compress_archive(
             Err(AppError::Ssh("压缩超时，文件夹可能过大".into()))
         }
         SubmitOutcome::Cancelled { reason } => match reason {
-            CancelReason::User | CancelReason::Agent | CancelReason::Task => {
+            CancelReason::User
+            | CancelReason::Agent
+            | CancelReason::Task
+            | CancelReason::RuntimeRestart => {
                 emit_event(&app, "ssh-long-cancelled", &json!({ "taskId": &task_id }));
                 Err(AppError::Ssh("压缩已取消".into()))
             }

@@ -493,15 +493,17 @@ impl AppState {
 
         // SSH 连接管理器 + 命令执行统一管理器（后者注册断连观察者，
         // 必须在 SshManager 构造后立即创建并共享同一句柄）。后台作业
-        // 的输出溢出文件放在配置目录下，随体系统一管理。
+        // 的输出溢出文件放在配置目录下，随体系统一管理；作业台账
+        // （job 序号水位）与其余配置同目录，保证 job_id 跨运行单调。
         let ssh_manager = SshManager::with_known_hosts(known_hosts);
         let command_exec = crate::command_exec::CommandExecutionManager::new(
             ssh_manager.clone(),
             config_dir.join("jobs_temp"),
+            config_dir.join(crate::command_exec::LEDGER_FILE_NAME),
         )
         .await;
 
-        Self {
+        let state = Self {
             ssh_manager,
             agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
@@ -528,27 +530,52 @@ impl AppState {
             multi_host_targets: crate::child_resources::ChildResources::new(),
             agent_transfer_mutex: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             agent_transfer_by_task: crate::child_resources::ChildResources::new(),
+        };
+
+        // 「作业活得比回合久」的资源回收钩子（见
+        // `command_exec::CommandExecutionManager::set_task_drain_hook`）：
+        // 任务收尾时名下还有作业在跑的自动拉起会话会先留着（关它会连坐杀掉
+        // 作业），等末条作业结算时由这里断开。闭包自己捕获 AppState ——
+        // command_exec 因此不必知道多机操控，也不必知道应用状态长什么样。
+        {
+            let drain_state = state.clone();
+            state
+                .command_exec
+                .set_task_drain_hook(std::sync::Arc::new(move |task_id: &str| {
+                    let state = drain_state.clone();
+                    let task_id = task_id.to_string();
+                    tokio::spawn(async move {
+                        crate::multi_host::cleanup_task_targets(&state, &task_id).await;
+                    });
+                }));
         }
+
+        state
     }
 }
 
-/// When settings.json exists but cannot be deserialised (schema mismatch,
+/// When a config file exists but cannot be deserialised (schema mismatch,
 /// corruption, version drift), copy it to a backup so the incompatible
 /// file is never silently overwritten by a subsequent save.
 /// Timestamped backups grow unbounded if loading fails on every launch.
 /// Keep at most this many historical copies; prune older ones.
-/// Returns the path of the "latest" backup (`settings.json.bak`) if it was
+/// Returns the path of the "latest" backup (`<name>.json.bak`) if it was
 /// successfully created, for surfacing a warning to the user.
-const MAX_TIMESTAMPED_SETTINGS_BACKUPS: usize = 5;
+const MAX_TIMESTAMPED_CONFIG_BACKUPS: usize = 5;
 
-fn backup_settings_on_load_failure(settings_file: &std::path::Path) -> Option<std::path::PathBuf> {
-    let parent = settings_file
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+/// 把加载失败的原文件隔离成备份，返回「最近一次失败」备份的路径（供 UI 提示）。
+///
+/// 命名沿用 settings 的既有做法：`<name>.json.bak`（每次失败覆盖，永远是最新
+/// 现场）+ `<name>.json.<时间戳>.bak`（历史快照，最多保留
+/// [`MAX_TIMESTAMPED_CONFIG_BACKUPS`] 份，避免连续失败时无限堆积）。
+/// **启动期写盘（内置注入、补齐字段）与加载失败必须保住原文件**：不隔离就等于
+/// 用户数据被后续保存静默覆盖。
+fn backup_config_on_load_failure(file: &std::path::Path) -> Option<std::path::PathBuf> {
+    let parent = file.parent().unwrap_or_else(|| std::path::Path::new("."));
 
     // Overwrite the most recent "last failure" backup (single file, always fresh).
-    let bak_path = settings_file.with_extension("json.bak");
-    let bak_created = match std::fs::copy(settings_file, &bak_path) {
+    let bak_path = file.with_extension("json.bak");
+    let bak_created = match std::fs::copy(file, &bak_path) {
         Ok(_) => {
             log::warn!("旧配置文件已备份到: {}", bak_path.display());
             true

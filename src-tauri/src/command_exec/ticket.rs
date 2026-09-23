@@ -37,6 +37,10 @@ pub enum CancelReason {
     Task,
     /// 会话断开，由断连观察者级联取消。
     Disconnected,
+    /// 应用退出（进程结束）：通道随进程一起没了，作业记录从台账恢复为
+    /// [`crate::command_exec::JobStatus::Interrupted`]。
+    /// 这不是「谁终止了它」——远端进程可能仍在运行，没人发过信号。
+    RuntimeRestart,
 }
 
 /// 命令来源。用于执行记录归属、统一事件与未来的优先级/嘈杂度策略。
@@ -88,6 +92,11 @@ pub struct CommandTicket {
     pub timeout: Duration,
     /// 可取消标识：同时是取消注册表的键（`ssh_exec_long_cancel(task_id)`）。
     pub task_id: Option<String>,
+    /// 后台作业的归属对话（用户视角的那次对话；子 agent 派发的作业算在
+    /// 派它的父对话名下）。这是唯一跨应用重启仍然有效的归属键——
+    /// `session_id` 是每次连接新生成的 UUID，`task_id` 每次任务新生成，
+    /// 重启后都指不回任何东西，而作业台账要靠它把旧作业认回来。
+    pub owner_conversation_id: Option<String>,
     pub streaming: Option<StreamTarget>,
     /// 取消时返回给调用方的错误文案（不同调用方文案不同，保持旧兼容）。
     pub cancelled_message: String,
@@ -107,9 +116,16 @@ impl CommandTicket {
             source,
             timeout: DEFAULT_EXEC_TIMEOUT,
             task_id: None,
+            owner_conversation_id: None,
             streaming: None,
             cancelled_message: "命令已取消".to_string(),
         }
+    }
+
+    /// 声明归属对话（后台作业台账与访问围栏都用它）。
+    pub fn owned_by(mut self, conversation_id: impl Into<String>) -> Self {
+        self.owner_conversation_id = Some(conversation_id.into());
+        self
     }
 
     /// 覆盖展示命令。command 被重写（如 sudo 密码填充）时必须调用。

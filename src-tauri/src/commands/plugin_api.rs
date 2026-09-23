@@ -171,7 +171,7 @@ async fn execute_command<R: Runtime>(
             );
             let outcome = state.command_exec.submit_opt(None, ticket).await;
             match outcome {
-                crate::command_exec::SubmitOutcome::Completed { output } => {
+                crate::command_exec::SubmitOutcome::Completed { output, .. } => {
                     Ok(serde_json::Value::String(output))
                 }
                 crate::command_exec::SubmitOutcome::TimedOut { .. } => Err(format!(

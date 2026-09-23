@@ -26,8 +26,10 @@
 //!   `sh -c` 下 fork 出来的那棵树；局限是只对仍在原进程组里的进程有效
 //!   （自己 setsid 脱离的收不到），且 forced-command / subsystem 会话会被拒绝。
 //!
-//! 新增语义：channel 以 `None` 结束（无 Eof/Close）且该会话的当前代连接
-//! 已不存在时，返回明确的断连错误，而不是把部分输出伪装成正常完成。
+//! 新增语义：channel 以 `None` 结束（无 Eof/Close）**就是断连**——russh 会把
+//! 服务端关闭通道显式转成 `ChannelMsg::Close`（见 [`silent_channel_end_error`]），
+//! 所以 `None` 只可能来自会话死亡。此时返回明确的断连错误，既不能把部分输出
+//! 伪装成正常完成，也不许去问连接表（那只会把断连判成正常结束）。
 
 use std::time::Duration;
 
@@ -42,12 +44,52 @@ use crate::ssh::connection::SshManager;
 
 use super::ticket::{CancelReason, CommandTicket};
 
+/// 命令结束的退出事实（退出码 / 终止信号）。
+///
+/// 「非零退出码不算执行失败」这条语义不变——失败指基础设施失败（开通道
+/// 失败、断连），非零退出是命令的正常结果。但**退出事实必须如实上报**：
+/// 调用方（尤其是模型）不能靠读输出猜命令成功没有，因为 `grep -q`、
+/// `test -f`、`make -q` 这类命令恰恰是「没有任何输出但没有成功」。
+/// 同理，被信号打死的命令（OOM、外部 kill）与正常退出必须能区分开。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExecExit {
+    /// 远端回报的退出码；sshd 未回报时为 None（旧路径 / 通道被提前关闭）。
+    pub code: Option<u32>,
+    /// 被信号终止时的信号名（如 `KILL`、`TERM`）。
+    pub signal: Option<String>,
+}
+
+impl ExecExit {
+    /// 机器可读的状态片段：`exit code: 3` / `signal: KILL`；都未知时为空串。
+    pub fn describe(&self) -> String {
+        if let Some(signal) = &self.signal {
+            return format!("signal: {}", signal);
+        }
+        match self.code {
+            Some(code) => format!("exit code: {}", code),
+            None => String::new(),
+        }
+    }
+
+    /// 退出事实是否已知（远端明确回报过）。
+    pub fn is_known(&self) -> bool {
+        self.code.is_some() || self.signal.is_some()
+    }
+
+    /// 已知且成功（退出码 0、没有被信号终止）。未知不算成功。
+    pub fn is_success(&self) -> bool {
+        self.code == Some(0) && self.signal.is_none()
+    }
+}
+
 /// 一次命令执行的最终结果（executor 层视图）。命令非零退出码不算
-/// 失败（与旧语义一致，调用方从输出内容判断）。
+/// 失败（与旧语义一致，但退出事实随 [`ExecExit`] 一起交给调用方，
+/// 不再让调用方从输出内容猜）。
 #[derive(Debug)]
 pub enum ExecOutcome {
-    /// 命令正常结束。
-    Completed { output: String },
+    /// 命令正常结束（非零退出码、被信号终止都算「正常结束」，
+    /// 具体事实见 `exit`）。
+    Completed { output: String, exit: ExecExit },
     /// 超时：已显式关闭通道，`output` 为已收到的部分输出。
     TimedOut { output: String },
     /// 被取消（用户取消或断连级联）：已显式关闭通道并停止等待；
@@ -81,7 +123,7 @@ pub trait ExecTransport: Send + Sync {
     ) -> Result<ExecOutcome, AppError> {
         let outcome = self.exec(ticket, app, cancel).await?;
         match &outcome {
-            ExecOutcome::Completed { output } | ExecOutcome::TimedOut { output } => {
+            ExecOutcome::Completed { output, .. } | ExecOutcome::TimedOut { output } => {
                 on_chunk(output);
             }
             ExecOutcome::Cancelled { .. } => {}
@@ -178,8 +220,11 @@ where
 /// - `cancel = Some(rx)` 时，取消信号与数据、超时三者共同竞争（biased，
 ///   取消优先）；取消后宽限关闭通道并返回 `Cancelled`。
 /// - 超时后宽限关闭通道，返回 `TimedOut`（含部分输出）。
-/// - channel 以 `None` 结束且会话当前代连接已消失时，返回
-///   `Err("SSH 连接已断开")`（见模块文档；旧实现此处返回部分输出）。
+/// - 正常结束返回 `Completed`，并带上远端回报的退出码 / 终止信号
+///   （[`ExecExit`]）；远端没回报就是空的，绝不猜。
+/// - channel 以 `None` 结束（`None ⟺ 会话死亡`）时一律返回
+///   `Err("SSH 连接已断开")`，不当正常完成（见模块文档；旧实现此处返回
+///   部分输出，后来那版又会把它误判成正常结束）。
 pub(crate) async fn run_raw(
     ssh: &SshManager,
     session_id: &str,
@@ -212,6 +257,9 @@ pub(crate) async fn run_raw(
 
     let mut output = String::new();
     let mut ended_without_close = false;
+    // 远端回报的退出事实。OpenSSH 在 EOF / close 之前先发 exit-status，
+    // 所以我们在这条通道关掉之前就能拿到它（没拿到就是 None，如实上报）。
+    let mut exit = ExecExit::default();
 
     loop {
         tokio::select! {
@@ -271,7 +319,12 @@ pub(crate) async fn run_raw(
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => {
                         break;
                     }
-                    Some(ChannelMsg::ExitStatus { .. }) => {}
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        exit.code = Some(exit_status);
+                    }
+                    Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                        exit.signal = Some(format!("{:?}", signal_name));
+                    }
                     Some(_) => {}
                     None => {
                         ended_without_close = true;
@@ -288,14 +341,38 @@ pub(crate) async fn run_raw(
         }
     }
 
-    if ended_without_close {
-        let still_active = ssh.is_generation_active(session_id, conn.generation).await;
-        if !still_active {
-            return Err(AppError::Ssh("SSH 连接已断开".into()));
-        }
+    if let Some(err) = silent_channel_end_error(ended_without_close) {
+        // 仅供诊断：注册表里这一代还在 = 清理任务还没跑完（`None` 与清理
+        // 常被同一事件唤醒），不在 = 清理已完成。**不参与判定**。
+        let still_registered = ssh.is_generation_active(session_id, conn.generation).await;
+        log::warn!(
+            "command_exec: 会话 {} 的 exec 通道未收到 Eof/Close 就结束了（第 {} 代连接仍在注册表: {}），按断连收尾",
+            session_id,
+            conn.generation,
+            still_registered
+        );
+        return Err(err);
     }
 
-    Ok(ExecOutcome::Completed { output })
+    Ok(ExecOutcome::Completed { output, exit })
+}
+
+/// channel 以 `None` 结束（没有 Eof / Close）时的收尾判据：**一律断连**，
+/// 不存在第二种输入。
+///
+/// `None ⟺ 会话死亡`：`Channel::wait()` 就是收包端 `receiver.recv().await`
+/// （russh `channels/mod.rs`），而服务端关闭通道会被 russh 显式转发成
+/// `ChannelMsg::Close`——`client/encrypted.rs` 把通道移出映射表之前先发一条
+/// Close，原文注释写明是「让等 `Channel::wait()` 的消费者收到明确的 Close，
+/// 而不是只看到 None」。收包端返回 `None` 只可能是发送端（会话的通道表）
+/// 随连接一起消失。
+///
+/// 因此判据里**不得**掺「SshManager 里这一代连接还在不在」：那只回答
+/// 「清理任务跑完没有」，而清理路径（`drive_session` 返回 → 断开 → 拿写锁
+/// remove）比这里的一次读锁长，两条路被同一事件唤醒时这里先到，答案必然
+/// 是「还在」，于是断连被当成正常结束（半截输出 + 无退出码）。
+fn silent_channel_end_error(ended_without_close: bool) -> Option<AppError> {
+    ended_without_close.then(|| AppError::Ssh("SSH 连接已断开".into()))
 }
 
 /// 旧 `SshManager::exec_command` 系列的超时预览文案（前 80 字符）。
@@ -317,5 +394,78 @@ mod tests {
         // CJK 不 panic 且按字符计数
         let cjk = "测".repeat(100);
         assert_eq!(timeout_preview(&cjk).chars().count(), 80);
+    }
+
+    #[test]
+    fn silent_channel_end_is_always_a_disconnect() {
+        // 回归护栏：channel 以 None 结束只可能是会话死亡（russh 把服务端关闭
+        // 显式转成 ChannelMsg::Close），一律按断连收尾。判据函数只有这一个
+        // 入参是刻意的——一旦有人再把它接到「这一代连接还在不在」上，就得改
+        // 签名，这个测试会先编译不过（而不是悄悄把断连判成正常结束）。
+        let err = silent_channel_end_error(true).expect("None 结束必须报断连");
+        assert!(err.to_string().contains("已断开"), "{}", err);
+        let normal_end = silent_channel_end_error(false);
+        assert!(normal_end.is_none(), "正常结束不受影响");
+    }
+
+    #[test]
+    fn exit_describe_names_code_or_signal() {
+        assert_eq!(
+            ExecExit {
+                code: Some(0),
+                signal: None
+            }
+            .describe(),
+            "exit code: 0"
+        );
+        assert_eq!(
+            ExecExit {
+                code: Some(3),
+                signal: None
+            }
+            .describe(),
+            "exit code: 3"
+        );
+        // 信号优先：被信号打死时退出码没有意义
+        assert_eq!(
+            ExecExit {
+                code: Some(137),
+                signal: Some("KILL".into())
+            }
+            .describe(),
+            "signal: KILL"
+        );
+        // 没回报过 → 空串（调用方据此不加任何标记）
+        assert_eq!(ExecExit::default().describe(), "");
+    }
+
+    #[test]
+    fn exit_success_requires_known_zero_code() {
+        assert!(ExecExit {
+            code: Some(0),
+            signal: None
+        }
+        .is_success());
+        assert!(!ExecExit {
+            code: Some(1),
+            signal: None
+        }
+        .is_success());
+        assert!(!ExecExit {
+            code: None,
+            signal: None
+        }
+        .is_success());
+        assert!(!ExecExit {
+            code: Some(0),
+            signal: Some("PIPE".into())
+        }
+        .is_success());
+        assert!(!ExecExit::default().is_known());
+        assert!(ExecExit {
+            code: Some(0),
+            signal: None
+        }
+        .is_known());
     }
 }

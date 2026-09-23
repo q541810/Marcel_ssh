@@ -705,7 +705,7 @@ impl SshManager {
         )
         .await?;
         Ok(match outcome {
-            crate::command_exec::executor::ExecOutcome::Completed { output } => (output, false),
+            crate::command_exec::executor::ExecOutcome::Completed { output, .. } => (output, false),
             crate::command_exec::executor::ExecOutcome::TimedOut { output } => (output, true),
             // 兼容 shim 不接取消信号，Cancelled 不可达。
             crate::command_exec::executor::ExecOutcome::Cancelled { .. } => (String::new(), false),
@@ -727,7 +727,7 @@ impl SshManager {
         )
         .await?;
         Ok(match outcome {
-            crate::command_exec::executor::ExecOutcome::Completed { output } => (output, false),
+            crate::command_exec::executor::ExecOutcome::Completed { output, .. } => (output, false),
             crate::command_exec::executor::ExecOutcome::TimedOut { output } => (output, true),
             crate::command_exec::executor::ExecOutcome::Cancelled { .. } => (String::new(), false),
         })
