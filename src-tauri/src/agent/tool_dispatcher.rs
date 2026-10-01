@@ -573,29 +573,47 @@ impl ToolDispatcher {
                                 );
                             }
                             ModelApprovalDecision::RouteToHuman(rs) => {
-                                emit_event(
-                                    &ctx.app_handle,
-                                    event_name,
-                                    ModelApprovalDoneEvent {
-                                        event_type: "modelApprovalDone".to_string(),
-                                        tool_call_id: tc.id.clone(),
-                                        decision: "route_to_human".to_string(),
-                                        reasons: rs.clone(),
-                                        engine,
-                                        confidence,
-                                    },
-                                );
-                                // Auto 模式下跳过人审，直接执行；Agent 模式弹窗
-                                // （Plan 默认也走这一支，除非开了「Plan 模式也需要
-                                // 审批」——判定同样遵循 `resolved_approval_mode`：
-                                // Auto 父派发的只读子 agent 在 route_to_human 时也
-                                // 不转人审）。例外：强制审批档。Auto 拦不住它，模型
-                                // 说"要转人审"时当然更不能把它咽掉。
-                                if resolved_approval_mode != AgentMode::Auto
-                                    || effective_disposition.survives_auto()
-                                {
+                                // 判据与「开不开窗」同源（`can_ask_human`）：
+                                // 没有人工介入的场合，"转人审"就没有落点。Auto 下这一档
+                                // 的实际结果就是放行，事件按**实际结果**发 `approve` ——
+                                // 否则工具卡上会一直挂着「模型建议人工审批」，而根本
+                                // 没有问过任何人，用户会以为自己漏掉了什么。模型的原判据
+                                // 留在日志里备查。
+                                if can_ask_human(&resolved_approval_mode, true) {
+                                    // Agent 模式弹窗（Plan 默认也走 Auto 那一支，除非开了
+                                    // 「Plan 模式也需要审批」——判定同样遵循
+                                    // `resolved_approval_mode`）。
+                                    emit_event(
+                                        &ctx.app_handle,
+                                        event_name,
+                                        ModelApprovalDoneEvent {
+                                            event_type: "modelApprovalDone".to_string(),
+                                            tool_call_id: tc.id.clone(),
+                                            decision: "route_to_human".to_string(),
+                                            reasons: rs.clone(),
+                                            engine,
+                                            confidence,
+                                        },
+                                    );
                                     final_needs_confirm = true;
                                     model_reasons = if rs.is_empty() { None } else { Some(rs) };
+                                } else {
+                                    log::info!(
+                                        "模型审批判定 route_to_human，但当前模式没有人工介入的落点，直接放行：$ {}",
+                                        cmd
+                                    );
+                                    emit_event(
+                                        &ctx.app_handle,
+                                        event_name,
+                                        ModelApprovalDoneEvent {
+                                            event_type: "modelApprovalDone".to_string(),
+                                            tool_call_id: tc.id.clone(),
+                                            decision: "approve".to_string(),
+                                            reasons: vec![],
+                                            engine,
+                                            confidence,
+                                        },
+                                    );
                                 }
                             }
                             ModelApprovalDecision::Approve => {
@@ -638,8 +656,13 @@ impl ToolDispatcher {
             }
         }
 
-        // 3. Human approval (if the risk assessment or the model requires it).
-        if final_needs_confirm {
+        // 3. Human approval —— 整个 dispatch 里**唯一**打开审批对话框的地方。
+        //
+        //    `final_needs_confirm` 有两条来路（档位判定 `needs_human_confirmation`、
+        //    命令审批模型判 route_to_human），两条提到"要人"之前都先过 `can_ask_human`；
+        //    这里再过一次，是为了把 Auto 的保证钉在唯一的出口上 —— 将来新增第三条
+        //    来路时忘了判模式，Auto 也不会因此悄悄弹窗。
+        if can_ask_human(&resolved_approval_mode, final_needs_confirm) {
             let mut approval_metadata: Option<serde_json::Value> = None;
 
             // 需要预演的工具（`edit_file` / 本机 `local_edit_file`）先做一次预读 +
@@ -854,15 +877,16 @@ pub(crate) fn resolve_disposition(
 ///
 /// 规划阶段绝大多数命令是只读研究（`ls` / `grep` / `tail`…），逐条弹窗是纯摩擦，
 /// 所以关掉「Plan 模式也需要审批」时 Plan 复用 Auto 那一套判定，而不是另写一份：
-/// 这样「强制审批档连 Auto 都拦得住」这条护栏对 Plan 同样成立，`Deny` 的提前
-/// 短路也照旧（两者都不看模式）。打开开关则原样返回 `Plan`，走命令名单。
+/// 两边都一次不问（`Deny` 的提前短路照旧，它不看模式）。打开开关则原样返回
+/// `Plan`，走命令名单与人工审批。
 ///
 /// 幂等 —— `decide_command` / `needs_human_confirmation` 内部也调它，所以设置页的
 /// 「命令测试」直接传 `Plan` 进来时，结论与真实执行一致（那两处曾经不一致过）。
 ///
 /// 折的范围是**整个审批层**，不止 bash：Plan 工具集里唯一声明 `Approval` 的非命令类
-/// 工具（`job_kill`）同样随之静默，与它在 Auto 下一致。`ForceApproval` / `Deny` 两档
-/// 不受影响（它们本来就不看模式）。
+/// 工具（`job_kill`）同样随之静默，与它在 Auto 下一致。`ForceApproval` 在 `decide_command`
+/// 里仍照算（档位不受模式影响），只是到了 `needs_human_confirmation` 才因为 Auto 而不问；
+/// `Deny` 两处都不受影响。
 pub(crate) fn effective_approval_mode(mode: &AgentMode, settings: &AgentModeSettings) -> AgentMode {
     match mode {
         AgentMode::Plan if !settings.plan_mode_requires_approval => AgentMode::Auto,
@@ -880,9 +904,10 @@ pub(crate) fn effective_approval_mode(mode: &AgentMode, settings: &AgentModeSett
 ///   - `Deny` —— 灾难模式判定 + 「该淘汰的写法」（按名字批量杀进程、管道进
 ///     shell、`source`/藏变量执行）都能产出；不征求意见，理由里写明替代写法，
 ///     模型会照着换
-///   - `ForceApproval` —— 系统级命令 / 受保护路径 …，Auto 也拦
-///   - `Approval` —— sudo 包装保底抬到这一档（`base_assessment`，Auto 跳过）；
-///     普通模式下也由命令名单产生
+///   - `ForceApproval` —— 系统级命令 / 受保护路径 …，覆盖命令名单：Agent / Plan
+///     （开了「Plan 模式也需要审批」时）下必须人点一次，Auto 下不问
+///   - `Approval` —— sudo 包装保底抬到这一档（`base_assessment`）；普通模式下也由
+///     命令名单产生，且会被名单降成放行
 ///   - `Allow` —— 其余交命令名单定（白名单命中就放行）
 pub(crate) fn decide_command(
     cmd: &str,
@@ -970,8 +995,12 @@ pub(crate) fn rejection_message(reason: Option<&str>) -> String {
 /// 判据是**最终档位**（`resolve_disposition` 的产物），不是命令文本单独算出来的
 /// 那份：`command_decision` 的入参里没有插件 manifest 声明，所以「声明了强制审批
 /// + 命令文本只算放行」这种组合在 `d.requires_confirmation` 上是 `false`，只看它
-/// 就等于把声明整条丢掉。`Deny` 不在此列 —— `dispatch` 在调用本函数之前已经把它
-/// 短路掉了（那种档位不该给出"能批准"的弹窗）。
+/// 就等于把声明整条丢掉。
+///
+/// **Auto 恒为 `false`**：Auto 的语义是全自主、不掺任何人工确认（用户明确选了它），
+/// 所以档位、插件/MCP 自己声明的强制审批、`requires_default_approval` 都不再征求
+/// 意见。不在这里的是 `Deny`：`dispatch` 在调用本函数之前已把「最终档位 = 直接拒绝」
+/// 的调用短路掉了（那种档位既不执行、也不弹窗），它根本到不了这里。
 pub(crate) fn needs_human_confirmation(
     approval_mode: &AgentMode,
     command_decision: Option<&CommandDecision>,
@@ -1000,14 +1029,25 @@ pub(crate) fn needs_human_confirmation(
                     || approval_switch_on
             }
         },
-        // Auto 模式不是"万事不商量"：强制审批档连 Auto 都拦得住，这正是它与
-        // 「请求审批」的唯一差别。`requires_default_approval` 是外置工具（MCP）
-        // 自己提的要求，同样带上。默认设置下的 Plan 也走这一支（见上）。
-        AgentMode::Auto => match command_decision {
-            Some(d) => d.requires_confirmation || effective_disposition.survives_auto(),
-            None => effective_disposition.survives_auto() || requires_default_approval,
-        },
+        // Auto 一次都不问 —— 强制审批档也不例外。危险命令的兜底不靠弹窗：灾难性写法
+        // 仍由 `Deny` 在 `dispatch` 里更早地拒掉（那条路没有"能批准"的按钮），
+        // 命令审批模型也照常跑（它只能拦、不能问人）。
+        AgentMode::Auto => false,
     }
+}
+
+/// 这件事能不能交给用户 —— **Auto 下无处可交**，这是它唯一的权威判定。
+///
+/// `dispatch` 里有两个地方需要回答这个问题，且必须给同一个答案：
+///   1. 打不打开审批对话框（档位判定与命令审批模型提出"要人确认"之后）；
+///   2. 命令审批模型判 `route_to_human` 时，这个"转人审"要不要真的转过去
+///      （转不过去就只能按放行呈现给前端，否则工具卡上会挂着一次根本没发生的
+///      人工审批）。
+///
+/// 抽成一个纯函数是为了守住 Auto 的不变量：无论未来新增多少条"要人确认"的路径，
+/// 只要还经过这里，Auto 就不会突然开始弹窗或者假装问过谁。
+fn can_ask_human(approval_mode: &AgentMode, wants_human: bool) -> bool {
+    wants_human && *approval_mode != AgentMode::Auto
 }
 
 /// 审批弹窗上给用户看的理由列表：模型审批的理由 + 静态评估命中的理由。
@@ -1138,28 +1178,36 @@ mod tests {
         }
     }
 
-    /// 强制审批：**Auto 模式也拦得住**，这是它和「请求审批」的唯一差别。
+    /// 强制审批档在 Auto 下**同样不弹窗**（Auto = 全自主，没有任何人工介入），
+    /// 但在 Agent 下必须弹 —— 这两种行为都要钉住。
     ///
     /// 走的是 `needs_human_confirmation`（`dispatch` 调的同一个函数），不是
-    /// `decide_command` —— 后者在 Auto 下也一样返回"要确认"，只测它的话，
-    /// 把 `dispatch` 的 Auto 分支改回只看 `requires_default_approval` 也照样绿，
-    /// 那护栏就是假的（这版第一稿正是这么写的）。
+    /// `decide_command` —— 后者在 Auto 下也一样返回"要确认"，只测它就等于没测
+    /// `dispatch` 真正读的那个判据。
     #[test]
-    fn force_approval_survives_auto_mode() {
+    fn force_approval_is_silent_in_auto_and_forced_in_agent() {
         let mut s = default_settings();
         // 名单里没有 reboot，且关掉了「逐条确认」—— 按名单逻辑它本该静默放行。
         s.confirm_each_command = false;
 
         for cmd in ["reboot", "systemctl restart nginx", "useradd bob"] {
+            // 档位与模式无关：命令文本该判强制审批还是强制审批。
             let d = decide_command(cmd, &AgentMode::Auto, &s, None);
             assert_eq!(
                 d.disposition,
                 Disposition::ForceApproval,
-                "`{}` 在 Auto 下也必须是强制审批",
+                "`{}` 的档位不受模式影响",
                 cmd
             );
             assert!(
-                needs_human_confirmation(
+                d.requires_confirmation,
+                "`{}` 的档位本身仍标着「需要确认」（Agent 模式读它）",
+                cmd
+            );
+
+            // Auto：一次都不问。
+            assert!(
+                !needs_human_confirmation(
                     &AgentMode::Auto,
                     Some(&d),
                     d.disposition,
@@ -1167,16 +1215,30 @@ mod tests {
                     &s,
                     false
                 ),
-                "`{}` 在 Auto 下必须要求人确认",
+                "`{}` 在 Auto 下不该有任何确认",
+                cmd
+            );
+
+            // Agent：必须问。
+            assert!(
+                needs_human_confirmation(
+                    &AgentMode::Agent,
+                    Some(&d),
+                    d.disposition,
+                    false,
+                    &s,
+                    false
+                ),
+                "`{}` 在 Agent 下必须要求人确认",
                 cmd
             );
         }
     }
 
-    /// sudo 包装只保底抬到「请求审批」：Agent 模式要确认、Auto 模式跳过 —— 与
-    /// 「请求审批」档同语义。里面的命令该强制还强制（见上一条）。
+    /// sudo 包装保底抬到「请求审批」；Auto 两种都不问（Auto 里连提权改系统状态也
+    /// 不问），Agent 两档都要问。
     #[test]
-    fn sudo_wrapping_needs_approval_but_survives_auto_no_more() {
+    fn sudo_wrapping_needs_approval_but_not_in_auto() {
         let s = default_settings();
         // 默认黑名单（rm/mkfs/dd）里没有 sudo，普通模式靠基础定档的保底档要确认。
         let d = decide_command(
@@ -1203,11 +1265,19 @@ mod tests {
         assert_eq!(auto.disposition, Disposition::Allow);
         assert!(!auto.requires_confirmation);
 
-        // 提权改系统状态的照样被里面的规则抬回强制审批，Auto 也拦。
+        // 提权改系统状态的照样被里面的规则抬回强制审批：Agent 要人点头，Auto 不问。
         let forced = decide_command("sudo systemctl restart nginx", &AgentMode::Auto, &s, None);
         assert_eq!(forced.disposition, Disposition::ForceApproval);
-        assert!(needs_human_confirmation(
+        assert!(!needs_human_confirmation(
             &AgentMode::Auto,
+            Some(&forced),
+            forced.disposition,
+            false,
+            &s,
+            false
+        ));
+        assert!(needs_human_confirmation(
+            &AgentMode::Agent,
             Some(&forced),
             forced.disposition,
             false,
@@ -1247,67 +1317,107 @@ mod tests {
         assert_eq!(merge_approval_reasons(None, None), None);
     }
 
-    /// 非命令类工具（声明了强制审批档的）在 Auto 下同样拦得住。
+    /// Auto 对**任何**档位都不问：`Approval`、`ForceApproval`、以及外置工具自己提的
+    /// `requires_default_approval` 一视同仁。Agent 下同样的输入必须问。
     #[test]
-    fn force_approval_survives_auto_for_non_command_tools() {
+    fn auto_never_prompts_for_any_disposition() {
         let s = default_settings();
+        for disposition in [Disposition::Allow, Disposition::Approval, Disposition::ForceApproval] {
+            for requires_default_approval in [false, true] {
+                assert!(
+                    !needs_human_confirmation(
+                        &AgentMode::Auto,
+                        None,
+                        disposition,
+                        requires_default_approval,
+                        &s,
+                        false
+                    ),
+                    "Auto 下 {disposition:?}（requires_default_approval={requires_default_approval}）不该问"
+                );
+            }
+        }
+        // 非命令类工具的强制审批档在 Agent 下仍然要问。
         assert!(needs_human_confirmation(
-            &AgentMode::Auto,
+            &AgentMode::Agent,
             None,
             Disposition::ForceApproval,
             false,
             &s,
             false
         ));
-        // 但普通的"请求审批"档在 Auto 下不弹 —— Auto 不能变成逐条确认。
-        assert!(!needs_human_confirmation(
-            &AgentMode::Auto,
+        // 外置工具自己提的审批要求同理。
+        assert!(needs_human_confirmation(
+            &AgentMode::Agent,
             None,
-            Disposition::Approval,
-            false,
+            Disposition::Allow,
+            true,
             &s,
             false
         ));
+    }
+
+    /// 「交给用户」的唯一判定：Auto 无论谁提出要人都交不出去（既不开窗、也不把
+    /// 模型判的 `route_to_human` 当成转人审），其余模式只看那个布尔。
+    ///
+    /// 这是 Auto 不变量的收口 —— 上面两条"要人确认"的路径任一漏写，这里仍然拦住。
+    #[test]
+    fn auto_never_hands_anything_to_a_human() {
+        for wants_human in [false, true] {
+            assert!(
+                !can_ask_human(&AgentMode::Auto, wants_human),
+                "Auto 下 wants_human={wants_human} 也不该交给用户"
+            );
+        }
+        for mode in [AgentMode::Plan, AgentMode::Agent] {
+            assert!(
+                !can_ask_human(&mode, false),
+                "{mode:?} 下没人要求人参与就不该交给用户"
+            );
+            assert!(
+                can_ask_human(&mode, true),
+                "{mode:?} 下有人要求人参与就得交给用户"
+            );
+        }
     }
 
     /// **回归：插件声明的强制审批曾被弹窗判定整条丢弃。**
     ///
     /// `decide_command` 的入参里没有 manifest 声明，所以声明了 `ForceApproval` 的插件
     /// 工具算出来仍是「命令文本只算放行」；这里以前在 `Some(d)` 分支只看
-    /// `d.requires_confirmation`，于是 Auto 模式、以及 Agent 模式关掉「逐条确认」之后，
-    /// 那条声明的强制审批命令**不弹窗直接执行**（只有 `Deny` 靠更早的短路侥幸逃过）。
-    /// 这条测试打的就是那一跳：允许放行的命令判定 + 强制审批声明。
+    /// `d.requires_confirmation`，于是 Agent 模式关掉「逐条确认」之后，那条声明的强制
+    /// 审批命令**不弹窗直接执行**（只有 `Deny` 靠更早的短路侥幸逃过）。这条测试打的
+    /// 就是那一跳：允许放行的命令判定 + 强制审批声明。
+    ///
+    /// Auto 下这条声明也**不**弹窗 —— 那是 Auto 的定义（全自主），不是这一跳的回归。
     #[test]
-    fn declared_force_approval_reaches_the_prompt_even_when_the_command_is_benign() {
-        for mode in [AgentMode::Auto, AgentMode::Agent] {
-            let mut s = default_settings();
-            // 让「逐条确认」不参与兜底：Agent 模式下必须靠声明本身拦住。
-            s.confirm_each_command = false;
+    fn declared_force_approval_reaches_the_prompt_in_agent_mode() {
+        let mut s = default_settings();
+        // 让「逐条确认」不参与兜底：必须靠声明本身拦住。
+        s.confirm_each_command = false;
 
-            // 只读查询：不在黑名单、逐条确认也关着 → 命令文本判定为放行。
-            let d = decide_command("ls -la", &mode, &s, None);
-            assert_eq!(
-                d.disposition,
-                Disposition::Allow,
-                "{mode:?} 下命令文本算放行"
-            );
-            assert!(!d.requires_confirmation, "命令文本本身不要求确认");
+        // 只读查询：不在黑名单、逐条确认也关着 → 命令文本判定为放行。
+        let d = decide_command("ls -la", &AgentMode::Agent, &s, None);
+        assert_eq!(d.disposition, Disposition::Allow, "命令文本算放行");
+        assert!(!d.requires_confirmation, "命令文本本身不要求确认");
 
-            // 插件 manifest 声明 ForceApproval（`kind=ssh` 工具）→ 最终档位取严。
-            let effective =
-                resolve_disposition(Some(d.disposition), Disposition::ForceApproval, false);
-            assert_eq!(effective, Disposition::ForceApproval);
+        // 插件 manifest 声明 ForceApproval（`kind=ssh` 工具）→ 最终档位取严。
+        let effective = resolve_disposition(Some(d.disposition), Disposition::ForceApproval, false);
+        assert_eq!(effective, Disposition::ForceApproval);
 
-            assert!(
-                needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
-                "{mode:?} 下插件声明的强制审批必须弹窗"
-            );
-        }
+        assert!(
+            needs_human_confirmation(&AgentMode::Agent, Some(&d), effective, false, &s, false),
+            "Agent 下插件声明的强制审批必须弹窗"
+        );
+        assert!(
+            !needs_human_confirmation(&AgentMode::Auto, Some(&d), effective, false, &s, false),
+            "Auto 下插件声明的强制审批也不问"
+        );
     }
 
-    /// 内建 `bash` 的行为**不变**：它声明的档位是 `Approval`（见 `tools/bash.rs`），
-    /// 所以命令文本算到 `ForceApproval` 时 `d.requires_confirmation` 本来就为真 ——
-    /// 新增的「最终档位」判据给的是同一个结论，而普通命令也不会突然开始弹窗。
+    /// 内建 `bash` 的档位下限是 `Approval`（见 `tools/bash.rs`）：命令文本算到
+    /// `ForceApproval` 时取严仍是 `ForceApproval`，Agent 要人点头；Auto 与默认的
+    /// Plan（折成 Auto）都不问。普通命令在任何模式下都静默。
     #[test]
     fn builtin_bash_prompting_is_unchanged() {
         // bash 的声明值；命令类工具的真实档位由命令文本现算后再与它取严。
@@ -1317,24 +1427,26 @@ mod tests {
             let mut s = default_settings();
             s.confirm_each_command = false;
 
-            // 系统级命令：命令文本自己就要人点头 → 三档都弹窗（改动前后一致）。
+            // 系统级命令：命令文本自己就要人点头。
             let d = decide_command("systemctl restart nginx", &mode, &s, None);
             assert_eq!(d.disposition, Disposition::ForceApproval);
             assert!(d.requires_confirmation);
             let effective = resolve_disposition(Some(d.disposition), declared, false);
-            assert!(
+            let expect_prompt = mode == AgentMode::Agent;
+            assert_eq!(
                 needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
-                "{mode:?} 下系统级命令必须弹窗"
+                expect_prompt,
+                "{mode:?} 下系统级命令的弹窗判定不对"
             );
 
-            // 普通命令：名单不命中 + 关掉逐条确认 → 仍然静默放行（变了就是回归）。
+            // 普通命令：名单不命中 + 关掉逐条确认 → 任何模式都静默放行。
             let d = decide_command("ls -la", &mode, &s, None);
             assert_eq!(d.disposition, Disposition::Allow);
             let effective = resolve_disposition(Some(d.disposition), declared, false);
             assert_eq!(effective, Disposition::Approval, "bash 的声明是档位下限");
             assert!(
                 !needs_human_confirmation(&mode, Some(&d), effective, false, &s, false),
-                "{mode:?} 下普通命令不该因为这次加固突然弹窗"
+                "{mode:?} 下普通命令不该弹窗"
             );
         }
     }
@@ -1351,21 +1463,14 @@ mod tests {
                 "{mode:?} 下只读工具不该弹窗"
             );
         }
-        // 反过来：同一个工具若被标成强制审批档（例如将来收紧了），Auto 也拦得住
-        assert!(needs_human_confirmation(
-            &AgentMode::Auto,
-            None,
-            Disposition::ForceApproval,
-            false,
-            &s,
-            false
-        ));
     }
 
-    /// 受保护路径 → 强制审批，而且**用户自定义的那份也算**。
+    /// 受保护路径 → 强制审批，而且**用户自定义的那份也算**（档位不看模式；
+    /// 弹窗只看模式：Agent 问、Auto 不问）。
     #[test]
-    fn protected_paths_force_approval_even_in_auto() {
-        let s = default_settings();
+    fn protected_paths_force_approval() {
+        let mut s = default_settings();
+        s.confirm_each_command = false;
         let policy = SecurityPolicy {
             custom_protected_paths: vec!["/srv/prod".into()],
             ..Default::default()
@@ -1379,6 +1484,22 @@ mod tests {
         );
         assert_eq!(d.disposition, Disposition::ForceApproval);
         assert!(d.requires_confirmation);
+        assert!(needs_human_confirmation(
+            &AgentMode::Agent,
+            Some(&d),
+            d.disposition,
+            false,
+            &s,
+            false
+        ));
+        assert!(!needs_human_confirmation(
+            &AgentMode::Auto,
+            Some(&d),
+            d.disposition,
+            false,
+            &s,
+            false
+        ));
     }
 
     /// 普通命令在 Auto 下静默 —— 强制审批那一档不能把整个 Auto 模式变成逐条弹窗。
@@ -1401,7 +1522,7 @@ mod tests {
     ///
     /// 诉求是「Plan 下执行 bash 默认不需要审批（和 Auto 一样），但要能关回去」。
     /// 两侧都要钉：默认静默时 Plan 的结论必须与 Auto **逐项相等**（不是"也静默"
-    /// 就算 —— 强制审批档的判定得一起搬过来），打开开关后必须回到走名单的旧行为。
+    /// 就算 —— 系统级命令的判定得一起搬过来），打开开关后必须回到走名单的旧行为。
     /// 只测一侧等于给一半的护栏。
     #[test]
     fn plan_mode_is_silent_by_default_and_the_setting_gates_it_back() {
@@ -1453,20 +1574,33 @@ mod tests {
             );
         }
 
-        // 硬闸不看这个开关：系统级命令两种设置下都是强制审批 + 弹窗。
-        for settings in [&silent, &gated] {
-            let d = decide_command("systemctl restart nginx", &AgentMode::Plan, settings, None);
-            assert_eq!(d.disposition, Disposition::ForceApproval);
-            assert!(d.requires_confirmation, "强制审批档自己就要确认");
-            assert!(needs_human_confirmation(
+        // 开关打开后 Plan 才回到「走名单 + 人工审批」；开关关着时 Plan 折成 Auto，
+        // 连系统级命令也不问。所以**同一个开关**同时决定这两件事。
+        let silent_system = decide_command("systemctl restart nginx", &AgentMode::Plan, &silent, None);
+        assert_eq!(silent_system.disposition, Disposition::ForceApproval);
+        assert!(
+            !needs_human_confirmation(
                 &AgentMode::Plan,
-                Some(&d),
-                resolve_disposition(Some(d.disposition), declared, false),
+                Some(&silent_system),
+                resolve_disposition(Some(silent_system.disposition), declared, false),
                 false,
-                settings,
+                &silent,
                 false
-            ));
-        }
+            ),
+            "开关关着时 Plan 折成 Auto，系统级命令也不问"
+        );
+
+        let gated_system = decide_command("systemctl restart nginx", &AgentMode::Plan, &gated, None);
+        assert_eq!(gated_system.disposition, Disposition::ForceApproval);
+        assert!(gated_system.requires_confirmation, "强制审批档自己就要确认");
+        assert!(needs_human_confirmation(
+            &AgentMode::Plan,
+            Some(&gated_system),
+            resolve_disposition(Some(gated_system.disposition), declared, false),
+            false,
+            &gated,
+            false
+        ));
 
         // 开关只对 Plan 生效：Agent / Auto 的档位与弹窗判定前后一模一样。
         for cmd in ["ls -la", "systemctl restart nginx"] {

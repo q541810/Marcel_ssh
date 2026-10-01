@@ -109,9 +109,9 @@ pub struct AgentSpec {
     /// 审批语义覆盖：`None` = 跟随自身 `mode`（Plan 模式默认与 Auto 一样不弹
     /// 人审，除非设置了 `plan_mode_requires_approval`）；`Some(Auto)` = 命令执行
     /// 静默放行不弹人审（模型审批的 route_to_human 也不转人审），仅保留 风险
-    /// 评估硬拦截。Auto 父任务派发的只读调研子 agent 用它，避免主任务在 Auto
-    /// 全自主时子 agent 的只读命令仍弹审批窗 —— 这条覆盖**优先于**上面的设置，
-    /// 用户把「Plan 模式也需要审批」打开后 Auto 父任务的子 agent 依然静默。
+    /// 评估的「直接拒绝」硬拦截。Auto 父任务派发的只读调研子 agent 用它，避免主
+    /// 任务在 Auto 全自主时子 agent 的只读命令仍弹审批窗 —— 这条覆盖**优先于**上面
+    /// 的设置，用户把「Plan 模式也需要审批」打开后 Auto 父任务的子 agent 依然静默。
     pub approval_mode: Option<AgentMode>,
 }
 

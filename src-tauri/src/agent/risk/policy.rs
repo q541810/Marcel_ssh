@@ -177,9 +177,10 @@ impl RiskAssessor {
             worst = worst.worst(base_assessment(&parsed));
 
             // Windows（PowerShell / cmd）形态的高危模式 —— 见 [`super::windows`]。
-            // 纯文本、与上面几条同层：只把「明确的毁灭性写法」抬到强制审批（Auto 也拦），
-            // 不新增拒绝、不降任何已有档位（`worst` 只会取更严的那个）。规则本身一条也不
-            // 写在这里 —— 那是 `windows` 模块的唯一权威来源。
+            // 纯文本、与上面几条同层：只把「明确的毁灭性写法」抬到强制审批（覆盖命令
+            // 名单：Agent / 开了 Plan 审批的 Plan 下必须人点头），不新增拒绝、不降任何
+            // 已有档位（`worst` 只会取更严的那个）。规则本身一条也不写在这里 ——
+            // 那是 `windows` 模块的唯一权威来源。
             if let Some(verdict) = windows_verdict(&parsed) {
                 worst = worst.worst(verdict);
             }

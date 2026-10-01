@@ -16,11 +16,12 @@
 //! # 审批语义（本工具是**派发闸门**，为什么不能只靠 dispatcher 的通用判定）
 //!
 //! - 工具自身 `disposition() = Approval`：父任务经 dispatcher 走「请求审批」档
-//!   （Agent 且开着逐条确认时弹一次；Auto 被 `survives_auto()` 挡下 —— 即「Agent
-//!   弹、Auto 跳过」）。
+//!   （Agent 且开着逐条确认时弹一次；Auto 一次都不问 —— `needs_human_confirmation`
+//!   的 Auto 分支恒 `false`，即「Agent 弹、Auto 跳过」）。
 //! - **默认设置下的 Plan 父任务是例外**：`effective_approval_mode`
-//!   （`tool_dispatcher.rs:848`）把 Plan 折成 Auto，dispatcher 一次都不会问；而只读
-//!   的本机子 agent 也能读用户电脑上的文件，所以这里在 `execute` 里补问一次。
+//!   （`tool_dispatcher.rs` 的 `effective_approval_mode`）把 Plan 折成 Auto，
+//!   dispatcher 一次都不会问；而只读的本机子 agent 也能读用户电脑上的文件，所以
+//!   这里在 `execute` 里补问一次。
 //!   补问面**恰好等于 dispatcher 不问的那些组合**（不重复问、也不漏问），判据与
 //!   理由见 [`needs_explicit_dispatch_approval`]。判据用的设置是**任务启动时的
 //!   快照**（`ctx.agent_mode_settings`，与 dispatcher 手里同一份），不是实时设置 ——
@@ -86,11 +87,11 @@ fn is_plan_parent_write_local_subagent_blocked(
 /// 派发本机子 agent 时，`execute` 要不要**再问一次**用户（纯函数便于单测）。
 ///
 /// 判据直接复用 dispatcher 的那一份实现，不另写第二套：
-/// - `tool_dispatcher::effective_approval_mode`（`tool_dispatcher.rs:848`）把 Plan
-///   默认折成 Auto（除非用户开了「Plan 模式也需要审批」）；
-/// - `tool_dispatcher::needs_human_confirmation`（`tool_dispatcher.rs:957`）对
-///   「无命令文本（本工具 `semantics = NONE`）、档位 = `disposition`」的调用给出的
-///   结论由 `confirm_each_command`（默认开）驱动，Auto 分支被 `survives_auto()` 挡下。
+/// - `tool_dispatcher::effective_approval_mode` 把 Plan 默认折成 Auto（除非用户开了
+///   「Plan 模式也需要审批」）；
+/// - `tool_dispatcher::needs_human_confirmation` 对「无命令文本（本工具
+///   `semantics = NONE`）、档位 = `disposition`」的调用：Agent 下的结论由
+///   `confirm_each_command`（默认开）驱动，Auto 下恒为 `false`。
 ///
 /// `disposition` 传**工具自己声明的档位**（调用处传 `self.disposition()`），
 /// 不写字面量：这个函数的结论是「dispatcher 不问时才补问」，档位一旦从

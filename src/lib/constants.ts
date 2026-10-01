@@ -63,7 +63,7 @@ export const DEFAULT_FONT_FAMILY = 'JetBrains Mono, Fira Code, Consolas, "Micros
 export const AGENT_MODES: { value: AgentMode; label: string; description: string }[] = [
   { value: 'plan', label: 'Plan', description: '计划模式，AI 可调用只读类工具做研究和规划，不可写文件，不注册插件/MCP 工具；bash 默认不弹审批（可在设置里打开）' },
   { value: 'agent', label: 'Agent', description: 'AI 可调用工具，命令执行受黑/白名单约束（在设置中配置）' },
-  { value: 'auto', label: 'Auto', description: 'AI 自主规划并执行所有工具调用，不再请求确认（强制审批档仍会询问）' },
+  { value: 'auto', label: 'Auto', description: 'AI 自主规划并执行所有工具调用，全程不请求确认（没有任何人工介入；灾难性写法仍会被直接拒绝）' },
 ];
 
 export const DISPOSITION_COLORS: Record<Disposition, string> = {

@@ -248,8 +248,8 @@ export function AgentPolicySection() {
             label="Plan 模式下执行命令时需要用户确认"
           />
           <p className="text-xs text-zinc-500 mt-2">
-            默认关闭：Plan 与 AUTO 一样不弹人工审批，只有系统级命令、受保护路径等
-            强制审批档仍会询问。开启后 Plan 恢复走命令名单与「每条都手动确认」。
+            默认关闭：Plan 与 AUTO 一样完全不弹人工审批。开启后 Plan 恢复走命令名单与
+            「每条都手动确认」—— 系统级命令、受保护路径等强制审批档也会跟着开始询问。
           </p>
         </SettingItem>
         <SettingItem

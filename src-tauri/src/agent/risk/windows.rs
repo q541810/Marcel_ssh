@@ -13,8 +13,8 @@
 //!
 //! - **纯文本、与 `assess_command` 同层**：不看会话、不看平台。远端 Linux 上恰好写了
 //!   这些词也照样判 —— 本层只会取严，知道对面是谁并不改变结论。
-//! - **只抬不降**：本层只产出 [`Disposition::ForceApproval`]（Auto 模式也拦），由调用方
-//!   与其它判定取最严者；已有档位（含 `Deny`）一律不动。
+//! - **只抬不降**：本层只产出 [`Disposition::ForceApproval`]（覆盖命令名单：Agent 下
+//!   必须人点一次），由调用方与其它判定取最严者；已有档位（含 `Deny`）一律不动。
 //! - **宁窄不宽**：误报的代价是把用户的正常清理也拦下来，所以每条规则都要求
 //!   「命令名 + 明确的破坏性参数 + 明确的目标」同时成立。只列出/读取的形态
 //!   （`Get-ChildItem` / `Get-Content` / `dir` / `type`）、`reg query` / `reg add`、
@@ -847,7 +847,7 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// 应当被抬到强制审批（Auto 模式也拦）。
+    /// 应当被抬到强制审批（覆盖命令名单）。
     #[track_caller]
     fn forced(cmd: &str) {
         assert_eq!(

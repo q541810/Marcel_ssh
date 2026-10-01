@@ -19,7 +19,9 @@ pub enum Disposition {
     /// 请求审批。Auto 模式跳过。
     #[serde(alias = "Moderate")]
     Approval,
-    /// 强制审批。Auto 模式**也**弹窗 —— 这是它与 `Approval` 的唯一差别。
+    /// 强制审批：**覆盖命令名单**，只要命中就必须由人点一次 —— 名单说放行也不算数
+    /// （这是它与 `Approval` 的唯一差别：`Approval` 会被名单降成放行，它不会）。
+    /// Auto 模式下与 `Approval` 一样静默执行：Auto 的语义是全自主、没有任何人工介入。
     #[serde(alias = "HighRisk", alias = "Destructive")]
     ForceApproval,
     /// 直接拒绝。不执行，把原因回给模型。
@@ -35,11 +37,6 @@ impl Disposition {
             Self::ForceApproval => "强制审批",
             Self::Deny => "直接拒绝",
         }
-    }
-
-    /// 是否连 Auto 模式都拦不住（必须由人确认）。
-    pub fn survives_auto(&self) -> bool {
-        matches!(self, Self::ForceApproval | Self::Deny)
     }
 }
 
