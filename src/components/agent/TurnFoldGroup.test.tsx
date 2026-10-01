@@ -2,6 +2,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import type { ReactNode } from 'react';
 import type { AgentMessage } from '@/lib/types';
 import { TurnFoldGroup } from './TurnFoldGroup';
 import { segmentTurns } from '@/lib/agentTurnFold';
@@ -47,7 +48,26 @@ function buildFoldableSegment(toolCount = 4): ReturnType<typeof segmentTurns>[0]
   return segmentTurns([u, calls, ...tools, answer])[0];
 }
 
-function mount(seg: ReturnType<typeof segmentTurns>[0], forceExpand = false) {
+/** 3 步 bash 过程 + 1 张成功 render_html 图表 + 答案：可折叠长回合。 */
+function buildSegmentWithDeliverable(): ReturnType<typeof segmentTurns>[0] {
+  const u: AgentMessage = { id: 'u', role: 'user', content: '画个图', timestamp: new Date().toISOString() };
+  const calls: AgentMessage = {
+    id: 'calls', role: 'assistant', content: '', timestamp: new Date().toISOString(),
+    toolCalls: Array.from({ length: 3 }, (_, i) => ({
+      id: `c${i}`, name: 'bash', arguments: { command: 'ls' }, disposition: 'Approval' as const,
+    })),
+  };
+  const answer: AgentMessage = { id: 'a', role: 'assistant', content: '图好了', timestamp: new Date().toISOString() };
+  return segmentTurns([
+    u, calls, toolMsg('t0'), toolMsg('viz', 'render_html'), toolMsg('t1'), toolMsg('t2'), answer,
+  ])[0];
+}
+
+function mount(
+  seg: ReturnType<typeof segmentTurns>[0],
+  forceExpand = false,
+  renderDeliverables?: () => ReactNode,
+) {
   act(() => {
     root.render(
       <TurnFoldGroup
@@ -56,6 +76,7 @@ function mount(seg: ReturnType<typeof segmentTurns>[0], forceExpand = false) {
         renderUser={() => <div data-testid="user" />}
         renderAnswer={() => <div data-testid="answer">answer</div>}
         renderExpanded={() => <div data-testid="expanded">expanded-content</div>}
+        renderDeliverables={renderDeliverables}
         forceExpand={forceExpand}
       />,
     );
@@ -92,6 +113,29 @@ describe('TurnFoldGroup', () => {
     mount(seg, true);
     // effect 触发 expandTurn
     expect(useTurnFoldStore.getState().expanded.conv?.[seg.key]).toBe(true);
+  });
+
+  it('折叠态：交付物（可视化图表）恒渲染，控制行计数不含它', () => {
+    const seg = buildSegmentWithDeliverable();
+    // 3 步 bash 过程 → 可折叠；图表不计入步数
+    expect(seg.foldable).toBe(true);
+    expect(seg.toolCallCount).toBe(3);
+    mount(seg, false, () => <div data-testid="deliverables">chart</div>);
+    expect(container.textContent).toContain('已执行 3 步');
+    expect(container.querySelector('[data-testid="deliverables"]')).not.toBeNull();
+    // 折叠态下过程区不渲染，交付物独立于它显示
+    expect(container.querySelector('[data-testid="expanded"]')).toBeNull();
+  });
+
+  it('展开后：交付物并入过程区不重复；收起后恢复恒渲染', () => {
+    const seg = buildSegmentWithDeliverable();
+    mount(seg, false, () => <div data-testid="deliverables">chart</div>);
+    act(() => container.querySelector('button')!.click());
+    expect(container.querySelector('[data-testid="expanded"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="deliverables"]')).toBeNull();
+    act(() => container.querySelector('button')!.click());
+    expect(container.querySelector('[data-testid="deliverables"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="expanded"]')).toBeNull();
   });
 
   it('短回合（不可折叠）由外层处理 —— TurnFoldGroup 不渲染（防御）', () => {

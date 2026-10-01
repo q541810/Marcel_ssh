@@ -7,6 +7,7 @@ import {
   TOOL_CATALOG,
   fileChangeToolName,
   interruptNoticeKind,
+  isDeliverableTool,
   isExplorationTool,
   isLocalExecutionTool,
   isLocalSessionId,
@@ -278,6 +279,14 @@ describe('toolDisplayName / 分组判定', () => {
     expect(isSubagentTool('subagent')).toBe(true);
     expect(isSubagentTool('task')).toBe(true);
     expect(isSubagentTool('bash')).toBe(false);
+  });
+
+  it('交付物标志只登记给产出用户可见产物的工具（回合折叠豁免）', () => {
+    expect(isDeliverableTool('render_html')).toBe(true);
+    expect(isDeliverableTool('bash')).toBe(false);
+    expect(isDeliverableTool('read_file')).toBe(false);
+    expect(isDeliverableTool('subagent')).toBe(false);
+    expect(isDeliverableTool('unknown_tool')).toBe(false);
   });
 
   it('流式输出的**传输事实**照实声明（决定后续有没有实时部分输出可看）', () => {

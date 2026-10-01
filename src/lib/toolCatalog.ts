@@ -70,6 +70,13 @@ export interface ToolPresentation {
   /** 标题图标：一组 SVG `path` 的 `d`，由 `ToolIcon` 用统一的描边 svg 包裹。 */
   readonly iconPaths?: readonly string[];
   readonly group?: ToolGroup;
+  /**
+   * 产物是**面向用户的交付物**（如 `render_html` 的可视化图表），不是过程记录：
+   * 已结束回合的过程折叠把它豁免——折叠态也恒渲染，且不计入「已执行 n 步」。
+   * 消费方是 `agentTurnFold.ts`（分段豁免），这里只做名字级声明；成功 / 被拦
+   * 与否属于单次调用的状态，由消费方结合 `toolResult` 判定。
+   */
+  readonly deliverable?: boolean;
   /** 结果 metadata 带「后端 / 降级 / 被网站拦截」信号（见 `webToolStatus.ts`）。 */
   readonly web?: boolean;
   /** 派发子 agent：卡片据此提供「查看调研过程」入口、标注读写模式。 */
@@ -386,6 +393,8 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
     name: 'render_html',
     // 参数里是整页 HTML，等完整 JSON 太久 —— 流式期间就把正文先拿出来渲染。
     partialPreview: { primary: 'fragment', companions: ['title', 'mode'] },
+    // 图表是用户要看的产物，不是过程：回合折叠时豁免展示。
+    deliverable: true,
   },
   // ── 本机工具族（`local_*`）：在运行 Marcel SSH 的这台电脑上干活，与远端同名
   //    工具一一对应。图标 / 预览 / 折叠分组一律照远端那一行（同类动作共用一副
@@ -514,6 +523,11 @@ export function isExplorationTool(toolName: string): boolean {
 /** 派发子 agent 的工具（现名 subagent；兼容旧历史消息的 task）。 */
 export function isSubagentTool(toolName: string): boolean {
   return toolSpec(toolName)?.subagent === true;
+}
+
+/** 产出用户直接消费的交付物（如可视化图表）——回合过程折叠时豁免。 */
+export function isDeliverableTool(toolName: string): boolean {
+  return toolSpec(toolName)?.deliverable === true;
 }
 
 /** skill 动态工具族（`skill_<名字>`）。 */

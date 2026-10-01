@@ -27,11 +27,16 @@ function assistantToolCalls(id: string, n: number): AgentMessage {
     })),
   };
 }
-function tool(id: string, toolName = 'bash', opts: { subagent?: boolean } = {}): AgentMessage {
+function tool(
+  id: string,
+  toolName = 'bash',
+  opts: { subagent?: boolean; success?: boolean; blocked?: boolean } = {},
+): AgentMessage {
   return {
     id, role: 'tool', content: 'ok', timestamp: new Date().toISOString(),
     toolResult: {
-      toolName, summary: '', result: 'ok', success: true, blocked: false,
+      toolName, summary: '', result: 'ok',
+      success: opts.success ?? true, blocked: opts.blocked ?? false,
       toolCallId: `${id}-call`,
       ...(opts.subagent ? { metadata: { __subagent: true } } : {}),
     },
@@ -76,6 +81,90 @@ describe('segmentTurns', () => {
     const answer = assistantText('a', 'done');
     const segs = segmentTurns([u, ...tools, answer]);
     expect(segs[0].foldable).toBe(false);
+  });
+
+  it('成功的 render_html 是交付物：不计入步数，折叠豁免但仍留在折叠区（展开按时间序）', () => {
+    const u = user('u');
+    const calls = assistantToolCalls('a-tc', 3);
+    const answer = assistantText('a', '如图所示');
+    const seg = segmentTurns([
+      u, calls, tool('t0'), tool('viz', 'render_html'), tool('t1'), tool('t2'), answer,
+    ])[0];
+    expect(seg.foldable).toBe(true);
+    // 3 步 bash 过程 + 1 张图：计数只算过程
+    expect(seg.toolCallCount).toBe(3);
+    expect(seg.deliverableMembers.map((m) => m.id)).toEqual(['viz']);
+    // 折叠区（展开态渲染）仍含图表，保持时间序
+    expect(seg.foldMembers.map((m) => m.id)).toContain('viz');
+  });
+
+  it('多张交付物按原顺序排列，计数不含它们', () => {
+    const u = user('u');
+    const answer = assistantText('a', '两张图都画好了');
+    const seg = segmentTurns([
+      u,
+      tool('t0'),
+      tool('viz1', 'render_html'),
+      tool('t1'),
+      tool('viz2', 'render_html'),
+      tool('t2'),
+      answer,
+    ])[0];
+    expect(seg.foldable).toBe(true);
+    expect(seg.toolCallCount).toBe(3);
+    expect(seg.deliverableMembers.map((m) => m.id)).toEqual(['viz1', 'viz2']);
+  });
+
+  it('失败或被拦的 render_html 照旧算过程步、不豁免', () => {
+    const u = user('u');
+    const answer = assistantText('a', '完成');
+    const seg = segmentTurns([
+      u,
+      tool('t0'),
+      tool('viz-fail', 'render_html', { success: false }),
+      tool('t1'),
+      tool('viz-blocked', 'render_html', { blocked: true }),
+      tool('t2'),
+      answer,
+    ])[0];
+    expect(seg.foldable).toBe(true);
+    expect(seg.toolCallCount).toBe(5);
+    expect(seg.deliverableMembers).toHaveLength(0);
+  });
+
+  it('过程步不足阈值时即使带交付物也不折叠（本来全程可见）', () => {
+    const u = user('u');
+    const answer = assistantText('a', 'done');
+    const seg = segmentTurns([u, tool('t0'), tool('viz', 'render_html'), answer])[0];
+    expect(seg.foldable).toBe(false);
+    expect(seg.toolCallCount).toBe(1);
+  });
+
+  it('回合以交付物收尾、无纯文本答案 → 半截回合照旧不可折叠', () => {
+    const u = user('u');
+    const seg = segmentTurns([
+      u, tool('t0'), tool('t1'), tool('t2'), tool('viz', 'render_html'),
+    ])[0];
+    expect(seg.foldable).toBe(false);
+    expect(seg.deliverableMembers).toHaveLength(0);
+  });
+
+  it('跨语言契约：半截回合展开渲染、补全后即可折叠 —— 后端翻页必须对齐回合边界', () => {
+    // 复现「上翻折叠突变」的形态：load_earlier_messages 若把回合从中间切开，
+    // 先到的后半段（无 user 开头）走 lone 分支完整展开、无控制行；下一页把
+    // 回合头补进来后回合变完整 → foldable → turnFoldStore 缺省收起，用户正
+    // 看着的过程当场折叠。因此后端 load_earlier_messages 的页缝必须落在回合
+    // 边界（conversation.rs 的 earlier_messages_pages_never_split_a_turn 是
+    // 这条契约的权威护栏，本用例钉住前端的突变形态本身）。
+    const tail = [tool('t0'), tool('t1'), tool('t2'), assistantText('a', '完成')];
+    const half = segmentTurns(tail);
+    expect(half).toHaveLength(4); // 每条各自成 lone 段
+    expect(half.every((s) => !s.foldable)).toBe(true); // 半截 = 全部展开
+    const u = user('u');
+    const calls = assistantToolCalls('a-tc', 3);
+    const whole = segmentTurns([u, calls, ...tail]);
+    expect(whole[0].foldable).toBe(true); // 补全后即可折叠 → 突变
+    expect(whole[0].toolCallCount).toBe(3);
   });
 
   it('subagent（subagent 工具）单独计数，且不计入普通工具数', () => {

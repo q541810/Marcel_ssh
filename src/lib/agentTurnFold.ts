@@ -12,6 +12,10 @@
  * - 计数口径（只数最终答案之前）：toolCallCount = tool 消息条数；
  *   messageCount = 有回复内容的 assistant 消息数（含 thinking/含 tool_calls）；
  *   subagentCount = toolResult.toolName 为 subagent（或历史 task）的 tool 消息数。
+ * - 交付物豁免：成功的「交付物型」工具调用（`toolCatalog` 声明 `deliverable` 的，
+ *   现为 render_html 可视化图表）不是过程 —— 不计入 toolCallCount（也不占
+ *   TOOL_FOLD_MIN 阈值），折叠态下仍恒渲染（`TurnSegment.deliverableMembers`）；
+ *   失败 / 被拦的调用照旧算过程。
  * - compaction 卡片 / system 消息 / user 是「不折叠锚点」：过程区不含它们。
  * - **收尾状态优先**：回合首条 user 消息上带 `turnState`（后端在 agent loop
  *   停止时记录并持久化的停止原因）时，只有 `completed` 允许折叠；停下来
@@ -22,7 +26,7 @@
  */
 
 import type { AgentMessage, TurnState } from "@/lib/types";
-import { isSubagentTool } from "@/lib/toolCatalog";
+import { isDeliverableTool, isSubagentTool } from "@/lib/toolCatalog";
 
 /** 过程 tool 消息达到该条数才把回合收成折叠（默认折叠阈值，对齐
  *  ExplorationGroup 探索工具 4 条 / plan 2 条的同类“组折叠”直觉）。 */
@@ -62,6 +66,9 @@ export interface TurnSegment {
   readonly answerIndex: number | null;
   /** 折叠区内「可折叠成员」消息（答案之前的 tool / assistant 过程行）。 */
   readonly foldMembers: readonly AgentMessage[];
+  /** 交付物（成功的 deliverable 工具结果，时间序子集）：折叠态也恒渲染；
+   *  展开态它们已在 foldMembers 里按时间序出现，不重复渲染。 */
+  readonly deliverableMembers: readonly AgentMessage[];
   /** 计数（只数答案之前）。 */
   readonly toolCallCount: number;
   readonly messageCount: number;
@@ -72,6 +79,19 @@ export interface TurnSegment {
 
 function isSubagentToolResult(msg: AgentMessage): boolean {
   return msg.role === 'tool' && !!msg.toolResult && isSubagentTool(msg.toolResult.toolName);
+}
+
+/**
+ * 成功交付的交付物结果（如 render_html 图表）：折叠豁免、不计步数。
+ * 失败 / 被拦的调用仍是过程的一部分，照常折叠。名字级声明在 `toolCatalog`
+ * （`deliverable` 标志），单次调用的成败在这里结合 `toolResult` 判定。
+ */
+function isDeliveredToolResult(msg: AgentMessage): boolean {
+  return msg.role === "tool"
+    && !!msg.toolResult
+    && isDeliverableTool(msg.toolResult.toolName)
+    && msg.toolResult.success
+    && !msg.toolResult.blocked;
 }
 
 /**
@@ -184,6 +204,7 @@ export function segmentTurns(
         controlIndex: 0,
         answerIndex: null,
         foldMembers: [],
+        deliverableMembers: [],
         toolCallCount: 0,
         messageCount: 0,
         subagentCount: 0,
@@ -215,6 +236,7 @@ export function segmentTurns(
         controlIndex: userIndex + 1,
         answerIndex: null,
         foldMembers: [],
+        deliverableMembers: [],
         toolCallCount: 0,
         messageCount: 0,
         subagentCount: 0,
@@ -230,6 +252,8 @@ export function segmentTurns(
     let messageCount = 0;
     let subagentCount = 0;
     for (const m of before) {
+      // 交付物（成功的可视化图表等）不计入过程步数 —— 它折叠态也显示。
+      if (isDeliveredToolResult(m)) continue;
       if (m.role === "tool") {
         toolCallCount += 1;
         if (isSubagentToolResult(m)) subagentCount += 1;
@@ -242,6 +266,8 @@ export function segmentTurns(
     const foldMembers = before.filter(
       (m) => m.role === "tool" || (m.role === "assistant" && hasAssistantContent(m)),
     );
+    // 交付物 = 成功的 deliverable 工具结果（时间序子集），折叠态恒渲染。
+    const deliverableMembers = before.filter(isDeliveredToolResult);
     // 任务尚未结束（尾回合且正在跑）→ 不折叠：模型可能继续输出 tool 或
     // 更多文本，现在折叠会在任务中途把过程收走（“干一半收起”）。
     // 过程中间夹 system（compaction 卡等永显锚点）→ 也不折叠。
@@ -257,6 +283,7 @@ export function segmentTurns(
       controlIndex: userIndex + 1,
       answerIndex,
       foldMembers,
+      deliverableMembers,
       toolCallCount,
       messageCount,
       subagentCount,

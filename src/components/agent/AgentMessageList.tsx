@@ -605,8 +605,9 @@ function AgentMessageList({
           const forceExpand = seg.foldMembers.some(
             (m) => matchedSet.has(m.id) || m.id === highlightMessageId,
           );
-          // user / 答案恒定渲染（普通路径）；过程内容惰性构建：
-          // 先对 foldMembers 做探索/plan 组折叠，展开时才逐条渲染。
+          // user / 答案恒定渲染（普通路径）；交付物（成功的可视化图表）折叠态
+          // 也恒渲染；过程内容惰性构建：先对 foldMembers 做探索/plan 组折叠，
+          // 展开时才逐条渲染。
           const userMsg = seg.messages[0];
           const answerMsg = seg.answerIndex === null
             ? null
@@ -618,6 +619,11 @@ function AgentMessageList({
               segment={seg}
               renderUser={() => (userMsg ? renderOne(userMsg) : null)}
               renderAnswer={() => (answerMsg ? renderOne(answerMsg) : null)}
+              renderDeliverables={
+                seg.deliverableMembers.length > 0
+                  ? () => seg.deliverableMembers.map((m) => renderOne(m))
+                  : undefined
+              }
               renderExpanded={() => {
                 const inner = buildGroupedItems(
                   seg.foldMembers as AgentMessage[],

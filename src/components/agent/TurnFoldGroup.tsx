@@ -25,6 +25,8 @@ interface Props {
   renderAnswer: () => ReactNode;
   /** 惰性渲染展开后的过程内容（探索/plan 组折叠已在外层完成）。 */
   renderExpanded: () => ReactNode;
+  /** 折叠态也恒渲染的交付物（成功的可视化图表等；展开时并入过程区不重复）。 */
+  renderDeliverables?: () => ReactNode;
   /** 段内成员命中搜索/高亮 → 强制展开。 */
   forceExpand?: boolean;
 }
@@ -35,6 +37,7 @@ export function TurnFoldGroup({
   renderUser,
   renderAnswer,
   renderExpanded,
+  renderDeliverables,
   forceExpand = false,
 }: Props) {
   const turnKey = segment.key;
@@ -82,6 +85,13 @@ export function TurnFoldGroup({
           <span>{open ? "收起过程" : label}</span>
         </button>
       </div>
+      {/* 交付物（如成功的可视化图表）不属于「过程」：折叠态也恒渲染；
+          展开时它们已在过程区按时间序出现，这里不再重复。 */}
+      {!open && renderDeliverables && (
+        <div className="flex min-w-0 w-full flex-col space-y-1" data-turn-deliverables>
+          {renderDeliverables()}
+        </div>
+      )}
       {/* 展开时才惰性渲染过程（懒加载：折叠态不解析过程 markdown/tool 卡） */}
       {open && (
         <div className="flex min-w-0 w-full flex-col space-y-1" data-turn-fold-members>
