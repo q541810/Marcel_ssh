@@ -35,7 +35,7 @@ import {
 } from "@/lib/agentScroll";
 import { groupConversationsWithPinned } from "@/lib/dateGrouping";
 import { getErrorMessage } from "@/lib/errors";
-import { currentVision, effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
+import { currentVision, effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import { contextMeterView, formatPercent } from "@/lib/tokenUsage";
 import type { AgentMode, AgentMessage } from "@/lib/types";
 import {
@@ -65,8 +65,8 @@ import PlanList from "./PlanList";
 import AgentCommandMenu, {
   type AgentCommandMenuHandle,
 } from "./AgentCommandMenu";
-import { ModelPicker } from "./ModelPicker";
 import { ReasoningEffortPicker } from "./ReasoningEffortPicker";
+import { DEBUG_REASONING_EFFORTS, useDebugStore } from "@/stores/debugStore";
 
 // ── Plugin input-activity bridge ──────────────────────────────────────
 // Emits `ui://input-activity` (typing bool only — never the content) so
@@ -118,8 +118,7 @@ export default function AgentPanel() {
   const attachHintTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const activeSession = useSessionStore((s) => {
-    const session = s.activeSessionId ? s.sessions[s.activeSessionId] : null;
-    return session ?? null;
+    return s.activeSessionId ? (s.sessions[s.activeSessionId] ?? null) : null;
   });
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
   const activeSessionId = activeSession?.id ?? null;
@@ -168,6 +167,9 @@ export default function AgentPanel() {
   );
 
   const canInteract = activeSession?.status === "connected";
+  const forceReasoningEffortPicker = useDebugStore(
+    (s) => s.forceReasoningEffortPicker,
+  );
 
   // 当前对话是否为子agent对话（subagent 工具派发）：输入区替换为"返回主对话"条
   const activeConversation = activeConversationId
@@ -1428,32 +1430,33 @@ export default function AgentPanel() {
               )}
             </div>
 
-            {/* Model selector — 会话级模型切换，回车后生效 */}
-            <ModelPicker
-              value={activeConversation?.modelId}
-              onChange={(modelId) => {
-                if (!activeConversationId) return;
-                void setConversationModel(activeConversationId, modelId);
-              }}
-              disabled={!canInteract}
-            />
-
-            {/* 思考强度选择器 — 仅当前生效模型声明了档位时出现；选档实时
-                生效于本会话后续任务（任务启动时取最新值注入 reasoning_effort） */}
+            {/* 模型设置：模型切换与思考强度合并为一个入口。 */}
             {(() => {
-              // 生效模型语义与 ModelPicker 一致：会话记忆 → 全局最近使用 → 首个
+              // 生效模型语义：会话记忆 → 全局最近使用 → 首个
               const effModel = effectiveModel(registry, activeConversation?.modelId);
-              const efforts = modelReasoningEfforts(effModel);
-              if (efforts.length === 0) return null;
+              const declaredEfforts = modelReasoningEfforts(effModel);
+              const efforts = declaredEfforts.length > 0
+                ? declaredEfforts
+                : forceReasoningEffortPicker
+                  ? DEBUG_REASONING_EFFORTS
+                  : [];
               return (
                 <ReasoningEffortPicker
+                  key={`${activeConversationId}:${effModel?.id}`}
                   value={activeConversation?.reasoningEffort}
                   efforts={efforts}
+                  modelName={modelLabel(effModel)}
+                  registry={registry}
+                  modelId={activeConversation?.modelId}
+                  onModelChange={(modelId) => {
+                    if (!activeConversationId) return;
+                    void setConversationModel(activeConversationId, modelId);
+                  }}
                   onChange={(effort) => {
                     if (!activeConversationId) return;
-                    void setConversationEffort(activeConversationId, effort);
+                    return setConversationEffort(activeConversationId, effort);
                   }}
-                  disabled={!canInteract}
+                  disabled={!canInteract || !activeConversationId}
                 />
               );
             })()}

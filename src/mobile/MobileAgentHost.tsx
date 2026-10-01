@@ -30,9 +30,12 @@ import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
 import { ContextMeterRing } from "@/components/agent/ContextMeterRing";
 import { TokenUsagePanel } from "@/components/agent/TokenUsagePanel";
 import { contextMeterView, formatPercent } from "@/lib/tokenUsage";
-import { ModelPicker } from "@/components/agent/ModelPicker";
 import { ReasoningEffortPicker } from "@/components/agent/ReasoningEffortPicker";
-import { effectiveModel, modelReasoningEfforts } from "@/lib/llmRegistry";
+import {
+  DEBUG_REASONING_EFFORTS,
+  useDebugStore,
+} from "@/stores/debugStore";
+import { effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import { registerBackHandler } from "./backHandler";
 import MobileApprovalSheet from "./MobileApprovalSheet";
 import MobileQuestionSheet from "./MobileQuestionSheet";
@@ -110,6 +113,9 @@ export default function MobileAgentHost({
   const ids = resolveAgentIds(activeSession);
   /** Connected + bound saved connection — required for conversation/task IPC. */
   const canInteract = !!ids && activeSession?.status === "connected";
+  const forceReasoningEffortPicker = useDebugStore(
+    (s) => s.forceReasoningEffortPicker,
+  );
   const emptyReason = agentEmptyStateReason(activeSession);
 
   const {
@@ -1310,30 +1316,32 @@ export default function MobileAgentHost({
                 </div>
               )}
             </div>
-            {/* 会话级模型切换（compact 图标态） */}
-            <ModelPicker
-              value={activeConversation?.modelId}
-              onChange={(modelId) => {
-                if (!activeConversationId) return;
-                void setConversationModel(activeConversationId, modelId);
-              }}
-              disabled={!canInteract || !ids}
-              compact
-            />
-            {/* 思考强度选择器（仅当前生效模型声明档位时显示；compact 闪电态） */}
+            {/* 模型设置：模型切换与思考强度合并为一个紧凑入口。 */}
             {(() => {
               const effModel = effectiveModel(registry, activeConversation?.modelId);
-              const efforts = modelReasoningEfforts(effModel);
-              if (efforts.length === 0) return null;
+              const declaredEfforts = modelReasoningEfforts(effModel);
+              const efforts = declaredEfforts.length > 0
+                ? declaredEfforts
+                : forceReasoningEffortPicker
+                  ? DEBUG_REASONING_EFFORTS
+                  : [];
               return (
                 <ReasoningEffortPicker
+                  key={`${activeConversationId}:${effModel?.id}`}
                   value={activeConversation?.reasoningEffort}
                   efforts={efforts}
+                  modelName={modelLabel(effModel)}
+                  registry={registry}
+                  modelId={activeConversation?.modelId}
+                  onModelChange={(modelId) => {
+                    if (!activeConversationId) return;
+                    void setConversationModel(activeConversationId, modelId);
+                  }}
                   onChange={(effort) => {
                     if (!activeConversationId) return;
-                    void setConversationEffort(activeConversationId, effort);
+                    return setConversationEffort(activeConversationId, effort);
                   }}
-                  disabled={!canInteract || !ids}
+                  disabled={!canInteract || !ids || !activeConversationId}
                   compact
                 />
               );

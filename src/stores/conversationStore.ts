@@ -696,6 +696,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     set((state) => {
       const conv = state.conversations[conversationId];
       if (!conv) return state;
+      // 保存期间可能切换了模型；旧模型的持久化结果不能覆盖新模型的显示档位。
+      const currentModelId = effectiveModelId(
+        useSettingsStore.getState().settings.llmRegistry,
+        conv.modelId,
+      );
+      if (currentModelId !== effModelId) return state;
       return {
         conversations: {
           ...state.conversations,

@@ -47,6 +47,9 @@ import { attachXtermMomentumScroll } from './terminalMomentum';
 import { createRemoteScrollForwarder } from '@/lib/terminalScrollGesture';
 import { attachTouchSelection } from './terminalSelection';
 import { attachTapLocate } from './terminalTapLocate';
+import { DEBUG_SERVER_PROMPT, isDebugSession } from '@/lib/debugServer';
+import { resolveTerminalColors } from '@/lib/terminalTheme';
+import { useDebugStore } from '@/stores/debugStore';
 
 interface MobileTerminalHostProps {
   /** When false, host stays mounted but hidden (tab keep-alive). */
@@ -62,9 +65,16 @@ export default function MobileTerminalHost({
   const reconnect = useSessionStore((s) => s.reconnect);
   const storeSettings = useSettingsStore((s) => s.settings);
   const preview = useSettingsStore((s) => s.preview);
+  const lightMode = useDebugStore((s) => s.lightMode);
   const appearance = useMemo(
-    () => resolveTerminalAppearance(storeSettings, preview),
-    [storeSettings, preview],
+    () => {
+      const resolved = resolveTerminalAppearance(storeSettings, preview);
+      return {
+        ...resolved,
+        terminalColors: resolveTerminalColors(resolved.terminalColors, lightMode),
+      };
+    },
+    [storeSettings, preview, lightMode],
   );
   const hostKeyMismatch = useHostKeyMismatch();
   const { onDisconnected } = useSessionLifecycle();
@@ -96,6 +106,7 @@ export default function MobileTerminalHost({
   const copyHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Prevents duplicate disconnect banners for the same disconnect cycle (desktop parity). */
   const disconnectBannerShownRef = useRef(false);
+  const forceListRequestedRef = useRef(false);
 
   inputStateRef.current = inputState;
   activeSessionIdRef.current = activeSessionId;
@@ -110,6 +121,21 @@ export default function MobileTerminalHost({
   const showList = panelMode === 'list';
   const listPresence = useAnimatedPresence(showList);
   const isLive = activeSession?.status === 'connected';
+  const isDebug = isDebugSession(activeSessionId);
+
+  // The debug page can ask the mobile shell to reveal its connection list while
+  // a session is already active. Keep that explicit request from being closed
+  // by the auto-hide effect below on the same render.
+  useEffect(() => {
+    const onShowConnections = () => {
+      forceListRequestedRef.current = true;
+      setForceList(true);
+    };
+    window.addEventListener('mobile:show-connections', onShowConnections);
+    return () => {
+      window.removeEventListener('mobile:show-connections', onShowConnections);
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -118,6 +144,10 @@ export default function MobileTerminalHost({
       (activeSession.status === 'connecting' ||
         activeSession.status === 'connected')
     ) {
+      if (forceListRequestedRef.current) {
+        forceListRequestedRef.current = false;
+        return;
+      }
       setForceList(false);
     }
   }, [forceList, activeSession]);
@@ -205,7 +235,7 @@ export default function MobileTerminalHost({
         const session = sessionId
           ? useSessionStore.getState().sessions[sessionId]
           : null;
-        if (!sessionId || session?.status !== 'connected') return;
+        if (!sessionId || isDebugSession(sessionId) || session?.status !== 'connected') return;
         void tauri.sshSendInput(sessionId, payload).catch((err) => {
           setIoError(getErrorMessage(err));
         });
@@ -223,6 +253,7 @@ export default function MobileTerminalHost({
     });
 
     term.onData((data) => {
+      if (isDebugSession(activeSessionIdRef.current)) return;
       let payload = data;
       let next = inputStateRef.current;
       if (data.length === 1) {
@@ -254,7 +285,7 @@ export default function MobileTerminalHost({
         fitAddon.fit();
         const sid = activeSessionIdRef.current;
         const sess = sid ? useSessionStore.getState().sessions[sid] : null;
-        if (sid && sess?.status === 'connected') {
+        if (sid && !isDebugSession(sid) && sess?.status === 'connected') {
           void tauri.sshResize(sid, term.cols, term.rows).catch(() => {});
         }
       } catch {
@@ -303,7 +334,7 @@ export default function MobileTerminalHost({
         fitAddonRef.current?.fit();
         const sid = activeSessionIdRef.current;
         const sess = sid ? useSessionStore.getState().sessions[sid] : null;
-        if (sid && sess?.status === 'connected') {
+        if (sid && !isDebugSession(sid) && sess?.status === 'connected') {
           void tauri.sshResize(sid, term.cols, term.rows).catch(() => {});
         }
       } catch {
@@ -329,6 +360,25 @@ export default function MobileTerminalHost({
       // Keep last bound id so the next connect still detects a session switch
       // and wipes stale scrollback (do not null out here).
       term.options.disableStdin = true;
+      return;
+    }
+
+    if (isDebugSession(activeSessionId)) {
+      clearListener();
+      inputBatcherRef.current?.flush();
+      term.options.disableStdin = true;
+      if (boundSessionIdRef.current !== activeSessionId) {
+        term.reset();
+        term.write(DEBUG_SERVER_PROMPT);
+      }
+      boundSessionIdRef.current = activeSessionId;
+      disconnectBannerShownRef.current = false;
+      setIoError(null);
+      try {
+        fitAddonRef.current?.fit();
+      } catch {
+        /* hidden */
+      }
       return;
     }
 
@@ -441,7 +491,7 @@ export default function MobileTerminalHost({
         fit.fit();
         const sid = activeSessionIdRef.current;
         const sess = sid ? useSessionStore.getState().sessions[sid] : null;
-        if (sid && sess?.status === 'connected') {
+        if (sid && !isDebugSession(sid) && sess?.status === 'connected') {
           void tauri.sshResize(sid, term.cols, term.rows).catch(() => {});
         }
       } catch {
@@ -455,7 +505,7 @@ export default function MobileTerminalHost({
     const session = sessionId
       ? useSessionStore.getState().sessions[sessionId]
       : null;
-    if (!sessionId || session?.status !== 'connected') return;
+    if (!sessionId || isDebugSession(sessionId) || session?.status !== 'connected') return;
     void tauri.sshSendInput(sessionId, payload).catch((err) => {
       setIoError(getErrorMessage(err));
     });
@@ -487,6 +537,7 @@ export default function MobileTerminalHost({
 
   const handleAuxKey = useCallback(
     (key: AuxKeyId) => {
+      if (isDebugSession(activeSessionIdRef.current) && key !== 'copy') return;
       const result = resolveAuxKeyInput(inputStateRef.current, key);
       inputStateRef.current = result.next;
       setInputState(result.next);
@@ -522,7 +573,7 @@ export default function MobileTerminalHost({
     (sessionId: string) => {
       const configId = useSessionStore.getState().sessions[sessionId]?.configId;
       void disconnect(sessionId).then(() => {
-        if (configId) onDisconnected(configId, sessionId);
+        if (configId && !isDebugSession(sessionId)) onDisconnected(configId, sessionId);
       });
       setForceList(false);
     },
@@ -663,12 +714,14 @@ export default function MobileTerminalHost({
 
       {!showList && (
         <>
-          <MobileQuickCommandBar
-            sessionKey={activeSession?.configId ?? null}
-            sessionId={isLive ? activeSessionId : null}
-            visible={visible}
-            onError={setIoError}
-          />
+          {!isDebug && (
+            <MobileQuickCommandBar
+              sessionKey={activeSession?.configId ?? null}
+              sessionId={isLive ? activeSessionId : null}
+              visible={visible}
+              onError={setIoError}
+            />
+          )}
           {copyHint && hasSelection && !copied && (
             <div className="pointer-events-none flex-shrink-0 border-t border-indigo-500/30 bg-indigo-500/15 px-3 py-1.5 text-center text-[11px] text-indigo-200">
               已选中 · 点下方复制键复制

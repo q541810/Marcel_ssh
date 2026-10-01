@@ -19,11 +19,13 @@ import { MobileChoiceGroup } from '@/mobile/ui/MobileChoiceGroup';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import { MobileSettingRow } from './MobileSettingRow';
+import { useDebugUnlock } from '@/hooks/useDebugUnlock';
 
 const REPO_URL = 'https://github.com/q541810/Marcel_ssh';
 
 /** About page for mobile: version, manual update check, re-run onboarding, project link. */
-export function MobileAboutSection() {
+export function MobileAboutSection({ onOpenDebug }: { onOpenDebug?: () => void }) {
+  const handleVersionTap = useDebugUnlock(() => onOpenDebug?.());
   const [appVersion, setAppVersion] = useState('');
   const [checking, setChecking] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -127,9 +129,14 @@ export function MobileAboutSection() {
         <div className="mt-2 text-base font-semibold text-zinc-100">
           {APP_NAME}
         </div>
-        <div className="mt-0.5 font-mono text-xs text-zinc-500">
+        <button
+          type="button"
+          onClick={handleVersionTap}
+          aria-label="当前版本"
+          className="mt-0.5 min-h-9 rounded px-2 font-mono text-xs text-zinc-500 active:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-indigo-400"
+        >
           {appVersion ? `v${appVersion}` : ''}
-        </div>
+        </button>
       </div>
 
       {/* Update check */}

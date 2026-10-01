@@ -19,6 +19,11 @@ import { useConversationStore } from "./conversationStore";
 import { resetAutoContinues } from "./wakeBudget";
 import { isTaskBusy } from "@/lib/agentStatus";
 import { useSettingsStore } from "./settingsStore";
+import {
+  useDebugStore,
+  DEBUG_67_DEFAULT_SPEED,
+  DEBUG_67_DEFAULT_TOKEN_LIMIT,
+} from "./debugStore";
 import { usageFromContextEvent } from "@/lib/tokenUsage";
 
 /** 一个会话的 token 用量读数（实时事件写进来，重启后由会话数据兜底）。 */
@@ -125,6 +130,75 @@ export interface TaskState {
 }
 
 const currentAssistantMessageId: Map<string, string> = new Map();
+
+const DEBUG_67_CHUNK_SIZE = 10;
+
+function waitForDebug67Chunk(speed: number): Promise<void> {
+  const delay = 1000 / Math.max(1, speed);
+  return new Promise((resolve) => globalThis.setTimeout(resolve, delay));
+}
+
+/**
+ * Debug-only model substitute. It deliberately stays in the task store so
+ * enabling the switch never reaches the Rust command or a real provider.
+ * A task can still be cancelled through the normal stop button; the next
+ * iteration observes its terminal status and exits.
+ */
+export async function runDebug67Simulation(
+  taskId: string,
+  conversationId: string,
+  assistantMessageId: string,
+  tokenLimit: number,
+  speed: number,
+  thinking: boolean,
+): Promise<void> {
+  if (thinking) {
+    useConversationStore.getState().updateConversationMessages(conversationId, (messages) =>
+      messages.map((message) =>
+        message.id === assistantMessageId
+          ? { ...message, isLoading: true, isThinking: true }
+          : message,
+      ),
+    );
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 1600));
+    const task = useTaskStore.getState().tasks[taskId];
+    if (!task || !isTaskBusy(task.status)) return;
+  }
+
+  let output = "";
+  for (let offset = 0; offset < tokenLimit; offset += DEBUG_67_CHUNK_SIZE) {
+    await waitForDebug67Chunk(speed);
+    const task = useTaskStore.getState().tasks[taskId];
+    if (!task || !isTaskBusy(task.status)) return;
+    const chunk = Array.from(
+      { length: Math.min(DEBUG_67_CHUNK_SIZE, tokenLimit - offset) },
+      () => "67",
+    ).join(" ");
+    output += `${output ? " " : ""}${chunk}`;
+    useConversationStore.getState().updateConversationMessages(conversationId, (messages) =>
+      messages.map((message) =>
+        message.id === assistantMessageId
+          // Once the first chunk arrives, render the answer while the rest of
+          // the local stream continues. `AgentMessage` intentionally hides
+          // content for loading skeletons, so leaving this flag true would
+          // make the simulated 67 output invisible until completion.
+          ? { ...message, content: output, isLoading: false, isThinking: false }
+          : message,
+      ),
+    );
+  }
+
+  useConversationStore.getState().updateConversationMessages(conversationId, (messages) =>
+    messages.map((message) =>
+      message.id === assistantMessageId
+        ? { ...message, content: output, isLoading: false, isThinking: false }
+        : message,
+    ),
+  );
+  useConversationStore.getState().markTailTurnState(conversationId, "completed");
+  useTaskStore.getState().updateTaskStatus(taskId, "completed");
+  useTaskStore.getState().clearActiveTaskIf(taskId);
+}
 
 /**
  * 任务本地收尾（**唯一入口**）。
@@ -331,6 +405,27 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       // 用量读数**不在这里清**：它是按会话累计的落库值（跨任务接着算），
       // 新一轮的第一个 `contextUsage` 事件会带着后端算好的累计值覆盖过来。
     }));
+
+    if (useDebugStore.getState().debug67Mode) {
+      // Keep the task visible as running while the local simulator streams.
+      // No listeners or backend command are created in this branch.
+      set((state) => ({
+        tasks: {
+          ...state.tasks,
+          [taskId]: { ...state.tasks[taskId], status: "executing" },
+        },
+      }));
+      const debugState = useDebugStore.getState();
+      void runDebug67Simulation(
+        taskId,
+        conversationId,
+        loadingAssistantId,
+        debugState.debug67TokenLimit || DEBUG_67_DEFAULT_TOKEN_LIMIT,
+        debugState.debug67Speed || DEBUG_67_DEFAULT_SPEED,
+        debugState.debug67Thinking,
+      );
+      return taskId;
+    }
 
     try {
       await Promise.all([

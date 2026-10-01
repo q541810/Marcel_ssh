@@ -6,6 +6,26 @@ use crate::agent::task::AgentTaskPlan;
 use crate::error::AppError;
 use crate::AppState;
 
+/// The frontend debug server is intentionally an in-memory session and never
+/// registers an SSH connection. Conversation records still need a stable
+/// connection bucket so the normal Agent UI can use the LLM while the fake
+/// terminal remains inert.
+const DEBUG_SERVER_ID: &str = "debug:msfakeserver";
+
+async fn connection_id_for_session(
+    state: &AppState,
+    session_id: &str,
+) -> Result<String, AppError> {
+    if session_id.starts_with("debug-session:") {
+        return Ok(DEBUG_SERVER_ID.to_string());
+    }
+    state
+        .ssh_manager
+        .get_connection_id(session_id)
+        .await
+        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))
+}
+
 /// 持久化的 plan（已反序列化），用于返回给前端。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,11 +55,7 @@ pub async fn agent_create_conversation(
     session_id: String,
     title: Option<String>,
 ) -> Result<String, AppError> {
-    let connection_id = state
-        .ssh_manager
-        .get_connection_id(&session_id)
-        .await
-        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+    let connection_id = connection_id_for_session(state.inner(), &session_id).await?;
 
     let title = title.unwrap_or_else(|| "新会话".to_string());
     let conversation = state
@@ -230,11 +246,7 @@ pub async fn agent_list_conversations(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<Vec<Conversation>, AppError> {
-    let connection_id = state
-        .ssh_manager
-        .get_connection_id(&session_id)
-        .await
-        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+    let connection_id = connection_id_for_session(state.inner(), &session_id).await?;
 
     let conversations = state
         .conversation_db
@@ -768,11 +780,7 @@ pub async fn agent_delete_conversations_by_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), AppError> {
-    let connection_id = state
-        .ssh_manager
-        .get_connection_id(&session_id)
-        .await
-        .ok_or_else(|| AppError::Ssh(format!("会话不存在: {}", session_id)))?;
+    let connection_id = connection_id_for_session(state.inner(), &session_id).await?;
 
     // 先列出待删除的 conversation ids，用于日志与级联清理
     let conv_ids = state

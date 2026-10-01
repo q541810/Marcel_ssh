@@ -30,6 +30,7 @@ import { isPasswordRejected, isPassphraseProblem, keyNeedsPassphrase } from '@/l
 import { formatConnLabel } from '@/lib/privacy';
 import type { ConnectionConfig, SavedConnection } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { isDebugConnection } from '@/lib/debugServer';
 import {
   groupNameOf,
   groupConnections,
@@ -311,6 +312,12 @@ export default function MobileConnectionList({
 
   const handleConnect = async (connection: SavedConnection) => {
     setLocalError(null);
+    if (isDebugConnection(connection.id)) {
+      useSessionStore.getState().connectDebugServer();
+      useConnectionStore.getState().setActiveConnection(connection.id);
+      onBack?.();
+      return;
+    }
     if (connection.authMethod === 'Password') {
       try {
         const stored = await tauri.hasPassword(connection.id);
@@ -665,7 +672,7 @@ export default function MobileConnectionList({
                     className={`flex flex-col gap-2 transition-all duration-[220ms] ${
                       isCollapsed ? '-translate-y-1 opacity-0' : 'translate-y-0 opacity-100'
                     }`}
-                    style={{ 
+                    style={{
                       transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)',
                       transitionDelay: isCollapsed ? '0ms' : '50ms'
                     }}
@@ -716,7 +723,7 @@ export default function MobileConnectionList({
                               </div>
                             </div>
                           </button>
-                          <button
+                          {!isDebugConnection(conn.id) && <button
                             type="button"
                             data-nodrag
                             onClick={() => openEditForm(conn)}
@@ -724,7 +731,7 @@ export default function MobileConnectionList({
                             aria-label={`编辑 ${conn.name}`}
                           >
                             <Pencil className="h-4 w-4" />
-                          </button>
+                          </button>}
                           <button
                             type="button"
                             data-nodrag

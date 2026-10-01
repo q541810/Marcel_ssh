@@ -6,6 +6,7 @@ import { subscribeTauriEvent, type Unsubscribe } from '@/lib/tauriEvent';
 import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { sshSendInput, sshResize } from '@/lib/tauri';
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import { resolveTerminalColors } from '@/lib/terminalTheme';
 import { openExternalLink } from '@/lib/externalLinks';
 import { buildTerminalFontFamily, onBundledNerdFontReady } from '@/lib/terminalFont';
 import {
@@ -14,6 +15,7 @@ import {
 } from '@/lib/terminalScrollGesture';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { attachClickLocate } from './terminalClickLocate';
+import { DEBUG_SERVER_PROMPT, isDebugSession } from '@/lib/debugServer';
 
 export interface TerminalInstance {
   id: string;
@@ -75,7 +77,9 @@ class TerminalInstanceManager {
     const initialFontFamily = buildTerminalFontFamily(
       useSettingsStore.getState().settings.fontFamily,
     );
-    const initialColors = useSettingsStore.getState().settings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+    const initialColors = resolveTerminalColors(
+      useSettingsStore.getState().settings.terminalColors ?? DEFAULT_TERMINAL_COLORS,
+    );
 
     const terminal = new XTerm({
       theme: initialColors,
@@ -129,6 +133,15 @@ class TerminalInstanceManager {
         terminal.refresh(0, terminal.rows - 1);
       }),
     );
+
+    // Virtual sessions keep the regular renderer and font handling, but have no
+    // input handlers or subscriptions to a remote connection.
+    if (isDebugSession(sessionId)) {
+      terminal.options.disableStdin = true;
+      terminal.write(DEBUG_SERVER_PROMPT);
+      this.instances.set(sessionId, instance);
+      return instance;
+    }
 
     // SSH input
     const onDataDisposable = terminal.onData((data: string) => {
@@ -256,6 +269,7 @@ class TerminalInstanceManager {
   }
 
   resizeRemoteIfChanged(instance: TerminalInstance) {
+    if (isDebugSession(instance.id)) return;
     const cols = instance.terminal.cols;
     const rows = instance.terminal.rows;
     if (instance.lastResize?.cols === cols && instance.lastResize?.rows === rows) return;
@@ -331,7 +345,7 @@ class TerminalInstanceManager {
     const instance = this.instances.get(sessionId);
     if (!instance) return;
     try {
-      instance.terminal.options.disableStdin = !enabled;
+      instance.terminal.options.disableStdin = isDebugSession(sessionId) || !enabled;
     } catch {
       // Instance may be mid-dispose
     }
@@ -386,6 +400,10 @@ class TerminalInstanceManager {
     const instance = this.instances.get(sessionId);
     if (!instance) return;
     instance.disconnectBannerShown = false;
+    if (isDebugSession(sessionId)) {
+      instance.terminal.reset();
+      instance.terminal.write(DEBUG_SERVER_PROMPT);
+    }
     this.setStdinEnabled(sessionId, true);
   }
 }

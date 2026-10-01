@@ -183,6 +183,134 @@ body,
 }
 
 /*
+ * Experimental light theme (debug page only).
+ *
+ * The application currently uses Tailwind's zinc palette directly on the
+ * shell and feature views. Mapping the palette at the root keeps this
+ * runtime experiment coherent across mounted panels without introducing a
+ * second persistent settings system. The debug switch adds
+ * `data-marcel-theme="light"` to <html> for the current run.
+ */
+html[data-marcel-theme='light'],
+html[data-marcel-theme='light'] body,
+html[data-marcel-theme='light'] #root {
+  color-scheme: light;
+  background-color: #f4f5f7;
+  color: #18181b;
+}
+
+/* Tailwind v4 zinc utilities resolve through these variables. Remapping the
+ * palette here covers utilities added by future views without a selector for
+ * every individual component. */
+html[data-marcel-theme='light'] {
+  --color-zinc-50: #111827;
+  --color-zinc-100: #18181b;
+  --color-zinc-200: #27272a;
+  --color-zinc-300: #3f3f46;
+  --color-zinc-400: #52525b;
+  --color-zinc-500: #71717a;
+  --color-zinc-600: #a1a1aa;
+  --color-zinc-700: #d4d4d8;
+  --color-zinc-800: #e4e4e7;
+  --color-zinc-900: #f4f4f5;
+  --color-zinc-950: #ffffff;
+  --color-indigo-50: #eef2ff;
+  --color-indigo-100: #312e81;
+  --color-indigo-200: #3730a3;
+  --color-indigo-300: #4338ca;
+  --color-indigo-400: #4f46e5;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-700: #4338ca;
+  --color-indigo-800: #c7d2fe;
+  --color-indigo-900: #e0e7ff;
+  --color-indigo-950: #eef2ff;
+  --color-red-50: #450a0a;
+  --color-red-100: #7f1d1d;
+  --color-red-200: #991b1b;
+  --color-red-300: #b91c1c;
+  --color-red-400: #dc2626;
+  --color-red-500: #ef4444;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-red-800: #fecaca;
+  --color-red-900: #fee2e2;
+  --color-red-950: #fff1f2;
+}
+
+html[data-marcel-theme='light'] .bg-zinc-950,
+html[data-marcel-theme='light'] [class~='bg-zinc-950/95'],
+html[data-marcel-theme='light'] [class~='bg-zinc-950/90'],
+html[data-marcel-theme='light'] [class~='bg-zinc-950/80'],
+html[data-marcel-theme='light'] [class~='bg-zinc-950/60'],
+html[data-marcel-theme='light'] [class~='bg-zinc-950/50'],
+html[data-marcel-theme='light'] [class~='bg-zinc-950/40'] {
+  background-color: #ffffff !important;
+}
+
+html[data-marcel-theme='light'] .bg-zinc-900,
+html[data-marcel-theme='light'] [class~='bg-zinc-900/95'],
+html[data-marcel-theme='light'] [class~='bg-zinc-900/80'],
+html[data-marcel-theme='light'] [class~='bg-zinc-900/70'],
+html[data-marcel-theme='light'] [class~='bg-zinc-900/60'],
+html[data-marcel-theme='light'] [class~='bg-zinc-900/50'],
+html[data-marcel-theme='light'] [class~='bg-zinc-900/40'] {
+  background-color: #f8fafc !important;
+}
+
+html[data-marcel-theme='light'] .bg-zinc-800,
+html[data-marcel-theme='light'] [class~='bg-zinc-800/90'],
+html[data-marcel-theme='light'] [class~='bg-zinc-800/80'],
+html[data-marcel-theme='light'] [class~='bg-zinc-800/70'],
+html[data-marcel-theme='light'] [class~='bg-zinc-800/60'],
+html[data-marcel-theme='light'] [class~='bg-zinc-800/50'] {
+  background-color: #eef1f5 !important;
+}
+
+html[data-marcel-theme='light'] .bg-zinc-700,
+html[data-marcel-theme='light'] .bg-zinc-600 {
+  background-color: #e3e6eb !important;
+}
+
+html[data-marcel-theme='light'] .text-zinc-100,
+html[data-marcel-theme='light'] .text-zinc-200 {
+  color: #18181b !important;
+}
+
+html[data-marcel-theme='light'] .text-zinc-300,
+html[data-marcel-theme='light'] .text-zinc-400 {
+  color: #3f3f46 !important;
+}
+
+html[data-marcel-theme='light'] .text-zinc-500,
+html[data-marcel-theme='light'] .text-zinc-600 {
+  color: #71717a !important;
+}
+
+html[data-marcel-theme='light'] .border-zinc-800,
+html[data-marcel-theme='light'] .border-zinc-700,
+html[data-marcel-theme='light'] .border-zinc-600,
+html[data-marcel-theme='light'] [class~='border-zinc-800/80'],
+html[data-marcel-theme='light'] [class~='border-zinc-800/60'],
+html[data-marcel-theme='light'] [class~='border-zinc-800/50'],
+html[data-marcel-theme='light'] [class~='border-zinc-700/60'],
+html[data-marcel-theme='light'] [class~='border-zinc-700/50'] {
+  border-color: #d9dde5 !important;
+}
+
+html[data-marcel-theme='light'] ::-webkit-scrollbar-thumb {
+  background: #c4c9d3;
+}
+
+html[data-marcel-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: #aeb5c1;
+}
+
+html[data-marcel-theme='light'] {
+  scrollbar-color: #c4c9d3 transparent;
+}
+
+/*
  * Mobile IME + overlays-content: the browser may pan/scroll the document to
  * keep a focused input above the keyboard. That creates a blank strip under
  * the content and exposes the bottom tab bar. Pin the document so only in-app

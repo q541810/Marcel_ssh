@@ -1,0 +1,450 @@
+.reasoning-effort-popover {
+  width: 228px;
+  padding: 8px 9px 9px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgb(63 63 70 / 90%);
+  border-radius: 11px;
+  background: #28282a;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 35%);
+}
+
+/* Keep this compact popover's motion local to the control.  The shared
+ * mobile-popover classes provide a fallback for other overlays, while these
+ * rules make opening and closing feel intentional at desktop sizes too. */
+@keyframes reasoningEffortPopoverEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.965);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(1px) scale(1.008);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes reasoningEffortPopoverExit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.reasoning-effort-popover.mobile-popover-enter {
+  transform-origin: top center;
+  animation: reasoningEffortPopoverEnter 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.reasoning-effort-popover.mobile-popover-exit {
+  transform-origin: top center;
+  animation: reasoningEffortPopoverExit 150ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+.reasoning-effort-heading {
+  min-width: 0;
+  padding: 0 20px;
+  text-align: center;
+}
+.reasoning-effort-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  color: #60a5fa;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 17px;
+}
+.reasoning-effort-ultra .reasoning-effort-value {
+  color: #c084fc;
+}
+.reasoning-effort-model {
+  display: flex;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
+  color: #8c8c93;
+  font-size: 10px;
+  line-height: 14px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.reasoning-effort-model:hover:not(:disabled),
+.reasoning-effort-model:focus-visible {
+  color: #d4d4d8;
+  outline: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.reasoning-effort-model:disabled {
+  cursor: default;
+}
+.reasoning-effort-model span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reasoning-effort-model svg {
+  flex-shrink: 0;
+}
+.reasoning-effort-reset {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: #85858c;
+  background: transparent;
+  cursor: pointer;
+}
+.reasoning-effort-reset:hover:not(:disabled),
+.reasoning-effort-reset:focus-visible {
+  color: #d4d4d8;
+  background: rgb(63 63 70 / 80%);
+}
+.reasoning-effort-reset:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.reasoning-effort-control {
+  position: relative;
+  height: 34px;
+  margin-top: 5px;
+}
+.reasoning-effort-track {
+  position: absolute;
+  top: 5px;
+  right: 0;
+  left: 0;
+  height: 24px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #52525b;
+  isolation: isolate;
+}
+.reasoning-effort-track::after {
+  position: absolute;
+  inset: 0 auto 0 -28%;
+  width: 28%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 20%), transparent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: skewX(-18deg);
+}
+.reasoning-effort-control:hover .reasoning-effort-track::after,
+.reasoning-effort-control.is-interacting .reasoning-effort-track::after {
+  opacity: 1;
+  animation: reasoningEffortTrackSheen 900ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+@keyframes reasoningEffortTrackSheen {
+  from { transform: translateX(0) skewX(-18deg); }
+  to { transform: translateX(460%) skewX(-18deg); }
+}
+.reasoning-effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 20px;
+  border-radius: inherit;
+  background: #3298f0;
+  transition: width 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.reasoning-effort-control.is-interacting .reasoning-effort-fill {
+  transition: width 90ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reasoning-effort-ultra .reasoning-effort-fill {
+  background: linear-gradient(105deg, #286ee7 0%, #5c78ee 28%, #a45fea 57%, #e07be9 82%, #8f6df0 100%);
+  background-size: 240% 100%;
+  animation: reasoningEffortUltraGlow 3.2s ease-in-out infinite alternate;
+}
+.reasoning-effort-ultra .reasoning-effort-track::after {
+  opacity: 0.9;
+  width: 42%;
+  left: -42%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 44%), rgb(221 175 255 / 34%), transparent);
+  animation: reasoningEffortUltraSheen 2.4s linear infinite;
+}
+@keyframes reasoningEffortUltraSheen {
+  from { transform: translateX(0) skewX(-18deg); }
+  to { transform: translateX(340%) skewX(-18deg); }
+}
+@keyframes reasoningEffortUltraGlow {
+  from {
+    background-position: 0% 50%;
+    filter: saturate(0.98) brightness(0.98);
+  }
+  to {
+    background-position: 100% 50%;
+    filter: saturate(1.16) brightness(1.08);
+  }
+}
+.reasoning-effort-stars {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.7;
+  background:
+    radial-gradient(circle at 8% 72%, #d6d4ff 0 0.7px, transparent 1.1px),
+    radial-gradient(circle at 14% 30%, #f1dfff 0 0.8px, transparent 1.2px),
+    radial-gradient(circle at 20% 44%, #d6d4ff 0 0.6px, transparent 1px),
+    radial-gradient(circle at 29% 65%, #d6d4ff 0 0.7px, transparent 1px),
+    radial-gradient(circle at 42% 37%, #f1dfff 0 0.9px, transparent 1.3px),
+    radial-gradient(circle at 48% 72%, #f1dfff 0 0.6px, transparent 1px),
+    radial-gradient(circle at 59% 38%, #f1dfff 0 0.8px, transparent 1.2px),
+    radial-gradient(circle at 70% 56%, #d6d4ff 0 0.9px, transparent 1.3px),
+    radial-gradient(circle at 83% 31%, #f1dfff 0 0.7px, transparent 1.1px);
+  animation: reasoningEffortStarsDrift 4.2s ease-in-out infinite alternate;
+}
+@keyframes reasoningEffortStarsDrift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 3px -1px;
+  }
+}
+.reasoning-effort-ticks {
+  position: absolute;
+  inset: 0 14px;
+  pointer-events: none;
+}
+.reasoning-effort-ticks span {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 38%);
+  transform: translate(-50%, -50%);
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), background-color 160ms ease;
+}
+.reasoning-effort-ticks span.is-hovered {
+  background: #fff;
+  transform: translate(-50%, -50%) scale(1.55);
+}
+.reasoning-effort-thumb {
+  position: absolute;
+  top: 3px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 30%);
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: left 260ms cubic-bezier(0.34, 1.56, 0.64, 1), transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 180ms ease;
+}
+.reasoning-effort-control:hover .reasoning-effort-thumb {
+  transform: translateX(-50%) scale(1.075);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 34%), 0 0 0 3px rgb(255 255 255 / 10%);
+}
+.reasoning-effort-control.is-interacting .reasoning-effort-thumb {
+  transition: left 90ms cubic-bezier(0.22, 1, 0.36, 1), transform 90ms ease-out, box-shadow 90ms ease;
+  transform: translateX(-50%) scale(1.045);
+}
+.reasoning-effort-control:has(.reasoning-effort-slider:focus-visible) .reasoning-effort-thumb {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+.reasoning-effort-control:has(.reasoning-effort-slider:disabled) .reasoning-effort-thumb {
+  opacity: 0.55;
+}
+.reasoning-effort-ultra-particles {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  z-index: 3;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) scale(0.3);
+  background:
+    radial-gradient(circle at 50% 3%, #e9d5ff 0 1.5px, transparent 2.3px),
+    radial-gradient(circle at 87% 18%, #c084fc 0 1.3px, transparent 2.1px),
+    radial-gradient(circle at 98% 54%, #f0abfc 0 1.4px, transparent 2.2px),
+    radial-gradient(circle at 75% 91%, #d8b4fe 0 1.2px, transparent 2px),
+    radial-gradient(circle at 23% 92%, #f0abfc 0 1.3px, transparent 2.1px),
+    radial-gradient(circle at 2% 53%, #c084fc 0 1.3px, transparent 2.1px),
+    radial-gradient(circle at 14% 18%, #e9d5ff 0 1.4px, transparent 2.2px);
+  animation: reasoningEffortUltraBurst 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes reasoningEffortUltraBurst {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.3);
+  }
+  25% {
+    opacity: 1;
+    transform: translateX(-50%) scale(0.92);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.42);
+  }
+}
+/* Outrank the app-wide input[type='range'] theme, irrespective of CSS load order. */
+input[type='range'].reasoning-effort-slider {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+input[type='range'].reasoning-effort-slider::-webkit-slider-runnable-track {
+  height: 24px;
+  background: transparent;
+}
+input[type='range'].reasoning-effort-slider::-moz-range-track {
+  height: 24px;
+  background: transparent;
+}
+input[type='range'].reasoning-effort-slider::-webkit-slider-thumb {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin-top: -2px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+input[type='range'].reasoning-effort-slider::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+input[type='range'].reasoning-effort-slider:focus-visible {
+  outline: none;
+}
+input[type='range'].reasoning-effort-slider:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.reasoning-effort-status {
+  margin: 1px 0 0;
+  color: #a1a1aa;
+  font-size: 10px;
+  line-height: 13px;
+  text-align: center;
+}
+.reasoning-effort-model-list {
+  max-height: 210px;
+  margin-top: 0;
+  overflow-y: auto;
+  padding-top: 0;
+}
+.reasoning-effort-model-channel {
+  padding: 5px 5px 2px;
+  color: #71717a;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.reasoning-effort-model-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 5px;
+  border: 0;
+  border-radius: 5px;
+  color: #d4d4d8;
+  background: transparent;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.reasoning-effort-model-option:hover:not(:disabled),
+.reasoning-effort-model-option:focus-visible,
+.reasoning-effort-model-option.is-active {
+  color: #bfdbfe;
+  background: rgb(79 70 229 / 22%);
+  outline: none;
+}
+.reasoning-effort-model-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.reasoning-effort-model-empty {
+  margin: 7px 0 2px;
+  color: #a1a1aa;
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+.reasoning-effort-error {
+  color: #f87171;
+}
+@media (forced-colors: active) {
+  .reasoning-effort-thumb,
+  .reasoning-effort-stars,
+  .reasoning-effort-ultra-particles {
+    display: none;
+  }
+  input[type='range'].reasoning-effort-slider {
+    appearance: auto;
+    -webkit-appearance: auto;
+  }
+  input[type='range'].reasoning-effort-slider::-webkit-slider-thumb,
+  input[type='range'].reasoning-effort-slider::-moz-range-thumb {
+    border: 1px solid ButtonText;
+    background: ButtonFace;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning-effort-popover.mobile-popover-enter {
+    animation: none;
+  }
+  /* Keep one animation frame so useAnimatedPresence can finish unmounting. */
+  .reasoning-effort-popover.mobile-popover-exit {
+    animation-duration: 1ms;
+  }
+  .reasoning-effort-fill,
+  .reasoning-effort-thumb,
+  .reasoning-effort-track::after,
+  .reasoning-effort-stars,
+  .reasoning-effort-ultra-particles,
+  .reasoning-effort-ultra .reasoning-effort-fill {
+    transition: none;
+    animation: none;
+  }
+}

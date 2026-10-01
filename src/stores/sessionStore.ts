@@ -4,6 +4,7 @@ import type { Session, ConnectionConfig } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { getErrorMessage } from "@/lib/errors";
 import { formatConnLabel } from "@/lib/privacy";
+import { DEBUG_SERVER_ID, isDebugConnection, isDebugSession } from "@/lib/debugServer";
 import { useSettingsStore } from "./settingsStore";
 import { terminalInstanceManager } from "@/components/terminal/TerminalInstanceManager";
 
@@ -11,6 +12,7 @@ interface SessionState {
   sessions: Record<string, Session>;
   activeSessionId: string | null;
 
+  connectDebugServer: () => string;
   connect: (config: ConnectionConfig) => Promise<string>;
   connectWithSavedPassword: (
     connectionId: string,
@@ -70,7 +72,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: {},
   activeSessionId: null,
 
+  connectDebugServer: () => {
+    const existing = Object.values(get().sessions).find((session) =>
+      isDebugSession(session.id),
+    );
+    if (existing) {
+      set({ activeSessionId: existing.id });
+      return existing.id;
+    }
+
+    const sessionId = `debug-session:${crypto.randomUUID()}`;
+    const session: Session = {
+      id: sessionId,
+      connectionId: "msfakeserver",
+      configId: DEBUG_SERVER_ID,
+      status: "connected",
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      sessions: { ...state.sessions, [sessionId]: session },
+      activeSessionId: sessionId,
+    }));
+    return sessionId;
+  },
+
   connect: async (config: ConnectionConfig) => {
+    if (isDebugConnection(config.connectionId)) return get().connectDebugServer();
     const tempId = allocateSessionSlot(get().sessions, config.connectionId);
     const privacyMode =
       useSettingsStore.getState().settings.privacyMode ?? false;
@@ -129,6 +156,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     connLabel: string,
     trustNewHostKey = false,
   ) => {
+    if (isDebugConnection(connectionId)) return get().connectDebugServer();
     const tempId = allocateSessionSlot(get().sessions, connectionId);
     const session: Session = {
       id: tempId,
@@ -182,6 +210,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     connLabel: string,
     trustNewHostKey = false,
   ) => {
+    if (isDebugConnection(connectionId)) return get().connectDebugServer();
     const tempId = allocateSessionSlot(get().sessions, connectionId);
     const session: Session = {
       id: tempId,
@@ -234,6 +263,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const session = get().sessions[sessionId];
     if (!session) {
       throw new Error(`会话不存在: ${sessionId}`);
+    }
+    if (isDebugSession(sessionId)) {
+      terminalInstanceManager.onReconnected(sessionId);
+      set((state) => ({
+        sessions: {
+          ...state.sessions,
+          [sessionId]: { ...session, status: "connected", errorMessage: undefined },
+        },
+      }));
+      return;
     }
     const connectionId = session.configId;
     if (!connectionId) {
@@ -305,6 +344,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : state.activeSessionId;
       return { sessions: updated, activeSessionId: nextActiveId };
     });
+    if (isDebugSession(sessionId)) return;
     try {
       await tauri.sshDisconnect(sessionId);
     } catch (err) {

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isDebugSession } from "@/lib/debugServer";
 import { getErrorMessage } from "./errors";
 import type {
   ActiveMessagesResult,
@@ -53,6 +54,7 @@ export async function sshSendInput(
   sessionId: string,
   data: string,
 ): Promise<void> {
+  if (isDebugSession(sessionId)) return;
   return invoke("ssh_send_input", { sessionId, data });
 }
 
@@ -61,6 +63,7 @@ export async function sshResize(
   cols: number,
   rows: number,
 ): Promise<void> {
+  if (isDebugSession(sessionId)) return;
   return invoke("ssh_resize", { sessionId, cols, rows });
 }
 

@@ -206,6 +206,10 @@ export default function MobileApp() {
             visible={activeTab === 'settings'}
             initialCategory={pendingSettingsCategory}
             onCategoryConsumed={() => setPendingSettingsCategory(null)}
+            onShowServers={() => {
+              setActiveTab('terminal');
+              window.dispatchEvent(new Event('mobile:show-connections'));
+            }}
           />
         </div>
 

@@ -2,6 +2,7 @@ import * as tauri from '@/lib/tauri';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSkillStore } from '@/stores/skillStore';
+import { mergeDebugServer } from '@/lib/debugServer';
 
 /**
  * 聚合启动 Hydration：通过一次 IPC 获取首屏所需的全部配置与数据快照，
@@ -22,11 +23,11 @@ export async function hydrateBootstrapData(): Promise<void> {
     });
 
     // 2. Hydrate Connections
-    useConnectionStore.setState({
-      connections: data.connections,
+    useConnectionStore.setState((state) => ({
+      connections: mergeDebugServer(data.connections, state.connections),
       loading: false,
       error: null,
-    });
+    }));
 
     // 3. Hydrate Skills
     useSkillStore.setState({

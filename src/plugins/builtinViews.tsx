@@ -1,4 +1,4 @@
-import { Terminal, Wand, Plug, Settings } from 'lucide-react';
+import { Bug, Terminal, Wand, Plug, Settings } from 'lucide-react';
 import type { ViewProvider } from '@/lib/types';
 import { useViewStore } from '@/stores/viewStore';
 
@@ -68,6 +68,18 @@ export function registerBuiltinViews(): void {
       exclusive: true,
       component: async () => ({
         default: (await import('@/components/settings/Settings')).default,
+      }),
+    },
+    {
+      id: 'builtin.debug',
+      pluginId: BUILTIN_PLUGIN_ID,
+      mount: 'center',
+      title: '调试',
+      icon: { kind: 'react', node: <Bug className="w-5 h-5" /> },
+      order: 30,
+      exclusive: true,
+      component: async () => ({
+        default: (await import('@/components/debug/DebugPage')).default,
       }),
     },
     {

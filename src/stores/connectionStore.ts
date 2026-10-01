@@ -4,6 +4,7 @@ import * as tauri from "@/lib/tauri";
 import type { ConnectionOrderEntry } from "@/lib/tauri";
 import { getErrorMessage } from "@/lib/errors";
 import { groupNameOf, toOrderEntries } from "@/lib/connectionOrder";
+import { createDebugServer, isDebugConnection, mergeDebugServer } from '@/lib/debugServer';
 
 interface ConnectionState {
   connections: SavedConnection[];
@@ -13,6 +14,7 @@ interface ConnectionState {
 
   fetchConnections: () => Promise<void>;
   addConnection: (connection: SavedConnection) => Promise<void>;
+  addDebugServer: () => void;
   removeConnection: (id: string) => Promise<void>;
   /** 应用拖拽后的顺序（组内重排 / 跨组移入 / 拖动分组）：乐观更新，失败回滚。 */
   applyConnectionOrder: (entries: ConnectionOrderEntry[]) => Promise<void>;
@@ -31,7 +33,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const connections = await tauri.getConnections();
-      set({ connections });
+      set((state) => ({ connections: mergeDebugServer(connections, state.connections) }));
     } catch (err) {
       set({ error: getErrorMessage(err) });
     } finally {
@@ -40,6 +42,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   addConnection: async (connection: SavedConnection) => {
+    if (isDebugConnection(connection.id)) return;
     set({ loading: true, error: null });
     try {
       await tauri.saveConnection(connection);
@@ -49,7 +52,20 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
   },
 
+  addDebugServer: () => {
+    set((state) => state.connections.some((connection) => isDebugConnection(connection.id))
+      ? state
+      : { connections: [...state.connections, createDebugServer()] });
+  },
+
   removeConnection: async (id: string) => {
+    if (isDebugConnection(id)) {
+      set((state) => ({
+        connections: state.connections.filter((connection) => connection.id !== id),
+        activeConnectionId: state.activeConnectionId === id ? null : state.activeConnectionId,
+      }));
+      return;
+    }
     set({ loading: true, error: null });
     try {
       await tauri.deleteConnection(id);
@@ -87,7 +103,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     set({ connections: next, error: null });
     try {
-      await tauri.applyConnectionOrder(entries);
+      const savedEntries = entries.filter((entry) => !isDebugConnection(entry.id));
+      if (savedEntries.length > 0) await tauri.applyConnectionOrder(savedEntries);
     } catch (err) {
       set({ connections: prev, error: getErrorMessage(err) });
     }
@@ -100,7 +117,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   renameGroup: async (oldName: string, newName: string) => {
     const trimmedNew = newName.trim();
     if (trimmedNew === oldName) return; // 没改
-    
+
     const prev = get().connections;
     const next = prev.map((conn) => {
       if (groupNameOf(conn) !== oldName) return conn;
@@ -111,7 +128,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
     set({ connections: next, error: null });
     try {
-      await tauri.applyConnectionOrder(toOrderEntries(next));
+      const savedEntries = toOrderEntries(next.filter((connection) => !isDebugConnection(connection.id)));
+      if (savedEntries.length > 0) await tauri.applyConnectionOrder(savedEntries);
     } catch (err) {
       set({ connections: prev, error: getErrorMessage(err) });
     }

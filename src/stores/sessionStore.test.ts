@@ -68,6 +68,23 @@ describe('sessionStore', () => {
     });
   });
 
+  it('creates and reuses the local debug server session without SSH', () => {
+    const first = useSessionStore.getState().connectDebugServer();
+    const stateAfterFirst = useSessionStore.getState();
+
+    expect(first).toMatch(/^debug-session:/);
+    expect(stateAfterFirst.sessions[first]).toMatchObject({
+      connectionId: 'msfakeserver',
+      configId: 'debug:msfakeserver',
+      status: 'connected',
+    });
+
+    const second = useSessionStore.getState().connectDebugServer();
+    expect(second).toBe(first);
+    expect(Object.keys(useSessionStore.getState().sessions)).toEqual([first]);
+    expect(sshConnect).not.toHaveBeenCalled();
+  });
+
   it('keeps failed saved-password connection visible with its error message', async () => {
     connectWithSavedPassword.mockRejectedValueOnce(new Error('认证失败：用户名或密码/密钥错误'));
 

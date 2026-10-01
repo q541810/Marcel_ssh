@@ -19,6 +19,8 @@ import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSect
 import { MobileModelSection } from './settings/MobileModelSection';
 import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
 import { registerBackHandler } from './backHandler';
+import DebugPage from '@/components/debug/DebugPage';
+import MobileFullscreenPage from './ui/MobileFullscreenPage';
 
 interface MobileSettingsProps {
   /** Tab keep-alive: false while another tab is active. */
@@ -26,12 +28,14 @@ interface MobileSettingsProps {
   /** 外部触发的初始分类（如保活卡片跳转）。消费后由 onCategoryConsumed 清理。 */
   initialCategory?: MobileSettingsCategoryId | null;
   onCategoryConsumed?: () => void;
+  onShowServers?: () => void;
 }
 
 export default function MobileSettings({
   visible = true,
   initialCategory = null,
   onCategoryConsumed,
+  onShowServers,
 }: MobileSettingsProps) {
   const loaded = useSettingsStore((s) => s.loaded);
   const storeSettings = useSettingsStore((s) => s.settings);
@@ -41,6 +45,7 @@ export default function MobileSettings({
 
   const [activeCategory, setActiveCategory] =
     useState<MobileSettingsCategoryId | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -65,6 +70,7 @@ export default function MobileSettings({
   useEffect(() => {
     if (visible) return;
     if (initialCategory) return;
+    setDebugOpen(false);
     storeClearPreview();
     setActiveCategory(null);
   }, [visible, storeClearPreview, initialCategory]);
@@ -242,11 +248,24 @@ export default function MobileSettings({
 
           {activeCategory === 'about' && (
             <div className="p-3">
-              <MobileAboutSection />
+              <MobileAboutSection onOpenDebug={() => setDebugOpen(true)} />
             </div>
           )}
         </div>
       </div>
+      {debugOpen && visible && (
+        <MobileFullscreenPage region="mobile-debug" onBack={() => setDebugOpen(false)}>
+          <div className="flex min-h-0 flex-1 flex-col" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+            <DebugPage
+              onBack={() => setDebugOpen(false)}
+              onShowServers={() => {
+                setDebugOpen(false);
+                onShowServers?.();
+              }}
+            />
+          </div>
+        </MobileFullscreenPage>
+      )}
     </SettingsActionsProvider>
   );
 }

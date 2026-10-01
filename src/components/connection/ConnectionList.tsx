@@ -18,6 +18,7 @@ import {
 } from '@/lib/connectionOrder';
 import type { SavedConnection, ConnectionConfig } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
+import { isDebugConnection } from '@/lib/debugServer';
 import Modal from '@/components/ui/Modal';
 import ListPanel from '@/components/ui/ListPanel';
 import ContextMenu from '@/components/ui/ContextMenu';
@@ -814,6 +815,11 @@ export default function ConnectionList() {
    */
   const handleConnect = async (connection: SavedConnection) => {
     setLocalError(null);
+    if (isDebugConnection(connection.id)) {
+      useSessionStore.getState().connectDebugServer();
+      setActiveConnection(connection.id);
+      return;
+    }
     if (connection.authMethod === 'Password') {
       try {
         const stored = await tauri.hasPassword(connection.id);
@@ -1040,10 +1046,10 @@ export default function ConnectionList() {
           label: '连接',
           onClick: () => handleConnect(contextMenu.connection),
         },
-        {
+        ...(!isDebugConnection(contextMenu.connection.id) ? [{
           label: '编辑',
           onClick: () => openEditForm(contextMenu.connection),
-        },
+        }] : []),
         ...(shiftable.up
           ? [
               {
@@ -1220,7 +1226,7 @@ export default function ConnectionList() {
                       className={`space-y-1 transition-all duration-[220ms] ${
                         isCollapsed ? '-translate-y-1 opacity-0' : 'translate-y-0 opacity-100'
                       }`}
-                      style={{ 
+                      style={{
                         transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)',
                         transitionDelay: isCollapsed ? '0ms' : '50ms'
                       }}

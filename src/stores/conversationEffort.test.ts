@@ -88,4 +88,62 @@ describe('conversationStore.setConversationEffort', () => {
       useConversationStore.getState().conversations['conv-1'].reasoningEffort,
     ).toBeNull();
   });
+
+  it('does not overwrite a newly selected model when an earlier effort save finishes', async () => {
+    const settings = useSettingsStore.getState().settings;
+    const model = settings.llmRegistry.models[0];
+    useSettingsStore.setState({
+      settings: {
+        ...settings,
+        llmRegistry: {
+          ...settings.llmRegistry,
+          models: [model, { ...model, id: 'model-2' }],
+          lastUsedModelId: 'model-2',
+        },
+      },
+    });
+    useConversationStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        'conv-1': { ...state.conversations['conv-1'], modelId: 'model-1' },
+      },
+    }));
+    let finishSave = () => {};
+    agentSetSessionEffort.mockReturnValueOnce(new Promise<void>((resolve) => { finishSave = resolve; }));
+    const save = useConversationStore.getState().setConversationEffort('conv-1', 'high');
+    agentSetSessionModel.mockResolvedValue(undefined);
+    agentGetSessionEffort.mockResolvedValueOnce('low');
+
+    await useConversationStore.getState().setConversationModel('conv-1', 'model-2');
+    finishSave();
+    await save;
+
+    expect(agentSetSessionEffort).toHaveBeenCalledWith('conv-1', 'model-1', 'high');
+    expect(useConversationStore.getState().conversations['conv-1']).toMatchObject({
+      modelId: 'model-2',
+      reasoningEffort: 'low',
+    });
+  });
+
+  it('does not apply a pending save after the unpinned conversation follows another default model', async () => {
+    let finishSave = () => {};
+    agentSetSessionEffort.mockReturnValueOnce(new Promise<void>((resolve) => { finishSave = resolve; }));
+    const save = useConversationStore.getState().setConversationEffort('conv-1', 'high');
+    const settings = useSettingsStore.getState().settings;
+    useSettingsStore.setState({
+      settings: {
+        ...settings,
+        llmRegistry: {
+          ...settings.llmRegistry,
+          models: [...settings.llmRegistry.models, { ...settings.llmRegistry.models[0], id: 'model-2' }],
+          lastUsedModelId: 'model-2',
+        },
+      },
+    });
+    finishSave();
+    await save;
+
+    expect(agentSetSessionEffort).toHaveBeenCalledWith('conv-1', 'model-1', 'high');
+    expect(useConversationStore.getState().conversations['conv-1'].reasoningEffort).toBeNull();
+  });
 });

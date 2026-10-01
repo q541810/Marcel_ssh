@@ -286,12 +286,12 @@ function MobileModelEditorSheet({
             <div className="mt-1 space-y-3">
               <div>
                 <label className="mb-1 block text-xs text-zinc-400">
-                  思考强度档位 <span className="text-zinc-600">（每行一个，不填 = 不启用）</span>
+                  思考强度档位 <span className="text-zinc-600">（从低到高，每行一个；留空不启用）</span>
                 </label>
                 <textarea
                   value={effortsText}
                   onChange={(e) => setEffortsText(e.target.value)}
-                  placeholder={'low\nhigh\nmax'}
+                  placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
                   className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 font-mono text-xs text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-indigo-500"

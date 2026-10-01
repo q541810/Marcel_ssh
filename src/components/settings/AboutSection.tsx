@@ -21,6 +21,8 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import ChatHistoryModal from './ChatHistoryModal';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useViewStore } from '@/stores/viewStore';
+import { useDebugUnlock } from '@/hooks/useDebugUnlock';
 
 export default function AboutSection() {
   const [appVersion, setAppVersion] = useState('');
@@ -51,6 +53,8 @@ export default function AboutSection() {
   const updateState = useUpdateStore((s) => s.state);
   const [installing, setInstalling] = useState(false);
   const fetchConnections = useConnectionStore((s) => s.fetchConnections);
+  const setActiveView = useViewStore((s) => s.setActiveId);
+  const handleVersionTap = useDebugUnlock(() => setActiveView('builtin.debug'));
 
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => setAppVersion('0.1.3'));
@@ -135,7 +139,14 @@ export default function AboutSection() {
           <span className="text-sm text-zinc-300">{APP_NAME}</span>
         </SettingItem>
         <SettingItem id="about-version" label="当前版本" sectionId="settings-about">
-          <span className="text-sm text-zinc-300">{appVersion}</span>
+          <button
+            type="button"
+            onClick={handleVersionTap}
+            className="rounded px-1 text-left text-sm text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-2 focus-visible:outline-indigo-400"
+            title="版本信息"
+          >
+            {appVersion}
+          </button>
         </SettingItem>
         <SettingItem
           id="about-update"

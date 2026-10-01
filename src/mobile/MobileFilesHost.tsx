@@ -35,6 +35,7 @@ import {
   isDialogCancelled,
 } from '@/lib/sftp-helpers';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { isDebugSession } from '@/lib/debugServer';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { withForegroundKeepAlive } from './mobileBridge';
@@ -102,7 +103,7 @@ export default function MobileFilesHost({
 }: MobileFilesHostProps) {
   const activeSession = useSessionStore((s) => {
     const id = s.activeSessionId;
-    return id ? (s.sessions[id] ?? null) : null;
+    return id && !isDebugSession(id) ? (s.sessions[id] ?? null) : null;
   });
   const connections = useConnectionStore((s) => s.connections);
   const ids = resolveFilesSessionIds(activeSession);

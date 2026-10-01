@@ -16,6 +16,9 @@ import { usePluginStore } from '@/stores/pluginStore';
 import { useClipboardHandler } from '@/hooks/useClipboardHandler';
 import { useTerminalBottomPanel } from './useTerminalBottomPanel';
 import { terminalInstanceManager } from './TerminalInstanceManager';
+import { isDebugSession } from '@/lib/debugServer';
+import { resolveTerminalColors } from '@/lib/terminalTheme';
+import { useDebugStore } from '@/stores/debugStore';
 
 export default function Terminal() {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -68,7 +71,13 @@ export default function Terminal() {
 
   const fontSize = preview?.fontSize ?? storeSettings.fontSize;
   const fontFamily = preview?.fontFamily ?? storeSettings.fontFamily;
-  const terminalColors = preview?.terminalColors ?? storeSettings.terminalColors ?? DEFAULT_TERMINAL_COLORS;
+  // The debug light theme is persisted by debugStore and mirrored on <html>.
+  // Resolve it here so already-mounted xterm instances repaint immediately.
+  const lightMode = useDebugStore((s) => s.lightMode);
+  const terminalColors = resolveTerminalColors(
+    preview?.terminalColors ?? storeSettings.terminalColors ?? DEFAULT_TERMINAL_COLORS,
+    lightMode,
+  );
 
   // Register callbacks for paste confirm and copy
   useEffect(() => {
@@ -224,7 +233,7 @@ export default function Terminal() {
         )}
       </div>
 
-      {hasSessions && activeSessionId && activeSession?.status === 'connected' && (
+      {hasSessions && activeSessionId && activeSession?.status === 'connected' && !isDebugSession(activeSessionId) && (
         <div className="flex flex-col flex-shrink-0">
           <div
             style={{

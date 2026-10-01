@@ -27,6 +27,21 @@ describe('canSendAgentPrompt', () => {
     ).toBe(true);
   });
 
+  it('keeps the passwordless debug session available to the assistant', () => {
+    const debug = session({
+      id: 'debug-session:test',
+      status: 'connected',
+      connectionId: 'msfakeserver',
+      configId: 'debug:msfakeserver',
+    });
+    expect(agentEmptyStateReason(debug)).toBe('ready');
+    expect(resolveAgentIds(debug)).toEqual({
+      sessionId: 'debug-session:test',
+      configId: 'debug:msfakeserver',
+    });
+    expect(canSendAgentPrompt(debug, false, 'hello')).toBe(true);
+  });
+
   it('blocks send when connected without configId', () => {
     expect(
       canSendAgentPrompt(

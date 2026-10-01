@@ -223,12 +223,12 @@ export default function ModelEditModal({
             <div className="mt-3 space-y-4">
               <div>
                 <label className="block text-xs text-zinc-400 mb-1">
-                  思考强度档位 <span className="text-zinc-600">（每行一个，不填 = 不启用）</span>
+                  思考强度档位 <span className="text-zinc-600">（从低到高，每行一个；留空不启用）</span>
                 </label>
                 <textarea
                   value={effortsText}
                   onChange={(e) => setEffortsText(e.target.value)}
-                  placeholder={'low\nhigh\nmax'}
+                  placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
                   className="w-full rounded-lg bg-zinc-900 border border-zinc-700 px-3 py-2 text-xs font-mono text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-indigo-500 resize-y"
