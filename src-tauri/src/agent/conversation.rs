@@ -1087,6 +1087,13 @@ impl ConversationDb {
         }
     }
 
+    /// 页缝安全角色：`user`/`notice` 是回合开头（前端 `agentTurnFold` 的
+    /// `isTurnStart` 同口径），`system` 是永显锚点（lone 分支）。页首落在
+    /// assistant/tool = 有个回合被切成了两半。
+    fn is_turn_start_role(role: &str) -> bool {
+        matches!(role, "user" | "notice" | "system")
+    }
+
     /// 加载指定消息之前的更早归档历史消息（按需翻页）。
     ///
     /// 只取锚点前**最近的 `limit` 条**（与 `fetch_side` 同构：DESC 取
@@ -1094,6 +1101,15 @@ impl ConversationDb {
     /// 全部归档——UI 每次只展示一页，全量读取是 Θ(B) 的重复搬运与锁占用。
     /// 返回 `(升序消息, 是否还有更早的)`；锚点不存在返回空且 `has_more=false`
     ///（调用方按「没有更早历史」处理，与旧行为一致）。
+    ///
+    /// **页缝必须落在「安全缝」上**（[`Self::is_turn_start_role`]）：页首若是
+    /// assistant/tool，说明有个回合被从中间切开——前端对「没有 user 开头的
+    /// 半截回合」按设计展开渲染（无折叠控制行），下一页把回合头补进来后
+    /// 回合变完整、满足折叠条件，而 `turnFoldStore` 缺省收起，用户正看着的
+    /// 过程当场折叠。因此页首不安全时把页面向前扩到最近一条安全缝（含），
+    /// 宁可单页超过 `limit`：一个回合本来就必须原子地进来才能正确渲染。
+    /// 归档里根本没有回合开头（纯 assistant/tool 残段）就整段返回、
+    /// `has_more=false`。
     pub fn load_earlier_messages(
         &self,
         conversation_id: &str,
@@ -1115,27 +1131,124 @@ impl ConversationDb {
             return Ok((vec![], false));
         };
 
+        // 探针页追加 rowid 与原始 created_at 两列（缀在常规列之后，不打乱
+        // map_stored_message 的按位读取）。缝对齐的比较必须用与写库同源的
+        // 原始 TEXT，不经过 DateTime 往返（同 locate_compaction_tail 的顾虑）。
         let mut stmt = conn.prepare(&format!(
-            "SELECT {}
+            "SELECT {}, rowid, created_at
                 FROM messages
-                WHERE conversation_id = ?1 
+                WHERE conversation_id = ?1
                 AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
                 ORDER BY created_at DESC, rowid DESC
                 LIMIT ?4",
             messages_select_columns()
         ))?;
 
-        let mut messages = stmt
+        let mut desc = stmt
             .query_map(
                 rusqlite::params![conversation_id, created_at, rowid, (limit as i64) + 1],
-                Self::map_stored_message,
+                |row| {
+                    let msg = Self::map_stored_message(row)?;
+                    let rowid: i64 = row.get(MESSAGES_COLUMNS.len())?;
+                    let raw_created_at: String = row.get(MESSAGES_COLUMNS.len() + 1)?;
+                    Ok((rowid, raw_created_at, msg))
+                },
             )?
             .collect::<RusqliteResult<Vec<_>>>()?;
 
-        let has_more = messages.len() > limit;
-        messages.truncate(limit);
-        messages.reverse();
+        let has_more_beyond_limit = desc.len() > limit;
+        if has_more_beyond_limit {
+            desc.truncate(limit);
+        }
+        let Some(&(oldest_rowid, ref oldest_created_at, ref oldest_msg)) = desc.last() else {
+            return Ok((vec![], has_more_beyond_limit));
+        };
+        if Self::is_turn_start_role(&oldest_msg.role) {
+            let mut messages: Vec<StoredMessage> = desc.drain(..).map(|(_, _, msg)| msg).collect();
+            messages.reverse();
+            return Ok((messages, has_more_beyond_limit));
+        }
+
+        // 页缝切在回合中间：向前找最近一条安全缝（含）整页重取。
+        let seam: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT created_at, rowid FROM messages
+                    WHERE conversation_id = ?1
+                    AND role IN ('user', 'notice', 'system')
+                    AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
+                    ORDER BY created_at DESC, rowid DESC
+                    LIMIT 1",
+                rusqlite::params![conversation_id, oldest_created_at, oldest_rowid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let Some((seam_created_at, seam_rowid)) = seam else {
+            // 没有任何安全缝（归档里没有 user/notice/system）：整段返回。
+            let messages =
+                Self::fetch_message_range(&conn, conversation_id, None, &(created_at, rowid))?;
+            return Ok((messages, false));
+        };
+        let messages = Self::fetch_message_range(
+            &conn,
+            conversation_id,
+            Some(&(seam_created_at.clone(), seam_rowid)),
+            &(created_at, rowid),
+        )?;
+        // 扩页后「还有没有更早」以缝为界重新判定——探针多出的行已经在页里了。
+        let has_more: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages
+                WHERE conversation_id = ?1
+                AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3)))",
+            rusqlite::params![conversation_id, seam_created_at, seam_rowid],
+            |r| r.get(0),
+        )?;
         Ok((messages, has_more))
+    }
+
+    /// 取 `(start, end)` 升序区间：start 含（`None` = 会话开头），end 不含。
+    /// 比较语义与 `load_earlier_messages` 的锚点切分完全同款
+    ///（(created_at, rowid) 元组，见模块头「归档边界」段）。
+    fn fetch_message_range(
+        conn: &Connection,
+        conversation_id: &str,
+        start: Option<&(String, i64)>,
+        end: &(String, i64),
+    ) -> RusqliteResult<Vec<StoredMessage>> {
+        let sql = match start {
+            Some(_) => format!(
+                "SELECT {}
+                    FROM messages
+                    WHERE conversation_id = ?1
+                    AND (created_at > ?2 OR (created_at = ?2 AND rowid >= ?3))
+                    AND (created_at < ?4 OR (created_at = ?4 AND rowid < ?5))
+                    ORDER BY created_at ASC, rowid ASC",
+                messages_select_columns()
+            ),
+            None => format!(
+                "SELECT {}
+                    FROM messages
+                    WHERE conversation_id = ?1
+                    AND (created_at < ?2 OR (created_at = ?2 AND rowid < ?3))
+                    ORDER BY created_at ASC, rowid ASC",
+                messages_select_columns()
+            ),
+        };
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = match start {
+            Some((s_created_at, s_rowid)) => stmt.query(rusqlite::params![
+                conversation_id,
+                s_created_at,
+                s_rowid,
+                end.0,
+                end.1
+            ])?,
+            None => stmt.query(rusqlite::params![conversation_id, end.0, end.1])?,
+        };
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push(Self::map_stored_message(row)?);
+        }
+        Ok(out)
     }
 
     /// 压缩落库的定位查询：找出 tail 行的 `(created_at, timestamp)`，以及它
@@ -4026,8 +4139,10 @@ mod tests {
         assert_eq!(earlier[2].content, "t1");
     }
 
-    /// 归档翻页必须真分页：每页 ≤ limit、跨页无重复无缺失、页序升序接续锚点。
-    /// 旧实现一次读出全部归档（无 LIMIT），这条测试在旧代码上直接失败。
+    /// 归档翻页必须真分页：跨页无重复无缺失、页序升序接续锚点；且**页缝
+    /// 必须落在回合边界**（页面最旧一条是 user/notice/system）——缝切在
+    /// 回合中间时向前扩页，单页可超过 limit。旧实现一次读出全部归档
+    /// （无 LIMIT），这条测试在旧代码上直接失败。
     #[test]
     fn earlier_messages_page_through_the_archive_without_loss() {
         let db = create_test_db();
@@ -4035,14 +4150,14 @@ mod tests {
 
         // 8 条归档（含相同 created_at 不同 rowid、中文/emoji 正文）+ 一张压缩卡
         let archived: Vec<(&str, &str, &str)> = vec![
-            ("u1", "第 1 条", "2026-01-01T00:00:00Z"),
-            ("a1", "第 2 条 🎉", "2026-01-01T00:00:01Z"),
-            ("a2", "第 3 条（同秒前段）", "2026-01-01T00:00:02Z"),
-            ("a3", "第 4 条（同秒后段）", "2026-01-01T00:00:02Z"),
-            ("t1", "第 5 条", "2026-01-01T00:00:03Z"),
-            ("u2", "第 6 条", "2026-01-01T00:00:04Z"),
-            ("a4", "第 7 条", "2026-01-01T00:00:05Z"),
-            ("u3", "第 8 条", "2026-01-01T00:00:06Z"),
+            ("user", "第 1 条", "2026-01-01T00:00:00Z"),
+            ("assistant", "第 2 条 🎉", "2026-01-01T00:00:01Z"),
+            ("assistant", "第 3 条（同秒前段）", "2026-01-01T00:00:02Z"),
+            ("assistant", "第 4 条（同秒后段）", "2026-01-01T00:00:02Z"),
+            ("tool", "第 5 条", "2026-01-01T00:00:03Z"),
+            ("user", "第 6 条", "2026-01-01T00:00:04Z"),
+            ("assistant", "第 7 条", "2026-01-01T00:00:05Z"),
+            ("user", "第 8 条", "2026-01-01T00:00:06Z"),
         ];
         for (role, content, ts) in &archived {
             db.save_message(&conv.id, role, content, ts, None, None)
@@ -4071,7 +4186,13 @@ mod tests {
                 .load_earlier_messages(&conv.id, &anchor, 3)
                 .expect("page");
             pages += 1;
-            assert!(page.len() <= 3, "单页不得超过 limit：{}", page.len());
+            // 页缝必须落在回合边界：页面最旧一条是 user/notice/system。
+            // 缝不安全时实现会向前扩页（第 2 页扩到 [1..6) 共 5 条 > limit）。
+            assert!(
+                ConversationDb::is_turn_start_role(page.first().expect("非空页").role.as_str()),
+                "页面最旧一条必须是回合开头/永显锚点：{:?}",
+                page.first().map(|m| &m.role)
+            );
             if !page.is_empty() {
                 let mut merged: Vec<StoredMessage> = page;
                 merged.extend(collected);
@@ -4088,11 +4209,123 @@ mod tests {
                 .clone();
         }
 
-        assert_eq!(pages, 3, "8 条归档按 3 条一页应翻 3 页");
+        assert_eq!(
+            pages, 2,
+            "8 条归档按 3 条一页翻页：第 2 页缝不安全扩到 5 条，共 2 页"
+        );
         assert_eq!(collected.len(), 8, "跨页不能丢消息");
         let expected: Vec<&str> = archived.iter().map(|(_, c, _)| *c).collect();
         let got: Vec<&str> = collected.iter().map(|m| m.content.as_str()).collect();
         assert_eq!(got, expected, "跨页拼接应与原始顺序完全一致");
+    }
+
+    /// 页缝绝不允许切在回合中间：页面最旧一条必须是「安全缝」
+    /// （role ∈ user/notice/system —— 与前端 `isTurnStart` 回合边界 + lone
+    /// 锚点同口径）。缝切在回合中间时，前端把先到的后半段当「半截回合」
+    /// 按设计展开渲染；下一页把回合头补进来后回合变完整、满足折叠条件，
+    /// 而 `turnFoldStore` 缺省收起 —— 用户正看着的过程当场折叠（回归）。
+    #[test]
+    fn earlier_messages_pages_never_split_a_turn() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "seam").expect("create");
+
+        // 三个回合：T1/T2 各 5 行（user + 过程 + 答案），T3 两行。
+        // 逻辑顺序即插入顺序（created_at 同批递增、rowid 决胜）。
+        let rows: Vec<(&str, &str)> = vec![
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("tool", "t1"),
+            ("tool", "t2"),
+            ("assistant", "a2"),
+            ("user", "u2"),
+            ("assistant", "a3"),
+            ("tool", "t3"),
+            ("tool", "t4"),
+            ("assistant", "a4"),
+            ("user", "u3"),
+            ("assistant", "a5"),
+        ];
+        for (role, content) in &rows {
+            db.save_message(&conv.id, role, content, "2026-01-01T00:00:00Z", None, None)
+                .expect("row");
+        }
+        let all = db.load_messages(&conv.id).expect("load");
+        assert_eq!(all.len(), 12);
+        // 锚点 = 内存里最旧一条（a5），页取它**之前**的行——锚点本身不进页。
+        let anchor = all.last().unwrap().id.clone();
+
+        // limit=4：探针页 [t3, t4, a4, u3] 的最旧一条是 tool —— 正好切在 T2 中间。
+        let (page, has_more) = db
+            .load_earlier_messages(&conv.id, &anchor, 4)
+            .expect("page1");
+        assert_eq!(
+            page.first().map(|m| m.role.as_str()),
+            Some("user"),
+            "页面最旧一条必须是回合开头（页缝对齐）"
+        );
+        assert_eq!(
+            page.first().map(|m| m.content.as_str()),
+            Some("u2"),
+            "缝切在 T2 中间 → 向前扩到 T2 的 user，T2 整段原子进入"
+        );
+        assert_eq!(page.len(), 6, "扩页 = u2..u3 六行一页拿全");
+        assert!(has_more, "u2 之前还有 T1 → 还有更早的");
+
+        // 第二页：锚点 u2，剩 [u1..a2] 5 行，limit=4 → 探针页最旧 a1（assistant，
+        // 不安全）→ 扩到 u1，T1 整段一页拿全。
+        let (page2, has_more2) = db
+            .load_earlier_messages(&conv.id, page.first().unwrap().id.as_str(), 4)
+            .expect("page2");
+        assert_eq!(page2.first().map(|m| m.role.as_str()), Some("user"));
+        assert_eq!(page2.first().map(|m| m.content.as_str()), Some("u1"));
+        assert_eq!(page2.len(), 5, "T1 整段 5 行一页拿全");
+        assert!(!has_more2, "u1 之前没有更多");
+    }
+
+    /// 页缝本来就落在回合边界（最旧一条是 user）→ 不扩页，页大小恒为 limit。
+    #[test]
+    fn earlier_messages_page_on_a_turn_boundary_is_not_extended() {
+        let db = create_test_db();
+        let conv = db
+            .create_conversation("conn_1", "boundary")
+            .expect("create");
+        let rows: Vec<(&str, &str)> = vec![
+            ("user", "u1"),
+            ("assistant", "a1"),
+            ("tool", "t1"),
+            ("tool", "t2"),
+            ("assistant", "a2"),
+            ("user", "u2"),
+            ("assistant", "a3"),
+            ("tool", "t3"),
+            ("tool", "t4"),
+            ("assistant", "a4"),
+            ("user", "u3"),
+            ("assistant", "a5"),
+        ];
+        for (role, content) in &rows {
+            db.save_message(&conv.id, role, content, "2026-01-01T00:00:00Z", None, None)
+                .expect("row");
+        }
+        let all = db.load_messages(&conv.id).expect("load");
+        // 锚点 = t3：页取它之前的 2 行 [u2, a3]，最旧一条恰是 user —— 边界缝。
+        let anchor = all
+            .iter()
+            .find(|m| m.content == "t3")
+            .expect("t3")
+            .id
+            .clone();
+
+        let (page, has_more) = db
+            .load_earlier_messages(&conv.id, &anchor, 2)
+            .expect("page");
+        assert_eq!(
+            page.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            vec!["u2", "a3"],
+            "缝正好落在 u2（回合边界）→ 原样返回，不扩页"
+        );
+        assert_eq!(page.len(), 2, "边界缝不扩页：页大小恒为 limit");
+        assert!(has_more);
     }
 
     /// 翻页 SELECT 必须命中 (conversation_id, created_at) 复合索引，

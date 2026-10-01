@@ -591,7 +591,9 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           },
           hasEarlierMessages: {
             ...state.hasEarlierMessages,
-            // 后端说还有就还有；翻页契约不再「一次补齐」
+            // 后端说还有就还有；翻页契约不再「一次补齐」。页缝由后端对齐到
+            // 回合边界（页首必是 user/notice/system），前插不会产生半截回合
+            // —— 半截展开、补全即折叠的突变靠这条保证压死。
             [conversationId]: hasMore,
           },
         };
