@@ -212,14 +212,19 @@
     radial-gradient(circle at 59% 38%, #f1dfff 0 0.8px, transparent 1.2px),
     radial-gradient(circle at 70% 56%, #d6d4ff 0 0.9px, transparent 1.3px),
     radial-gradient(circle at 83% 31%, #f1dfff 0 0.7px, transparent 1.1px);
-  animation: reasoningEffortStarsDrift 4.2s ease-in-out infinite alternate;
+  /* The field tiles at one track width and slides exactly one tile per cycle,
+   * so the loop wraps with no seam: the stars read as drifting left instead of
+   * snapping back. */
+  background-size: 210px 100%;
+  background-repeat: repeat;
+  animation: reasoningEffortStarsDrift 26s linear infinite;
 }
 @keyframes reasoningEffortStarsDrift {
   from {
     background-position: 0 0;
   }
   to {
-    background-position: 3px -1px;
+    background-position: -210px 0;
   }
 }
 .reasoning-effort-ticks {
@@ -269,41 +274,6 @@
 }
 .reasoning-effort-control:has(.reasoning-effort-slider:disabled) .reasoning-effort-thumb {
   opacity: 0.55;
-}
-.reasoning-effort-ultra-particles {
-  position: absolute;
-  top: -11px;
-  left: 50%;
-  z-index: 3;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateX(-50%) scale(0.3);
-  background:
-    radial-gradient(circle at 50% 3%, #e9d5ff 0 1.5px, transparent 2.3px),
-    radial-gradient(circle at 87% 18%, #c084fc 0 1.3px, transparent 2.1px),
-    radial-gradient(circle at 98% 54%, #f0abfc 0 1.4px, transparent 2.2px),
-    radial-gradient(circle at 75% 91%, #d8b4fe 0 1.2px, transparent 2px),
-    radial-gradient(circle at 23% 92%, #f0abfc 0 1.3px, transparent 2.1px),
-    radial-gradient(circle at 2% 53%, #c084fc 0 1.3px, transparent 2.1px),
-    radial-gradient(circle at 14% 18%, #e9d5ff 0 1.4px, transparent 2.2px);
-  animation: reasoningEffortUltraBurst 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes reasoningEffortUltraBurst {
-  0% {
-    opacity: 0;
-    transform: translateX(-50%) scale(0.3);
-  }
-  25% {
-    opacity: 1;
-    transform: translateX(-50%) scale(0.92);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(-50%) scale(1.42);
-  }
 }
 /* Outrank the app-wide input[type='range'] theme, irrespective of CSS load order. */
 input[type='range'].reasoning-effort-slider {
@@ -415,8 +385,7 @@ input[type='range'].reasoning-effort-slider:disabled {
 }
 @media (forced-colors: active) {
   .reasoning-effort-thumb,
-  .reasoning-effort-stars,
-  .reasoning-effort-ultra-particles {
+  .reasoning-effort-stars {
     display: none;
   }
   input[type='range'].reasoning-effort-slider {
@@ -442,7 +411,6 @@ input[type='range'].reasoning-effort-slider:disabled {
   .reasoning-effort-thumb,
   .reasoning-effort-track::after,
   .reasoning-effort-stars,
-  .reasoning-effort-ultra-particles,
   .reasoning-effort-ultra .reasoning-effort-fill {
     transition: none;
     animation: none;

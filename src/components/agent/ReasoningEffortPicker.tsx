@@ -54,7 +54,6 @@ export function ReasoningEffortPicker({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
   const [isInteracting, setIsInteracting] = useState(false);
-  const [ultraBurst, setUltraBurst] = useState(0);
   const [hoveredTick, setHoveredTick] = useState<number | null>(null);
   const [modelListOpen, setModelListOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -111,9 +110,6 @@ export function ReasoningEffortPicker({
     }
     setPreviewIndex(nextIndex);
     setError(false);
-    if (options[nextIndex] === 'ultra' || nextIndex === efforts.length) {
-      setUltraBurst((current) => current + 1);
-    }
     savingRef.current = true;
     setSaving(true);
     try {
@@ -336,14 +332,6 @@ export function ReasoningEffortPicker({
                 style={{ width: index === efforts.length ? '100%' : `calc(${progress * 100}% + ${14 - progress * 28}px)` }}
               />
               {isUltra && <span className="reasoning-effort-stars" />}
-              {isUltra && ultraBurst > 0 && (
-                <span
-                  key={ultraBurst}
-                  className="reasoning-effort-ultra-particles"
-                  aria-hidden="true"
-                  style={{ left: `calc(${progress * 100}% + ${14 - progress * 28}px)` }}
-                />
-              )}
               <div className="reasoning-effort-ticks">
                 {options.map((_, step) => (
                   <span
