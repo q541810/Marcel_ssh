@@ -22,6 +22,7 @@ import {
 // 卡片骨架（容器 + 标题行）与图标/小标记是共用的：「系统告知」卡用的是同一副
 // 壳（见 `jobNoticeCard`），样式只留这一份。
 import { ToolCardFrame, ToolChip, ToolIcon } from './toolCardChrome';
+import { useMessageViewState } from './messageViewState';
 
 interface Props {
   message: AgentMessage;
@@ -75,7 +76,8 @@ function ApprovalMeta({
 }
 
 function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props) {
-  const [expanded, setExpanded] = useState(autoExpand ?? false);
+  const [expanded, setExpanded] = useMessageViewState('tool-expanded', autoExpand ?? false);
+  const previousAutoExpand = useRef(autoExpand);
   const wasExecutingRef = useRef(message.isExecuting);
   const {
     ref: outputRef,
@@ -131,10 +133,10 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   }, [message.toolResult?.result, message.isExecuting, followOutput]);
 
   useEffect(() => {
-    if (!autoExpand) {
-      setExpanded(false);
-    }
-  }, [autoExpand]);
+    // Remounting an offscreen row must not undo the user's saved expansion.
+    if (previousAutoExpand.current !== autoExpand) setExpanded(!!autoExpand);
+    previousAutoExpand.current = autoExpand;
+  }, [autoExpand, setExpanded]);
 
   // Auto-collapse when execution completes (transition true→false)
   useEffect(() => {
@@ -143,7 +145,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     if (was && !message.isExecuting) {
       setExpanded(false);
     }
-  }, [message.isExecuting]);
+  }, [message.isExecuting, setExpanded]);
 
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {

@@ -2,7 +2,6 @@ import {
   useState,
   useRef,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useCallback,
 } from "react";
@@ -27,12 +26,6 @@ import {
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { isLocalSessionId } from "@/lib/toolCatalog";
 import { AGENT_MODES } from "@/lib/constants";
-import {
-  isNearBottom,
-  NEAR_BOTTOM_THRESHOLD_PX,
-  shouldAutoScroll,
-  shouldShowScrollToBottomFab,
-} from "@/lib/agentScroll";
 import { groupConversationsWithPinned } from "@/lib/dateGrouping";
 import { getErrorMessage } from "@/lib/errors";
 import { currentVision, effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
@@ -60,7 +53,9 @@ import * as tauri from "@/lib/tauri";
 import { bus } from "@/plugins/injection/bus";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
 import MultiHostPicker from "./MultiHostPicker";
-import AgentMessageList from "./AgentMessageList";
+import AgentTranscript from "./AgentTranscript";
+import { AgentDraft, AgentTextarea } from "./AgentDraft";
+import { isCommandDraft } from "./agentCommandEntries";
 import PlanList from "./PlanList";
 import AgentCommandMenu, {
   type AgentCommandMenuHandle,
@@ -104,13 +99,8 @@ export default function AgentPanel() {
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [attachHint, setAttachHint] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const lastScrolledMessageRef = useRef<string | null>(null);
   /** 用户主动发送后允许一次强制贴底；流式更新只跟随近底区。 */
   const userJustSentRef = useRef(false);
-  const [nearBottom, setNearBottom] = useState(true);
-  const nearBottomRef = useRef(true);
   const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<AgentCommandMenuHandle>(null);
@@ -124,12 +114,10 @@ export default function AgentPanel() {
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
   const {
-    messages,
     sendPrompt,
     stopActiveTask,
     mode,
     setMode,
-    inputDraft: input,
     setInputDraft: setInput,
     isRunning,
     conversations,
@@ -145,7 +133,7 @@ export default function AgentPanel() {
     rollbackToMessage,
     activeUsageView,
     syncActiveToConnection,
-  } = useAgent();
+  } = useAgent({ subscribeMessages: false, subscribeDraft: false });
 
   const tasks = useTaskStore((s) => s.tasks);
   const unreadCompletedConversations = useTaskStore(
@@ -218,59 +206,6 @@ export default function AgentPanel() {
     if (!activeConfigId || !activeSessionId) return;
     void syncActiveToConnection(activeConfigId, activeSessionId);
   }, [activeConfigId, activeSessionId, syncActiveToConnection]);
-
-  const lastMessage = messages[messages.length - 1];
-  const lastMessageSize =
-    (lastMessage?.content.length ?? 0) +
-    (lastMessage?.reasoningContent?.length ?? 0);
-
-  // Stream: only pin when sticky zone or user just sent — never yank while reading up.
-  // 「还在不在底部」用 handleMessagesScroll 记下的 nearBottomRef，不在这里现量几何：
-  // 这个 effect 跑在内容已经进 DOM（容器已经变高）之后，现量得到的是"这一批长高了多少"
-  // —— 一次超过 80px（来一张工具卡就够）就再也追不回来，跟随会永久停住。
-  // 移动端 MobileAgentHost 用的就是 ref 这一路。
-  useEffect(() => {
-    if (!lastMessage || !canInteract) return;
-    const container = messagesContainerRef.current;
-    if (!shouldAutoScroll(nearBottomRef.current, userJustSentRef.current)) return;
-    const isNewMessage = lastScrolledMessageRef.current !== lastMessage.id;
-    lastScrolledMessageRef.current = lastMessage.id;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    } else {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: isNewMessage ? "smooth" : "auto",
-        block: "end",
-      });
-    }
-    nearBottomRef.current = true;
-    setNearBottom(true);
-    userJustSentRef.current = false;
-  }, [lastMessage, lastMessageSize, canInteract]);
-
-  const handleMessagesScroll = useCallback(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    const near = isNearBottom(
-      el.scrollTop,
-      el.clientHeight,
-      el.scrollHeight,
-      NEAR_BOTTOM_THRESHOLD_PX,
-    );
-    nearBottomRef.current = near;
-    setNearBottom(near);
-  }, []);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    const el = messagesContainerRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior });
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-    }
-    nearBottomRef.current = true;
-    setNearBottom(true);
-  }, []);
 
   useEffect(() => {
     if (!modeDrawerOpen) return;
@@ -361,23 +296,15 @@ export default function AgentPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
   }, [visionEnabled]);
 
-  const resizeInput = useCallback(() => {
-    const textarea = inputRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
-  }, []);
-
   /** 追加文本附件到输入框草稿（带文件名标记），并保持输入框自动增高。 */
   const appendTextAttachment = useCallback(
     (text: string) => {
       setInput((prev) => (prev ? prev + text : text));
       requestAnimationFrame(() => {
-        resizeInput();
         notifyInputTyping();
       });
     },
-    [setInput, resizeInput],
+    [setInput],
   );
 
   /** 统一处理一组本地 File（拖拽 / 粘贴）：图片 → 预览区，文本 → 插入输入框。 */
@@ -616,7 +543,7 @@ export default function AgentPanel() {
     // 从后续请求里抹掉（见 taskStore.compacting 的注释）。返回键与发送键同一
     // 判定；屏幕上常驻的原因说明负责让用户知道为什么没反应。
     if (isRunning || isCompacting || sendingRef.current) return;
-    const prompt = input.trim();
+    const prompt = useTaskStore.getState().inputDraft.trim();
     const images = visionEnabled ? pendingImages : [];
     if ((!prompt && images.length === 0) || !canInteract) return;
     if (!visionEnabled && pendingImages.length > 0) {
@@ -635,9 +562,6 @@ export default function AgentPanel() {
     notifyInputStopped();
     // 只清 UI 状态，blob URL 等成功后再 revoke；save 失败可原样回滚
     setPendingImages([]);
-    if (inputRef.current) {
-      inputRef.current.style.height = "auto";
-    }
     try {
       await sendPrompt(
         activeSessionId!,
@@ -660,7 +584,6 @@ export default function AgentPanel() {
       setPendingImages(snapshotImages);
       userJustSentRef.current = false;
       requestAnimationFrame(() => {
-        resizeInput();
         inputRef.current?.focus();
       });
     } finally {
@@ -675,11 +598,10 @@ export default function AgentPanel() {
   // 压缩中同样不唤出 —— 会话忙的两种情况走同一个 `conversationIsBusy`，
   // 顺带堵住「压缩中再点一次压缩」（两次摘要各写一张卡会破坏恒单卡）。
   // 键盘事件在打开时交给面板组件处理（↑↓/Enter/Esc/子菜单 Backspace）。
+  const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
   const commandMenuOpen =
-    input.startsWith("/") &&
-    !/\s/.test(input) &&
+    commandDraft &&
     (!activeConversationId || !conversationIsBusy(activeConversationId));
-  const commandMenuQuery = commandMenuOpen ? input.slice(1) : "";
 
   const handleCompact = () => {
     if (!activeConversationId) return;
@@ -709,12 +631,12 @@ export default function AgentPanel() {
   const handleInsertSkill = (prompt: string) => {
     setInput(prompt);
     requestAnimationFrame(() => {
-      resizeInput();
       inputRef.current?.focus();
     });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (commandMenuOpen && commandMenuRef.current?.handleKeyDown(e)) {
       e.preventDefault();
       return;
@@ -724,19 +646,6 @@ export default function AgentPanel() {
       handleSend();
     }
   };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    resizeInput();
-    notifyInputTyping();
-  };
-
-  useLayoutEffect(() => {
-    const textarea = inputRef.current;
-    if (!textarea || !input) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 96)}px`;
-  }, [input]);
 
   const showRollbackNotice = useCallback((removedCount: number) => {
     setRollbackNotice(`已撤回 ${removedCount} 条消息，原消息已放回输入框`);
@@ -794,7 +703,6 @@ export default function AgentPanel() {
 
       showRollbackNotice(result.removedCount);
       requestAnimationFrame(() => {
-        resizeInput();
         inputRef.current?.focus();
       });
     } catch (err) {
@@ -803,7 +711,7 @@ export default function AgentPanel() {
   }, [
     activeConversationId, isRunning, isCompacting, rollbackToMessage, setInput,
     clearPendingImages, visionEnabled, deletePersistedPaths, showAttachHint,
-    showRollbackNotice, resizeInput,
+    showRollbackNotice,
   ]);
 
   const handleCopyMessage = useCallback(async (message: AgentMessage) => {
@@ -1069,12 +977,14 @@ export default function AgentPanel() {
       </div>
 
       {/* Messages */}
-      <div className="relative flex-1 min-h-0 min-w-0">
-        <div
-          ref={messagesContainerRef}
-          onScroll={handleMessagesScroll}
-          className="h-full min-h-0 overflow-y-auto overflow-x-hidden p-3 space-y-1"
-        >
+      <AgentTranscript
+        conversationId={activeConversationId}
+        canInteract={canInteract}
+        rollbackDisabled={isRunning || isCompacting}
+        onRollback={handleRollbackMessage}
+        onCopy={handleCopyMessage}
+        userJustSentRef={userJustSentRef}
+        emptyState={<>
           {!activeSession && (
             <div className="text-center text-zinc-500 text-sm mt-8">
               <p>请先连接 SSH 服务器。</p>
@@ -1097,54 +1007,20 @@ export default function AgentPanel() {
               <p>连接已断开，请在标签栏重新连接。</p>
             </div>
           )}
-          {canInteract && messages.length === 0 && !activeConversationId && (
+          {canInteract && !activeConversationId && (
             <div className="text-center text-zinc-500 text-sm mt-8">
               <p>暂无会话。</p>
               <p className="mt-1">点击左上角 + 新建会话。</p>
             </div>
           )}
-          {canInteract && messages.length === 0 && activeConversationId && (
+          {canInteract && activeConversationId && (
             <div className="text-center text-zinc-500 text-sm mt-8">
               <p>暂无消息。</p>
               <p className="mt-1">描述您想要做的事情，智能助手将为您提供帮助。</p>
             </div>
           )}
-          {canInteract && (
-            <AgentMessageList
-              messages={messages}
-              rollbackDisabled={isRunning || isCompacting}
-              onRollback={handleRollbackMessage}
-              onCopy={handleCopyMessage}
-              messagesEndRef={messagesEndRef}
-              // 宿主层已管贴底跟随；列表层不再二次写 scrollTop
-              enableStickyFollow={false}
-            />
-          )}
-        </div>
-        {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
-          <button
-            type="button"
-            onClick={() => scrollToBottom("smooth")}
-            title="回到底部"
-            aria-label="回到底部"
-            className="absolute bottom-3 right-3 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-zinc-600 bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-zinc-700"
-          >
-            <svg
-              className="h-4 w-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M19 14l-7 7m0 0l-7-7m7 7V3"
-              />
-            </svg>
-          </button>
-        )}
-      </div>
+        </>}
+      />
 
       {/* PlanList - todolist rendered between messages and input */}
       <PlanList />
@@ -1239,6 +1115,7 @@ export default function AgentPanel() {
           </div>
         </div>
       ) : (
+        <AgentDraft>{(input) => (
         <div
           className="flex-shrink-0 p-3 border-t border-zinc-800"
           onDragOver={handleDragOver}
@@ -1290,7 +1167,7 @@ export default function AgentPanel() {
             <AgentCommandMenu
               ref={commandMenuRef}
               open={commandMenuOpen}
-              query={commandMenuQuery}
+              query={commandMenuOpen ? input.slice(1) : ""}
               currentMode={mode}
               onSelectMode={setMode}
               onInsertSkill={handleInsertSkill}
@@ -1298,11 +1175,11 @@ export default function AgentPanel() {
               onClose={() => setInput("")}
             />
             {/* Input field — 顶部整行，操作工具条移至下方 */}
-            <textarea
+            <AgentTextarea
               ref={inputRef}
               rows={1}
-              value={input}
-              onChange={handleInputChange}
+              maxHeight={96}
+              onTyping={notifyInputTyping}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={
@@ -1543,6 +1420,7 @@ export default function AgentPanel() {
             </div>
           </div>
         </div>
+        )}</AgentDraft>
       )}
 
       {/* History Drawer */}

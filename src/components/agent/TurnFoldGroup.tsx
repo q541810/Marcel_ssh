@@ -15,6 +15,26 @@
 import { useEffect, type ReactNode } from "react";
 import { useTurnFoldStore } from "@/stores/turnFoldStore";
 import { turnFoldLabel, type TurnSegment } from "@/lib/agentTurnFold";
+import { ChevronRight } from 'lucide-react';
+
+export function TurnFoldControl({ segment, open, onToggle }: {
+  segment: TurnSegment;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return <div className="flex justify-start my-0.5" data-turn-fold-control>
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group -mx-1 flex items-center gap-1 rounded px-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+      aria-expanded={open}
+      title={open ? "收起过程" : "展开过程"}
+    >
+      <ChevronRight className={`h-3 w-3 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} aria-hidden />
+      <span>{open ? "收起过程" : turnFoldLabel(segment)}</span>
+    </button>
+  </div>;
+}
 
 interface Props {
   conversationId: string;
@@ -47,8 +67,6 @@ export function TurnFoldGroup({
   const toggleTurn = useTurnFoldStore((s) => s.toggleTurn);
   const expandTurn = useTurnFoldStore((s) => s.expandTurn);
 
-  const label = turnFoldLabel(segment);
-
   // 命中搜索/高亮 → 自动展开（保持展开，不自动收起）。
   useEffect(() => {
     if (forceExpand) expandTurn(conversationId, turnKey);
@@ -58,33 +76,7 @@ export function TurnFoldGroup({
     <>
       {renderUser()}
       {/* 过程控制行 */}
-      <div className="flex justify-start my-0.5" data-turn-fold-control>
-        <button
-          type="button"
-          onClick={() => toggleTurn(conversationId, turnKey)}
-          className="group -mx-1 flex items-center gap-1 rounded px-1 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
-          aria-expanded={open}
-          title={open ? "收起过程" : "展开过程"}
-        >
-          <svg
-            className={`h-3 w-3 transition-transform duration-150 ${
-              open ? "rotate-90" : ""
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M9 5l7 7-7 7"
-            />
-          </svg>
-          <span>{open ? "收起过程" : label}</span>
-        </button>
-      </div>
+      <TurnFoldControl segment={segment} open={open} onToggle={() => toggleTurn(conversationId, turnKey)} />
       {/* 交付物（如成功的可视化图表）不属于「过程」：折叠态也恒渲染；
           展开时它们已在过程区按时间序出现，这里不再重复。 */}
       {!open && renderDeliverables && (

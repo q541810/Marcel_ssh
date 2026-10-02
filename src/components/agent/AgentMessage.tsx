@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
+import { useMessageViewState } from './messageViewState';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
   useIsomorphicLayoutEffect,
@@ -77,7 +78,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
     const r = (endMs - Date.now()) / 1000;
     return r > 0 ? r : 0;
   });
-  const [errorExpanded, setErrorExpanded] = useState(false);
+  const [errorExpanded, setErrorExpanded] = useMessageViewState('retry-error-expanded', false);
   const endMsRef = useRef(endMs);
   endMsRef.current = endMs;
 
@@ -198,9 +199,7 @@ function AgentMessage({
     (s) => s.settings.hideThinkingDisplay,
   );
   /** 用户手动展开/收起覆盖；null = 跟随 autoExpand。仅在思考进行中有意义。 */
-  const [thinkingUserToggle, setThinkingUserToggle] = useState<boolean | null>(
-    null,
-  );
+  const [thinkingUserToggle, setThinkingUserToggle] = useMessageViewState<boolean | null>('thinking-expanded', null);
   /** 思考区内滚：用户上翻后暂停跟随，滑回底部附近再恢复。 */
   const {
     ref: thinkingBodyRef,
@@ -215,7 +214,7 @@ function AgentMessage({
       setThinkingUserToggle(null);
       restartThinkingFollow();
     }
-  }, [autoExpand, restartThinkingFollow]);
+  }, [autoExpand, restartThinkingFollow, setThinkingUserToggle]);
   const thinkingExpanded = thinkingUserToggle ?? !!autoExpand;
 
   const handleToggleThinking = () => {
@@ -587,10 +586,10 @@ function JobNoticeCard({
   // 一张高亮的卡片，找不到命中在哪。
   const keyword = searchKeyword?.trim().toLowerCase() ?? '';
   const notesMatched = !!keyword && notesText.toLowerCase().includes(keyword);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useMessageViewState('notice-expanded', false);
   useEffect(() => {
     if (notesMatched) setExpanded(true);
-  }, [notesMatched]);
+  }, [notesMatched, setExpanded]);
 
   const headTone = head ? (JOB_STATUS_STYLE[head.status] ?? UNKNOWN_JOB_STATUS).tone : 'default';
 
@@ -699,12 +698,14 @@ function CompactionRunningCard({ message }: { message: AgentMessageType }) {
 /** 上下文压缩卡片：进行中（实时进度）→ 完成（摘要可见）。 */
 function CompactionCard({ message }: { message: AgentMessageType }) {
   const comp = message.compaction;
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useMessageViewState('compaction-expanded', comp?.status === 'done');
   // 完成瞬间默认展开摘要：用户正看着实时文本，别让它在原地"消失"成一行折叠
   const status = comp?.status;
+  const previousStatus = useRef(status);
   useEffect(() => {
-    if (status === 'done') setExpanded(true);
-  }, [status]);
+    if (status === 'done' && previousStatus.current !== status) setExpanded(true);
+    previousStatus.current = status;
+  }, [status, setExpanded]);
   if (!comp) return null;
 
   // ── 压缩进行中 ──

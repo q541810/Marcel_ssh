@@ -1,4 +1,5 @@
-import { memo, useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { memo, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useMessageViewState } from './messageViewState';
 import { diffLines } from 'diff';
 
 interface Props {
@@ -284,6 +285,10 @@ function FileChangeView({ toolName, arguments: args, metadata }: Props) {
     );
   }
 
+  return <FileDiffView arguments={args} metadata={metadata} />;
+}
+
+function FileDiffView({ arguments: args, metadata }: Pick<Props, 'arguments' | 'metadata'>) {
   // ── diff 分支：edit_file / local_edit_file ──
   // metadata（before/after/hunks/match_line_positions/occurrences…）与参数键
   // （old_content/new_content/replace_all）两侧同形，所以这一段完全共用。
@@ -291,17 +296,21 @@ function FileChangeView({ toolName, arguments: args, metadata }: Props) {
   const newContent = String(args.new_content ?? '');
   const replaceAll = args.replace_all === true;
   const occurrences = metadata?.occurrences != null ? Number(metadata.occurrences) : 0;
-  const matchLines = Array.isArray(metadata?.match_line_positions)
+  const matchLines = useMemo(() => Array.isArray(metadata?.match_line_positions)
     ? (metadata.match_line_positions as unknown[]).map((n) => Number(n)).filter((n) => n > 0)
-    : [];
+    : [], [metadata?.match_line_positions]);
   const before = metadata?.before != null ? String(metadata.before) : '';
   const after = metadata?.after != null ? String(metadata.after) : '';
-  const hunks = parseHunks(metadata);
+  const hunks = useMemo(() => parseHunks(metadata), [metadata]);
   const fileContent = metadata?.file_content ? String(metadata.file_content) : '';
   const linePosition = metadata?.line_position ? Number(metadata.line_position) : 0;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const [activeMatch, setActiveMatch] = useState(0);
+  const [activeMatch, setActiveMatch] = useMessageViewState('diff-active-match', 0);
+  const activeMatchRef = useRef(activeMatch);
+  activeMatchRef.current = activeMatch;
+  const [savedDiff, saveDiff] = useMessageViewState('diff-source', [before, after, hunks?.length, fileContent, linePosition]);
+  const previousDiff = useRef(savedDiff);
 
   const fullDiffRows = useMemo(() => {
     if (before || after) return buildDiffRows(before, after);
@@ -352,20 +361,20 @@ function FileChangeView({ toolName, arguments: args, metadata }: Props) {
         elRect.top - parentRect.top - root.clientHeight / 2 + elRect.height / 2;
       root.scrollTo({ top: Math.max(0, root.scrollTop + delta), behavior: 'smooth' });
     },
-    [matchCount, linePosition],
+    [matchCount, linePosition, setActiveMatch],
   );
 
+  // Restore the selected change after virtual remount; new diff content starts at the first change.
   useEffect(() => {
-    setActiveMatch(0);
-  }, [before, after, hunks?.length, fileContent, linePosition]);
-
-  // Always jump to first change (single or multi) after layout.
-  useEffect(() => {
+    const identity = [before, after, hunks?.length, fileContent, linePosition];
+    const changed = identity.some((value, i) => value !== previousDiff.current[i]);
+    previousDiff.current = identity;
+    saveDiff(identity);
     if (!before && !after && !hunks?.length && !fileContent) return;
     let cancelled = false;
     const run = () => {
       if (cancelled) return;
-      scrollToMatch(0);
+      scrollToMatch(changed ? 0 : activeMatchRef.current);
     };
     // Double rAF: wait until DiffRowView with data-match is painted.
     const id = requestAnimationFrame(() => {
@@ -375,7 +384,7 @@ function FileChangeView({ toolName, arguments: args, metadata }: Props) {
       cancelled = true;
       cancelAnimationFrame(id);
     };
-  }, [before, after, hunks?.length, fileContent, linePosition, scrollToMatch]);
+  }, [before, after, hunks?.length, fileContent, linePosition, scrollToMatch, saveDiff]);
 
   const bannerText =
     replaceAll || occurrences > 1

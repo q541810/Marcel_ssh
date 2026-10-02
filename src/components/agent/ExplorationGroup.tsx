@@ -26,6 +26,10 @@ interface Props {
   forceExpand?: boolean;
   matchedIds?: Set<string>;
   flashId?: string | null;
+  /** Virtual lists render the members as independent rows. */
+  headerOnly?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
 }
 
 function GroupLabel({ kind, count }: { kind: ToolGroupKind; count: number }) {
@@ -66,8 +70,12 @@ function ExplorationGroup({
   forceExpand = false,
   matchedIds,
   flashId = null,
+  headerOnly = false,
+  expanded: controlledExpanded,
+  onToggle,
 }: Props) {
-  const [expanded, setExpanded] = useState(forceExpand);
+  const [localExpanded, setExpanded] = useState(forceExpand);
+  const expanded = controlledExpanded ?? localExpanded;
 
   useEffect(() => {
     setExpanded(forceExpand);
@@ -92,7 +100,8 @@ function ExplorationGroup({
       <div className="max-w-[90%]">
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={onToggle ?? (() => setExpanded((v) => !v))}
+          aria-expanded={expanded}
           className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <svg
@@ -123,7 +132,7 @@ function ExplorationGroup({
             </span>
           )}
         </button>
-        {expanded && (
+        {expanded && !headerOnly && (
           <div className="mt-1.5 space-y-1">
             {messages.map((msg) => {
               const isMatch = matchedIds?.has(msg.id) ?? false;

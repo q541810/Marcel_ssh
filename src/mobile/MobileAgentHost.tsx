@@ -24,7 +24,9 @@ import { AGENT_MODES } from "@/lib/constants";
 import { currentVision } from "@/lib/llmRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
 import type { AgentMessage, AgentMode } from "@/lib/types";
-import AgentMessageList from "@/components/agent/AgentMessageList";
+import AgentTranscript from "@/components/agent/AgentTranscript";
+import { AgentDraft, AgentTextarea } from "@/components/agent/AgentDraft";
+import { isCommandDraft } from "@/components/agent/agentCommandEntries";
 import PlanList from "@/components/agent/PlanList";
 import AgentCommandMenu from "@/components/agent/AgentCommandMenu";
 import { ContextMeterRing } from "@/components/agent/ContextMeterRing";
@@ -48,12 +50,6 @@ import {
   resolveAgentIds,
   type AgentEmptyStateReason,
 } from "./agentUi";
-import {
-  isNearBottom,
-  shouldAutoScroll,
-  shouldShowScrollToBottomFab,
-  NEAR_BOTTOM_THRESHOLD_PX,
-} from "./agentScroll";
 import { resolveSessionDisplayName, sessionStatusLabel } from "./sessionUi";
 import {
   type PendingImage,
@@ -119,12 +115,10 @@ export default function MobileAgentHost({
   const emptyReason = agentEmptyStateReason(activeSession);
 
   const {
-    messages,
     sendPrompt,
     stopActiveTask,
     mode,
     setMode,
-    inputDraft,
     setInputDraft,
     isRunning,
     conversations,
@@ -140,7 +134,7 @@ export default function MobileAgentHost({
     syncActiveToConnection,
     rollbackToMessage,
     activeUsageView,
-  } = useAgent();
+  } = useAgent({ subscribeMessages: false, subscribeDraft: false });
 
   // 当前会话（含会话级模型记忆 overlay）：提前到 vision 依赖之前
   const activeConversation = activeConversationId
@@ -176,22 +170,15 @@ export default function MobileAgentHost({
   const [rollbackHint, setRollbackHint] = useState<string | null>(null);
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [attachHint, setAttachHint] = useState<string | null>(null);
-  const [nearBottom, setNearBottom] = useState(true);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sendingRef = useRef(false);
-  const lastScrolledMessageRef = useRef<string | null>(null);
   const rollbackHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const attachHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const nearBottomRef = useRef(true);
   const userJustSentRef = useRef(false);
-  const prevVisibleRef = useRef(visible);
-  const messageCountAtHideRef = useRef(0);
 
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [renameTitleInput, setRenameTitleInput] = useState("");
@@ -278,85 +265,6 @@ export default function MobileAgentHost({
     if (!ids?.configId || !ids?.sessionId) return;
     void syncActiveToConnection(ids.configId, ids.sessionId);
   }, [ids?.configId, ids?.sessionId, syncActiveToConnection]);
-
-  const lastMessage = messages[messages.length - 1];
-  const lastMessageSize =
-    (lastMessage?.content.length ?? 0) +
-    (lastMessage?.reasoningContent?.length ?? 0);
-
-  const measureNearBottom = useCallback((): boolean => {
-    const el = scrollContainerRef.current;
-    if (!el) return true;
-    return isNearBottom(
-      el.scrollTop,
-      el.clientHeight,
-      el.scrollHeight,
-      NEAR_BOTTOM_THRESHOLD_PX,
-    );
-  }, []);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-    const el = scrollContainerRef.current;
-    if (el) {
-      el.scrollTo({ top: el.scrollHeight, behavior });
-    } else {
-      messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-    }
-    nearBottomRef.current = true;
-    setNearBottom(true);
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const near = measureNearBottom();
-    nearBottomRef.current = near;
-    setNearBottom(near);
-  }, [measureNearBottom]);
-
-  // Stream: only pin when sticky zone or user just sent (don't yank while reading up).
-  useEffect(() => {
-    if (!lastMessage || !canInteract) return;
-    if (!shouldAutoScroll(nearBottomRef.current, userJustSentRef.current))
-      return;
-    const isNew = lastScrolledMessageRef.current !== lastMessage.id;
-    lastScrolledMessageRef.current = lastMessage.id;
-    scrollToBottom(isNew ? "smooth" : "auto");
-    userJustSentRef.current = false;
-  }, [lastMessage, lastMessageSize, canInteract, scrollToBottom]);
-
-  // Tab become visible: scrollIntoView while hidden is useless — re-pin once if sticky/empty→msgs.
-  useEffect(() => {
-    const wasVisible = prevVisibleRef.current;
-    prevVisibleRef.current = visible;
-    if (!visible) {
-      // Snapshot only on hide transition; do not overwrite while messages stream off-tab.
-      if (wasVisible) messageCountAtHideRef.current = messages.length;
-      return;
-    }
-    if (wasVisible) return;
-    const emptyToMessages =
-      messageCountAtHideRef.current === 0 && messages.length > 0;
-    if (!nearBottomRef.current && !emptyToMessages) return;
-    // rAF: layout may still be settling after un-hide
-    requestAnimationFrame(() => {
-      scrollToBottom("auto");
-    });
-  }, [visible, messages.length, scrollToBottom]);
-
-  // Container resize (IME open/close, input growth, plan panel): keep pinned
-  // to bottom when in the sticky zone, otherwise the newest content slides
-  // under the keyboard. Non-sticky users keep their reading position for free
-  // (scrollTop is measured from the top, so the top line stays put).
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (nearBottomRef.current) {
-        scrollToBottom("auto");
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollToBottom]);
 
   const handleStop = useCallback(() => {
     void stopActiveTask();
@@ -478,12 +386,6 @@ export default function MobileAgentHost({
   const appendTextAttachment = useCallback(
     (text: string) => {
       setInputDraft((prev) => (prev ? prev + text : text));
-      requestAnimationFrame(() => {
-        if (inputRef.current) {
-          inputRef.current.style.height = "auto";
-          inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
-        }
-      });
     },
     [setInputDraft],
   );
@@ -611,7 +513,8 @@ export default function MobileAgentHost({
 
   const handleSend = useCallback(async () => {
     if (conversationBusy || sendingRef.current) return;
-    if (!canSendAgentPrompt(activeSession, conversationBusy, inputDraft)) return;
+    const inputDraft = useTaskStore.getState().inputDraft;
+    if (!canSendAgentPrompt(activeSession, conversationBusy, inputDraft, pendingImages.length > 0)) return;
     if (!ids) return;
     const prompt = inputDraft.trim();
     const images = visionEnabled ? pendingImages : [];
@@ -627,7 +530,6 @@ export default function MobileAgentHost({
     userJustSentRef.current = true;
     setInputDraft("");
     setPendingImages([]);
-    if (inputRef.current) inputRef.current.style.height = "auto";
     try {
       await sendPrompt(ids.sessionId, prompt, ids.configId, dataUrls);
       revokePendingImages(snapshotImages);
@@ -643,7 +545,6 @@ export default function MobileAgentHost({
   }, [
     activeSession,
     ids,
-    inputDraft,
     conversationBusy,
     canInteract,
     sendPrompt,
@@ -666,13 +567,6 @@ export default function MobileAgentHost({
         );
         setInputDraft(result.prompt);
         showRollbackHint(`已撤回 ${result.removedCount} 条消息`);
-        requestAnimationFrame(() => {
-          if (inputRef.current) {
-            inputRef.current.style.height = "auto";
-            inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
-            inputRef.current.focus();
-          }
-        });
       } catch (err) {
         console.error("Failed to rollback message:", err);
         showRollbackHint("撤回失败");
@@ -695,23 +589,15 @@ export default function MobileAgentHost({
     }
   }, []);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputDraft(e.target.value);
-    const el = e.target;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
-  };
-
   // ── `/` 命令面板（与桌面同款组件）：输入以 "/" 开头时在输入框上方弹出，
   // 手机端以触摸点选为主；软键盘回车/发送语义不变。
   // 任务运行中不唤出（与桌面一致）：手动压缩与运行中任务并发会造成替换竞态。
   // 压缩中同样不唤出 —— 会话忙的两种情况走同一个 `conversationIsBusy`，顺带
   // 堵住「压缩中再点一次压缩」（两次摘要各写一张卡会破坏恒单卡）。
+  const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
   const commandMenuOpen =
-    inputDraft.startsWith("/") &&
-    !/\s/.test(inputDraft) &&
+    commandDraft &&
     (!activeConversationId || !conversationIsBusy(activeConversationId));
-  const commandMenuQuery = commandMenuOpen ? inputDraft.slice(1) : "";
 
   const handleCompact = useCallback(() => {
     if (!activeConversationId) return;
@@ -741,13 +627,6 @@ export default function MobileAgentHost({
   const handleInsertSkill = useCallback(
     (prompt: string) => {
       setInputDraft(prompt);
-      requestAnimationFrame(() => {
-        if (inputRef.current) {
-          inputRef.current.style.height = "auto";
-          inputRef.current.style.height = `${Math.min(inputRef.current.scrollHeight, 120)}px`;
-          inputRef.current.focus();
-        }
-      });
     },
     [setInputDraft],
   );
@@ -758,14 +637,6 @@ export default function MobileAgentHost({
     return registerBackHandler(() => setInputDraft(""));
   }, [commandMenuOpen, setInputDraft]);
 
-  const sendEnabled =
-    !!ids &&
-    canSendAgentPrompt(
-      activeSession,
-      conversationBusy,
-      inputDraft,
-      pendingImages.length > 0,
-    );
   const hostLabel =
     resolveSessionDisplayName(activeSession, connections) || "智能助手";
   const statusText = activeSession
@@ -877,12 +748,16 @@ export default function MobileAgentHost({
         </div>
       )}
 
-      <div className="relative min-h-0 flex-1">
-        <div
-          ref={scrollContainerRef}
-          className="h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-3"
-          onScroll={handleScroll}
-        >
+      <AgentTranscript
+        conversationId={activeConversationId}
+        canInteract={canInteract}
+        rollbackDisabled={conversationBusy}
+        userJustSentRef={userJustSentRef}
+        onRollback={handleRollbackMessage}
+        onCopy={handleCopyMessage}
+        mobile
+        visible={visible}
+        emptyState={<>
           {emptyReason !== "ready" && (
             <div className="mt-10 text-center text-sm text-zinc-500">
               <p className="font-medium text-zinc-400">
@@ -891,7 +766,7 @@ export default function MobileAgentHost({
               <p className="mt-1">{EMPTY_STATE_COPY[emptyReason].body}</p>
             </div>
           )}
-          {emptyReason === "ready" && messages.length === 0 && (
+          {emptyReason === "ready" && (
             <div className="mt-10 text-center text-sm text-zinc-500">
               <p className="font-medium text-zinc-400">
                 {activeConversationId ? "暂无消息" : "暂无会话"}
@@ -903,29 +778,8 @@ export default function MobileAgentHost({
               </p>
             </div>
           )}
-          {canInteract && (
-            <AgentMessageList
-              messages={messages}
-              rollbackDisabled={conversationBusy}
-              messagesEndRef={messagesEndRef}
-              onRollback={handleRollbackMessage}
-              onCopy={handleCopyMessage}
-              alwaysShowActions
-              // 宿主层已管贴底跟随；列表层不再二次写 scrollTop
-              enableStickyFollow={false}
-            />
-          )}
-        </div>
-        {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
-          <button
-            type="button"
-            onClick={() => scrollToBottom("smooth")}
-            className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-zinc-600 bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg backdrop-blur-sm active:bg-zinc-700"
-          >
-            回到底部
-          </button>
-        )}
-      </div>
+        </>}
+      />
 
       <PlanList />
 
@@ -1178,6 +1032,7 @@ export default function MobileAgentHost({
           </div>
         </div>
       ) : (
+        <AgentDraft>{(inputDraft) => (
         <div className="relative flex-shrink-0 border-t border-zinc-800 p-3">
           {/* `/` 命令面板：锚定输入框上方，触摸点选执行；遮罩点击/返回键关闭 */}
           {commandMenuOpen && (
@@ -1189,7 +1044,7 @@ export default function MobileAgentHost({
           )}
           <AgentCommandMenu
             open={commandMenuOpen}
-            query={commandMenuQuery}
+            query={commandMenuOpen ? inputDraft.slice(1) : ""}
             currentMode={mode}
             onSelectMode={setMode}
             onInsertSkill={handleInsertSkill}
@@ -1235,11 +1090,10 @@ export default function MobileAgentHost({
             {/* 移动端不拦截回车：软键盘/IME 的「换行」键走 textarea 原生行为插入换行
                 （含拼音组合中确认候选词的回车，不会误发）；发送只走右侧按钮——
                 手机上没有 shift+Enter，若拦截回车则多行输入无法换行。桌面端语义不受影响。 */}
-            <textarea
+            <AgentTextarea
               ref={inputRef}
               rows={1}
-              value={inputDraft}
-              onChange={handleInputChange}
+              maxHeight={120}
               placeholder={
                 !canInteract
                   ? "请先连接服务器…"
@@ -1376,7 +1230,9 @@ export default function MobileAgentHost({
                     ? handleCancelCompaction()
                     : void handleSend()
               }
-              disabled={!isRunning && !isCompacting && !sendEnabled}
+              disabled={!isRunning && !isCompacting && !(!!ids && canSendAgentPrompt(
+                activeSession, conversationBusy, inputDraft, pendingImages.length > 0,
+              ))}
               className={`mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-150 active:scale-95 disabled:opacity-40 ${
                 isRunning
                   ? "bg-red-600 active:bg-red-500"
@@ -1398,6 +1254,7 @@ export default function MobileAgentHost({
             </div>
           </div>
         </div>
+        )}</AgentDraft>
       )}
     </div>
   );

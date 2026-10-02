@@ -53,6 +53,7 @@
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "virtua": "^0.52.10",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

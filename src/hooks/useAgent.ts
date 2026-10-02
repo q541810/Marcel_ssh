@@ -10,12 +10,12 @@ import type { AgentMessage } from '@/lib/types';
 // 缺少消息缓存时也返回稳定引用；这里只读取，不向 store 补写/清空旧数据。
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
-export function useAgent() {
+export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {}) {
   const conversation = useConversationStore(useShallow((s) => ({
     // 会话列表由双端 UI 展示，元数据变化仍须响应；消息只订阅当前会话的桶。
     conversations: s.conversations,
     activeConversationId: s.activeConversationId,
-    messages: s.activeConversationId
+    messages: subscribeMessages && s.activeConversationId
       ? (s.messages[s.activeConversationId] ?? EMPTY_MESSAGES)
       : EMPTY_MESSAGES,
     newConversation: s.newConversation,
@@ -36,7 +36,7 @@ export function useAgent() {
     activeTask: s.activeTaskId ? (s.tasks[s.activeTaskId] ?? null) : null,
     activeUsage: activeConversationId ? s.usageByConversation[activeConversationId] : undefined,
     mode: s.mode,
-    inputDraft: s.inputDraft,
+    inputDraft: subscribeDraft ? s.inputDraft : '',
     startTask: s.startTask,
     stopTask: s.stopTask,
     setMode: s.setMode,

@@ -12,6 +12,10 @@ export type MenuEntry =
   | { kind: 'skill'; skill: Skill }
   | { kind: 'mode'; mode: (typeof AGENT_MODES)[number] };
 
+export function isCommandDraft(input: string): boolean {
+  return input.startsWith('/') && !/\s/.test(input);
+}
+
 function matchesCommand(label: string, keywords: string[], query: string): boolean {
   if (!query) return true;
   const q = query.toLowerCase();

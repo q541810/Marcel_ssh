@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, type ComponentProps } from 'react';
+import { Simulate } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AgentPanel from '@/components/agent/AgentPanel';
@@ -19,7 +20,7 @@ const counts = vi.hoisted(() => ({ host: 0, markdown: new Map<string, number>() 
 // 计数后调用真实 hook 和 Markdown 解析器；宿主、列表、消息 memo 均不替换。
 vi.mock('@/hooks/useAgent', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useAgent')>();
-  return { useAgent: () => { counts.host++; return actual.useAgent(); } };
+  return { useAgent: (...args: Parameters<typeof actual.useAgent>) => { counts.host++; return actual.useAgent(...args); } };
 });
 vi.mock('react-markdown', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-markdown')>();
@@ -169,7 +170,7 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
     await mount(Host);
     await textFrames(CURRENT);
     expect(host.textContent).toContain('x'.repeat(100));
-    expect(counts.host).toBeGreaterThanOrEqual(100);
+    expect(counts.host).toBe(0);
     expect(counts.markdown.get(STATIC_MARKDOWN) ?? 0).toBe(0);
   });
 
@@ -177,7 +178,26 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
     await mount(Host);
     await act(async () => { useTaskStore.getState().setInputDraft('new draft'); });
     expect(host.querySelector('textarea')?.value).toBe('new draft');
+    expect(counts.host).toBe(0);
     expect(counts.markdown.get(STATIC_MARKDOWN) ?? 0).toBe(0);
+  });
+
+  it('十次打字只测高十次，不刷新宿主；外部恢复草稿也自动测高', async () => {
+    await mount(Host);
+    const input = host.querySelector('textarea')!;
+    let reads = 0;
+    Object.defineProperty(input, 'scrollHeight', { get: () => { reads++; return 48; } });
+    for (let i = 1; i <= 10; i++) {
+      await act(async () => {
+        input.value = 'x'.repeat(i);
+        Simulate.change(input);
+      });
+    }
+    expect(reads).toBe(10);
+    expect(counts.host).toBe(0);
+    await act(async () => { useTaskStore.getState().setInputDraft('restored\ntext'); });
+    expect(input.value).toBe('restored\ntext');
+    expect(reads).toBe(11);
   });
 
   it('回调稳定后复制、撤回仍用当前消息，压缩占位及时禁用操作', async () => {
