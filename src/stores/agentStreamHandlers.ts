@@ -289,25 +289,12 @@ export function handleToolOutput(
   toolCallId: string,
   chunk: string,
 ) {
-  handler.updateMessages(conversationId, (convMsgs) => {
-    const newMsgs = [...convMsgs];
-    const streamState = getStreamState(taskId);
-    const pendingMsgId = streamState.pendingToolCalls.get(toolCallId);
-    if (pendingMsgId) {
-      const pendingIdx = newMsgs.findIndex((m) => m.id === pendingMsgId);
-      if (pendingIdx !== -1) {
-        const msg = newMsgs[pendingIdx];
-        newMsgs[pendingIdx] = {
-          ...msg,
-          toolResult: {
-            ...msg.toolResult!,
-            result: (msg.toolResult!.result || '') + chunk,
-          },
-        };
-      }
-    }
-    return newMsgs;
-  });
+  if (!chunk) return;
+  const state = getStreamState(taskId);
+  const messageId = state.pendingToolCalls.get(toolCallId);
+  if (!messageId) return;
+  state.pendingToolOutput.set(messageId, (state.pendingToolOutput.get(messageId) ?? '') + chunk);
+  scheduleFlush(handler, taskId, conversationId, '');
 }
 
 // ---------------------------------------------------------------------------
@@ -328,6 +315,7 @@ interface TaskStreamState {
   // 用 requestAnimationFrame 把同帧内全部 delta 合并成一次提交。
   pendingTextDelta: string;
   pendingThinkingDelta: string;
+  pendingToolOutput: Map<string, string>;
   flushRafId: number | null;
   /** 上下文压缩占位消息 id（compactionStart → done/未完成 原位更新） */
   compactionMessageId: string | null;
@@ -359,6 +347,7 @@ export function getStreamState(taskId: string): TaskStreamState {
     pendingToolArgs: new Map(),
     pendingTextDelta: '',
     pendingThinkingDelta: '',
+    pendingToolOutput: new Map(),
     flushRafId: null,
     compactionMessageId: null,
     compactionTrigger: null,
@@ -390,7 +379,7 @@ export function cleanupStreamState(taskId: string) {
 
 /** 收尾补笔：把缓冲里剩下的 delta 写到它们本就该去的那个对话。 */
 function flushLeftoverDeltas(taskId: string, state: TaskStreamState) {
-  if (!state.pendingTextDelta && !state.pendingThinkingDelta) return;
+  if (!state.pendingTextDelta && !state.pendingThinkingDelta && state.pendingToolOutput.size === 0) return;
   const writer = taskStreamWriters.get(taskId);
   // 没攒过 delta 就没有写入口 —— 也没东西可写。
   if (!writer) return;
@@ -412,6 +401,8 @@ export function handleToolResult(
   loadingAssistantId: string,
   tr: ToolResultPayload,
 ) {
+  // Commit streamed output before the authoritative result replaces it.
+  flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
   handler.updateMessages(conversationId, (convMsgs) => {
     const newMsgs = [...convMsgs];
     const streamState = getStreamState(taskId);
@@ -520,22 +511,38 @@ function flushPendingDeltas(
   loadingAssistantId: string,
 ) {
   const state = getStreamState(taskId);
-  const { pendingTextDelta, pendingThinkingDelta } = state;
+  const { pendingTextDelta, pendingThinkingDelta, pendingToolOutput } = state;
 
   // 清空 buffer 和 raf 句柄 —— 必须在 updateMessages 之前完成，
   // 否则 updater 闭包里对 state 的写入会丢失。
   state.pendingTextDelta = '';
   state.pendingThinkingDelta = '';
+  state.pendingToolOutput = new Map();
   if (state.flushRafId != null) {
     cancelAnimationFrame(state.flushRafId);
     state.flushRafId = null;
   }
 
-  if (!pendingTextDelta && !pendingThinkingDelta) return;
+  if (!pendingTextDelta && !pendingThinkingDelta && pendingToolOutput.size === 0) return;
 
   handler.updateMessages(conversationId, (convMsgs) => {
-    convMsgs = convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying));
-    const newMsgs = [...convMsgs];
+    const hasText = !!(pendingTextDelta || pendingThinkingDelta);
+    const newMsgs = hasText
+      ? convMsgs.filter((m) => !(m.role === 'system' && m.isRetrying))
+      : [...convMsgs];
+    if (pendingToolOutput.size > 0) {
+      for (let i = 0; i < newMsgs.length; i++) {
+        const message = newMsgs[i];
+        const chunk = pendingToolOutput.get(message.id);
+        if (chunk && message.toolResult) {
+          newMsgs[i] = {
+            ...message,
+            toolResult: { ...message.toolResult, result: (message.toolResult.result || '') + chunk },
+          };
+        }
+      }
+    }
+    if (!hasText) return newMsgs;
     const targetId = state.assistantMessageId;
     const idx = targetId
       ? newMsgs.findIndex((m) => m.id === targetId)
@@ -743,6 +750,7 @@ export function handleError(
   }
   state.pendingTextDelta = '';
   state.pendingThinkingDelta = '';
+  flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
 
   handler.updateTaskStatus(taskId, 'failed');
 
