@@ -220,3 +220,17 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
     expect(host.querySelector('textarea')?.value).toBe('恢复这个问题');
   });
 });
+
+it('手机隐藏页不解析流式消息，恢复时显示最新内容且草稿不丢', async () => {
+  await mount(MobileAgentHost);
+  await act(async () => { useTaskStore.getState().setInputDraft('keep draft'); });
+  await act(async () => { root.render(<MobileAgentHost visible={false} />); });
+  resetCounts();
+  await textFrames(CURRENT);
+  expect(counts.markdown.size).toBe(0);
+  const messages = useConversationStore.getState().messages[CURRENT];
+  expect(messages[messages.length - 1]?.content).toBe('x'.repeat(100));
+  await act(async () => { root.render(<MobileAgentHost visible />); });
+  expect(host.textContent).toContain('x'.repeat(100));
+  expect(host.querySelector('textarea')?.value).toBe('keep draft');
+});

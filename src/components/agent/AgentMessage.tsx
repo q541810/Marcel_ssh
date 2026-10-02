@@ -1,11 +1,7 @@
 import { memo, useState, useEffect, useRef, type ReactNode } from 'react';
 import type { AgentMessage as AgentMessageType } from '@/lib/types';
 import MessageImageThumb from './MessageImageThumb';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeHighlight from 'rehype-highlight';
-import rehypeKatex from 'rehype-katex';
+import MarkdownBody from './MarkdownBody';
 import { useMessageViewState } from './messageViewState';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
@@ -13,7 +9,6 @@ import {
   useStickyFollow,
 } from '@/hooks/useStickyFollow';
 import { INNER_FOLLOW_THRESHOLD_PX } from '@/lib/agentScroll';
-import { openExternalLink } from '@/lib/externalLinks';
 import { parseJobNotice } from '@/lib/jobNotice';
 import { useJobStore } from '@/stores/jobStore';
 import { ToolCardFrame, type ToolCardTone } from './toolCardChrome';
@@ -489,36 +484,7 @@ function AgentMessage({
           )
         ) : (
           <div className={MARKDOWN_CLASS}>
-            <Markdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[
-                rehypeHighlight,
-                [
-                  rehypeKatex,
-                  {
-                    // rehype-katex v7 内部已硬编码 throwOnError:false 容错，
-                    // 这里只需透传错误显示颜色：流式半截公式渲染为红色文本，不崩
-                    errorColor: '#f87171',
-                  },
-                ],
-              ]}
-              components={{
-                a: ({ href, children, ...props }) => (
-                  <a
-                    {...props}
-                    href={href}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      if (href) openExternalLink(href);
-                    }}
-                  >
-                    {children}
-                  </a>
-                ),
-              }}
-            >
-              {message.content}
-            </Markdown>
+            <MarkdownBody key={message.id} content={message.content} />
           </div>
         )}
       </div>

@@ -2,6 +2,9 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 // https://v2.tauri.app/start/frontend/vite/
 export default defineConfig({
@@ -10,6 +13,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "./src"),
+      // Its browser entry calls document.createElement, which cannot run in a Worker.
+      // The package's default entry uses the same entity table without a DOM.
+      "decode-named-character-reference": require.resolve("decode-named-character-reference"),
+      // KaTeX's HAST adapter also has a DOM-only browser entry (DOMParser).
+      "hast-util-from-html-isomorphic": require.resolve("hast-util-from-html-isomorphic"),
     },
   },
 
