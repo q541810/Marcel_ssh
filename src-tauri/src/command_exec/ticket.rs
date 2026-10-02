@@ -55,6 +55,8 @@ pub enum CommandSource {
     Agent,
     /// 插件系统后端路由的命令执行。
     Plugin,
+    /// 外部 MCP client 调用（绕过风险评估，外部 agent 自负其责）。
+    ExternalMcp,
 }
 
 /// 执行生命周期状态。

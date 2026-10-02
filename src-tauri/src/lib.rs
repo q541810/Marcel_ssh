@@ -14,6 +14,8 @@ pub mod download;
 pub mod error;
 pub mod llm;
 pub mod mcp;
+#[cfg(desktop)]
+pub mod mcp_server;
 pub mod multi_host;
 pub mod notification;
 pub mod plugins;
@@ -956,6 +958,19 @@ pub fn run() {
             commands::mcp::mcp_toggle_server,
             commands::mcp::mcp_refresh_tools,
             commands::mcp::mcp_call_tool,
+            // MCP **server**（对外服务，与上面的 client 方向相反）。桌面专属。
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_status,
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_start_http,
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_stop_http,
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_regenerate_token,
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_client_config,
+            #[cfg(desktop)]
+            commands::mcp_server::mcp_server_defaults,
             commands::update::check_update,
             commands::update::open_external_url,
             commands::update::get_update_state,

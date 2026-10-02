@@ -9,6 +9,10 @@ pub mod job;
 pub mod keychain;
 pub mod market;
 pub mod mcp;
+/// MCP **server**（对外服务）的设置命令，与上面的 `mcp`（client）方向相反。
+/// 桌面专属：移动端不做 MCP server，整个模块编译不进去。
+#[cfg(desktop)]
+pub mod mcp_server;
 pub mod plugin;
 pub mod plugin_api;
 pub mod plugin_fs;

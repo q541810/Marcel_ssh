@@ -426,6 +426,51 @@ pub async fn ssh_connect_with_saved_passphrase(
 /// 凭证缺失时返回 `AppError::Config`，前端据 `kind === "Config"` 弹窗让用户输入。
 /// 安全：密码/passphrase 都在 Rust 侧从 keychain 读取，不经过前端。
 ///
+/// 从「已保存的连接 + 系统密钥链」装配运行时连接配置。
+///
+/// 密码与私钥密码短语都**只在 Rust 侧**从密钥链取，不经前端。
+///
+/// 这是装配已保存连接的**唯一入口**：`ssh_reconnect` 与 MCP 无头连接
+/// （`mcp_server::external_executor`）共用它，避免两处各写一套认证装配
+/// 而在某条路径上漏掉某个认证方式或跳板机配置。
+pub(crate) fn build_saved_connection_config(
+    saved: &SavedConnection,
+    connection_id: &str,
+    trust_new_host_key: bool,
+) -> Result<ConnectionConfig, AppError> {
+    let auth_method = match saved.auth_method.as_str() {
+        "Password" => {
+            let password = keychain::get_password(connection_id)?
+                .ok_or_else(|| AppError::Config("未找到已保存的密码".into()))?;
+            AuthMethod::Password { password }
+        }
+        "PrivateKey" => {
+            let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
+            build_private_key_auth(
+                saved.key_id.as_deref(),
+                saved.key_path.as_deref(),
+                passphrase,
+                "私钥",
+            )?
+        }
+        other => return Err(AppError::Config(format!("不支持的认证方式: {}", other))),
+    };
+
+    let jump = build_jump_config(saved, connection_id, &auth_method)?;
+
+    Ok(ConnectionConfig {
+        host: saved.host.clone(),
+        port: saved.port,
+        username: saved.username.clone(),
+        auth_method,
+        connection_id: Some(connection_id.to_string()),
+        trust_new_host_key,
+        jump,
+    })
+}
+
+/// 用已保存的密码重连一个已有 session。
+///
 /// `trust_new_host_key` 默认 false；仅当用户在 HostKeyMismatch 弹窗里
 /// 明确选择「信任新密钥」后才传 true。
 #[tauri::command]
@@ -444,35 +489,11 @@ pub async fn ssh_reconnect(
             .clone()
     };
 
-    let auth_method = match saved.auth_method.as_str() {
-        "Password" => {
-            let password = keychain::get_password(&connection_id)?
-                .ok_or_else(|| AppError::Config("重连需要密码，请重新输入".into()))?;
-            AuthMethod::Password { password }
-        }
-        "PrivateKey" => {
-            let passphrase = keychain::get_password(&format!("pk:{}", connection_id))?;
-            build_private_key_auth(
-                saved.key_id.as_deref(),
-                saved.key_path.as_deref(),
-                passphrase,
-                "私钥",
-            )?
-        }
-        other => return Err(AppError::Config(format!("不支持的认证方式: {}", other))),
-    };
-
-    let jump = build_jump_config(&saved, &connection_id, &auth_method)?;
-
-    let config = ConnectionConfig {
-        host: saved.host,
-        port: saved.port,
-        username: saved.username,
-        auth_method,
-        connection_id: Some(connection_id),
-        trust_new_host_key: trust_new_host_key.unwrap_or(false),
-        jump,
-    };
+    let config = build_saved_connection_config(
+        &saved,
+        &connection_id,
+        trust_new_host_key.unwrap_or(false),
+    )?;
 
     state.ssh_manager.reconnect(session_id, config, app).await
 }

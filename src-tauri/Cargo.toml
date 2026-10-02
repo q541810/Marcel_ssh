@@ -69,6 +69,10 @@ aes-gcm = "0.10"
 # 未配置代理时自动直连。Android 不启用（市场功能仅桌面）。
 [target.'cfg(not(target_os = "android"))'.dependencies]
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "native-tls", "system-proxy", "charset", "gzip", "brotli", "deflate"] }
+# MCP Server 的 HTTP transport（mcp_server/http_transport.rs，仅桌面）。
+# 纯 Rust 实现，Android 交叉编译不需要——移动端本就只做 MCP client，
+# 不做 server，所以放在 not-android 段里，不给 Android 构建增重。
+axum = { version = "^0.8", default-features = false, features = ["http1", "json", "tokio"] }
 # 桌面密钥链：Windows Credential Manager / macOS+iOS Keychain / Linux Secret Service
 keyring = { version = "^4", default-features = false, features = [
     "v1",

@@ -120,7 +120,25 @@ impl SshManager {
         app: AppHandle,
     ) -> Result<String, AppError> {
         let session_id = Uuid::new_v4().to_string();
-        self.connect_inner(session_id.clone(), config, app).await?;
+        self.connect_inner(session_id.clone(), config, Some(app), false)
+            .await?;
+        Ok(session_id)
+    }
+
+    /// 建立**无头** SSH 连接：供 MCP 等外部入口使用。
+    ///
+    /// 与 [`Self::connect`] 的差别只有「没有界面」这一件事：
+    /// - **不分配 PTY、不起终端驱动**——外部调用只需要 exec 通道与 SFTP，
+    ///   不需要交互式 shell；
+    /// - **不发 UI 事件**（状态、TOFU 告警）——没有窗口可收。
+    ///
+    /// **安全语义完全不变**：主机密钥照样校验（未知/不匹配都会拒绝），
+    /// 认证走同一条 `authenticate`，跳板机走同一条隧道逻辑。
+    /// 区别仅在「提醒谁」，不在「放不放行」。
+    pub async fn connect_headless(&self, config: ConnectionConfig) -> Result<String, AppError> {
+        let session_id = Uuid::new_v4().to_string();
+        self.connect_inner(session_id.clone(), config, None, true)
+            .await?;
         Ok(session_id)
     }
 
@@ -133,7 +151,7 @@ impl SshManager {
         config: ConnectionConfig,
         app: AppHandle,
     ) -> Result<(), AppError> {
-        self.connect_inner(session_id, config, app).await
+        self.connect_inner(session_id, config, Some(app), false).await
     }
 
     /// Shared connection logic for both fresh connects and reconnects.
@@ -142,11 +160,15 @@ impl SshManager {
     /// a shell channel with a PTY, inserts the connection into the manager
     /// (overwriting any stale entry for the same id), emits `Connected`, and
     /// spawns the driver task.
+    ///
+    /// `headless = true` 时跳过 PTY 与终端驱动（见 [`Self::connect_headless`]），
+    /// 连接仍然登记进 `connections`，因此 exec 通道与 SFTP 照常可用。
     async fn connect_inner(
         &self,
         session_id: String,
         config: ConnectionConfig,
-        app: AppHandle,
+        app: Option<AppHandle>,
+        headless: bool,
     ) -> Result<(), AppError> {
         if config.host.is_empty() {
             return Err(AppError::Ssh("主机地址不能为空".into()));
@@ -204,7 +226,7 @@ impl SshManager {
                         &jump.host,
                         jump.port,
                         config.trust_new_host_key,
-                        &app,
+                        app.as_ref(),
                         "jump",
                     )
                     .await
@@ -251,7 +273,7 @@ impl SshManager {
                 &host,
                 port,
                 config.trust_new_host_key,
-                &app,
+                app.as_ref(),
                 "target",
             )
             .await
@@ -262,7 +284,7 @@ impl SshManager {
                 &host,
                 port,
                 config.trust_new_host_key,
-                &app,
+                app.as_ref(),
                 "target",
             )
             .await
@@ -273,21 +295,29 @@ impl SshManager {
             .await
             .map_err(|e| map_target_err(e, &host, via_jump))?;
 
-        // Open session channel
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| AppError::Ssh(format!("打开会话通道失败: {}", e)))?;
+        // 交互式终端通道。无头模式（MCP 等外部入口）**不需要**：外部调用只用
+        // exec 通道与 SFTP 子系统，不分配 PTY 也就不必维持一个 shell 会话。
+        // `handle` 在两种情况都留用——exec / SFTP 正是挂在它上面的。
+        let channel = if headless {
+            None
+        } else {
+            let channel = handle
+                .channel_open_session()
+                .await
+                .map_err(|e| AppError::Ssh(format!("打开会话通道失败: {}", e)))?;
 
-        channel
-            .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
-            .await
-            .map_err(|e| AppError::Ssh(format!("分配 PTY 失败: {}", e)))?;
+            channel
+                .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+                .await
+                .map_err(|e| AppError::Ssh(format!("分配 PTY 失败: {}", e)))?;
 
-        channel
-            .request_shell(false)
-            .await
-            .map_err(|e| AppError::Ssh(format!("启动 shell 失败: {}", e)))?;
+            channel
+                .request_shell(false)
+                .await
+                .map_err(|e| AppError::Ssh(format!("启动 shell 失败: {}", e)))?;
+
+            Some(channel)
+        };
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
         let shared_handle = Arc::new(TokioMutex::new(handle));
@@ -324,14 +354,40 @@ impl SshManager {
             order.push_back(session_id.clone());
         }
 
-        emit_event(
-            &app,
-            &format!("ssh://status/{}", session_id),
-            SshStatus::Connected,
-        );
+        if let Some(app) = app.as_ref() {
+            emit_event(
+                app,
+                &format!("ssh://status/{}", session_id),
+                SshStatus::Connected,
+            );
+        }
+
+        // 终端驱动：只有交互式连接才起。无头连接没有 PTY 通道可驱动，
+        // 它的生命周期由调用方掌握（会话登记在 `connections` 里，
+        // exec / SFTP 照常按 session_id 取用）。
+        let Some(channel) = channel else {
+            log::info!(
+                "[无头] SSH 会话 {} 已建立（{}@{}:{}），未分配 PTY",
+                session_id,
+                username,
+                host,
+                port
+            );
+            return Ok(());
+        };
+
+        // 走到这里必然是有头连接（无头在上面已 return），因此 AppHandle 存在。
+        // 终端驱动的每个输出 chunk 都要发事件，没有界面就没有驱动的意义。
+        let Some(app_handle) = app else {
+            log::warn!(
+                "SSH 会话 {} 有 PTY 通道却没有 AppHandle，跳过终端驱动",
+                session_id
+            );
+            return Ok(());
+        };
 
         let sid = session_id.clone();
-        let app_clone = app.clone();
+        let app_clone = app_handle.clone();
         let manager_connections = self.connections.clone();
         let manager_observers = self.disconnect_observers.clone();
         tokio::spawn(async move {
@@ -372,14 +428,33 @@ impl SshManager {
         Ok(())
     }
 
+    /// 关闭一个无头会话（`connect_headless` 建的那些）。
+    ///
+    /// 有头会话的清理挂在终端驱动上（驱动退出即摘表）；无头会话没有驱动，
+    /// 所以要在进程收尾时显式摘掉，避免 `connections` 里留着已经用不上的条目。
+    /// 不存在的 id 视为已清理（幂等）。
+    pub async fn disconnect_headless(&self, session_id: &str) {
+        let removed = self.connections.write().await.remove(session_id);
+        if let Some(conn) = removed {
+            let _ = conn.cmd_tx.send(SessionCommand::Disconnect);
+            {
+                let mut order = self.activation_order.write().await;
+                order.retain(|sid| sid != session_id);
+            }
+            log::info!("[无头] SSH 会话 {} 已关闭", session_id);
+        }
+    }
+
     /// TCP connect + SSH handshake to `host:port` with host-key verification.
+    ///
+    /// `app` 为 `None` = 无头模式：跳过 TOFU 的 UI 告警（主机密钥校验照常）。
     async fn ssh_handshake(
         &self,
         client_config: Arc<client::Config>,
         host: &str,
         port: u16,
         trust_new: bool,
-        app: &AppHandle,
+        app: Option<&AppHandle>,
         role: &str,
     ) -> Result<client::Handle<Client>, AppError> {
         let verdict = Arc::new(TokioMutex::new(None));
@@ -414,6 +489,8 @@ impl SshManager {
     }
 
     /// SSH handshake over an existing stream (e.g. jump tunnel).
+    ///
+    /// `app` 为 `None` = 无头模式（同 [`Self::ssh_handshake`]）。
     async fn ssh_handshake_stream<R>(
         &self,
         client_config: Arc<client::Config>,
@@ -421,7 +498,7 @@ impl SshManager {
         host: &str,
         port: u16,
         trust_new: bool,
-        app: &AppHandle,
+        app: Option<&AppHandle>,
         role: &str,
     ) -> Result<client::Handle<Client>, AppError>
     where
@@ -458,8 +535,13 @@ impl SshManager {
         Ok(handle)
     }
 
+    /// TOFU 警告：密钥没能落盘时提醒用户。
+    ///
+    /// `app` 为 `None` = 无头模式（MCP 等外部调用入口）：**日志照记**，
+    /// 但不发 UI 事件——没有界面可提醒。这不影响安全性：主机密钥的**校验**
+    /// 始终发生（见 [`Client`] 的 `verify`），这里只是「记不下来」的告警。
     async fn emit_tofu_warning(
-        app: &AppHandle,
+        app: Option<&AppHandle>,
         host: &str,
         port: u16,
         tofu_record_error: Arc<TokioMutex<Option<String>>>,
@@ -467,16 +549,18 @@ impl SshManager {
     ) {
         if let Some(err_msg) = tofu_record_error.lock().await.take() {
             log::warn!("主机密钥未持久化 {}: {} — {}", host, port, err_msg);
-            emit_event(
-                app,
-                "hostKeyWarning",
-                serde_json::json!({
-                    "host": host,
-                    "port": port,
-                    "reason": err_msg,
-                    "message": "主机密钥未能持久化，本次连接安全但不保证未来能检测密钥变更，请检查配置目录可写性"
-                }),
-            );
+            if let Some(app) = app {
+                emit_event(
+                    app,
+                    "hostKeyWarning",
+                    serde_json::json!({
+                        "host": host,
+                        "port": port,
+                        "reason": err_msg,
+                        "message": "主机密钥未能持久化，本次连接安全但不保证未来能检测密钥变更，请检查配置目录可写性"
+                    }),
+                );
+            }
         }
     }
 
