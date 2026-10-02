@@ -46,6 +46,7 @@ export default function ConnectionForm({
   const [name, setName] = useState(connection?.name ?? '');
   const [host, setHost] = useState(connection?.host ?? '');
   const [port, setPort] = useState(connection?.port ?? DEFAULT_PORT);
+  const [portInput, setPortInput] = useState(String(connection?.port ?? DEFAULT_PORT));
   const [username, setUsername] = useState(connection?.username ?? '');
   const [authMethod, setAuthMethod] = useState(connection?.authMethod ?? 'Password');
   const [keyPath, setKeyPath] = useState(connection?.keyPath ?? '');
@@ -78,6 +79,7 @@ export default function ConnectionForm({
   const [useJump, setUseJump] = useState(connection?.useJump ?? false);
   const [jumpHost, setJumpHost] = useState(connection?.jumpHost ?? '');
   const [jumpPort, setJumpPort] = useState(connection?.jumpPort ?? DEFAULT_PORT);
+  const [jumpPortInput, setJumpPortInput] = useState(String(connection?.jumpPort ?? DEFAULT_PORT));
   const [jumpUsername, setJumpUsername] = useState(connection?.jumpUsername ?? '');
   const [jumpAuthMethod, setJumpAuthMethod] = useState<JumpAuthMethod>(
     connection?.jumpAuthMethod ?? 'withTarget',
@@ -315,8 +317,21 @@ export default function ConnectionForm({
         <Input
           label="端口"
           type="number"
-          value={String(port)}
-          onChange={(e) => setPort(parseInt(e.target.value, 10) || DEFAULT_PORT)}
+          value={portInput}
+          onChange={(e) => {
+            const val = e.target.value;
+            setPortInput(val);
+            const parsed = parseInt(val, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+              setPort(parsed);
+            }
+          }}
+          onBlur={() => {
+            if (!portInput || isNaN(parseInt(portInput, 10))) {
+              setPortInput(String(DEFAULT_PORT));
+              setPort(DEFAULT_PORT);
+            }
+          }}
           error={errors.port}
         />
       </div>
@@ -562,10 +577,21 @@ export default function ConnectionForm({
               <Input
                 label="端口"
                 type="number"
-                value={String(jumpPort)}
-                onChange={(e) =>
-                  setJumpPort(parseInt(e.target.value, 10) || DEFAULT_PORT)
-                }
+                value={jumpPortInput}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setJumpPortInput(val);
+                  const parsed = parseInt(val, 10);
+                  if (!isNaN(parsed) && parsed > 0) {
+                    setJumpPort(parsed);
+                  }
+                }}
+                onBlur={() => {
+                  if (!jumpPortInput || isNaN(parseInt(jumpPortInput, 10))) {
+                    setJumpPortInput(String(DEFAULT_PORT));
+                    setJumpPort(DEFAULT_PORT);
+                  }
+                }}
                 error={errors.jumpPort}
               />
             </div>

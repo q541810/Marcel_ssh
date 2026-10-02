@@ -72,6 +72,7 @@ export default function MobileConnectionForm({
   const [name, setName] = useState('');
   const [host, setHost] = useState('');
   const [port, setPort] = useState(DEFAULT_PORT);
+  const [portInput, setPortInput] = useState(String(DEFAULT_PORT));
   const [username, setUsername] = useState('');
   const [authMethod, setAuthMethod] = useState('Password');
   const [keyPath, setKeyPath] = useState('');
@@ -100,6 +101,7 @@ export default function MobileConnectionForm({
   const [useJump, setUseJump] = useState(false);
   const [jumpHost, setJumpHost] = useState('');
   const [jumpPort, setJumpPort] = useState(DEFAULT_PORT);
+  const [jumpPortInput, setJumpPortInput] = useState(String(DEFAULT_PORT));
   const [jumpUsername, setJumpUsername] = useState('');
   const [jumpAuthMethod, setJumpAuthMethod] =
     useState<JumpAuthMethod>('withTarget');
@@ -117,7 +119,9 @@ export default function MobileConnectionForm({
     if (!open) return;
     setName(connection?.name ?? '');
     setHost(connection?.host ?? '');
-    setPort(connection?.port ?? DEFAULT_PORT);
+    const mainPort = connection?.port ?? DEFAULT_PORT;
+    setPort(mainPort);
+    setPortInput(String(mainPort));
     setUsername(connection?.username ?? '');
     setAuthMethod(connection?.authMethod ?? 'Password');
     setKeyPath(connection?.keyPath ?? '');
@@ -133,7 +137,9 @@ export default function MobileConnectionForm({
     setSaving(false);
     setUseJump(connection?.useJump ?? false);
     setJumpHost(connection?.jumpHost ?? '');
-    setJumpPort(connection?.jumpPort ?? DEFAULT_PORT);
+    const jPort = connection?.jumpPort ?? DEFAULT_PORT;
+    setJumpPort(jPort);
+    setJumpPortInput(String(jPort));
     setJumpUsername(connection?.jumpUsername ?? '');
     setJumpAuthMethod(connection?.jumpAuthMethod ?? 'withTarget');
     setJumpKeyPath(connection?.jumpKeyPath ?? '');
@@ -390,10 +396,21 @@ export default function MobileConnectionForm({
             <input
               type="number"
               inputMode="numeric"
-              value={String(port)}
-              onChange={(e) =>
-                setPort(parseInt(e.target.value, 10) || DEFAULT_PORT)
-              }
+              value={portInput}
+              onChange={(e) => {
+                const val = e.target.value;
+                setPortInput(val);
+                const parsed = parseInt(val, 10);
+                if (!isNaN(parsed) && parsed > 0) {
+                  setPort(parsed);
+                }
+              }}
+              onBlur={() => {
+                if (!portInput || isNaN(parseInt(portInput, 10))) {
+                  setPortInput(String(DEFAULT_PORT));
+                  setPort(DEFAULT_PORT);
+                }
+              }}
               className={errors.port ? inputErrorClass : inputClass}
             />
           </Field>
@@ -652,10 +669,21 @@ export default function MobileConnectionForm({
                   <input
                     type="number"
                     inputMode="numeric"
-                    value={String(jumpPort)}
-                    onChange={(e) =>
-                      setJumpPort(parseInt(e.target.value, 10) || DEFAULT_PORT)
-                    }
+                    value={jumpPortInput}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setJumpPortInput(val);
+                      const parsed = parseInt(val, 10);
+                      if (!isNaN(parsed) && parsed > 0) {
+                        setJumpPort(parsed);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (!jumpPortInput || isNaN(parseInt(jumpPortInput, 10))) {
+                        setJumpPortInput(String(DEFAULT_PORT));
+                        setJumpPort(DEFAULT_PORT);
+                      }
+                    }}
                     className={errors.jumpPort ? inputErrorClass : inputClass}
                   />
                 </Field>
