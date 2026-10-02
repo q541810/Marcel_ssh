@@ -1,15 +1,15 @@
 {
-  "version": "1.5.0",
-  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.5.0",
-  "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.5.0/Marcel.SSH_1.5.0_x64-setup.exe",
-  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZWg2MTZZZFhKRVpZc3hoZ1JmTXNMeWdqMWgzUnp5ZW11NjdaYUdlN1RzMEJUYXRUQWp1OGVNMTE1ZzNrTkR3Nzl6ejV0OWlZWVNSSXdNazhaTTBPUksxL3dYcFkxcUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwMjA0MjQ1CWZpbGU6TWFyY2VsIFNTSF8xLjUuMF94NjQtc2V0dXAuZXhlCkVnOW1PWDZRRVh3dFZFcXJpcGJEeVBORmJudER6MmNpK1BWeHpGVGhPeFkvYTdBdWVOdjFUTmx3UkhqWXFqRGxkYkEvbFczamZnbDdCakxnR0NHOEN3PT0K",
-  "sha256": "7879f480d2f6de961643659efd94e01ebe27be4ad0d66a2501b5f53a0914dc35",
-  "size": 11177060,
+  "version": "1.6.0",
+  "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.6.0",
+  "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.6.0/Marcel+SSH_1.6.0_x64-setup.exe",
+  "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZWg2MTZZZFhKRVUxNFJUWXVhcWVQZUp4cmFtQ0hZc0xwUUEzbUpqVUJUTlVMYXl4c0c5RWpBM1FTNlBhSCtSOStvMksrNEFZU3QxRzMwSHpIK0JVcmhjRmZZV013clFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTI3NzQzCWZpbGU6TWFyY2VsIFNTSF8xLjYuMF94NjQtc2V0dXAuZXhlCnZ1WnVmc3F0TnppRXJFVXQ3MnpTZ0pxWFdWYmgxNFZyVDA1WmF6aDAydFVZWmJxMFpQUzIvSHc0TVRVZVRWcDE4a3VmbzRkeVpNdGY0em5RaDN5UUFRPT0K",
+  "sha256": "afc5aa91689b08bad1b4b8785497a28cfc3b16aae244d32bf348a6c0acc5398a",
+  "size": 12292002,
   "android": {
-    "version": "1.5.0",
-    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.5.0",
-    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.5.0/Marcel-SSH_1.5.0_arm64.apk",
-    "sha256": "bb911093fbf3b46991a5b924788465097f734d8381a13745f8f316bf6bd4cd9c",
-    "size": 28133791
+    "version": "1.6.0",
+    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.6.0",
+    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.6.0/Marcel-SSH_1.6.0_arm64.apk",
+    "sha256": "0ef5e545e88fea52d17842b06463c3f947b43960d1d333784c376fcc448e8d93",
+    "size": 28659159
   }
 }
