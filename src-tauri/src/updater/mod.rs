@@ -768,8 +768,41 @@ fn reset_downloading(app: &AppHandle) {
     }
 }
 
+/// 下载与校验所需的注入点：把 `AppHandle` 依赖收成「目录 / 取消 / 进度 / 验签公钥」，
+/// 好让「下发 → 落盘 → sha256 + 签名把关 → 写 pending.json」这整条路径能在进程内
+/// 用本地 HTTP 服务端到端跑（见文件末尾的 `update_gate`）。生产路径由
+/// [`run_download`] 装配，语义与抽取前逐字节一致。
+struct DownloadEnv<'a> {
+    dir: PathBuf,
+    cancel: &'a (dyn Fn() -> bool + Sync),
+    progress: &'a (dyn Fn(u64, u64) + Sync),
+    /// 下载被判定为「按用户要求停止」时的收尾（生产 = 清掉取消请求；测试给空操作）。
+    on_cancelled: &'a (dyn Fn() + Sync),
+    /// Windows 验签公钥（minisign base64 行）。`None` = 用内置生产公钥；只有测试
+    /// 传 `Some`（测试向量由另一把私钥签发，生产公钥必然验不过）。
+    #[cfg_attr(not(windows), allow(dead_code))]
+    verify_pubkey: Option<String>,
+}
+
 async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<DownloadOutcome, String> {
     let dir = update_dir(app)?;
+    let env = DownloadEnv {
+        dir,
+        cancel: &|| is_cancel_requested(app),
+        progress: &|downloaded, total| {
+            emit_progress(app, offer.version.clone(), downloaded, total);
+        },
+        on_cancelled: &|| clear_cancel_request(app),
+        verify_pubkey: None,
+    };
+    run_download_in(&env, offer).await
+}
+
+async fn run_download_in(
+    env: &DownloadEnv<'_>,
+    offer: &LatestRelease,
+) -> Result<DownloadOutcome, String> {
+    let dir = env.dir.clone();
     std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建更新缓存目录: {}", e))?;
 
     let expected_size = offer.assets.size.ok_or("更新包大小未知")?;
@@ -805,19 +838,16 @@ async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<Download
     // 分段并发下载：GitHub 这类线路按单连接限速（实测单连接 0.02MB/s、16 连接
     // 0.25MB/s），单连接顺序流只能跑到浏览器的水平。模块内部会先探测 Range
     // 支持情况，不支持时自动退回单连接顺序流。
-    let version_for_progress = offer.version.clone();
     let download = crate::download::SegmentedDownload {
         urls: candidates,
         part_path: part_path.clone(),
         expected_size,
-        cancel: &|| is_cancel_requested(app),
-        progress: &|done, total| {
-            emit_progress(app, version_for_progress.clone(), done, total);
-        },
+        cancel: env.cancel,
+        progress: env.progress,
     };
     match download.run().await? {
         crate::download::DownloadOutcome::Cancelled => {
-            clear_cancel_request(app);
+            (env.on_cancelled)();
             return Ok(DownloadOutcome::Cancelled);
         }
         crate::download::DownloadOutcome::Done => {}
@@ -837,7 +867,14 @@ async fn run_download(app: &AppHandle, offer: &LatestRelease) -> Result<Download
     }
     #[cfg(windows)]
     {
-        if let Err(e) = verify_signature(
+        // 公钥在这一步才解析（不在下载前就解析）：保持与抽取前一致的失败顺序 ——
+        // 内置公钥坏掉时报的是「签名验证失败」，且不白下这一趟的语义不变。
+        let pubkey_line = match env.verify_pubkey.as_deref() {
+            Some(line) => line.to_string(),
+            None => decode_wrapped_pubkey()?,
+        };
+        if let Err(e) = verify_signature_with(
+            &pubkey_line,
             &final_bytes_of(&part_path)?,
             offer.assets.signature.as_deref().unwrap_or(""),
         ) {
@@ -934,11 +971,22 @@ fn hash_equal(actual: &str, expected: &str) -> bool {
 /// 文件内容（base64 包裹的 minisign 签名文件）。
 #[cfg(windows)]
 fn verify_signature(file_bytes: &[u8], signature_b64: &str) -> Result<(), String> {
-    let signature_text = decode_wrapped_b64(signature_b64)?;
-    let pubkey_text = decode_wrapped_pubkey()?;
+    verify_signature_with(&decode_wrapped_pubkey()?, file_bytes, signature_b64)
+}
 
-    let pubkey = minisign_verify::PublicKey::from_base64(&pubkey_text)
-        .map_err(|e| format!("内置公钥无效: {}", e))?;
+/// 同上，公钥由调用方给：生产走内置公钥（[`verify_signature`]），测试换测试公钥
+/// 才能覆盖「签名**正确**时必须通过」这半边 —— 只测拒绝的话，一个「恒拒绝」的
+/// 回归（公钥抄错、比较写反）照样全绿。
+#[cfg(windows)]
+fn verify_signature_with(
+    pubkey_line: &str,
+    file_bytes: &[u8],
+    signature_b64: &str,
+) -> Result<(), String> {
+    let signature_text = decode_wrapped_b64(signature_b64)?;
+
+    let pubkey = minisign_verify::PublicKey::from_base64(pubkey_line)
+        .map_err(|e| format!("签名公钥无效: {}", e))?;
     let signature = minisign_verify::Signature::decode(&signature_text)
         .map_err(|e| format!("签名格式无效: {}", e))?;
     // allow_legacy=false：只接受标准 minisign ed25519 签名（tauri signer 产出）。
@@ -1712,5 +1760,475 @@ mod tests {
         // 解析不了 → 维持旧的幂等行为（不重下几十 MB）
         assert!(ready_covers_offer("not-a-version", "1.6.0"));
         assert!(ready_covers_offer("1.5.0", "not-a-version"));
+    }
+}
+
+/// ── 无感更新的自动门控：包下完了，码对不对？ ───────────────────────
+///
+/// `mod tests` 测的是纯函数（hash 比较、签名向量、决策表），`download.rs` 测的是
+/// 「字节有没有下对」。**这两者之间那一跳没人测过**：包在磁盘上了，sha256 与签名
+/// 把关到底有没有真的拦住坏包？拦住之后有没有清干净？好包有没有被写进 pending？
+/// ——这些正是「更新装上了，但内容不是我们发的那个」的入口。
+///
+/// 这一组用例把本地 HTTP 服务 + 真实下载器 + 真实校验 + 真实落库拼起来跑，每条都
+/// 成对断言「返回结果」与「磁盘残留」，覆盖真机会遇到的失败形态：传输损坏或被换包
+/// （sha256 对不上）、下不完整、签名不是我们的（换了包留旧签名）、字段缺失、源不可达。
+/// 断言里的错误文案是**用户最终看到的那句**，别改成自造词。
+#[cfg(test)]
+mod update_gate {
+    use super::*;
+    use crate::commands::update::ReleaseAssets;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    const VERSION: &str = "9.9.9";
+    /// 生产公钥验不过测试签名；测试要覆盖「签名正确必须通过」那半边，得换测试公钥。
+    #[cfg(windows)]
+    const TEST_PUBKEY_WRAP_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0ODZGQ0M5QURGOTFBOTIKUldTU0d2bXR5ZnlHbEZGenJVaHU5N0EwSHFWZGltdWkzVDdqcHUyNjhnUUxqbmIwa3d3RVhUN0oK";
+    #[cfg(windows)]
+    const TEST_SIG_WRAP_B64: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTU0d2bXR5ZnlHbEJsSHcwY2NYZnY1d0RJMGVzaTc0bzRGdTkwTDkzZENFRy9DaW1jdzRoZVI5ZXlqVm1KNTMwOEhqUS9DSUpOM3FOcS9BbjVmaGIrWUVGVjgyQ3V0WFFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTk4MDIwCWZpbGU6cGF5bG9hZC5iaW4KY01Udk4wYUxidFlVMlZFVWd3aFhmQ2RRK29NeDdhWXAvTVRIa3hoa3hzSm5PTWVCNmJPOFkrNGdwdnNkRGpibUVqWS9XOHNCT0FBdXQzak1ONEpJRHc9PQo=";
+    #[cfg(windows)]
+    const TEST_PAYLOAD: &[u8] = b"marcel-update-test-payload\n";
+
+    fn sha_of(bytes: &[u8]) -> String {
+        format!("{:x}", Sha256::digest(bytes))
+    }
+
+    fn offer(
+        url: &str,
+        sha256: Option<&str>,
+        size: Option<u64>,
+        signature: Option<&str>,
+    ) -> LatestRelease {
+        LatestRelease {
+            version: VERSION.to_string(),
+            release_url: "https://example.com/tag/v9.9.9".to_string(),
+            assets: ReleaseAssets {
+                installer_url: Some(url.to_string()),
+                installer_mirrors: Vec::new(),
+                signature: signature.map(str::to_string),
+                sha256: sha256.map(str::to_string),
+                size,
+            },
+        }
+    }
+
+    /// 跑一遍真实下载：本地 HTTP → .part → sha256/签名把关 → rename + pending.json。
+    async fn run_offer(
+        dir: &Path,
+        release: &LatestRelease,
+        verify_pubkey: Option<&str>,
+    ) -> Result<PathBuf, String> {
+        let cancel = || false;
+        let progress = |_: u64, _: u64| {};
+        let on_cancelled = || {};
+        let env = DownloadEnv {
+            dir: dir.to_path_buf(),
+            cancel: &cancel,
+            progress: &progress,
+            on_cancelled: &on_cancelled,
+            verify_pubkey: verify_pubkey.map(str::to_string),
+        };
+        match run_download_in(&env, release).await? {
+            DownloadOutcome::Done(path) => Ok(path),
+            DownloadOutcome::Cancelled => Err("下载被判定为取消（测试里不该发生）".to_string()),
+        }
+    }
+
+    /// 最小 HTTP 服务：回 `status` + `body`，`declared_len` 可谎报 content-length
+    /// （模拟传输被截断）。不认 Range → 客户端走单连接兜底路径（分段路径的字节
+    /// 正确性由 `download.rs` 自己的用例覆盖）。返回 (base_url, 命中次数)。
+    async fn spawn_server(
+        status: u16,
+        declared_len: usize,
+        body: Vec<u8>,
+    ) -> (String, Arc<AtomicU64>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicU64::new(0));
+        let hits_task = hits.clone();
+        let body = Arc::new(body);
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                hits_task.fetch_add(1, Ordering::Relaxed);
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut scratch = [0u8; 2048];
+                    let _ = socket.read(&mut scratch).await;
+                    let reason = if status == 200 { "OK" } else { "Internal Server Error" };
+                    let head = format!(
+                        "HTTP/1.1 {status} {reason}\r\ncontent-length: {declared_len}\r\nconnection: close\r\n\r\n"
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    if status == 200 {
+                        let _ = socket.write_all(&body).await;
+                    }
+                    let _ = socket.flush().await;
+                });
+            }
+        });
+        (format!("http://{addr}"), hits)
+    }
+
+    /// 目录里现存的文件名（排序）。
+    fn dir_entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 失败之后不能留下任何「会被当成可用更新」的东西：不留成品包、不留 pending.json。
+    ///
+    /// 只钉这两样 —— 它们才是「坏包被接受」的路径：成品包会被交给安装器，pending 会被
+    /// 下次启动的清理当成「上次没装上」捡起来。`.part` 不在此列：生产代码删它就是
+    /// `let _ = remove_file(..)`（尽力而为，失败只记日志），且它由启动清理（无差别删
+    /// .part）与重试时的 reset 兜底；把「必须当场消失」当契约，等于给门控埋一条可能
+    /// 误报的断言。残留能否被扫掉另有 `assert_startup_cleanup_sweeps_residue` 钉住。
+    fn assert_no_package_left(dir: &Path) {
+        let left = dir_entries(dir);
+        assert!(
+            !dir.join(installer_file_name(VERSION)).exists(),
+            "校验没通过却把包留成了成品：{left:?}"
+        );
+        assert!(
+            !dir.join(PENDING_FILE_NAME).exists(),
+            "校验没通过却写了 pending.json（下次启动会被当成「上次没装上」捡起来）：{left:?}"
+        );
+    }
+
+    /// 残留的 `.part` 必须能被启动清理扫干净（这是「失败后不留垃圾」的真实兜底）。
+    fn assert_startup_cleanup_sweeps_residue(dir: &Path) {
+        cleanup_update_dir(dir, &semver::Version::from_str("1.0.0").unwrap());
+        let left = dir_entries(dir);
+        assert!(left.is_empty(), "启动清理应扫掉残留，实际留下：{left:?}");
+    }
+
+    #[cfg(windows)]
+    fn test_pubkey_line() -> String {
+        decode_wrapped_b64(TEST_PUBKEY_WRAP_B64)
+            .unwrap()
+            .lines()
+            .nth(1)
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    // ── 正路径：能过校验的包必须真就绪，且落库字段与 latest.json 一致 ──
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn accepts_correctly_signed_payload_and_publishes_pending() {
+        let (base, hits) = spawn_server(200, TEST_PAYLOAD.len(), TEST_PAYLOAD.to_vec()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let result = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                Some(&sha_of(TEST_PAYLOAD)),
+                Some(TEST_PAYLOAD.len() as u64),
+                Some(TEST_SIG_WRAP_B64),
+            ),
+            Some(&test_pubkey_line()),
+        )
+        .await
+        .expect("签名正确的包必须就绪");
+
+        assert_eq!(
+            std::fs::read(&result).unwrap(),
+            TEST_PAYLOAD,
+            "落盘内容必须逐字节一致"
+        );
+        let meta: PendingUpdateMeta = serde_json::from_slice(
+            &std::fs::read(dir.join(PENDING_FILE_NAME)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta.version, VERSION);
+        assert_eq!(meta.sha256, sha_of(TEST_PAYLOAD), "pending 里记的必须是校验过的 sha");
+        assert_eq!(
+            meta.signature, TEST_SIG_WRAP_B64,
+            "pending 要留签名供启动时复验"
+        );
+        assert_eq!(
+            dir_entries(dir),
+            vec![installer_file_name(VERSION), PENDING_FILE_NAME.to_string()],
+            "半成品 .part 必须已被 rename 掉"
+        );
+        assert!(hits.load(Ordering::Relaxed) >= 1);
+    }
+
+    /// 生产公钥不接受别的私钥签出来的包 —— 正面钉住「验签没退化」。
+    ///
+    /// 只测拒绝的话，一个「恒拒绝」的回归（公钥抄错、比较写反）照样全绿；只测
+    /// 「注入测试公钥就通过」也证明不了生产路径用的是内置公钥。两条一起才算数。
+    #[cfg(windows)]
+    #[test]
+    fn production_pubkey_does_not_accept_foreign_signature() {
+        verify_signature_with(&test_pubkey_line(), TEST_PAYLOAD, TEST_SIG_WRAP_B64)
+            .expect("测试公钥应接受测试签名（否则是测试向量坏了）");
+        assert!(
+            verify_signature(TEST_PAYLOAD, TEST_SIG_WRAP_B64).is_err(),
+            "生产公钥竟然接受了别的私钥签的包"
+        );
+    }
+
+    // ── 失败形态：坏包必须被拒，且不留痕 ──
+
+    /// 测试用的「真实更新包」与此文件上**有效**的签名（非 Windows 没有签名这一关）。
+    #[cfg(windows)]
+    fn served_payload() -> Vec<u8> {
+        TEST_PAYLOAD.to_vec()
+    }
+    #[cfg(not(windows))]
+    fn served_payload() -> Vec<u8> {
+        b"a-served-payload-for-gate".to_vec()
+    }
+    #[cfg(windows)]
+    fn served_signature() -> Option<&'static str> {
+        Some(TEST_SIG_WRAP_B64)
+    }
+    #[cfg(not(windows))]
+    fn served_signature() -> Option<&'static str> {
+        None
+    }
+    #[cfg(windows)]
+    fn served_pubkey() -> Option<String> {
+        Some(test_pubkey_line())
+    }
+    #[cfg(not(windows))]
+    fn served_pubkey() -> Option<String> {
+        None
+    }
+
+    /// 主案「码对不上」：文件确实下完了（长度也对），内容不是 latest.json 声明的
+    /// 那一份（发布时 hash 与文件不是同一份，或传输中被换过）。
+    ///
+    /// Windows 上特意带上**对该文件有效**的签名 —— 把签名关卡排除在外，这样当
+    /// sha256 关卡被去掉或写坏时这条必红。否则「签名先报错」会让它假绿：看着在测
+    /// sha256，其实一次都没验到它。
+    #[tokio::test]
+    async fn rejects_body_that_does_not_match_declared_sha256() {
+        let served = served_payload();
+        let (base, _) = spawn_server(200, served.len(), served.clone()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                Some(&sha_of(b"a-different-build-entirely")),
+                Some(served.len() as u64),
+                served_signature(),
+            ),
+            served_pubkey().as_deref(),
+        )
+        .await
+        .expect_err("内容与声明的 sha256 不符，必须被拒");
+        assert!(
+            err.contains("校验失败"),
+            "这条必须由 sha256 关卡拦下（错误文案要让用户看懂是校验失败）：{err}"
+        );
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// 下不完整：服务端按完整大小报了 content-length，实际只发了一半就断开。
+    #[tokio::test]
+    async fn rejects_truncated_transfer_instead_of_accepting_partial_bytes() {
+        let full = vec![7u8; 4096];
+        let half = full[..2048].to_vec();
+        let (base, _) = spawn_server(200, full.len(), half).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                Some(&sha_of(&full)),
+                Some(full.len() as u64),
+                Some("sig"),
+            ),
+            None,
+        )
+        .await
+        .expect_err("半截包必须被拒绝");
+        assert!(!err.is_empty(), "拒绝时必须给出原因");
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// latest.json 里没有 sha256（发布侧漏写）→ 没有可比对的依据，必须拒。
+    /// 同样带上有效签名，保证「被拒」这件事只能归因于缺 sha，而不是签名先报错。
+    #[tokio::test]
+    async fn rejects_offer_without_sha256() {
+        let body = served_payload();
+        let (base, _) = spawn_server(200, body.len(), body.clone()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                None,
+                Some(body.len() as u64),
+                served_signature(),
+            ),
+            served_pubkey().as_deref(),
+        )
+        .await
+        .expect_err("没有 sha256 就没有可比对的依据，必须拒绝");
+        assert!(err.contains("校验失败"), "{err}");
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// 大小信息无效时在**发起任何请求之前**就退出（别白下 10MB 再报错）。
+    #[tokio::test]
+    async fn rejects_zero_size_without_touching_the_network() {
+        let (base, hits) = spawn_server(200, 8, b"12345678".to_vec()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(&format!("{base}/pkg"), Some("aa"), Some(0), Some("sig")),
+            None,
+        )
+        .await
+        .expect_err("size=0 必须被拒");
+        assert!(err.contains("大小"), "{err}");
+        assert_eq!(hits.load(Ordering::Relaxed), 0, "不该发起请求");
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// 镜像兜底路径同样受校验约束：主源不可达 → 换镜像，镜像给的是坏包 → 仍然拒绝，
+    /// 不会因为「主源已经失败过」就放松要求。
+    #[tokio::test]
+    async fn mirror_fallback_is_still_verified() {
+        let served = b"mirror-serves-wrong-bytes".to_vec();
+        let (base, _) = spawn_server(200, served.len(), served.clone()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // 主源指向一个必然连不上的端口（下载器会换下一个候选）。
+        let mut release = offer(
+            "http://127.0.0.1:1/pkg",
+            Some(&sha_of(b"the-real-payload")),
+            Some(served.len() as u64),
+            Some("sig"),
+        );
+        release.assets.installer_mirrors = vec![format!("{base}/mirror")];
+        let err = run_offer(dir, &release, None)
+            .await
+            .expect_err("镜像给的坏包必须被拒绝");
+        assert!(!err.is_empty());
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// 源全部不可达 → 如实报错，而不是零字节「成功」。
+    #[tokio::test]
+    async fn rejects_when_every_source_is_unreachable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                "http://127.0.0.1:1/pkg",
+                Some(&sha_of(b"x")),
+                Some(1),
+                Some("sig"),
+            ),
+            None,
+        )
+        .await
+        .expect_err("没有可达源必须报错");
+        assert!(!err.is_empty());
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// sha256 恰好对上时，签名的两种坏法（缺失 / 不是我们的）也必须拦下。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn rejects_unsigned_and_wrongly_signed_payloads() {
+        // 无签名：latest.json 四个字段凑齐了（download_ready 会放行），但签名空。
+        let (base, _) = spawn_server(200, TEST_PAYLOAD.len(), TEST_PAYLOAD.to_vec()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                Some(&sha_of(TEST_PAYLOAD)),
+                Some(TEST_PAYLOAD.len() as u64),
+                None,
+            ),
+            None,
+        )
+        .await
+        .expect_err("sha 对但没有签名，Windows 上必须拒绝");
+        assert!(
+            err.contains("签名验证失败"),
+            "错误文案要指出签名问题：{err}"
+        );
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+
+        // 签名是别的私钥签的（这里就是测试私钥），生产公钥验不过。
+        let (base, _) = spawn_server(200, TEST_PAYLOAD.len(), TEST_PAYLOAD.to_vec()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let err = run_offer(
+            dir,
+            &offer(
+                &format!("{base}/pkg"),
+                Some(&sha_of(TEST_PAYLOAD)),
+                Some(TEST_PAYLOAD.len() as u64),
+                Some(TEST_SIG_WRAP_B64),
+            ),
+            None,
+        )
+        .await
+        .expect_err("sha 对但签名不是我们的，必须拒绝");
+        assert!(err.contains("签名验证失败"), "{err}");
+        assert_no_package_left(dir);
+        assert_startup_cleanup_sweeps_residue(dir);
+    }
+
+    /// 上一次留下的坏 pending（文件在、sha256 对不上 / 签名不是我们的）在启动清理时
+    /// 也必须被丢弃并删掉 —— 「码对不上」不能靠「上次已经校验过」蒙过去。
+    #[cfg(windows)]
+    #[test]
+    fn startup_cleanup_drops_pending_whose_bytes_no_longer_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let file_name = installer_file_name(VERSION);
+        std::fs::write(dir.join(&file_name), b"tampered-after-verification").unwrap();
+        let meta = PendingUpdateMeta {
+            version: VERSION.to_string(),
+            file_name: file_name.clone(),
+            sha256: sha_of(TEST_PAYLOAD),
+            signature: TEST_SIG_WRAP_B64.to_string(),
+        };
+        std::fs::write(
+            dir.join(PENDING_FILE_NAME),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+
+        let restored = cleanup_update_dir(dir, &semver::Version::from_str("1.0.0").unwrap());
+        assert!(restored.is_none(), "被换过的包不得恢复为待装");
+        assert!(!dir.join(&file_name).exists(), "坏包要删掉");
+        assert!(!dir.join(PENDING_FILE_NAME).exists(), "坏 pending 要删掉");
     }
 }

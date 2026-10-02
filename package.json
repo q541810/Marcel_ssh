@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "tauri:dev:mobile": "node scripts/tauri-dev-mobile.mjs",
     "test": "vitest run",
-    "test:markdown-worker": "node scripts/test-markdown-worker.mjs"
+    "test:markdown-worker": "node scripts/test-markdown-worker.mjs",
+    "verify:update-gate": "node scripts/update-gate-inject.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",
