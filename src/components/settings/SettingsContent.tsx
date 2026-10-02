@@ -9,6 +9,7 @@ import { NotificationSection } from './NotificationSection';
 import { TerminalAppearanceSection } from './TerminalAppearanceSection';
 import { ToolCapabilitiesSection } from './ToolCapabilitiesSection';
 import { TransferSection } from './TransferSection';
+import { McpServerSection } from './McpServerSection';
 import { PluginSection } from './PluginSection';
 import { MarketSection } from '@/components/market/MarketSection';
 import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS, SETTINGS_SECTION_SPAN } from './settingsNavigation';
@@ -60,6 +61,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },
     { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },
+    { id: 'settings-mcp-server', element: <McpServerSection /> },
     { id: 'settings-transfer', element: <TransferSection /> },
     { id: 'settings-about', element: <AboutSection /> },
     { id: 'settings-plugins', element: <PluginSection /> },

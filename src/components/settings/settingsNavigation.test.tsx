@@ -22,6 +22,7 @@ describe('settingsNavigation', () => {
     expect(allSections).toContain('settings-command-policy');
     expect(allSections).toContain('settings-notification');
     expect(allSections).toContain('settings-experimental');
+    expect(allSections).toContain('settings-mcp-server');
     expect(allSections).toContain('settings-transfer');
     expect(allSections).toContain('settings-about');
   });

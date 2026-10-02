@@ -8,7 +8,7 @@
   <strong>小白也能上手的专业级 AI-Native SSH Client</strong>
 </p>
 
-***
+---
 
 ## 交流群
 
@@ -16,7 +16,7 @@ QQ:1101255501
 
 欢迎加入交流群，与我们分享使用经验、反馈问题、建议功能等
 
-***
+---
 
 ## 核心功能
 
@@ -24,17 +24,18 @@ QQ:1101255501
 
 - **智能助手 (Agent)**：13+ 内置工具，自主决策多步执行，支持命令执行、文件读写、进程管理、Web 搜索等
 - **执行计划系统**：Agent 自动创建分步计划，实时状态推送，可视化进度跟踪
-- **MCP 支持**：连接外部工具服务器，工具自动发现与调用，支持信任分级
+- **MCP 客户端**：连接外部工具服务器，工具自动发现与调用，支持信任分级
+- **MCP Server / 外部 Agent 接入**：反向把 SSH、SFTP 能力以 MCP 暴露出去，Claude Code、opencode 等外部 Agent 可直接复用你已保存的连接操作服务器（[接入说明](docs/mcp-server.md)）
 - **Skills**：自定义提示词模板，渐进式披露，按需启用/禁用
 - **SFTP 文件管理**：拖拽上传、批量操作、在线解压、可上传文件夹、文件编辑
 - **插件系统**：自定义插件扩展功能，支持 WebView 面板挂载（[开发指南](docs/plugin-development.md)）
 - **双端支持**：Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端**，两端共用同一套核心体验
 
-***
+---
 
 ## 安全功能
 
-**三层审批体系，危险命令无处遁形** 
+**三层审批体系，危险命令无处遁形**
 
 1. **命令风险评估**：Shell-aware 解析器把每条命令判成四档之一 —— 直接拒绝（灾难度写错，不执行）、强制审批（系统级操作、受保护路径，**Auto 模式下也弹窗**）、请求审批（按你的白/黑名单）、正常放行
 2. **模型审批（可开可关）**：LLM 独立判断命令安全性，支持放行/转人工/阻止三种决策
@@ -45,7 +46,7 @@ QQ:1101255501
 - **密钥链隔离**：API Key、SSH 密码存储在系统密钥链，前端永远拿不到明文(移动版为Android Keystore + SharedPreferences)
 - **内存清零**：密码、敏感命令执行后立即清零内存（zeroize crate）
 
-***
+---
 
 ## 生于agent，不止于agent
 
@@ -60,24 +61,25 @@ Marcel SSH 底层为 AI Agent 深度定制，内置13+工具、自主执行计�
 
 我们精心打磨各项功能，只为给你最完整的体验——**Agent 是强大的副驾驶，但 Marcel SSH 本身就是一辆哪儿都能去的车，而不是一个止步于 agent 功能的花架子。**
 
-****
+---
 
 ## 双端支持
 
 Marcel SSH 同时支持 **Windows 桌面端** 与 **Android 移动端**，两端共用同一套核心：SSH 终端、Agent 自动化、SFTP 文件管理、Skills、MCP、设置。
 
-|                                | Windows                                | Android                                     |
-| ------------------------------ | -------------------------------------- | ------------------------------------------- |
-| 安装包                            | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名） |
-| SSH 终端 / Agent / SFTP / Skills | ✓                                      | ✓                                           |
-| 插件系统/自定义MCP                    | ✓                                      | ✗                                           |
-| 敏感信息存储                         | 系统密钥链                                  | Android Keystore + SharedPreferences        |
-| 网页获取                           | http_get/调用本机真实浏览器（默认）                 | http_get                                    |
-| 平台专属交互                         | PowerShell 风格终端操作                      | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）                 |
+|                                  | Windows                                  | Android                                           |
+| -------------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| 安装包                           | `Marcel SSH_x.y.z_x64-setup.exe`（NSIS） | `Marcel-SSH_x.y.z_arm64.apk`（arm64-v8a，已签名） |
+| SSH 终端 / Agent / SFTP / Skills | ✓                                        | ✓                                                 |
+| 插件系统/自定义MCP               | ✓                                        | ✗                                                 |
+| MCP Server（外部 Agent 接入）    | ✓                                        | ✗                                                 |
+| 敏感信息存储                     | 系统密钥链                               | Android Keystore + SharedPreferences              |
+| 网页获取                         | http_get/调用本机真实浏览器（默认）      | http_get                                          |
+| 平台专属交互                     | PowerShell 风格终端操作                  | 终端底部辅助键栏（Esc/Ctrl/方向键/常用符号）      |
 
 Android APK 在 [Release 页面](https://github.com/q541810/Marcel_ssh/releases) 与 Windows 安装包一同发布。
 
-****
+---
 
 ## 移动端不含糊
 
@@ -89,7 +91,7 @@ Agent 通知做了前后台智能判断：你正在 App 里看，不弹通知打
 
 同时，很多本不适合移动端使用的功能（如插件系统）在 Android 端已被移除。这些臃肿且使用率低的功能，我们选择舍弃掉，以换取更简洁、更稳定、更流畅的移动端体验。
 
-****
+---
 
 ## 快速开始
 
@@ -100,13 +102,13 @@ Agent 通知做了前后台智能判断：你正在 App 里看，不弹通知打
 
 （想要体验最新内容请自行拉取仓库后运行dev.cmd或打包成安装包使用，并在有新commit后pull）
 
-***
+---
 
 ### 提交插件到插件市场
 
 见[插件市场的github仓库](https://github.com/q541810/marcel-ssh-plugins)
 
-****
+---
 
 ### 自行编译 Android 包
 
@@ -120,36 +122,36 @@ pnpm tauri android build --apk --target aarch64
 
 产物在 `src-tauri/gen/android/app/build/outputs/apk/universal/release/`。release 构建会自动用仓库外的正式 keystore 签名；没有配置 `key.properties` 时退化为未签名 APK，可手动用 `apksigner` 签 debug key 自测。
 
-***
+---
 
 ### 适配其他平台的计划
 
 目前，marcel ssh仅支持windows与安卓，由于缺少真机测试的条件，我们暂时没有任何适配 ios\mac os\鸿蒙 的计划
 
-****
+---
 
 ## 界面展示
 
 ![Marcel SSH 展示图](https://github.com/q541810/Marcel_ssh/blob/main/image/%E5%B1%95%E7%A4%BA%E5%9B%BE.png?raw=true)
 
-***
+---
 
 ## 开发相关
 
-贡献必读： [Contributors\_read.md](Contributors_read.md)，了解贡献者需要遵守的规则和建议
+贡献必读： [Contributors_read.md](Contributors_read.md)，了解贡献者需要遵守的规则和建议
 
 插件开发：
 
 - [插件开发指南](docs/plugin-development.md) — 从零开始创建插件
 - [插件 API 参考](docs/plugin-api.md) — 完整的字段定义与协议格式
 
-***
+---
 
 ## 授权
 
 GNU General Public License v3.0
 
-***
+---
 
 ## 致谢
 
@@ -158,7 +160,3 @@ GNU General Public License v3.0
 感谢wisdom-ssh为本项目带来的灵感
 
 感谢ai使得作者这个弱智可以开始使用面向opencode的编程语言(中文)，而不是面向对象的编程语言
-
-
-
-

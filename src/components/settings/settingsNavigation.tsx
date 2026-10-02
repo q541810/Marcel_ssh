@@ -18,6 +18,8 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-agent-system-prompt': 'full',
   'settings-notification': 'half',
   'settings-experimental': 'half',
+  // 含 JSON 配置片段，需要整行宽度才不会被折断成看不懂的样子
+  'settings-mcp-server': 'full',
   'settings-transfer': 'half',
   'settings-about': 'half',
   'settings-plugins': 'full',
@@ -51,7 +53,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     id: 'tools',
     label: '工具能力',
     icon: <Wrench className="w-4 h-4" />,
-    sections: ['settings-experimental'],
+    sections: ['settings-experimental', 'settings-mcp-server'],
   },
   {
     id: 'transfer',

@@ -384,6 +384,34 @@ export interface McpServerRuntimeStatus {
   discovered: boolean;
 }
 
+/**
+ * MCP **server**（对外服务）的运行状态。
+ *
+ * 与上面的 `McpServer` / `McpServerRuntimeStatus` 区分开：那些是 **client**
+ * 侧——Marcel SSH 去连别人的 MCP server。这里是反方向：Marcel SSH 自己当
+ * server 供外部 agent 接入。
+ */
+export interface McpHttpRuntimeInfo {
+  bind: string;
+  port: number;
+  token: string;
+  url: string;
+}
+
+/** 可直接粘进客户端配置的片段。 */
+export interface McpClientConfig {
+  executablePath: string;
+  /** stdio 接入的完整配置 JSON */
+  stdio: string;
+  /** HTTP 接入的配置 JSON；服务没跑时为 null */
+  http: string | null;
+}
+
+export interface McpServerDefaults {
+  bind: string;
+  port: number;
+}
+
 export interface McpServerListResponse {
   servers: McpServer[];
   statuses: McpServerRuntimeStatus[];

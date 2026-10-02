@@ -21,6 +21,9 @@ import type {
   McpServerInput,
   McpServerListResponse,
   McpTool,
+  McpHttpRuntimeInfo,
+  McpClientConfig,
+  McpServerDefaults,
   UpdateCheckResult,
   UpdateState,
   UpdateCapabilities,
@@ -720,6 +723,41 @@ export async function quickCommandDelete(id: string): Promise<void> {
 }
 
 // MCP commands
+
+// MCP server（对外服务，与上面的 mcp* client 函数方向相反）
+
+export async function mcpServerStatus(): Promise<McpHttpRuntimeInfo | null> {
+  return invoke<McpHttpRuntimeInfo | null>("mcp_server_status");
+}
+
+export async function mcpServerStartHttp(
+  bind: string,
+  port: number,
+  token?: string,
+): Promise<McpHttpRuntimeInfo> {
+  return invoke<McpHttpRuntimeInfo>("mcp_server_start_http", {
+    bind,
+    port,
+    token: token ?? null,
+  });
+}
+
+/** 停止服务。返回「之前是否在跑」。 */
+export async function mcpServerStopHttp(): Promise<boolean> {
+  return invoke<boolean>("mcp_server_stop_http");
+}
+
+export async function mcpServerRegenerateToken(): Promise<string> {
+  return invoke<string>("mcp_server_regenerate_token");
+}
+
+export async function mcpServerClientConfig(): Promise<McpClientConfig> {
+  return invoke<McpClientConfig>("mcp_server_client_config");
+}
+
+export async function mcpServerDefaults(): Promise<McpServerDefaults> {
+  return invoke<McpServerDefaults>("mcp_server_defaults");
+}
 
 export async function mcpListServers(): Promise<McpServerListResponse> {
   return invoke<McpServerListResponse>("mcp_list_servers");
