@@ -1411,6 +1411,9 @@ mod tests {
         assert_same::<MobileBackgroundSettings>("MobileBackgroundSettings");
         assert_same::<WorkspaceLayoutSettings>("WorkspaceLayoutSettings");
         assert_same::<TerminalColors>("TerminalColors");
+        // LlmRegistry 含 Vec 嵌套字段（subagent_models 等），靠全量 serde
+        // defaults 测试传递覆盖；这里补一条直指失败点的断言。
+        assert_same::<crate::llm::registry::LlmRegistry>("LlmRegistry");
     }
 
     /// 后端 `AppSettings` 的 serde 默认值必须与 `Default::default()` 一致。

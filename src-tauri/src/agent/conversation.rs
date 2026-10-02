@@ -99,7 +99,8 @@ pub struct Conversation {
     /// 会话级模型选择：`llmRegistry` 中的模型条目 id。
     /// `None` = 跟随全局默认模型（未显式选择过 / 旧数据）。
     /// 启动任务时经 `agent_start_task` 的 `model_id` 传入，作为
-    /// `AgentSpec.model_override` 解析；子 agent 继承父任务模型。
+    /// `AgentSpec.model_override` 解析；子 agent 默认继承父任务模型
+    /// （候选清单配置后可被工具的 model 参数覆盖）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     /// 会话级思考强度（`reasoning_effort` 档位字符串，**内存 overlay**，

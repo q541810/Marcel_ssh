@@ -130,6 +130,11 @@ pub async fn config_save_settings(
         log::warn!("保存设置前检测到思考强度档位含空格/重复/空项，已自动归一化");
     }
 
+    // 自愈兜底：子agent 候选清单去空、trim 描述并按模型 id 去重（保留首次）。
+    if candidate.llm_registry.normalize_subagent_models() {
+        log::warn!("保存设置前检测到子agent 候选清单含空引用/重复条目，已自动归一化");
+    }
+
     // 校验多渠道配置（含渠道重试参数、引用完整性与模型 ID 唯一性）
     candidate.llm_registry.validate()?;
 

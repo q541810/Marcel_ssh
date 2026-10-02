@@ -1201,7 +1201,9 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         switch: None,
         semantics: ToolSemantics::NONE,
         prompt_section: Some(PromptSection::Subagent),
-        build: || Arc::new(subagent::SubagentTool),
+        // 无候选实例；配置了候选清单时由 manager::build_role_registry 的
+        // inject_subagent_model_choices 用 with_choices 同名覆盖。
+        build: || Arc::new(subagent::SubagentTool::new()),
     },
     // ── 实验性：联网能力 ──
     BuiltinToolSpec {

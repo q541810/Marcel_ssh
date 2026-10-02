@@ -48,7 +48,9 @@ use crate::agent::risk::Disposition;
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::subagent::{
-    classify_subagent_result, truncate_chars, SubTaskStartEvent, SubagentOutcome,
+    classify_subagent_result, lookup_model_choice, model_param_schema,
+    render_model_selection_section, resolved_sub_model_label, truncate_chars, unknown_model_note,
+    ModelChoiceLookup, SubTaskStartEvent, SubagentModelCandidate, SubagentOutcome,
 };
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::AgentModeSettings;
@@ -146,11 +148,32 @@ fn set_task_status(state: &AppState, task_id: &str, status: AgentStatus) {
     }
 }
 
-pub struct LocalSubagentTool;
+pub struct LocalSubagentTool {
+    /// 非空：向 LLM 暴露 model 参数并在描述里列出候选（与 `subagent` 同一份设置）。
+    model_choices: Vec<SubagentModelCandidate>,
+    /// 构造期渲染好的描述（`description()` 返回 `&str`，动态内容只能预拼进字段）。
+    rendered_description: String,
+}
 
 impl LocalSubagentTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            model_choices: Vec::new(),
+            rendered_description: BASE_DESCRIPTION.to_string(),
+        }
+    }
+
+    /// 带候选构建。注入点唯一：`manager::build_role_registry`（仅主任务、候选非空）。
+    pub(crate) fn with_choices(model_choices: Vec<SubagentModelCandidate>) -> Self {
+        let rendered_description = format!(
+            "{}{}",
+            BASE_DESCRIPTION,
+            render_model_selection_section(&model_choices)
+        );
+        Self {
+            model_choices,
+            rendered_description,
+        }
     }
 }
 
@@ -160,14 +183,9 @@ impl Default for LocalSubagentTool {
     }
 }
 
-#[async_trait]
-impl AgentTool for LocalSubagentTool {
-    fn name(&self) -> &str {
-        "local_subagent"
-    }
-
-    fn description(&self) -> &str {
-        "Dispatch an isolated subagent that works on **this computer** — the machine \
+/// 无候选配置时的工具描述（与引入子agent 模型候选前逐字节一致）。
+const BASE_DESCRIPTION: &str =
+    "Dispatch an isolated subagent that works on **this computer** — the machine \
          running Marcel SSH (the user's own computer), NOT the SSH server. Use it when \
          the job is about your local machine: reading local logs / configs, inspecting \
          local processes, disk or network state, or (in execution mode) making changes \
@@ -203,11 +221,20 @@ impl AgentTool for LocalSubagentTool {
          moment via `read_history(scope=parent)`, but that is not a substitute for a \
          self-contained prompt. You receive only the report — integrate the conclusions \
          into your reply, do not echo the process. Its full process stays viewable in \
-         its own conversation (open it from the subagent card)."
+         its own conversation (open it from the subagent card).";
+
+#[async_trait]
+impl AgentTool for LocalSubagentTool {
+    fn name(&self) -> &str {
+        "local_subagent"
+    }
+
+    fn description(&self) -> &str {
+        &self.rendered_description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "prompt": {
@@ -225,7 +252,15 @@ impl AgentTool for LocalSubagentTool {
                 }
             },
             "required": ["prompt"]
-        })
+        });
+        // 用户配置了候选清单才暴露 model 参数（与 `subagent` 同一份清单）。
+        if let Some(model) = model_param_schema(&self.model_choices) {
+            schema["properties"]
+                .as_object_mut()
+                .expect("parameters properties is an object")
+                .insert("model".to_string(), model);
+        }
+        schema
     }
 
     /// 本机派发是「请求审批」档：Agent 父任务由 dispatcher 弹窗、Auto 静默；
@@ -495,6 +530,29 @@ impl AgentTool for LocalSubagentTool {
             .clone()
             .and_then(|m| (m == AgentMode::Auto).then_some(AgentMode::Auto));
 
+        // ── 子 agent 模型：默认继承父任务；配置了候选清单时可经 model 参数选择 ──
+        // label → ModelEntry id 的映射在本工具内完成（与 `subagent` 同一套）。
+        let mut model_note = String::new();
+        let mut model_param_used = false;
+        let model_override = match lookup_model_choice(&params, &self.model_choices) {
+            ModelChoiceLookup::Chosen(model_id) => {
+                model_param_used = true;
+                Some(model_id)
+            }
+            // 清单为空时 schema 根本没有 model 参数——LLM 幻觉出的值视同未
+            // 提供（与 `subagent` 同口径：未配置路径与引入本机制前逐字节一致）。
+            ModelChoiceLookup::Unknown(label) if !self.model_choices.is_empty() => {
+                model_param_used = true;
+                model_note = unknown_model_note(&label);
+                // label 无效：回落继承父任务模型，并把提示带回给主 agent。
+                parent.as_ref().and_then(|t| t.model_id.clone())
+            }
+            ModelChoiceLookup::Unknown(_) | ModelChoiceLookup::NotProvided => {
+                // 恒继承父任务模型（旧行为）。
+                parent.as_ref().and_then(|t| t.model_id.clone())
+            }
+        };
+
         // ── 组装 + spawn ──
         // 约束段复用远端子 agent 那两份（`子agent_只读` / `子agent_执行`），再追加
         // 本机环境段：它把约束段里「服务器 / 远端 / SSH 通道」的措辞按这台电脑重新
@@ -523,8 +581,8 @@ impl AgentTool for LocalSubagentTool {
             conversation_id: sub_conversation_id.clone(),
             prompt,
             history: Vec::new(),
-            // 模型恒继承父任务（与 `subagent` 一致），不向 LLM 暴露 model 参数。
-            model_override: parent.and_then(|t| t.model_id.clone()),
+            // 默认继承父任务模型；候选清单配置后可被 model 参数覆盖（见上）。
+            model_override,
             prompt_extra: vec![sub_instruction, local_instruction],
             prompt_origin: PromptOrigin::User,
         };
@@ -547,8 +605,19 @@ impl AgentTool for LocalSubagentTool {
             .get(&sub_task_id)
             .map(|t| t.status.clone())
             .unwrap_or(AgentStatus::Failed);
+        // 主 agent 显式选过模型（含选错回落）才带 modelLabel —— 展示的是 spawn
+        // 解析后真实落地的模型；未传参时保持既有 metadata 形状不变。
+        let model_label = if model_param_used {
+            let settings = state.settings.read().await;
+            resolved_sub_model_label(&state, &settings.llm_registry, &sub_task_id)
+        } else {
+            None
+        };
         let result_meta = |mut base: serde_json::Value| -> serde_json::Value {
             let obj = base.as_object_mut().expect("metadata is object");
+            if let Some(label) = &model_label {
+                obj.insert("modelLabel".to_string(), json!(label));
+            }
             obj.insert(
                 "mode".to_string(),
                 json!(if exec_mode == AgentMode::Agent {
@@ -568,19 +637,20 @@ impl AgentTool for LocalSubagentTool {
                     sub_task_id,
                     text.chars().count()
                 );
-                Ok(
-                    ToolOutput::ok(format!("本机子agent完成：{}", description), output)
-                        .with_metadata(result_meta(json!({
-                            "subTaskId": sub_task_id,
-                            "subConversationId": sub_conversation_id,
-                            "status": "completed",
-                        }))),
+                Ok(ToolOutput::ok(
+                    format!("本机子agent完成：{}{}", description, model_note),
+                    output,
                 )
+                .with_metadata(result_meta(json!({
+                    "subTaskId": sub_task_id,
+                    "subConversationId": sub_conversation_id,
+                    "status": "completed",
+                }))))
             }
             SubagentOutcome::Empty => {
                 log::warn!("Local subtask {} returned an empty report", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("本机子agent未返回结论：{}", description),
+                    format!("本机子agent未返回结论：{}{}", description, model_note),
                     "本机子agent结束了，但没有返回任何结论（正文为空，或整段都在思维标签里）。\
                      不要把它当成调研结果：需要结论时重新派发，并在 prompt 里明确要求以正文给出最终报告。",
                 )
@@ -593,7 +663,7 @@ impl AgentTool for LocalSubagentTool {
             SubagentOutcome::Cancelled => {
                 log::info!("Local subtask {} cancelled", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("本机子agent已取消：{}", description),
+                    format!("本机子agent已取消：{}{}", description, model_note),
                     "本机子agent已被取消，未返回调研结果。",
                 )
                 .with_metadata(result_meta(json!({
@@ -605,7 +675,7 @@ impl AgentTool for LocalSubagentTool {
             SubagentOutcome::Failed => {
                 log::warn!("Local subtask {} failed (no result)", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("本机子agent失败：{}", description),
+                    format!("本机子agent失败：{}{}", description, model_note),
                     "本机子agent执行失败（LLM 错误或达到最大轮数），未返回结果。",
                 )
                 .with_metadata(result_meta(json!({
@@ -792,5 +862,28 @@ mod tests {
         // 作用侧的权威在描述里（`tools/mod.rs` 的 `acting_tools_state_their_side`）。
         let desc = tool.description().to_lowercase();
         assert!(desc.contains("this computer"));
+    }
+
+    /// 候选注入后：描述追加 MODEL SELECTION 段、schema 暴露 model 参数；
+    /// 未注入（new）则与引入本机制前一致。共享机制（过滤/映射/枚举内容）由
+    /// `subagent.rs` 的测试钉住，这里只钉本工具的接线。
+    #[test]
+    fn with_choices_exposes_model_param() {
+        let plain = LocalSubagentTool::new();
+        assert!(plain.definition().parameters["properties"]
+            .get("model")
+            .is_none());
+        assert_eq!(plain.description(), BASE_DESCRIPTION);
+
+        let configured = LocalSubagentTool::with_choices(vec![SubagentModelCandidate {
+            model_id: "m1".into(),
+            label: "小杯".into(),
+            description: String::new(),
+        }]);
+        let def = configured.definition();
+        assert!(def.description.starts_with(BASE_DESCRIPTION));
+        assert!(def.description.contains("MODEL SELECTION"));
+        assert!(def.description.contains("- \"小杯\"\n"));
+        assert_eq!(def.parameters["properties"]["model"]["enum"][0], "小杯");
     }
 }

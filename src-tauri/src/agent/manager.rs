@@ -27,8 +27,9 @@ use crate::agent::conversation_persister::{ConversationPersister, PromptOrigin};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, TurnState};
 use crate::agent::templates::TemplateManager;
+use crate::agent::tools::subagent::{resolve_subagent_candidates, SubagentModelCandidate};
 use crate::agent::tools::{
-    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, ToolRegistry,
+    mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent, ToolRegistry,
 };
 use crate::config::keychain;
 use crate::config::settings::{CommandApprovalEngine, ExperimentalSettings};
@@ -36,6 +37,7 @@ use crate::error::AppError;
 use crate::llm::jev::JevConfig;
 use crate::llm::manager::LlmManager;
 use crate::llm::provider::{LlmConfig, LlmMessage, LlmRole, ToolDefinition};
+use crate::llm::registry::LlmRegistry;
 use crate::mcp::store::McpServerConfig;
 use crate::plugins::context::{apply_to_string, SessionContext};
 use crate::plugins::registry::PluginRegistry;
@@ -293,9 +295,14 @@ impl AgentManager {
     pub async fn current_tool_definitions(&self, conversation_id: &str) -> Vec<ToolDefinition> {
         let (enabled_skills, enabled_mcp_servers, experimental_settings) =
             self.resolve_tool_inputs().await;
-        let mode = {
-            let raw = self.state.settings.read().await.default_agent_mode.clone();
-            AgentMode::from_settings_str(&raw)
+        // 与 spawn 同源：手动压缩的摘要请求要拿到和常规请求一致的 tools 段
+        // （含配置了候选清单时的 subagent model 参数）。
+        let (mode, llm_registry) = {
+            let settings = self.state.settings.read().await;
+            (
+                AgentMode::from_settings_str(&settings.default_agent_mode),
+                settings.llm_registry.clone(),
+            )
         };
         let plugin_registry_guard = self.state.plugin_registry.read().await;
         let registry = self
@@ -306,6 +313,7 @@ impl AgentManager {
                 &enabled_mcp_servers,
                 &experimental_settings,
                 &plugin_registry_guard,
+                &llm_registry,
             )
             .await;
         let expose = self
@@ -346,9 +354,10 @@ impl AgentManager {
         // ── 2. 模型路由（主模型语义 = 会话级 → 全局最近使用 → 第一个） ──
         // - 主任务：`spec.model_override` 为空时，先查本会话内存模型记忆；
         //   无记忆 → 全局最近使用（resolve_default = last_used/首个）。
-        // - 子任务：model_override 恒为父任务 model_id（`subagent` 工具继承，
-        //   不向 LLM 暴露 model 参数），空时同样回落到会话记忆/最近使用
-        //   （与主任务同源语义）。
+        // - 子任务：`subagent`/`local_subagent` 工具默认传父任务 model_id
+        //   （继承会话模型）；用户配置了候选清单时，主 agent 可经工具的
+        //   model 参数传候选的 ModelEntry id 覆盖。两者皆空时走
+        //   resolve_default（最近使用/首个；会话记忆仅主任务查询）。
         // registry 解析会兜底补读 keychain（渠道密钥），无需再手动预取。
         let session_override = if spec.model_override.is_none() && spec.role == AgentRole::Main {
             self.state
@@ -490,6 +499,7 @@ impl AgentManager {
                 &enabled_mcp_servers,
                 &experimental_settings,
                 &plugin_registry_guard,
+                &llm_registry,
             )
             .await;
         let tools = build_definitions(&registry, &spec.mode);
@@ -676,8 +686,15 @@ impl AgentManager {
         enabled_mcp_servers: &[McpServerConfig],
         experimental_settings: &ExperimentalSettings,
         plugin_registry: &PluginRegistry,
+        llm_registry: &LlmRegistry,
     ) -> Arc<ToolRegistry> {
-        let mut registry = build_role_registry(role, mode, enabled_skills, experimental_settings);
+        let mut registry = build_role_registry(
+            role,
+            mode,
+            enabled_skills,
+            experimental_settings,
+            &resolve_subagent_candidates(llm_registry),
+        );
         // 子 agent 只携带核心读写工具，不加载插件生态，也不去刷新 MCP
         // server（省一次无谓连接）—— 与只读 Plan 子 agent 一致，提示词里
         // 的工具列表不会说谎。主任务（role=Main）插件/MCP 全套保留。
@@ -805,6 +822,7 @@ fn build_role_registry(
     mode: &AgentMode,
     enabled_skills: &[crate::skills::store::Skill],
     experimental_settings: &ExperimentalSettings,
+    subagent_choices: &[SubagentModelCandidate],
 ) -> ToolRegistry {
     let mut registry = match mode {
         AgentMode::Plan => build_plan_registry(role, enabled_skills, experimental_settings),
@@ -819,7 +837,41 @@ fn build_role_registry(
             registry.remove(name);
         }
     }
+    inject_subagent_model_choices(&mut registry, role, subagent_choices);
     registry
+}
+
+/// 把用户配置的子agent 候选模型注入 `subagent` / `local_subagent` 工具实例。
+///
+/// 仅主任务 registry 做注入：这两个工具都是 `ToolRoles::MainOnly`，角色收敛已在
+/// 上面完成；用 `get()` 探测而不是按名字盲插，声明表将来怎么变都不会注错对象。
+/// `register` 同名后者胜，直接覆盖声明表建出的无候选实例。候选为空时不注入，
+/// 工具定义与未配置前逐字节一致。
+fn inject_subagent_model_choices(
+    registry: &mut ToolRegistry,
+    role: &AgentRole,
+    choices: &[SubagentModelCandidate],
+) {
+    if *role != AgentRole::Main || choices.is_empty() {
+        return;
+    }
+    // 探测不中且候选非空 = 候选功能静默失效（典型：声明表移除/改名了工具），
+    // 必须留痕——静默失效会让用户以为配置了却不生效是别处的问题。
+    if registry.get("subagent").is_some() {
+        registry.register(Arc::new(subagent::SubagentTool::with_choices(
+            choices.to_vec(),
+        )));
+    } else {
+        log::warn!("子agent 候选清单已配置，但主任务工具集没有 subagent 工具，候选未生效");
+    }
+    #[cfg(desktop)]
+    if registry.get("local_subagent").is_some() {
+        registry.register(Arc::new(
+            crate::agent::tools::local_subagent::LocalSubagentTool::with_choices(choices.to_vec()),
+        ));
+    } else {
+        log::warn!("子agent 候选清单已配置，但主任务工具集没有 local_subagent 工具，候选未生效");
+    }
 }
 
 fn build_definitions(registry: &Arc<ToolRegistry>, mode: &AgentMode) -> Vec<ToolDefinition> {
@@ -1446,7 +1498,7 @@ mod tests {
         };
         let mut narrowed = vec![];
         for mode in [AgentMode::Plan, AgentMode::Agent, AgentMode::Auto] {
-            narrowed.push(build_role_registry(&parent, &mode, &[], &exp()));
+            narrowed.push(build_role_registry(&parent, &mode, &[], &exp(), &[]));
         }
         for registry in &narrowed {
             for absent in [
@@ -1497,11 +1549,11 @@ mod tests {
             }
         }
         // 写 / 编辑：只在 Execute 侧出现（声明为 EXECUTE），与远端口径一致。
-        let exec = build_role_registry(&parent, &AgentMode::Agent, &[], &exp());
+        let exec = build_role_registry(&parent, &AgentMode::Agent, &[], &exp(), &[]);
         for name in ["local_write_file", "local_edit_file"] {
             assert!(exec.get(name).is_some(), "读写本机子 agent 应含 {}", name);
         }
-        let plan = build_role_registry(&parent, &AgentMode::Plan, &[], &exp());
+        let plan = build_role_registry(&parent, &AgentMode::Plan, &[], &exp(), &[]);
         for name in ["local_write_file", "local_edit_file"] {
             assert!(plan.get(name).is_none(), "只读本机子 agent 不该有 {}", name);
         }
@@ -1521,7 +1573,7 @@ mod tests {
             ),
             (AgentRole::Main, AgentMode::Plan),
         ] {
-            let registry = build_role_registry(&role, &mode, &[], &exp());
+            let registry = build_role_registry(&role, &mode, &[], &exp(), &[]);
             for name in ["bash", "read_file"] {
                 assert!(
                     registry.get(name).is_some(),
@@ -1532,6 +1584,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 子agent 候选模型注入边界：仅 Main 注入（Plan/Agent 模式都算），子任务
+    /// 角色与空候选都不注入（后者 = 工具定义与未配置前一致）。
+    #[test]
+    fn subagent_model_choices_inject_only_for_main() {
+        let choices = vec![SubagentModelCandidate {
+            model_id: "m1".into(),
+            label: "小杯".into(),
+            description: "小模型".into(),
+        }];
+
+        for mode in [AgentMode::Plan, AgentMode::Agent] {
+            let main = build_role_registry(&AgentRole::Main, &mode, &[], &exp(), &choices);
+            let def = main
+                .get("subagent")
+                .expect("主任务应有 subagent")
+                .definition();
+            assert_eq!(
+                def.parameters["properties"]["model"]["enum"][0], "小杯",
+                "{mode:?} 模式的主任务都要拿到候选"
+            );
+            assert!(def.description.contains("MODEL SELECTION"));
+        }
+        // 本机子agent 派发入口同样注入（桌面专属工具）。
+        #[cfg(desktop)]
+        {
+            let main =
+                build_role_registry(&AgentRole::Main, &AgentMode::Agent, &[], &exp(), &choices);
+            let local_def = main
+                .get("local_subagent")
+                .expect("主任务应有 local_subagent")
+                .definition();
+            assert_eq!(
+                local_def.parameters["properties"]["model"]["enum"][0],
+                "小杯"
+            );
+        }
+
+        // 子任务（远端与本机）：工具集本来就没有派发入口，注入必须不发生。
+        for role in [
+            AgentRole::Sub {
+                parent_task_id: "p".into(),
+            },
+            AgentRole::LocalSub {
+                parent_task_id: "p".into(),
+            },
+        ] {
+            let registry = build_role_registry(&role, &AgentMode::Agent, &[], &exp(), &choices);
+            assert!(
+                registry.get("subagent").is_none(),
+                "{role:?} 不该有 subagent"
+            );
+            assert!(registry.get("local_subagent").is_none());
+        }
+
+        // 空候选：不注入，定义与未配置前一致。
+        let plain = build_role_registry(&AgentRole::Main, &AgentMode::Agent, &[], &exp(), &[]);
+        assert!(
+            plain.get("subagent").unwrap().definition().parameters["properties"]
+                .get("model")
+                .is_none()
+        );
     }
 
     #[test]

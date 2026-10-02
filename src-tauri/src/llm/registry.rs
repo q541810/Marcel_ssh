@@ -166,6 +166,22 @@ impl Default for ModelEntry {
     }
 }
 
+/// 子agent 可选模型候选（用户在「模型服务」设置里配置）。
+///
+/// 主 agent 派发 `subagent` / `local_subagent` 时可从清单里按任务难度选一个；
+/// 清单为空 = 不向 LLM 暴露 model 参数（子agent 恒继承会话模型，旧行为）。
+/// `model_id` 指向 [`LlmRegistry::models`] 的条目 id；引用已删除/渠道禁用的
+/// 模型时该候选在派发侧被过滤（不在清单里出现），设置里保留原样。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentModelChoice {
+    #[serde(default)]
+    pub model_id: String,
+    /// 给主 agent 看的选型提示（如「小模型，适合搜索等简单任务」），可空。
+    #[serde(default)]
+    pub description: String,
+}
+
 /// 场景槽位：把「辅助用途」绑定到具体模型。
 ///
 /// 两个槽位均允许为空字符串：审核/摘要槽位为空 → 回落会话主模型
@@ -198,6 +214,10 @@ pub struct LlmRegistry {
     pub models: Vec<ModelEntry>,
     #[serde(default)]
     pub slots: ModelSlots,
+    /// 子agent 可选模型候选（主 agent 派发子agent 时按 label 选择）。
+    /// 空 = 不暴露 model 参数，子agent 恒继承会话模型。
+    #[serde(default)]
+    pub subagent_models: Vec<SubagentModelChoice>,
     /// 全局主模型：最近一次在任意会话选择的模型（「最后使用」）。
     /// 空/失效 → 解析时回落第一个模型（尽力可用）。
     /// 取代旧版 `slots.default_model_id` 的「默认模型」语义。
@@ -482,6 +502,43 @@ impl LlmRegistry {
             }
         }
         any_changed
+    }
+
+    /// 自愈：子agent 候选清单去空、trim 描述并按模型 id 去重（保留首次出现）。
+    ///
+    /// 语义：每条候选是「一个模型 + 一句选型提示」，同一模型出现两条没有意义
+    /// （派发侧 [`crate::agent::tools::subagent::resolve_subagent_candidates`]
+    /// 第一遍同样按 model_id 只保留第一条）；空 model_id 是 UI 半成品行或脏
+    /// 数据。悬挂引用（模型已删）不在此处删——消费侧会过滤，与槽位「解析时
+    /// 回落」同口径。幂等：无改动时返回 false。
+    pub fn normalize_subagent_models(&mut self) -> bool {
+        let mut changed = false;
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut normalized: Vec<SubagentModelChoice> =
+            Vec::with_capacity(self.subagent_models.len());
+        for choice in &self.subagent_models {
+            if choice.model_id.trim().is_empty() {
+                changed = true; // 空 id：丢弃
+                continue;
+            }
+            let model_id = choice.model_id.trim();
+            if !seen.insert(model_id) {
+                changed = true; // 同模型重复条目：只保留第一条
+                continue;
+            }
+            let description = choice.description.trim().to_string();
+            if model_id != choice.model_id || description != choice.description {
+                changed = true;
+            }
+            normalized.push(SubagentModelChoice {
+                model_id: model_id.to_string(),
+                description,
+            });
+        }
+        if changed {
+            self.subagent_models = normalized;
+        }
+        changed
     }
 
     /// 保存前校验：渠道/模型字段合法、Base URL 必填且为 http(s)、引用完整、
@@ -1149,6 +1206,56 @@ mod tests {
             r.models[0].reasoning_efforts,
             vec!["low".to_string(), "high".to_string()]
         );
+    }
+
+    /// 旧数据没有 `subagentModels` 键 → 空 vec（零迁移）：反序列化后行为与
+    /// 引入子agent 候选前完全一致。
+    #[test]
+    fn missing_subagent_models_key_defaults_to_empty() {
+        let json = serde_json::json!({
+            "channels": [],
+            "models": [],
+            "slots": { "modelApprovalModelId": "", "summarizerModelId": "" },
+            "lastUsedModelId": "",
+        });
+        let registry: LlmRegistry = serde_json::from_value(json).unwrap();
+        assert!(registry.subagent_models.is_empty());
+        // 序列化往返保持为空（不凭空造出条目）
+        let round: LlmRegistry =
+            serde_json::from_str(&serde_json::to_string(&registry).unwrap()).unwrap();
+        assert!(round.subagent_models.is_empty());
+    }
+
+    #[test]
+    fn normalize_subagent_models_drops_empty_and_dupes() {
+        let mut r = LlmRegistry::default();
+        r.subagent_models = vec![
+            SubagentModelChoice {
+                model_id: " m1 ".into(),
+                description: " 小模型，适合搜索 ".into(),
+            },
+            SubagentModelChoice {
+                model_id: "m1".into(),
+                description: "同模型重复条目".into(),
+            },
+            SubagentModelChoice {
+                model_id: String::new(),
+                description: "空引用".into(),
+            },
+        ];
+        assert!(r.normalize_subagent_models());
+        assert_eq!(r.subagent_models.len(), 1, "重复与空引用被丢掉");
+        assert_eq!(r.subagent_models[0].model_id, "m1");
+        assert_eq!(r.subagent_models[0].description, "小模型，适合搜索");
+        // 幂等：干净清单不再改动
+        assert!(!r.normalize_subagent_models());
+        // 悬挂引用不删（消费侧过滤，与槽位「解析时回落」同口径）
+        r.subagent_models.push(SubagentModelChoice {
+            model_id: "deleted-model".into(),
+            description: String::new(),
+        });
+        assert!(!r.normalize_subagent_models());
+        assert_eq!(r.subagent_models.len(), 2);
     }
 
     #[test]

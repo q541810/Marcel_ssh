@@ -31,6 +31,7 @@ use crate::agent::templates::TemplateManager;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::emit_event;
 use crate::error::AppError;
+use crate::llm::registry::LlmRegistry;
 use crate::AppState;
 
 /// 子agent结果回传给主 agent 的最大字符数（完整过程保留在子对话中）。
@@ -74,11 +75,235 @@ fn default_sub_mode() -> String {
     "plan".to_string()
 }
 
-pub struct SubagentTool;
+// ── 子agent 候选模型（`subagent` 与 `local_subagent` 共用）──────────────────
+//
+// 用户在「模型服务」设置里配置候选清单（llm_registry.subagentModels）后，主
+// agent 派发子agent 时可经工具的 `model` 参数按任务难度选一个；清单为空则两个
+// 工具的定义与引入本机制前逐字节一致（无参数、无附加描述），子agent 恒继承
+// 会话模型。工具描述是这份清单的唯一权威（提示词模板不复述）。
+
+/// 解析后的候选：派发侧已按注册表过滤，`label` 即 LLM 在 `model` 参数里传回的值。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SubagentModelCandidate {
+    /// ModelEntry id，命中后作为 `AgentSpec.model_override` 传给 spawn。
+    pub model_id: String,
+    /// 展示标签（display_name 优先，否则 model_name）——出现在描述、enum 与
+    /// 结果 metadata 里的同一个值。
+    pub label: String,
+    /// 用户写的选型提示，可空。
+    pub description: String,
+}
+
+/// 把设置里的候选解析成派发侧清单（纯函数便于单测）：
+/// - 引用不存在模型的条目丢弃（模型被删后候选静默消失，不出现在工具描述里）；
+/// - 渠道禁用的条目丢弃（与前端 `modelOptionsByChannel` 同口径：不让主 agent
+///   选到解析必失败的模型）；
+/// - **不同模型** label 撞名（同一模型配在两个渠道、或相同 display_name）→
+///   走 `label · 渠道名` 消歧，两条都保留可选——用户配的候选不该无声消失；
+///   消歧后仍撞（或无法消歧，如渠道名为空）才丢弃本条。enum 恒无重复值：每次
+///   push 前都对照已产出清单查重，原始 label 撞上他组消歧结果的条目同样消歧；
+/// - label / description 折叠换行（拼进单行清单；label 来自用户可编辑的
+///   display_name，手改配置可携带换行/多余空白）。
+///
+/// 这些都是「设置里保留原样」的刻意行为，每次 spawn 都会发生——日志用
+/// debug 级，避免长期保留失效候选的用户刷屏。
+pub(crate) fn resolve_subagent_candidates(registry: &LlmRegistry) -> Vec<SubagentModelCandidate> {
+    /// 第一遍过滤后的待定候选（label 消歧在第二遍做）。
+    struct Pending {
+        model_id: String,
+        label: String,
+        description: String,
+        channel_name: String,
+    }
+    let mut pending: Vec<Pending> = Vec::new();
+    for choice in &registry.subagent_models {
+        // trim 与保存侧 normalize_subagent_models 同口径（手改配置带空格时
+        // 仍能命中，下一次保存即被归一）。
+        let model_id = choice.model_id.trim();
+        let Some(model) = registry.find_model(model_id) else {
+            log::debug!("子agent 候选引用了不存在的模型 ({model_id})，已跳过");
+            continue;
+        };
+        let Some(channel) = registry.find_channel(&model.channel_id) else {
+            log::debug!("子agent 候选 {} 的渠道不存在，已跳过", model.id);
+            continue;
+        };
+        if !channel.enabled {
+            log::debug!("子agent 候选 {} 所在渠道已禁用，已跳过", registry.model_label(model));
+            continue;
+        }
+        // 同一模型重复条目（手改配置才会出现，UI 已排除）：直接只保留第一条，
+        // 不参与下面的跨模型 label 消歧（消歧是给「不同模型同名」用的）。
+        if pending.iter().any(|p| p.model_id == model.id) {
+            log::debug!("子agent 候选 {} 重复出现，只保留第一条", model.id);
+            continue;
+        }
+        pending.push(Pending {
+            model_id: model.id.clone(),
+            label: registry
+                .model_label(model)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            description: choice
+                .description
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            channel_name: channel.name.split_whitespace().collect::<Vec<_>>().join(" "),
+        });
+    }
+    let mut out: Vec<SubagentModelCandidate> = Vec::new();
+    for (index, item) in pending.iter().enumerate() {
+        // 撞名判据两个维度，缺一不可：
+        // - pending 里其他条目与它同原始 label（跨模型撞名组，整组消歧）；
+        // - out 里已有条目占用了它的原始 label（display_name 是自由文本，
+        //   用户可能照抄消歧格式「X · 渠道名」；不查这里会让 enum 出现重复
+        //   值，lookup 首条命中会让后配的候选永远选不中）。
+        // 撞了就走 `label · 渠道名` 消歧；消歧后仍撞才丢弃本条。
+        let label_taken_by_pending = pending
+            .iter()
+            .enumerate()
+            .any(|(j, other)| j != index && other.label == item.label);
+        let label_taken_by_out = out.iter().any(|c| c.label == item.label);
+        let mut label = item.label.clone();
+        if label_taken_by_pending || label_taken_by_out {
+            if item.channel_name.is_empty() {
+                log::debug!(
+                    "子agent 候选标签重复 ({})，且无法用渠道名消歧，丢弃本条",
+                    item.label
+                );
+                continue;
+            }
+            label = format!("{} · {}", item.label, item.channel_name);
+            if out.iter().any(|c| c.label == label) {
+                log::debug!("子agent 候选标签消歧后仍重复 ({label})，丢弃本条");
+                continue;
+            }
+        }
+        out.push(SubagentModelCandidate {
+            model_id: item.model_id.clone(),
+            label,
+            description: item.description.clone(),
+        });
+    }
+    out
+}
+
+/// 候选清单段（拼在两个工具描述的末尾）。
+pub(crate) fn render_model_selection_section(choices: &[SubagentModelCandidate]) -> String {
+    if choices.is_empty() {
+        return String::new();
+    }
+    let mut section = String::from(
+        "\n\nMODEL SELECTION: the user configured candidate models for subagents — \
+         pick the best fit for THIS task via the `model` parameter:\n",
+    );
+    for choice in choices {
+        if choice.description.is_empty() {
+            section.push_str(&format!("- \"{}\"\n", choice.label));
+        } else {
+            section.push_str(&format!("- \"{}\": {}\n", choice.label, choice.description));
+        }
+    }
+    section.push_str(
+        "When no candidate fits (or the current model is fine), omit `model` and the \
+         subagent runs on the current session's model.",
+    );
+    section
+}
+
+/// `model` 参数的 schema 片段；候选为空 = 不暴露该参数（旧行为）。
+pub(crate) fn model_param_schema(choices: &[SubagentModelCandidate]) -> Option<serde_json::Value> {
+    if choices.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "type": "string",
+        "enum": choices.iter().map(|c| c.label.clone()).collect::<Vec<_>>(),
+        "description": "Optional. Which model the subagent should run on: pick the best fit for THIS task from the candidate list (each candidate's strengths are in the tool description). When omitted, the subagent inherits the current session's model."
+    }))
+}
+
+/// `model` 参数的解析结果。
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ModelChoiceLookup {
+    /// 参数未提供：继承父任务模型（旧行为）。
+    NotProvided,
+    /// 命中候选：以该 ModelEntry id 覆盖继承。
+    Chosen(String),
+    /// 提供了但不在候选清单：回落继承，并把提示带回给主 agent。
+    Unknown(String),
+}
+
+/// 从工具入参解析 `model` 参数（两个 subagent 工具共用）。
+pub(crate) fn lookup_model_choice(
+    params: &serde_json::Value,
+    choices: &[SubagentModelCandidate],
+) -> ModelChoiceLookup {
+    let Some(requested) = params
+        .get("model")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return ModelChoiceLookup::NotProvided;
+    };
+    match choices.iter().find(|c| c.label == requested) {
+        Some(choice) => ModelChoiceLookup::Chosen(choice.model_id.clone()),
+        None => ModelChoiceLookup::Unknown(requested.to_string()),
+    }
+}
+
+/// 「模型 X 不在候选清单」带回给主 agent 的提示（拼在结果标题后）。
+pub(crate) fn unknown_model_note(label: &str) -> String {
+    format!("（模型 \"{label}\" 不在候选清单，已沿用会话模型）")
+}
+
+/// 子任务实际使用的模型展示名（spawn 解析后的真实落地模型，含回落情形）。
+pub(crate) fn resolved_sub_model_label(
+    state: &AppState,
+    registry: &LlmRegistry,
+    sub_task_id: &str,
+) -> Option<String> {
+    let model_id = state
+        .agent_tasks
+        .read()
+        .get(sub_task_id)
+        .and_then(|t| t.model_id.clone())?;
+    registry
+        .find_model(&model_id)
+        .map(|m| registry.model_label(m))
+}
+
+pub struct SubagentTool {
+    /// 非空：向 LLM 暴露 model 参数并在描述里列出候选（来自设置
+    /// `llm_registry.subagentModels`，经 [`resolve_subagent_candidates`] 过滤）。
+    /// 空：工具定义与引入本机制前一致。
+    model_choices: Vec<SubagentModelCandidate>,
+    /// 构造期渲染好的描述（`description()` 返回 `&str`，动态内容只能预拼进字段）。
+    rendered_description: String,
+}
 
 impl SubagentTool {
     pub fn new() -> Self {
-        Self
+        Self {
+            model_choices: Vec::new(),
+            rendered_description: BASE_DESCRIPTION.to_string(),
+        }
+    }
+
+    /// 带候选构建。注入点唯一：`manager::build_role_registry`（仅主任务、候选非空）。
+    pub(crate) fn with_choices(model_choices: Vec<SubagentModelCandidate>) -> Self {
+        let rendered_description = format!(
+            "{}{}",
+            BASE_DESCRIPTION,
+            render_model_selection_section(&model_choices)
+        );
+        Self {
+            model_choices,
+            rendered_description,
+        }
     }
 }
 
@@ -140,14 +365,10 @@ pub(super) fn classify_subagent_result(
     }
 }
 
-#[async_trait]
-impl AgentTool for SubagentTool {
-    fn name(&self) -> &str {
-        "subagent"
-    }
-
-    fn description(&self) -> &str {
-        "Spawn an isolated subagent to do a self-contained piece of work for you — \
+/// 无候选配置时的工具描述（与引入子agent 模型候选前逐字节一致；候选段由
+/// [`render_model_selection_section`] 构造期追加）。
+const BASE_DESCRIPTION: &str =
+    "Spawn an isolated subagent to do a self-contained piece of work for you — \
          research, investigation, auditing, or (in execution mode) an actual job on \
          another machine. The subagent runs in its OWN conversation with its own \
          context window, does the work end-to-end there, and returns only its final \
@@ -192,11 +413,20 @@ impl AgentTool for SubagentTool {
          modify files / run installs / deploy on its machine (still risk-assessed and \
          subject to the parent task's approval semantics). mode=\"agent\" is only \
          allowed when the CURRENT parent task is in Agent/Auto mode — Plan-mode \
-         parents can only spawn read-only research subagents (use \"plan\")."
+         parents can only spawn read-only research subagents (use \"plan\").";
+
+#[async_trait]
+impl AgentTool for SubagentTool {
+    fn name(&self) -> &str {
+        "subagent"
+    }
+
+    fn description(&self) -> &str {
+        &self.rendered_description
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
-        json!({
+        let mut schema = json!({
             "type": "object",
             "properties": {
                 "prompt": {
@@ -218,7 +448,15 @@ impl AgentTool for SubagentTool {
                 }
             },
             "required": ["prompt"]
-        })
+        });
+        // 用户配置了候选清单才暴露 model 参数（enum = 候选标签，清单在工具描述里）。
+        if let Some(model) = model_param_schema(&self.model_choices) {
+            schema["properties"]
+                .as_object_mut()
+                .expect("parameters properties is an object")
+                .insert("model".to_string(), model);
+        }
+        schema
     }
 
     fn disposition(&self) -> Disposition {
@@ -254,18 +492,47 @@ impl AgentTool for SubagentTool {
         let state = ctx.app_handle.state::<AppState>();
         let state: AppState = state.inner().clone();
 
-        // ── 子 agent 模型继承：恒继承父任务模型 ──
-        // 保证「父任务用 A 模型 → 派发的子 agent 也用 A」。父任务 model_id
-        // 为 None（极端情况）时回落全局默认（spawn 内 resolve_override 处理）。
-        // 不再向 LLM 暴露 model 参数：子 agent 模型不可由模型自行指定。
-        let model_override = if let Some(pid) = ctx.task_id.clone() {
-            state
-                .agent_tasks
-                .read()
-                .get(&pid)
-                .and_then(|t| t.model_id.clone())
-        } else {
-            None
+        // ── 子 agent 模型：默认继承父任务模型；配置了候选清单时主 agent 可经
+        // model 参数按 label 选一个（label → ModelEntry id 的映射在本工具内完成
+        // —— spawn 侧 resolve_override 只认 id/模型名，不认 display_name）──
+        // 父任务 model_id 为 None（极端情况）时回落最近使用/首个模型
+        // （spawn 内 resolve_default 处理）。
+        let mut model_note = String::new();
+        let mut model_param_used = false;
+        let model_override = match lookup_model_choice(&params, &self.model_choices) {
+            ModelChoiceLookup::Chosen(model_id) => {
+                model_param_used = true;
+                Some(model_id)
+            }
+            // 清单为空时 schema 根本没有 model 参数——LLM 幻觉出的值视同未
+            // 提供（无 note、无 modelLabel），保证未配置候选的路径与引入本
+            // 机制前逐字节一致。
+            ModelChoiceLookup::Unknown(label) if !self.model_choices.is_empty() => {
+                model_param_used = true;
+                model_note = unknown_model_note(&label);
+                // label 无效：回落继承父任务模型，并把提示带回给主 agent。
+                if let Some(pid) = ctx.task_id.clone() {
+                    state
+                        .agent_tasks
+                        .read()
+                        .get(&pid)
+                        .and_then(|t| t.model_id.clone())
+                } else {
+                    None
+                }
+            }
+            ModelChoiceLookup::Unknown(_) | ModelChoiceLookup::NotProvided => {
+                // 恒继承父任务模型（旧行为）：父任务用 A，派发的子 agent 也用 A。
+                if let Some(pid) = ctx.task_id.clone() {
+                    state
+                        .agent_tasks
+                        .read()
+                        .get(&pid)
+                        .and_then(|t| t.model_id.clone())
+                } else {
+                    None
+                }
+            }
         };
 
         // ── 嵌套防御：子agent不能再派发子agent ──
@@ -479,11 +746,24 @@ impl AgentTool for SubagentTool {
             .map(|t| t.status.clone())
             .unwrap_or(AgentStatus::Failed);
 
+        // 主 agent 显式选过模型（含选错回落）才带 modelLabel —— 展示的是 spawn
+        // 解析后**真实落地**的模型（渠道失效回落时不说谎）；未传参时保持既有
+        // metadata 形状不变。
+        let model_label = if model_param_used {
+            let settings = state.settings.read().await;
+            resolved_sub_model_label(&state, &settings.llm_registry, &sub_task_id)
+        } else {
+            None
+        };
+
         // 结果归属元数据（多机 badge / 子 agent 模式）——三处共用。
         let result_meta = |mut base: serde_json::Value| -> serde_json::Value {
             let obj = base.as_object_mut().expect("metadata is object");
             if let Some(label) = &target_host_label {
                 obj.insert("targetHostLabel".to_string(), json!(label));
+            }
+            if let Some(label) = &model_label {
+                obj.insert("modelLabel".to_string(), json!(label));
             }
             obj.insert(
                 "mode".to_string(),
@@ -504,20 +784,20 @@ impl AgentTool for SubagentTool {
                     sub_task_id,
                     text.chars().count()
                 );
-                Ok(
-                    ToolOutput::ok(format!("子agent完成：{}", description), output).with_metadata(
-                        result_meta(json!({
-                            "subTaskId": sub_task_id,
-                            "subConversationId": sub_conversation_id,
-                            "status": "completed",
-                        })),
-                    ),
+                Ok(ToolOutput::ok(
+                    format!("子agent完成：{}{}", description, model_note),
+                    output,
                 )
+                .with_metadata(result_meta(json!({
+                    "subTaskId": sub_task_id,
+                    "subConversationId": sub_conversation_id,
+                    "status": "completed",
+                }))))
             }
             SubagentOutcome::Empty => {
                 log::warn!("Subtask {} returned an empty report", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("子agent未返回结论：{}", description),
+                    format!("子agent未返回结论：{}{}", description, model_note),
                     "子agent结束了，但没有返回任何结论（正文为空，或整段都在思维标签里）。\
                      不要把它当成调研结果：需要结论时重新派发，并在 prompt 里明确要求以正文给出最终报告。",
                 )
@@ -530,7 +810,7 @@ impl AgentTool for SubagentTool {
             SubagentOutcome::Cancelled => {
                 log::info!("Subtask {} cancelled", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("子agent已取消：{}", description),
+                    format!("子agent已取消：{}{}", description, model_note),
                     "子agent已被取消，未返回调研结果。",
                 )
                 .with_metadata(result_meta(json!({
@@ -542,7 +822,7 @@ impl AgentTool for SubagentTool {
             SubagentOutcome::Failed => {
                 log::warn!("Subtask {} failed (no result)", sub_task_id);
                 Ok(ToolOutput::fail(
-                    format!("子agent失败：{}", description),
+                    format!("子agent失败：{}{}", description, model_note),
                     "子agent执行失败（LLM 错误或达到最大轮数），未返回调研结果。",
                 )
                 .with_metadata(result_meta(json!({
@@ -678,5 +958,280 @@ mod tests {
         // 远端派发不写 `side`：新增字段不能改动既有事件形状（前端按
         // `sessionId` 哨兵判定，`side` 只在本机派发时出现）。
         assert!(json.get("side").is_none());
+    }
+
+    // ── 子agent 候选模型 ─────────────────────────────────────────────
+
+    use crate::llm::registry::{ChannelConfig, ModelEntry, SubagentModelChoice};
+
+    /// 渠道 c1 启用（m1 有 display_name、m2 没有）；渠道 c2 禁用（m3）。
+    fn registry_with_choices(choices: Vec<SubagentModelChoice>) -> LlmRegistry {
+        let mut registry = LlmRegistry::default();
+        registry.channels.push(ChannelConfig {
+            id: "c1".into(),
+            name: "渠道一".into(),
+            base_url: "https://api.example.com/v1".into(),
+            ..Default::default()
+        });
+        registry.channels.push(ChannelConfig {
+            id: "c2".into(),
+            name: "禁用渠道".into(),
+            enabled: false,
+            ..Default::default()
+        });
+        registry.models.push(ModelEntry {
+            id: "m1".into(),
+            channel_id: "c1".into(),
+            model_name: "qwen3.8-32b-a3b".into(),
+            display_name: "小杯".into(),
+            ..Default::default()
+        });
+        registry.models.push(ModelEntry {
+            id: "m2".into(),
+            channel_id: "c1".into(),
+            model_name: "claude-fable-5".into(),
+            ..Default::default()
+        });
+        registry.models.push(ModelEntry {
+            id: "m3".into(),
+            channel_id: "c2".into(),
+            model_name: "disabled-model".into(),
+            ..Default::default()
+        });
+        registry.subagent_models = choices;
+        registry
+    }
+
+    #[test]
+    fn candidates_filter_missing_disabled_and_duplicate_labels() {
+        let registry = registry_with_choices(vec![
+            SubagentModelChoice {
+                model_id: "m1".into(),
+                description: "小模型，\n 适合搜索等简单任务".into(),
+            },
+            SubagentModelChoice {
+                model_id: "missing".into(),
+                description: "已被删除的模型".into(),
+            },
+            SubagentModelChoice {
+                model_id: "m3".into(),
+                description: "渠道禁用".into(),
+            },
+            SubagentModelChoice {
+                model_id: "m2".into(),
+                description: String::new(),
+            },
+            // 与第一条同模型 → label 撞名，只保留第一条。
+            SubagentModelChoice {
+                model_id: "m1".into(),
+                description: "重复条目".into(),
+            },
+        ]);
+        let candidates = resolve_subagent_candidates(&registry);
+        assert_eq!(candidates.len(), 2, "丢失/禁用/撞名的候选都不进清单");
+        assert_eq!(candidates[0].model_id, "m1");
+        assert_eq!(candidates[0].label, "小杯", "display_name 优先");
+        assert_eq!(candidates[0].description, "小模型， 适合搜索等简单任务");
+        assert_eq!(
+            candidates[1].label, "claude-fable-5",
+            "display_name 为空时回落 model_name"
+        );
+    }
+
+    #[test]
+    fn empty_choices_registry_yields_no_candidates() {
+        let registry = registry_with_choices(Vec::new());
+        assert!(resolve_subagent_candidates(&registry).is_empty());
+    }
+
+    /// 两个**不同模型** label 撞名（同一模型配在两个渠道是真实场景）：
+    /// 整组消歧为 `label · 渠道名`，两条都保留可选，enum 无歧义；
+    /// 同渠道同名（消歧救不了）才回落「只保留第一条」。
+    #[test]
+    fn candidates_disambiguate_cross_model_label_collision() {
+        let mut registry = LlmRegistry::default();
+        for (id, name) in [("c1", "渠道一"), ("c2", "渠道二")] {
+            registry.channels.push(ChannelConfig {
+                id: id.into(),
+                name: name.into(),
+                base_url: format!("https://{id}.example.com"),
+                ..Default::default()
+            });
+        }
+        for (id, channel_id) in [("m1", "c1"), ("m2", "c1"), ("m3", "c2")] {
+            registry.models.push(ModelEntry {
+                id: id.into(),
+                channel_id: channel_id.into(),
+                model_name: "same-name".into(),
+                ..Default::default()
+            });
+        }
+        // 跨渠道：m1(c1) 与 m3(c2) 同名 → 都保留，label 带渠道名消歧。
+        // 同渠道：m2(c1) 与 m1(c1) 同名 → 消歧救不了，只留清单里的第一条（m1）。
+        registry.subagent_models = vec![
+            SubagentModelChoice {
+                model_id: "m1".into(),
+                description: "第一条".into(),
+            },
+            SubagentModelChoice {
+                model_id: "m3".into(),
+                description: "跨渠道同名".into(),
+            },
+            SubagentModelChoice {
+                model_id: "m2".into(),
+                description: "同渠道同名".into(),
+            },
+        ];
+        let candidates = resolve_subagent_candidates(&registry);
+        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["same-name · 渠道一", "same-name · 渠道二"],
+            "跨渠道同名消歧共存；同渠道同名只留第一条"
+        );
+        assert_eq!(candidates[0].model_id, "m1");
+        assert_eq!(candidates[1].model_id, "m3");
+    }
+
+    /// display_name 是自由文本，用户可能照抄消歧格式（「X · 渠道名」）：原始
+    /// label 与他组消歧结果相撞的条目同样要走消歧——enum 恒无重复值，且不
+    /// 无声丢弃（lookup 首条命中会让后配的候选永远选不中）。
+    #[test]
+    fn candidates_disambiguate_when_original_label_collides_with_disambiguated() {
+        let mut registry = LlmRegistry::default();
+        for (id, name) in [("c1", "官方"), ("c2", "中转")] {
+            registry.channels.push(ChannelConfig {
+                id: id.into(),
+                name: name.into(),
+                base_url: format!("https://{id}.example.com"),
+                ..Default::default()
+            });
+        }
+        // m1/m2 同名（跨渠道撞名组）→ 消歧为 `gemini · 官方` / `gemini · 中转`；
+        // m3 的 display_name 手填 `gemini · 官方` → 原始 label 直接撞 m1 的消歧结果。
+        registry.models.push(ModelEntry {
+            id: "m1".into(),
+            channel_id: "c1".into(),
+            model_name: "gemini".into(),
+            ..Default::default()
+        });
+        registry.models.push(ModelEntry {
+            id: "m2".into(),
+            channel_id: "c2".into(),
+            model_name: "gemini".into(),
+            ..Default::default()
+        });
+        registry.models.push(ModelEntry {
+            id: "m3".into(),
+            channel_id: "c1".into(),
+            model_name: "other".into(),
+            display_name: "gemini · 官方".into(),
+            ..Default::default()
+        });
+        registry.subagent_models = vec![
+            SubagentModelChoice {
+                model_id: "m1".into(),
+                description: String::new(),
+            },
+            SubagentModelChoice {
+                model_id: "m2".into(),
+                description: String::new(),
+            },
+            SubagentModelChoice {
+                model_id: "m3".into(),
+                description: String::new(),
+            },
+        ];
+        let candidates = resolve_subagent_candidates(&registry);
+        let labels: Vec<&str> = candidates.iter().map(|c| c.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["gemini · 官方", "gemini · 中转", "gemini · 官方 · 官方"],
+            "三候选全保留、enum 无重复值"
+        );
+        assert_eq!(candidates[2].model_id, "m3");
+    }
+
+    /// 手改配置带首尾空格的 model_id 仍能命中（与保存侧 normalize 口径一致，
+    /// 下一次保存即被归一）。
+    #[test]
+    fn candidates_tolerate_whitespace_in_model_id() {
+        let registry = registry_with_choices(vec![SubagentModelChoice {
+            model_id: " m1 ".into(),
+            description: String::new(),
+        }]);
+        let candidates = resolve_subagent_candidates(&registry);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].model_id, "m1");
+        assert_eq!(candidates[0].label, "小杯");
+    }
+
+    /// 未配置候选 = 工具定义与引入本机制前逐字节一致（无 model 参数、无附加段）。
+    #[test]
+    fn without_choices_definition_is_unchanged() {
+        let tool = SubagentTool::new();
+        let def = tool.definition();
+        assert_eq!(def.description, BASE_DESCRIPTION);
+        assert!(
+            def.parameters["properties"].get("model").is_none(),
+            "未配置候选时不得暴露 model 参数"
+        );
+    }
+
+    #[test]
+    fn with_choices_exposes_model_param_and_description_section() {
+        let choices = vec![
+            SubagentModelCandidate {
+                model_id: "m1".into(),
+                label: "小杯".into(),
+                description: "小模型".into(),
+            },
+            SubagentModelCandidate {
+                model_id: "m2".into(),
+                label: "大杯".into(),
+                description: String::new(),
+            },
+        ];
+        let tool = SubagentTool::with_choices(choices);
+        let def = tool.definition();
+        assert!(def.description.starts_with(BASE_DESCRIPTION));
+        assert!(def.description.contains("MODEL SELECTION"));
+        assert!(def.description.contains("- \"小杯\": 小模型"));
+        assert!(def.description.contains("- \"大杯\"\n"));
+        let model = &def.parameters["properties"]["model"];
+        assert_eq!(model["type"], "string");
+        assert_eq!(model["enum"][0], "小杯");
+        assert_eq!(model["enum"][1], "大杯");
+        assert_eq!(model["enum"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn lookup_maps_label_and_reports_unknown() {
+        let choices = vec![SubagentModelCandidate {
+            model_id: "m1".into(),
+            label: "小杯".into(),
+            description: String::new(),
+        }];
+        assert_eq!(
+            lookup_model_choice(&json!({}), &choices),
+            ModelChoiceLookup::NotProvided
+        );
+        assert_eq!(
+            lookup_model_choice(&json!({ "model": "  " }), &choices),
+            ModelChoiceLookup::NotProvided,
+            "空白值等同未提供"
+        );
+        assert_eq!(
+            lookup_model_choice(&json!({ "model": "小杯" }), &choices),
+            ModelChoiceLookup::Chosen("m1".into())
+        );
+        assert_eq!(
+            lookup_model_choice(&json!({ "model": "不在清单的" }), &choices),
+            ModelChoiceLookup::Unknown("不在清单的".into())
+        );
+        assert_eq!(
+            unknown_model_note("X"),
+            "（模型 \"X\" 不在候选清单，已沿用会话模型）"
+        );
     }
 }
