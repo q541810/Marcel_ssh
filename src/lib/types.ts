@@ -444,7 +444,7 @@ export interface AgentTask {
   createdAt: string;
   /** Parent task id — set when this task is a subagent dispatched via the `subagent` tool. */
   parentTaskId?: string;
-  /** 本任务实际使用的模型（llmRegistry 模型条目 id）。子 agent 继承父任务该值。 */
+  /** 本任务实际使用的模型（llmRegistry 模型条目 id）。子 agent 默认继承父任务该值（候选清单配置后可被 model 参数覆盖）。 */
   modelId?: string;
 }
 
@@ -681,11 +681,22 @@ export interface ModelSlots {
   summarizerModelId: string;
 }
 
+/** 子agent 可选模型候选：主 agent 派发子agent 时可从中按任务难度选一个。 */
+export interface SubagentModelChoice {
+  /** 指向 LlmRegistry.models 的模型条目 id。 */
+  modelId: string;
+  /** 给主 agent 看的选型提示（如「小模型，适合搜索等简单任务」），可空。 */
+  description: string;
+}
+
 /** 多渠道多模型注册表（AppSettings 内嵌，随设置持久化）。 */
 export interface LlmRegistry {
   channels: ChannelConfig[];
   models: ModelEntry[];
   slots: ModelSlots;
+  /** 子agent 可选模型候选（主 agent 派发 subagent / local_subagent 时的可选项）。
+   *  空 = 不向 LLM 暴露 model 参数，子agent 恒继承会话模型。 */
+  subagentModels?: SubagentModelChoice[];
   /** 全局主模型：最近一次在任意会话选择的模型（「最后使用」）。
    *  空/失效 → 解析时回落第一个模型。取代旧版 slots.defaultModelId。 */
   lastUsedModelId?: string;

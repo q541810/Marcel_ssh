@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settingsStore';
-import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelInfo, NetPolicy } from '@/lib/types';
+import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelInfo, NetPolicy, SubagentModelChoice } from '@/lib/types';
 import { llmListModels } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
@@ -18,6 +18,8 @@ import {
   duplicateModelName,
   defaultNetPolicy,
   mergeChannelModels,
+  modelOptionsByChannel,
+  candidateRowModelLabel,
 } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
@@ -25,12 +27,17 @@ import { MobileSettingRow } from './MobileSettingRow';
 const inputClass =
   'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
 
+/** 候选的选型提示是中文散文，不用渠道/模型字段那套等宽字体。 */
+const descriptionInputClass =
+  'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
+
 /** 空注册表兜底（settings 尚未初始化时）。 */
 function emptyRegistry(): LlmRegistry {
   return {
     channels: [],
     models: [],
     slots: { modelApprovalModelId: '', summarizerModelId: '' },
+    subagentModels: [],
     netPolicy: defaultNetPolicy(),
   };
 }
@@ -44,6 +51,7 @@ function MobileModelPickerSheet({
   value,
   allowEmpty,
   emptyLabel,
+  excludeModelIds,
   onChange,
 }: {
   open: boolean;
@@ -53,9 +61,13 @@ function MobileModelPickerSheet({
   value: string;
   allowEmpty: boolean;
   emptyLabel: string;
+  /** 已被其他候选行占用的模型 id（这些行禁选，防同一模型配两条候选）。
+   *  不传 = 不过滤（摘要槽位等单选场景）。 */
+  excludeModelIds?: ReadonlySet<string>;
   onChange: (modelId: string) => void;
 }) {
   const models = registry.models;
+  const occupied = excludeModelIds;
   return (
     <MobileSheet open={open} onClose={onClose} title={title}>
       <div className="px-4 pb-4">
@@ -92,17 +104,18 @@ function MobileModelPickerSheet({
               <div className="divide-y divide-zinc-800/70">
                 {channelModels.map((m) => {
                   const selected = value === m.id;
+                  const occupiedHere = !selected && occupied?.has(m.id);
                   return (
                     <button
                       key={m.id}
                       type="button"
-                      disabled={channelDisabled}
+                      disabled={channelDisabled || occupiedHere}
                       onClick={() => {
                         onChange(m.id);
                         onClose();
                       }}
                       className={`flex w-full items-center justify-between gap-2 px-3 py-3 text-left active:bg-zinc-800 ${
-                        channelDisabled ? "opacity-40" : ""
+                        channelDisabled || occupiedHere ? "opacity-40" : ""
                       }`}
                     >
                       <span className="min-w-0 truncate text-sm text-zinc-200">
@@ -110,6 +123,11 @@ function MobileModelPickerSheet({
                       </span>
                       {selected && (
                         <span className="flex-shrink-0 text-xs text-indigo-400">当前</span>
+                      )}
+                      {occupiedHere && (
+                        <span className="flex-shrink-0 text-xs text-zinc-500">
+                          已用于其他候选
+                        </span>
                       )}
                     </button>
                   );
@@ -683,11 +701,60 @@ export function MobileModelSection() {
   const netPolicy: NetPolicy = registry.netPolicy;
 
   const [summarizerPicker, setSummarizerPicker] = useState(false);
+  // 正在为第几条子agent 候选选模型（null = 弹层关闭）
+  const [choicePicker, setChoicePicker] = useState<number | null>(null);
   const [channelEditor, setChannelEditor] = useState<{ open: boolean; channel?: ChannelConfig }>({
     open: false,
   });
 
   const updateRegistry = (next: LlmRegistry) => update({ llmRegistry: next });
+
+  // ── 子agent 模型候选（主 agent 派发子agent 时的可选项） ──
+  const subagentChoices: SubagentModelChoice[] = (registry.subagentModels ?? []).filter(
+    (c) => c && typeof c.modelId === 'string',
+  );
+
+  const updateSubagentChoice = (index: number, patch: Partial<SubagentModelChoice>) => {
+    updateRegistry({
+      ...registry,
+      subagentModels: subagentChoices.map((c, i) => (i === index ? { ...c, ...patch } : c)),
+    });
+  };
+
+  const addSubagentChoice = () => {
+    // 新行预选第一个**未被其他行占用**的启用渠道模型（与桌面同走
+    // modelOptionsByChannel 口径）：不让同一模型出现在两条候选里
+    const occupied = new Set(subagentChoices.map((c) => c.modelId));
+    const firstFree = modelOptionsByChannel(registry)
+      .flatMap((g) => g.options)
+      .find((o) => !occupied.has(o.value));
+    updateRegistry({
+      ...registry,
+      subagentModels: [...subagentChoices, { modelId: firstFree?.value ?? '', description: '' }],
+    });
+  };
+
+  // 「添加候选」还有没有意义：无可用模型 → 提示先加渠道；全部模型已被占用 →
+  // 提示清单已满（与桌面同语义）。
+  const availableForNew = (() => {
+    const occupied = new Set(subagentChoices.map((c) => c.modelId));
+    return modelOptionsByChannel(registry)
+      .flatMap((g) => g.options)
+      .filter((o) => !occupied.has(o.value));
+  })();
+
+  const removeSubagentChoice = (index: number) => {
+    updateRegistry({
+      ...registry,
+      subagentModels: subagentChoices.filter((_, i) => i !== index),
+    });
+  };
+
+  // 「添加候选」三态的判定基底（与桌面同语义）：有启用渠道下的可用模型，
+  // 才有资格谈占用/满员。
+  const hasEnabledChannelModels = registry.channels.some(
+    (ch) => ch.enabled && modelsOfChannel(registry, ch.id).length > 0,
+  );
 
   const updateNetPolicy = (patch: Partial<NetPolicy>) => {
     updateRegistry({ ...registry, netPolicy: { ...netPolicy, ...patch } });
@@ -716,6 +783,79 @@ export function MobileModelSection() {
           </span>
           <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
         </button>
+      </MobileSettingRow>
+
+      <MobileSettingRow
+        label="子agent 模型候选"
+        description="主 agent 派发子agent 时可从这份清单按任务难度自选模型，每条写一句适用场景作为选型提示。未配置时，子agent 恒使用当前会话的模型"
+      >
+        <div className="mt-2 w-full space-y-2">
+          {subagentChoices.length === 0 ? (
+            <p className="text-xs leading-relaxed text-zinc-500">
+              清单为空：子agent 跟随当前会话的模型。添加候选后，主 agent 会按描述自行选型。
+            </p>
+          ) : (
+            subagentChoices.map((choice, i) => {
+              const occupiedElsewhere = new Set(
+                subagentChoices.filter((_, ci) => ci !== i).map((c) => c.modelId),
+              );
+              // 与桌面同一套状态标注（llmRegistry.ts 共享函数）：渠道禁用/
+              // 被其他行占用/悬挂引用都要让用户看懂「这条为什么不参与派发」。
+              const triggerLabel = choice.modelId
+                ? (candidateRowModelLabel(registry, choice.modelId, occupiedElsewhere) ??
+                  '已失效的模型')
+                : '选择模型';
+              return (
+              <div
+                key={i}
+                className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2"
+              >
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setChoicePicker(i)}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 active:bg-zinc-700"
+                  >
+                    <span className="truncate">{triggerLabel}</span>
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-zinc-500" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeSubagentChoice(i)}
+                    className="flex-shrink-0 rounded-lg bg-zinc-800 px-2.5 py-2 text-xs text-zinc-300 active:bg-zinc-700"
+                  >
+                    移除
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={choice.description}
+                  onChange={(e) => updateSubagentChoice(i, { description: e.target.value })}
+                  placeholder="选型提示，如：小模型，适合搜索等简单任务"
+                  className={descriptionInputClass}
+                />
+              </div>
+              );
+            })
+          )}
+          {hasEnabledChannelModels ? (
+            availableForNew.length > 0 ? (
+              <button
+                type="button"
+                onClick={addSubagentChoice}
+                className="w-full rounded-lg border border-dashed border-zinc-700 px-3 py-2 text-sm text-zinc-400 active:bg-zinc-800"
+              >
+                + 添加候选
+              </button>
+            ) : (
+              <p className="text-xs text-zinc-600">全部可用模型都已在清单里。</p>
+            )
+          ) : registry.models.length > 0 ? (
+            <p className="text-xs text-zinc-600">所有渠道均已禁用，启用后才能配置候选。</p>
+          ) : (
+            <p className="text-xs text-zinc-600">先在下方添加渠道与模型，才能配置候选。</p>
+          )}
+        </div>
       </MobileSettingRow>
 
       <MobileSettingRow
@@ -908,6 +1048,26 @@ export function MobileModelSection() {
         onChange={(modelId) =>
           updateRegistry({ ...registry, slots: { ...slots, summarizerModelId: modelId } })
         }
+      />
+
+      {/* 子agent 候选的模型选择（choicePicker = 候选行下标；已用于其他
+          候选行的模型禁选，防同一模型配两条候选） */}
+      <MobileModelPickerSheet
+        open={choicePicker !== null}
+        onClose={() => setChoicePicker(null)}
+        title="选择候选模型"
+        registry={registry}
+        value={choicePicker !== null ? (subagentChoices[choicePicker]?.modelId ?? '') : ''}
+        allowEmpty={false}
+        emptyLabel=""
+        excludeModelIds={
+          choicePicker !== null
+            ? new Set(subagentChoices.filter((_, i) => i !== choicePicker).map((c) => c.modelId))
+            : undefined
+        }
+        onChange={(modelId) => {
+          if (choicePicker !== null) updateSubagentChoice(choicePicker, { modelId });
+        }}
       />
 
       {/* 渠道编辑（key 强制重挂载，重置表单为当前渠道） */}

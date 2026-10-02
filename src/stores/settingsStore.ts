@@ -50,6 +50,16 @@ function normalizeRegistry(r: Partial<LlmRegistry> | null | undefined): LlmRegis
     channels: Array.isArray(r.channels) ? r.channels : [],
     models,
     slots: r.slots ? { ...emptySlots(), ...r.slots } : emptySlots(),
+    // 子agent 候选清单：缺字段补空数组（兼容旧数据），丢掉非对象/无 id 的脏
+    // 条目；description 归一为字符串（手改配置缺该键时受控 input 不吃 undefined）
+    subagentModels: Array.isArray(r.subagentModels)
+      ? r.subagentModels
+          .filter((c) => c && typeof c.modelId === 'string')
+          .map((c) => ({
+            modelId: c.modelId,
+            description: typeof c.description === 'string' ? c.description : '',
+          }))
+      : [],
     netPolicy: r.netPolicy ? { ...defaultNetPolicy(), ...r.netPolicy } : defaultNetPolicy(),
     // 只在有有效值时设键：undefined 时与 emptyRegistry（无此键）形态一致
     ...(lastUsedModelId ? { lastUsedModelId } : {}),

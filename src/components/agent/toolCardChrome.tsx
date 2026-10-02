@@ -44,15 +44,20 @@ export function ToolChip({
   title,
   className = '',
   children,
+  shrinkable = false,
 }: {
   tone?: ToolChipTone;
   title?: string;
   className?: string;
   children: ReactNode;
+  /** 允许随卡片宽度收缩（内容需自带 truncate；配合 max-w 使用）。
+   *  默认不收缩：多数 chip 是短标签，收缩会让它们被压扁——只有 host /
+   *  模型这类「内容长度不可控」的 chip 才打开。 */
+  shrinkable?: boolean;
 }) {
   return (
     <span
-      className={`flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
+      className={`${shrinkable ? 'min-w-0' : 'flex-shrink-0'} text-[11px] px-1.5 py-0.5 rounded-md font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
       title={title}
     >
       {children}

@@ -217,6 +217,20 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       (tr.metadata as Record<string, unknown>).mode === 'agent'
         ? '读写'
         : '';
+    // 子agent 模型：用户配置候选后主 agent 可经 model 参数选型。执行中读参数
+    // `model`（与 host chip 同理，发起时模型已写明）；结束后用 metadata 的
+    // modelLabel —— 那是 spawn 解析后真实落地的模型（选错回落时不说谎）。
+    // 两处读取都按工具名收口：只有 subagent 族会在 metadata 里写 modelLabel。
+    const subMetaModel =
+      isSubagentTool(tr.toolName) && tr.metadata &&
+      typeof (tr.metadata as Record<string, unknown>).modelLabel === 'string'
+        ? ((tr.metadata as Record<string, unknown>).modelLabel as string)
+        : '';
+    const argModel =
+      isSubagentTool(tr.toolName)
+        ? asArgString((tr.arguments as Record<string, unknown> | undefined)?.model) ?? ''
+        : '';
+    const subModel = subMetaModel || argModel;
     // 联网工具（web_search / http_get）：本次用的是哪个后端、有没有降级、页面
     // 是否被网站的人机验证拦下。旧会话没有这些字段 → status 为 null，界面不变。
     const webStatus = readWebToolStatus(tr.toolName, tr.metadata);
@@ -238,6 +252,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               <ToolChip
                 title={`目标机器：${targetHost}`}
                 className="flex items-center gap-1 max-w-[160px]"
+                shrinkable
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
@@ -246,6 +261,19 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               </ToolChip>
             )}
             {subMode && <ToolChip>读写子agent</ToolChip>}
+            {subModel && (
+              <ToolChip
+                title={`子agent 模型：${subModel}`}
+                className="flex items-center gap-1 max-w-[140px]"
+                shrinkable
+              >
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" />
+                </svg>
+                <span className="truncate">{subModel}</span>
+              </ToolChip>
+            )}
             {webChips.map((chip) => (
               <ToolChip key={chip.key} tone={chip.tone} title={chip.title}>
                 {chip.label}
@@ -430,6 +458,12 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     // 只能从参数读；真正执行/完成后由 toolResult 分支的权威 label 接管。
     const tcHost =
       asArgString((tc.arguments as Record<string, unknown> | undefined)?.host) ?? '';
+    // 子agent 模型：发起瞬间即显示（参数 model）；完成后由 metadata.modelLabel
+    // 的权威值接管（含选错回落情形）。
+    const tcModel =
+      isSubagentTool(tc.name)
+        ? asArgString((tc.arguments as Record<string, unknown> | undefined)?.model) ?? ''
+        : '';
     // 按码点截断（机器名可能含中文/emoji）；tooltip 给全名。
     const tcHostChars = Array.from(tcHost);
     const tcDisplayHost =
@@ -447,11 +481,25 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               <ToolChip
                 title={`目标机器：${tcHost}`}
                 className="flex items-center gap-1 max-w-[160px]"
+                shrinkable
               >
                 <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
                 </svg>
                 <span className="truncate">{tcDisplayHost}</span>
+              </ToolChip>
+            )}
+            {tcModel && (
+              <ToolChip
+                title={`子agent 模型：${tcModel}`}
+                className="flex items-center gap-1 max-w-[140px]"
+                shrinkable
+              >
+                <svg className="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" />
+                </svg>
+                <span className="truncate">{tcModel}</span>
               </ToolChip>
             )}
             {preview && (

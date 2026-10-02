@@ -33,7 +33,14 @@ export function defaultNetPolicy(): NetPolicy {
 }
 
 export function emptyRegistry(): LlmRegistry {
-  return { channels: [], models: [], slots: emptySlots(), netPolicy: defaultNetPolicy() };
+  return {
+    channels: [],
+    models: [],
+    slots: emptySlots(),
+    // 子agent 候选清单：默认空（不向 LLM 暴露 model 参数，子agent 恒继承会话模型）
+    subagentModels: [],
+    netPolicy: defaultNetPolicy(),
+  };
 }
 
 export function emptySlots(): ModelSlots {
@@ -61,6 +68,28 @@ export function modelFullLabel(r: LlmRegistry, modelId: string): string {
   const label = modelLabel(m);
   const ch = findChannel(r, m.channelId);
   return ch ? `${label} · ${ch.name}` : label;
+}
+
+/**
+ * 子agent 候选行「已选模型」的完整显示名 + 状态标注（桌面/移动端共享，
+ * 两端用同一套话解释「这条候选为什么不参与派发」）。
+ *
+ * - 被其他候选行占用 → `（与其他候选重复）`
+ * - 渠道已禁用 → `（渠道已禁用）`
+ * - 模型不存在（手改配置的悬挂引用）→ null（调用方显示「已失效的模型」）
+ */
+export function candidateRowModelLabel(
+  r: LlmRegistry,
+  modelId: string,
+  occupiedElsewhere: ReadonlySet<string>,
+): string | null {
+  const m = findModel(r, modelId);
+  if (!m) return null;
+  const base = modelFullLabel(r, modelId);
+  if (occupiedElsewhere.has(modelId)) return `${base}（与其他候选重复）`;
+  const ch = findChannel(r, m.channelId);
+  if (ch && !ch.enabled) return `${base}（渠道已禁用）`;
+  return base;
 }
 
 /**
@@ -254,6 +283,9 @@ export function mergeChannelModels(
   if (!slotTargets.has(slots.modelApprovalModelId)) slots.modelApprovalModelId = '';
   if (!slotTargets.has(slots.summarizerModelId)) slots.summarizerModelId = '';
 
+  // 子agent 候选清理：指向被删模型的候选整条移除（与槽位清理同批发生）
+  const subagentModels = (r.subagentModels ?? []).filter((c) => slotTargets.has(c.modelId));
+
   // 最近使用清理：被删模型若是全局最近使用则清空（解析回落第一个模型）
   let lastUsedModelId =
     r.lastUsedModelId && !slotTargets.has(r.lastUsedModelId)
@@ -264,7 +296,7 @@ export function mergeChannelModels(
     lastUsedModelId = draftModels[0].id;
   }
 
-  return { ...r, channels, models, slots, lastUsedModelId };
+  return { ...r, channels, models, slots, subagentModels, lastUsedModelId };
 }
 
 /** 删除渠道：级联删除其模型，并清理指向被删模型的槽位与最近使用。返回新 registry。 */
@@ -300,7 +332,7 @@ function clearSlotsForRemoved(slots: ModelSlots, removedIds: Set<string>): Model
   return next;
 }
 
-/** 删除模型后清理 registry 顶层引用（lastUsed + 槽位）。返回新 registry。 */
+/** 删除模型后清理 registry 顶层引用（lastUsed + 槽位 + 子agent 候选）。返回新 registry。 */
 export function clearModelReferences(
   r: LlmRegistry,
   removedIds: Set<string>,
@@ -310,6 +342,8 @@ export function clearModelReferences(
     lastUsedModelId:
       r.lastUsedModelId && removedIds.has(r.lastUsedModelId) ? '' : r.lastUsedModelId,
     slots: clearSlotsForRemoved(r.slots, removedIds),
+    // 指向被删模型的候选整条移除（与槽位清理同口径）
+    subagentModels: (r.subagentModels ?? []).filter((c) => !removedIds.has(c.modelId)),
   };
 }
 

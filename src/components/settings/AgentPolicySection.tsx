@@ -777,6 +777,7 @@ export function AgentPolicySection() {
                               channels: [],
                               models: [],
                               slots: { modelApprovalModelId: '', summarizerModelId: '' },
+                              subagentModels: [],
                               netPolicy: {
                                 maxRetries: 1,
                                 retryDelaySecs: 5,

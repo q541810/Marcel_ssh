@@ -742,6 +742,7 @@ function emptyRegistryFallback(): LlmRegistry {
     channels: [],
     models: [],
     slots: { modelApprovalModelId: '', summarizerModelId: '' },
+    subagentModels: [],
     netPolicy: {
       maxRetries: 1,
       retryDelaySecs: 5,

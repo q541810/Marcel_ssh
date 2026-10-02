@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
-import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelSlots, NetPolicy } from '@/lib/types';
+import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelSlots, NetPolicy, SubagentModelChoice } from '@/lib/types';
 import Select, { type SelectGroup } from '@/components/ui/Select';
 import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
@@ -15,6 +15,8 @@ import {
   removeChannel,
   modelOptionsByChannel,
   mergeChannelModels,
+  candidateRowModelLabel,
+  emptyRegistry,
 } from '@/lib/llmRegistry';
 
 /** 从注册表生成槽位选择器的选项（按渠道分组）。 */
@@ -26,18 +28,8 @@ export function ModelServiceSection() {
   const { settings, update } = useSettingsActions();
   const channelKeyStatus = useSettingsStore((s) => s.channelKeyStatus);
 
-  const registry: LlmRegistry = settings.llmRegistry ?? {
-    channels: [],
-    models: [],
-    slots: { modelApprovalModelId: '', summarizerModelId: '' },
-    netPolicy: {
-      maxRetries: 1,
-      retryDelaySecs: 5,
-      retryHttpStatuses: '408, 429, 500-599',
-      firstByteTimeoutSecs: 60,
-      retryOnTimeout: true,
-    },
-  };
+  // llmRegistry.ts 的权威 emptyRegistry（不再手抄第 4 份空注册表字面量）
+  const registry: LlmRegistry = settings.llmRegistry ?? emptyRegistry();
   const slots: ModelSlots = registry.slots;
   const netPolicy: NetPolicy = registry.netPolicy;
 
@@ -68,10 +60,79 @@ export function ModelServiceSection() {
     [options],
   );
 
+  // ── 子agent 模型候选（主 agent 派发子agent 时的可选项） ──
+  const subagentChoices: SubagentModelChoice[] = (registry.subagentModels ?? []).filter(
+    (c) => c && typeof c.modelId === 'string',
+  );
+
+  const updateSubagentChoice = (index: number, patch: Partial<SubagentModelChoice>) => {
+    updateRegistry({
+      ...registry,
+      subagentModels: subagentChoices.map((c, i) => (i === index ? { ...c, ...patch } : c)),
+    });
+  };
+
+  const addSubagentChoice = () => {
+    // 新行预选第一个**未被其他行占用**的模型：不让同一模型出现在两条候选里
+    // （后端保存时也只保留首条——重复根本不该在 UI 上发生）
+    const occupied = new Set(subagentChoices.map((c) => c.modelId));
+    const firstFree = options.flatMap((g) => g.options).find((o) => !occupied.has(o.value));
+    updateRegistry({
+      ...registry,
+      subagentModels: [...subagentChoices, { modelId: firstFree?.value ?? '', description: '' }],
+    });
+  };
+
+  const removeSubagentChoice = (index: number) => {
+    updateRegistry({
+      ...registry,
+      subagentModels: subagentChoices.filter((_, i) => i !== index),
+    });
+  };
+
+  // 「添加候选」还有没有意义：无可用模型 → 提示先加渠道；全部模型已被占用 →
+  // 提示清单已满；两者之外才显示按钮。
+  const availableForNew = (() => {
+    const occupied = new Set(subagentChoices.map((c) => c.modelId));
+    return options.flatMap((g) => g.options).filter((o) => !occupied.has(o.value));
+  })();
+
+  // 候选行可选项：启用渠道的全部模型，**排除已被其他行占用的**；当前行自己
+  // 的 value 若指向禁用渠道/被占用（只可能来自手改配置），补一个禁用选项让
+  // 它仍可辨识，而不是回落成 placeholder 看起来像没选。
+  const subagentRowOptions = (index: number, choice: SubagentModelChoice) => {
+    const occupiedElsewhere = new Set(
+      subagentChoices.filter((_, i) => i !== index).map((c) => c.modelId),
+    );
+    const groups = options
+      .map((g) => ({
+        ...g,
+        options: g.options.filter((o) => !occupiedElsewhere.has(o.value)),
+      }))
+      .filter((g) => g.options.length > 0);
+    if (!choice.modelId || groups.some((g) => g.options.some((o) => o.value === choice.modelId))) {
+      return groups;
+    }
+    const label = candidateRowModelLabel(registry, choice.modelId, occupiedElsewhere);
+    return [
+      ...groups,
+      {
+        value: choice.modelId,
+        label: label ?? '已失效的模型',
+        disabled: true,
+      },
+    ];
+  };
+
   const handleChannelSave = (channel: ChannelConfig, channelModels: ModelEntry[]) => {
     // 本渠道模型整体替换为草稿 + 按 id 去重 + 槽位/最近使用清理（桌面/移动端共用）
     updateRegistry(mergeChannelModels(registry, channel, channelModels));
   };
+
+  // 「添加候选」三态的判定基底：有启用渠道下的可用模型，才有资格谈占用/满员。
+  const hasEnabledChannelModels = registry.channels.some(
+    (ch) => ch.enabled && modelsOfChannel(registry, ch.id).length > 0,
+  );
 
   const handleDeleteChannel = (channel: ChannelConfig) => {
     updateRegistry(removeChannel(registry, channel.id));
@@ -93,6 +154,62 @@ export function ModelServiceSection() {
           placeholder="跟随会话模型"
           className="w-72"
         />
+      </SettingItem>
+
+      <SettingItem
+        id="llm-subagent-models"
+        label="子agent 模型候选"
+        description="主 agent 派发子agent 时可从这份清单按任务难度自选模型，每条写一句适用场景作为选型提示。未配置时，子agent 恒使用当前会话的模型"
+        sectionId="settings-llm"
+        keywords={['subagent', '子agent', '子代理', '候选', '派发', '选型', '模型']}
+      >
+        <div className="flex-1 min-w-0 space-y-2">
+          {subagentChoices.length === 0 ? (
+            <p className="text-xs text-zinc-500">
+              清单为空：子agent 跟随当前会话的模型。添加候选后，主 agent 会按描述自行选型。
+            </p>
+          ) : (
+            subagentChoices.map((choice, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Select
+                  value={choice.modelId}
+                  onChange={(v) => updateSubagentChoice(i, { modelId: v })}
+                  options={subagentRowOptions(i, choice)}
+                  placeholder="选择模型"
+                  className="w-56 flex-shrink-0"
+                />
+                <input
+                  type="text"
+                  value={choice.description}
+                  onChange={(e) => updateSubagentChoice(i, { description: e.target.value })}
+                  placeholder="选型提示，如：小模型，适合搜索等简单任务"
+                  className="flex-1 min-w-0 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeSubagentChoice(i)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-800 hover:bg-zinc-700 transition-colors flex-shrink-0"
+                  title="移除该候选"
+                >
+                  移除
+                </button>
+              </div>
+            ))
+          )}
+          {hasEnabledChannelModels ? (
+            availableForNew.length > 0 ? (
+              <Button size="sm" onClick={addSubagentChoice}>
+                + 添加候选
+              </Button>
+            ) : (
+              <p className="text-xs text-zinc-600">全部可用模型都已在清单里。</p>
+            )
+          ) : registry.models.length > 0 ? (
+            <p className="text-xs text-zinc-600">所有渠道均已禁用，启用后才能配置候选。</p>
+          ) : (
+            <p className="text-xs text-zinc-600">先在下方添加渠道与模型，才能配置候选。</p>
+          )}
+        </div>
       </SettingItem>
 
       <SettingItem id="llm-context-window" label="模型上下文窗口 (tokens)" description="留空或 0 = 仅在模型报告上下文超限时压缩旧历史；填写后按窗口的 80% 阈值预防式压缩。模型可单独设置，优先于这里的全局值" sectionId="settings-llm" keywords={['context', '上下文', 'token', '窗口', 'window', '压缩', 'compaction']}>

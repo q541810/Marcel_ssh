@@ -204,3 +204,58 @@ describe('mergeChannelModels (fix: no more same-id duplication on channel save)'
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+describe('subagentModels cascade cleanup (子agent 候选随模型/渠道删除级联)', () => {
+  function regWithChoices(): LlmRegistry {
+    const r = regWithTwoModels();
+    r.subagentModels = [
+      { modelId: r.models[0].id, description: '小模型，适合搜索' },
+      { modelId: r.models[1].id, description: '' },
+    ];
+    return r;
+  }
+
+  it('removeModel removes choices pointing at it, keeps the rest', () => {
+    const r = regWithChoices();
+    const next = removeModel(r, r.models[0].id);
+    expect(next.subagentModels).toHaveLength(1);
+    expect(next.subagentModels?.[0].modelId).toBe(r.models[1].id);
+  });
+
+  it('removeChannel cascades choices of that channel away', () => {
+    const r = regWithChoices();
+    const next = removeChannel(r, r.channels[0].id);
+    expect(next.subagentModels).toHaveLength(0);
+  });
+
+  it('mergeChannelModels drops choices of models removed from the draft', () => {
+    const r = regWithChoices();
+    const ch = r.channels[0];
+    // 草稿里只保留第二个模型（第一个被删）
+    const next = mergeChannelModels(r, ch, [r.models[1]]);
+    expect(next.subagentModels).toHaveLength(1);
+    expect(next.subagentModels?.[0].modelId).toBe(r.models[1].id);
+  });
+
+  it('emptyRegistry defaults to an empty choice list (feature off)', () => {
+    const r = emptyRegistry();
+    expect(r.subagentModels).toEqual([]);
+  });
+});
+
+describe('subagentModels cross-channel retention', () => {
+  it('mergeChannelModels keeps choices pointing at models of OTHER channels', () => {
+    const r = emptyRegistry();
+    const chA = createChannel('A', 'https://a.example.com');
+    const chB = createChannel('B', 'https://b.example.com');
+    r.channels.push(chA, chB);
+    const ma = createModel(chA.id, 'model-a');
+    const mb = createModel(chB.id, 'model-b');
+    r.models.push(ma, mb);
+    r.subagentModels = [{ modelId: mb.id, description: 'B 渠道的候选' }];
+    // 编辑 A 渠道（其模型 id 不变、内容替换），B 渠道的候选必须原样保留
+    const next = mergeChannelModels(r, chA, [{ ...createModel(chA.id, 'model-a2'), id: ma.id }]);
+    expect(next.subagentModels).toHaveLength(1);
+    expect(next.subagentModels?.[0].modelId).toBe(mb.id);
+  });
+});
