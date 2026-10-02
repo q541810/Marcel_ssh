@@ -79,20 +79,16 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
   },
 ];
 
-export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = {
-  interface: ['settings-appearance', 'settings-display'],
-  model: ['settings-llm'],
-  agent: [
-    'settings-command-policy',
-    'settings-agent-system-prompt',
-    'settings-notification',
-  ],
-  tools: ['settings-experimental'],
-  transfer: ['settings-transfer'],
-  plugins: ['settings-plugins'],
-  market: ['settings-market'],
-  about: ['settings-about'],
-};
+/**
+ * `分类 id → section id 列表` 的查表形式。
+ *
+ * **从 `SETTINGS_CATEGORIES` 派生**，不再手写第二份：两份列表一旦漂移，
+ * 症状是「某个 section 在分类里能看到、搜索却搜不到」（或反过来），
+ * 而且加 section 时很容易只改一处。派生之后新增 section 只有一个地方要动。
+ */
+export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = Object.fromEntries(
+  SETTINGS_CATEGORIES.map((category) => [category.id, category.sections]),
+);
 
 export function getSettingsCategoryLabel(id: string) {
   return SETTINGS_CATEGORIES.find((category) => category.id === id)?.label ?? '设置';
