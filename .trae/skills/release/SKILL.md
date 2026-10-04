@@ -301,7 +301,7 @@ gh release upload v{version} "src-tauri\gen\android\app\build\outputs\apk\univer
 
 未发布平台的资产**不要上传**（与 `latest.json` 字段保持一致，避免用户跳转到该 release 却找不到对应平台的包）。
 
-> **上传后必须核对真实资产名**：`gh release upload` 的 `路径#目标名` 重命名在部分 shell 下**不会生效**（实测 PowerShell 里会静默按原文件名上传，APK 就叫 `app-universal-release.apk`）。上传完立刻 `gh release view v{version} --json assets` 看实际名字，`latest.json` 的 `installer_url` **按核对后的真实文件名**拼；名字对不上 = 客户端下载 404、更新直接失败。Windows 安装包经 gh 上传后空格会变成点（`Marcel.SSH_{version}_x64-setup.exe`），照实写进 URL 即可；要保留 `Marcel-SSH_...apk` 这种名字，就先把文件本地复制成目标名再上传。
+> **先上传、再填 `latest.json` 的资产字段**（顺序反了就得像 v1.6.0 那次一样补一个 commit 改 URL）。**上传后必须核对真实资产名**：`gh release upload` 的 `路径#目标名` 重命名在部分 shell 下**不会生效**（实测 PowerShell 里会静默按原文件名上传，APK 就叫 `app-universal-release.apk`）。上传完立刻 `gh release view v{version} --json assets` 看实际名字，`latest.json` 的 `installer_url` **按核对后的真实文件名**拼；名字对不上 = 客户端下载 404、更新直接失败。Windows 安装包经 gh 上传后空格会变成点（`Marcel.SSH_{version}_x64-setup.exe`），照实写进 URL 即可；要保留 `Marcel-SSH_...apk` 这种名字，就先把文件本地复制成目标名再上传。
 
 ### 10. 发布后强制验证
 
