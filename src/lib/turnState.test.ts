@@ -5,15 +5,16 @@ import { TURN_STATES } from './types';
  * 后端源码。用 vite 的 raw glob 读进来做文本比对：本仓库没装 @types/node，
  * 测试里不引 node API（与 `disposition.test.ts` / `toolCatalog.test.ts` 同一手法）。
  * - `task.rs`：`TurnState` 枚举（变体名 / 序列化大小写）
- * - `conversation.rs`：`StoredMessage`（字段名与线名）
+ * - `conversation/messages.rs`：`StoredMessage`（字段名与线名；conversation.rs
+ *   已拆为目录模块，消息行形状在 messages.rs）
  */
 const RUST = import.meta.glob(
-  ['/src-tauri/src/agent/task.rs', '/src-tauri/src/agent/conversation.rs'],
+  ['/src-tauri/src/agent/task.rs', '/src-tauri/src/agent/conversation/messages.rs'],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>;
 
 const rustSource = RUST['/src-tauri/src/agent/task.rs'] ?? '';
-const dbSource = RUST['/src-tauri/src/agent/conversation.rs'] ?? '';
+const dbSource = RUST['/src-tauri/src/agent/conversation/messages.rs'] ?? '';
 
 /** 抽 `pub enum TurnState { … }` 的头部与变体名（每个变体独占一行）。 */
 function parseRustTurnState(src: string): { header: string; variants: string[] } {
@@ -54,7 +55,7 @@ describe('TurnState 与后端的对齐', () => {
     // 或把结构体的 rename_all 去掉，读到的就是 undefined —— 静默退回
     // 「没有记录」，本次修复等于没做。这条把线名钉住。
     const structStart = dbSource.indexOf('pub struct StoredMessage {');
-    expect(structStart, 'conversation.rs 里找不到 StoredMessage').toBeGreaterThan(-1);
+    expect(structStart, 'conversation/messages.rs 里找不到 StoredMessage').toBeGreaterThan(-1);
     const structHead = dbSource.slice(Math.max(0, structStart - 200), structStart);
     expect(structHead).toContain('#[serde(rename_all = "camelCase")]');
     expect(dbSource.slice(structStart)).toContain('pub turn_state: Option<String>');
