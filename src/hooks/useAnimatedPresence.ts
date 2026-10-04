@@ -4,7 +4,7 @@ export type PresencePhase = 'enter' | 'exit';
 
 type AnimationEndLike = { target?: unknown; currentTarget?: unknown };
 
-interface AnimatedPresence {
+export interface AnimatedPresence {
   /** Keep the element mounted while true (covers the exit animation). */
   mounted: boolean;
   /** Current phase; use to pick the -enter / -exit animation class. */

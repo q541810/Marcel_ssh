@@ -6,15 +6,10 @@ import {
   useCallback,
 } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Pin } from "lucide-react";
+import * as tauri from "@/lib/tauri";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
-import { useJobStore } from "@/stores/jobStore";
-import { getConversationAgentStatus, taskCenterEntry } from "@/stores/agentStatusSelectors";
-import { AgentStatusIndicator } from "./AgentStatusIndicator";
 import { AgentTasksDrawer } from "./AgentTasksDrawer";
-import { ContextMeterRing } from "./ContextMeterRing";
-import { TokenUsagePanel } from "./TokenUsagePanel";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
 import { useSessionStore } from "@/stores/sessionStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -25,87 +20,39 @@ import {
 } from "@/stores/conversationStore";
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { isLocalSessionId } from "@/lib/toolCatalog";
-import { AGENT_MODES } from "@/lib/constants";
-import { groupConversationsWithPinned } from "@/lib/dateGrouping";
-import { getErrorMessage } from "@/lib/errors";
-import { currentVision, effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
-import { contextMeterView, formatPercent } from "@/lib/tokenUsage";
-import type { AgentMode, AgentMessage } from "@/lib/types";
+import { currentVision } from "@/lib/llmRegistry";
+import type { AgentMessage } from "@/lib/types";
 import {
   type PendingImage,
   revokePendingImages,
-  compressImageFile,
   pendingImageFromDataUrl,
-  deletePersistedImagePaths,
   MAX_ATTACH_IMAGES,
 } from "@/lib/imageAttach";
-import {
-  classifyAttachment,
-  blobToText,
-  wrapTextAttachment,
-  base64ToBlob,
-  readLocalAttachment,
-  resolveAttachmentName,
-  MAX_TEXT_FILE_BYTES,
-} from "@/lib/attachmentAttach";
-import { open } from "@tauri-apps/plugin-dialog";
-import * as tauri from "@/lib/tauri";
-import { bus } from "@/plugins/injection/bus";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
-import MultiHostPicker from "./MultiHostPicker";
 import AgentTranscript from "./AgentTranscript";
-import { AgentDraft, AgentTextarea } from "./AgentDraft";
 import { isCommandDraft } from "./agentCommandEntries";
 import PlanList from "./PlanList";
-import AgentCommandMenu, {
-  type AgentCommandMenuHandle,
-} from "./AgentCommandMenu";
-import { ReasoningEffortPicker } from "./ReasoningEffortPicker";
-import { DEBUG_REASONING_EFFORTS, useDebugStore } from "@/stores/debugStore";
-
-// ── Plugin input-activity bridge ──────────────────────────────────────
-// Emits `ui://input-activity` (typing bool only — never the content) so
-// plugins such as a desktop pet can reflect "user is typing". Throttled:
-// only fires on state change, and auto-resets to false after 600ms idle.
-let __inputActivityTimer: number | null = null;
-let __lastTypingState = false;
-function emitInputActivity(typing: boolean) {
-  if (typing === __lastTypingState) return;
-  __lastTypingState = typing;
-  bus.emit("ui://input-activity", { typing });
-}
-function notifyInputTyping() {
-  emitInputActivity(true);
-  if (__inputActivityTimer !== null) window.clearTimeout(__inputActivityTimer);
-  __inputActivityTimer = window.setTimeout(() => emitInputActivity(false), 600);
-}
-function notifyInputStopped() {
-  if (__inputActivityTimer !== null) {
-    window.clearTimeout(__inputActivityTimer);
-    __inputActivityTimer = null;
-  }
-  emitInputActivity(false);
-}
+import type { AgentCommandMenuHandle } from "./AgentCommandMenu";
+import { notifyInputStopped } from "./panel/inputActivity";
+import { useAgentPanelAttachments } from "./panel/useAgentPanelAttachments";
+import { AgentPanelHeader } from "./panel/AgentPanelHeader";
+import { AgentHistoryDrawer } from "./panel/AgentHistoryDrawer";
+import { AgentComposer } from "./panel/AgentComposer";
+import { SubconversationBar } from "./panel/SubconversationBar";
+import { RollbackNoticeBar } from "./panel/RollbackNoticeBar";
 
 export default function AgentPanel() {
-  const [modeDrawerOpen, setModeDrawerOpen] = useState(false);
-  const modeDrawerPresence = useAnimatedPresence(modeDrawerOpen);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const historyDrawerPresence = useAnimatedPresence(historyDrawerOpen);
   const [tasksDrawerOpen, setTasksDrawerOpen] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [tokenPopoverOpen, setTokenPopoverOpen] = useState(false);
   const [rollbackNotice, setRollbackNotice] = useState<string | null>(null);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [attachHint, setAttachHint] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const [tasksDrawerTab, setTasksDrawerTab] = useState<'agents' | 'jobs'>('agents');
   /** 用户主动发送后允许一次强制贴底；流式更新只跟随近底区。 */
   const userJustSentRef = useRef(false);
-  const drawerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<AgentCommandMenuHandle>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
-  const attachHintTimerRef = useRef<number | null>(null);
   const sendingRef = useRef(false);
   const activeSession = useSessionStore((s) => {
     return s.activeSessionId ? (s.sessions[s.activeSessionId] ?? null) : null;
@@ -124,7 +71,6 @@ export default function AgentPanel() {
     activeConversationId,
     newConversation,
     switchConversation,
-    loadConversation,
     renameConversation,
     deleteConversation,
     setConversationPinned,
@@ -155,9 +101,6 @@ export default function AgentPanel() {
   );
 
   const canInteract = activeSession?.status === "connected";
-  const forceReasoningEffortPicker = useDebugStore(
-    (s) => s.forceReasoningEffortPicker,
-  );
 
   // 当前对话是否为子agent对话（subagent 工具派发）：输入区替换为"返回主对话"条
   const activeConversation = activeConversationId
@@ -191,6 +134,13 @@ export default function AgentPanel() {
   const registry = useSettingsStore((s) => s.settings.llmRegistry);
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
 
+  const attachments = useAgentPanelAttachments({
+    visionEnabled,
+    canInteract,
+    activeConversationId,
+    setInput,
+  });
+
   const handleBackToParent = useCallback(() => {
     if (parentConversationId) {
       void switchConversation(parentConversationId);
@@ -207,336 +157,14 @@ export default function AgentPanel() {
     void syncActiveToConnection(activeConfigId, activeSessionId);
   }, [activeConfigId, activeSessionId, syncActiveToConnection]);
 
-  useEffect(() => {
-    if (!modeDrawerOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (drawerRef.current && !drawerRef.current.contains(e.target as Node)) {
-        setModeDrawerOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [modeDrawerOpen]);
-
   useEffect(
     () => () => {
       if (rollbackNoticeTimerRef.current !== null) {
         window.clearTimeout(rollbackNoticeTimerRef.current);
       }
-      if (attachHintTimerRef.current !== null) {
-        window.clearTimeout(attachHintTimerRef.current);
-      }
     },
     [],
   );
-
-  const showAttachHint = useCallback((msg: string) => {
-    setAttachHint(msg);
-    if (attachHintTimerRef.current !== null) {
-      window.clearTimeout(attachHintTimerRef.current);
-    }
-    attachHintTimerRef.current = window.setTimeout(() => {
-      setAttachHint(null);
-      attachHintTimerRef.current = null;
-    }, 3200);
-  }, []);
-
-  const deletePersistedPaths = useCallback(
-    async (paths: Array<string | undefined | null>) => {
-      await deletePersistedImagePaths(paths, tauri.agentDeleteMessageImage);
-    },
-    [],
-  );
-
-  /** 清空预览；deleteDisk=true 时删除撤回恢复的落盘图 */
-  const clearPendingImages = useCallback(
-    (options?: { deleteDisk?: boolean }) => {
-      const deleteDisk = options?.deleteDisk ?? false;
-      setPendingImages((prev) => {
-        if (deleteDisk) {
-          void deletePersistedPaths(prev.map((p) => p.persistedPath));
-        }
-        revokePendingImages(prev);
-        return [];
-      });
-    },
-    [deletePersistedPaths],
-  );
-
-  const removePendingImage = useCallback(
-    (id: string) => {
-      setPendingImages((prev) => {
-        const target = prev.find((p) => p.id === id);
-        if (target?.persistedPath) {
-          void deletePersistedPaths([target.persistedPath]);
-        }
-        if (target) revokePendingImages([target]);
-        return prev.filter((p) => p.id !== id);
-      });
-    },
-    [deletePersistedPaths],
-  );
-
-  // 切换对话/主机时丢掉草稿附件，避免把 A 的撤回图带到 B
-  const prevConversationIdRef = useRef<string | null | undefined>(undefined);
-  useEffect(() => {
-    const prev = prevConversationIdRef.current;
-    prevConversationIdRef.current = activeConversationId;
-    if (prev === undefined) return; // 首次挂载
-    if (prev === activeConversationId) return;
-    clearPendingImages({ deleteDisk: true });
-  }, [activeConversationId, clearPendingImages]);
-
-  // Vision OFF：清空已挂起图片并删落盘图（未保留在预览）
-  useEffect(() => {
-    if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages({ deleteDisk: true });
-      showAttachHint("当前模型未开启「视觉 / 支持图片」");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
-  }, [visionEnabled]);
-
-  /** 追加文本附件到输入框草稿（带文件名标记），并保持输入框自动增高。 */
-  const appendTextAttachment = useCallback(
-    (text: string) => {
-      setInput((prev) => (prev ? prev + text : text));
-      requestAnimationFrame(() => {
-        notifyInputTyping();
-      });
-    },
-    [setInput],
-  );
-
-  /** 统一处理一组本地 File（拖拽 / 粘贴）：图片 → 预览区，文本 → 插入输入框。 */
-  const handleFileObjects = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
-
-      const imageFiles: File[] = [];
-      const textFiles: File[] = [];
-      const unsupported: string[] = [];
-      for (const f of files) {
-        const kind = classifyAttachment(f.name, f.type);
-        if (kind === "image") imageFiles.push(f);
-        else if (kind === "text") textFiles.push(f);
-        else unsupported.push(f.name);
-      }
-
-      // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
-      if (unsupported.length > 0) {
-        const shown = unsupported.slice(0, 3).join("、");
-        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
-        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
-      }
-
-      // 图片 → 预览（与 ctrl+v 完全同路径）；vision 关闭时跳过图片，文本照常处理
-      if (imageFiles.length > 0) {
-        if (!visionEnabled) {
-          clearPendingImages({ deleteDisk: true });
-          showAttachHint("当前模型未开启「视觉 / 支持图片」");
-        } else {
-          const room = MAX_ATTACH_IMAGES - pendingImages.length;
-          const added: PendingImage[] = [];
-          for (const file of imageFiles.slice(0, room)) {
-            try {
-              const { dataUrl, previewUrl } = await compressImageFile(file);
-              added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
-            } catch {
-              // skip broken files
-            }
-          }
-          if (added.length > 0) {
-            setPendingImages((prev) =>
-              [...prev, ...added].slice(0, MAX_ATTACH_IMAGES),
-            );
-          }
-          if (imageFiles.length > room) {
-            showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张，已忽略多余图片`);
-          }
-        }
-      }
-
-      // 文本 → 输入框
-      for (const file of textFiles) {
-        if (file.size > MAX_TEXT_FILE_BYTES) {
-          showAttachHint(
-            `「${file.name}」超过 ${Math.round(MAX_TEXT_FILE_BYTES / 1024 / 1024)}MB，已跳过`,
-          );
-          continue;
-        }
-        try {
-          const content = await blobToText(file);
-          appendTextAttachment(wrapTextAttachment(file.name, content));
-        } catch {
-          showAttachHint(`读取「${file.name}」失败`);
-        }
-      }
-    },
-    [
-      visionEnabled,
-      pendingImages.length,
-      clearPendingImages,
-      showAttachHint,
-      appendTextAttachment,
-    ],
-  );
-
-  /** 统一处理一组本地路径（文件选择器返回）：图片 → 预览区，文本 → 插入输入框。 */
-  const handleAttachmentPaths = useCallback(
-    async (paths: string[]) => {
-      if (paths.length === 0) return;
-
-      const imagePaths: string[] = [];
-      const textPaths: string[] = [];
-      const unsupported: string[] = [];
-      // 先把每条路径的展示名解析出来（content:// URI 必须经后端 ContentResolver
-      // 查 DISPLAY_NAME，不能用 split('/').pop() 拿 document id），再按真实扩展名分拣。
-      // 否则 Android 上 .jpg 会被误判为文本，整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
-      const resolved: { path: string; name: string; kind: ReturnType<typeof classifyAttachment> }[] =
-        await Promise.all(
-          paths.map(async (p) => {
-            const name = await resolveAttachmentName(p);
-            return { path: p, name, kind: classifyAttachment(name) };
-          }),
-        );
-      for (const { path: p, name, kind } of resolved) {
-        if (kind === "image") imagePaths.push(p);
-        else if (kind === "text") textPaths.push(p);
-        else unsupported.push(name);
-      }
-
-      // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
-      if (unsupported.length > 0) {
-        const shown = unsupported.slice(0, 3).join("、");
-        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
-        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
-      }
-
-      // 图片 → 预览（读本地 → 压缩，与 ctrl+v 同链路）；vision 关闭时跳过图片，文本照常处理
-      if (imagePaths.length > 0) {
-        if (!visionEnabled) {
-          clearPendingImages({ deleteDisk: true });
-          showAttachHint("当前模型未开启「视觉 / 支持图片」");
-        } else {
-          const room = MAX_ATTACH_IMAGES - pendingImages.length;
-          const added: PendingImage[] = [];
-          for (const p of imagePaths.slice(0, room)) {
-            try {
-              const { base64 } = await readLocalAttachment(p);
-              const blob = base64ToBlob(base64, "image/*");
-              const { dataUrl, previewUrl } = await compressImageFile(blob);
-              added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
-            } catch {
-              // skip broken files
-            }
-          }
-          if (added.length > 0) {
-            setPendingImages((prev) =>
-              [...prev, ...added].slice(0, MAX_ATTACH_IMAGES),
-            );
-          }
-          if (imagePaths.length > room) {
-            showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张，已忽略多余图片`);
-          }
-        }
-      }
-
-      // 文本 → 输入框
-      for (const p of textPaths) {
-        try {
-          const { name, base64, size } = await readLocalAttachment(p);
-          if (size > MAX_TEXT_FILE_BYTES) {
-            showAttachHint(
-              `「${name}」超过 ${Math.round(MAX_TEXT_FILE_BYTES / 1024 / 1024)}MB，已跳过`,
-            );
-            continue;
-          }
-          const content = await blobToText(base64ToBlob(base64));
-          appendTextAttachment(wrapTextAttachment(name, content));
-        } catch {
-          const name = p.split(/[/\\]/).pop() || p;
-          showAttachHint(`读取「${name}」失败`);
-        }
-      }
-    },
-    [
-      visionEnabled,
-      pendingImages.length,
-      clearPendingImages,
-      showAttachHint,
-      appendTextAttachment,
-    ],
-  );
-
-  /** 附件按钮：系统文件选择器（图片 / 文本 / 所有文件）。 */
-  const handleAttach = useCallback(async () => {
-    if (!canInteract) return;
-    try {
-      const selected = await open({
-        multiple: true,
-        title: "添加图片和文件",
-        filters: [
-          {
-            name: "图片",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"],
-          },
-          {
-            name: "文本",
-            extensions: [
-              "md", "txt", "log", "json", "yml", "yaml", "xml", "csv",
-              "ini", "conf", "sh", "py", "js", "ts", "html", "css",
-              "sql", "toml", "svg",
-            ],
-          },
-          { name: "所有文件", extensions: ["*"] },
-        ],
-      });
-      if (!selected) return;
-      const paths = Array.isArray(selected) ? selected : [selected];
-      await handleAttachmentPaths(paths);
-    } catch {
-      showAttachHint("打开文件选择器失败");
-    }
-  }, [canInteract, handleAttachmentPaths, showAttachHint]);
-
-  const handlePaste = async (e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.kind !== "file") continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      // 图片或文本文件才接管粘贴（普通文本粘贴走系统默认）
-      const kind = classifyAttachment(file.name, file.type);
-      if (kind === "image" || kind === "text") files.push(file);
-    }
-    if (files.length === 0) return;
-    e.preventDefault();
-    await handleFileObjects(files);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    if (!e.dataTransfer?.types?.includes("Files")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    if (!canInteract) return;
-    const files = e.dataTransfer?.files;
-    if (!files || files.length === 0) return;
-    await handleFileObjects(Array.from(files));
-  };
 
   const handleSend = async () => {
     // 压缩中把消息发出去 = 消息会被随后落下的压缩卡盖到后面、再被归档边界
@@ -544,11 +172,11 @@ export default function AgentPanel() {
     // 判定；屏幕上常驻的原因说明负责让用户知道为什么没反应。
     if (isRunning || isCompacting || sendingRef.current) return;
     const prompt = useTaskStore.getState().inputDraft.trim();
-    const images = visionEnabled ? pendingImages : [];
+    const images = visionEnabled ? attachments.pendingImages : [];
     if ((!prompt && images.length === 0) || !canInteract) return;
-    if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages({ deleteDisk: true });
-      showAttachHint("当前模型未开启「视觉 / 支持图片」");
+    if (!visionEnabled && attachments.pendingImages.length > 0) {
+      attachments.clearPendingImages({ deleteDisk: true });
+      attachments.showAttachHint("当前模型未开启「视觉 / 支持图片」");
       return;
     }
     sendingRef.current = true;
@@ -561,7 +189,7 @@ export default function AgentPanel() {
     setInput("");
     notifyInputStopped();
     // 只清 UI 状态，blob URL 等成功后再 revoke；save 失败可原样回滚
-    setPendingImages([]);
+    attachments.setPendingImages([]);
     try {
       await sendPrompt(
         activeSessionId!,
@@ -581,7 +209,7 @@ export default function AgentPanel() {
       }
       // save 失败或其它：恢复输入与预览，旧落盘图保留
       setInput(prompt);
-      setPendingImages(snapshotImages);
+      attachments.setPendingImages(snapshotImages);
       userJustSentRef.current = false;
       requestAnimationFrame(() => {
         inputRef.current?.focus();
@@ -667,7 +295,7 @@ export default function AgentPanel() {
       setInput(result.prompt);
 
       // 先清当前预览（若有撤回恢复的落盘图也删掉）
-      clearPendingImages({ deleteDisk: true });
+      attachments.clearPendingImages({ deleteDisk: true });
       const paths = result.imagePaths?.length
         ? result.imagePaths
         : (message.imagePaths ?? []);
@@ -688,17 +316,17 @@ export default function AgentPanel() {
           failedPaths.push(...paths.slice(MAX_ATTACH_IMAGES));
         }
         if (failedPaths.length > 0) {
-          void deletePersistedPaths(failedPaths);
+          void attachments.deletePersistedPaths(failedPaths);
         }
         if (restored.length > 0) {
-          setPendingImages(restored);
+          attachments.setPendingImages(restored);
         } else if (paths.length > 0) {
-          showAttachHint("原消息图片恢复失败");
+          attachments.showAttachHint("原消息图片恢复失败");
         }
       } else if (paths.length > 0 && !visionEnabled) {
         // 未回到预览：清磁盘
-        void deletePersistedPaths(paths);
-        showAttachHint("当前模型未开启「视觉 / 支持图片」，图片未恢复");
+        void attachments.deletePersistedPaths(paths);
+        attachments.showAttachHint("当前模型未开启「视觉 / 支持图片」，图片未恢复");
       }
 
       showRollbackNotice(result.removedCount);
@@ -710,8 +338,7 @@ export default function AgentPanel() {
     }
   }, [
     activeConversationId, isRunning, isCompacting, rollbackToMessage, setInput,
-    clearPendingImages, visionEnabled, deletePersistedPaths, showAttachHint,
-    showRollbackNotice,
+    attachments, visionEnabled, showRollbackNotice,
   ]);
 
   const handleCopyMessage = useCallback(async (message: AgentMessage) => {
@@ -748,233 +375,33 @@ export default function AgentPanel() {
     }
   };
 
-  const handleDeleteConversation = async (
-    e: React.MouseEvent,
-    conversationId: string,
-  ) => {
-    e.stopPropagation();
-    try {
-      await deleteConversation(conversationId);
-    } catch (err) {
-      console.error("Failed to delete conversation:", err);
+  const handleHistoryClick = () => {
+    if (canInteract) {
+      setHistoryDrawerOpen((v) => !v);
+    } else {
+      setShowHistoryModal(true);
     }
   };
 
-  const [editingConvId, setEditingConvId] = useState<string | null>(null);
-  const [editingTitle, setEditingTitle] = useState("");
-  const editInputRef = useRef<HTMLInputElement>(null);
-
-  const startRenameConversation = (
-    e: React.MouseEvent,
-    convId: string,
-    currentTitle: string,
-  ) => {
-    e.stopPropagation();
-    setEditingConvId(convId);
-    setEditingTitle(currentTitle);
+  const handleOpenTaskCenter = (tab: 'agents' | 'jobs') => {
+    setTasksDrawerTab(tab);
+    setTasksDrawerOpen(true);
   };
-
-  const handleSaveRename = async () => {
-    if (!editingConvId) return;
-    const trimmed = editingTitle.trim();
-    if (trimmed) {
-      try {
-        await renameConversation(editingConvId, trimmed);
-      } catch (err) {
-        console.error("Failed to rename conversation:", err);
-      }
-    }
-    setEditingConvId(null);
-    setEditingTitle("");
-  };
-
-  const handleCancelRename = () => {
-    setEditingConvId(null);
-    setEditingTitle("");
-  };
-
-  useEffect(() => {
-    if (editingConvId) {
-      editInputRef.current?.focus();
-      editInputRef.current?.select();
-    }
-  }, [editingConvId]);
-
-  const groupedSessionConversations = useMemo(
-    () => groupConversationsWithPinned(sessionConversations),
-    [sessionConversations],
-  );
-
-  const currentModeInfo =
-    AGENT_MODES.find((m) => m.value === mode) ?? AGENT_MODES[1];
-
-  const jobs = useJobStore((s) => s.jobs);
-  // 占用环读数（百分比 / 未配置窗口的降级都由 `lib/tokenUsage.ts` 定，
-  // 与移动端共用同一份口径）
-  const meter = contextMeterView(activeUsageView?.usage, activeUsageView?.windowTokens);
-  // 任务与作业中心入口的判定与内容（与移动端共用一份，见 taskCenterEntry）
-  const taskCenter = useMemo(
-    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null),
-    [tasks, jobs, activeConversationId],
-  );
-  const [tasksDrawerTab, setTasksDrawerTab] = useState<'agents' | 'jobs'>('agents');
 
   return (
     <div
       data-region="agent-panel"
       className="relative flex flex-col h-full bg-zinc-900"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <h2 className="text-sm font-semibold text-zinc-200">智能助手</h2>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setTokenPopoverOpen((v) => !v)}
-                className={`flex h-5 w-5 items-center justify-center rounded-full transition-colors ${
-                  tokenPopoverOpen ? 'bg-indigo-600/30' : 'hover:bg-zinc-700/70'
-                }`}
-                title={
-                  meter.percent != null
-                    ? `上下文占用 ${formatPercent(meter.percent)}%`
-                    : meter.windowTokens === 0
-                      ? 'Token 用量（未配置上下文窗口）'
-                      : 'Token 用量'
-                }
-                aria-label="Token 用量"
-                aria-expanded={tokenPopoverOpen}
-              >
-                <ContextMeterRing percent={meter.percent} />
-              </button>
-              {tokenPopoverOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-40"
-                  onClick={() => setTokenPopoverOpen(false)}
-                />
-                {/* `text-xs` 是这块面板的字号基准：内部尺寸都用 em 相对它算，
-                    移动端那张 sheet 用 text-sm，两端各自贴合各自的字号体系 */}
-                <div className="absolute top-full left-0 mt-2 w-64 text-xs bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl z-50 p-3 animate-fadeIn">
-                  <div className="mb-2 border-b border-zinc-700 pb-1.5 text-xs font-semibold text-zinc-300">
-                    Token 用量
-                  </div>
-                  <TokenUsagePanel
-                    usage={activeUsageView?.usage}
-                    windowTokens={activeUsageView?.windowTokens ?? 0}
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-          {/* 计数胶囊：并发任务 > 1、运行中任务在别的对话、有后台作业在跑，
-              或**只有**需要用户知道结局的作业（重启恢复出来的 interrupted，
-              那种状态下没有任何 running，唯一的入口就是这里）。 */}
-          {taskCenter.visible && (
-            <button
-              type="button"
-              onClick={() => {
-                setTasksDrawerTab(taskCenter.initialTab);
-                setTasksDrawerOpen(true);
-              }}
-              className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
-                taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
-                  ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
-                  : taskCenter.runningJobs.length > 0
-                    ? 'bg-sky-500/10 hover:bg-sky-500/20 border-sky-500/30 text-sky-300'
-                    : 'bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300'
-              }`}
-              title={
-                taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
-                  ? '有上次运行留下的作业：结局未知，点开查看'
-                  : '查看所有运行中的 Agent 任务与后台作业'
-              }
-            >
-              {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 ? (
-                <svg
-                  className="w-3 h-3 flex-shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-                  />
-                </svg>
-              ) : (
-                <AgentStatusIndicator status="running" size="xs" />
-              )}
-              <span>
-                {taskCenter.runningTasks.length > 0 && `${taskCenter.runningTasks.length} 个任务`}
-                {taskCenter.runningTasks.length > 0 && taskCenter.runningJobs.length > 0 && ' · '}
-                {taskCenter.runningJobs.length > 0 && `${taskCenter.runningJobs.length} 个后台作业`}
-                {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 &&
-                  `${taskCenter.attentionJobs.length} 个作业已中断`}
-              </span>
-              <svg className="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          {/* 多机操控：目标机器选择器（当前机锁定置顶 + 可跨机目标；桌面恒渲染） */}
-          <MultiHostPicker />
-          <button
-            type="button"
-            onClick={handleNewConversation}
-            disabled={!canInteract}
-            className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            title="新建会话"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 4v16m8-8H4"
-              />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (canInteract) {
-                setHistoryDrawerOpen((v) => !v);
-              } else {
-                setShowHistoryModal(true);
-              }
-            }}
-            className="p-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition-colors"
-            title="历史会话"
-          >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-          </button>
-        </div>
-      </div>
+      <AgentPanelHeader
+        activeUsageView={activeUsageView}
+        tasks={tasks}
+        activeConversationId={activeConversationId}
+        canInteract={canInteract}
+        onNewConversation={handleNewConversation}
+        onHistoryClick={handleHistoryClick}
+        onOpenTaskCenter={handleOpenTaskCenter}
+      />
 
       {/* Messages */}
       <AgentTranscript
@@ -1026,581 +453,61 @@ export default function AgentPanel() {
       <PlanList />
 
       {rollbackNotice && (
-        <div className="flex-shrink-0 border-t border-zinc-800 bg-zinc-900/90 backdrop-blur animate-fadeIn">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-amber-200">
-            <div className="flex items-center gap-2 min-w-0">
-              <svg
-                className="w-3.5 h-3.5 flex-shrink-0 text-amber-300"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"
-                />
-              </svg>
-              <span className="truncate">{rollbackNotice}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setRollbackNotice(null)}
-              className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
-              title="关闭"
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
+        <RollbackNoticeBar
+          notice={rollbackNotice}
+          onDismiss={() => setRollbackNotice(null)}
+        />
       )}
 
       {/* Input area */}
       {isSubConversation ? (
-        <div className="p-3 border-t border-zinc-800">
-          <div className="flex items-center gap-3 rounded-lg border border-zinc-700/60 bg-zinc-800/40 px-3 py-2.5">
-            <button
-              type="button"
-              onClick={handleBackToParent}
-              className="flex items-center gap-1.5 flex-shrink-0 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-            >
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M10 19l-7-7m0 0l7-7m-7 7h18"
-                />
-              </svg>
-              返回主对话
-            </button>
-            <div className="flex-1 min-w-0 border-l border-zinc-700/50 pl-3">
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-400">
-                {/* 本机子任务（local_subagent）：这条子对话在用户这台电脑上跑，
-                    没有 SSH 会话。不标的话用户会以为它跑在某台服务器上。 */}
-                {subAgentDispatch.isLocal && (
-                  <span className="flex-shrink-0 rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300">
-                    本机
-                  </span>
-                )}
-                <span className="min-w-0 truncate">
-                  {subAgentMode === "agent" ? "子agent执行" : "子agent调研"} ·{" "}
-                  {activeConversation?.title ?? "子agent对话"}
-                </span>
-              </div>
-              <div className="text-[11px] text-zinc-600 mt-0.5">
-                {subAgentMode === "agent"
-                  ? "此对话由主 Agent 派发，用于读写执行，不支持输入"
-                  : "此对话由主 Agent 派发，仅用于只读调研，不支持输入"}
-              </div>
-            </div>
-          </div>
-        </div>
+        <SubconversationBar
+          subAgentMode={subAgentMode}
+          isLocal={subAgentDispatch.isLocal}
+          title={activeConversation?.title ?? "子agent对话"}
+          onBack={handleBackToParent}
+        />
       ) : (
-        <AgentDraft>{(input) => (
-        <div
-          className="flex-shrink-0 p-3 border-t border-zinc-800"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          {attachHint && (
-            <div className="mb-2 px-2 py-1.5 rounded-md bg-amber-950/60 border border-amber-800/50 text-xs text-amber-200">
-              {attachHint}
-            </div>
-          )}
-          {/* 压缩中常驻的原因说明：发送键这时是「取消压缩」，回车也发不出去，
-              没有这一行用户只会觉得输入框坏了。配色跟随会话里那张进行中卡。 */}
-          {isCompacting && (
-            <div className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded-md bg-violet-950/50 border border-violet-800/50 text-xs text-violet-200">
-              <span className="h-2 w-2 shrink-0 rounded-full bg-violet-400/90" />
-              正在压缩上下文，完成后即可发送（可点右下角取消）
-            </div>
-          )}
-          {pendingImages.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {pendingImages.map((img) => (
-                <div key={img.id} className="relative h-14 w-14">
-                  <img
-                    src={img.previewUrl}
-                    alt=""
-                    className="h-full w-full object-cover rounded-md border border-zinc-600"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removePendingImage(img.id)}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-600 text-zinc-300 hover:text-white hover:bg-red-600 flex items-center justify-center text-[10px] leading-none"
-                    title="移除"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div
-            className={`agent-input relative rounded-2xl bg-zinc-800 border transition-colors focus-within:border-indigo-500 ${
-              dragOver
-                ? "border-indigo-400 ring-1 ring-indigo-500/40"
-                : "border-zinc-700"
-            }`}
-          >
-            {/* `/` 命令面板：锚定输入框上方，键盘事件由面板消费 */}
-            <AgentCommandMenu
-              ref={commandMenuRef}
-              open={commandMenuOpen}
-              query={commandMenuOpen ? input.slice(1) : ""}
-              currentMode={mode}
-              onSelectMode={setMode}
-              onInsertSkill={handleInsertSkill}
-              onCompact={handleCompact}
-              onClose={() => setInput("")}
-            />
-            {/* Input field — 顶部整行，操作工具条移至下方 */}
-            <AgentTextarea
-              ref={inputRef}
-              rows={1}
-              maxHeight={96}
-              onTyping={notifyInputTyping}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                activeSession?.status === "connecting"
-                  ? "正在连接服务器..."
-                  : canInteract
-                    ? "描述您想要做的事情，输入 / 可查看命令..."
-                    : "请先连接到服务器..."
-              }
-              disabled={!canInteract}
-              className="w-full px-4 pt-3 pb-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 bg-transparent outline-none focus:outline-none focus:ring-0 disabled:opacity-50 resize-none max-h-[6rem] overflow-y-auto leading-relaxed"
-            />
-
-            {/* Toolbar：+ 附件 / 模式 / 模型 —— 发送按钮右对齐 */}
-            <div className="flex items-center px-1.5 pb-1.5">
-              {/* + 附件按钮 — 图片/文本文件导入 */}
-              <button
-                type="button"
-                onClick={() => void handleAttach()}
-                disabled={!canInteract}
-                className="flex-shrink-0 p-1.5 -ml-0.5 rounded-full text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700/50 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150 active:scale-90"
-                title="添加图片或文本文件"
-                aria-label="添加图片或文本文件"
-              >
-                <svg
-                  className="w-[18px] h-[18px]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 4v16m8-8H4"
-                  />
-                </svg>
-              </button>
-              {/* Mode selector — 空间不足时可收缩，文案窄时优先让位 */}
-              <div className="relative min-w-0" ref={drawerRef}>
-              <button
-                type="button"
-                onClick={() => setModeDrawerOpen((v) => !v)}
-                className={`
-                flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs font-medium transition-colors rounded-full
-                ${
-                  modeDrawerOpen
-                    ? "bg-zinc-700 text-zinc-100"
-                    : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50"
-                }
-              `}
-                title={currentModeInfo.description}
-                aria-haspopup="listbox"
-                aria-expanded={modeDrawerOpen}
-              >
-                <span className="truncate min-w-0">{currentModeInfo.label}</span>
-                <svg
-                  className={`w-3 h-3 flex-shrink-0 transition-transform duration-200 ${
-                    modeDrawerOpen ? "rotate-180" : ""
-                  }`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 9l-7 7-7-7"
-                  />
-                </svg>
-              </button>
-
-              {modeDrawerPresence.mounted && (
-                <div
-                  role="listbox"
-                  onAnimationEnd={modeDrawerPresence.onAnimationEnd}
-                  className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-zinc-700 bg-zinc-800 shadow-2xl py-1 z-30 ${
-                    modeDrawerPresence.phase === "exit"
-                      ? "mobile-popover-exit"
-                      : "mobile-popover-enter"
-                  }`}
-                >
-                  {AGENT_MODES.map((m) => {
-                    const active = m.value === mode;
-                    return (
-                      <button
-                        key={m.value}
-                        role="option"
-                        aria-selected={active}
-                        onClick={() => {
-                          setMode(m.value as AgentMode);
-                          setModeDrawerOpen(false);
-                        }}
-                        className={`
-                        w-full text-left px-3 py-2 transition-colors
-                        ${
-                          active
-                            ? "bg-indigo-600/20 border-l-2 border-indigo-500"
-                            : "hover:bg-zinc-700 border-l-2 border-transparent"
-                        }
-                      `}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span
-                            className={`text-sm font-semibold ${
-                              active ? "text-indigo-300" : "text-zinc-200"
-                            }`}
-                          >
-                            {m.label}
-                          </span>
-                          {active && (
-                            <span className="text-xs text-indigo-400">
-                              已选
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-zinc-400 mt-0.5">
-                          {m.description}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* 模型设置：模型切换与思考强度合并为一个入口。 */}
-            {(() => {
-              // 生效模型语义：会话记忆 → 全局最近使用 → 首个
-              const effModel = effectiveModel(registry, activeConversation?.modelId);
-              const declaredEfforts = modelReasoningEfforts(effModel);
-              const efforts = declaredEfforts.length > 0
-                ? declaredEfforts
-                : forceReasoningEffortPicker
-                  ? DEBUG_REASONING_EFFORTS
-                  : [];
-              return (
-                <ReasoningEffortPicker
-                  key={`${activeConversationId}:${effModel?.id}`}
-                  value={activeConversation?.reasoningEffort}
-                  efforts={efforts}
-                  modelName={modelLabel(effModel)}
-                  registry={registry}
-                  modelId={activeConversation?.modelId}
-                  onModelChange={(modelId) => {
-                    if (!activeConversationId) return;
-                    void setConversationModel(activeConversationId, modelId);
-                  }}
-                  onChange={(effort) => {
-                    if (!activeConversationId) return;
-                    return setConversationEffort(activeConversationId, effort);
-                  }}
-                  disabled={!canInteract || !activeConversationId}
-                />
-              );
-            })()}
-
-            <div className="flex-1" />
-
-            {/* Send / Stop / Cancel-compaction button — 右下角
-                三态：任务运行中 = 停止（红）；正在压缩上下文 = 取消压缩（紫，
-                压缩不能暂停，这是它唯一的出路）；否则 = 发送。
-                压缩时发送键不能只是「禁用」：那会让用户干等几十秒。 */}
-            <button
-              type="button"
-              onClick={
-                isRunning
-                  ? handleStop
-                  : isCompacting
-                    ? handleCancelCompaction
-                    : handleSend
-              }
-              disabled={
-                !isRunning &&
-                !isCompacting &&
-                ((!input.trim() && pendingImages.length === 0) || !canInteract)
-              }
-              className={`
-              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-all duration-150 active:scale-95
-              ${
-                isRunning
-                  ? "bg-red-600 hover:bg-red-500 text-white"
-                  : isCompacting
-                    ? "bg-violet-600 hover:bg-violet-500 text-white"
-                    : "bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-zinc-700 disabled:text-zinc-500 disabled:cursor-not-allowed"
-              }
-            `}
-              title={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
-              aria-label={isRunning ? "停止" : isCompacting ? "取消压缩" : "发送"}
-            >
-              {isRunning ? (
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <rect
-                    x="6"
-                    y="6"
-                    width="12"
-                    height="12"
-                    rx="1"
-                    fill="currentColor"
-                  />
-                </svg>
-              ) : isCompacting ? (
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 6l12 12M18 6L6 18"
-                  />
-                </svg>
-              ) : (
-                <svg
-                  className="w-[18px] h-[18px]"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 19V5m-7 7l7-7 7 7"
-                  />
-                </svg>
-              )}
-            </button>
-            </div>
-          </div>
-        </div>
-        )}</AgentDraft>
+        <AgentComposer
+          attachments={attachments}
+          mode={mode}
+          setMode={setMode}
+          isRunning={isRunning}
+          isCompacting={isCompacting}
+          canInteract={canInteract}
+          activeSessionStatus={activeSession?.status}
+          commandMenuOpen={commandMenuOpen}
+          commandMenuRef={commandMenuRef}
+          inputRef={inputRef}
+          onKeyDown={handleKeyDown}
+          onInsertSkill={handleInsertSkill}
+          onCompact={handleCompact}
+          setInput={setInput}
+          registry={registry}
+          activeConversation={activeConversation}
+          activeConversationId={activeConversationId}
+          setConversationModel={setConversationModel}
+          setConversationEffort={setConversationEffort}
+          onSend={handleSend}
+          onStop={handleStop}
+          onCancelCompaction={handleCancelCompaction}
+        />
       )}
 
       {/* History Drawer */}
       {historyDrawerPresence.mounted && (
-        <>
-          <div
-            className={`absolute inset-0 bg-black/40 z-20 ${
-              historyDrawerPresence.phase === "exit"
-                ? "animate-fadeOut"
-                : "animate-fadeIn"
-            }`}
-            onClick={() => setHistoryDrawerOpen(false)}
-          />
-          <div
-            onAnimationEnd={historyDrawerPresence.onAnimationEnd}
-            className={`absolute top-0 right-0 h-full w-72 bg-zinc-950 border-l border-zinc-800 z-30 flex flex-col shadow-2xl ${
-              historyDrawerPresence.phase === "exit"
-                ? "animate-slideOutRight"
-                : "animate-slideInRight"
-            }`}
-          >
-            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-zinc-200">历史会话</h3>
-              <button
-                type="button"
-                onClick={() => setHistoryDrawerOpen(false)}
-                className="p-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 transition-colors"
-              >
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-3">
-              {sessionConversations.length === 0 && (
-                <div className="text-center text-zinc-500 text-sm mt-8">
-                  <p>暂无历史会话</p>
-                </div>
-              )}
-              {groupedSessionConversations.map((group) => (
-                <div key={group.key} className="space-y-1">
-                  <div className="px-2 py-1 text-[11px] font-semibold text-zinc-500 tracking-wider uppercase">
-                    {group.label}
-                  </div>
-                  {group.items.map((conv) => {
-                    const isActive = conv.id === activeConversationId;
-                    const isEditing = editingConvId === conv.id;
-                    return (
-                      <div
-                        key={conv.id}
-                        className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg text-sm transition-colors ${
-                          isActive
-                            ? "bg-zinc-800 text-zinc-100 ring-1 ring-zinc-700/50"
-                            : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
-                        }`}
-                      >
-                        {isEditing ? (
-                          <div className="flex-1 flex items-center gap-1 min-w-0">
-                            <input
-                              ref={editInputRef}
-                              type="text"
-                              value={editingTitle}
-                              onChange={(e) => setEditingTitle(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  void handleSaveRename();
-                                } else if (e.key === "Escape") {
-                                  e.preventDefault();
-                                  handleCancelRename();
-                                }
-                              }}
-                              className="flex-1 min-w-0 px-1.5 py-0.5 text-xs bg-zinc-900 border border-indigo-500 rounded text-zinc-100 focus:outline-none"
-                              placeholder="会话名称"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => void handleSaveRename()}
-                              className="p-1 rounded text-emerald-400 hover:bg-zinc-700 transition-colors flex-shrink-0"
-                              title="确认"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleCancelRename}
-                              className="p-1 rounded text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 transition-colors flex-shrink-0"
-                              title="取消"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                              </svg>
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => handleSelectConversation(conv.id)}
-                              className="flex-1 text-left min-w-0 flex items-center justify-between gap-2"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="truncate font-medium leading-snug">{conv.title}</div>
-                                <div className="text-[11px] text-zinc-500 mt-0.5">
-                                  {new Date(conv.updatedAt).toLocaleString()}
-                                </div>
-                              </div>
-                              <AgentStatusIndicator
-                                status={getConversationAgentStatus(
-                                  conv.id,
-                                  tasks,
-                                  unreadCompletedConversations,
-                                )}
-                                size="xs"
-                              />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // 后置失败就原地不动 —— 必须接住，否则是未处理拒绝
-                                //（沿用重命名那一套：失败 console.error，图标不变）
-                                setConversationPinned(conv.id, !conv.pinned).catch((err) => {
-                                  console.error('Failed to toggle pin:', getErrorMessage(err));
-                                });
-                              }}
-                              className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                              title={conv.pinned ? "取消置顶" : "置顶会话"}
-                              aria-label={conv.pinned ? "取消置顶" : "置顶会话"}
-                            >
-                              <Pin className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => startRenameConversation(e, conv.id, conv.title)}
-                              className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                              title="重命名会话"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                />
-                              </svg>
-                            </button>
-                            <button
-                              onClick={(e) => handleDeleteConversation(e, conv.id)}
-                              className="p-1 rounded text-zinc-500 hover:text-red-400 hover:bg-zinc-700/80 transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
-                              title="删除会话"
-                            >
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                                />
-                              </svg>
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
+        <AgentHistoryDrawer
+          presence={historyDrawerPresence}
+          onClose={() => setHistoryDrawerOpen(false)}
+          sessionConversations={sessionConversations}
+          activeConversationId={activeConversationId}
+          tasks={tasks}
+          unreadCompletedConversations={unreadCompletedConversations}
+          onSelect={handleSelectConversation}
+          onDelete={deleteConversation}
+          onPin={setConversationPinned}
+          onRename={renameConversation}
+        />
       )}
 
       <ChatHistoryModal
