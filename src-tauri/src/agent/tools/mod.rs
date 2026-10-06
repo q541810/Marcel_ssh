@@ -55,6 +55,8 @@ pub mod question;
 #[cfg(desktop)]
 pub mod render_html;
 pub mod search;
+// SFTP 远端探测（stat）：调度器「写前必须已读」预检里「远端目标存在吗」的回落实现。
+pub(crate) mod sftp_probe;
 pub mod sftp_transfer;
 pub mod skill;
 pub mod subagent;

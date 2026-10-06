@@ -7,7 +7,10 @@ use crate::agent::model_approval::{
 };
 use crate::agent::risk::{split_command_chain, Disposition, RiskAssessor, SecurityPolicy};
 use crate::agent::task::AgentMode;
-use crate::agent::tools::{PathWrite, ToolContext, ToolOutput, ToolRegistry};
+use crate::agent::tools::sftp_probe::remote_file_exists;
+use crate::agent::tools::{
+    AgentTool, PathWrite, ToolContext, ToolOutput, ToolRegistry, ToolSemantics,
+};
 use crate::config::settings::{AgentModeSettings, CommandApprovalEngine, CommandListMode};
 use crate::emit_event;
 use crate::error::AppError;
@@ -163,6 +166,15 @@ impl CommandApprover for UnavailableApprover {
     ) -> Result<ApprovalJudgement, AppError> {
         Err(AppError::Config(self.reason.clone()))
     }
+}
+
+/// `dispatch` 处置合成段（[`ToolDispatcher::resolve_call_disposition`]）的产物：
+/// 本次调用的最终档位，加上后续「要不要确认 / 模型审批 / 拒绝理由」各段都要读的
+/// 中间结论。
+struct ResolvedDisposition {
+    effective_disposition: Disposition,
+    command_decision: Option<CommandDecision>,
+    resolved_approval_mode: AgentMode,
 }
 
 /// Dispatches tool calls through the registry with mode-aware security policy.
@@ -390,6 +402,141 @@ impl ToolDispatcher {
             .and_then(|v| v.as_str());
         let path_write = semantics.map(|s| s.path_write).unwrap_or(PathWrite::None);
 
+        // 处置档位合成（三个来源按严取一）+「直接拒绝」短路。
+        let plan = match self.resolve_call_disposition(
+            tc,
+            tool.as_ref(),
+            ctx,
+            command,
+            declares_command,
+            path,
+            path_write,
+        ) {
+            Ok(plan) => plan,
+            Err(blocked) => return blocked,
+        };
+        let effective_disposition = plan.effective_disposition;
+
+        let requires_default_approval = tool.requires_approval_by_default();
+
+        // 0.4 必填参数预检 + 0.5/0.6 写前必须已读：注定失败的调用不进审批。
+        if let Err(blocked) = self
+            .run_entry_prechecks(
+                tc,
+                tool.as_ref(),
+                ctx,
+                path,
+                path_write,
+                effective_disposition,
+            )
+            .await
+        {
+            return blocked;
+        }
+
+        // 1. 需不需要人确认 —— 模式 × 档位 × 命令名单三者的交叉点。
+        //    命令类工具的结论来自 `decide_command`（它把风险评估和名单一起算完，
+        //    `deny` 已经在上面短路掉了）；其余工具按自己声明的档位走。
+        let assessed_needs_confirm = needs_human_confirmation(
+            &plan.resolved_approval_mode,
+            plan.command_decision.as_ref(),
+            effective_disposition,
+            requires_default_approval,
+            &self.agent_settings,
+            semantics
+                .and_then(|s| s.approval_switch)
+                .map(|switch| switch.is_on(&self.agent_settings))
+                .unwrap_or(false),
+        );
+
+        // 2. 模型审批（命令类工具；详见 `run_model_approval`）。
+        let (final_needs_confirm, model_reasons) = match self
+            .run_model_approval(
+                tc,
+                ctx,
+                event_name,
+                recent_messages,
+                command,
+                declares_command,
+                &plan.resolved_approval_mode,
+                effective_disposition,
+                assessed_needs_confirm,
+            )
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(blocked) => return blocked,
+        };
+
+        // 3. 人工审批（整个 dispatch 里唯一打开审批对话框的地方，详见
+        //    `request_human_approval`）。
+        if let Err(blocked) = self
+            .request_human_approval(
+                tc,
+                ctx,
+                tool.as_ref(),
+                semantics,
+                command,
+                declares_command,
+                &plan.resolved_approval_mode,
+                effective_disposition,
+                plan.command_decision.as_ref(),
+                model_reasons,
+                final_needs_confirm,
+            )
+            .await
+        {
+            return blocked;
+        }
+
+        set_task_status(
+            &self.state,
+            &self.task_id,
+            crate::agent::task::AgentStatus::Executing,
+        );
+        match tool.execute(tc.arguments.clone(), ctx).await {
+            Ok(out) => {
+                // 带路径参数的工具成功即记账：模型刚读过，或刚写入/改过的文件
+                // 内容都在其上下文中，等价于「已观察」。后续 edit_file 与
+                // write_file 的写前检查以此集合为准。
+                if out.success {
+                    if let Some(path) = path {
+                        self.read_files
+                            .write()
+                            .insert(crate::agent::risk::normalize_path(path));
+                    }
+                }
+                DispatchResult::from_tool_output(out, effective_disposition)
+            }
+            Err(e) => DispatchResult {
+                summary: format!("{} (error)", tc.name),
+                output: format!("tool error: {}", e),
+                success: false,
+                blocked: false,
+                was_timeout: false,
+                was_aborted: false,
+                metadata: None,
+                disposition: effective_disposition,
+            },
+        }
+    }
+
+    /// 处置档位合成段 —— 本次调用的最终档位，与「直接拒绝」短路。
+    ///
+    /// 纯提取自 `dispatch`（原 393-444 行）：参数就是原来的捕获变量，判定顺序、
+    /// 档位文案与错误路径逐字节保持。
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::result_large_err)] // 与 plugin_tool 同口径：DispatchResult 本身就大
+    fn resolve_call_disposition(
+        &self,
+        tc: &ToolCall,
+        tool: &dyn AgentTool,
+        ctx: &ToolContext,
+        command: Option<&str>,
+        declares_command: bool,
+        path: Option<&str>,
+        path_write: PathWrite,
+    ) -> Result<ResolvedDisposition, DispatchResult> {
         // 处置档位有三个来源，按严取一：
         //   1. 命令类工具 —— 按命令文本现算（`decide_command`，与设置页的
         //      「命令测试」共用同一份判定，否则会出现"测出来一个样、跑起来一个样"）
@@ -440,19 +587,38 @@ impl ToolDispatcher {
             } else {
                 tc.name.clone()
             };
-            return DispatchResult::blocked(summary, reason, Disposition::Deny);
+            return Err(DispatchResult::blocked(summary, reason, Disposition::Deny));
         }
 
-        let requires_default_approval = tool.requires_approval_by_default();
+        Ok(ResolvedDisposition {
+            effective_disposition,
+            command_decision,
+            resolved_approval_mode,
+        })
+    }
 
+    /// 预检段 —— 必填参数校验 + 写前必须已读：注定失败的调用在这里直接失败，
+    /// 不进入任何审批流程。
+    ///
+    /// 纯提取自 `dispatch`（原 448-500 行）：顺序与 await 位置不变，读 guard
+    /// 依旧不跨 `.await`。
+    async fn run_entry_prechecks(
+        &self,
+        tc: &ToolCall,
+        tool: &dyn AgentTool,
+        ctx: &ToolContext,
+        path: Option<&str>,
+        path_write: PathWrite,
+        effective_disposition: Disposition,
+    ) -> Result<(), DispatchResult> {
         // 0.4 必填参数预检：参数不合格的调用既不弹审批、也不占用模型审批。
         //     与上面写前必须已读同一个道理——用户不该为一次注定失败的调用点批准，
         //     点完还得看它失败、等模型补参数后**再点一次**。
         if let Err(message) = tool.validate_arguments(&tc.arguments) {
-            return DispatchResult::from_tool_output(
+            return Err(DispatchResult::from_tool_output(
                 ToolOutput::fail(tc.name.clone(), message),
                 effective_disposition,
-            );
+            ));
         }
 
         // 0.5 / 0.6 写前必须已读：注定失败的写会直接失败并提示先读取，不进入审批
@@ -465,13 +631,13 @@ impl ToolDispatcher {
             PathWrite::Edit => {
                 if let Some(path) = path {
                     if !path_was_read(&self.read_files.read(), path) {
-                        return DispatchResult::from_tool_output(
+                        return Err(DispatchResult::from_tool_output(
                             ToolOutput::fail(
                                 format!("edit {}", path),
                                 read_before_edit_error(path),
                             ),
                             effective_disposition,
-                        );
+                        ));
                     }
                 }
             }
@@ -485,35 +651,40 @@ impl ToolDispatcher {
                             None => remote_file_exists(&ctx.ssh, &ctx.session_id, path).await,
                         };
                         if exists {
-                            return DispatchResult::from_tool_output(
+                            return Err(DispatchResult::from_tool_output(
                                 ToolOutput::fail(
                                     format!("write {}", path),
                                     read_before_write_error(path),
                                 ),
                                 effective_disposition,
-                            );
+                            ));
                         }
                     }
                 }
             }
             PathWrite::None => {}
         }
+        Ok(())
+    }
 
-        // 1. 需不需要人确认 —— 模式 × 档位 × 命令名单三者的交叉点。
-        //    命令类工具的结论来自 `decide_command`（它把风险评估和名单一起算完，
-        //    `deny` 已经在上面短路掉了）；其余工具按自己声明的档位走。
-        let assessed_needs_confirm = needs_human_confirmation(
-            &resolved_approval_mode,
-            command_decision.as_ref(),
-            effective_disposition,
-            requires_default_approval,
-            &self.agent_settings,
-            semantics
-                .and_then(|s| s.approval_switch)
-                .map(|switch| switch.is_on(&self.agent_settings))
-                .unwrap_or(false),
-        );
-
+    /// 模型审批段 —— 命令类工具在配置了审批引擎时先过一遍模型判定。模型只能
+    /// 判，不能改写命令；返回并集后的「要不要人确认」与模型给的理由，模型
+    /// `Block` / 判定失败在这里短路。
+    ///
+    /// 纯提取自 `dispatch`（原 517-657 行）：事件顺序、放行/转人审语义不变。
+    #[allow(clippy::too_many_arguments)]
+    async fn run_model_approval(
+        &self,
+        tc: &ToolCall,
+        ctx: &ToolContext,
+        event_name: &str,
+        recent_messages: &[LlmMessage],
+        command: Option<&str>,
+        declares_command: bool,
+        resolved_approval_mode: &AgentMode,
+        effective_disposition: Disposition,
+        assessed_needs_confirm: bool,
+    ) -> Result<(bool, Option<Vec<String>>), DispatchResult> {
         // 2. Model-based approval — runs for tools that declare a command
         //    argument (i.e. `bash`) when an approver is configured, regardless
         //    of whether the risk assessment requires human approval. The model can only
@@ -566,11 +737,11 @@ impl ToolDispatcher {
                                     format!("模型审批阻止: {}", rs.join("; "))
                                 };
                                 let hint = "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
-                                return DispatchResult::blocked(
+                                return Err(DispatchResult::blocked(
                                     format!("$ {}", cmd),
                                     format!("{}{}", reason, hint),
                                     effective_disposition,
-                                );
+                                ));
                             }
                             ModelApprovalDecision::RouteToHuman(rs) => {
                                 // 判据与「开不开窗」同源（`can_ask_human`）：
@@ -579,7 +750,7 @@ impl ToolDispatcher {
                                 // 否则工具卡上会一直挂着「模型建议人工审批」，而根本
                                 // 没有问过任何人，用户会以为自己漏掉了什么。模型的原判据
                                 // 留在日志里备查。
-                                if can_ask_human(&resolved_approval_mode, true) {
+                                if can_ask_human(resolved_approval_mode, true) {
                                     // Agent 模式弹窗（Plan 默认也走 Auto 那一支，除非开了
                                     // 「Plan 模式也需要审批」——判定同样遵循
                                     // `resolved_approval_mode`）。
@@ -646,23 +817,45 @@ impl ToolDispatcher {
                                 confidence: None,
                             },
                         );
-                        return DispatchResult::blocked(
+                        return Err(DispatchResult::blocked(
                             format!("$ {}", cmd),
                             format!("模型审批失败: {}", err_msg),
                             effective_disposition,
-                        );
+                        ));
                     }
                 }
             }
         }
 
+        Ok((final_needs_confirm, model_reasons))
+    }
+
+    /// 人工审批段 —— 打开审批对话框（预演、状态迁移、拒绝路径都在这里）。
+    ///
+    /// 纯提取自 `dispatch`（原 659-758 行）：预演与弹窗顺序不变，拒绝时返回
+    /// `Err(DispatchResult)`。
+    #[allow(clippy::too_many_arguments)]
+    async fn request_human_approval(
+        &self,
+        tc: &ToolCall,
+        ctx: &ToolContext,
+        tool: &dyn AgentTool,
+        semantics: Option<ToolSemantics>,
+        command: Option<&str>,
+        declares_command: bool,
+        resolved_approval_mode: &AgentMode,
+        effective_disposition: Disposition,
+        command_decision: Option<&CommandDecision>,
+        model_reasons: Option<Vec<String>>,
+        final_needs_confirm: bool,
+    ) -> Result<(), DispatchResult> {
         // 3. Human approval —— 整个 dispatch 里**唯一**打开审批对话框的地方。
         //
         //    `final_needs_confirm` 有两条来路（档位判定 `needs_human_confirmation`、
         //    命令审批模型判 route_to_human），两条提到"要人"之前都先过 `can_ask_human`；
         //    这里再过一次，是为了把 Auto 的保证钉在唯一的出口上 —— 将来新增第三条
         //    来路时忘了判模式，Auto 也不会因此悄悄弹窗。
-        if can_ask_human(&resolved_approval_mode, final_needs_confirm) {
+        if can_ask_human(resolved_approval_mode, final_needs_confirm) {
             let mut approval_metadata: Option<serde_json::Value> = None;
 
             // 需要预演的工具（`edit_file` / 本机 `local_edit_file`）先做一次预读 +
@@ -690,7 +883,7 @@ impl ToolDispatcher {
                 match preview {
                     Ok(meta) => approval_metadata = Some(meta),
                     Err(e) => {
-                        return DispatchResult {
+                        return Err(DispatchResult {
                             summary: e.summary,
                             output: e.message,
                             success: false,
@@ -699,7 +892,7 @@ impl ToolDispatcher {
                             was_aborted: false,
                             metadata: None,
                             disposition: effective_disposition,
-                        };
+                        });
                     }
                 }
             }
@@ -711,7 +904,7 @@ impl ToolDispatcher {
             );
             let approval_reasons = merge_approval_reasons(
                 model_reasons,
-                command_decision.as_ref().map(|d| d.reason.clone()),
+                command_decision.map(|d| d.reason.clone()),
             );
             let answer = self
                 .approval
@@ -749,44 +942,14 @@ impl ToolDispatcher {
                 } else {
                     tc.name.clone()
                 };
-                return DispatchResult::blocked(
+                return Err(DispatchResult::blocked(
                     summary,
                     rejection_message(answer.reason.as_deref()),
                     effective_disposition,
-                );
+                ));
             }
         }
-
-        set_task_status(
-            &self.state,
-            &self.task_id,
-            crate::agent::task::AgentStatus::Executing,
-        );
-        match tool.execute(tc.arguments.clone(), ctx).await {
-            Ok(out) => {
-                // 带路径参数的工具成功即记账：模型刚读过，或刚写入/改过的文件
-                // 内容都在其上下文中，等价于「已观察」。后续 edit_file 与
-                // write_file 的写前检查以此集合为准。
-                if out.success {
-                    if let Some(path) = path {
-                        self.read_files
-                            .write()
-                            .insert(crate::agent::risk::normalize_path(path));
-                    }
-                }
-                DispatchResult::from_tool_output(out, effective_disposition)
-            }
-            Err(e) => DispatchResult {
-                summary: format!("{} (error)", tc.name),
-                output: format!("tool error: {}", e),
-                success: false,
-                blocked: false,
-                was_timeout: false,
-                was_aborted: false,
-                metadata: None,
-                disposition: effective_disposition,
-            },
-        }
+        Ok(())
     }
 }
 
@@ -818,19 +981,6 @@ fn read_before_write_error(path: &str) -> String {
         "错误：覆盖已有文件需要先读取\"{}\" —— 请先读取该文件，然后再重试。",
         path
     )
-}
-
-/// 远程目标是否存在（SFTP stat）。stat 失败按"不存在"处理：
-/// 连接问题会由 write 自己报 SFTP 错误，这里不双重误拦新建。
-async fn remote_file_exists(
-    ssh: &crate::ssh::connection::SshManager,
-    session_id: &str,
-    path: &str,
-) -> bool {
-    match ssh.open_sftp(session_id).await {
-        Ok(sftp) => sftp.metadata(path).await.is_ok(),
-        Err(_) => false,
-    }
 }
 
 /// 一条命令的最终处置结论。
