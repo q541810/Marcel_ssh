@@ -21,18 +21,18 @@ import {
   isKeepAliveTipDismissed,
 } from '@/lib/keepAliveTip';
 import MobileKeepAliveTipCard from './MobileKeepAliveTipCard';
-import {
-  asHostKeyMismatch,
-  getErrorMessage,
-  parseAppError,
-} from '@/lib/errors';
-import { isPasswordRejected, isPassphraseProblem, keyNeedsPassphrase } from '@/lib/privateKey';
-import { formatConnLabel } from '@/lib/privacy';
-import type { ConnectionConfig, SavedConnection } from '@/lib/types';
-import * as tauri from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import { isDebugConnection } from '@/lib/debugServer';
+import { formatConnLabel } from '@/lib/privacy';
+import type { SavedConnection } from '@/lib/types';
 import {
-  groupNameOf,
+  loadCollapsedGroups,
+  removeCollapsedGroup,
+  saveCollapsedGroups,
+  toggledCollapsedGroups,
+} from '@/lib/connectionGroups';
+import { createConnectFlow } from '@/lib/connectFlow';
+import {
   groupConnections,
   toOrderEntries,
 } from '@/lib/connectionOrder';
@@ -40,20 +40,6 @@ import { useLongPressDrag } from './useLongPressDrag';
 import { listSessionsToDisconnectBeforeNewConnect } from './sessionUi';
 import MobileConnectionForm from './MobileConnectionForm';
 import MobileSheet from './ui/MobileSheet';
-
-/**
- * 密钥链写入失败的提示文案。
- *
- * 保存失败**不拦连接**（密钥链不可用时照样把这次连接连上，这是既有取舍），但必须
- * 出声：以前只写 console，用户只看到"连上了"，并不知道这份凭证根本没记住。
- *
- * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面
- * 的原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径
- * 要一起改。
- */
-function secretSaveFailedMessage(what: string, err: unknown): string {
-  return `${what}没能保存到本设备（${getErrorMessage(err)}）。本次连接照常进行，但下次连接和「重连」还得再输一次。`;
-}
 
 interface MobileConnectionListProps {
   onBack?: () => void;
@@ -108,15 +94,9 @@ export default function MobileConnectionList({
   );
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState('');
-  // 折叠状态（key = 分组名）
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem('marcel-collapsed-connection-groups');
-      return stored ? new Set(JSON.parse(stored)) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
+  // 折叠状态（key = 分组名）。读写与 key 常量统一走 lib/connectionGroups。
+  const [collapsedGroups, setCollapsedGroups] =
+    useState<Set<string>>(loadCollapsedGroups);
   // 后台保活提示：仅在连接列表页（未连上）显示
   const keepAliveEnabled = useSettingsStore(
     (s) => s.settings.mobileBackgroundSettings.keepAliveEnabled,
@@ -160,17 +140,8 @@ export default function MobileConnectionList({
   /** 切换分组的折叠状态（点击标题时）。 */
   const toggleGroupCollapse = (groupName: string) => {
     setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupName)) {
-        next.delete(groupName);
-      } else {
-        next.add(groupName);
-      }
-      try {
-        localStorage.setItem('marcel-collapsed-connection-groups', JSON.stringify([...next]));
-      } catch {
-        // localStorage 失败不阻止切换
-      }
+      const next = toggledCollapsedGroups(prev, groupName);
+      saveCollapsedGroups(next);
       return next;
     });
   };
@@ -193,289 +164,36 @@ export default function MobileConnectionList({
     }
   };
 
-  const doConnect = async (
-    conn: SavedConnection,
-    password?: string,
-    passphrase?: string,
-    trust = false,
-  ) => {
-    let authMethod: ConnectionConfig['authMethod'];
-    switch (conn.authMethod) {
-      case 'Password':
-        if (!password) {
-          promptForPassword(conn);
-          return;
-        }
-        authMethod = { type: 'Password', password };
-        break;
-      case 'PrivateKey':
-        authMethod = {
-          type: 'PrivateKey',
-          keyId: conn.keyId,
-          keyPath: conn.keyPath,
-          passphrase,
-        };
-        break;
-      default:
-        // 历史数据里可能有已不再支持的取值（例如早期的 "Agent"）：
-        // 说清楚是哪一条、该怎么修，而不是发一个后端必然拒绝的请求
-        setLocalError(
-          `「${conn.name}」保存的认证方式（${conn.authMethod}）已不再支持，请编辑这条连接、重新选择认证方式`,
-        );
-        return;
-    }
-
-    const config: ConnectionConfig = {
-      host: conn.host,
-      port: conn.port,
-      username: conn.username,
-      authMethod,
-      connectionId: conn.id,
-      trustNewHostKey: trust,
-    };
-
-    setConnectingId(conn.id);
-    setLocalError(null);
-    try {
-      await clearOtherSessions();
-      const sessionId = await connect(config);
-      if (config.connectionId) {
-        void onConnected(config.connectionId, sessionId).catch(() => {});
-      }
-    } catch (err) {
-      if (!trust) {
-        const m = asHostKeyMismatch(parseAppError(err));
-        if (m) {
-          mismatch.prompt({
-            data: m,
-            onTrust: () => void doConnect(conn, password, passphrase, true),
-          });
-          return;
-        }
-      }
+  // 连接发起的判定树在 lib/connectFlow.ts（与桌面共用）。移动端与桌面的差异全部
+  // 走注入回调：连接前断开其他会话（clearOtherSessions）、行内转圈（connectingId）、
+  // 失败上红条；「查密钥链有没有存过」的失败保持静默退到追问（桌面此时只写 console）。
+  const { handleConnect } = createConnectFlow({
+    connect,
+    connectWithSavedPassword,
+    connectWithSavedPassphrase,
+    promptPassword,
+    promptMismatch: mismatch.prompt,
+    onSessionEstablished: (connId, sessionId) => {
+      if (connId) void onConnected(connId, sessionId).catch(() => {});
+    },
+    setLocalError,
+    privacyMode,
+    beforeAttempt: (connId, { clearLocalError }) => {
+      setConnectingId(connId);
+      if (clearLocalError) setLocalError(null);
+    },
+    beforeSessionConnect: clearOtherSessions,
+    afterAttempt: () => setConnectingId(null),
+    reportFailure: (err, site) => {
+      if (site === 'checkPassword' || site === 'checkPassphrase') return;
       setLocalError(getErrorMessage(err));
-    } finally {
-      setConnectingId(null);
-    }
-  };
-
-  /**
-   * 追问 SSH 密码。`rejectedSaved` = 密钥链里存着的那份已经**被服务器拒了**，
-   * 这一问是"换一份"而不是"缺一份"——文案要说出来，否则浮层凭空弹出，用户会以为
-   * 自己从没存过密码。
-   */
-  const promptForPassword = (conn: SavedConnection, rejectedSaved = false) => {
-    promptPassword({
-      title: 'SSH 密码',
-      description:
-        `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密码会加密保存在本设备，下次自动使用。` +
-        (rejectedSaved ? '上次保存的密码被服务器拒绝，请输入新的。' : ''),
-      onSubmit: async (password) => {
-        // 一律保存（没有"不记住"这个选项）：没存下来的密码会一路带来两个坏结果——
-        // 每次连接都要重新输，以及重连只会报"重连需要密码"。
-        // 保存失败不拦连接：密钥链不可用时照样把这次连接连上。
-        // 覆盖旧的也是同一条路：复问一次就把打错的那份顶掉。
-        let saveWarning: string | null = null;
-        try {
-          await tauri.savePassword(conn.id, password);
-        } catch (err) {
-          console.warn('保存密码到密钥链失败:', err);
-          // 出声：不然用户只看到"连上了"，并不知道这份密码根本没记住——
-          // 下次连接与重连还会再要一次，而他会以为自己早就存过了。
-          saveWarning = secretSaveFailedMessage('密码', err);
-        }
-        await doConnect(conn, password);
-        // 放在连接之后：doConnect 开头就清空这条错误带，先说会被它抹掉；
-        // 只有它没留下更该看的信息（连接本身失败）时才把"没记住"顶上来。
-        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
-      },
-    });
-  };
-
-  const promptForPassphrase = (conn: SavedConnection) => {
-    promptPassword({
-      title: '私钥密码',
-      description: `连接到 ${formatConnLabel(conn.username, conn.host, conn.port, privacyMode)}。密钥密码会加密保存在本设备，下次自动使用。`,
-      onSubmit: async (passphrase) => {
-        let saveWarning: string | null = null;
-        try {
-          await tauri.savePassphrase(conn.id, passphrase);
-        } catch (err) {
-          console.warn('保存 passphrase 到密钥链失败:', err);
-          saveWarning = secretSaveFailedMessage('密钥密码', err);
-        }
-        await doConnect(conn, undefined, passphrase);
-        if (saveWarning) setLocalError((prev) => prev ?? saveWarning);
-      },
-    });
-  };
-
-  const handleConnect = async (connection: SavedConnection) => {
-    setLocalError(null);
-    if (isDebugConnection(connection.id)) {
+    },
+    onDebugConnect: (conn) => {
       useSessionStore.getState().connectDebugServer();
-      useConnectionStore.getState().setActiveConnection(connection.id);
+      useConnectionStore.getState().setActiveConnection(conn.id);
       onBack?.();
-      return;
-    }
-    if (connection.authMethod === 'Password') {
-      try {
-        const stored = await tauri.hasPassword(connection.id);
-        if (stored) {
-          const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
-          setConnectingId(connection.id);
-          try {
-            await clearOtherSessions();
-            const sessionId = await connectWithSavedPassword(
-              connection.id,
-              connLabel,
-            );
-            void onConnected(connection.id, sessionId).catch(() => {});
-            return;
-          } catch (err) {
-            const m = asHostKeyMismatch(parseAppError(err));
-            if (m) {
-              mismatch.prompt({
-                data: m,
-                onTrust: async () => {
-                  try {
-                    setConnectingId(connection.id);
-                    await clearOtherSessions();
-                    const sid = await connectWithSavedPassword(
-                      connection.id,
-                      connLabel,
-                      true,
-                    );
-                    void onConnected(connection.id, sid).catch(() => {});
-                  } catch (e) {
-                    setLocalError(getErrorMessage(e));
-                  } finally {
-                    setConnectingId(null);
-                  }
-                },
-              });
-              return;
-            }
-            // 存的那份密码被服务器拒了：追问并覆盖它。不复问的话，这份打错一个字符的
-            // 密码会被每次连接和每次重连一直重放，用户再也等不到输入框（与私钥分支的
-            // 复问对称）。红条不给——浮层里已经写清"上次保存的密码被拒绝"，两条一起
-            // 说同一件事只会更吵。
-            if (isPasswordRejected(err)) {
-              promptForPassword(connection, true);
-              return;
-            }
-            setLocalError(getErrorMessage(err));
-            return;
-          } finally {
-            setConnectingId(null);
-          }
-        }
-      } catch {
-        /* fall through to prompt */
-      }
-      promptForPassword(connection);
-      return;
-    }
-
-    if (connection.authMethod === 'PrivateKey') {
-      const hasSavedPassphrase = await tauri
-        .hasPassphrase(connection.id)
-        .catch(() => false);
-      if (hasSavedPassphrase) {
-        const connLabel = formatConnLabel(connection.username, connection.host, connection.port, privacyMode);
-        setConnectingId(connection.id);
-        try {
-          await clearOtherSessions();
-          const sessionId = await connectWithSavedPassphrase(
-            connection.id,
-            connLabel,
-          );
-          void onConnected(connection.id, sessionId).catch(() => {});
-          return;
-        } catch (err) {
-          const m = asHostKeyMismatch(parseAppError(err));
-          if (m) {
-            mismatch.prompt({
-              data: m,
-              onTrust: async () => {
-                try {
-                  setConnectingId(connection.id);
-                  await clearOtherSessions();
-                  const sid = await connectWithSavedPassphrase(
-                    connection.id,
-                    connLabel,
-                    true,
-                  );
-                  void onConnected(connection.id, sid).catch(() => {});
-                } catch (e) {
-                  setLocalError(getErrorMessage(e));
-                } finally {
-                  setConnectingId(null);
-                }
-              },
-            });
-            return;
-          }
-          // 真需要密码（保存的那把已经不对了）才追问；别的原因就说别的
-          if (isPassphraseProblem(err)) {
-            promptForPassphrase(connection);
-            return;
-          }
-          setLocalError(getErrorMessage(err));
-          return;
-        } finally {
-          setConnectingId(null);
-        }
-      }
-
-      // 密钥库里的私钥是带密码的、而本地没存：直接问，不拿一次失败去试
-      if (await keyNeedsPassphrase(connection)) {
-        promptForPassphrase(connection);
-        return;
-      }
-
-      try {
-        setConnectingId(connection.id);
-        await clearOtherSessions();
-        const config: ConnectionConfig = {
-          host: connection.host,
-          port: connection.port,
-          username: connection.username,
-          authMethod: {
-            type: 'PrivateKey',
-            keyId: connection.keyId,
-            keyPath: connection.keyPath,
-          },
-          connectionId: connection.id,
-        };
-        const sessionId = await connect(config);
-        void onConnected(connection.id, sessionId).catch(() => {});
-        return;
-      } catch (err) {
-        const m = asHostKeyMismatch(parseAppError(err));
-        if (m) {
-          mismatch.prompt({
-            data: m,
-            onTrust: () =>
-              void doConnect(connection, undefined, undefined, true),
-          });
-          return;
-        }
-        // 这一次尝试不是白费的：后端明确告诉我们原因，只有"缺密码 / 密码错"
-        // 才继续追问，其他原因照实显示
-        if (isPassphraseProblem(err)) {
-          promptForPassphrase(connection);
-          return;
-        }
-        setLocalError(getErrorMessage(err));
-      } finally {
-        setConnectingId(null);
-      }
-      return;
-    }
-
-    await doConnect(connection);
-  };
+    },
+  });
 
   const openNewForm = () => {
     setEditingConnection(undefined);
@@ -513,11 +231,7 @@ export default function MobileConnectionList({
       setLocalError(null);
       await renameGroup(renamingGroup, trimmed);
       // 重命名后更新折叠状态的 key（旧名字的折叠状态丢弃）
-      setCollapsedGroups((prev) => {
-        const next = new Set(prev);
-        next.delete(renamingGroup);
-        return next;
-      });
+      setCollapsedGroups((prev) => removeCollapsedGroup(prev, renamingGroup));
     }
     setRenamingGroup(null);
     setRenameInput('');
