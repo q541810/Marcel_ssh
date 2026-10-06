@@ -10,7 +10,9 @@ export default function BottomTabBar({ activeTab, onTabChange, tabs }: BottomTab
   const resolvedTabs = tabs ?? BOTTOM_TABS;
 
   return (
-    <div className="flex flex-shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-900 px-3 py-1.5">
+    // 终端栏窄的时候（「Agent 占主区域」把终端收进右侧固定栏，最低 300px）药丸放不下：
+    // 让这一行横向滚动，而不是被父级 overflow-hidden 裁掉半截
+    <div className="flex flex-shrink-0 items-center gap-2 border-t border-zinc-800 bg-zinc-900 px-3 py-1.5 overflow-x-auto">
       {resolvedTabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (
@@ -18,7 +20,7 @@ export default function BottomTabBar({ activeTab, onTabChange, tabs }: BottomTab
             key={tab.id}
             type="button"
             onClick={() => onTabChange(isActive ? null : tab.id)}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+            className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
               isActive
                 ? 'border-indigo-500 bg-indigo-500/10 text-indigo-400'
                 : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300'

@@ -33,6 +33,11 @@ import { useTauriEvent } from '@/hooks/useTauriEvent';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
+  baseWidthPatch,
+  defaultBaseWidthOf,
+  dockBaseWidthOf,
+  dockPanelOf,
+  mergeWorkspaceLayout,
   normalizeWorkspaceLayout,
   resolvePanelBaseBounds,
   resolveWorkspaceLayout,
@@ -60,6 +65,7 @@ function getLazy(provider: ViewProvider): LazyExoticComponent<ComponentType> {
 }
 
 registerBuiltinViews();
+
 
 const SETTINGS_LEFT_PANEL_COLLAPSE_MS = 300;
 const AGENT_PANEL_COLLAPSE_MS = 300;
@@ -102,7 +108,7 @@ export default function App() {
   const [dragBase, setDragBase] = useState<{ side: PanelSide; base: number } | null>(null);
   const [resizingSide, setResizingSide] = useState<PanelSide | null>(null);
   const [isWindowResizing, setIsWindowResizing] = useState(false);
-  const agentPanelUnmountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dockUnmountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadSettings = useSettingsStore((s) => s.load);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -118,6 +124,12 @@ export default function App() {
 
   const sidebarOpen = workspaceLayout?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen;
   const agentPanelOpen = workspaceLayout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
+  /**
+   * 右侧固定栏（dock）现在停谁：默认 Agent 面板；开启「Agent 占主区域」后与终端互换，
+   * dock 里是终端、主区域是 Agent。宽度、把手文案、落盘字段全按这个判断走。
+   */
+  const dockPanel = dockPanelOf(workspaceLayout);
+  const agentPrimary = dockPanel === 'terminal';
   const disabledPlugins = useSettingsStore((s) => s.settings.disabledPlugins);
   const disableAllInjections = useSettingsStore((s) => s.settings.disableAllInjections);
   const authorizedCapabilities = useSettingsStore((s) => s.settings.authorizedCapabilities);
@@ -137,9 +149,11 @@ export default function App() {
   // 插件 agent 视图必须 order<10 才能显示（同时顶掉内置 Agent 面板），实际不可用
   const agentProvider = isExclusive ? null : agentProviders[0];
   const effectiveSidebarOpen = sidebarOpen && !isExclusive && sidebarProvider !== null;
-  const effectiveAgentPanelOpen = agentPanelOpen && !isExclusive && agentProvider !== null;
-  const [agentPanelMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
-  const agentPanelWasUnmountedRef = useRef(!effectiveAgentPanelOpen);
+  // dock 里停谁由 agentPrimary 决定：停终端时它永远在（终端是常驻中心视图）
+  const dockProvider = agentPrimary ? centerProviders[0] : agentProvider;
+  const effectiveAgentPanelOpen = agentPanelOpen && !isExclusive && dockProvider !== null;
+  const [dockMounted, setAgentPanelMounted] = useState(effectiveAgentPanelOpen);
+  const dockWasUnmountedRef = useRef(!effectiveAgentPanelOpen);
 
   useEffect(() => {
     attachTransferListeners();
@@ -171,9 +185,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (agentPanelUnmountTimeoutRef.current) {
-      clearTimeout(agentPanelUnmountTimeoutRef.current);
-      agentPanelUnmountTimeoutRef.current = null;
+    if (dockUnmountTimeoutRef.current) {
+      clearTimeout(dockUnmountTimeoutRef.current);
+      dockUnmountTimeoutRef.current = null;
     }
 
     if (effectiveAgentPanelOpen) {
@@ -181,23 +195,23 @@ export default function App() {
       return;
     }
 
-    agentPanelUnmountTimeoutRef.current = setTimeout(() => {
+    dockUnmountTimeoutRef.current = setTimeout(() => {
       setAgentPanelMounted(false);
-      agentPanelUnmountTimeoutRef.current = null;
+      dockUnmountTimeoutRef.current = null;
     }, AGENT_PANEL_COLLAPSE_MS);
   }, [effectiveAgentPanelOpen]);
 
   useEffect(() => {
-    if (!agentPanelMounted) return;
-    if (!agentPanelWasUnmountedRef.current) return;
-    agentPanelWasUnmountedRef.current = false;
+    if (!dockMounted) return;
+    if (!dockWasUnmountedRef.current) return;
+    dockWasUnmountedRef.current = false;
     rehydrateInjections();
-  }, [agentPanelMounted, rehydrateInjections]);
+  }, [dockMounted, rehydrateInjections]);
 
   useEffect(() => {
-    if (agentPanelMounted) return;
-    agentPanelWasUnmountedRef.current = true;
-  }, [agentPanelMounted]);
+    if (dockMounted) return;
+    dockWasUnmountedRef.current = true;
+  }, [dockMounted]);
 
   useEffect(() => {
     const el = mainRowRef.current;
@@ -232,14 +246,13 @@ export default function App() {
 
   // 拖动期间把候选基准宽度并进设置再求解：面板宽度、中栏、邻栏全部由同一个
   // resolveWorkspaceLayout 算出来，所以拖动中看到的布局就是松手后的布局。
+  // 落盘字段按 dock 当前停谁选（互换模式下拖的是终端自己的宽度）。
   const dragBasePatch = useMemo(
     () =>
       dragBase === null
         ? null
-        : dragBase.side === 'sidebar'
-          ? { sidebarBaseWidth: dragBase.base }
-          : { agentBaseWidth: dragBase.base },
-    [dragBase],
+        : baseWidthPatch(dragBase.side, workspaceLayout, dragBase.base),
+    [dragBase, workspaceLayout],
   );
 
   const resolvedLayout = resolveWorkspaceLayout({
@@ -251,8 +264,8 @@ export default function App() {
   });
 
   const sidebarWidth = resolvedLayout.sidebarWidth;
-  const agentPanelWidth = resolvedLayout.agentWidth;
-  const agentPanelVisible = effectiveAgentPanelOpen && agentPanelWidth > 0;
+  const dockWidth = resolvedLayout.dockWidth;
+  const dockVisible = effectiveAgentPanelOpen && dockWidth > 0;
   const isResizing = resizingSide !== null;
 
   // 可拖范围（拿 resolveWorkspaceLayout 自己当预言机扫出来的），只在窗口尺寸 /
@@ -269,10 +282,10 @@ export default function App() {
       }),
     [agentPanelOpen, isExclusive, layoutWidth, sidebarOpen, workspaceLayout],
   );
-  const agentBounds = useMemo(
+  const dockBounds = useMemo(
     () =>
       resolvePanelBaseBounds({
-        side: 'agent',
+        side: 'dock',
         containerWidth: layoutWidth,
         settings: workspaceLayout,
         sidebarOpen,
@@ -286,7 +299,7 @@ export default function App() {
     // 从 store 现取而不是用渲染闭包：update() 是「先落盘再改内存」，
     // 连续两次调整时闭包里的 workspaceLayout 可能还没有上一条的结果。
     const current = useSettingsStore.getState().settings.workspaceLayout;
-    const next = normalizeWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...current, ...patch });
+    const next = mergeWorkspaceLayout(current, patch);
     return updateSettings({ workspaceLayout: next }).catch((err) => {
       console.error('Failed to save workspace layout:', err);
     });
@@ -295,9 +308,10 @@ export default function App() {
   /** 落盘一次面板基准宽度，并在 store 真的拿到新值之后再撤掉本地覆盖值。 */
   const commitPanelBase = useCallback(
     (side: PanelSide, base: number) => {
-      void persistWorkspaceLayout(
-        side === 'sidebar' ? { sidebarBaseWidth: base } : { agentBaseWidth: base },
-      ).then(() => {
+      // 落盘字段从 store 现取（和 persistWorkspaceLayout 同一个理由）：互换模式下
+      // dock 停的是终端，这一笔要写进 terminalBaseWidth，两栏各记各的宽度。
+      const current = useSettingsStore.getState().settings.workspaceLayout;
+      void persistWorkspaceLayout(baseWidthPatch(side, current, base)).then(() => {
         // 等 store 更新完再撤覆盖：早一步撤会先按旧宽度渲染一帧，看起来就是「松手闪一下」。
         // 期间若已经开出新的一次调整，就把它留给那一次收尾。
         setDragBase((current) =>
@@ -318,13 +332,14 @@ export default function App() {
 
   const startPanelResize = useCallback(
     (side: PanelSide, e: React.PointerEvent<HTMLDivElement>) => {
-      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
+      const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
       if (e.button !== 0 || isExclusive || !bounds.draggable) return;
       // 只捕获指针、不 preventDefault：焦点与选区的守卫在 SplitHandle 的 mousedown 上
       // （取消 pointerdown 有引擎会连 click / dblclick 一起掐掉）。
       e.currentTarget.setPointerCapture(e.pointerId);
       const layout = normalizeWorkspaceLayout(workspaceLayout);
-      const baseStart = side === 'sidebar' ? layout.sidebarBaseWidth : layout.agentBaseWidth;
+      const baseStart =
+        side === 'sidebar' ? layout.sidebarBaseWidth : dockBaseWidthOf(layout);
       resizeSessionRef.current = {
         side,
         pointerId: e.pointerId,
@@ -336,7 +351,7 @@ export default function App() {
       };
       setResizingSide(side);
     },
-    [agentBounds, isExclusive, layoutWidth, sidebarBounds, workspaceLayout],
+    [dockBounds, isExclusive, layoutWidth, sidebarBounds, workspaceLayout],
   );
 
   const movePanelResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -372,14 +387,14 @@ export default function App() {
 
   const nudgePanelResize = useCallback(
     (side: PanelSide, delta: number) => {
-      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
+      const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
       const layout = normalizeWorkspaceLayout(workspaceLayout);
       const current =
         dragBase && dragBase.side === side
           ? dragBase.base
           : side === 'sidebar'
             ? layout.sidebarBaseWidth
-            : layout.agentBaseWidth;
+            : dockBaseWidthOf(layout);
       const base = Math.min(
         bounds.max,
         Math.max(bounds.min, current + Math.round(delta / resolveWorkspaceScale(layoutWidth))),
@@ -395,21 +410,19 @@ export default function App() {
         if (pending) commitPanelBase(pending.side, pending.base);
       }, NUDGE_COMMIT_MS);
     },
-    [agentBounds, commitPanelBase, dragBase, layoutWidth, sidebarBounds, workspaceLayout],
+    [dockBounds, commitPanelBase, dragBase, layoutWidth, sidebarBounds, workspaceLayout],
   );
 
   const resetPanelWidth = useCallback(
     (side: PanelSide) => {
-      const bounds = side === 'sidebar' ? sidebarBounds : agentBounds;
-      const fallback =
-        side === 'sidebar'
-          ? DEFAULT_WORKSPACE_LAYOUT.sidebarBaseWidth
-          : DEFAULT_WORKSPACE_LAYOUT.agentBaseWidth;
+      const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
+      // 复位到「当前停在 dock 上的那个面板」自己的默认宽度
+      const fallback = defaultBaseWidthOf(side, workspaceLayout);
       const base = Math.min(bounds.max, Math.max(bounds.min, fallback));
       setDragBase({ side, base });
       commitPanelBase(side, base);
     },
-    [agentBounds, commitPanelBase, sidebarBounds],
+    [dockBounds, commitPanelBase, sidebarBounds, workspaceLayout],
   );
 
   // 拖动期间把光标钉死：终端（xterm 自带 cursor: text）之类的内容会盖掉 body 上的继承值，
@@ -514,11 +527,40 @@ export default function App() {
   const CenterView = centerProvider ? getLazy(centerProvider) : null;
   const AgentView = agentProvider ? getLazy(agentProvider) : null;
 
+  /** 终端主体（不含标签栏）：进 dock 的只有这一份。标签栏恒驻主区域顶部，
+   *  「Agent 占主区域」时它留在 Agent 上方（主区域顶条），不跟终端进 dock。 */
+  const terminalBody = (
+    <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      {centerProvider && centerProvider.pluginId !== 'builtin' ? (
+        <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
+      ) : (
+        <Suspense fallback={null}>{CenterView && <CenterView />}</Suspense>
+      )}
+    </main>
+  );
+
+  /** 终端那一份内容（挂载点 center）：标签栏 + 中心视图。 */
+  const terminalPane = (
+    <>
+      <TabBar />
+      {terminalBody}
+    </>
+  );
+
+  /** Agent 面板内容（挂载点 agent）。 */
+  const agentPane =
+    agentProvider && agentProvider.pluginId !== 'builtin' ? (
+      <PluginWebviewSlot key={`${agentProvider.id}-${pluginRefreshKey}`} provider={agentProvider} />
+    ) : (
+      AgentView && <AgentView />
+    );
+
   return (
     <div className="relative">
       <AppHeader
         onToggleSidebar={handleToggleSidebar}
-        onToggleAgentPanel={handleToggleAgentPanel}
+        onToggleDock={handleToggleAgentPanel}
+        dockPanel={dockPanel}
         className="fixed top-0 left-0 right-0 z-[99999]"
       />
 
@@ -578,7 +620,19 @@ export default function App() {
             />
           )}
 
-          <div data-region="center" className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative">
+          {/*
+            主区域：默认停终端（含标签栏），开启「Agent 占主区域」后主区域停 Agent、
+            终端主体换到右侧固定栏。标签栏不跟着走：它恒驻主区域顶条（此时在
+            Agent 上方），dock 里只停终端本体——终端没有可显示的会话时（dock
+            合上）标签栏也一并隐藏。区域名跟随**逻辑面板**而不是物理左右
+            （center = 终端那一份视图 / agent = Agent 面板）：挂载点本身就是逻辑的
+            （builtin.terminal 的 mount 就是 center），插件按区域名注入时不会因为
+            用户换了布局而漂到另一边。
+          */}
+          <div
+            data-region={agentPrimary ? 'agent' : 'center'}
+            className="layout-contained flex-1 flex flex-col min-w-0 overflow-hidden relative"
+          >
             {isExclusive ? (
               <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-zinc-900 animate-settings-workspace-enter">
                 {centerProvider && centerProvider.pluginId !== 'builtin' ? (
@@ -589,54 +643,56 @@ export default function App() {
                   </Suspense>
                 )}
               </div>
-            ) : (
+            ) : agentPrimary ? (
               <>
-                <TabBar />
+                {dockMounted && dockVisible && <TabBar />}
                 <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                  {centerProvider && centerProvider.pluginId !== 'builtin' ? (
-                    <PluginWebviewSlot key={`${centerProvider.id}-${pluginRefreshKey}`} provider={centerProvider} />
-                  ) : (
-                    <Suspense fallback={null}>{CenterView && <CenterView />}</Suspense>
-                  )}
+                  {/* AgentPanel 是 lazy 的：agentPrimary 下它在主区域首帧就渲染，
+                      没有边界的话，chunk 加载窗口内任何一个同步更新（启动时
+                      settings/作业/会话事件齐发）都会致命——「A component
+                      suspended while responding to synchronous input」。 */}
+                  <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>{agentPane}</Suspense>
                 </main>
               </>
+            ) : (
+              terminalPane
             )}
           </div>
 
           <div
             className="layout-contained flex overflow-hidden flex-shrink-0"
             style={{
-              width: agentPanelVisible ? `${agentPanelWidth + 4}px` : '0px',
+              width: dockVisible ? `${dockWidth + 4}px` : '0px',
               transition: isResizing || isWindowResizing ? 'none' : 'width 300ms var(--spring-bounce, cubic-bezier(0.34, 1.56, 0.64, 1))',
             }}
           >
-            {agentPanelMounted && agentPanelVisible && (
+            {dockMounted && dockVisible && (
               <>
                 <SplitHandle
-                  label="调整 Agent 面板宽度"
-                  value={agentPanelWidth}
-                  min={agentBounds.minDisplayed}
-                  max={agentBounds.maxDisplayed}
-                  active={resizingSide === 'agent'}
-                  draggable={agentBounds.draggable && !isExclusive}
+                  label={agentPrimary ? '调整终端栏宽度' : '调整 Agent 面板宽度'}
+                  value={dockWidth}
+                  min={dockBounds.minDisplayed}
+                  max={dockBounds.maxDisplayed}
+                  active={resizingSide === 'dock'}
+                  draggable={dockBounds.draggable && !isExclusive}
                   // 把手在面板左缘：左方向键把面板拉宽
                   growDirection={-1}
-                  onPointerDown={(e) => startPanelResize('agent', e)}
+                  onPointerDown={(e) => startPanelResize('dock', e)}
                   onPointerMove={movePanelResize}
                   onPointerUp={endPanelResize}
                   onPointerCancel={endPanelResize}
-                  onNudge={(delta) => nudgePanelResize('agent', delta)}
-                  onReset={() => resetPanelWidth('agent')}
+                  onNudge={(delta) => nudgePanelResize('dock', delta)}
+                  onReset={() => resetPanelWidth('dock')}
                 />
                 <aside
-                  data-region="agent"
-                  className="layout-contained overflow-hidden border-l border-zinc-800 flex-shrink-0"
-                  style={{ width: `${agentPanelWidth}px` }}
+                  data-region={agentPrimary ? 'center' : 'agent'}
+                  className="layout-contained flex flex-col overflow-hidden border-l border-zinc-800 flex-shrink-0"
+                  style={{ width: `${dockWidth}px` }}
                 >
-                  {agentProvider && agentProvider.pluginId !== 'builtin' ? (
-                    <PluginWebviewSlot key={`${agentProvider.id}-${pluginRefreshKey}`} provider={agentProvider} />
-                  ) : (
-                    AgentView && <AgentView />
+                  {agentPrimary ? terminalBody : (
+                    /* 默认布局的 dock 同样渲染 lazy 的 agentPane：靠 ResizeObserver
+                       时序躲过了同步更新窗口，那是运气不是保证，边界必须显式给。 */
+                    <Suspense fallback={<div className="flex-1 bg-zinc-900" />}>{agentPane}</Suspense>
                   )}
                 </aside>
               </>

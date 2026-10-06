@@ -19,7 +19,12 @@ import {
   conversationIsBusy,
 } from "@/stores/conversationStore";
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
-import { isLocalSessionId } from "@/lib/toolCatalog";
+import {
+  canOpenCommandMenu,
+  compactingSelectorOf,
+  deriveSubAgentDispatch,
+} from "@/lib/agentPanelDerived";
+import { dockPanelOf } from "@/lib/workspaceLayout";
 import { currentVision } from "@/lib/llmRegistry";
 import type { AgentMessage } from "@/lib/types";
 import {
@@ -35,6 +40,12 @@ import PlanList from "./PlanList";
 import type { AgentCommandMenuHandle } from "./AgentCommandMenu";
 import { notifyInputStopped } from "./panel/inputActivity";
 import { useAgentPanelAttachments } from "./panel/useAgentPanelAttachments";
+import ContentWidthHandles from "./panel/ContentWidthHandles";
+import {
+  readChatWidthPreference,
+  resolveAgentContentWidth,
+  writeChatWidthPreference,
+} from "@/lib/chatContentWidth";
 import { AgentPanelHeader } from "./panel/AgentPanelHeader";
 import { AgentHistoryDrawer } from "./panel/AgentHistoryDrawer";
 import { AgentComposer } from "./panel/AgentComposer";
@@ -87,9 +98,7 @@ export default function AgentPanel() {
   );
   // 本会话是否正在手动压缩上下文（订阅而非直接读 store：压缩一开始就要立刻
   // 禁用发送键并显示原因，不能等第一条压缩事件把它带出来）。
-  const isCompacting = useTaskStore((s) =>
-    activeConversationId ? !!s.compacting[activeConversationId] : false,
-  );
+  const isCompacting = useTaskStore(compactingSelectorOf(activeConversationId));
 
   // 子agent对话不在会话列表展示：只通过主对话的 task 卡片进入/返回
   const sessionConversations = useMemo(
@@ -111,28 +120,75 @@ export default function AgentPanel() {
   /**
    * 子 agent 派发信息：
    * - `mode`（plan 只读调研 / agent 读写执行）驱动输入区文案；
-   * - `isLocal` 判定它是不是**本机**子任务（`local_subagent`）——本机子任务的
-   *   `sessionId` 是哨兵值（`isLocalSessionId`，见 toolCatalog 的
-   *   `LOCAL_SESSION_SENTINEL`），没有 SSH 会话。横条据此标「本机」，否则用户
-   *   会以为这条子对话跑在某台服务器上（与移动端 `MobileAgentHost` 同口径）。
+   * - `isLocal` 判定它是不是**本机**子任务 —— 横条据此标「本机」，否则用户
+   *   会以为这条子对话跑在某台服务器上。
+   *
+   * 派生逻辑与移动端 `MobileAgentHost` 共用 `lib/agentPanelDerived` 的
+   * `deriveSubAgentDispatch`（哨兵值口径等细节见其注释）。
    */
-  const subAgentDispatch = (() => {
-    if (!activeConversationId) return { mode: "plan" as const, isLocal: false };
-    const subTask = Object.values(tasks).find(
-      (t) => t.conversationId === activeConversationId && t.parentTaskId,
-    );
-    return {
-      mode: (subTask?.mode === "agent" ? "agent" : "plan") as "plan" | "agent",
-      isLocal: isLocalSessionId(subTask?.sessionId),
-    };
-  })();
+  const subAgentDispatch = deriveSubAgentDispatch(tasks, activeConversationId);
   const subAgentMode = subAgentDispatch.mode;
 
   // 图片支持按「当前会话实际生效模型」判定（会话记忆 → 全局最近使用），
   // 避免会话内切到非视觉模型时仍允许附图。普通派生值（随每次渲染重算，
   // 不能用 zustand selector——会话切换时 selector 不重跑）。
   const registry = useSettingsStore((s) => s.settings.llmRegistry);
+  const workspaceLayout = useSettingsStore((s) => s.settings.workspaceLayout);
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
+
+  // ── 内容列宽度（参考 DSH ui-conversation 的 ConversationRoot）──
+  // 仅「Agent 占主区域」布局默认限宽；右侧 dock 默认不限宽（除非用户拖拽
+  // 设置过偏好）。把手拖拽实时发布到根上的 --agent-content-max，提交才落
+  // localStorage；双击把手复位到自适应宽度。
+  const agentRootRef = useRef<HTMLDivElement>(null);
+  const chatWidthLimitActive = dockPanelOf(workspaceLayout) === 'terminal';
+  const publishContentWidth = useCallback(() => {
+    const root = agentRootRef.current;
+    if (!root) return;
+    const column = root.clientWidth;
+    if (!Number.isFinite(column) || column <= 0) return;
+    const preference = readChatWidthPreference();
+    if (!chatWidthLimitActive && preference === null) {
+      root.style.setProperty('--agent-content-max', 'none');
+      return;
+    }
+    root.style.setProperty(
+      '--agent-content-max',
+      `${resolveAgentContentWidth(column, preference)}px`,
+    );
+  }, [chatWidthLimitActive]);
+  useEffect(() => {
+    const root = agentRootRef.current;
+    if (!root) return;
+    publishContentWidth();
+    const observer = new ResizeObserver(() => publishContentWidth());
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [publishContentWidth]);
+  const handleContentWidthStart = useCallback(() => {
+    const root = agentRootRef.current;
+    return resolveAgentContentWidth(root ? root.clientWidth : 0, readChatWidthPreference());
+  }, []);
+  const handleContentWidthDrag = useCallback((width: number) => {
+    const root = agentRootRef.current;
+    if (!root) return;
+    root.style.setProperty(
+      '--agent-content-max',
+      `${resolveAgentContentWidth(root.clientWidth, width)}px`,
+    );
+  }, []);
+  const handleContentWidthCommit = useCallback((width: number) => {
+    const root = agentRootRef.current;
+    if (!root) return;
+    writeChatWidthPreference(resolveAgentContentWidth(root.clientWidth, width));
+  }, []);
+  const handleContentWidthEnd = useCallback(() => {
+    publishContentWidth();
+  }, [publishContentWidth]);
+  const handleContentWidthReset = useCallback(() => {
+    writeChatWidthPreference(null);
+    publishContentWidth();
+  }, [publishContentWidth]);
 
   const attachments = useAgentPanelAttachments({
     visionEnabled,
@@ -221,15 +277,15 @@ export default function AgentPanel() {
 
   // ── `/` 命令面板 ─────────────────────────────────────────────────────
   // 输入以 "/" 开头且不含空格时激活（含空格视为普通文本，避免路径输入误弹）。
-  // 任务运行中不唤出：手动压缩与运行中任务并发会造成替换竞态（对齐 DSH
-  // compactNow 的 busy 语义），其它命令（模式切换）在运行中也没有意义。
-  // 压缩中同样不唤出 —— 会话忙的两种情况走同一个 `conversationIsBusy`，
-  // 顺带堵住「压缩中再点一次压缩」（两次摘要各写一张卡会破坏恒单卡）。
+  // 唤出门控（任务运行中/压缩中不唤出，理由见共享函数注释）与移动端
+  // `MobileAgentHost` 共用 `canOpenCommandMenu`。
   // 键盘事件在打开时交给面板组件处理（↑↓/Enter/Esc/子菜单 Backspace）。
   const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
-  const commandMenuOpen =
-    commandDraft &&
-    (!activeConversationId || !conversationIsBusy(activeConversationId));
+  const commandMenuOpen = canOpenCommandMenu(
+    commandDraft,
+    activeConversationId,
+    conversationIsBusy,
+  );
 
   const handleCompact = () => {
     if (!activeConversationId) return;
@@ -390,6 +446,7 @@ export default function AgentPanel() {
 
   return (
     <div
+      ref={agentRootRef}
       data-region="agent-panel"
       className="relative flex flex-col h-full bg-zinc-900"
     >
@@ -520,6 +577,16 @@ export default function AgentPanel() {
         onClose={() => setTasksDrawerOpen(false)}
         initialTab={tasksDrawerTab}
       />
+
+      {chatWidthLimitActive && (
+        <ContentWidthHandles
+          onStart={handleContentWidthStart}
+          onDrag={handleContentWidthDrag}
+          onCommit={handleContentWidthCommit}
+          onEnd={handleContentWidthEnd}
+          onReset={handleContentWidthReset}
+        />
+      )}
     </div>
   );
 }

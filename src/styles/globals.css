@@ -1050,3 +1050,73 @@ body.marcel-resizing-x * {
   cursor: col-resize !important;
   user-select: none;
 }
+
+/* ── Agent 聊天内容列（参考 DSH ui-chat 的 --dsh-chat-content-width）──
+   滚动器本身全宽，只有内容列限宽并水平居中；窄面板（dock ~460px）时
+   width:100% 自然钳制，max-width 不会撑破容器。cqw 以最近的
+   container-type: inline-size 祖先（transcript 滚动容器 / composer 根）
+   为基准，等价于 DSH 的「对话列宽度 × 0.64，680–920 封顶」。 */
+.agent-content-column {
+  width: 100%;
+  /* 数值由 AgentPanel 根发布（自适应 clamp 或拖拽偏好 px；右侧 dock 默认
+     不限宽时是 none）。这里的 clamp 只是没有发布者时的兜底。 */
+  max-width: var(--agent-content-max, clamp(680px, 64cqw, 920px));
+  margin-inline: auto;
+}
+
+/* ── 内容列宽度把手（左右一对，参考 DSH ui-conversation 的 WidthHandle）──
+   只有 agentPrimary（Agent 占主区域）布局渲染：把手占住内容列两侧的留白，
+   拖拽对称改变内容列宽度（向外 1px = 内容列 +2px）。辉光条随指针 Y 滑动，
+   hover / 拖拽中点亮。top: 44px 避开面板头部的按钮区。 */
+.agent-width-handle {
+  position: absolute;
+  top: 44px;
+  bottom: 0;
+  z-index: 20;
+  width: min(
+    40px,
+    calc((100% - var(--agent-content-max, 0px)) / 2 - 24px - 24px)
+  );
+  cursor: col-resize;
+}
+
+.agent-width-handle[data-side='left'] {
+  right: calc(50% + var(--agent-content-max, 0px) / 2 + 24px);
+}
+
+.agent-width-handle[data-side='right'] {
+  left: calc(50% + var(--agent-content-max, 0px) / 2 + 24px);
+}
+
+/* 辉光：一条 3px 竖条随指针 Y 滑动，24px 实心核心向两侧 40px 渐隐——
+   实心核心而不是单峰，否则会在渐隐里洗掉。取滚动条 hover 的色调。 */
+.agent-width-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to bottom,
+    transparent calc(var(--agent-width-handle-pointer-y, 50%) - 52px),
+    rgba(161, 161, 170, 0.45) calc(var(--agent-width-handle-pointer-y, 50%) - 12px),
+    rgba(161, 161, 170, 0.45) calc(var(--agent-width-handle-pointer-y, 50%) + 12px),
+    transparent calc(var(--agent-width-handle-pointer-y, 50%) + 52px)
+  );
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent-width-handle[data-side='left']::after {
+  right: 16px;
+}
+
+.agent-width-handle[data-side='right']::after {
+  left: 16px;
+}
+
+.agent-width-handle:hover::after,
+.agent-width-handle[data-dragging]::after {
+  opacity: 1;
+}

@@ -88,11 +88,12 @@ export function AgentComposer({
   return (
     <AgentDraft>{(input) => (
     <div
-      className="flex-shrink-0 p-3 border-t border-zinc-800"
+      className="flex-shrink-0 p-3 border-t border-zinc-800 [container-type:inline-size]"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      <div className="agent-content-column">
       {attachHint && (
         <div className="mb-2 px-2 py-1.5 rounded-md bg-amber-950/60 border border-amber-800/50 text-xs text-amber-200">
           {attachHint}
@@ -238,6 +239,7 @@ export function AgentComposer({
             onCancelCompaction={onCancelCompaction}
           />
         </div>
+      </div>
       </div>
     </div>
     )}</AgentDraft>

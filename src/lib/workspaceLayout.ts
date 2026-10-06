@@ -2,9 +2,13 @@ import type { WorkspaceLayoutSettings } from '@/lib/types';
 
 /**
  * 面板宽度的两套坐标，改这里之前先分清：
- * - `sidebar.min/max`、`agent.min/max` 是**显示宽度**（屏幕上真实的像素），夹取发生在 resolve 里；
+ * - `sidebar.min/max`、`dock.min/max` 是**显示宽度**（屏幕上真实的像素），夹取发生在 resolve 里；
  * - 落盘存的是**基准宽度**（`*BaseWidth`），显示宽度 = 基准 × scale，scale 随窗口宽变化。
  * 两套坐标必须严格互逆（见 baseWidthBounds），否则拖拽松手会跳。
+ *
+ * 拓扑固定为「左侧栏 + 中间主区域(flex-1) + 右侧固定栏」。右侧那一栏是可拖宽、可收起的
+ * **dock 槽位**：默认停 Agent 面板，开启「Agent 占主区域」（`agentPrimary`）后与终端互换——
+ * Agent 去主区域，终端停进 dock。所以宽度求解只认槽位，dock 的基准宽度按当前停的面板取。
  */
 export const WORKSPACE_LAYOUT_LIMITS = {
   navWidth: 56,
@@ -16,12 +20,19 @@ export const WORKSPACE_LAYOUT_LIMITS = {
     max: 560,
     defaultBaseWidth: 280,
   },
-  agent: {
+  /** 右侧固定栏的几何：Agent 面板与终端栏共用同一套可用区间。 */
+  dock: {
     min: 300,
     compactMin: 260,
     max: 1100,
     defaultBaseWidth: 460,
+    /**
+     * 终端停进 dock 时的默认基准宽度。与 Agent 停 dock 时同值：互换换的是谁在中间主区域，
+     * 右侧窄栏的默认宽度不变——终端想更宽自己拖（上限与其他一切照旧）。
+     */
+    terminalDefaultBaseWidth: 460,
   },
+  /** 主区域（flex-1）：默认停终端，互换后停 Agent 面板，两套内容共用同一套几何。 */
   main: {
     min: 560,
   },
@@ -29,15 +40,18 @@ export const WORKSPACE_LAYOUT_LIMITS = {
 
 export const DEFAULT_WORKSPACE_LAYOUT: WorkspaceLayoutSettings = {
   sidebarBaseWidth: WORKSPACE_LAYOUT_LIMITS.sidebar.defaultBaseWidth,
-  agentBaseWidth: WORKSPACE_LAYOUT_LIMITS.agent.defaultBaseWidth,
+  agentBaseWidth: WORKSPACE_LAYOUT_LIMITS.dock.defaultBaseWidth,
+  terminalBaseWidth: WORKSPACE_LAYOUT_LIMITS.dock.terminalDefaultBaseWidth,
   sidebarOpen: true,
   agentOpen: true,
+  agentPrimary: false,
 };
 
 export interface ResolvedWorkspaceLayout {
   sidebarWidth: number;
   mainWidth: number;
-  agentWidth: number;
+  /** 右侧固定栏的宽度：默认是 Agent 面板，开启「Agent 占主区域」后是终端栏。 */
+  dockWidth: number;
 }
 
 interface ResolveWorkspaceLayoutInput {
@@ -59,6 +73,57 @@ const legacyRatioToBaseWidth = (value: number | undefined, fallback: number) => 
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return fallback;
   return Math.round(WORKSPACE_LAYOUT_LIMITS.referenceWidth * clamp(value, 0.12, 0.45));
 };
+
+/** 右侧固定栏当前承载的面板：默认 Agent 面板，开启「Agent 占主区域」后是终端栏。 */
+export function dockPanelOf(
+  settings?: Partial<WorkspaceLayoutSettings> | null,
+): 'agent' | 'terminal' {
+  return settings?.agentPrimary ? 'terminal' : 'agent';
+}
+
+/**
+ * 右侧固定栏的基准宽度落在哪个设置字段。拖动结束后要按这里写回——互换模式下写的是
+ * 终端自己的宽度，两栏各有各的记忆，来回切换不会互相顶掉对方的宽度。
+ */
+export function baseWidthKeyOf(
+  side: PanelSide,
+  settings?: Partial<WorkspaceLayoutSettings> | null,
+): 'sidebarBaseWidth' | 'agentBaseWidth' | 'terminalBaseWidth' {
+  if (side === 'sidebar') return 'sidebarBaseWidth';
+  return dockPanelOf(settings) === 'terminal' ? 'terminalBaseWidth' : 'agentBaseWidth';
+}
+
+/** 右侧固定栏的基准宽度（已归一），求解器与拖拽区间都从这里取。 */
+export function dockBaseWidthOf(settings?: Partial<WorkspaceLayoutSettings> | null): number {
+  const layout = normalizeWorkspaceLayout(settings);
+  return layout.agentPrimary ? layout.terminalBaseWidth : layout.agentBaseWidth;
+}
+
+/**
+ * 把一次拖动的结果写成设置 patch——落盘字段按「dock 现在停谁」决定，调用方不用自己判断。
+ * 与 `baseWidthKeyOf` 同一个判断点（`dockPanelOf`），两者不会漂。
+ */
+export function baseWidthPatch(
+  side: PanelSide,
+  settings: Partial<WorkspaceLayoutSettings> | null | undefined,
+  base: number,
+): Partial<WorkspaceLayoutSettings> {
+  if (side === 'sidebar') return { sidebarBaseWidth: base };
+  return dockPanelOf(settings) === 'terminal'
+    ? { terminalBaseWidth: base }
+    : { agentBaseWidth: base };
+}
+
+/** 双击把手复位到的基准宽度：按 dock 现在停的面板取各自的默认值。 */
+export function defaultBaseWidthOf(
+  side: PanelSide,
+  settings?: Partial<WorkspaceLayoutSettings> | null,
+): number {
+  if (side === 'sidebar') return DEFAULT_WORKSPACE_LAYOUT.sidebarBaseWidth;
+  return dockPanelOf(settings) === 'terminal'
+    ? DEFAULT_WORKSPACE_LAYOUT.terminalBaseWidth
+    : DEFAULT_WORKSPACE_LAYOUT.agentBaseWidth;
+}
 
 export function resolveWorkspaceScale(containerWidth: number): number {
   const availableWidth = Math.max(1, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
@@ -93,6 +158,17 @@ export function displayedWidthFromBaseWidth(
   return clamp(Math.round(baseWidth * resolveWorkspaceScale(containerWidth)), min, max);
 }
 
+/**
+ * 把一次布局改动并进现有设置：缺项补默认、非法值夹取。落盘的每一条路径都必须过这里
+ * （拖动落盘、设置页开关各写一份的话，加字段时必然漏一边）。
+ */
+export function mergeWorkspaceLayout(
+  current: Partial<WorkspaceLayoutSettings> | null | undefined,
+  patch: Partial<WorkspaceLayoutSettings>,
+): WorkspaceLayoutSettings {
+  return normalizeWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...current, ...patch });
+}
+
 export function normalizeWorkspaceLayout(
   settings?: Partial<WorkspaceLayoutSettings> | null,
 ): WorkspaceLayoutSettings {
@@ -108,9 +184,9 @@ export function normalizeWorkspaceLayout(
     WORKSPACE_LAYOUT_LIMITS.sidebar.min,
     WORKSPACE_LAYOUT_LIMITS.sidebar.max,
   );
-  const agentBounds = baseWidthBounds(
-    WORKSPACE_LAYOUT_LIMITS.agent.min,
-    WORKSPACE_LAYOUT_LIMITS.agent.max,
+  const dockBounds = baseWidthBounds(
+    WORKSPACE_LAYOUT_LIMITS.dock.min,
+    WORKSPACE_LAYOUT_LIMITS.dock.max,
   );
 
   return {
@@ -122,12 +198,20 @@ export function normalizeWorkspaceLayout(
     ),
     agentBaseWidth: clampBaseWidth(
       settings?.agentBaseWidth,
-      agentBounds.min,
-      agentBounds.max,
+      dockBounds.min,
+      dockBounds.max,
       legacyAgentBaseWidth,
+    ),
+    terminalBaseWidth: clampBaseWidth(
+      settings?.terminalBaseWidth,
+      dockBounds.min,
+      dockBounds.max,
+      DEFAULT_WORKSPACE_LAYOUT.terminalBaseWidth,
     ),
     sidebarOpen: settings?.sidebarOpen ?? DEFAULT_WORKSPACE_LAYOUT.sidebarOpen,
     agentOpen: settings?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen,
+    // 旧配置没有这一项：按默认 false 走，即保持原布局（不因为升级换位置）
+    agentPrimary: settings?.agentPrimary ?? DEFAULT_WORKSPACE_LAYOUT.agentPrimary,
   };
 }
 
@@ -141,14 +225,16 @@ export function resolveWorkspaceLayout({
   const layout = normalizeWorkspaceLayout(settings);
   const availableWidth = Math.max(0, containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
   const effectiveSidebarOpen = !isExclusive && (sidebarOpen ?? layout.sidebarOpen);
-  const effectiveAgentOpen = !isExclusive && (agentOpen ?? layout.agentOpen);
+  const effectiveDockOpen = !isExclusive && (agentOpen ?? layout.agentOpen);
+  const dockLimits = WORKSPACE_LAYOUT_LIMITS.dock;
+  const dockBaseWidth = layout.agentPrimary ? layout.terminalBaseWidth : layout.agentBaseWidth;
 
   if (availableWidth <= 0) {
-    return { sidebarWidth: 0, mainWidth: 0, agentWidth: 0 };
+    return { sidebarWidth: 0, mainWidth: 0, dockWidth: 0 };
   }
 
-  if (!effectiveSidebarOpen && !effectiveAgentOpen) {
-    return { sidebarWidth: 0, mainWidth: availableWidth, agentWidth: 0 };
+  if (!effectiveSidebarOpen && !effectiveDockOpen) {
+    return { sidebarWidth: 0, mainWidth: availableWidth, dockWidth: 0 };
   }
 
   const sidebarDesired = effectiveSidebarOpen
@@ -159,60 +245,60 @@ export function resolveWorkspaceLayout({
         WORKSPACE_LAYOUT_LIMITS.sidebar.max,
       )
     : 0;
-  const agentDesired = effectiveAgentOpen
+  const dockDesired = effectiveDockOpen
     ? displayedWidthFromBaseWidth(
-        layout.agentBaseWidth,
+        dockBaseWidth,
         containerWidth,
-        WORKSPACE_LAYOUT_LIMITS.agent.min,
-        WORKSPACE_LAYOUT_LIMITS.agent.max,
+        dockLimits.min,
+        dockLimits.max,
       )
     : 0;
 
   const sideMin =
     (effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0) +
-    (effectiveAgentOpen ? WORKSPACE_LAYOUT_LIMITS.agent.min : 0);
+    (effectiveDockOpen ? dockLimits.min : 0);
   const compactSideMin =
     (effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0) +
-    (effectiveAgentOpen ? WORKSPACE_LAYOUT_LIMITS.agent.compactMin : 0);
+    (effectiveDockOpen ? dockLimits.compactMin : 0);
 
   if (availableWidth <= WORKSPACE_LAYOUT_LIMITS.main.min + sideMin) {
     const sidebarWidth = effectiveSidebarOpen ? WORKSPACE_LAYOUT_LIMITS.sidebar.min : 0;
-    const remainingForAgent = availableWidth - WORKSPACE_LAYOUT_LIMITS.main.min - sidebarWidth;
-    const agentWidth = effectiveAgentOpen && availableWidth >= WORKSPACE_LAYOUT_LIMITS.main.min + compactSideMin
-      ? Math.max(WORKSPACE_LAYOUT_LIMITS.agent.compactMin, remainingForAgent)
+    const remainingForDock = availableWidth - WORKSPACE_LAYOUT_LIMITS.main.min - sidebarWidth;
+    const dockWidth = effectiveDockOpen && availableWidth >= WORKSPACE_LAYOUT_LIMITS.main.min + compactSideMin
+      ? Math.max(dockLimits.compactMin, remainingForDock)
       : 0;
     return {
       sidebarWidth,
-      agentWidth,
-      mainWidth: Math.max(0, availableWidth - sidebarWidth - agentWidth),
+      dockWidth,
+      mainWidth: Math.max(0, availableWidth - sidebarWidth - dockWidth),
     };
   }
 
   let sidebarWidth = sidebarDesired;
-  let agentWidth = agentDesired;
-  let mainWidth = availableWidth - sidebarWidth - agentWidth;
+  let dockWidth = dockDesired;
+  let mainWidth = availableWidth - sidebarWidth - dockWidth;
 
   if (mainWidth < WORKSPACE_LAYOUT_LIMITS.main.min) {
     let deficit = WORKSPACE_LAYOUT_LIMITS.main.min - mainWidth;
 
-    const agentSlack = effectiveAgentOpen ? Math.max(0, agentWidth - WORKSPACE_LAYOUT_LIMITS.agent.min) : 0;
+    const dockSlack = effectiveDockOpen ? Math.max(0, dockWidth - dockLimits.min) : 0;
     const sidebarSlack = effectiveSidebarOpen ? Math.max(0, sidebarWidth - WORKSPACE_LAYOUT_LIMITS.sidebar.min) : 0;
-    const totalSlack = agentSlack + sidebarSlack;
+    const totalSlack = dockSlack + sidebarSlack;
 
     if (totalSlack > 0) {
-      const agentReduction = Math.min(
-        agentSlack,
-        Math.round(deficit * (agentSlack / totalSlack)),
+      const dockReduction = Math.min(
+        dockSlack,
+        Math.round(deficit * (dockSlack / totalSlack)),
       );
-      const sidebarReduction = Math.min(sidebarSlack, deficit - agentReduction);
-      agentWidth -= agentReduction;
+      const sidebarReduction = Math.min(sidebarSlack, deficit - dockReduction);
+      dockWidth -= dockReduction;
       sidebarWidth -= sidebarReduction;
-      deficit -= agentReduction + sidebarReduction;
+      deficit -= dockReduction + sidebarReduction;
     }
 
-    if (deficit > 0 && effectiveAgentOpen) {
-      const reducible = Math.min(deficit, agentWidth - WORKSPACE_LAYOUT_LIMITS.agent.min);
-      agentWidth -= reducible;
+    if (deficit > 0 && effectiveDockOpen) {
+      const reducible = Math.min(deficit, dockWidth - dockLimits.min);
+      dockWidth -= reducible;
       deficit -= reducible;
     }
 
@@ -220,13 +306,13 @@ export function resolveWorkspaceLayout({
       const reducible = Math.min(deficit, sidebarWidth - WORKSPACE_LAYOUT_LIMITS.sidebar.min);
       sidebarWidth -= reducible;
     }
-    mainWidth = availableWidth - sidebarWidth - agentWidth;
+    mainWidth = availableWidth - sidebarWidth - dockWidth;
   }
 
-  return { sidebarWidth, mainWidth, agentWidth };
+  return { sidebarWidth, mainWidth, dockWidth };
 }
 
-export type PanelSide = 'sidebar' | 'agent';
+export type PanelSide = 'sidebar' | 'dock';
 
 export interface PanelBaseBounds {
   /** 可拖到的基准宽度区间（含首尾）。 */
@@ -254,8 +340,11 @@ interface PanelBaseBoundsInput {
  *
  * 墙必须由求解器算出来，不能另写一套几何：正中那栏的下限（main.min）在拖动期间
  * 必须当场生效，否则松手后求解器会按 slack 比例把两侧一起砍——表现就是
- * 「我拖左边，右边的 Agent 栏跟着变窄」。
+ * 「我拖左边，右边那一栏跟着变窄」。
  * 代价是每次算一遍线性扫描（最多约 1500 次纯计算），只在窗口尺寸/设置变化时算。
+ *
+ * 区间是**当前停在 dock 上的那个面板**的基准宽度区间；调用方写回设置时按
+ * `baseWidthKeyOf(side, settings)` 取字段，别自己猜。
  */
 export function resolvePanelBaseBounds({
   side,
@@ -265,10 +354,10 @@ export function resolvePanelBaseBounds({
   agentOpen,
   isExclusive,
 }: PanelBaseBoundsInput): PanelBaseBounds {
-  const limits = side === 'sidebar' ? WORKSPACE_LAYOUT_LIMITS.sidebar : WORKSPACE_LAYOUT_LIMITS.agent;
-  const baseKey = side === 'sidebar' ? 'sidebarBaseWidth' : 'agentBaseWidth';
-  const otherKey = side === 'sidebar' ? 'agentWidth' : 'sidebarWidth';
-  const mineKey = side === 'sidebar' ? 'sidebarWidth' : 'agentWidth';
+  const limits = side === 'sidebar' ? WORKSPACE_LAYOUT_LIMITS.sidebar : WORKSPACE_LAYOUT_LIMITS.dock;
+  const baseKey = baseWidthKeyOf(side, settings);
+  const otherKey = side === 'sidebar' ? 'dockWidth' : 'sidebarWidth';
+  const mineKey = side === 'sidebar' ? 'sidebarWidth' : 'dockWidth';
   const bounds = baseWidthBounds(limits.min, limits.max);
   const shared = { containerWidth, sidebarOpen, agentOpen, isExclusive };
   const at = (base: number) =>

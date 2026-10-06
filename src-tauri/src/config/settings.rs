@@ -444,6 +444,8 @@ impl Default for MobileBackgroundSettings {
 
 /// Saved workspace layout intent. The frontend treats these as user-preferred
 /// base widths, then scales them against the current window size.
+/// `terminal_base_width` is the width of the right-hand dock when it holds the
+/// terminal, which happens while `agent_primary` is on (the two panes swap).
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceLayoutSettings {
@@ -451,10 +453,15 @@ pub struct WorkspaceLayoutSettings {
     pub sidebar_base_width: u16,
     #[serde(default = "default_agent_base_width")]
     pub agent_base_width: u16,
+    #[serde(default = "default_terminal_base_width")]
+    pub terminal_base_width: u16,
     #[serde(default = "default_true")]
     pub sidebar_open: bool,
     #[serde(default = "default_true")]
     pub agent_open: bool,
+    /// 主区域放谁：false = 终端（默认），true = Agent 面板（与终端互换位置）。
+    #[serde(default)]
+    pub agent_primary: bool,
 }
 
 fn default_sidebar_base_width() -> u16 {
@@ -462,6 +469,10 @@ fn default_sidebar_base_width() -> u16 {
 }
 
 fn default_agent_base_width() -> u16 {
+    460
+}
+
+fn default_terminal_base_width() -> u16 {
     460
 }
 
@@ -485,10 +496,12 @@ impl<'de> Deserialize<'de> for WorkspaceLayoutSettings {
         struct Helper {
             sidebar_base_width: Option<u16>,
             agent_base_width: Option<u16>,
+            terminal_base_width: Option<u16>,
             sidebar_ratio: Option<f64>,
             agent_ratio: Option<f64>,
             sidebar_open: Option<bool>,
             agent_open: Option<bool>,
+            agent_primary: Option<bool>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -499,8 +512,12 @@ impl<'de> Deserialize<'de> for WorkspaceLayoutSettings {
             agent_base_width: helper.agent_base_width.unwrap_or_else(|| {
                 legacy_ratio_to_base_width(helper.agent_ratio, default_agent_base_width())
             }),
+            terminal_base_width: helper
+                .terminal_base_width
+                .unwrap_or_else(default_terminal_base_width),
             sidebar_open: helper.sidebar_open.unwrap_or(true),
             agent_open: helper.agent_open.unwrap_or(true),
+            agent_primary: helper.agent_primary.unwrap_or(false),
         })
     }
 }
@@ -510,8 +527,10 @@ impl Default for WorkspaceLayoutSettings {
         Self {
             sidebar_base_width: default_sidebar_base_width(),
             agent_base_width: default_agent_base_width(),
+            terminal_base_width: default_terminal_base_width(),
             sidebar_open: true,
             agent_open: true,
+            agent_primary: false,
         }
     }
 }
@@ -864,6 +883,34 @@ mod tests {
         assert_eq!(parsed.agent_base_width, 343);
         assert!(parsed.sidebar_open);
         assert!(!parsed.agent_open);
+    }
+
+    #[test]
+    fn workspace_layout_reads_swap_fields() {
+        // 自定义 Deserialize 只认 Helper 里列出的键：新字段漏进 Helper 就是
+        // 「保存后重启，设置被打回默认」——序列化再反序列化必须闭环。
+        let json = r#"{
+            "agentPrimary": true,
+            "terminalBaseWidth": 700,
+            "agentBaseWidth": 480
+        }"#;
+        let parsed: WorkspaceLayoutSettings = serde_json::from_str(json).expect("deserialize");
+
+        assert!(parsed.agent_primary);
+        assert_eq!(parsed.terminal_base_width, 700);
+        assert_eq!(parsed.agent_base_width, 480);
+        assert_eq!(parsed.sidebar_base_width, default_sidebar_base_width());
+
+        let roundtrip: WorkspaceLayoutSettings =
+            serde_json::from_str(&serde_json::to_string(&parsed).expect("serialize"))
+                .expect("deserialize");
+        assert_eq!(roundtrip, parsed);
+
+        // 旧配置没有这两个键：位置不换（false），宽度走默认
+        let legacy: WorkspaceLayoutSettings =
+            serde_json::from_str(r#"{"agentBaseWidth": 480}"#).expect("deserialize");
+        assert!(!legacy.agent_primary);
+        assert_eq!(legacy.terminal_base_width, default_terminal_base_width());
     }
 
     #[test]

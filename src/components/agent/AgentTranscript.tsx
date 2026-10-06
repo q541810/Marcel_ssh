@@ -89,7 +89,7 @@ export default memo(function AgentTranscript({
     <div className="relative flex-1 min-h-0 min-w-0">
       <div
         ref={containerRef}
-        className={`h-full min-h-0 overflow-y-auto overflow-x-hidden p-3 ${mobile ? 'overscroll-contain' : 'space-y-1'}`}
+        className={`h-full min-h-0 overflow-y-auto overflow-x-hidden p-3 [container-type:inline-size] ${mobile ? 'overscroll-contain' : ''}`}
         onScroll={() => {
           const node = containerRef.current;
           if (!node || !visible || !userScrolling.current) return;
@@ -98,7 +98,7 @@ export default memo(function AgentTranscript({
           setNearBottom(near);
         }}
       >
-        <div ref={contentRef}>
+        <div ref={contentRef} className={`${mobile ? '' : 'space-y-1'} agent-content-column`}>
           {(!canInteract || messages.length === 0) && emptyState}
           {canInteract && (
             <MarkdownVisibility.Provider value={visible}>

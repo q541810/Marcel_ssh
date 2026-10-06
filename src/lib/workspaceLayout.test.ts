@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WORKSPACE_LAYOUT,
   baseWidthBounds,
+  baseWidthKeyOf,
+  baseWidthPatch,
+  defaultBaseWidthOf,
+  mergeWorkspaceLayout,
   normalizeWorkspaceLayout,
   resolvePanelBaseBounds,
   resolveWorkspaceLayout,
@@ -13,24 +17,24 @@ describe('workspaceLayout', () => {
     const layout = resolveWorkspaceLayout({ containerWidth: 1200, settings: DEFAULT_WORKSPACE_LAYOUT });
 
     expect(layout.sidebarWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
-    expect(layout.agentWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(layout.dockWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.dock.min);
     expect(layout.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
-    expect(layout.sidebarWidth + layout.mainWidth + layout.agentWidth).toBe(1144);
+    expect(layout.sidebarWidth + layout.mainWidth + layout.dockWidth).toBe(1144);
   });
 
   it('lets side columns grow on wide screens', () => {
     const layout = resolveWorkspaceLayout({ containerWidth: 2560, settings: DEFAULT_WORKSPACE_LAYOUT });
 
     expect(layout.sidebarWidth).toBeGreaterThan(350);
-    expect(layout.agentWidth).toBeGreaterThan(580);
-    expect(layout.agentWidth).toBeLessThanOrEqual(WORKSPACE_LAYOUT_LIMITS.agent.max);
+    expect(layout.dockWidth).toBeGreaterThan(580);
+    expect(layout.dockWidth).toBeLessThanOrEqual(WORKSPACE_LAYOUT_LIMITS.dock.max);
   });
 
   it('protects the main column on narrow screens', () => {
     const layout = resolveWorkspaceLayout({ containerWidth: 900, settings: DEFAULT_WORKSPACE_LAYOUT });
 
     expect(layout.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
-    expect(layout.agentWidth).toBe(0);
+    expect(layout.dockWidth).toBe(0);
     expect(layout.mainWidth).toBe(624);
   });
 
@@ -40,7 +44,7 @@ describe('workspaceLayout', () => {
         WORKSPACE_LAYOUT_LIMITS.navWidth +
         WORKSPACE_LAYOUT_LIMITS.main.min +
         WORKSPACE_LAYOUT_LIMITS.sidebar.min +
-        WORKSPACE_LAYOUT_LIMITS.agent.compactMin,
+        WORKSPACE_LAYOUT_LIMITS.dock.compactMin,
       settings: DEFAULT_WORKSPACE_LAYOUT,
     });
     const notEnoughForCompactAgent = resolveWorkspaceLayout({
@@ -48,12 +52,12 @@ describe('workspaceLayout', () => {
         WORKSPACE_LAYOUT_LIMITS.navWidth +
         WORKSPACE_LAYOUT_LIMITS.main.min +
         WORKSPACE_LAYOUT_LIMITS.sidebar.min +
-        WORKSPACE_LAYOUT_LIMITS.agent.compactMin - 1,
+        WORKSPACE_LAYOUT_LIMITS.dock.compactMin - 1,
       settings: DEFAULT_WORKSPACE_LAYOUT,
     });
 
-    expect(enoughForCompactAgent.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.compactMin);
-    expect(notEnoughForCompactAgent.agentWidth).toBe(0);
+    expect(enoughForCompactAgent.dockWidth).toBe(WORKSPACE_LAYOUT_LIMITS.dock.compactMin);
+    expect(notEnoughForCompactAgent.dockWidth).toBe(0);
   });
 
   it('gives the workspace all room when side panels are closed', () => {
@@ -64,7 +68,7 @@ describe('workspaceLayout', () => {
       agentOpen: false,
     });
 
-    expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, agentWidth: 0 });
+    expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, dockWidth: 0 });
   });
 
   it('hides side panels in exclusive view', () => {
@@ -74,7 +78,7 @@ describe('workspaceLayout', () => {
       isExclusive: true,
     });
 
-    expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, agentWidth: 0 });
+    expect(layout).toEqual({ sidebarWidth: 0, mainWidth: 1544, dockWidth: 0 });
   });
 
   it('clamps extreme saved ratios', () => {
@@ -84,7 +88,7 @@ describe('workspaceLayout', () => {
     });
 
     expect(layout.sidebarWidth).toBeGreaterThan(500);
-    expect(layout.agentWidth).toBeGreaterThan(500);
+    expect(layout.dockWidth).toBeGreaterThan(500);
     expect(layout.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
   });
 
@@ -99,8 +103,8 @@ describe('workspaceLayout', () => {
       settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: 700 },
     });
 
-    expect(userLayout.agentWidth).toBeGreaterThan(defaultLayout.agentWidth + 140);
-    expect(wideUserLayout.agentWidth).toBeGreaterThan(userLayout.agentWidth);
+    expect(userLayout.dockWidth).toBeGreaterThan(defaultLayout.dockWidth + 140);
+    expect(wideUserLayout.dockWidth).toBeGreaterThan(userLayout.dockWidth);
   });
 
   it('shares resize pressure between side panels before shrinking the agent to its minimum', () => {
@@ -111,7 +115,7 @@ describe('workspaceLayout', () => {
 
     expect(layout.mainWidth).toBe(WORKSPACE_LAYOUT_LIMITS.main.min);
     expect(layout.sidebarWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
-    expect(layout.agentWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(layout.dockWidth).toBeGreaterThan(WORKSPACE_LAYOUT_LIMITS.dock.min);
   });
 
   it('normalizes legacy ratio settings into base widths', () => {
@@ -126,13 +130,13 @@ describe('workspaceLayout', () => {
 
 describe('面板拖动的可拖范围', () => {
   const containers = [1136, 1280, 1440, 1920, 2560];
-  const sides = ['sidebar', 'agent'] as const;
+  const sides = ['sidebar', 'dock'] as const;
   const baseKeyOf = (side: (typeof sides)[number]) =>
-    side === 'sidebar' ? ('sidebarBaseWidth' as const) : ('agentBaseWidth' as const);
+    baseWidthKeyOf(side, DEFAULT_WORKSPACE_LAYOUT);
   const widthKeyOf = (side: (typeof sides)[number]) =>
-    side === 'sidebar' ? ('sidebarWidth' as const) : ('agentWidth' as const);
+    side === 'sidebar' ? ('sidebarWidth' as const) : ('dockWidth' as const);
   const otherKeyOf = (side: (typeof sides)[number]) =>
-    side === 'sidebar' ? ('agentWidth' as const) : ('sidebarWidth' as const);
+    side === 'sidebar' ? ('dockWidth' as const) : ('sidebarWidth' as const);
 
   const layoutFor = (containerWidth: number, side: (typeof sides)[number], base: number) =>
     resolveWorkspaceLayout({
@@ -219,11 +223,11 @@ describe('面板拖动的可拖范围', () => {
     });
     const agent = resolveWorkspaceLayout({
       containerWidth: 2560,
-      settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: boundsFor(2560, 'agent').min },
+      settings: { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: boundsFor(2560, 'dock').min },
     });
 
     expect(sidebar.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
-    expect(agent.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(agent.dockWidth).toBe(WORKSPACE_LAYOUT_LIMITS.dock.min);
   });
 
   it('窄窗口里加宽要先收窄另一侧：墙只吃中栏的空间', () => {
@@ -245,9 +249,9 @@ describe('面板拖动的可拖范围', () => {
       settings: { ...narrowedAgent, sidebarBaseWidth: roomyBounds.max },
     });
 
-    expect(afterNarrow.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(afterNarrow.dockWidth).toBe(WORKSPACE_LAYOUT_LIMITS.dock.min);
     expect(widened.sidebarWidth).toBeGreaterThan(tight.sidebarWidth);
-    expect(widened.agentWidth).toBe(WORKSPACE_LAYOUT_LIMITS.agent.min);
+    expect(widened.dockWidth).toBe(WORKSPACE_LAYOUT_LIMITS.dock.min);
     expect(widened.mainWidth).toBe(WORKSPACE_LAYOUT_LIMITS.main.min);
   });
 
@@ -261,23 +265,23 @@ describe('面板拖动的可拖范围', () => {
     expect(closed.draggable).toBe(false);
     expect(closed.maxDisplayed).toBe(closed.minDisplayed);
 
-    // 侧栏关掉之后 agent 的墙就开了：它不必再让出侧栏占的那一份
+    // 侧栏关掉之后 dock 的墙就开了：它不必再让出侧栏占的那一份
     const agentWithSidebarClosed = resolvePanelBaseBounds({
-      side: 'agent',
+      side: 'dock',
       containerWidth: 1920,
       settings: DEFAULT_WORKSPACE_LAYOUT,
       sidebarOpen: false,
     });
     const agentWithSidebarOpen = resolvePanelBaseBounds({
-      side: 'agent',
+      side: 'dock',
       containerWidth: 1920,
       settings: DEFAULT_WORKSPACE_LAYOUT,
     });
-    expect(agentWithSidebarClosed.maxDisplayed).toBe(WORKSPACE_LAYOUT_LIMITS.agent.max);
+    expect(agentWithSidebarClosed.maxDisplayed).toBe(WORKSPACE_LAYOUT_LIMITS.dock.max);
     expect(agentWithSidebarOpen.maxDisplayed).toBeLessThan(agentWithSidebarClosed.maxDisplayed);
 
     const exclusive = resolvePanelBaseBounds({
-      side: 'agent',
+      side: 'dock',
       containerWidth: 1920,
       settings: DEFAULT_WORKSPACE_LAYOUT,
       isExclusive: true,
@@ -291,9 +295,122 @@ describe('面板拖动的可拖范围', () => {
       min: 163,
       max: 683,
     });
-    expect(baseWidthBounds(WORKSPACE_LAYOUT_LIMITS.agent.min, WORKSPACE_LAYOUT_LIMITS.agent.max)).toEqual({
+    expect(baseWidthBounds(WORKSPACE_LAYOUT_LIMITS.dock.min, WORKSPACE_LAYOUT_LIMITS.dock.max)).toEqual({
       min: 222,
       max: 1341,
     });
+  });
+});
+
+/**
+ * 「Agent 占主区域」（agentPrimary）：Agent 与终端互换——Agent 去中间主区域，
+ * 终端停进右侧固定栏。求解器只认 dock 槽位，宽度按当前停谁取，两栏各记各的。
+ */
+describe('终端与 Agent 互换位置', () => {
+  const swapped = { ...DEFAULT_WORKSPACE_LAYOUT, agentPrimary: true };
+
+  it('旧配置缺字段时保持原布局：不换位置，终端宽度取默认', () => {
+    const layout = normalizeWorkspaceLayout({ sidebarBaseWidth: 300 });
+
+    expect(layout.agentPrimary).toBe(false);
+    expect(layout.terminalBaseWidth).toBe(DEFAULT_WORKSPACE_LAYOUT.terminalBaseWidth);
+    expect(normalizeWorkspaceLayout({ agentPrimary: undefined }).agentPrimary).toBe(false);
+  });
+
+  it('dock 的宽度取「当前停在里面的那个面板」自己的基准宽度', () => {
+    // 不能拿公式反推期望值：主区域下限会把 dock 压小（求解器的输出才是屏幕上的宽度）。
+    // 所以改成互相印证——动谁不影响谁。
+    const settings = { ...DEFAULT_WORKSPACE_LAYOUT, agentBaseWidth: 700, terminalBaseWidth: 380 };
+    const normal = resolveWorkspaceLayout({ containerWidth: 1600, settings });
+    const swap = resolveWorkspaceLayout({ containerWidth: 1600, settings: { ...settings, agentPrimary: true } });
+
+    // 普通模式：dock 听 agentBaseWidth，终端自己的宽度完全不参与
+    expect(resolveWorkspaceLayout({ containerWidth: 1600, settings: { ...settings, terminalBaseWidth: 900 } }).dockWidth).toBe(
+      normal.dockWidth,
+    );
+    // 互换模式：dock 听 terminalBaseWidth，Agent 自己的宽度完全不参与
+    expect(resolveWorkspaceLayout({ containerWidth: 1600, settings: { ...settings, agentBaseWidth: 900, agentPrimary: true } }).dockWidth).toBe(
+      swap.dockWidth,
+    );
+    // 同一组设置下互换后变窄：dock 从 700 换成了 380
+    expect(swap.dockWidth).toBeLessThan(normal.dockWidth);
+    expect(swap.mainWidth).toBeGreaterThan(normal.mainWidth);
+  });
+
+  it('默认的右侧窄栏宽度与 Agent 停右侧时一致：互换先把空间给主区域', () => {
+    const normal = resolveWorkspaceLayout({ containerWidth: 1920, settings: DEFAULT_WORKSPACE_LAYOUT });
+    const swap = resolveWorkspaceLayout({ containerWidth: 1920, settings: swapped });
+
+    expect(swap.dockWidth).toBe(normal.dockWidth);
+    expect(swap.mainWidth).toBeGreaterThan(swap.dockWidth);
+  });
+
+  it('落盘字段按 dock 当前停谁选，两栏的宽度互不覆盖', () => {
+    expect(baseWidthKeyOf('sidebar', swapped)).toBe('sidebarBaseWidth');
+    expect(baseWidthKeyOf('dock', DEFAULT_WORKSPACE_LAYOUT)).toBe('agentBaseWidth');
+    expect(baseWidthKeyOf('dock', swapped)).toBe('terminalBaseWidth');
+
+    expect(baseWidthPatch('sidebar', swapped, 300)).toEqual({ sidebarBaseWidth: 300 });
+    expect(baseWidthPatch('dock', DEFAULT_WORKSPACE_LAYOUT, 640)).toEqual({ agentBaseWidth: 640 });
+    expect(baseWidthPatch('dock', swapped, 640)).toEqual({ terminalBaseWidth: 640 });
+  });
+
+  it('双击复位到当前停在 dock 上的面板自己的默认宽度', () => {
+    expect(defaultBaseWidthOf('dock', DEFAULT_WORKSPACE_LAYOUT)).toBe(
+      DEFAULT_WORKSPACE_LAYOUT.agentBaseWidth,
+    );
+    expect(defaultBaseWidthOf('dock', swapped)).toBe(DEFAULT_WORKSPACE_LAYOUT.terminalBaseWidth);
+    expect(defaultBaseWidthOf('sidebar', swapped)).toBe(DEFAULT_WORKSPACE_LAYOUT.sidebarBaseWidth);
+  });
+
+  it('互换后拖动同样自洽：拖动中 = 落盘读回来，且不挤主区域', () => {
+    for (const containerWidth of [1136, 1280, 1440, 1920, 2560]) {
+      const bounds = resolvePanelBaseBounds({
+        side: 'dock',
+        containerWidth,
+        settings: swapped,
+      });
+      const stored = normalizeWorkspaceLayout(swapped);
+      expect(stored.terminalBaseWidth).toBeGreaterThanOrEqual(bounds.min);
+      expect(stored.terminalBaseWidth).toBeLessThanOrEqual(bounds.max);
+
+      for (let base = bounds.min; base <= bounds.max; base += 1) {
+        const during = resolveWorkspaceLayout({
+          containerWidth,
+          settings: { ...swapped, terminalBaseWidth: base },
+        });
+        const persisted = normalizeWorkspaceLayout({ ...swapped, terminalBaseWidth: base });
+        expect(resolveWorkspaceLayout({ containerWidth, settings: persisted })).toEqual(during);
+        expect(during.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
+      }
+    }
+  });
+
+  it('切换开关只动 agentPrimary，宽度类字段原样保留（两栏各有各的记忆）', () => {
+    const merged = mergeWorkspaceLayout(
+      { ...DEFAULT_WORKSPACE_LAYOUT, sidebarBaseWidth: 400, agentBaseWidth: 700, terminalBaseWidth: 640 },
+      { agentPrimary: true },
+    );
+
+    expect(merged).toEqual({
+      sidebarBaseWidth: 400,
+      agentBaseWidth: 700,
+      terminalBaseWidth: 640,
+      sidebarOpen: true,
+      agentOpen: true,
+      agentPrimary: true,
+    });
+  });
+
+  it('互换后三栏都还在自己的区间里，主区域下限照旧生效', () => {
+    for (const containerWidth of [1280, 1920]) {
+      const swap = resolveWorkspaceLayout({ containerWidth, settings: swapped });
+
+      expect(swap.sidebarWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
+      expect(swap.sidebarWidth).toBeLessThanOrEqual(WORKSPACE_LAYOUT_LIMITS.sidebar.max);
+      expect(swap.dockWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.dock.min);
+      expect(swap.mainWidth).toBeGreaterThanOrEqual(WORKSPACE_LAYOUT_LIMITS.main.min);
+      expect(swap.sidebarWidth + swap.mainWidth + swap.dockWidth).toBe(containerWidth - WORKSPACE_LAYOUT_LIMITS.navWidth);
+    }
   });
 });

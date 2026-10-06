@@ -855,10 +855,18 @@ export interface MobileBackgroundSettings {
 export interface WorkspaceLayoutSettings {
   sidebarBaseWidth: number;
   agentBaseWidth: number;
+  /** 右侧固定栏停终端时的基准宽度（开启「Agent 占主区域」后才用得上）。 */
+  terminalBaseWidth: number;
   sidebarRatio?: number;
   agentRatio?: number;
   sidebarOpen: boolean;
   agentOpen: boolean;
+  /**
+   * 主区域（中间 flex-1 那一栏）放谁：false = 终端（默认），true = Agent 面板。
+   * 开启后 Agent 与终端互换位置——Agent 占主区域，终端收进右侧可拖宽的窄栏。
+   * 缺字段（旧配置）按 false，即保持原布局。
+   */
+  agentPrimary: boolean;
 }
 
 /** 更新方式三态（与后端 `UpdateMode` 的线上取值一一对应）。 */

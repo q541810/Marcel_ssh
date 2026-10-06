@@ -35,8 +35,10 @@ describe('settingsStore', () => {
     expect(s.workspaceLayout).toEqual({
       sidebarBaseWidth: 280,
       agentBaseWidth: 460,
+      terminalBaseWidth: 460,
       sidebarOpen: true,
       agentOpen: true,
+      agentPrimary: false,
     });
   });
 
