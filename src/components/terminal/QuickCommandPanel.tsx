@@ -21,6 +21,17 @@ interface FormState {
 
 type QuickCommandTab = 'all' | QuickCommandScope;
 
+/** 弹窗内联提示：error = 校验/保存失败，notice = 操作已生效的说明 */
+interface FormMessage {
+  tone: 'error' | 'notice';
+  text: string;
+}
+
+const formMessageClass = (tone: FormMessage['tone']) =>
+  tone === 'error'
+    ? 'border-red-900/50 bg-red-950/40 text-red-200'
+    : 'border-amber-900/50 bg-amber-950/30 text-amber-200';
+
 const emptyForm = (scope: QuickCommandScope | ''): FormState => ({
   scope,
   name: '',
@@ -51,6 +62,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
   const [tab, setTab] = useState<QuickCommandTab>('all');
   const [form, setForm] = useState<FormState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState<FormMessage | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
@@ -97,6 +109,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
     const scope = tab === 'all' ? '' : tab;
     setForm(emptyForm(scope));
     setMessage(null);
+    setFormMessage(null);
   };
 
   /** 切换"点击后自动执行"开关：仅插入模式只能输入单行内容 */
@@ -106,7 +119,10 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
     if (nextInsertOnly) {
       const lines = parseCommands(form.commandsText);
       if (lines.length > 1) {
-        setMessage('仅插入模式只支持一行命令，已保留第一行，其余行已移除');
+        setFormMessage({
+          tone: 'notice',
+          text: '仅插入模式只支持一行命令，已保留第一行，其余行已移除',
+        });
         setForm({ ...form, insertOnly: true, commandsText: lines[0] });
         return;
       }
@@ -118,23 +134,26 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
     if (!form) return;
     const commandLines = parseCommands(form.commandsText);
     if (!form.scope) {
-      setMessage('请选择快捷指令作用域');
+      setFormMessage({ tone: 'error', text: '请选择快捷指令作用域' });
       return;
     }
     if (!form.name.trim()) {
-      setMessage('名称不能为空');
+      setFormMessage({ tone: 'error', text: '名称不能为空' });
       return;
     }
     if (commandLines.length === 0) {
-      setMessage('至少需要一条命令');
+      setFormMessage({ tone: 'error', text: '至少需要一条命令' });
       return;
     }
     if (form.insertOnly && commandLines.length > 1) {
-      setMessage('仅插入模式只支持一行命令');
+      setFormMessage({ tone: 'error', text: '仅插入模式只支持一行命令' });
       return;
     }
     if (form.scope === 'session' && !sessionKey) {
-      setMessage('当前会话未绑定保存的连接配置，不能创建当前连接快捷指令');
+      setFormMessage({
+        tone: 'error',
+        text: '当前会话未绑定保存的连接配置，不能创建当前连接快捷指令',
+      });
       return;
     }
 
@@ -154,10 +173,11 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
         await add(payload);
       }
       setForm(null);
+      setFormMessage(null);
       setTab(tab === 'all' ? 'all' : payload.scope);
       setMessage(null);
     } catch (err) {
-      setMessage(`保存失败：${getErrorMessage(err)}`);
+      setFormMessage({ tone: 'error', text: `保存失败：${getErrorMessage(err)}` });
     }
   };
 
@@ -284,6 +304,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                         onClick={(e) => {
                           e.stopPropagation();
                           setForm(commandToForm(command));
+                          setFormMessage(null);
                           setActiveMenuId(null);
                         }}
                         className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-zinc-700"
@@ -315,6 +336,14 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
             <h3 className="text-sm font-semibold text-zinc-200 mb-3">
               {form.id ? '编辑快捷指令' : '新建快捷指令'}
             </h3>
+            {formMessage && (
+              <div
+                role={formMessage.tone === 'error' ? 'alert' : undefined}
+                className={`mb-3 rounded-lg border px-3 py-2 text-xs leading-relaxed ${formMessageClass(formMessage.tone)}`}
+              >
+                {formMessage.text}
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs text-zinc-400">名称</label>

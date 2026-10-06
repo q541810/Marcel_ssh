@@ -34,6 +34,17 @@ const EMPTY_FORM: FormState = {
   insertOnly: false,
 };
 
+/** sheet 内联提示：error = 校验/保存失败，notice = 操作已生效的说明 */
+interface FormMessage {
+  tone: 'error' | 'notice';
+  text: string;
+}
+
+const formMessageClass = (tone: FormMessage['tone']) =>
+  tone === 'error'
+    ? 'border-red-900/50 bg-red-950/40 text-red-300'
+    : 'border-amber-900/50 bg-amber-950/30 text-amber-200';
+
 function parseCommands(text: string): string[] {
   return text
     .split(/\r?\n/)
@@ -86,6 +97,7 @@ export function MobileQuickCommandSection() {
   const [form, setForm] = useState<FormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<QuickCommand | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState<FormMessage | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -125,19 +137,19 @@ export function MobileQuickCommandSection() {
     if (!form) return;
     const lines = parseCommands(form.commandsText);
     if (!form.name.trim()) {
-      setMessage('名称不能为空');
+      setFormMessage({ tone: 'error', text: '名称不能为空' });
       return;
     }
     if (lines.length === 0) {
-      setMessage('至少需要一条命令');
+      setFormMessage({ tone: 'error', text: '至少需要一条命令' });
       return;
     }
     if (form.insertOnly && lines.length > 1) {
-      setMessage('仅插入模式只支持一行命令');
+      setFormMessage({ tone: 'error', text: '仅插入模式只支持一行命令' });
       return;
     }
     if (form.scope === 'session' && !form.sessionKey) {
-      setMessage('请选择该命令所属的连接');
+      setFormMessage({ tone: 'error', text: '请选择该命令所属的连接' });
       return;
     }
     const payload: QuickCommandInput = {
@@ -149,7 +161,7 @@ export function MobileQuickCommandSection() {
       insertOnly: form.insertOnly,
     };
     setSaving(true);
-    setMessage(null);
+    setFormMessage(null);
     try {
       if (form.id) {
         await tauri.quickCommandUpdate(form.id, payload);
@@ -157,9 +169,10 @@ export function MobileQuickCommandSection() {
         await tauri.quickCommandAdd(payload);
       }
       setForm(null);
+      setFormMessage(null);
       await reload();
     } catch (err) {
-      setMessage(getErrorMessage(err));
+      setFormMessage({ tone: 'error', text: `保存失败：${getErrorMessage(err)}` });
     } finally {
       setSaving(false);
     }
@@ -184,7 +197,10 @@ export function MobileQuickCommandSection() {
     if (nextInsertOnly) {
       const lines = parseCommands(form.commandsText);
       if (lines.length > 1) {
-        setMessage('仅插入模式只支持一行命令，已保留第一行，其余行已移除');
+        setFormMessage({
+          tone: 'notice',
+          text: '仅插入模式只支持一行命令，已保留第一行，其余行已移除',
+        });
         setForm({ ...form, insertOnly: true, commandsText: lines[0] });
         return;
       }
@@ -200,6 +216,7 @@ export function MobileQuickCommandSection() {
         type="button"
         onClick={() => {
           setMessage(null);
+          setFormMessage(null);
           setForm(EMPTY_FORM);
         }}
         className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-700 px-3 py-3 text-sm text-zinc-300 transition-colors duration-100 active:scale-[0.99] active:bg-zinc-900"
@@ -253,6 +270,7 @@ export function MobileQuickCommandSection() {
             type="button"
             onClick={() => {
               setMessage(null);
+              setFormMessage(null);
               setForm({
                 id: cmd.id,
                 scope: cmd.scope,
@@ -306,9 +324,12 @@ export function MobileQuickCommandSection() {
       >
         {form && (
           <div className="space-y-3 px-4 pb-3">
-            {message && (
-              <div className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300">
-                {message}
+            {formMessage && (
+              <div
+                role={formMessage.tone === 'error' ? 'alert' : undefined}
+                className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${formMessageClass(formMessage.tone)}`}
+              >
+                {formMessage.text}
               </div>
             )}
             <div>
