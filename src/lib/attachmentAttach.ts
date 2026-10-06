@@ -8,11 +8,81 @@
  *  - 粘贴/拖拽里的文本文件（Web 侧 File 对象）直接 file.text() 读取
  */
 
+import type { DialogFilter } from "@tauri-apps/plugin-dialog";
 import { agentGetLocalFileName, agentReadLocalFile } from "./tauri";
 import { BINARY_EXTENSIONS } from "./constants";
 
 /** 文本单文件大小上限（前端先拦，后端还有 10MB 兜底）。 */
 export const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * 「添加图片和文件」系统选择器的过滤器（桌面 / 移动同一份）。
+ *
+ * 扩展名清单与 IMAGE_EXTENSIONS / TEXT_EXTENSIONS **有意不同**：选择器过滤器
+ * 只列常见扩展名引导用户，「所有文件」兜底让冷门扩展名（如 .tsv / .cfg）也能
+ * 被选进来 —— 分拣由 classifyAttachment 负责，过滤器不是安全边界。
+ */
+export const ATTACH_FILE_PICKER_FILTERS: DialogFilter[] = [
+  {
+    name: "图片",
+    extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"],
+  },
+  {
+    name: "文本",
+    extensions: [
+      "md", "txt", "log", "json", "yml", "yaml", "xml", "csv",
+      "ini", "conf", "sh", "py", "js", "ts", "html", "css",
+      "sql", "toml", "svg",
+    ],
+  },
+  { name: "所有文件", extensions: ["*"] },
+];
+
+/**
+ * 「不支持的文件类型已跳过：a、b、c 等 N 个」的文案构造。
+ * 横幅一行放不下太多名字：最多列 3 个，其余用计数收口。
+ */
+export function unsupportedAttachmentHint(names: readonly string[]): string {
+  const shown = names.slice(0, 3).join("、");
+  const more = names.length > 3 ? ` 等 ${names.length} 个` : "";
+  return `不支持的文件类型已跳过：${shown}${more}`;
+}
+
+/** 分拣结果：图片走预览压缩链路、文本插入输入框、其余明确提示后跳过。 */
+export interface PartitionedAttachmentPaths {
+  imagePaths: string[];
+  textPaths: string[];
+  /** 保留展示名而不是裸路径：提示文案只关心名字，调用方不用再自己取 basename。 */
+  unsupported: { name: string }[];
+}
+
+/**
+ * 把文件选择器返回的一组本地路径按附件类型分拣（桌面 / 移动同一份）。
+ *
+ * 先把每条路径的展示名解析出来（content:// URI 必须经后端 ContentResolver
+ * 查 DISPLAY_NAME，不能用 split('/').pop() 拿 document id），再按真实扩展名分拣。
+ * 否则 Android 上 .jpg 会被误判为文本，整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
+ */
+export async function partitionAttachmentPaths(
+  paths: string[],
+): Promise<PartitionedAttachmentPaths> {
+  const imagePaths: string[] = [];
+  const textPaths: string[] = [];
+  const unsupported: { name: string }[] = [];
+  const resolved: { path: string; name: string; kind: AttachmentKind }[] =
+    await Promise.all(
+      paths.map(async (p) => {
+        const name = await resolveAttachmentName(p);
+        return { path: p, name, kind: classifyAttachment(name) };
+      }),
+    );
+  for (const { path: p, name, kind } of resolved) {
+    if (kind === "image") imagePaths.push(p);
+    else if (kind === "text") textPaths.push(p);
+    else unsupported.push({ name });
+  }
+  return { imagePaths, textPaths, unsupported };
+}
 
 const IMAGE_EXTENSIONS = new Set([
   "png",

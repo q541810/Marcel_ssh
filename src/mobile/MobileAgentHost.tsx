@@ -19,7 +19,11 @@ import {
 import { sessionConversationBindingManager } from "@/stores/sessionConversationBindingManager";
 import { groupConversationsWithPinned } from "@/lib/dateGrouping";
 import { getErrorMessage } from "@/lib/errors";
-import { isLocalSessionId } from "@/lib/toolCatalog";
+import {
+  canOpenCommandMenu,
+  compactingSelectorOf,
+  deriveSubAgentDispatch,
+} from "@/lib/agentPanelDerived";
 import { AGENT_MODES } from "@/lib/constants";
 import { currentVision } from "@/lib/llmRegistry";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -58,13 +62,14 @@ import {
   MAX_ATTACH_IMAGES,
 } from "@/lib/imageAttach";
 import {
-  classifyAttachment,
   blobToText,
   wrapTextAttachment,
   base64ToBlob,
   readLocalAttachment,
-  resolveAttachmentName,
   MAX_TEXT_FILE_BYTES,
+  ATTACH_FILE_PICKER_FILTERS,
+  partitionAttachmentPaths,
+  unsupportedAttachmentHint,
 } from "@/lib/attachmentAttach";
 
 interface MobileAgentHostProps {
@@ -147,9 +152,7 @@ export default function MobileAgentHost({
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
   // 本会话是否正在手动压缩上下文（订阅而非直接读：压缩一开始就要禁用发送并
   // 显示原因，不能等第一条压缩事件把它带出来）
-  const isCompacting = useTaskStore((s) =>
-    activeConversationId ? !!s.compacting[activeConversationId] : false,
-  );
+  const isCompacting = useTaskStore(compactingSelectorOf(activeConversationId));
   // 「会话忙」= 任务在跑或正在压缩 —— 发送、`/` 菜单、撤回共用这一个判定
   // （与桌面同源，见 conversationStore.conversationIsBusy）。
   const conversationBusy = isRunning || isCompacting;
@@ -190,26 +193,16 @@ export default function MobileAgentHost({
   /**
    * 当前子对话的派发信息：
    * - `mode`（plan 只读调研 / agent 读写执行）驱动输入区文案；
-   * - `isLocal` 判定它是不是**本机**子任务（`local_subagent`）——本机子任务的
-   *   `sessionId` 是哨兵值（`isLocalSessionId`，见 toolCatalog 的
-   *   `LOCAL_SESSION_SENTINEL`），没有 SSH 会话。横条据此标「本机」，否则用户
+   * - `isLocal` 判定它是不是**本机**子任务 —— 横条据此标「本机」，否则用户
    *   会以为这条子对话跑在某台服务器上。
    *
-   * 判定只走哨兵值（与桌面 `AgentTasksDrawer` 同一口径），不查 sessionStore、
-   * 也不读子任务事件上的 `side`：`side` 缺省（旧数据 / 远端子任务）不命中哨兵，
-   * 行为与从前完全一致。
+   * 派生逻辑与桌面 `AgentPanel` 共用 `lib/agentPanelDerived` 的
+   * `deriveSubAgentDispatch`（哨兵值口径等细节见其注释）。
    */
-  const subAgentDispatch = useMemo(() => {
-    const subTask = activeConversationId
-      ? Object.values(tasks).find(
-          (t) => t.conversationId === activeConversationId && t.parentTaskId,
-        )
-      : undefined;
-    return {
-      mode: (subTask?.mode === "agent" ? "agent" : "plan") as "plan" | "agent",
-      isLocal: isLocalSessionId(subTask?.sessionId),
-    };
-  }, [activeConversationId, tasks]);
+  const subAgentDispatch = useMemo(
+    () => deriveSubAgentDispatch(tasks, activeConversationId),
+    [tasks, activeConversationId],
+  );
   const { mode: subAgentMode, isLocal: subAgentIsLocal } = subAgentDispatch;
   // 后台作业（跨会话）：header 胶囊与任务/作业中心的显示入口依赖它——
   // 「有需要用户知道结局的作业」（重启恢复出来的 interrupted）同样要给入口：
@@ -395,30 +388,12 @@ export default function MobileAgentHost({
     async (paths: string[]) => {
       if (paths.length === 0) return;
 
-      const imagePaths: string[] = [];
-      const textPaths: string[] = [];
-      const unsupported: string[] = [];
-      // 先把每条路径的展示名解析出来（content:// URI 必须经后端 ContentResolver
-      // 查 DISPLAY_NAME，不能用 split('/').pop() 拿 document id），再按真实扩展名分拣。
-      // 否则 Android 上 .jpg 会被误判为文本，整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
-      const resolved: { path: string; name: string; kind: ReturnType<typeof classifyAttachment> }[] =
-        await Promise.all(
-          paths.map(async (p) => {
-            const name = await resolveAttachmentName(p);
-            return { path: p, name, kind: classifyAttachment(name) };
-          }),
-        );
-      for (const { path: p, name, kind } of resolved) {
-        if (kind === "image") imagePaths.push(p);
-        else if (kind === "text") textPaths.push(p);
-        else unsupported.push(name);
-      }
+      const { imagePaths, textPaths, unsupported } =
+        await partitionAttachmentPaths(paths);
 
       // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
       if (unsupported.length > 0) {
-        const shown = unsupported.slice(0, 3).join("、");
-        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
-        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
+        showAttachHint(unsupportedAttachmentHint(unsupported.map((u) => u.name)));
       }
 
       // 图片 → 预览（读本地 → 压缩，与桌面 ctrl+v 同链路）
@@ -484,21 +459,7 @@ export default function MobileAgentHost({
       const selected = await open({
         multiple: true,
         title: "添加图片和文件",
-        filters: [
-          {
-            name: "图片",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"],
-          },
-          {
-            name: "文本",
-            extensions: [
-              "md", "txt", "log", "json", "yml", "yaml", "xml", "csv",
-              "ini", "conf", "sh", "py", "js", "ts", "html", "css",
-              "sql", "toml", "svg",
-            ],
-          },
-          { name: "所有文件", extensions: ["*"] },
-        ],
+        filters: ATTACH_FILE_PICKER_FILTERS,
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
@@ -591,13 +552,14 @@ export default function MobileAgentHost({
 
   // ── `/` 命令面板（与桌面同款组件）：输入以 "/" 开头时在输入框上方弹出，
   // 手机端以触摸点选为主；软键盘回车/发送语义不变。
-  // 任务运行中不唤出（与桌面一致）：手动压缩与运行中任务并发会造成替换竞态。
-  // 压缩中同样不唤出 —— 会话忙的两种情况走同一个 `conversationIsBusy`，顺带
-  // 堵住「压缩中再点一次压缩」（两次摘要各写一张卡会破坏恒单卡）。
+  // 唤出门控（任务运行中/压缩中不唤出，理由见共享函数注释）与桌面
+  // `AgentPanel` 共用 `canOpenCommandMenu`。
   const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
-  const commandMenuOpen =
-    commandDraft &&
-    (!activeConversationId || !conversationIsBusy(activeConversationId));
+  const commandMenuOpen = canOpenCommandMenu(
+    commandDraft,
+    activeConversationId,
+    conversationIsBusy,
+  );
 
   const handleCompact = useCallback(() => {
     if (!activeConversationId) return;

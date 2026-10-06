@@ -9,12 +9,14 @@ import {
   MAX_ATTACH_IMAGES,
 } from "@/lib/imageAttach";
 import {
+  ATTACH_FILE_PICKER_FILTERS,
   classifyAttachment,
   blobToText,
   wrapTextAttachment,
   base64ToBlob,
   readLocalAttachment,
-  resolveAttachmentName,
+  partitionAttachmentPaths,
+  unsupportedAttachmentHint,
   MAX_TEXT_FILE_BYTES,
 } from "@/lib/attachmentAttach";
 import { notifyInputTyping } from "./inputActivity";
@@ -148,9 +150,7 @@ export function useAgentPanelAttachments({
 
       // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
       if (unsupported.length > 0) {
-        const shown = unsupported.slice(0, 3).join("、");
-        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
-        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
+        showAttachHint(unsupportedAttachmentHint(unsupported));
       }
 
       // 图片 → 预览（与 ctrl+v 完全同路径）；vision 关闭时跳过图片，文本照常处理
@@ -210,30 +210,15 @@ export function useAgentPanelAttachments({
     async (paths: string[]) => {
       if (paths.length === 0) return;
 
-      const imagePaths: string[] = [];
-      const textPaths: string[] = [];
-      const unsupported: string[] = [];
-      // 先把每条路径的展示名解析出来（content:// URI 必须经后端 ContentResolver
-      // 查 DISPLAY_NAME，不能用 split('/').pop() 拿 document id），再按真实扩展名分拣。
-      // 否则 Android 上 .jpg 会被误判为文本，整张 JPEG 二进制当 UTF-8 解码塞进输入框 → 满屏乱码。
-      const resolved: { path: string; name: string; kind: ReturnType<typeof classifyAttachment> }[] =
-        await Promise.all(
-          paths.map(async (p) => {
-            const name = await resolveAttachmentName(p);
-            return { path: p, name, kind: classifyAttachment(name) };
-          }),
-        );
-      for (const { path: p, name, kind } of resolved) {
-        if (kind === "image") imagePaths.push(p);
-        else if (kind === "text") textPaths.push(p);
-        else unsupported.push(name);
-      }
+      // 分拣（含 content:// 展示名解析）抽在 attachmentAttach 里，桌面 / 移动共用
+      const { imagePaths, textPaths, unsupported } =
+        await partitionAttachmentPaths(paths);
 
       // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
       if (unsupported.length > 0) {
-        const shown = unsupported.slice(0, 3).join("、");
-        const more = unsupported.length > 3 ? ` 等 ${unsupported.length} 个` : "";
-        showAttachHint(`不支持的文件类型已跳过：${shown}${more}`);
+        showAttachHint(
+          unsupportedAttachmentHint(unsupported.map((u) => u.name)),
+        );
       }
 
       // 图片 → 预览（读本地 → 压缩，与 ctrl+v 同链路）；vision 关闭时跳过图片，文本照常处理
@@ -299,21 +284,7 @@ export function useAgentPanelAttachments({
       const selected = await open({
         multiple: true,
         title: "添加图片和文件",
-        filters: [
-          {
-            name: "图片",
-            extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"],
-          },
-          {
-            name: "文本",
-            extensions: [
-              "md", "txt", "log", "json", "yml", "yaml", "xml", "csv",
-              "ini", "conf", "sh", "py", "js", "ts", "html", "css",
-              "sql", "toml", "svg",
-            ],
-          },
-          { name: "所有文件", extensions: ["*"] },
-        ],
+        filters: ATTACH_FILE_PICKER_FILTERS,
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
