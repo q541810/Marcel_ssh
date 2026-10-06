@@ -1,9 +1,14 @@
 import { useRef, useState } from 'react';
 import { Trash2, ChevronDown } from 'lucide-react';
-import type { CommandCheckResult, CommandListMode, LlmRegistry } from '@/lib/types';
+import type { CommandCheckResult, CommandListMode } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
-import { DISPOSITION_LABELS, SYSTEM_PROMPT_MAX_CHARS } from '@/lib/constants';
+import {
+  AGENT_MAX_TOOL_ROUNDS_MAX,
+  AGENT_MAX_TOOL_ROUNDS_MIN,
+  DISPOSITION_LABELS,
+  SYSTEM_PROMPT_MAX_CHARS,
+} from '@/lib/constants';
 import Toggle from '@/components/ui/Toggle';
 import SegmentedControl from '@/components/ui/SegmentedControl';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
@@ -13,7 +18,7 @@ import {
   preCheckCustomPath,
 } from '@/components/settings/AgentPolicySection';
 import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
-import { modelFullLabel, modelLabel } from '@/lib/llmRegistry';
+import { emptyRegistry, modelFullLabel, modelLabel } from '@/lib/llmRegistry';
 import MobileSheet from '../ui/MobileSheet';
 import { MobileSettingRow } from './MobileSettingRow';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -614,9 +619,9 @@ export function MobileAgentPolicySection() {
       >
         <input
           type="range"
-          min={10}
-          max={1000}
-          step={10}
+          min={AGENT_MAX_TOOL_ROUNDS_MIN}
+          max={AGENT_MAX_TOOL_ROUNDS_MAX}
+          step={1}
           value={agent.maxToolRounds ?? 500}
           onChange={(e) =>
             updateAgent({ maxToolRounds: Number(e.target.value) })
@@ -658,9 +663,9 @@ export function MobileAgentPolicySection() {
             onClick={() => {
               update({
                 llmRegistry: {
-                  ...(settings.llmRegistry ?? emptyRegistryFallback()),
+                  ...(settings.llmRegistry ?? emptyRegistry()),
                   slots: {
-                    ...(settings.llmRegistry?.slots ?? emptyRegistryFallback().slots),
+                    ...(settings.llmRegistry?.slots ?? emptyRegistry().slots),
                     modelApprovalModelId: '',
                   },
                 },
@@ -676,7 +681,7 @@ export function MobileAgentPolicySection() {
           </button>
           {/* 按提供商（渠道）分组 */}
           {(settings.llmRegistry?.channels ?? []).map((ch) => {
-            const reg = settings.llmRegistry ?? emptyRegistryFallback();
+            const reg = settings.llmRegistry ?? emptyRegistry();
             const channelModels = reg.models.filter((m) => m.channelId === ch.id);
             if (channelModels.length === 0) return null;
             const channelDisabled = !ch.enabled;
@@ -701,7 +706,7 @@ export function MobileAgentPolicySection() {
                         type="button"
                         disabled={channelDisabled}
                         onClick={() => {
-                          const registry = settings.llmRegistry ?? emptyRegistryFallback();
+                          const registry = settings.llmRegistry ?? emptyRegistry();
                           update({
                             llmRegistry: {
                               ...registry,
@@ -734,21 +739,4 @@ export function MobileAgentPolicySection() {
       </MobileSheet>
     </div>
   );
-}
-
-/** 空注册表兜底（settings 未初始化时）。 */
-function emptyRegistryFallback(): LlmRegistry {
-  return {
-    channels: [],
-    models: [],
-    slots: { modelApprovalModelId: '', summarizerModelId: '' },
-    subagentModels: [],
-    netPolicy: {
-      maxRetries: 1,
-      retryDelaySecs: 5,
-      retryHttpStatuses: '408, 429, 500-599',
-      firstByteTimeoutSecs: 60,
-      retryOnTimeout: true,
-    },
-  };
 }

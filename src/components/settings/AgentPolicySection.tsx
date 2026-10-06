@@ -1,10 +1,13 @@
 import { useState, useRef, useMemo } from 'react';
 import { Trash2 } from 'lucide-react';
-import { DISPOSITION_LABELS } from '@/lib/constants';
+import {
+  AGENT_MAX_TOOL_ROUNDS_MAX,
+  AGENT_MAX_TOOL_ROUNDS_MIN,
+  DISPOSITION_LABELS,
+} from '@/lib/constants';
 import type {
   CommandListMode,
   CommandCheckResult,
-  LlmRegistry,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
@@ -15,7 +18,7 @@ import SegmentedControl from '@/components/ui/SegmentedControl';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
 import { ValidatedInput } from './ValidatedInput';
-import { modelOptionsByChannel } from '@/lib/llmRegistry';
+import { emptyRegistry, modelOptionsByChannel } from '@/lib/llmRegistry';
 import { useDefaultApprovalPrompt } from '@/hooks/useDefaultApprovalPrompt';
 import { useSettingsStore } from '@/stores/settingsStore';
 
@@ -773,19 +776,9 @@ export function AgentPolicySection() {
                         <Select
                           value={settings.llmRegistry?.slots?.modelApprovalModelId ?? ''}
                           onChange={(v) => {
-                            const registry: LlmRegistry = settings.llmRegistry ?? {
-                              channels: [],
-                              models: [],
-                              slots: { modelApprovalModelId: '', summarizerModelId: '' },
-                              subagentModels: [],
-                              netPolicy: {
-                                maxRetries: 1,
-                                retryDelaySecs: 5,
-                                retryHttpStatuses: '408, 429, 500-599',
-                                firstByteTimeoutSecs: 60,
-                                retryOnTimeout: true,
-                              },
-                            };
+                            // settings 未初始化时兜底：与 lib/llmRegistry 的
+                            // emptyRegistry（空注册表唯一权威来源）同构。
+                            const registry = settings.llmRegistry ?? emptyRegistry();
                             update({
                               llmRegistry: {
                                 ...registry,
@@ -857,19 +850,27 @@ export function AgentPolicySection() {
             onChange={(v) => updateAgent({ maxToolRounds: v })}
             validate={(s) => {
               const v = Number(s);
-              if (!Number.isInteger(v) || v < 10 || v > 2000)
-                return '须为 10-2000 的整数';
+              if (
+                !Number.isInteger(v) ||
+                v < AGENT_MAX_TOOL_ROUNDS_MIN ||
+                v > AGENT_MAX_TOOL_ROUNDS_MAX
+              )
+                return `须为 ${AGENT_MAX_TOOL_ROUNDS_MIN}-${AGENT_MAX_TOOL_ROUNDS_MAX} 的整数`;
               return null;
             }}
             validatorId="maxToolRounds"
             validatorFn={(draft) => {
               const v = draft.agentModeSettings.maxToolRounds;
-              if (!Number.isInteger(v) || v < 10 || v > 2000)
-                return `最大执行轮数须为 10-2000 的整数（当前值：${v}）`;
+              if (
+                !Number.isInteger(v) ||
+                v < AGENT_MAX_TOOL_ROUNDS_MIN ||
+                v > AGENT_MAX_TOOL_ROUNDS_MAX
+              )
+                return `最大执行轮数须为 ${AGENT_MAX_TOOL_ROUNDS_MIN}-${AGENT_MAX_TOOL_ROUNDS_MAX} 的整数（当前值：${v}）`;
               return null;
             }}
-            min={10}
-            max={2000}
+            min={AGENT_MAX_TOOL_ROUNDS_MIN}
+            max={AGENT_MAX_TOOL_ROUNDS_MAX}
             step={1}
             suffix="轮"
             className="w-24"

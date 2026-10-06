@@ -13,10 +13,10 @@ import {
   modelLabel,
   modelFullLabel,
   createModel,
+  emptyRegistry,
   removeChannel,
   duplicateChannelName,
   duplicateModelName,
-  defaultNetPolicy,
   mergeChannelModels,
   modelOptionsByChannel,
   candidateRowModelLabel,
@@ -31,16 +31,7 @@ const inputClass =
 const descriptionInputClass =
   'w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500';
 
-/** 空注册表兜底（settings 尚未初始化时）。 */
-function emptyRegistry(): LlmRegistry {
-  return {
-    channels: [],
-    models: [],
-    slots: { modelApprovalModelId: '', summarizerModelId: '' },
-    subagentModels: [],
-    netPolicy: defaultNetPolicy(),
-  };
-}
+/** 空注册表兜底（settings 尚未初始化时）：用 lib/llmRegistry 的共享版。 */
 
 /** 模型选择底部弹层（辅助场景槽位选择用）。 */
 function MobileModelPickerSheet({

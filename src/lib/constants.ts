@@ -66,6 +66,15 @@ export const AGENT_MODES: { value: AgentMode; label: string; description: string
   { value: 'auto', label: 'Auto', description: 'AI 自主规划并执行所有工具调用，全程不请求确认（没有任何人工介入；灾难性写法仍会被直接拒绝）' },
 ];
 
+/**
+ * Agent 单次任务的工具调用轮数上下限（两端设置页共用，桌面口径权威）。
+ *
+ * 后端只做下限收敛（agent_loop 对 `max_tool_rounds` 取 `.max(10)`），没有上限
+ * 校验 —— 上限是前端口径，别在别处另立一套数字。
+ */
+export const AGENT_MAX_TOOL_ROUNDS_MIN = 10;
+export const AGENT_MAX_TOOL_ROUNDS_MAX = 2000;
+
 export const DISPOSITION_COLORS: Record<Disposition, string> = {
   Allow: 'bg-emerald-600 text-emerald-100',
   Approval: 'bg-amber-600 text-amber-100',
