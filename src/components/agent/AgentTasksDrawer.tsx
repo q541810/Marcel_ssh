@@ -8,7 +8,12 @@ import { useConversationStore } from '@/stores/conversationStore';
 import { getTaskVisualStatus, getActiveRunningTasks } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
-import { isLocalSessionId } from '@/lib/toolCatalog';
+import {
+  canJumpToSession,
+  getJobSessionLabel,
+  getSessionLabel,
+  type TaskCenterCatalog,
+} from '@/lib/taskCenterLabels';
 
 interface AgentTasksDrawerProps {
   open: boolean;
@@ -46,30 +51,9 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
   const jobList = Object.values(jobs).sort((a, b) => b.startedAtMillis - a.startedAtMillis);
   const runningJobs = jobList.filter((j) => j.status === 'running');
 
-  const getSessionLabel = (task: AgentTask) => {
-    // 本机子任务（local_subagent）：sessionId 是哨兵值，没有 SSH 会话可查 ——
-    // 不查了，直接说清它在本机跑（查下去只会落成「未知会话」）。
-    if (isLocalSessionId(task.sessionId)) return '本机';
-    const session = sessions[task.sessionId];
-    if (!session) return '未知会话';
-    const conn = session.configId ? connections.find((c) => c.id === session.configId) : null;
-    return conn?.name || session.connectionId || task.sessionId;
-  };
-
-  // 作业专用会话标签：会话已关闭（前端 sessions 已删除，但后端作业仍保留）
-  // 时，显示会话 ID + 关闭提示，不冒充未知会话。
-  const getJobSessionLabel = (sessionId: string) => {
-    // 本机作业（`local_bash(run_in_background: true)`，id 形如 `local_job_N`）：
-    // `sessionId` 是哨兵值，本来就没有会话可查 —— 与上面 `getSessionLabel` 同一
-    // 口径，直接说清它在本机跑。漏了这行会落成
-    // 「local（该任务对应会话已关闭）」：把一条**正在跑**的本机作业说成「会话已
-    // 关闭」，用户会以为它废了。
-    if (isLocalSessionId(sessionId)) return '本机';
-    const session = sessions[sessionId];
-    if (!session) return `${sessionId}（该任务对应会话已关闭）`;
-    const conn = session.configId ? connections.find((c) => c.id === session.configId) : null;
-    return conn?.name || session.connectionId || sessionId;
-  };
+  // 会话标签与跳转守卫：两端（移动端 MobileActiveAgentsSheet）共用
+  // `lib/taskCenterLabels`，含幽灵会话反查与哨兵值特判。
+  const catalog: TaskCenterCatalog = { sessions, connections, conversations, tasks };
 
   const getConversationTitle = (task: AgentTask) => {
     const conv = conversations[task.conversationId];
@@ -78,10 +62,10 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
   };
 
   const handleJumpToTask = async (task: AgentTask) => {
-    // 本机子任务没有 SSH 会话（sessionId 是哨兵值）：把它当会话切过去只会让
-    // activeSessionId 指向一个不存在的终端标签。只切到它的子对话 —— 过程一样
-    // 看得到，「本机」字样在卡片上（见 getSessionLabel）。
-    if (!isLocalSessionId(task.sessionId) && task.sessionId && task.sessionId !== activeSessionId) {
+    // 本机子任务（哨兵 sessionId）与幽灵会话（不在 sessionStore）都没有终端
+    // 标签可切：守卫判定在 canJumpToSession（共享模块）。只切到它的子对话 ——
+    // 过程一样看得到，会话标签在卡片上。
+    if (canJumpToSession(sessions, task, activeSessionId)) {
       setActiveSession(task.sessionId);
     }
     if (task.conversationId && task.conversationId !== activeConversationId) {
@@ -168,7 +152,7 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
             ) : (
               runningTasks.map((task) => {
                 const isSubTask = Boolean(task.parentTaskId);
-                const sessionLabel = getSessionLabel(task);
+                const sessionLabel = getSessionLabel(catalog, task);
                 const convTitle = getConversationTitle(task);
                 const isCurrent = task.conversationId === activeConversationId;
                 const visualStatus = getTaskVisualStatus(task);
@@ -238,7 +222,7 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
               </div>
             ) : (
               jobList.map((job: JobInfo) => {
-                const sessionLabel = getJobSessionLabel(job.sessionId);
+                const sessionLabel = getJobSessionLabel(catalog, job.sessionId);
                 const isRunning = job.status === 'running';
                 // 上一次应用运行留下、随应用退出中断的作业：没有可终止的东西，
                 // 也不会再有新输出——给用户一句解释，别让他以为还在跑。
