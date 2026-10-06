@@ -62,3 +62,20 @@ export function asHostKeyMismatch(e: ParsedAppError): HostKeyMismatchData | null
   }
   return d as HostKeyMismatchData;
 }
+/**
+ * 把错误展开成**用于上报/反馈**的完整文本：Error 取 stack（含消息与调用栈），
+ * 字符串原样，其余对象转 JSON 形状。与 getErrorMessage 的分工：
+ * getErrorMessage 给界面显示一行可读文案，describeError 给开发者完整现场。
+ * 兜底界面的「复制错误信息」用的就是它。
+ */
+export function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.stack || error.message;
+  }
+  if (typeof error === 'string' && error) return error;
+  try {
+    return JSON.stringify(error, null, 2) ?? String(error);
+  } catch {
+    return String(error);
+  }
+}

@@ -1,5 +1,5 @@
 import { Component, type ReactNode } from 'react';
-import WindowControls from './WindowControls';
+import ErrorScreen from './ErrorScreen';
 
 interface Props {
   children: ReactNode;
@@ -7,40 +7,21 @@ interface Props {
 
 interface State {
   hasError: boolean;
+  /** 触发兜底的错误本体：错误屏上必须展示它，否则用户只能看到「出错了」三个字，
+   *  报 bug 时拿不到任何线索（console 里的错误对象复制文本时会丢）。 */
+  error: unknown;
 }
 
 export default class ErrorBoundary extends Component<Props, State> {
-  state: State = { hasError: false };
+  state: State = { hasError: false, error: null };
 
-  static getDerivedStateFromError(): State {
-    return { hasError: true };
+  static getDerivedStateFromError(error: unknown): State {
+    return { hasError: true, error };
   }
 
   render() {
     if (this.state.hasError) {
-      return (
-        <div className="flex flex-col h-screen bg-zinc-950 text-zinc-300">
-          <div className="flex items-center justify-between bg-zinc-950 border-b border-zinc-800 select-none h-8 flex-shrink-0">
-            <div className="flex items-center gap-2 px-2 text-xs text-zinc-500">
-              <span className="text-red-400">错误</span>
-            </div>
-            <WindowControls />
-          </div>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center space-y-4">
-              <h1 className="text-xl font-semibold">出错了</h1>
-              <p className="text-sm text-zinc-500">应用遇到意外错误，请尝试重新加载</p>
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-500 transition-colors"
-              >
-                重新加载
-              </button>
-            </div>
-          </div>
-        </div>
-      );
+      return <ErrorScreen error={this.state.error} />;
     }
 
     return this.props.children;

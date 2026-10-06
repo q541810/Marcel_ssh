@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Binary, Bug, Check, FlaskConical, Plus, PlugZap, Server, Sun } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, Binary, Bug, Check, Eye, FlaskConical, Plus, PlugZap, Server, Sun } from "lucide-react";
 import { isDebugConnection } from "@/lib/debugServer";
 import * as tauri from "@/lib/tauri";
+import ErrorScreen from "@/components/layout/ErrorScreen";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useViewStore } from "@/stores/viewStore";
 import { useDebugStore } from "@/stores/debugStore";
+
+/** 预览用的示例错误：手工 stack 让预览屏与真实崩溃形态一致（含缩进的调用栈）。 */
+const sampleError = new TypeError("Cannot read properties of undefined (reading 'map')");
+sampleError.stack = [
+  "TypeError: Cannot read properties of undefined (reading 'map')",
+  "    at MessageList (src/components/agent/AgentMessageList.tsx:42:18)",
+  "    at renderWithHooks (react-dom.development.js:15486:18)",
+  "    at beginWork (react-dom.development.js:19167:14)",
+  "    at performUnitOfWork (react-dom.development.js:23179:12)",
+].join("\n");
 
 interface DebugPageProps {
   onBack?: () => void;
@@ -34,6 +45,17 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
   const setDebug67Thinking = useDebugStore((state) => state.setDebug67Thinking);
   const [pluginReloading, setPluginReloading] = useState(false);
   const [pluginReloadStatus, setPluginReloadStatus] = useState<string | null>(null);
+  const [errorPreviewOpen, setErrorPreviewOpen] = useState(false);
+
+  // 预览覆盖层支持 Escape 退出（与关闭按钮等价）。
+  useEffect(() => {
+    if (!errorPreviewOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setErrorPreviewOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [errorPreviewOpen]);
   const fallbackBack = () =>
     useViewStore.getState().setActiveId("builtin.settings");
   const fallbackServers = () =>
@@ -191,6 +213,31 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
 
         <section
           className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"
+          aria-labelledby="debug-error-screen-title"
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
+            <div className="min-w-0">
+              <h2 id="debug-error-screen-title" className="text-sm font-medium text-zinc-200">
+                错误界面预览
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-zinc-400">
+                以示例错误全屏预览应用崩溃时的兜底界面（含复制错误信息与交流群反馈引导），不影响真实状态。
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setErrorPreviewOpen(true)}
+            className="mt-4 flex min-h-10 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-indigo-400"
+          >
+            <Eye className="h-4 w-4" aria-hidden="true" />
+            预览错误界面
+          </button>
+        </section>
+
+        <section
+          className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/50 p-4"
           aria-labelledby="debug-experimental-title"
         >
           <div className="flex items-start gap-3">
@@ -274,6 +321,12 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           )}
         </section>
       </div>
+
+      {errorPreviewOpen && (
+        <div className="fixed inset-0 z-[100001]">
+          <ErrorScreen error={sampleError} onClose={() => setErrorPreviewOpen(false)} />
+        </div>
+      )}
     </main>
   );
 }
