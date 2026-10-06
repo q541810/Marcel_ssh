@@ -32,16 +32,29 @@ export default function QuestionPanel({
   );
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // 交互切换（questionId 变化）时整份重置题号与答案。必须在渲染期重置而不是
+  // useEffect：effect 晚一帧，挡不住切换当帧的越界读取（2 题答到第 2 题 →
+  // 队列切到 1 题，questions[1] 已是 undefined）。正常路径靠 overlay 传 key
+  // 重挂载，这里是给复用本组件却忘了换 key 的调用方兜底（2026-10-06 线上爆炸）。
+  const [prevQuestionId, setPrevQuestionId] = useState(questionId);
+  if (prevQuestionId !== questionId) {
+    setPrevQuestionId(questionId);
+    setCurrentIndex(0);
+    setAnswers(questions.map(() => ({ selected: [], custom: '' })));
+  }
+
   const total = questions.length;
-  const current = questions[currentIndex];
-  const currentAnswer = answers[currentIndex];
-  const isLast = currentIndex === total - 1;
-  const isFirst = currentIndex === 0;
+  // 下标钳制：题目数在帧内变少的极端情况下也不越界（渲染为空好过崩掉整棵树）
+  const index = Math.min(currentIndex, Math.max(total - 1, 0));
+  const current = questions[index];
+  const multiple = current?.multiple === true;
+  const isLast = total > 0 && index === total - 1;
+  const isFirst = index === 0;
 
   // Focus input when switching questions
   useEffect(() => {
     inputRef.current?.focus();
-  }, [currentIndex]);
+  }, [index]);
 
   const goTo = useCallback(
     (nextIndex: number) => {
@@ -55,8 +68,8 @@ export default function QuestionPanel({
     (label: string) => {
       setAnswers((prev) => {
         const next = [...prev];
-        const cur = { ...next[currentIndex] };
-        if (current.multiple) {
+        const cur = { ...next[index] };
+        if (multiple) {
           const idx = cur.selected.indexOf(label);
           if (idx >= 0) {
             cur.selected = cur.selected.filter((s) => s !== label);
@@ -66,37 +79,37 @@ export default function QuestionPanel({
         } else {
           cur.custom = label;
         }
-        next[currentIndex] = cur;
+        next[index] = cur;
         return next;
       });
     },
-    [currentIndex, current.multiple],
+    [index, multiple],
   );
 
   const handleCustomChange = useCallback(
     (value: string) => {
       setAnswers((prev) => {
         const next = [...prev];
-        const cur = { ...next[currentIndex] };
+        const cur = { ...next[index] };
         cur.custom = value;
-        next[currentIndex] = cur;
+        next[index] = cur;
         return next;
       });
     },
-    [currentIndex],
+    [index],
   );
 
   const handleNext = useCallback(() => {
     if (isLast) {
       onSubmit(questionId, answers);
     } else {
-      goTo(currentIndex + 1);
+      goTo(index + 1);
     }
-  }, [isLast, questionId, answers, onSubmit, goTo, currentIndex]);
+  }, [isLast, questionId, answers, onSubmit, goTo, index]);
 
   const handlePrev = useCallback(() => {
-    goTo(currentIndex - 1);
-  }, [goTo, currentIndex]);
+    goTo(index - 1);
+  }, [goTo, index]);
 
   const handleCancel = useCallback(() => {
     const emptyAnswers = questions.map(() => ({ selected: [] as string[], custom: '' }));
@@ -112,6 +125,10 @@ export default function QuestionPanel({
     },
     [handleNext],
   );
+
+  // 畸形载荷（0 题）：不渲染，也不崩（放在所有 hook 之后，hooks 顺序不能依赖载荷形状）
+  if (!current) return null;
+  const currentAnswer = answers[index] ?? { selected: [], custom: '' };
 
   return (
     <div className="p-3">
@@ -148,7 +165,7 @@ export default function QuestionPanel({
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <span className="text-xs text-zinc-500">
-              {currentIndex + 1}/{total}
+              {index + 1}/{total}
             </span>
             {onMinimize && (
               <button

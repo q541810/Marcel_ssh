@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { LOCAL_SESSION_SENTINEL } from '@/lib/toolCatalog';
-import type { ActiveInteractionPayload, AgentTask } from '@/lib/types';
+import type { ActiveInteractionPayload, AgentTask, QuestionItem } from '@/lib/types';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -108,6 +108,26 @@ function localApproval(
   };
 }
 
+/** 远端会话的提问交互：questions 由调用方给定（形状照 2026-10-06 的真实崩溃载荷）。 */
+function questionInteraction(
+  questions: QuestionItem[],
+  overrides: Partial<ActiveInteractionPayload> = {},
+): ActiveInteractionPayload {
+  return {
+    type: 'interactionActive',
+    interactionId: 'int-q',
+    kind: 'question',
+    taskId: 'task-remote',
+    sessionId: 'session-remote',
+    conversationId: 'conv-remote',
+    sessionName: 'jinye',
+    conversationTitle: 'new.neopig.top 开 api 站',
+    queueLength: 2,
+    question: { questionId: 'q-1', questions },
+    ...overrides,
+  };
+}
+
 let container: HTMLDivElement;
 let root: Root;
 
@@ -138,6 +158,17 @@ function clickButton(label: string) {
     (b) => b.textContent?.trim() === label,
   );
   if (!el) throw new Error(`找不到按钮：${label}`);
+  act(() => {
+    el.click();
+  });
+}
+
+/** 选项按钮的文本带着 description（`A选项说明`），按标签前缀找。 */
+function clickOption(label: string) {
+  const el = Array.from(container.querySelectorAll('button')).find(
+    (b) => b.textContent?.trim().startsWith(label),
+  );
+  if (!el) throw new Error(`找不到选项：${label}`);
   act(() => {
     el.click();
   });
@@ -249,5 +280,54 @@ describe('本机交互（本机子 agent 的审批）的跳转与「当前上下
 
     expect(mocks.setActiveSession).toHaveBeenCalledWith('session-remote');
     expect(mocks.switchConversation).toHaveBeenCalledWith('conv-remote');
+  });
+});
+
+/**
+ * 回归（2026-10-06 线上爆炸）：2 题的 ask 答到第 2 题后，队列直接切到只有 1 题
+ * 的下一个 ask。QuestionPanel 的 currentIndex/answers 是挂载时定下的 —— 交互
+ * 切换若不重挂载（key），questions[currentIndex] 越界，渲染当场抛
+ * TypeError，整棵树被顶层 ErrorBoundary 换成「出错了」。
+ */
+describe('提问交互的队列切换（不重挂载就崩的回归）', () => {
+  const TWO_QUESTIONS: QuestionItem[] = [
+    { header: '3001实例', question: '3001 走哪条路', multiple: false, options: [{ label: 'A', description: '选项说明' }, { label: 'B', description: '选项说明' }] },
+    { header: '陈旧编排', question: '编排怎么处理', multiple: false, options: [{ label: 'C', description: '选项说明' }, { label: 'D', description: '选项说明' }] },
+  ];
+  const ONE_QUESTION: QuestionItem[] = [
+    { header: '方案选择', question: '存档改不改', multiple: false, options: [{ label: 'E', description: '选项说明' }, { label: 'F', description: '选项说明' }] },
+  ];
+
+  function swapToNextAsk() {
+    mocks.interaction = questionInteraction(ONE_QUESTION, {
+      interactionId: 'int-q-next',
+      question: { questionId: 'q-2', questions: ONE_QUESTION },
+    });
+    render();
+  }
+
+  it('答到第 2/2 题后切到 1 题的下一个 ask → 不崩，显示新交互的第一题', () => {
+    mocks.interaction = questionInteraction(TWO_QUESTIONS);
+    render();
+    expect(container.textContent).toContain('3001实例');
+    clickButton('下一题 →');
+    expect(container.textContent).toContain('2/2');
+
+    swapToNextAsk();
+
+    expect(container.textContent).toContain('方案选择');
+    expect(container.textContent).toContain('1/1');
+  });
+
+  it('切到下一个 ask 后答案不得串场（上一轮的选择不带入新面板）', () => {
+    mocks.interaction = questionInteraction(TWO_QUESTIONS);
+    render();
+    clickOption('A');
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('A');
+    clickButton('下一题 →');
+
+    swapToNextAsk();
+
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
   });
 });

@@ -137,7 +137,9 @@ export default function GlobalInteractionOverlay() {
 
   if (current.kind === 'approval' && current.approval) {
     return (
+      // key：审批切换必须重挂载，理由输入等内部状态不能从上一条审批漏进下一条
       <ApprovalDialog
+        key={current.interactionId}
         toolCall={{
           id: current.approval.toolCallId,
           name: current.approval.toolName,
@@ -183,7 +185,10 @@ export default function GlobalInteractionOverlay() {
             （全宽下选项按钮被拉得无法使用）。pointer-events-auto 只让
             面板本身可交互，两侧留白不拦截点击。 */}
         <div className="pointer-events-auto w-full max-w-2xl px-3 pb-3 sm:px-4 sm:pb-5 drop-shadow-2xl">
+          {/* key：交互切换必须重挂载。面板内部题号/答案按首份 questions 定格，
+              不重挂的话 2 题切 1 题会越界渲染崩掉整棵树（2026-10-06 线上爆炸） */}
           <QuestionPanel
+            key={current.interactionId}
             questionId={current.question.questionId}
             questions={current.question.questions}
             onSubmit={(_qid, answers) => {
