@@ -81,8 +81,7 @@ function ExplorationGroup({
     setExpanded(forceExpand);
   }, [forceExpand]);
 
-  // 折叠态只显示「已探索 N 次读取」，联网工具的降级/被网站拦截标记会随之消失。
-  // 这里把组内异常汇总到分组标题上，保证折叠时也不会漏掉"这次其实是降级/被拦"。
+  // 折叠态只强调仍影响结果的站点拦截；已恢复的方式切换留在单张卡片详情。
   const webSummary = useMemo(
     () =>
       summarizeWebToolGroup(
@@ -115,14 +114,6 @@ function ExplorationGroup({
           <span className="flex items-center gap-1 text-sm">
             <GroupLabel kind={kind} count={messages.length} />
           </span>
-          {webSummary.degraded > 0 && (
-            <span
-              className="ml-1 flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md font-medium bg-amber-500/10 text-amber-300"
-              title={`组内有 ${webSummary.degraded} 次联网调用发生了降级（未使用设置指定的后端），展开可查看原因`}
-            >
-              含降级
-            </span>
-          )}
           {webSummary.blocked > 0 && (
             <span
               className="ml-1 flex-shrink-0 text-[11px] px-1.5 py-0.5 rounded-md font-medium bg-amber-500/10 text-amber-300"

@@ -5,10 +5,10 @@
  * 背景：这两个工具的结果过去只渲染正文 pre，后端 metadata 里"用的哪个后端、
  * 有没有降级、页面是否被人机验证拦下"一点都没显示，用户只能看到空正文，于是
  * 只能反馈"网页获取失败"。本测试锁定：
- *  - 后端标识与「已降级」「被网站拦截」标记出现在**卡片标题行**（不展开可见）；
- *  - 展开后能看到解释性说明（含具体原因/供应商名）；
+ *  - 后端标识与成功恢复合并为一个中性标记，不默认展示大块告警；
+ *  - 诊断原因在展开卡片后的原生 details 中按需读取；真正拦截仍及时提示；
  *  - 旧会话（metadata 无新字段）不显示任何标记——"兼容旧数据 = 保持原样"；
- *  - 「已降级」与策略层面的「已阻止」措辞不冲突。
+ *  - 方式切换与策略层面的「已阻止」措辞不冲突。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
@@ -91,6 +91,30 @@ function baseResult(overrides: Partial<NonNullable<AgentMessage['toolResult']>> 
 }
 
 describe('ToolCallCard 联网工具状态标记', () => {
+  it('keeps an unrecovered page visible when another page in the batch succeeded', () => {
+    const el = renderCard(baseResult({
+      toolName: 'http_get', success: true,
+      metadata: {
+        provider: 'browser', requested_mode: 'browser', failed: 1, success: 1, urls_fetched: 2,
+        fallback: { from: 'browser', to: 'html', reason: 'browser and HTTP both failed' },
+      },
+    }));
+    expect(el.textContent).toContain('部分获取失败');
+    expect(el.textContent).not.toContain('已切换方式');
+    expect(el.querySelectorAll('span[title]')).toHaveLength(1);
+  });
+
+  it('shows a compact failure for failed web results even without new metadata', () => {
+    const el = renderCard(baseResult({ toolName: 'http_get', success: false, metadata: undefined }));
+    expect(el.textContent).toContain('获取失败');
+    expect(el.querySelector('details')).toBeNull();
+  });
+
+  it('does not show a failure while a web request is still executing', () => {
+    const el = renderCard(baseResult({ toolName: 'http_get', success: false, metadata: undefined }), true);
+    expect(el.textContent).not.toContain('获取失败');
+  });
+
   it('always shows which backend served the request', () => {
     const el = renderCard(
       baseResult({
@@ -104,7 +128,7 @@ describe('ToolCallCard 联网工具状态标记', () => {
     expect(el.textContent).not.toContain('被网站拦截');
   });
 
-  it('shows a 已降级 chip in the header as soon as a fallback happened', () => {
+  it('shows only one neutral chip when fallback recovered the result', () => {
     const el = renderCard(
       baseResult({
         toolName: 'web_search',
@@ -118,9 +142,10 @@ describe('ToolCallCard 联网工具状态标记', () => {
     );
 
     const text = el.textContent ?? '';
-    // 实际服务本次请求的后端 + 降级标记都必须出现在不展开就能看到的位置。
-    expect(text).toContain('已降级');
-    expect(text).toContain('裸抓 HTML');
+    expect(text).toContain('已切换方式');
+    expect(text).not.toContain('已降级');
+    expect(el.querySelectorAll('span[title]')).toHaveLength(1);
+    expect(el.querySelector('[class*="bg-amber"]')).toBeNull();
     // 标题行不得把浏览器标成本次后端（只有在解释"哪个后端失败了"时才可提到它）。
     const chipTitles = Array.from(el.querySelectorAll('span[title]')).map((s) =>
       s.getAttribute('title') ?? '',
@@ -128,7 +153,7 @@ describe('ToolCallCard 联网工具状态标记', () => {
     expect(chipTitles.join(' | ')).toContain('实际使用：裸抓 HTML');
   });
 
-  it('explains the fallback and its cause without needing to expand', () => {
+  it('keeps fallback details collapsed until the reader asks, with a native touch and keyboard control', () => {
     const el = renderCard(
       baseResult({
         toolName: 'web_search',
@@ -140,14 +165,25 @@ describe('ToolCallCard 联网工具状态标记', () => {
       }),
     );
 
-    // 降级属于"这次结果不一定可信"的信号，必须默认可见，不能藏在展开区里。
     const text = el.textContent ?? '';
-    expect(text).toContain('已降级为裸抓 HTML');
-    expect(text).toContain('本机浏览器本次没有成功');
-    expect(text).toContain('CDP endpoint did not become ready');
+    expect(text).not.toContain('内容质量可能低于预期');
+    expect(text).not.toContain('CDP endpoint did not become ready');
+    expect(el.querySelector('details')).toBeNull();
 
     expand(el);
-    expect(el.textContent).toContain('已降级为裸抓 HTML');
+    const details = el.querySelector('details')!;
+    const summary = details?.querySelector('summary');
+    expect(summary?.textContent).toBe('获取详情');
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain('CDP endpoint did not become ready');
+    expect(details.textContent).toContain('实际使用：裸抓 HTML');
+    act(() => summary?.focus());
+    expect(document.activeElement).toBe(summary);
+    act(() => summary?.click());
+    expect(details.open).toBe(true);
+    expect(el.querySelector('[class*="bg-amber"]')).toBeNull();
+    expand(el);
+    expect(el.querySelector('details')).toBeNull();
   });
 
   it('flags a search intercepted by a verification page', () => {
@@ -230,6 +266,28 @@ describe('ToolCallCard 联网工具状态标记', () => {
   it('renders without metadata at all', () => {
     const el = renderCard(baseResult({ metadata: undefined }));
     expect(el.textContent).toContain('web_search');
+    expand(el);
+    expect(el.querySelector('details')).toBeNull();
+  });
+
+  it('does not mark a normal source-file download as a fallback', () => {
+    const el = renderCard(baseResult({
+      toolName: 'http_get',
+      metadata: { provider: 'html', requested_mode: 'browser', degraded: false },
+    }));
+    expect(el.textContent).toContain('裸抓 HTML');
+    expect(el.textContent).not.toContain('切换');
+    expect(el.querySelector('[class*="bg-amber"]')).toBeNull();
+  });
+
+  it('ignores malformed status metadata without inventing a warning', () => {
+    const el = renderCard(baseResult({
+      toolName: 'http_get',
+      metadata: { provider: null, degraded: 'true', fallback: { from: 1 }, pages: [null, 'bad'] },
+    }));
+    expand(el);
+    expect(el.querySelector('details')).toBeNull();
+    expect(el.querySelector('[class*="bg-amber"]')).toBeNull();
   });
 
   it('leaves non-web tools untouched', () => {

@@ -8,7 +8,7 @@ import {
   useStickyFollow,
 } from '@/hooks/useStickyFollow';
 import { INNER_FOLLOW_THRESHOLD_PX } from '@/lib/agentScroll';
-import { readWebToolStatus, webToolChips, webToolNotice } from '@/lib/webToolStatus';
+import { readWebToolStatus, webToolChips, webToolDetails, webToolNotice } from '@/lib/webToolStatus';
 import {
   asArgString,
   fileChangeToolName,
@@ -235,9 +235,12 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
     const subModel = subMetaModel || argModel;
     // 联网工具（web_search / http_get）：本次用的是哪个后端、有没有降级、页面
     // 是否被网站的人机验证拦下。旧会话没有这些字段 → status 为 null，界面不变。
-    const webStatus = readWebToolStatus(tr.toolName, tr.metadata);
+    const webStatus = readWebToolStatus(
+      tr.toolName, tr.metadata, !isExecuting && !tr.blocked ? tr.success : undefined,
+    );
     const webChips = webStatus ? webToolChips(webStatus) : [];
     const webNotice = webStatus ? webToolNotice(webStatus) : null;
+    const webDetails = webStatus ? webToolDetails(webStatus) : [];
 
     return (
       <ToolCardFrame
@@ -361,7 +364,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             )}
           </div>
         )}
-        {/* 联网工具的异常说明：降级 / 被网站拦截 / 无正文。
+        {/* 联网工具的异常说明：被网站拦截 / 无正文。
             放在正文之前，先解释「发生了什么」再看内容，避免用户把验证页正文
             当成真实页面。正常情况不渲染，不占版面。 */}
         {webNotice && !isExecuting && (
@@ -391,6 +394,16 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               </ul>
             </div>
           </div>
+        )}
+        {expanded && !isExecuting && webDetails.length > 0 && (
+          <details className="border-t border-zinc-700/50 px-3 text-xs text-zinc-400">
+            <summary className="min-h-11 py-3 cursor-pointer rounded-sm hover:text-zinc-300 active:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 touch-manipulation">
+              获取详情
+            </summary>
+            <div className="pb-3 space-y-1 leading-relaxed">
+              {webDetails.map((line, i) => <p key={i} className="break-words [overflow-wrap:anywhere]">{line}</p>)}
+            </div>
+          </details>
         )}
         {showOutput && (
           <div className={`min-w-0 border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>

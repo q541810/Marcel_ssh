@@ -15,6 +15,7 @@ import {
   readWebToolStatus,
   summarizeWebToolGroup,
   webToolChips,
+  webToolDetails,
   webToolNotice,
 } from './webToolStatus';
 
@@ -65,7 +66,7 @@ describe('readWebToolStatus', () => {
     expect(webToolNotice(status!)).toBeNull();
   });
 
-  it('treats an explicit fallback as degraded and explains it', () => {
+  it('marks a recovered fallback once without warning about content quality', () => {
     const status = readWebToolStatus('web_search', {
       provider: 'html',
       requested_mode: 'browser',
@@ -74,11 +75,9 @@ describe('readWebToolStatus', () => {
 
     expect(status.degraded).toBe(true);
     const chips = webToolChips(status);
-    expect(chips.map((c) => c.label)).toContain('已降级');
-
-    const notice = webToolNotice(status)!;
-    expect(notice.title).toBe('已降级为裸抓 HTML');
-    expect(notice.lines.join(' ')).toContain('CDP endpoint did not become ready');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toMatchObject({ label: '已切换方式', tone: 'neutral' });
+    expect(webToolNotice(status)).toBeNull();
   });
 
   it('detects a degradation from provider/requested_mode mismatch alone', () => {
@@ -88,7 +87,7 @@ describe('readWebToolStatus', () => {
       requested_mode: 'browser',
     })!;
     expect(status.degraded).toBe(true);
-    expect(webToolChips(status).map((c) => c.label)).toContain('已降级');
+    expect(webToolChips(status).map((c) => c.label)).toContain('已切换方式');
   });
 
   it('treats the browser→html rewrite as unavailable, not degraded, on mobile', () => {
@@ -119,7 +118,7 @@ describe('readWebToolStatus', () => {
         fallback: { from: 'browser', to: 'html', reason: 'browser boot: timed out' },
       })!;
       expect(status.degraded).toBe(true);
-      expect(webToolChips(status).map((c) => c.label)).toContain('已降级');
+      expect(webToolChips(status).map((c) => c.label)).toContain('已切换方式');
     } finally {
       platform.mobile = false;
     }
@@ -234,7 +233,130 @@ describe('readWebToolStatus', () => {
   });
 });
 
+describe('fetch provider compatibility', () => {
+  it('honors an explicit non-degraded download transfer despite a provider mismatch', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'html', requested_mode: 'browser', degraded: false,
+    })!;
+    expect(status.degraded).toBe(false);
+    expect(webToolChips(status)).toMatchObject([{ label: '裸抓 HTML', tone: 'neutral' }]);
+    expect(webToolNotice(status)).toBeNull();
+  });
+
+  it('infers mixed providers from complete legacy page records', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'html', requested_mode: 'browser',
+      pages: [
+        { url: 'https://rendered.example/', provider: 'browser', status: 200 },
+        { url: 'https://fallback.example/', provider: 'html', status: 200 },
+      ],
+    })!;
+    expect(status.provider).toBe('mixed');
+    expect(webToolChips(status)).toMatchObject([{ label: '部分已切换', tone: 'neutral' }]);
+  });
+
+  it('preserves the declared provider when old page records are incomplete', () => {
+    for (const extra of [{ url: 'https://legacy.example/' }, null]) {
+      const status = readWebToolStatus('http_get', {
+        provider: 'html', requested_mode: 'browser',
+        pages: [
+          { url: 'https://rendered.example/', provider: 'browser' },
+          { url: 'https://fallback.example/', provider: 'html' },
+          extra,
+        ],
+      })!;
+      expect(status.provider).toBe('html');
+    }
+  });
+
+  it('ignores malformed degraded values instead of suppressing a real fallback', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'html', requested_mode: 'browser', degraded: 'false',
+    })!;
+    expect(status.degraded).toBe(true);
+  });
+
+  it('retains an explicit fallback even if corrupt metadata also claims no degradation', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'html', degraded: false,
+      fallback: { from: 'browser', to: 'html', reason: 'navigation timed out' },
+    })!;
+    expect(status.degraded).toBe(true);
+    expect(webToolDetails(status).join(' ')).toContain('navigation timed out');
+  });
+
+  it('shows the actual per-page providers in optional mixed-fetch details', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'mixed', requested_mode: 'browser', degraded: true,
+      fallback: { from: 'browser', to: 'html', reason: 'one page timed out' },
+      pages: [
+        { url: 'https://rendered.example/', provider: 'browser', status: 200 },
+        { url: 'https://fallback.example/', provider: 'html', status: 200 },
+      ],
+    })!;
+    expect(webToolDetails(status)).toContain('https://rendered.example/ — 本机浏览器');
+    expect(webToolDetails(status)).toContain('https://fallback.example/ — 裸抓 HTML');
+    expect(webToolDetails(status)).toContain('原因：one page timed out');
+  });
+
+  it('keeps a fallback from hiding an unreadable or intercepted final page', () => {
+    const meta = {
+      provider: 'html', requested_mode: 'browser',
+      fallback: { from: 'browser', to: 'html', reason: 'navigation timed out' },
+    };
+    const blocked = readWebToolStatus('http_get', {
+      ...meta, pages: [{ url: 'https://blocked.example/', challenge: 'Cloudflare' }],
+    })!;
+    expect(webToolNotice(blocked)?.title).toBe('1 个页面被网站拦截');
+    const blank = readWebToolStatus('http_get', {
+      ...meta, pages: [{ url: 'https://blank.example/', blank_content: true }],
+    })!;
+    expect(webToolNotice(blank)?.title).toBe('页面没有可读内容');
+  });
+});
+
 describe('webToolChips', () => {
+  it('reports a partially failed batch instead of claiming the failed request recovered', () => {
+    const status = readWebToolStatus('http_get', {
+      provider: 'browser', requested_mode: 'browser', failed: 1, success: 1, urls_fetched: 2,
+      fallback: { from: 'browser', to: 'html', reason: 'both requests failed' },
+    })!;
+    expect(webToolChips(status)).toMatchObject([{ label: '部分获取失败', tone: 'warning' }]);
+    expect(webToolChips(status)).toHaveLength(1);
+    expect(webToolDetails(status).join(' ')).toContain('已尝试');
+  });
+
+  it('reports a fully failed fetch from final failure counts', () => {
+    for (const toolName of ['http_get', 'web_search']) {
+      const status = readWebToolStatus(toolName, { failed: 1, success: 0 })!;
+      expect(webToolChips(status)).toMatchObject([{ label: '获取失败', tone: 'warning' }]);
+    }
+  });
+
+  it('does not invent failure from missing or malformed counts', () => {
+    for (const failed of [undefined, -1, 1.5, '1', Infinity, NaN]) {
+      const status = readWebToolStatus('http_get', { provider: 'html', failed, success: 0 })!;
+      expect(webToolChips(status)).toMatchObject([{ label: '裸抓 HTML', tone: 'neutral' }]);
+    }
+    const recovered = readWebToolStatus('http_get', {
+      provider: 'html', failed: 0, success: 1,
+      fallback: { from: 'browser', to: 'html', reason: 'browser timed out' },
+    })!;
+    expect(webToolChips(recovered)).toMatchObject([{ label: '已切换方式', tone: 'neutral' }]);
+  });
+
+  it('does not repeat a failure chip beside an explicit website interception', () => {
+    const status = readWebToolStatus('web_search', {
+      provider: 'html', failed: 1, success: 0,
+      fallback: { from: 'browser', to: 'html', reason: 'browser timed out' },
+      interception: { kind: 'challenge', vendor: 'Cloudflare' },
+    })!;
+    const labels = webToolChips(status).map((chip) => chip.label);
+    expect(labels).toContain('被网站拦截');
+    expect(labels).not.toContain('获取失败');
+    expect(labels).not.toContain('已切换方式');
+  });
+
   it('always exposes which backend ran, so results are never ambiguous', () => {
     const status = readWebToolStatus('http_get', {
       provider: 'html',
@@ -246,7 +368,7 @@ describe('webToolChips', () => {
     expect(chips[0].tone).toBe('neutral');
   });
 
-  it('orders a degradation before an interception', () => {
+  it('keeps an interception visible without suggesting the fallback recovered it', () => {
     const status = readWebToolStatus('web_search', {
       provider: 'html',
       requested_mode: 'browser',
@@ -254,7 +376,7 @@ describe('webToolChips', () => {
       interception: { kind: 'challenge', vendor: '百度安全验证' },
     })!;
     const labels = webToolChips(status).map((c) => c.label);
-    expect(labels.indexOf('已降级')).toBeLessThan(labels.indexOf('被网站拦截'));
+    expect(labels).toEqual(['裸抓 HTML', '被网站拦截']);
   });
 });
 

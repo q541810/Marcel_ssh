@@ -40,6 +40,7 @@ export interface WebInterception {
 
 export interface WebPageSummary {
   url: string;
+  provider?: string;
   /** 真实 HTTP 状态；浏览器模式拿不到响应时为 `null`（不是 200）。 */
   status: number | null;
   /** 被识别为验证页时的名称。 */
@@ -52,7 +53,7 @@ export interface WebPageSummary {
 export interface WebToolStatus {
   /** 实际服务本次请求的后端。 */
   provider?: string;
-  /** 用户设置里要求使用的后端（与 provider 不同 = 发生了降级）。 */
+  /** 用户设置里要求使用的后端；下载等正常分流也可能与实际后端不同。 */
   requestedMode?: string;
   fallback?: WebFallback;
   interception?: WebInterception;
@@ -61,7 +62,12 @@ export interface WebToolStatus {
   blockedPages: number;
   /** 加载成功但正文为空的页面数。 */
   blankPages: number;
-  /** 后端与请求的后端不一致（含 fallback 显式声明的情况）。 */
+  /** 后端给出的最终请求计数；缺失或损坏时不补零。 */
+  failedCount?: number;
+  successCount?: number;
+  /** 工具结果的最终成功标记；执行中不传。 */
+  finalSuccess?: boolean;
+  /** 发生了失败接管；旧结果缺少显式字段时按后端差异推断。 */
   degraded: boolean;
 }
 
@@ -91,6 +97,10 @@ function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
 }
 
+function count(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+}
+
 function readFallback(v: unknown): WebFallback | undefined {
   if (!isRecord(v)) return undefined;
   const from = str(v.from);
@@ -118,6 +128,7 @@ function readPages(v: unknown): WebPageSummary[] {
     if (url === undefined && status === undefined) continue;
     pages.push({
       url: url ?? '',
+      provider: str(raw.provider),
       status: status ?? null,
       challenge: str(raw.challenge),
       // 旧数据没有该字段 → 视为"有内容"，绝不误报为空正文。
@@ -154,25 +165,34 @@ function modeUnavailableOnThisPlatform(requested: string, provider: string): boo
   return requested === 'browser' && provider === 'html';
 }
 
-function readStatus(metadata: unknown): WebToolStatus {
+function readStatus(metadata: unknown, finalSuccess?: boolean): WebToolStatus {
   const meta = isRecord(metadata) ? metadata : {};
-  const provider = str(meta.provider);
+  let provider = str(meta.provider);
   const requestedMode = str(meta.requested_mode);
   const fallback = readFallback(meta.fallback);
   const pages = readPages(meta.pages);
+  // 旧批次可能把部分 HTTP 接管误记成整批 html。仅在全部页面身份、后端信息
+  // 都完整时修正；缺项、坏数据或未知后端不猜测，保留原有顶层值。
+  if (
+    (provider === 'html' || provider === 'browser') &&
+    Array.isArray(meta.pages) && meta.pages.length === pages.length &&
+    pages.every((page) => page.provider === 'browser' || page.provider === 'html') &&
+    pages.some((page) => page.provider === 'browser') &&
+    pages.some((page) => page.provider === 'html')
+  ) {
+    provider = 'mixed';
+  }
   const blockedPages = pages.filter((p) => !!p.challenge).length;
   const blankPages = pages.filter((p) => p.blankContent).length;
 
-  // 降级判定有两路来源，二者独立成立：
-  //  - 后端显式声明 fallback（整批换后端 / 部分页面换后端）；
-  //  - provider 与 requested_mode 不一致（例如设置里选了浏览器却由裸抓服务）。
-  // requested_mode 是后加的字段，旧数据缺失时只依赖显式 fallback，不会误报降级。
+  // 新结果显式区分失败接管与正常下载读取。旧数据缺少 degraded 时保留原来的
+  // 后端差异推断；真正的 fallback 仍是证据，不能被矛盾的 false 字段掩盖。
   const modeMismatch =
     !!provider &&
     !!requestedMode &&
     provider !== requestedMode &&
     !modeUnavailableOnThisPlatform(requestedMode, provider);
-  const degraded = !!fallback || modeMismatch;
+  const degraded = !!fallback || (typeof meta.degraded === 'boolean' ? meta.degraded : modeMismatch);
 
   return {
     provider,
@@ -182,6 +202,9 @@ function readStatus(metadata: unknown): WebToolStatus {
     pages,
     blockedPages,
     blankPages,
+    failedCount: count(meta.failed),
+    successCount: count(meta.success),
+    finalSuccess,
     degraded,
   };
 }
@@ -192,15 +215,18 @@ function readStatus(metadata: unknown): WebToolStatus {
 export function readWebToolStatus(
   toolName: string,
   metadata?: Record<string, unknown>,
+  finalSuccess?: boolean,
 ): WebToolStatus | null {
   if (!isWebTool(toolName)) return null;
-  const status = readStatus(metadata);
+  const status = readStatus(metadata, finalSuccess);
   const hasSignal =
     !!status.provider ||
     !!status.requestedMode ||
     !!status.fallback ||
     !!status.interception ||
-    status.pages.length > 0;
+    status.pages.length > 0 ||
+    (status.failedCount ?? 0) > 0 ||
+    status.finalSuccess === false;
   return hasSignal ? status : null;
 }
 
@@ -210,44 +236,44 @@ export interface StatusChip {
   key: string;
   label: string;
   tone: ChipTone;
-  /** hover 提示：说明原因，不占版面。 */
+  /** 可选快捷提示；同样的信息在可展开详情中提供给触摸与键盘用户。 */
   title?: string;
 }
 
 /**
  * 卡片标题行右侧的状态小标记。
  *
- * 之所以放在标题行（而不是只在展开区）：仓库既有惯例就是在这里显示「已阻止 /
- * 已中断 / 超时」，用户不展开也能看到本次调用出了什么问题。折叠成「已探索 N 次
- * 读取」时，这些标记由 `summarizeWebToolGroup` 汇总到分组标题上。
+ * 获取方式与成功恢复合并为一个中性标记，最终仍失败的结果才使用警告色。
  */
 export function webToolChips(status: WebToolStatus): StatusChip[] {
   const chips: StatusChip[] = [];
 
-  if (status.provider) {
+  const actualProvider = status.provider ?? status.fallback?.to;
+  const providerTitle = status.requestedMode && status.requestedMode !== actualProvider
+    ? `设置要求：${backendLabel(status.requestedMode)}；实际使用：${backendLabel(actualProvider)}`
+    : `实际使用：${backendLabel(actualProvider)}`;
+  const specificFailure = webToolNotice(status);
+  const hasFailure = (status.failedCount ?? 0) > 0 || status.finalSuccess === false || !!specificFailure;
+  if (hasFailure && !specificFailure) {
     chips.push({
-      key: 'provider',
-      label: backendLabel(status.provider),
-      tone: 'neutral',
-      title: status.requestedMode && status.requestedMode !== status.provider
-        ? `设置要求：${backendLabel(status.requestedMode)}；实际使用：${backendLabel(status.provider)}`
-        : `本次后端：${backendLabel(status.provider)}`,
+      key: 'failed',
+      label: (status.successCount ?? 0) > 0 || status.finalSuccess === true ? '部分获取失败' : '获取失败',
+      tone: 'warning',
+      title: '仍有请求未获取到可用结果，展开可查看输出与详情',
     });
-  }
-
-  if (status.fallback) {
+  } else if (status.degraded && !hasFailure) {
     chips.push({
       key: 'fallback',
-      label: '已降级',
-      tone: 'warning',
-      title: `${backendLabel(status.fallback.from)}失败，已改用${backendLabel(status.fallback.to)}${status.fallback.reason ? `：${status.fallback.reason}` : ''}`,
+      label: actualProvider === 'mixed' ? '部分已切换' : '已切换方式',
+      tone: 'neutral',
+      title: actualProvider ? providerTitle : '已自动切换获取方式，展开可查看详情',
     });
-  } else if (status.degraded) {
+  } else if (actualProvider) {
     chips.push({
-      key: 'degraded',
-      label: '已降级',
-      tone: 'warning',
-      title: `设置要求：${backendLabel(status.requestedMode)}；实际使用：${backendLabel(status.provider)}`,
+      key: 'provider',
+      label: backendLabel(actualProvider),
+      tone: 'neutral',
+      title: `实际使用：${backendLabel(actualProvider)}`,
     });
   }
 
@@ -270,6 +296,26 @@ export function webToolChips(status: WebToolStatus): StatusChip[] {
   return chips;
 }
 
+/** 按需展开的诊断信息；方式切换本身不代表内容质量下降。 */
+export function webToolDetails(status: WebToolStatus): string[] {
+  const lines: string[] = [];
+  const provider = status.provider ?? status.fallback?.to;
+  if (provider) lines.push(`实际使用：${backendLabel(provider)}`);
+  if (status.degraded && status.requestedMode && status.requestedMode !== provider) {
+    lines.push(`设置要求：${backendLabel(status.requestedMode)}`);
+  }
+  if (status.fallback) {
+    lines.push(`${backendLabel(status.fallback.from)}未完成的请求，已尝试改用${backendLabel(status.fallback.to)}获取。`);
+    if (status.fallback.reason) lines.push(`原因：${status.fallback.reason}`);
+  }
+  if (provider === 'mixed') {
+    for (const page of status.pages) {
+      if (page.url && page.provider) lines.push(`${page.url} — ${backendLabel(page.provider)}`);
+    }
+  }
+  return lines;
+}
+
 function interceptionTitle(interception: WebInterception): string {
   if (interception.kind === 'challenge') {
     return `搜索引擎返回了人机验证页${interception.vendor ? `（${interception.vendor}）` : ''}，不是搜索结果`;
@@ -284,8 +330,7 @@ export interface StatusNotice {
 }
 
 /**
- * 展开区里的一段说明，解释「本次到底发生了什么」。
- * 没有异常时返回 `null`，不占用版面。
+ * 对最终结果仍不可用的情况给出说明；已恢复的获取方式切换仅放在详情中。
  */
 export function webToolNotice(status: WebToolStatus): StatusNotice | null {
   if (status.interception) {
@@ -305,17 +350,6 @@ export function webToolNotice(status: WebToolStatus): StatusNotice | null {
       tone: 'warning',
       title: '搜索被网站拦截',
       lines: lines.filter(Boolean),
-    };
-  }
-
-  if (status.fallback) {
-    return {
-      tone: 'warning',
-      title: `已降级为${backendLabel(status.fallback.to)}`,
-      lines: [
-        `${backendLabel(status.fallback.from)}本次没有成功，已自动改用${backendLabel(status.fallback.to)}。内容质量可能低于预期。`,
-        status.fallback.reason ? `原因：${status.fallback.reason}` : '',
-      ].filter(Boolean),
     };
   }
 

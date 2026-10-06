@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { AgentMessage } from '@/lib/types';
 import { isExplorationTool, isPlanToolMessage } from '@/components/agent/ExplorationGroup';
+import ExplorationGroup from '@/components/agent/ExplorationGroup';
 
 function makeToolMessage(toolName: string): AgentMessage {
   return {
@@ -19,6 +21,28 @@ function makeToolMessage(toolName: string): AgentMessage {
 }
 
 describe('isExplorationTool', () => {
+  it('does not emphasize recovered fallbacks in a collapsed group', () => {
+    const message = makeToolMessage('http_get');
+    message.toolResult!.metadata = {
+      provider: 'html', requested_mode: 'browser',
+      fallback: { from: 'browser', to: 'html', reason: 'timed out' },
+    };
+    const html = renderToStaticMarkup(<ExplorationGroup messages={[message]} />);
+    expect(html).not.toContain('含降级');
+    expect(html).not.toContain('bg-amber');
+    expect(html).toContain('已探索');
+  });
+
+  it('keeps genuine website interception visible in a collapsed group', () => {
+    const message = makeToolMessage('http_get');
+    message.toolResult!.metadata = {
+      provider: 'html',
+      pages: [{ url: 'https://blocked.example/', challenge: 'Cloudflare' }],
+    };
+    const html = renderToStaticMarkup(<ExplorationGroup messages={[message]} />);
+    expect(html).toContain('含网站拦截');
+  });
+
   it('treats search and read tools as exploration', () => {
     for (const toolName of ['web_search', 'http_get', 'read_file', 'search_files', 'list_directory']) {
       expect(isExplorationTool(makeToolMessage(toolName)), toolName).toBe(true);
