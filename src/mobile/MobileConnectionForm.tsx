@@ -2,7 +2,14 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { JumpAuthMethod, SavedConnection, StoredKeyMeta } from '@/lib/types';
 import { DEFAULT_PORT } from '@/lib/constants';
 import * as tauri from '@/lib/tauri';
-import { getErrorMessage } from '@/lib/errors';
+import {
+  buildSavedConnection,
+  keyUsageCount,
+  parsePortInput,
+  secretSaveFailedMessage,
+  shouldResetPortOnBlur,
+  validateConnectionForm,
+} from '@/lib/connectionFormModel';
 import { describeAlgorithm, shortFingerprint } from '@/lib/privateKey';
 import { useConnectionStore } from '@/stores/connectionStore';
 import KeyManager from '@/components/connection/KeyManager';
@@ -44,17 +51,6 @@ function Field({
       {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
     </div>
   );
-}
-
-/**
- * 密钥链写入失败的提示文案。
- *
- * 只说这件事本身——不回显、不记录任何凭据（错误文案来自后端密钥链，只有系统层面的
- * 原因）。同一条提示在连接列表与连接表单里各有一份（桌面/移动共四处），改口径要
- * 一起改。
- */
-function secretSaveFailedMessage(what: string, err: unknown): string {
-  return `${what}没能保存到本设备（${getErrorMessage(err)}）。下次连接和「重连」还得再输一次。`;
 }
 
 /**
@@ -221,63 +217,51 @@ export default function MobileConnectionForm({
     };
   }, [open, connection]);
 
-  const buildSaved = (): SavedConnection => ({
-    id: connection?.id ?? crypto.randomUUID(),
-    name: name.trim(),
-    host: host.trim(),
-    port,
-    username: username.trim(),
-    authMethod,
-    // 选了密钥库里的私钥就不再记路径；反之保留手填路径（老数据与高级用法）
-    keyPath: authMethod === 'PrivateKey' && !keyId ? keyPath.trim() : undefined,
-    keyId: authMethod === 'PrivateKey' ? keyId || undefined : undefined,
-    group: group.trim() || undefined,
-    lastConnected: connection?.lastConnected,
-    useJump,
-    jumpHost: useJump ? jumpHost.trim() : undefined,
-    jumpPort: useJump ? jumpPort : undefined,
-    jumpUsername: useJump ? jumpUsername.trim() : undefined,
-    jumpAuthMethod: useJump ? jumpAuthMethod : undefined,
-    jumpKeyPath:
-      useJump && jumpAuthMethod === 'PrivateKey' && !jumpKeyId
-        ? jumpKeyPath.trim()
-        : undefined,
-    jumpKeyId:
-      useJump && jumpAuthMethod === 'PrivateKey'
-        ? jumpKeyId || undefined
-        : undefined,
-  });
+  const buildSaved = (): SavedConnection =>
+    buildSavedConnection({
+      existing: connection,
+      name,
+      host,
+      port,
+      username,
+      authMethod,
+      keyId,
+      keyPath,
+      group,
+      useJump,
+      jumpHost,
+      jumpPort,
+      jumpUsername,
+      jumpAuthMethod,
+      jumpKeyId,
+      jumpKeyPath,
+    });
 
   const validate = (): boolean => {
-    const next: Record<string, string> = {};
-    if (!name.trim()) next.name = '名称为必填项';
-    if (!host.trim()) next.host = '主机为必填项';
-    if (!username.trim()) next.username = '用户名为必填项';
-    if (port < 1 || port > 65535) next.port = '端口必须在 1-65535 之间';
-    if (authMethod === 'PrivateKey' && !keyId && !keyPath.trim()) {
-      next.keyPath = '请选择或导入一把私钥';
-    }
-    if (useJump) {
-      if (!jumpHost.trim()) next.jumpHost = '跳板机主机为必填项';
-      if (!jumpUsername.trim()) next.jumpUsername = '跳板机用户名为必填项';
-      if (jumpPort < 1 || jumpPort > 65535)
-        next.jumpPort = '端口必须在 1-65535 之间';
-      if (jumpAuthMethod === 'PrivateKey' && !jumpKeyId && !jumpKeyPath.trim()) {
-        next.jumpKeyPath = '请选择或导入跳板机的私钥';
-      }
-      if (jumpAuthMethod === 'Password' && !jumpPassword && !hasJumpPassword) {
-        next.jumpPassword = '请填写跳板机密码';
-      }
-    }
+    const next = validateConnectionForm({
+      name,
+      host,
+      username,
+      port,
+      authMethod,
+      keyId,
+      keyPath,
+      useJump,
+      jumpHost,
+      jumpUsername,
+      jumpPort,
+      jumpAuthMethod,
+      jumpKeyId,
+      jumpKeyPath,
+      jumpPassword,
+      hasJumpPassword,
+    });
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
   /** 有几条连接在用这把私钥（含作为跳板机私钥），删除前要提醒清楚。 */
-  const keyUsage = (id: string) =>
-    connections.filter(
-      (c) => c.keyId === id || (c.useJump && c.jumpKeyId === id),
-    ).length;
+  const keyUsage = (id: string) => keyUsageCount(connections, id);
 
   /** Persist secrets to keychain (best-effort, same semantics as desktop). */
   const persistSecrets = async (id: string) => {
@@ -322,7 +306,7 @@ export default function MobileConnectionForm({
         console.warn('保存凭证失败:', err);
         // 凭证没进密钥链这件事必须让用户知道（否则他以为已经记住了，下次又得输）。
         // 连接本身照存——这是既有的取舍：密钥链不可用不该挡着保存/连接。
-        secretWarning = secretSaveFailedMessage('凭证', err);
+        secretWarning = secretSaveFailedMessage('凭证', err, 'form');
       }
       await onSave(saved);
     } finally {
@@ -400,13 +384,13 @@ export default function MobileConnectionForm({
               onChange={(e) => {
                 const val = e.target.value;
                 setPortInput(val);
-                const parsed = parseInt(val, 10);
-                if (!isNaN(parsed) && parsed > 0) {
+                const parsed = parsePortInput(val);
+                if (parsed !== null) {
                   setPort(parsed);
                 }
               }}
               onBlur={() => {
-                if (!portInput || isNaN(parseInt(portInput, 10))) {
+                if (shouldResetPortOnBlur(portInput)) {
                   setPortInput(String(DEFAULT_PORT));
                   setPort(DEFAULT_PORT);
                 }
@@ -673,13 +657,13 @@ export default function MobileConnectionForm({
                     onChange={(e) => {
                       const val = e.target.value;
                       setJumpPortInput(val);
-                      const parsed = parseInt(val, 10);
-                      if (!isNaN(parsed) && parsed > 0) {
+                      const parsed = parsePortInput(val);
+                      if (parsed !== null) {
                         setJumpPort(parsed);
                       }
                     }}
                     onBlur={() => {
-                      if (!jumpPortInput || isNaN(parseInt(jumpPortInput, 10))) {
+                      if (shouldResetPortOnBlur(jumpPortInput)) {
                         setJumpPortInput(String(DEFAULT_PORT));
                         setJumpPort(DEFAULT_PORT);
                       }
