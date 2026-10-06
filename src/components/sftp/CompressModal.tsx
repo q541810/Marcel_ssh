@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTauriEvent } from '@/hooks/useTauriEvent';
 import { sftpCompressArchive, sshExecLongCancel } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/sftp-helpers';
+import { defaultArchiveTargetPath, type ArchiveFormat } from '@/lib/sftpFileOpen';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
 
 interface CompressModalProps {
@@ -15,7 +16,9 @@ interface CompressModalProps {
   onCompressed: () => void;
 }
 
-type Format = 'tar.gz' | 'zip';
+/** tar.gz / zip 双端共用（推导逻辑在 @/lib/sftpFileOpen）。 */
+type Format = ArchiveFormat;
+
 type Phase = 'idle' | 'compressing' | 'done' | 'error' | 'cancelled';
 
 interface LongOutputEvent {
@@ -27,16 +30,6 @@ interface LongOutputEvent {
 interface TaskEvent {
   taskId: string;
   message?: string;
-}
-
-/** 从 remoteDir 推导默认目标路径：父目录/ basename.{ext} */
-function defaultTargetPath(remoteDir: string, format: Format): string {
-  const trimmed = remoteDir.replace(/\/+$/, '');
-  const lastSlash = trimmed.lastIndexOf('/');
-  const basename = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  const parent = lastSlash >= 0 ? trimmed.slice(0, lastSlash) : '/';
-  const joinedParent = parent === '' ? '/' : parent;
-  return joinedParent === '/' ? `/${basename}.${format}` : `${joinedParent}/${basename}.${format}`;
 }
 
 export default function CompressModal({
@@ -81,7 +74,7 @@ export default function CompressModal({
     if (!open) return;
     if (phaseRef.current === 'compressing') return;
     setFormat('tar.gz');
-    setTargetPath(defaultTargetPath(remoteDir, 'tar.gz'));
+    setTargetPath(defaultArchiveTargetPath(remoteDir, 'tar.gz'));
     setOverwrite(false);
     setPhase('idle');
     setError(null);
@@ -97,9 +90,9 @@ export default function CompressModal({
     (next: Format) => {
       setFormat(next);
       // 如果当前 targetPath 是上一个格式的默认值，就跟随更新
-      const prevDefault = defaultTargetPath(remoteDir, format);
+      const prevDefault = defaultArchiveTargetPath(remoteDir, format);
       if (targetPath === prevDefault) {
-        setTargetPath(defaultTargetPath(remoteDir, next));
+        setTargetPath(defaultArchiveTargetPath(remoteDir, next));
       }
     },
     [remoteDir, format, targetPath],

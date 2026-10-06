@@ -30,10 +30,14 @@ import {
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import {
-  formatSize,
   getErrorMessage,
   isDialogCancelled,
 } from '@/lib/sftp-helpers';
+import {
+  binaryNotEditableMessage,
+  fileTooLargeMessage,
+  imageTooLargeMessage,
+} from '@/lib/sftpFileOpen';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { isDebugSession } from '@/lib/debugServer';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -361,22 +365,19 @@ export default function MobileFilesHost({
       const kind = openFileKind(entry.name);
       if (kind === 'image') {
         if (entry.size > MAX_PREVIEW_IMAGE_SIZE) {
-          setError(
-            `图片过大 (${formatSize(entry.size)})，预览上限为 ${formatSize(MAX_PREVIEW_IMAGE_SIZE)}，请使用下载功能`,
-          );
+          setError(imageTooLargeMessage(entry.size));
           return;
         }
         setPreviewFile({ path: fullPath, name: entry.name, size: entry.size });
         return;
       }
       if (kind === 'binary') {
-        setError(`无法编辑二进制文件，请使用下载功能`);
+        // 文案与桌面 handleNavigate 对齐（含扩展名），共享 @/lib/sftpFileOpen 的构造
+        setError(binaryNotEditableMessage(entry.name));
         return;
       }
       if (entry.size > MAX_EDITOR_FILE_SIZE) {
-        setError(
-          `文件过大 (${formatSize(entry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`,
-        );
+        setError(fileTooLargeMessage(entry.size));
         return;
       }
       setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
@@ -540,7 +541,8 @@ export default function MobileFilesHost({
       setNewFolderName('');
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`创建目录失败：${getErrorMessage(err)}`);
+      // 措辞对齐桌面 handleCreateFolder（创建文件夹失败），避免双端说法漂移
+      setError(`创建文件夹失败：${getErrorMessage(err)}`);
     }
   }, [newFolderName, sessionId, currentPath, loadDirectory]);
 

@@ -1,7 +1,18 @@
-import { BINARY_EXTENSIONS } from '@/lib/constants';
-import { formatSize, getFileExtension, isPreviewableImage } from '@/lib/sftp-helpers';
+import { formatSize } from '@/lib/sftp-helpers';
 import type { Session, SftpFileEntry } from '@/lib/types';
 import type { StoredTransferItem, TransferKind } from '@/stores/transferStore';
+
+// 列表排序 / 路径拼接 / 打开方式判定 / 压缩目标路径与桌面共用同一份实现，
+// 已晋升到 @/lib/sftpFileOpen；这里 re-export 保持 mobile 内部 import 路径不破。
+export {
+  sortFileEntries,
+  joinRemotePath,
+  isImageFileName,
+  isProbablyTextFileName,
+  openFileKind,
+  defaultArchiveTargetPath,
+} from '@/lib/sftpFileOpen';
+export type { OpenFileKind, ArchiveFormat } from '@/lib/sftpFileOpen';
 
 export type FilesEmptyStateReason =
   | 'no-session'
@@ -9,29 +20,6 @@ export type FilesEmptyStateReason =
   | 'disconnected'
   | 'error'
   | 'ready';
-
-export function sortFileEntries(
-  entries: SftpFileEntry[],
-  showHidden = true,
-): SftpFileEntry[] {
-  const result = showHidden
-    ? [...entries]
-    : entries.filter((e) => !e.name.startsWith('.'));
-  result.sort((a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, {
-      sensitivity: 'base',
-      numeric: true,
-    });
-  });
-  return result;
-}
-
-export function joinRemotePath(parent: string, name: string): string {
-  const base = parent.replace(/\/+$/, '') || '';
-  if (!base || base === '') return `/${name}`;
-  return `${base}/${name}`;
-}
 
 export function parentPath(path: string): string {
   const normalized = path.replace(/\/+$/, '');
@@ -120,34 +108,6 @@ export function filesListLoadingMode(
 ): FilesListLoadingMode {
   if (!loading) return 'none';
   return entryCount === 0 ? 'empty' : 'overlay';
-}
-
-export type OpenFileKind = 'image' | 'text' | 'binary';
-
-/**
- * Image open/preview by extension (mirrors desktop isPreviewableImage / IMAGE_EXTENSIONS).
- * Kept as mobile pure helper so UI + tests do not import desktop panel.
- */
-export function isImageFileName(name: string): boolean {
-  return isPreviewableImage(name);
-}
-
-/**
- * Heuristic: not a known binary extension → probably text/code (including no-extension).
- * Images are not text even though desktop BINARY_EXTENSIONS also lists them.
- */
-export function isProbablyTextFileName(name: string): boolean {
-  if (isImageFileName(name)) return false;
-  const ext = getFileExtension(name);
-  if (!ext) return true;
-  return !BINARY_EXTENSIONS.has(ext);
-}
-
-/** How mobile should open a file on primary action. */
-export function openFileKind(name: string): OpenFileKind {
-  if (isImageFileName(name)) return 'image';
-  if (isProbablyTextFileName(name)) return 'text';
-  return 'binary';
 }
 
 /**
@@ -326,21 +286,6 @@ export function transferCompletionNotice(
   return { text: `已上传到 ${path}`, path };
 }
 
-// ──────────── 压缩（mirrors desktop CompressModal.defaultTargetPath） ────────────
-
-export type ArchiveFormat = 'tar.gz' | 'zip';
-
-/** 从 remoteDir 推导默认压缩目标路径：父目录/basename.{ext}，避免递归包含。 */
-export function defaultArchiveTargetPath(
-  remoteDir: string,
-  format: ArchiveFormat,
-): string {
-  const trimmed = remoteDir.replace(/\/+$/, '');
-  const lastSlash = trimmed.lastIndexOf('/');
-  const basename = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
-  const parent = lastSlash >= 0 ? trimmed.slice(0, lastSlash) : '/';
-  const joinedParent = parent === '' ? '/' : parent;
-  return joinedParent === '/'
-    ? `/${basename}.${format}`
-    : `${joinedParent}/${basename}.${format}`;
-}
+// ──────────── 压缩 ────────────
+// ArchiveFormat / defaultArchiveTargetPath 已晋升到 @/lib/sftpFileOpen，
+// 与桌面 CompressModal 的默认目标路径推导共用同一份实现（文件顶部统一 re-export）。

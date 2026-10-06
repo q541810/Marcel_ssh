@@ -14,7 +14,8 @@ import {
   sftpOpenWithSystem,
 } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
-import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage } from '@/lib/sftp-helpers';
+import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage, getFileExtension } from '@/lib/sftp-helpers';
+import { binaryNotEditableMessage, fileTooLargeMessage, imageTooLargeMessage, joinRemotePath, sortFileEntries } from '@/lib/sftpFileOpen';
 import { MAX_EDITOR_FILE_SIZE, MAX_PREVIEW_IMAGE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import FileTreeSidebar from './FileTreeSidebar';
@@ -205,14 +206,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   }, [menuEntry, menuTargets]);
 
-  const filteredEntries = useMemo(() => {
-    const result = showHidden ? [...entries] : entries.filter((e) => !e.name.startsWith('.'));
-    result.sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
-    });
-    return result;
-  }, [entries, showHidden]);
+  const filteredEntries = useMemo(
+    () => sortFileEntries(entries, showHidden),
+    [entries, showHidden],
+  );
 
   const navigateTo = useCallback((path: string) => {
     setHistory((prev) => {
@@ -242,26 +239,24 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   const handleNavigate = (entry: SftpFileEntry) => {
     if (entry.is_dir) {
-      const path = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-      navigateTo(path);
+      navigateTo(joinRemotePath(currentPath, entry.name));
     } else if (entry.is_file) {
-      const fullPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+      const fullPath = joinRemotePath(currentPath, entry.name);
       // 图片：走预览（先于 BINARY_EXTENSIONS 判断，因为图片扩展名也在 BINARY_EXTENSIONS 里）
       if (isPreviewableImage(entry.name)) {
         if (entry.size > MAX_PREVIEW_IMAGE_SIZE) {
-          setError(`图片过大 (${formatSize(entry.size)})，预览上限为 ${formatSize(MAX_PREVIEW_IMAGE_SIZE)}，请使用下载功能`);
+          setError(imageTooLargeMessage(entry.size));
           return;
         }
         setPreviewFile({ path: fullPath, name: entry.name, size: entry.size });
         return;
       }
-      const ext = entry.name.lastIndexOf('.') >= 0 ? entry.name.slice(entry.name.lastIndexOf('.')).toLowerCase() : '';
-      if (BINARY_EXTENSIONS.has(ext)) {
-        setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+      if (BINARY_EXTENSIONS.has(getFileExtension(entry.name))) {
+        setError(binaryNotEditableMessage(entry.name));
         return;
       }
       if (entry.size > MAX_EDITOR_FILE_SIZE) {
-        setError(`文件过大 (${formatSize(entry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+        setError(fileTooLargeMessage(entry.size));
         return;
       }
       setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
@@ -284,7 +279,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const handleDownload = async (entry: SftpFileEntry) => {
     setMenuEntry(null);
     setMenuTargets([]);
-    const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    const entryPath = joinRemotePath(currentPath, entry.name);
     try {
       await startDownload(entry, entryPath);
     } catch (err) {
@@ -298,7 +293,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const handleOpenWithSystem = async (entry: SftpFileEntry) => {
     setMenuEntry(null);
     setMenuTargets([]);
-    const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    const entryPath = joinRemotePath(currentPath, entry.name);
 
     // 一个 task_id 关联「下载」与「监视回传」两张卡片；id 形如 sysopen-dl-<taskId> / sysopen-ul-<taskId>。
     // 取消任意一条即取消整个任务（见 transferScheduler.cancelTransfer）。
@@ -382,7 +377,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       const localPath = Array.isArray(filePaths) ? filePaths[0] : filePaths;
       const fileName = localPath.split(/[/\\]/).pop() || 'upload';
-      const targetPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+      const targetPath = joinRemotePath(currentPath, fileName);
 
       uploadFile(localPath, fileName, targetPath, () => {
         void loadDirectory(currentPath);
@@ -419,7 +414,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const handleDropUpload = useCallback((paths: string[]) => {
     for (const localPath of paths) {
       const fileName = localPath.split(/[/\\]/).pop() || 'upload';
-      const targetPath = currentPath === '/' ? `/${fileName}` : `${currentPath}/${fileName}`;
+      const targetPath = joinRemotePath(currentPath, fileName);
       uploadFile(localPath, fileName, targetPath, () => {
         void loadDirectory(currentPath);
       });
@@ -516,7 +511,12 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
   const { isDragging } = useFileDrop(handleFileDrop, true);
 
-  const handleDelete = async (entries: SftpFileEntry[]) => {
+  /**
+   * 删除入口的公共实现（原 handleDelete / handleQuickDelete 互为拷贝）：
+   * 普通删除走 SFTP 逐个 remove，快速删除打包成 shell rm（sftpRemoveViaShell）；
+   * 状态清理、逐条错误聚合与文案前缀只有「删除 / 快速删除」一个词的差异。
+   */
+  const runDelete = async (targets: SftpFileEntry[], quick: boolean) => {
     setDeleteConfirm([]);
     setMenuEntry(null);
     setMenuTargets([]);
@@ -524,51 +524,33 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     try {
       setLoading(true);
       const errors: string[] = [];
-      for (const entry of entries) {
+      for (const entry of targets) {
         try {
-          const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-          await sftpRemove(sessionId, entryPath, entry.is_dir);
+          const entryPath = joinRemotePath(currentPath, entry.name);
+          if (quick) {
+            await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
+          } else {
+            await sftpRemove(sessionId, entryPath, entry.is_dir);
+          }
         } catch (err) {
           errors.push(`${entry.name}: ${getErrorMessage(err)}`);
         }
       }
       if (errors.length > 0) {
-        setError(`部分删除失败：${errors.join('；')}`);
+        setError(`部分${quick ? '快速删除' : '删除'}失败：${errors.join('；')}`);
       }
       await loadDirectory(currentPath);
     } catch (err) {
-      setError(`删除失败：${getErrorMessage(err)}`);
+      setError(`${quick ? '快速删除' : '删除'}失败：${getErrorMessage(err)}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleQuickDelete = async (entries: SftpFileEntry[]) => {
-    setDeleteConfirm([]);
-    setMenuEntry(null);
-    setMenuTargets([]);
-    setSelected(new Set());
-    try {
-      setLoading(true);
-      const errors: string[] = [];
-      for (const entry of entries) {
-        try {
-          const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-          await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
-        } catch (err) {
-          errors.push(`${entry.name}: ${getErrorMessage(err)}`);
-        }
-      }
-      if (errors.length > 0) {
-        setError(`部分快速删除失败：${errors.join('；')}`);
-      }
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`快速删除失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleDelete = (targets: SftpFileEntry[]) => runDelete(targets, false);
+
+  const handleQuickDelete = (targets: SftpFileEntry[]) =>
+    runDelete(targets, true);
 
   const handleRename = async () => {
     if (!renameEntry || !renameValue.trim()) return;
@@ -577,8 +559,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setMenuTargets([]);
     try {
       setLoading(true);
-      const oldPath = currentPath === '/' ? `/${renameEntry.name}` : `${currentPath}/${renameEntry.name}`;
-      const newPath = currentPath === '/' ? `/${renameValue}` : `${currentPath}/${renameValue}`;
+      const oldPath = joinRemotePath(currentPath, renameEntry.name);
+      const newPath = joinRemotePath(currentPath, renameValue);
       await sftpRename(sessionId, oldPath, newPath);
       await loadDirectory(currentPath);
     } catch (err) {
@@ -593,7 +575,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setShowNewFolder(false);
     try {
       setLoading(true);
-      const folderPath = currentPath === '/' ? `/${newFolderName}` : `${currentPath}/${newFolderName}`;
+      const folderPath = joinRemotePath(currentPath, newFolderName);
       await sftpMkdir(sessionId, folderPath);
       await loadDirectory(currentPath);
     } catch (err) {
@@ -608,7 +590,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setShowNewFile(false);
     try {
       setLoading(true);
-      const filePath = currentPath === '/' ? `/${newFileName}` : `${currentPath}/${newFileName}`;
+      const filePath = joinRemotePath(currentPath, newFileName);
       await sftpWriteFile(sessionId, filePath, '');
       await loadDirectory(currentPath);
     } catch (err) {
@@ -622,9 +604,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     setMenuEntry(null);
     setMenuTargets([]);
     try {
-      const paths = entries.map((e) =>
-        currentPath === '/' ? `/${e.name}` : `${currentPath}/${e.name}`,
-      );
+      const paths = entries.map((e) => joinRemotePath(currentPath, e.name));
       const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
       await writeText(paths.join('\n'));
     } catch {
@@ -636,7 +616,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     const entry = extractConfirm;
     if (!entry) return;
     setExtractConfirm(null);
-    const archivePath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+    const archivePath = joinRemotePath(currentPath, entry.name);
     try {
       setLoading(true);
       await sftpExtractArchive(sessionId, archivePath, targetDir);
@@ -949,7 +929,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               </tr>
             ) : (
               filteredEntries.map((entry) => {
-              const entryPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
+              const entryPath = joinRemotePath(currentPath, entry.name);
               const isSelected = selected.has(entry.name);
               return (
                 <tr
@@ -1097,11 +1077,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                       type="button"
                       onClick={() => {
                         if (menuEntry.size > MAX_PREVIEW_IMAGE_SIZE) {
-                          setError(`图片过大 (${formatSize(menuEntry.size)})，预览上限为 ${formatSize(MAX_PREVIEW_IMAGE_SIZE)}，请使用下载功能`);
+                          setError(imageTooLargeMessage(menuEntry.size));
                           setMenuEntry(null); setMenuTargets([]);
                           return;
                         }
-                        const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                        const fullPath = joinRemotePath(currentPath, menuEntry.name);
                         setPreviewFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
                         setMenuEntry(null); setMenuTargets([]);
                       }}
@@ -1113,18 +1093,17 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                     <button
                       type="button"
                       onClick={() => {
-                        const ext = menuEntry.name.lastIndexOf('.') >= 0 ? menuEntry.name.slice(menuEntry.name.lastIndexOf('.')).toLowerCase() : '';
-                        if (BINARY_EXTENSIONS.has(ext)) {
-                          setError(`无法编辑二进制文件 (${ext})，请使用下载功能`);
+                        if (BINARY_EXTENSIONS.has(getFileExtension(menuEntry.name))) {
+                          setError(binaryNotEditableMessage(menuEntry.name));
                           setMenuEntry(null); setMenuTargets([]);
                           return;
                         }
                         if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
-                          setError(`文件过大 (${formatSize(menuEntry.size)})，编辑器限制为 ${formatSize(MAX_EDITOR_FILE_SIZE)}，请使用下载功能`);
+                          setError(fileTooLargeMessage(menuEntry.size));
                           setMenuEntry(null); setMenuTargets([]);
                           return;
                         }
-                        const fullPath = currentPath === '/' ? `/${menuEntry.name}` : `${currentPath}/${menuEntry.name}`;
+                        const fullPath = joinRemotePath(currentPath, menuEntry.name);
                         setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
                         setMenuEntry(null); setMenuTargets([]);
                       }}
@@ -1319,11 +1298,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <CompressModal
           open={!!compressEntry}
           sessionId={sessionId}
-          remoteDir={
-            currentPath === '/'
-              ? `/${compressEntry.name}`
-              : `${currentPath}/${compressEntry.name}`
-          }
+          remoteDir={joinRemotePath(currentPath, compressEntry.name)}
           onClose={() => setCompressEntry(null)}
           onCompressed={() => {
             setCompressEntry(null);
@@ -1432,7 +1407,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 type="button"
                 onClick={() => {
                   const stem = archiveStem(extractConfirm.name);
-                  const target = currentPath === '/' ? `/${stem}` : `${currentPath}/${stem}`;
+                  const target = joinRemotePath(currentPath, stem);
                   handleExtract(target);
                 }}
                 className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-zinc-600 transition-colors"
