@@ -3,6 +3,8 @@
 // 原 ModelRetrySection / ModelServiceSection 里的校验函数收敛到这里，
 // 多渠道模型服务下每个渠道/模型编辑表单复用同一套规则。
 
+import { getErrorMessage } from './errors';
+
 /** 校验重试 HTTP 状态码串（逗号分隔的状态码或范围，如 "408, 429, 500-599"）。
  *  返回错误文案；null 表示合法（空串合法 = 不按状态码重试）。 */
 export function validateRetryHttpStatuses(value: string): string | null {
@@ -38,7 +40,7 @@ export function validateExtraBodyJson(text: string): string | null {
   try {
     parsed = JSON.parse(trimmed);
   } catch (e) {
-    return `JSON 解析失败：${e instanceof Error ? e.message : String(e)}`;
+    return `JSON 解析失败：${getErrorMessage(e)}`;
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return '必须是 JSON 对象（{}），不能是数组、null 或基本类型';

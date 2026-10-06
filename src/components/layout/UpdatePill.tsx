@@ -4,12 +4,11 @@ import { useTaskStore } from '@/stores/taskStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { openExternalLink } from '@/lib/externalLinks';
+import { getErrorMessage } from '@/lib/errors';
 import { isTaskBusy } from '@/lib/agentStatus';
-import { formatMb, updatePercent } from '@/lib/updateProgress';
+import { updatePercent } from '@/lib/updateProgress';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
-
-const mb = formatMb;
 
 /**
  * 标题栏更新药丸（双端同源的更新状态在桌面端的唯一入口）：
@@ -106,7 +105,7 @@ export default function UpdatePill() {
       await installNow();
       // Windows 会退出应用、Android 会切到系统安装界面，成功不需要收尾
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(getErrorMessage(e));
       setBusy(false);
       return;
     }
@@ -129,7 +128,7 @@ export default function UpdatePill() {
       await download();
       setOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(getErrorMessage(e));
     } finally {
       setBusy(false);
     }

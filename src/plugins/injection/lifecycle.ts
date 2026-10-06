@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errors';
 import type { InjectionRuntime, PluginApi } from './types';
 
 /**
@@ -69,7 +70,10 @@ export function reportError(pluginId: string, injectionId: string, err: unknown)
     console.error(`[injection] error for unknown injection ${injectionId}:`, err);
     return;
   }
-  const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+  // Error 保留 stack 原样；非 Error（注入器传来的已格式化字符串、插件抛出的
+  // 任意值）走 getErrorMessage——Tauri 序列化错误是 `{ kind, message }` 对象，
+  // String() 会渲染成 "[object Object]"。
+  const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : getErrorMessage(err);
   rt.error = msg;
   console.error(`[injection] ${pluginId}/${injectionId} error:`, err);
   notifyStatus();

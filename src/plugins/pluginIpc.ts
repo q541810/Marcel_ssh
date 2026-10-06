@@ -14,6 +14,7 @@
 import { listen, emit } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { pluginCapabilityMap } from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 
 import {
   ALL_COMMANDS,
@@ -89,7 +90,7 @@ export async function initPluginIpc(): Promise<void> {
         const argsWithPluginId = { ...req.args, _pluginId: req.pluginId };
         const result = virtualHandler(argsWithPluginId);
         if (result instanceof Promise) {
-          result.then((data) => respond(true, data)).catch((err) => respond(false, String(err)));
+          result.then((data) => respond(true, data)).catch((err) => respond(false, getErrorMessage(err)));
         } else {
           respond(true, result);
         }
@@ -111,7 +112,7 @@ export async function initPluginIpc(): Promise<void> {
       const result = await invoke(req.cmd, req.args);
       respond(true, result);
     } catch (err) {
-      respond(false, String(err));
+      respond(false, getErrorMessage(err));
     }
   });
 }
