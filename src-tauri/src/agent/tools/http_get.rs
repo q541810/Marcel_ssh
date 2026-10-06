@@ -209,11 +209,6 @@ impl AgentTool for HttpGetTool {
         }
 
         let mode = resolve_fetch_mode(ctx).await;
-        let provider = match mode {
-            HttpFetchMode::Browser => WebBackend::Browser.label(),
-            HttpFetchMode::Html => WebBackend::Html.label(),
-        };
-
         // Batch mode treats chunk_size as a per-page limit. The final combined
         // output still has a safety cap to avoid flooding the model context.
         let combined_output_limit = chunk_size
@@ -221,27 +216,15 @@ impl AgentTool for HttpGetTool {
             .min(96_000);
 
         let owned: Vec<String> = urls_to_fetch.iter().map(|u| (*u).to_string()).collect();
-        let (results, provider, fallback) = match mode {
-            HttpFetchMode::Browser => match fetch_all_browser(&owned, format).await {
-                BrowserBatch::Served { results, fallback } => {
-                    (results, WebBackend::Browser.label(), fallback)
-                }
-                BrowserBatch::Failed { failures, note } => {
-                    // The browser could not serve anything. Fall back to the
-                    // stateless HTTP fetcher so the agent still gets content,
-                    // and say so instead of pretending the browser worked.
-                    log::warn!(
-                        "http_get browser mode failed for {} URL(s): {}",
-                        failures,
-                        note.reason
-                    );
-                    let results = fetch_all_html(&urls_to_fetch, format).await;
-                    (results, WebBackend::Html.label(), Some(note))
-                }
+        let batch = match mode {
+            HttpFetchMode::Browser => fetch_all_browser(&owned, format).await,
+            HttpFetchMode::Html => FetchBatch {
+                results: fetch_all_html(&urls_to_fetch, format).await,
+                fallback: None,
             },
-            HttpFetchMode::Html => (fetch_all_html(&urls_to_fetch, format).await, provider, None),
         };
-        let provider = fallback.as_ref().map(|note| note.to).unwrap_or(provider);
+        let provider = batch.provider();
+        let FetchBatch { results, fallback } = batch;
 
         // Build combined output
         let mut sections = Vec::new();
@@ -295,10 +278,9 @@ impl AgentTool for HttpGetTool {
                             e
                         ));
                     } else {
-                        return Ok(ToolOutput::fail(
-                            format!("http_get {}", domain),
-                            format!("fetch failed (provider={}): {}", provider, e),
-                        ));
+                        // Keep diagnostics in metadata even when both backends
+                        // failed; the same result path serves single and batch.
+                        sections.push(format!("fetch failed (provider={}): {}", provider, e));
                     }
                 }
             }
@@ -317,26 +299,27 @@ impl AgentTool for HttpGetTool {
 
         let summary = if urls_to_fetch.len() == 1 {
             format!(
-                "http_get {} ({} via {}){}",
+                "http_get {} ({} via {})",
                 extract_domain(urls_to_fetch[0]),
                 format_bytes(total_content_bytes),
-                provider,
-                fallback_suffix
+                provider
             )
         } else {
             format!(
-                "http_get ({} pages: {} ok, {} failed, {} via {}){}",
+                "http_get ({} pages: {} ok, {} failed, {} via {})",
                 urls_to_fetch.len(),
                 success_count,
                 fail_count,
                 format_bytes(total_content_bytes),
-                provider,
-                fallback_suffix
+                provider
             )
         };
 
         let mut metadata = json!({
             "provider": provider,
+            // An expected file download uses HTTP without being a degradation.
+            // Explicit evidence overrides legacy provider-mismatch inference.
+            "degraded": fallback.is_some(),
             "requested_mode": match mode {
                 HttpFetchMode::Browser => WebBackend::Browser.label(),
                 HttpFetchMode::Html => WebBackend::Html.label(),
@@ -389,15 +372,27 @@ impl AgentTool for HttpGetTool {
     }
 }
 
-/// Outcome of driving the browser backend for a whole batch.
-enum BrowserBatch {
-    /// At least one page came back; per-page failures are inside `results`.
-    Served {
-        results: Vec<Result<FetchedPage, AppError>>,
-        fallback: Option<FallbackNote>,
-    },
-    /// The session could not serve anything; the caller should use another backend.
-    Failed { failures: usize, note: FallbackNote },
+/// Pages in request order, with diagnostics for actual browser failures.
+struct FetchBatch {
+    results: Vec<Result<FetchedPage, AppError>>,
+    fallback: Option<FallbackNote>,
+}
+
+impl FetchBatch {
+    fn provider(&self) -> &'static str {
+        let mut providers = self
+            .results
+            .iter()
+            .filter_map(|r| r.as_ref().ok().map(|p| p.provider));
+        // If no response came back, every browser failure has already been
+        // attempted over HTTP. Report that last attempted transport.
+        let first = providers.next().unwrap_or(WebBackend::Html.label());
+        if providers.any(|provider| provider != first) {
+            WebBackend::Mixed.label()
+        } else {
+            first
+        }
+    }
 }
 
 /// Cap on one browser pass over a batch.
@@ -430,7 +425,7 @@ async fn fetch_all_html(urls: &[&str], format: OutputFormat) -> Vec<Result<Fetch
 }
 
 /// Drive the browser backend, then decide whether a fallback is warranted.
-async fn fetch_all_browser(urls: &[String], format: OutputFormat) -> BrowserBatch {
+async fn fetch_all_browser(urls: &[String], format: OutputFormat) -> FetchBatch {
     let budget = if urls.len() == 1 {
         BROWSER_SINGLE_BUDGET
     } else {
@@ -440,90 +435,63 @@ async fn fetch_all_browser(urls: &[String], format: OutputFormat) -> BrowserBatc
     let attempt = tokio::time::timeout(budget, browser_cdp::fetch_html_many(urls)).await;
     let raw = match attempt {
         Ok(results) => results,
-        Err(_elapsed) => {
-            return BrowserBatch::Failed {
-                failures: urls.len(),
-                note: FallbackNote::new(
-                    WebBackend::Browser.label(),
-                    WebBackend::Html.label(),
-                    format!(
+        Err(_elapsed) => urls
+            .iter()
+            .map(|_| {
+                Err(browser_cdp::CdpFailure {
+                    stage: browser_cdp::CdpStage::Session,
+                    message: format!(
                         "browser session exceeded its {:.0}s budget",
                         budget.as_secs_f32()
                     ),
-                ),
-            }
-        }
+                })
+            })
+            .collect(),
     };
+    finish_browser_batch(urls, raw, format).await
+}
 
-    let results: Vec<Result<FetchedPage, AppError>> = raw
+/// Browser pages stay intact; only URLs without a document need an HTTP pass.
+/// Download responses are expected handoffs, identified by CDP's isDownload,
+/// never by an error string or a file extension. This also preserves per-page
+/// HTTP error/challenge/blank classification instead of declaring a retry OK.
+async fn finish_browser_batch(
+    urls: &[String],
+    raw: Vec<Result<browser_cdp::BrowserPage, browser_cdp::CdpFailure>>,
+    format: OutputFormat,
+) -> FetchBatch {
+    let failures: Vec<_> = raw
+        .iter()
+        .filter_map(|r| r.as_ref().err())
+        .filter(|failure| failure.stage != browser_cdp::CdpStage::Download)
+        .collect();
+    let fallback = failures.first().map(|reason| {
+        FallbackNote::new(
+            WebBackend::Browser.label(),
+            WebBackend::Html.label(),
+            format!(
+                "{} of {} page(s) failed in the browser: {}",
+                failures.len(),
+                urls.len(),
+                reason
+            ),
+        )
+    });
+    let retry_urls: Vec<_> = urls
+        .iter()
+        .zip(&raw)
+        .filter(|(_, result)| result.is_err())
+        .map(|(url, _)| url.as_str())
+        .collect();
+    let mut retries = fetch_all_html(&retry_urls, format).await.into_iter();
+    let results = raw
         .into_iter()
-        .map(|r| {
-            r.map(|page| browser_page_to_fetched(page, format))
-                .map_err(AppError::from)
+        .map(|result| match result {
+            Ok(page) => Ok(browser_page_to_fetched(page, format)),
+            Err(_) => retries.next().expect("one HTTP result per retry URL"),
         })
         .collect();
-
-    let ok_count = results.iter().filter(|r| r.is_ok()).count();
-    if ok_count == 0 {
-        let reason = results
-            .iter()
-            .find_map(|r| r.as_ref().err())
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "browser returned no pages".to_string());
-        return BrowserBatch::Failed {
-            failures: urls.len(),
-            note: FallbackNote::new(
-                WebBackend::Browser.label(),
-                WebBackend::Html.label(),
-                reason,
-            ),
-        };
-    }
-
-    // Some pages succeeded. Anything the browser could not deliver is retried on
-    // the cheap stateless backend, so one broken page does not cost the rest.
-    if ok_count < urls.len() {
-        let failed = urls.len() - ok_count;
-        let reason = results
-            .iter()
-            .find_map(|r| r.as_ref().err())
-            .map(|e| e.to_string())
-            .unwrap_or_else(|| "unknown browser failure".to_string());
-        let retries: Vec<_> = urls
-            .iter()
-            .zip(results)
-            .map(|(url, result)| async move {
-                match result {
-                    Ok(page) => Ok(page),
-                    Err(_) => fetch_page_http(url, format).await,
-                }
-            })
-            .collect();
-        let merged: Vec<Result<FetchedPage, AppError>> = join_all(retries).await;
-        let served = merged.iter().filter(|r| r.is_ok()).count();
-        // Only claim a degradation if the retry actually salvaged something.
-        let note = (served > ok_count).then(|| {
-            FallbackNote::new(
-                WebBackend::Browser.label(),
-                WebBackend::Html.label(),
-                format!(
-                    "{} of {} page(s) failed in the browser: {}",
-                    failed,
-                    urls.len(),
-                    reason
-                ),
-            )
-        });
-        return BrowserBatch::Served {
-            results: merged,
-            fallback: note,
-        };
-    }
-
-    BrowserBatch::Served {
-        results,
-        fallback: None,
-    }
+    FetchBatch { results, fallback }
 }
 
 async fn resolve_fetch_mode(ctx: &ToolContext) -> HttpFetchMode {
@@ -1699,29 +1667,249 @@ mod tests {
         assert!(!fetched.content.is_empty() || fetched.title.is_some());
     }
 
-    // ── Fallback decisions, driven without a browser ────────────────────
+    // ── Browser → HTTP handoffs, exercising the real HTTP fetcher ────────
 
-    /// With no browser available the batch must fall back rather than fail, and
-    /// the note must name both backends and the reason.
+    async fn retry_fixture(
+        status: &str,
+        content_type: &str,
+        body: &str,
+        requests: usize,
+    ) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len(),
+        );
+        let task = tokio::spawn(async move {
+            let mut paths = Vec::new();
+            for _ in 0..requests {
+                let (mut stream, _) =
+                    tokio::time::timeout(Duration::from_secs(5), listener.accept())
+                        .await
+                        .unwrap()
+                        .unwrap();
+                let mut buf = [0; 4096];
+                let n = stream.read(&mut buf).await.unwrap();
+                paths.push(
+                    String::from_utf8_lossy(&buf[..n])
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .to_string(),
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+            paths
+        });
+        (url, task)
+    }
+
+    fn navigation_failure(
+        stage: browser_cdp::CdpStage,
+    ) -> Result<browser_cdp::BrowserPage, browser_cdp::CdpFailure> {
+        Err(browser_cdp::CdpFailure {
+            stage,
+            message: "fixture navigation".into(),
+        })
+    }
+
     #[tokio::test]
-    async fn browser_batch_reports_a_fallback_note_when_nothing_is_served() {
-        // A reserved-for-documentation TLD cannot resolve, and a loopback port
-        // with nothing listening refuses immediately; either way the browser
-        // cannot serve the batch.
-        let urls = vec!["https://nope.invalid/".to_string()];
-        match fetch_all_browser(&urls, OutputFormat::Markdown).await {
-            BrowserBatch::Failed { failures, note } => {
-                assert_eq!(failures, 1);
-                assert_eq!(note.from, "browser");
-                assert_eq!(note.to, "html");
-                assert!(!note.reason.is_empty());
-                assert!(note.summary_suffix().contains("fell back to html"));
-            }
-            BrowserBatch::Served { .. } => {
-                // A machine with a working browser and a DNS wildcard could
-                // legitimately serve this; that is not a failure of the logic.
-            }
+    async fn browser_batch_retries_only_missing_pages_and_reports_mixed() {
+        let (base, server) =
+            retry_fixture("200 OK", "text/plain", "HTTP recovered content", 1).await;
+        let urls = vec![format!("{base}/rendered"), format!("{base}/retry")];
+        let batch = finish_browser_batch(
+            &urls,
+            vec![
+                Ok(browser_page(
+                    &urls[0],
+                    "<html><body>Rendered original</body></html>",
+                    Some(200),
+                )),
+                navigation_failure(browser_cdp::CdpStage::Navigate),
+            ],
+            OutputFormat::Markdown,
+        )
+        .await;
+        assert_eq!(batch.provider(), "mixed");
+        assert!(batch.fallback.as_ref().unwrap().reason.contains("1 of 2"));
+        let first = batch.results[0].as_ref().unwrap();
+        let second = batch.results[1].as_ref().unwrap();
+        assert_eq!(first.requested_url, urls[0]);
+        assert_eq!(second.requested_url, urls[1]);
+        assert!(first.content.contains("Rendered original"));
+        assert_eq!(first.provider, "browser");
+        assert_eq!(second.provider, "html");
+        assert_eq!(second.content, "HTTP recovered content");
+        assert_eq!(server.await.unwrap(), ["GET /retry HTTP/1.1"]);
+    }
+
+    #[tokio::test]
+    async fn browser_download_reads_source_without_a_degradation() {
+        let source = "package billingexpr\n\nfunc Compile() {}";
+        let (url, server) = retry_fixture("200 OK", "application/octet-stream", source, 1).await;
+        let batch = finish_browser_batch(
+            &[url],
+            vec![navigation_failure(browser_cdp::CdpStage::Download)],
+            OutputFormat::Markdown,
+        )
+        .await;
+        assert_eq!(batch.provider(), "html");
+        assert!(batch.fallback.is_none());
+        let page = batch.results[0].as_ref().unwrap();
+        assert_eq!(page.content, source);
+        assert!(!page.http_error && !page.blank_content);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_download_and_document_are_mixed_without_a_degradation() {
+        let (url, server) = retry_fixture("200 OK", "text/plain", "source", 1).await;
+        let urls = vec!["https://rendered.example/".to_string(), url];
+        let batch = finish_browser_batch(
+            &urls,
+            vec![
+                Ok(browser_page(
+                    &urls[0],
+                    "<html><body>Page</body></html>",
+                    Some(200),
+                )),
+                navigation_failure(browser_cdp::CdpStage::Download),
+            ],
+            OutputFormat::Markdown,
+        )
+        .await;
+        assert_eq!(batch.provider(), "mixed");
+        assert!(batch.fallback.is_none());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_batch_counts_real_failures_separately_from_downloads() {
+        let (url, server) = retry_fixture("200 OK", "text/plain", "source", 2).await;
+        let batch = finish_browser_batch(
+            &[url.clone(), url],
+            vec![
+                navigation_failure(browser_cdp::CdpStage::Download),
+                navigation_failure(browser_cdp::CdpStage::Read),
+            ],
+            OutputFormat::Markdown,
+        )
+        .await;
+        assert_eq!(batch.provider(), "html");
+        assert!(batch.fallback.as_ref().unwrap().reason.contains("1 of 2"));
+        assert!(batch
+            .fallback
+            .as_ref()
+            .unwrap()
+            .reason
+            .contains("browser read"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_handoffs_preserve_http_error_challenge_and_blank_classification() {
+        for (status, body, http_error, challenge, blank) in [
+            (
+                "404 Not Found",
+                "<html><body>Not Found</body></html>",
+                true,
+                false,
+                false,
+            ),
+            (
+                "200 OK",
+                "<html><body>百度安全验证</body></html>",
+                false,
+                true,
+                false,
+            ),
+            ("200 OK", "<html><body></body></html>", false, false, true),
+        ] {
+            let (url, server) = retry_fixture(status, "text/html", body, 1).await;
+            let batch = finish_browser_batch(
+                &[url],
+                vec![navigation_failure(browser_cdp::CdpStage::Navigate)],
+                OutputFormat::Markdown,
+            )
+            .await;
+            let page = batch.results[0].as_ref().unwrap();
+            assert_eq!(page.http_error, http_error);
+            assert_eq!(page.challenge.is_some(), challenge);
+            assert_eq!(page.blank_content, blank);
+            assert!(batch.fallback.is_some());
+            server.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn browser_and_http_failure_keeps_the_original_fallback_reason() {
+        // A closed port can produce a proxy's HTTP error page on some machines.
+        // Invalid advertised compression deterministically fails body decoding.
+        let (url, server) = retry_fixture(
+            "200 OK",
+            "text/plain\r\nContent-Encoding: gzip",
+            "invalid gzip",
+            1,
+        )
+        .await;
+        let batch = finish_browser_batch(
+            &[url],
+            vec![navigation_failure(browser_cdp::CdpStage::Read)],
+            OutputFormat::Markdown,
+        )
+        .await;
+        assert_eq!(batch.provider(), "html");
+        assert!(batch.results[0].is_err());
+        assert!(batch.fallback.unwrap().reason.contains("browser read"));
+        server.await.unwrap();
+    }
+
+    /// Exercises the complete browser → download → HTTP path with a real
+    /// Chromium, including continued use of the same page after a download.
+    #[tokio::test]
+    #[ignore = "live: starts a local headless browser against loopback fixtures"]
+    async fn browser_download_handoff_live_local_server() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = [0; 4096];
+                    let n = stream.read(&mut buf).await.unwrap();
+                    let request = String::from_utf8_lossy(&buf[..n]);
+                    let (mime, body) = if request.starts_with("GET /source ") {
+                        (
+                            "application/octet-stream",
+                            "package billingexpr\n\nfunc Compile() {}",
+                        )
+                    } else {
+                        (
+                            "text/html",
+                            "<html><body><h1>Rendered page after download</h1></body></html>",
+                        )
+                    };
+                    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nX-Content-Type-Options: nosniff\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let urls = vec![format!("{base}/source"), format!("{base}/page")];
+        let batch = fetch_all_browser(&urls, OutputFormat::Markdown).await;
+        server.abort();
+        assert_eq!(batch.provider(), "mixed");
+        assert!(batch.fallback.is_none(), "{:?}", batch.fallback);
+        let source = batch.results[0].as_ref().expect("read download over HTTP");
+        let page = batch.results[1].as_ref().expect("continue browser session");
+        assert_eq!(source.content, "package billingexpr\n\nfunc Compile() {}");
+        assert_eq!(source.provider, "html");
+        assert_eq!(source.status, Some(200));
+        assert_eq!(page.provider, "browser");
+        assert!(page.content.contains("Rendered page after download"));
+        assert_eq!(page.final_url, urls[1]);
     }
 
     /// A fully blank page must be reported as a failure, not as a successful

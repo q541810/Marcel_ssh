@@ -31,6 +31,8 @@ pub enum Reply {
     Ok(Value),
     /// Reply with a CDP `error` payload.
     Err(String),
+    /// Delay the complete response, as a navigation waiting for response headers does.
+    Delayed(Duration, Value),
     /// Never reply (the client must hit its own deadline).
     Never,
     /// Send an unparsable frame, then an id-less event, then the response.
@@ -189,6 +191,12 @@ fn serve(
                 let body =
                     serde_json::json!({"id": id, "error": {"code": -32000, "message": message}});
                 if reader.write_text(&body.to_string()).is_err() {
+                    return;
+                }
+            }
+            Reply::Delayed(delay, result) => {
+                thread::sleep(delay);
+                if send_result(&mut reader, id, result).is_err() {
                     return;
                 }
             }

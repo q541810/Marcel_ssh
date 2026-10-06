@@ -76,6 +76,8 @@ pub enum CdpStage {
     Connect,
     /// Driving or awaiting a navigation.
     Navigate,
+    /// The response is a download rather than a rendered document.
+    Download,
     /// Reading a frame or awaiting a response.
     Read,
     /// Writing a frame.
@@ -91,6 +93,7 @@ impl CdpStage {
             Self::Boot => "boot",
             Self::Connect => "connect",
             Self::Navigate => "navigate",
+            Self::Download => "download",
             Self::Read => "read",
             Self::Write => "write",
             Self::Session => "session",
@@ -100,9 +103,9 @@ impl CdpStage {
     /// Infrastructure phases can be transiently broken, so repeating the same
     /// mechanism once may well succeed.
     ///
-    /// [`CdpStage::Navigate`] is deliberately excluded: a navigation only fails
-    /// for a reason (DNS, refused, stalled host), and re-running it just burns
-    /// the budget — a different backend is the more useful next step.
+    /// [`CdpStage::Navigate`] and [`CdpStage::Download`] are deliberately
+    /// excluded: repeating a refused navigation or a non-renderable download
+    /// only burns the budget — a different mechanism is the useful next step.
     pub fn retryable(self) -> bool {
         matches!(
             self,
@@ -189,7 +192,7 @@ pub(crate) struct CdpTimeouts {
     pub connect: Duration,
     /// Websocket upgrade handshake.
     pub handshake: Duration,
-    /// One CDP request/response round trip. Authoritative for all reads it drives.
+    /// Default round-trip budget; an enclosing step may supply a shared deadline.
     pub call: Duration,
     /// How long a navigation may take before the document must be usable.
     pub nav: Duration,
@@ -709,8 +712,8 @@ enum ReadFailure {
     Io(String),
 }
 
-/// The one failure a stalled navigation reports, from either exit: the loop ran
-/// out with a probe in flight, or with no document ever becoming usable. Naming
+/// The one failure a stalled navigation reports, whether it is still awaiting
+/// response headers, has a probe in flight, or never sees a usable document. Naming
 /// the last observed state is what makes "the browser could not load it" and "the
 /// page loaded but never settled" tell themselves apart in a bug report.
 fn navigation_budget_exhausted(url: &str, timeouts: &CdpTimeouts, last: &PageFacts) -> CdpFailure {
@@ -746,14 +749,12 @@ struct CdpPage {
     /// Set when a read failure left the stream mid-frame, so the session can no
     /// longer be trusted for further requests.
     poisoned: bool,
-    /// Overrides [`CdpTimeouts::call`] for the next request only.
+    /// Overrides [`CdpTimeouts::call`] while the enclosing step owns the deadline.
     ///
-    /// A bounded loop that probes the page repeatedly (the navigation readiness
-    /// poll) owns a deadline of its own, and a single probe must not outlive it:
-    /// with the call budget — 20s — longer than what a probe can usefully spend
-    /// inside a 30s navigation, one stalled probe eats most of the loop's budget
-    /// and the error arrives as a generic call timeout instead of the loop's own
-    /// "did not become usable". Invariant 2 above, applied to the loop.
+    /// Navigation acknowledgement can wait for response headers, so it needs
+    /// the same 30s budget as the subsequent readiness probes, rather than the
+    /// ordinary 20s request budget. Every probe spends only the remainder of
+    /// that shared deadline. The caller clears this after each request.
     call_deadline: Option<Instant>,
 }
 
@@ -856,6 +857,11 @@ impl CdpPage {
             poisoned: false,
             call_deadline: None,
         };
+        // http_get reads responses; it must never write a browser download to
+        // the user's default download directory. Chromium still reports
+        // isDownload in Page.navigate's acknowledgement when downloads are denied.
+        page.call("Browser.setDownloadBehavior", json!({"behavior": "deny"}))
+            .await?;
         page.call("Page.enable", json!({})).await?;
         page.call("Runtime.enable", json!({})).await?;
         let _ = page.call("DOM.enable", json!({})).await;
@@ -879,12 +885,26 @@ impl CdpPage {
 
     /// Navigate and wait until the *new* document is usable.
     ///
-    /// `Page.navigate` only acknowledges that navigation started; because the
-    /// browser sits on `about:blank` (whose `readyState` is already
-    /// `"complete"`), a plain readiness probe would race and could read the
-    /// stale document. Requiring a non-blank `location.href` removes the race.
+    /// `Page.navigate` can wait for response headers before acknowledging the
+    /// navigation, but does not guarantee a usable DOM. Its acknowledgement and
+    /// the readiness probes therefore share one navigation deadline. Requiring
+    /// a non-blank `location.href` also rejects the browser's stale start page.
     async fn navigate_and_wait(&mut self, url: &str) -> Result<PageFacts, CdpFailure> {
-        let ack = self.call("Page.navigate", json!({ "url": url })).await?;
+        let deadline = Instant::now() + self.timeouts.nav;
+        let mut last = PageFacts::blank();
+        self.call_deadline = Some(deadline);
+        let ack = self.call("Page.navigate", json!({ "url": url })).await;
+        self.call_deadline = None;
+        if Instant::now() >= deadline {
+            return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
+        }
+        let ack = ack?;
+        if ack.get("isDownload").and_then(Value::as_bool) == Some(true) {
+            return Err(fail(
+                CdpStage::Download,
+                format!("{} returned a download instead of a rendered document", url),
+            ));
+        }
         if let Some(error_text) = ack.get("errorText").and_then(|v| v.as_str()) {
             if !error_text.is_empty() {
                 return Err(fail(
@@ -894,8 +914,6 @@ impl CdpPage {
             }
         }
 
-        let deadline = Instant::now() + self.timeouts.nav;
-        let mut last = PageFacts::blank();
         loop {
             if Instant::now() >= deadline {
                 return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
@@ -909,6 +927,12 @@ impl CdpPage {
             let probe = self.read_page_facts().await;
             self.call_deadline = None;
 
+            // A completed buffered response can win a timeout poll even after
+            // the deadline, so check the step budget before accepting success.
+            if Instant::now() >= deadline {
+                return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
+            }
+
             match probe {
                 Ok(facts) => {
                     if is_new_document(&facts.href) && is_usable_ready_state(&facts.ready_state) {
@@ -920,18 +944,11 @@ impl CdpPage {
                 // recreated, so those errors just mean "keep polling". A dead
                 // session is different and must not be hidden.
                 Err(transient) => {
-                    // The probe shares this loop's deadline, so a read that ran it
-                    // out is the navigation timing out — not a broken session.
-                    // Reporting it as one would name the wrong culprit and hide
-                    // which step actually stalled.
-                    if Instant::now() >= deadline {
-                        return Err(navigation_budget_exhausted(url, &self.timeouts, &last));
-                    }
                     self.ensure_usable().map_err(|_| transient)?;
                 }
             }
 
-            tokio::time::sleep(NAV_POLL_INTERVAL).await;
+            tokio::time::sleep_until(deadline.min(Instant::now() + NAV_POLL_INTERVAL)).await;
         }
     }
 
@@ -1067,10 +1084,10 @@ impl CdpPage {
 
         // One deadline governs the whole round trip. An inner read timeout would
         // preempt it and report a generic failure instead of naming `method`.
-        // `call_deadline` lets an enclosing loop tighten it for this call only.
-        let tightened = self.call_deadline;
-        let deadline = tightened.unwrap_or_else(|| Instant::now() + self.timeouts.call);
-        let budget = match tightened {
+        // `call_deadline` substitutes the enclosing step's remaining budget.
+        let step_deadline = self.call_deadline;
+        let deadline = step_deadline.unwrap_or_else(|| Instant::now() + self.timeouts.call);
+        let budget = match step_deadline {
             Some(_) => "the remaining budget of the step that issued it".to_string(),
             None => format!("{:.0}s", self.timeouts.call.as_secs_f32()),
         };
@@ -1275,6 +1292,190 @@ mod tests {
             .is_some_and(|e| e.contains("readyState"))
     }
 
+    /// Real Chromium holds the navigation acknowledgement until response
+    /// headers arrive. A slow response that fits the navigation budget must not
+    /// be cut off by the shorter budget used for ordinary CDP calls.
+    #[tokio::test]
+    async fn regression_navigation_ack_can_outlive_the_call_budget() {
+        let fake = FakeCdp::start(Arc::new(|method, params, _| match method {
+            "Page.navigate" => Reply::Delayed(
+                Duration::from_millis(300),
+                json!({"frameId": "F", "loaderId": "L"}),
+            ),
+            "Runtime.evaluate" if is_facts_probe(params) => eval_ok(facts(
+                "https://slow-headers.example/",
+                "complete",
+                Some(200),
+            )),
+            _ => Reply::Ok(json!({})),
+        }));
+        let mut page = CdpPage::connect_with(
+            &fake.ws_url(),
+            CdpTimeouts {
+                call: Duration::from_millis(100),
+                nav: Duration::from_secs(1),
+                ..fast()
+            },
+        )
+        .await
+        .expect("connect");
+
+        let facts = page
+            .navigate_and_wait("https://slow-headers.example/")
+            .await
+            .expect("response headers arrived within the navigation budget");
+        assert_eq!(facts.response_status, Some(200));
+        assert!(!page.is_poisoned());
+        assert!(
+            page.call_deadline.is_none(),
+            "navigation must restore ordinary call budgets"
+        );
+    }
+
+    /// A slow acknowledgement cannot start a second full navigation window.
+    #[tokio::test]
+    async fn regression_navigation_ack_and_probe_share_one_budget() {
+        let fake = FakeCdp::start(Arc::new(|method, params, _| match method {
+            "Page.navigate" => Reply::Delayed(
+                Duration::from_millis(500),
+                json!({"frameId": "F", "loaderId": "L"}),
+            ),
+            "Runtime.evaluate" if is_facts_probe(params) => Reply::Delayed(
+                Duration::from_millis(500),
+                json!({"result": {"value": facts("https://slow-total.example/", "complete", Some(200))}}),
+            ),
+            _ => Reply::Ok(json!({})),
+        }));
+        let mut page = CdpPage::connect_with(
+            &fake.ws_url(),
+            CdpTimeouts {
+                call: Duration::from_secs(2),
+                nav: Duration::from_millis(800),
+                ..fast()
+            },
+        )
+        .await
+        .expect("connect");
+
+        let err = page
+            .navigate_and_wait("https://slow-total.example/")
+            .await
+            .expect_err("ack plus readiness exceeded one navigation budget");
+        assert_eq!(err.stage, CdpStage::Navigate);
+        assert!(err.message.contains("https://slow-total.example/"));
+        assert!(
+            page.is_poisoned(),
+            "an unfinished probe retires the session"
+        );
+        assert!(page.call_deadline.is_none());
+    }
+
+    #[tokio::test]
+    async fn regression_navigation_ack_timeout_names_the_url_and_retires_the_session() {
+        let fake = FakeCdp::start(Arc::new(|method, _, _| match method {
+            "Page.navigate" => Reply::Never,
+            _ => Reply::Ok(json!({})),
+        }));
+        let mut page = CdpPage::connect_with(
+            &fake.ws_url(),
+            CdpTimeouts {
+                call: Duration::from_secs(2),
+                nav: Duration::from_millis(300),
+                ..fast()
+            },
+        )
+        .await
+        .expect("connect");
+
+        let started = Instant::now();
+        let err = page
+            .navigate_and_wait("https://no-headers.example/")
+            .await
+            .expect_err("no navigation acknowledgement");
+        assert_eq!(err.stage, CdpStage::Navigate);
+        assert!(err.message.contains("https://no-headers.example/"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(page.is_poisoned());
+        assert!(page.call_deadline.is_none());
+        let reuse = page
+            .call("Page.navigate", json!({}))
+            .await
+            .expect_err("retired session");
+        assert_eq!(reuse.stage, CdpStage::Session);
+        assert_eq!(fake.count_of("Page.navigate"), 1);
+    }
+
+    #[tokio::test]
+    async fn regression_navigation_download_is_distinct_from_an_aborted_page() {
+        for is_download in [Some(true), Some(false), None] {
+            let fake = FakeCdp::start(Arc::new(move |method, _, _| match method {
+                "Page.navigate" => {
+                    let mut ack = json!({"frameId": "F", "errorText": "net::ERR_ABORTED"});
+                    if let Some(value) = is_download {
+                        ack["isDownload"] = json!(value);
+                    }
+                    Reply::Ok(ack)
+                }
+                _ => Reply::Ok(json!({})),
+            }));
+            let mut page = CdpPage::connect_with(&fake.ws_url(), fast())
+                .await
+                .expect("connect");
+            let err = page
+                .navigate_and_wait("https://files.example/source.go")
+                .await
+                .expect_err("no rendered document");
+            assert_eq!(
+                err.stage.label(),
+                if is_download == Some(true) {
+                    "download"
+                } else {
+                    "navigate"
+                }
+            );
+            assert!(!err.retryable());
+            assert!(err.message.contains("https://files.example/source.go"));
+            assert!(
+                !page.is_poisoned(),
+                "a complete navigation reply keeps the connection usable"
+            );
+            assert_eq!(
+                fake.count_of("Runtime.evaluate"),
+                0,
+                "never read the stale document after an aborted navigation"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn regression_browser_disables_downloads_before_loading_any_url() {
+        let fake = FakeCdp::start(Arc::new(|method, params, _| {
+            if method == "Browser.setDownloadBehavior" {
+                assert_eq!(params["behavior"], "deny");
+            }
+            Reply::Ok(json!({}))
+        }));
+        let _page = CdpPage::connect_with(&fake.ws_url(), fast())
+            .await
+            .expect("connect");
+        assert_eq!(fake.count_of("Browser.setDownloadBehavior"), 1);
+        assert_eq!(fake.count_of("Page.navigate"), 0);
+    }
+
+    #[tokio::test]
+    async fn regression_browser_does_not_load_urls_if_downloads_cannot_be_disabled() {
+        let fake = FakeCdp::start(Arc::new(|method, _, _| match method {
+            "Browser.setDownloadBehavior" => Reply::Err("download policy refused".to_string()),
+            _ => Reply::Ok(json!({})),
+        }));
+        let err = match CdpPage::connect_with(&fake.ws_url(), fast()).await {
+            Ok(_) => panic!("must establish download policy before navigating"),
+            Err(err) => err,
+        };
+        assert!(err.message.contains("download policy refused"));
+        assert_eq!(fake.count_of("Page.navigate"), 0);
+    }
+
     /// The regression: a stalled readiness probe must not spend the call budget
     /// while the navigation loop is clocking.
     ///
@@ -1439,6 +1640,7 @@ mod tests {
             assert!(stage.retryable(), "{:?} should be retryable", stage);
         }
         assert!(!CdpStage::Navigate.retryable());
+        assert!(!CdpStage::Download.retryable());
     }
 
     /// Failures must name their stage, so policy never depends on string parsing.
@@ -1604,7 +1806,9 @@ mod tests {
     #[tokio::test]
     async fn a_stalled_request_names_the_method_that_stalled() {
         let fake = FakeCdp::start(Arc::new(move |method, _params, _| match method {
-            "Page.enable" | "Runtime.enable" | "DOM.enable" => Reply::Ok(json!({})),
+            "Browser.setDownloadBehavior" | "Page.enable" | "Runtime.enable" | "DOM.enable" => {
+                Reply::Ok(json!({}))
+            }
             _ => Reply::Never,
         }));
 
