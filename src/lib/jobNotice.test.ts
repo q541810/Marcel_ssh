@@ -13,8 +13,9 @@ import { parseJobNotice } from '@/lib/jobNotice';
  * - 前端 `agentTurnFold.ts`：回合切分把 `notice` 当回合开头（否则那条告知会被
  *   并进上一轮的尾巴，把上一轮的折叠判定与答案定位全带偏）；
  * - 前端 `tauri.ts`：IPC 上那个来源字符串与后端的 `from_ipc` 认得的值一致。
- * - 后端 `agent_loop.rs` ↔ 前端 `jobNotice.ts` / `AgentMessage.tsx`：告知**正文
+ * - 后端 `agent_loop/mod.rs` ↔ 前端 `jobNotice.ts` / `AgentMessage.tsx`：告知**正文
  *   的行格式**（界面把它拆成标题行与展开区）与状态文案的配色覆盖。
+ *   （agent_loop.rs 已拆为目录模块，告知格式串在 mod.rs。）
  *
  * 任一侧改名/改值/改格式而另一侧没跟上，这里就红 —— 这类漂移不会报错，只会
  * 静默表现成「告知长成了用户气泡」「额度被自己的通知解封」「标题行只剩一串
@@ -23,7 +24,7 @@ import { parseJobNotice } from '@/lib/jobNotice';
 const RUST = import.meta.glob(
   [
     '/src-tauri/src/agent/conversation_persister.rs',
-    '/src-tauri/src/agent/agent_loop.rs',
+    '/src-tauri/src/agent/agent_loop/mod.rs',
   ],
   { query: '?raw', import: 'default', eager: true },
 ) as Record<string, string>;
@@ -38,7 +39,7 @@ const TS = import.meta.glob(
 ) as Record<string, string>;
 
 const persister = RUST['/src-tauri/src/agent/conversation_persister.rs'] ?? '';
-const agentLoop = RUST['/src-tauri/src/agent/agent_loop.rs'] ?? '';
+const agentLoop = RUST['/src-tauri/src/agent/agent_loop/mod.rs'] ?? '';
 const types = TS['/src/lib/types.ts'] ?? '';
 const fold = TS['/src/lib/agentTurnFold.ts'] ?? '';
 const tauri = TS['/src/lib/tauri.ts'] ?? '';
