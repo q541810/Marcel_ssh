@@ -42,6 +42,7 @@ import { notifyInputStopped } from "./panel/inputActivity";
 import { useAgentPanelAttachments } from "./panel/useAgentPanelAttachments";
 import ContentWidthHandles from "./panel/ContentWidthHandles";
 import {
+  agentContentMaxCss,
   readChatWidthPreference,
   resolveAgentContentWidth,
   writeChatWidthPreference,
@@ -137,9 +138,11 @@ export default function AgentPanel() {
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
 
   // ── 内容列宽度（参考 DSH ui-conversation 的 ConversationRoot）──
-  // 仅「Agent 占主区域」布局默认限宽；右侧 dock 默认不限宽（除非用户拖拽
-  // 设置过偏好）。把手拖拽实时发布到根上的 --agent-content-max，提交才落
-  // localStorage；双击把手复位到自适应宽度。
+  // 仅「Agent 占主区域」布局限宽（自适应 clamp，拖拽偏好可覆盖）；dock 里的
+  // Agent **永远不限宽**——内容列宽就是 dock 自己的宽（拖中间分隔条调），
+  // 拖拽偏好在这个布局下不生效（哪怕设过），切回主区域时仍在。把手拖拽实时
+  // 发布到根上的 --agent-content-max，提交才落 localStorage；双击把手复位到
+  // 自适应宽度。
   const agentRootRef = useRef<HTMLDivElement>(null);
   const chatWidthLimitActive = dockPanelOf(workspaceLayout) === 'terminal';
   const publishContentWidth = useCallback(() => {
@@ -147,14 +150,9 @@ export default function AgentPanel() {
     if (!root) return;
     const column = root.clientWidth;
     if (!Number.isFinite(column) || column <= 0) return;
-    const preference = readChatWidthPreference();
-    if (!chatWidthLimitActive && preference === null) {
-      root.style.setProperty('--agent-content-max', 'none');
-      return;
-    }
     root.style.setProperty(
       '--agent-content-max',
-      `${resolveAgentContentWidth(column, preference)}px`,
+      agentContentMaxCss(column, readChatWidthPreference(), chatWidthLimitActive),
     );
   }, [chatWidthLimitActive]);
   useEffect(() => {

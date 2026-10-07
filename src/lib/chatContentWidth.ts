@@ -43,3 +43,16 @@ export function resolveAgentContentWidth(panelWidth: number, preference: number 
   if (preference !== null) return Math.min(Math.max(preference, CONTENT_MIN), max);
   return Math.max(680, Math.min(panelWidth * 0.64, 920));
 }
+
+/** 面板根该发布的 `--agent-content-max` 值。布局规则（用户定的）：Agent 占主区域
+ *  → 限宽（自适应 clamp，拖拽偏好可覆盖）；Agent 在 dock → **永远不限宽**，内容列
+ *  宽就是 dock 自己的宽（拖中间分隔条调），拖拽偏好在这个布局下不生效——它属于
+ *  限宽布局，切回主区域时仍然在。 */
+export function agentContentMaxCss(
+  panelWidth: number,
+  preference: number | null,
+  limitActive: boolean,
+): string {
+  if (!limitActive) return 'none';
+  return `${resolveAgentContentWidth(panelWidth, preference)}px`;
+}

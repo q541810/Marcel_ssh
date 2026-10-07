@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  agentContentMaxCss,
   CHAT_CONTENT_WIDTH_KEY,
   CONTENT_EDGE_BUDGET,
   CONTENT_MIN,
@@ -20,6 +21,20 @@ describe('resolveAgentContentWidth（与 DSH resolveContentWidth 同口径）', 
     expect(resolveAgentContentWidth(1600, 970)).toBe(970);
     expect(resolveAgentContentWidth(900, 970)).toBe(900 - CONTENT_EDGE_BUDGET);
     expect(resolveAgentContentWidth(1600, 100)).toBe(CONTENT_MIN);
+  });
+});
+
+describe('agentContentMaxCss（dock 永远不限宽；拖拽偏好只在限宽的主区域布局生效）', () => {
+  it('dock 布局（limitActive=false）即使设过拖拽偏好也必须不限宽', () => {
+    // 回归：偏好从主区域布局漏进 dock，dock 里又没有把手能清掉它
+    expect(agentContentMaxCss(900, 970, false)).toBe('none');
+    expect(agentContentMaxCss(460, null, false)).toBe('none');
+  });
+
+  it('主区域布局（limitActive=true）：无偏好自适应，有偏好按偏好钳制', () => {
+    expect(agentContentMaxCss(1600, null, true)).toBe('920px');
+    expect(agentContentMaxCss(1600, 970, true)).toBe('970px');
+    expect(agentContentMaxCss(900, 970, true)).toBe(`${900 - CONTENT_EDGE_BUDGET}px`);
   });
 });
 

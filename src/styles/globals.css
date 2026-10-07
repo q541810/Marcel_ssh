@@ -1079,8 +1079,8 @@ body.marcel-resizing-x * {
    为基准，等价于 DSH 的「对话列宽度 × 0.64，680–920 封顶」。 */
 .agent-content-column {
   width: 100%;
-  /* 数值由 AgentPanel 根发布（自适应 clamp 或拖拽偏好 px；右侧 dock 默认
-     不限宽时是 none）。这里的 clamp 只是没有发布者时的兜底。 */
+  /* 数值由 AgentPanel 根发布（自适应 clamp 或拖拽偏好 px；dock 布局不限宽，
+     发布的是 none）。这里的 clamp 只是没有发布者时的兜底。 */
   max-width: var(--agent-content-max, clamp(680px, 64cqw, 920px));
   margin-inline: auto;
 }
