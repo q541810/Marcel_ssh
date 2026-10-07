@@ -17,6 +17,7 @@ import {
 import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { remarkRepairCjkAutolinks } from '@/lib/autolinkRepair';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import { marketDetail, pluginInstall, pluginInstallCancel, pluginUninstall } from '@/lib/tauri';
@@ -562,7 +563,7 @@ export function MarketDetailPanel({
             ) : detail.readme ? (
               <div className="text-sm leading-relaxed text-zinc-100 break-words prose prose-invert prose-sm max-w-none prose-p:my-2 prose-code:text-pink-300 prose-code:bg-zinc-800 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-pre:bg-zinc-950 prose-pre:border prose-pre:border-zinc-700 prose-a:text-indigo-400 prose-headings:my-3 prose-headings:text-zinc-100 prose-headings:font-semibold prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-blockquote:border-l-zinc-600 prose-blockquote:text-zinc-400 prose-blockquote:italic prose-img:rounded-lg prose-img:max-h-80 prose-img:object-contain prose-table:text-xs prose-th:border prose-th:border-zinc-700 prose-th:px-2 prose-th:py-1 prose-td:border prose-td:border-zinc-800 prose-td:px-2 prose-td:py-1">
                 <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
+                  remarkPlugins={[remarkGfm, remarkRepairCjkAutolinks]}
                   urlTransform={urlTransform}
                   components={{
                     a: ({ href, children, ...props }) => (

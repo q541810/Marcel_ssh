@@ -12,7 +12,9 @@ const processor = unified()
   .freeze();
 
 export function parseMarkdown(text: string) {
-  return processor.runSync(processor.parse(text));
+  // runSync 必须显式带上 file：transformer（如 autolinkRepair）要从 file.value
+  // 读原文；只传树的话 file 是空的，插件会被静默跳过。
+  return processor.runSync(processor.parse(text), text);
 }
 
 export type MarkdownTree = ReturnType<typeof parseMarkdown>;
