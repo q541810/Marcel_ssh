@@ -38,9 +38,18 @@ class ResizeMock {
   unobserve = (element: Element) => { this.elements.delete(element); };
   disconnect = () => { this.elements.clear(); ResizeMock.all.delete(this); };
 }
+const collectionHeight = (node: HTMLElement): number | undefined => {
+  const collection = node.matches('[data-virtual-row-collection]') ? node
+    : node.querySelector<HTMLElement>(':scope > [data-virtual-row-collection]');
+  if (!collection) return;
+  return Array.from(collection.children).reduce((sum, child) => sum
+    + (heights.get(child.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId ?? '') ?? itemHeight), 0);
+};
 const dimensions = (node: HTMLElement): { width: number; height: number } => ({
   width: 600,
   height: node === viewport ? 600
+    : collectionHeight(node) !== undefined ? collectionHeight(node)!
+    : node.querySelector(':scope > [data-virtual-row-hidden="true"]') ? 0
     : node.querySelector(':scope > [data-virtual-row-key]')
       ? heights.get(node.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId ?? '') ?? itemHeight
     : Number.parseFloat(node.style.height) || 0,
@@ -287,10 +296,10 @@ describe('real virtualizer integration', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
-  it('virtualizes the members of an expanded turn and exploration group', async () => {
+  it('keeps expanded turn and tool members in one natural-flow virtual item', async () => {
     data = [
       { ...fixture(1)[0], turnState: 'completed' },
-      ...Array.from({ length: 1000 }, (_, i): AgentMessage => ({
+      ...Array.from({ length: 40 }, (_, i): AgentMessage => ({
         id: `tool-${i}`, role: 'tool', content: '', timestamp: '',
         toolResult: { toolName: 'read_file', result: 'read', summary: 'read', success: true, blocked: false },
       })),
@@ -305,7 +314,52 @@ describe('real virtualizer integration', () => {
     await act(async () => group.click());
     await settle();
     expect(renderedIds().some((id) => id?.startsWith('tool-'))).toBe(true);
-    expect(renderedIds().length).toBeLessThan(40);
+    expect(renderedIds().filter((id) => id?.startsWith('tool-'))).toHaveLength(40);
+    const collections = [...viewport.querySelectorAll('[data-message-id^="tool-"]')].map((node) => node.closest('[data-virtual-row-collection]'));
+    expect(new Set(collections).size).toBe(1);
+  });
+
+  it('keeps the same natural-flow tool nodes after reveal without remounting them', async () => {
+    const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    const pending: Animation[] = [];
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: vi.fn(() => {
+        const animation = { cancel: vi.fn(), onfinish: null } as unknown as Animation;
+        pending.push(animation);
+        return animation;
+      }),
+    });
+    try {
+      data = [fixture(1)[0], ...Array.from({ length: 40 }, (_, i): AgentMessage => ({
+        id: `tool-${i}`, role: 'tool', content: '', timestamp: '',
+        toolResult: { toolName: 'bash', result: 'output', summary: `command-${i}`, success: true, blocked: false },
+      })), { id: 'answer', role: 'assistant', content: 'done', timestamp: '' }];
+      await render();
+      const group = viewport.querySelector<HTMLButtonElement>('[data-virtual-row-key^="group:"] button')!;
+      expect(group).not.toBeNull();
+      await act(async () => group.click());
+      // Flush both entry frames and ResizeObserver measurements while WAAPI remains pending.
+      await settle();
+      expect(pending).toHaveLength(40);
+      const enteringNodes = [...viewport.querySelectorAll<HTMLElement>('[data-message-id^="tool-"]')];
+      expect(enteringNodes).toHaveLength(40);
+      await scroll(viewport.scrollHeight);
+      expect(enteringNodes.every((node) => node.isConnected)).toBe(true);
+      expect(pending).toHaveLength(40);
+      await act(async () => {
+        for (const animation of pending) {
+          animation.onfinish?.call(animation, new Event('finish') as AnimationPlaybackEvent);
+        }
+      });
+      await settle();
+      expect(renderedIds().filter((id) => id?.startsWith('tool-'))).toHaveLength(40);
+      expect(enteringNodes.every((node) => node.isConnected)).toBe(true);
+      expect(pending).toHaveLength(40);
+    } finally {
+      if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
+      else delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
+    }
   });
 
   it('keeps focused rows alive only until focus moves elsewhere', async () => {

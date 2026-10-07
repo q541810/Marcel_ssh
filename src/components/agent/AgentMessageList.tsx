@@ -21,6 +21,11 @@ import ExplorationGroup from './ExplorationGroup';
 import { TurnFoldControl } from './TurnFoldGroup';
 import { buildMessageRows, isRowPrepend, type MessageRow } from './agentMessageRows';
 import { MarkdownVisibility } from './markdownVisibility';
+import { useToolFoldTransition } from './useToolFoldTransition';
+import ToolFoldRow from './ToolFoldRow';
+import { ToolGroupReveal } from './toolGroupReveal';
+import { virtualMessageSlots, type MessageSlot } from './virtualMessageSlots';
+import { useFoldScrollAnchor } from '@/hooks/useFoldScrollAnchor';
 import {
   MessageViewCacheContext, MessageViewIdContext, type MessageViewCache, useMessageViewState,
 } from './messageViewState';
@@ -43,6 +48,7 @@ interface Props {
   foldTurns?: boolean;
   /** Standalone lists own following; live AgentTranscript explicitly opts out. */
   enableStickyFollow?: boolean;
+  onManualLayout?: () => void;
   listRef?: RefObject<AgentMessageListHandle | null>;
 }
 const PAGE_SIZE = 50;
@@ -91,7 +97,7 @@ function DedicatedViewRetention({
 function MessageList({
   messages, conversationId = '', rollbackDisabled = false, onRollback, onCopy, messagesEndRef,
   highlightMessageId = null, matchedMessageIds, searchKeyword, alwaysShowActions = false,
-  foldTurns: foldTurnsProp, enableStickyFollow = true, listRef,
+  foldTurns: foldTurnsProp, enableStickyFollow = true, listRef, onManualLayout,
 }: Props) {
   const visible = useContext(MarkdownVisibility);
   const [visibleCount, setVisibleCount] = useState(() => {
@@ -115,18 +121,26 @@ function MessageList({
   }, [messages, start]);
   const sliced = useMemo(() => start ? messages.slice(start) : messages, [messages, start]);
   const settingsFold = useSettingsStore((s) => s.settings.foldCompletedTurns ?? true);
+  const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay ?? false);
   const expandedTurns = useTurnFoldStore((s) => s.expanded[conversationId] ?? EMPTY_EXPANDED);
   const tailActive = useTaskStore((s) => Object.values(s.tasks).some(
     (t) => t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
   ));
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const mountedRows = useRef(new Set<string>());
+  const onRowMountChange = useCallback((key: string, mounted: boolean) => {
+    if (mounted) mountedRows.current.add(key); else mountedRows.current.delete(key);
+  }, []);
   const matched = useMemo(() => new Set([
     ...(matchedMessageIds ?? []), ...(highlightMessageId ? [highlightMessageId] : []),
   ]), [matchedMessageIds, highlightMessageId]);
   const model = useMemo(() => buildMessageRows(sliced, {
-    foldTurns: foldTurnsProp ?? settingsFold, tailActive, expandedTurns, expandedGroups, matchedIds: matched,
-  }), [sliced, foldTurnsProp, settingsFold, tailActive, expandedTurns, expandedGroups, matched]);
-  const { rows } = model;
+    foldTurns: foldTurnsProp ?? settingsFold, tailActive, expandedTurns, expandedGroups, matchedIds: matched, hideThinkingDisplay,
+  }), [sliced, foldTurnsProp, settingsFold, tailActive, expandedTurns, expandedGroups, matched, hideThinkingDisplay]);
+  const { rows, exiting, entering, entryGroups, exitGroups, onExitComplete, onEnterComplete } = useToolFoldTransition(model.rows, mountedRows.current);
+  const reveal = useMemo(() => new ToolGroupReveal(), []);
+  useEffect(() => () => reveal.dispose(), [reveal]);
+  const slots = useMemo(() => virtualMessageSlots(sliced, rows), [sliced, rows]);
   // Search expansions survive clearing the query, like the existing turn controls.
   useEffect(() => {
     model.forcedTurns.forEach((key) => useTurnFoldStore.getState().expandTurn(conversationId, key));
@@ -138,6 +152,7 @@ function MessageList({
   const root = useRef<HTMLDivElement>(null);
   const listStart = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLElement | null>(null);
+  const { capture: captureFoldAnchor, cancel: cancelFoldAnchor, anchorKey: foldAnchorKey } = useFoldScrollAnchor(root, scrollRef, rows, visible);
   const userScrolling = useAgentScrollIntent(scrollRef, visible);
   const virtualizer = useRef<VirtualizerHandle>(null);
   const virtual = typeof ResizeObserver !== 'undefined';
@@ -149,9 +164,9 @@ function MessageList({
     setRetained((old) => old.has(rowKey) ? old : new Set([...old, rowKey]));
   }, []);
   const [held, setHeld] = useState<Set<string>>(() => new Set());
-  const previousRows = useRef(rows);
-  const shift = isRowPrepend(previousRows.current, rows);
-  useIsomorphicLayoutEffect(() => { previousRows.current = rows; }, [rows]);
+  const previousRows = useRef(slots);
+  const shift = isRowPrepend(previousRows.current, slots);
+  useIsomorphicLayoutEffect(() => { previousRows.current = slots; }, [slots]);
   const snapshot = useRef<{ top: number; height: number } | null>(null);
   const hasArchive = useConversationStore((s) =>
     // Read-only history owns its own data; never load an unrelated active conversation.
@@ -189,23 +204,25 @@ function MessageList({
   const followBottom = useCallback(() => {
     // Continuous follow is a single write, not a persistent imperative scroll target.
     // Otherwise subsequent measurements can undo a user's wheel/touch scroll.
+    cancelFoldAnchor();
     pinned.current = true;
     userScrolling.current = false;
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [userScrolling]);
+  }, [userScrolling, cancelFoldAnchor]);
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    cancelFoldAnchor();
     pinned.current = true;
     userScrolling.current = false;
-    if (virtualizer.current && rows.length) {
+    if (virtualizer.current && slots.length) {
       // Jump over large histories; don't mount every intermediate row for an animation.
       const nearby = virtualizer.current.scrollSize - virtualizer.current.scrollOffset
         < virtualizer.current.viewportSize * 2;
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      virtualizer.current.scrollToIndex(rows.length - 1, {
+      virtualizer.current.scrollToIndex(slots.length - 1, {
         align: 'end', smooth: behavior === 'smooth' && nearby && !reduceMotion,
       });
     } else if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [rows.length, userScrolling]);
+  }, [slots.length, userScrolling, cancelFoldAnchor]);
   useImperativeHandle(listRef, () => ({ scrollToBottom, followBottom }), [scrollToBottom, followBottom]);
 
   useIsomorphicLayoutEffect(() => {
@@ -320,31 +337,55 @@ function MessageList({
     setRetained((old) => [...old].every((key) => keys.has(key)) ? old
       : new Set([...old].filter((key) => keys.has(key))));
   }, [messages, rows]);
-  const keepMounted = rows.flatMap((row, index) => {
+  // New/just-hidden zero slots must be measured once. Otherwise the virtualizer
+  // assigns its default estimate to an offscreen empty slot and invents scroll space.
+  const [, measuredEmptySlots] = useState(0);
+  const pendingHidden = virtual ? slots.flatMap(({ row }, index) =>
+    !row && virtualizer.current?.getItemSize(index) !== 0 ? [index] : []) : [];
+  useEffect(() => {
+    if (!visible || !pendingHidden.length) return;
+    const frame = requestAnimationFrame(() => measuredEmptySlots((n) => n + 1));
+    return () => cancelAnimationFrame(frame);
+  });
+  const keepMounted = [...pendingHidden, ...slots.flatMap((slot, index) => {
+    if (!slot.rows) return [];
+    return slot.rows.some((row) => {
     const active = row.kind === 'message' && (
       row.message.isExecuting || row.message.isThinking || row.message.isLoading || row.message.isRetrying
       || row.message.compaction?.status === 'running'
     );
-    return held.has(row.key) || retained.has(row.key) || active ? [index] : [];
-  });
+    return held.has(row.key) || retained.has(row.key) || active || exiting.has(row.key) || entering.has(row.key)
+      || foldAnchorKey === row.key;
+    }) ? [index] : [];
+  })];
   const lastHighlight = useRef<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   useEffect(() => {
     if (!highlightMessageId) { lastHighlight.current = null; return; }
     if (lastHighlight.current === highlightMessageId) return;
-    const index = rows.findIndex((row) => row.kind === 'message' && row.message.id === highlightMessageId);
+    const index = slots.findIndex((slot) => slot.rows?.some((row) => row.kind === 'message' && row.message.id === highlightMessageId));
     if (index < 0) return;
     lastHighlight.current = highlightMessageId;
+    cancelFoldAnchor();
     pinned.current = false;
     if (virtualizer.current) virtualizer.current.scrollToIndex(index, { align: 'center' });
     else root.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(highlightMessageId)}"]`)
       ?.scrollIntoView?.({ block: 'center' });
     setFlash(highlightMessageId);
-  }, [highlightMessageId, rows]);
+  }, [highlightMessageId, slots, cancelFoldAnchor]);
   useEffect(() => {
     if (!flash) return;
+    // scrollToIndex locates the collection; then locate the actual matched card
+    // within its natural flow, which may be far from the collection's center.
+    const frame = requestAnimationFrame(() => {
+      const target = root.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(flash)}"]`);
+      const scroll = scrollRef.current;
+      if (!target?.closest('[data-virtual-row-collection]') || !scroll) return;
+      scroll.scrollBy({ top: target.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+        - Math.max(0, (scroll.clientHeight - target.getBoundingClientRect().height) / 2) });
+    });
     const timer = setTimeout(() => setFlash(null), 2000);
-    return () => clearTimeout(timer);
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
   }, [flash]);
 
   const renderRow = (row: MessageRow): ReactNode => {
@@ -370,15 +411,28 @@ function MessageList({
     const dedicated = row.kind === 'message'
       && !!row.message.toolResult
       && !!getToolView(row.message.toolResult.toolName);
-    return <div key={row.key} data-virtual-row-key={row.key}
-      className="min-w-0 w-full pb-1 flow-root">
+    return <ToolFoldRow key={row.key} rowKey={row.key} exiting={exiting.has(row.key)}
+      entering={entering.has(row.key)} onExitComplete={onExitComplete} onEnterComplete={onEnterComplete}
+      reveal={reveal} revealGroup={exiting.has(row.key) ? exitGroups.get(row.key) : entryGroups.get(row.key)} compact={row.kind === 'group' || (row.kind === 'message' && row.message.role === 'tool')}
+      onMountChange={onRowMountChange}>
       {dedicated && <DedicatedViewRetention rowKey={row.key} onVisit={retainDedicatedView} />}
       {renderRow(row)}
-    </div>;
+    </ToolFoldRow>;
   };
+  const slotElement = ({ key, rows: members }: MessageSlot) => members?.length ? (members[0].kind === 'message' ? rowElement(members[0])
+    : <div key={key} data-virtual-row-collection className="min-w-0 flow-root">{members.map(rowElement)}</div>)
+    : <div key={key} data-virtual-row-key={key} data-virtual-row-hidden="true" aria-hidden="true" style={{ height: 0, overflow: 'hidden' }} />;
 
   return <MessageViewCacheContext.Provider value={viewCache.current}>
-    <div ref={root} className="min-w-0 w-full" data-agent-message-list data-virtualized={virtual}>
+    <div ref={root} className="min-w-0 w-full" data-agent-message-list data-virtualized={virtual}
+      onClickCapture={(event) => {
+        const button = (event.target as Element).closest('button[aria-expanded]');
+        if (!button) return;
+        pinned.current = false;
+        userScrolling.current = false;
+        onManualLayout?.();
+        captureFoldAnchor(button);
+      }}>
       {canLoad && <div className="flex items-center justify-center py-2 text-xs text-zinc-500">
         {loadError ? <button type="button" onClick={() => {
           loadErrorRef.current = null;
@@ -390,8 +444,8 @@ function MessageList({
       </div>}
       <div ref={listStart}>
         {virtual ? <Virtualizer ref={virtualizer} scrollRef={scrollRef} startMargin={margin}
-          data={rows} shift={shift} bufferSize={600} ssrCount={12} keepMounted={keepMounted}>
-          {rowElement}
+          data={slots} shift={shift} bufferSize={600} ssrCount={12} keepMounted={keepMounted}>
+          {slotElement}
         </Virtualizer> : rows.map(rowElement)}
       </div>
       {messagesEndRef && <div ref={messagesEndRef} />}

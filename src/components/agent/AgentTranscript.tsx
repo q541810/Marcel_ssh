@@ -39,6 +39,12 @@ export default memo(function AgentTranscript({
   const [nearBottom, setNearBottom] = useState(true);
   const previousConversation = useRef(conversationId);
   const lastMessage = messages[messages.length - 1];
+  const onManualLayout = useCallback(() => {
+    // A disclosure is a reading action. Its header owns the viewport until the next scroll.
+    nearBottomRef.current = false;
+    userScrolling.current = false;
+    setNearBottom(false);
+  }, [userScrolling]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const container = containerRef.current;
@@ -75,6 +81,10 @@ export default memo(function AgentTranscript({
       frame = requestAnimationFrame(() => {
         frame = null;
         if (nearBottomRef.current) scrollToBottom();
+        else if (containerRef.current) {
+          const node = containerRef.current;
+          setNearBottom(isNearBottom(node.scrollTop, node.clientHeight, node.scrollHeight));
+        }
       });
     });
     if (containerRef.current) observer.observe(containerRef.current);
@@ -92,9 +102,9 @@ export default memo(function AgentTranscript({
         className={`h-full min-h-0 overflow-y-auto overflow-x-hidden p-3 [container-type:inline-size] ${mobile ? 'overscroll-contain' : ''}`}
         onScroll={() => {
           const node = containerRef.current;
-          if (!node || !visible || !userScrolling.current) return;
+          if (!node || !visible) return;
           const near = isNearBottom(node.scrollTop, node.clientHeight, node.scrollHeight);
-          nearBottomRef.current = near;
+          if (userScrolling.current) nearBottomRef.current = near;
           setNearBottom(near);
         }}
       >
@@ -111,6 +121,7 @@ export default memo(function AgentTranscript({
               onCopy={onCopy}
               alwaysShowActions={mobile}
               enableStickyFollow={false}
+              onManualLayout={onManualLayout}
             />
             </MarkdownVisibility.Provider>
           )}
