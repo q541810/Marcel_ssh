@@ -84,6 +84,9 @@ keyring = { version = "^4", default-features = false, features = [
 # APK 由系统安装器强制校验签名一致，故不引入该依赖）。
 [target.'cfg(windows)'.dependencies]
 minisign-verify = "0.2"
+# Windows 系统通知点击激活：tauri-plugin-notification 未暴露 Activated 钩子，
+# 直接用它的底层同版本 crate 挂 on_activated → 聚焦主窗口。
+tauri-winrt-notification = "0.7"
 
 [target.'cfg(target_os = "android")'.dependencies]
 reqwest = { version = "^0.12", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "gzip", "brotli", "deflate"] }

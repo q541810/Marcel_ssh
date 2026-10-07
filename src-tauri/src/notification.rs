@@ -1,4 +1,6 @@
 use tauri::AppHandle;
+// Windows 桌面走 show_toast（直连 winrt，见下），用不到插件的 builder 扩展
+#[cfg(any(mobile, all(desktop, not(windows))))]
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(mobile)]
@@ -78,6 +80,54 @@ const AGENT_CHANNEL_ID: &str = "marcel_agent";
 ///         tauri-plugin-notification 的 Rust API 直接发通知（Rust → JNI → NotificationManager），
 ///         走 `marcel_agent` channel（IMPORTANCE_HIGH + 振动、无声），不依赖 WebView JS 引擎。
 ///         不播提示音，配置用独立的 MobileNotificationSettings（不参与云端同步）。
+/// Windows 系统通知：直接走 tauri-winrt-notification——tauri-plugin-notification
+/// 没有暴露点击激活钩子，而「点击弹窗回到应用」必须挂 Toast 的 Activated 事件。
+/// AUMID 条件与插件的 desktop 实现逐字一致（desktop.rs 的 show()）：安装版用
+/// config identifier；target/debug|release 下回落 PowerShell 身份（未注册的
+/// AUMID 系统会直接拒发 toast）。
+#[cfg(all(desktop, windows))]
+pub(crate) fn show_toast<R: tauri::Runtime>(app: &tauri::AppHandle<R>, title: &str, body: &str) {
+    use tauri::Manager;
+
+    const SEP: char = std::path::MAIN_SEPARATOR;
+    let in_target = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?.to_str()?;
+        Some(
+            dir.ends_with(format!("{SEP}target{SEP}debug").as_str())
+                || dir.ends_with(format!("{SEP}target{SEP}release").as_str()),
+        )
+    });
+    // current_exe 拿不到的极端情况按安装版处理：identifier 未注册时 toast 发不出、
+    // 走 warn 日志，比静默换身份更能暴露问题。
+    let app_id: String = match in_target {
+        Some(false) => app.config().identifier.clone(),
+        _ => tauri_winrt_notification::Toast::POWERSHELL_APP_ID.to_string(),
+    };
+
+    let app_for_click = app.clone();
+    let title = title.to_string();
+    let body = body.to_string();
+    // show() 里有 COM 调用，挪到异步运行时线程，调用方（可能是 tokio worker）不等它
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = tauri_winrt_notification::Toast::new(&app_id)
+            .title(&title)
+            .text1(&body)
+            .on_activated(move |_action| {
+                // 点击 toast 正文：把主窗口拉回前台（最小化则先还原）
+                if let Some(window) = app_for_click.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                Ok(())
+            })
+            .show()
+        {
+            log::warn!("发送 Windows 通知失败: {e}");
+        }
+    });
+}
+
 pub fn send_notification(
     app: &AppHandle,
     kind: NotificationKind,
@@ -95,6 +145,9 @@ pub fn send_notification(
         if !kind.enabled(ns) {
             return;
         }
+        #[cfg(windows)]
+        show_toast(app, title, body);
+        #[cfg(not(windows))]
         if let Err(e) = app.notification().builder().title(title).body(body).show() {
             log::warn!("发送通知失败: {}", e);
         }

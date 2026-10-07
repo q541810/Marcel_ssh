@@ -1,4 +1,6 @@
 use tauri::AppHandle;
+// Windows 桌面走 notification::show_toast（带点击激活钩子），用不到插件 builder 扩展
+#[cfg(not(windows))]
 use tauri_plugin_notification::NotificationExt;
 
 use crate::error::AppError;
@@ -23,6 +25,11 @@ pub(crate) fn plugin_send_notification_inner<R: tauri::Runtime>(
     body: &str,
 ) -> Result<(), AppError> {
     let formatted_title = format!("[{}] {}", plugin_id, title);
+    // Windows 与 Agent 通知同一条带激活钩子的路径（点击弹窗回到应用）；
+    // 发送失败在 show_toast 内部记 warn 日志，不向上报——插件通知本就是尽力而为
+    #[cfg(windows)]
+    crate::notification::show_toast(app, &formatted_title, body);
+    #[cfg(not(windows))]
     app.notification()
         .builder()
         .title(&formatted_title)
