@@ -343,6 +343,13 @@ interface PanelBaseBoundsInput {
  * 「我拖左边，右边那一栏跟着变窄」。
  * 代价是每次算一遍线性扫描（最多约 1500 次纯计算），只在窗口尺寸/设置变化时算。
  *
+ * 扫描结果还要**收紧到显示宽度真的会响应的范围**：显示宽撞到墙之后会贴死
+ * （主区域下限、面板自身显示上下限、侧栏贴底时主区域下限的墙全吃在 dock 上），
+ * 墙那侧的基准再增大显示也不动——若把这段基准也放进可拖区间，拖动松手落盘的
+ * 就是永远撞墙的值，下一次拖拽得先把这段虚高消费完面板才肯动（指针拖出去
+ * 几百像素没有任何响应）。所以下限取「仍贴着显示下限」的最后一个基准，
+ * 上限取「刚达到显示上限」的第一个基准。
+ *
  * 区间是**当前停在 dock 上的那个面板**的基准宽度区间；调用方写回设置时按
  * `baseWidthKeyOf(side, settings)` 取字段，别自己猜。
  */
@@ -366,15 +373,34 @@ export function resolvePanelBaseBounds({
 
   // 显示宽度取的是求解器的输出，不是 base × scale：被 deficit 修过的值才是屏幕上真实的宽度，
   // 用公式算出来的数字会偏大（比如 1280 宽下区间末端公式给 289，实际只会到 261）。
-  let max = bounds.min;
   const minDisplayed = at(bounds.min)[mineKey];
   let maxDisplayed = minDisplayed;
+  const reachable: Array<[number, number]> = [];
   for (let base = bounds.min; base <= bounds.max; base += 1) {
     const layout = at(base);
     if (layout[otherKey] < otherRest) continue;
-    max = base;
+    reachable.push([base, layout[mineKey]]);
     if (layout[mineKey] > maxDisplayed) maxDisplayed = layout[mineKey];
   }
 
-  return { min: bounds.min, max, minDisplayed, maxDisplayed, draggable: maxDisplayed > minDisplayed };
+  // 退化：窗口太窄把显示压死时（draggable=false），整个可达集显示都一样，
+  // 保持旧的宽松区间即可（把手不会提示可拖，区间只被复位路径读到）。
+  if (maxDisplayed <= minDisplayed) {
+    const last = reachable.length > 0 ? reachable[reachable.length - 1][0] : bounds.min;
+    return { min: bounds.min, max: last, minDisplayed, maxDisplayed, draggable: false };
+  }
+
+  let min = bounds.min;
+  let max = bounds.min;
+  for (const [base, display] of reachable) {
+    if (display <= minDisplayed) min = base;
+  }
+  for (const [base, display] of reachable) {
+    if (display >= maxDisplayed) {
+      max = base;
+      break;
+    }
+  }
+
+  return { min, max, minDisplayed, maxDisplayed, draggable: maxDisplayed > minDisplayed };
 }

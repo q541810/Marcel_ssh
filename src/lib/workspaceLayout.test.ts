@@ -153,8 +153,12 @@ describe('面板拖动的可拖范围', () => {
       for (const side of sides) {
         const bounds = boundsFor(containerWidth, side);
         const base = side === 'sidebar' ? stored.sidebarBaseWidth : stored.agentBaseWidth;
-        expect(base).toBeGreaterThanOrEqual(bounds.min);
-        expect(base).toBeLessThanOrEqual(bounds.max);
+        // 存量基准可能落在贴墙的平坦段里（多个基准对应同一个显示宽），被夹进
+        // 响应区间时不许改变显示宽——「不跳」指的是屏幕上的宽度不跳。
+        const clamped = Math.min(bounds.max, Math.max(bounds.min, base));
+        expect(layoutFor(containerWidth, side, clamped)[widthKeyOf(side)]).toBe(
+          layoutFor(containerWidth, side, base)[widthKeyOf(side)],
+        );
       }
     }
   });
@@ -228,6 +232,60 @@ describe('面板拖动的可拖范围', () => {
 
     expect(sidebar.sidebarWidth).toBe(WORKSPACE_LAYOUT_LIMITS.sidebar.min);
     expect(agent.dockWidth).toBe(WORKSPACE_LAYOUT_LIMITS.dock.min);
+  });
+
+  it('撞墙段不进可拖区间：上界 = 刚达到显示上限的基准，回拖第一像素就响应', () => {
+    for (const containerWidth of containers) {
+      // 侧栏关掉：dock 的显示宽撞到上限（或主区域下限的墙）后基准再大也不动，
+      // 这段平坦区正是旧版会拖出去很远都没反应的来源
+      const closed = { sidebarOpen: false };
+      const bounds = resolvePanelBaseBounds({
+        side: 'dock',
+        containerWidth,
+        settings: DEFAULT_WORKSPACE_LAYOUT,
+        ...closed,
+      });
+      if (!bounds.draggable) continue;
+      const solve = (base: number) =>
+        resolveWorkspaceLayout({
+          containerWidth,
+          settings: { ...DEFAULT_WORKSPACE_LAYOUT, ...closed, agentBaseWidth: base },
+        });
+      expect(solve(bounds.max).dockWidth).toBe(bounds.maxDisplayed);
+      // 上界之外显示贴死：这一段基准对屏幕毫无贡献
+      expect(solve(bounds.max + 40).dockWidth).toBe(bounds.maxDisplayed);
+      // 上界往回第一格显示就开始响应
+      if (bounds.max > bounds.min) {
+        expect(solve(bounds.max - 1).dockWidth).toBeLessThan(bounds.maxDisplayed);
+      }
+      // 下界同理：贴着显示下限的最后一个基准，往下的基准全是贴死段
+      expect(solve(bounds.min).dockWidth).toBe(bounds.minDisplayed);
+      expect(solve(bounds.min - 1).dockWidth).toBe(bounds.minDisplayed);
+      expect(solve(bounds.min + 1).dockWidth).toBeGreaterThan(bounds.minDisplayed);
+    }
+  });
+
+  it('存量虚高基准（旧版撞墙落盘的值）夹进区间后显示不变：按下不跳、回拖即响应', () => {
+    for (const containerWidth of containers) {
+      const closed = { sidebarOpen: false };
+      const bounds = resolvePanelBaseBounds({
+        side: 'dock',
+        containerWidth,
+        settings: DEFAULT_WORKSPACE_LAYOUT,
+        ...closed,
+      });
+      if (!bounds.draggable) continue;
+      // 1341 = baseWidthBounds 的上界：旧版拖到墙再继续往外拖会落盘到的虚高值
+      const polluted = 1341;
+      const clamped = Math.min(bounds.max, Math.max(bounds.min, polluted));
+      expect(clamped).toBe(bounds.max);
+      const solve = (base: number) =>
+        resolveWorkspaceLayout({
+          containerWidth,
+          settings: { ...DEFAULT_WORKSPACE_LAYOUT, ...closed, agentBaseWidth: base },
+        });
+      expect(solve(clamped).dockWidth).toBe(solve(polluted).dockWidth);
+    }
   });
 
   it('窄窗口里加宽要先收窄另一侧：墙只吃中栏的空间', () => {
@@ -371,8 +429,14 @@ describe('终端与 Agent 互换位置', () => {
         settings: swapped,
       });
       const stored = normalizeWorkspaceLayout(swapped);
-      expect(stored.terminalBaseWidth).toBeGreaterThanOrEqual(bounds.min);
-      expect(stored.terminalBaseWidth).toBeLessThanOrEqual(bounds.max);
+      // 存量基准可能落在贴墙平坦段里，被收紧后的区间夹取时不许改变显示宽
+      const clamped = Math.min(
+        bounds.max,
+        Math.max(bounds.min, stored.terminalBaseWidth),
+      );
+      const solveWith = (base: number) =>
+        resolveWorkspaceLayout({ containerWidth, settings: { ...swapped, terminalBaseWidth: base } });
+      expect(solveWith(clamped).dockWidth).toBe(solveWith(stored.terminalBaseWidth).dockWidth);
 
       for (let base = bounds.min; base <= bounds.max; base += 1) {
         const during = resolveWorkspaceLayout({

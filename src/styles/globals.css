@@ -55,6 +55,26 @@
   }
 }
 
+/* 数字角标入场（如传输中心的红色失败角标）：弹一下出现 */
+@keyframes badge-pop-in {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.badge-pop-in {
+  animation: badge-pop-in 180ms ease-out both;
+}
+
 @keyframes spring-toggle-on {
   0% {
     transform: translateX(0);
@@ -611,7 +631,8 @@ button:active {
   .modal-panel-exit,
   .modal-backdrop-enter,
   .modal-backdrop-exit,
-  .context-menu-enter {
+  .context-menu-enter,
+  .badge-pop-in {
     animation-duration: 1ms;
   }
 }

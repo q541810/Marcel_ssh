@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   lazy,
   Suspense,
@@ -44,6 +45,7 @@ import {
   resolveWorkspaceScale,
   type PanelBaseBounds,
   type PanelSide,
+  type ResolvedWorkspaceLayout,
 } from '@/lib/workspaceLayout';
 import SplitHandle from '@/components/layout/SplitHandle';
 import { registerBuiltinViews } from '@/plugins/builtinViews';
@@ -73,8 +75,11 @@ const AGENT_PANEL_COLLAPSE_MS = 300;
 const NUDGE_COMMIT_MS = 240;
 
 /**
- * 一次拖动的全部状态。放 ref 而不是 state：指针移动期间只需要 setState 更新宽度，
- * 事件靠 Pointer 捕获直接回到把手，不挂 document 监听、不进 effect 依赖。
+ * 一次指针拖动的全部状态。放 ref 而不是 state：指针移动期间**不进 React 渲染路径**
+ * （每个 pointermove 都 setState 会让整棵 App 树跟着每帧重渲，右侧分隔条拖动时
+ * 叠加聊天区回流 + 终端跨格重画，是拖动卡顿的根源），事件靠 Pointer 捕获直接回到
+ * 把手，不挂 document 监听、不进 effect 依赖。
+ *
  * 宽度以**基准宽度**为单位推进（不是屏幕像素），松手存的就是推进到的那个值，
  * 所以「松手后停在松手前的位置」是构造出来的，不是对齐出来的。
  */
@@ -82,10 +87,36 @@ interface ResizeSession {
   side: PanelSide;
   pointerId: number;
   pointerStartX: number;
+  /** 最新指针位置，rAF 帧里消费。 */
+  latestClientX: number;
   baseStart: number;
   baseCurrent: number;
   bounds: PanelBaseBounds;
   scale: number;
+  /** 求解输入快照：与 bounds 一样对手势冻结（拖动中途改设置是走不到的路径）。 */
+  workspaceLayout: WorkspaceLayoutSettings;
+  sidebarOpen: boolean;
+  agentOpen: boolean;
+  isExclusive: boolean;
+  rafId: number | null;
+  /** 本次手势是否写过候选宽度（决定「只是点了一下」收摊时要不要撤覆盖值）。 */
+  touchedOverride: boolean;
+}
+
+/**
+ * 拖动/方向键期间尚未落盘的候选宽度。每帧算好的三栏显示宽直接写 DOM
+ * （与 panel/ContentWidthHandles 同一架构），渲染路径不感知；store 拿到
+ * 提交值之后才撤掉。快照字段用于自愈 effect 判废：与当前不一致就作废，
+ * 交还给 React 的正常渲染。
+ */
+interface LiveWidthOverride {
+  side: PanelSide;
+  base: number;
+  layout: ResolvedWorkspaceLayout;
+  containerWidth: number;
+  sidebarOpen: boolean;
+  agentOpen: boolean;
+  isExclusive: boolean;
 }
 
 export default function App() {
@@ -101,11 +132,15 @@ export default function App() {
   const windowResizingRef = useRef(false);
   const windowResizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizeSessionRef = useRef<ResizeSession | null>(null);
+  /** 拖动/方向键期间未落盘的候选宽度（含算好的三栏显示宽），直写 DOM 用。 */
+  const liveOverrideRef = useRef<LiveWidthOverride | null>(null);
+  const sidebarAsideRef = useRef<HTMLElement>(null);
+  const sidebarInnerRef = useRef<HTMLDivElement>(null);
+  const dockWrapRef = useRef<HTMLDivElement>(null);
+  const dockAsideRef = useRef<HTMLElement>(null);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingNudgeRef = useRef<{ side: PanelSide; base: number } | null>(null);
   const [layoutWidth, setLayoutWidth] = useState(0);
-  /** 拖动/方向键期间的基准宽度覆盖值；落盘生效后被撤掉，布局回到设置里的值。 */
-  const [dragBase, setDragBase] = useState<{ side: PanelSide; base: number } | null>(null);
   const [resizingSide, setResizingSide] = useState<PanelSide | null>(null);
   const [isWindowResizing, setIsWindowResizing] = useState(false);
   const dockUnmountTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -244,24 +279,19 @@ export default function App() {
     };
   }, []);
 
-  // 拖动期间把候选基准宽度并进设置再求解：面板宽度、中栏、邻栏全部由同一个
-  // resolveWorkspaceLayout 算出来，所以拖动中看到的布局就是松手后的布局。
-  // 落盘字段按 dock 当前停谁选（互换模式下拖的是终端自己的宽度）。
-  const dragBasePatch = useMemo(
+  // 布局求解只依赖 store 与窗口宽。拖动/方向键期间的候选宽度走 liveOverride
+  // 直写 DOM，不进渲染路径；store 拿到提交值后，这里的求解结果自然与 DOM 一致。
+  const resolvedLayout = useMemo(
     () =>
-      dragBase === null
-        ? null
-        : baseWidthPatch(dragBase.side, workspaceLayout, dragBase.base),
-    [dragBase, workspaceLayout],
+      resolveWorkspaceLayout({
+        containerWidth: layoutWidth,
+        settings: workspaceLayout,
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+      }),
+    [agentPanelOpen, isExclusive, layoutWidth, workspaceLayout, sidebarOpen],
   );
-
-  const resolvedLayout = resolveWorkspaceLayout({
-    containerWidth: layoutWidth,
-    settings: dragBasePatch ? { ...workspaceLayout, ...dragBasePatch } : workspaceLayout,
-    sidebarOpen,
-    agentOpen: agentPanelOpen,
-    isExclusive,
-  });
 
   const sidebarWidth = resolvedLayout.sidebarWidth;
   const dockWidth = resolvedLayout.dockWidth;
@@ -305,22 +335,24 @@ export default function App() {
     });
   }, [updateSettings]);
 
-  /** 落盘一次面板基准宽度，并在 store 真的拿到新值之后再撤掉本地覆盖值。 */
+  /** 落盘一次面板基准宽度，返回落盘完成的 promise（调用方据此撤候选宽度覆盖值）。 */
   const commitPanelBase = useCallback(
     (side: PanelSide, base: number) => {
       // 落盘字段从 store 现取（和 persistWorkspaceLayout 同一个理由）：互换模式下
       // dock 停的是终端，这一笔要写进 terminalBaseWidth，两栏各记各的宽度。
       const current = useSettingsStore.getState().settings.workspaceLayout;
-      void persistWorkspaceLayout(baseWidthPatch(side, current, base)).then(() => {
-        // 等 store 更新完再撤覆盖：早一步撤会先按旧宽度渲染一帧，看起来就是「松手闪一下」。
-        // 期间若已经开出新的一次调整，就把它留给那一次收尾。
-        setDragBase((current) =>
-          current && current.side === side && current.base === base ? null : current,
-        );
-      });
+      return persistWorkspaceLayout(baseWidthPatch(side, current, base));
     },
     [persistWorkspaceLayout],
   );
+
+  const cancelPendingNudge = useCallback(() => {
+    if (nudgeTimerRef.current) {
+      clearTimeout(nudgeTimerRef.current);
+      nudgeTimerRef.current = null;
+    }
+    pendingNudgeRef.current = null;
+  }, []);
 
   const handleToggleSidebar = () => {
     persistWorkspaceLayout({ sidebarOpen: !sidebarOpen });
@@ -330,6 +362,59 @@ export default function App() {
     persistWorkspaceLayout({ agentOpen: !agentPanelOpen });
   };
 
+  /** 把一次求解结果直接写到四块承载宽度的 DOM 上（不经过 React）。 */
+  const applyDragWidths = useCallback((layout: ResolvedWorkspaceLayout) => {
+    const { sidebarWidth, dockWidth } = layout;
+    if (sidebarAsideRef.current) sidebarAsideRef.current.style.width = `${sidebarWidth}px`;
+    if (sidebarInnerRef.current) sidebarInnerRef.current.style.width = `${sidebarWidth}px`;
+    if (dockWrapRef.current) {
+      dockWrapRef.current.style.width = `${dockWidth > 0 ? dockWidth + 4 : 0}px`;
+    }
+    if (dockAsideRef.current) dockAsideRef.current.style.width = `${dockWidth}px`;
+  }, []);
+
+  /** 一帧拖动推进：算候选基准 → 求解三栏显示宽 → 写 DOM + 记覆盖值。 */
+  const runResizeFrame = useCallback(() => {
+    const session = resizeSessionRef.current;
+    if (!session) return;
+    session.rafId = null;
+    const dx =
+      session.side === 'sidebar'
+        ? session.latestClientX - session.pointerStartX
+        : session.pointerStartX - session.latestClientX;
+    // 指针位移 ÷ 缩放 = 基准位移；自由空间里两次缩放正好抵消，面板与指针 1:1 跟手
+    const base = Math.min(
+      session.bounds.max,
+      Math.max(session.bounds.min, Math.round(session.baseStart + dx / session.scale)),
+    );
+    const override = liveOverrideRef.current;
+    if (base === session.baseCurrent && override?.side === session.side) return;
+    // 容器宽取实时值：窗口缩放插进来的帧也按新宽求解
+    const containerWidth = mainRowWidthRef.current;
+    const layout = resolveWorkspaceLayout({
+      containerWidth,
+      settings: {
+        ...session.workspaceLayout,
+        ...baseWidthPatch(session.side, session.workspaceLayout, base),
+      },
+      sidebarOpen: session.sidebarOpen,
+      agentOpen: session.agentOpen,
+      isExclusive: session.isExclusive,
+    });
+    session.baseCurrent = base;
+    session.touchedOverride = true;
+    liveOverrideRef.current = {
+      side: session.side,
+      base,
+      layout,
+      containerWidth,
+      sidebarOpen: session.sidebarOpen,
+      agentOpen: session.agentOpen,
+      isExclusive: session.isExclusive,
+    };
+    applyDragWidths(layout);
+  }, [applyDragWidths]);
+
   const startPanelResize = useCallback(
     (side: PanelSide, e: React.PointerEvent<HTMLDivElement>) => {
       const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
@@ -337,92 +422,179 @@ export default function App() {
       // 只捕获指针、不 preventDefault：焦点与选区的守卫在 SplitHandle 的 mousedown 上
       // （取消 pointerdown 有引擎会连 click / dblclick 一起掐掉）。
       e.currentTarget.setPointerCapture(e.pointerId);
+      // 上一次手势/方向键的候选宽度还没落盘时从它接着走，别跳回 store 旧值；
+      // 同时掐掉未决的方向键提交——拖动的松手提交会一并把最终值落盘。
+      // 不管来源是哪，都先夹进响应区间：旧版本落盘过「撞墙后基准仍在前进」的
+      // 值（显示已贴死、基准还虚高），不夹的话下一次拖拽要先把虚高消费完才有响应。
+      const pendingOverride = liveOverrideRef.current;
       const layout = normalizeWorkspaceLayout(workspaceLayout);
-      const baseStart =
-        side === 'sidebar' ? layout.sidebarBaseWidth : dockBaseWidthOf(layout);
+      const rawBase =
+        pendingOverride && pendingOverride.side === side
+          ? pendingOverride.base
+          : side === 'sidebar'
+            ? layout.sidebarBaseWidth
+            : dockBaseWidthOf(layout);
+      const baseStart = Math.min(bounds.max, Math.max(bounds.min, rawBase));
+      cancelPendingNudge();
       resizeSessionRef.current = {
         side,
         pointerId: e.pointerId,
         pointerStartX: e.clientX,
+        latestClientX: e.clientX,
         baseStart,
         baseCurrent: baseStart,
         bounds,
         scale: resolveWorkspaceScale(layoutWidth),
+        workspaceLayout: layout,
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+        rafId: null,
+        touchedOverride: false,
       };
       setResizingSide(side);
     },
-    [dockBounds, isExclusive, layoutWidth, sidebarBounds, workspaceLayout],
+    [
+      agentPanelOpen,
+      cancelPendingNudge,
+      dockBounds,
+      isExclusive,
+      layoutWidth,
+      sidebarBounds,
+      sidebarOpen,
+      workspaceLayout,
+    ],
   );
 
-  const movePanelResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const session = resizeSessionRef.current;
-    if (!session || e.pointerId !== session.pointerId) return;
-    const delta =
-      session.side === 'sidebar' ? e.clientX - session.pointerStartX : session.pointerStartX - e.clientX;
-    // 指针位移 ÷ 缩放 = 基准位移；自由空间里两次缩放正好抵消，面板与指针 1:1 跟手
-    const base = Math.min(
-      session.bounds.max,
-      Math.max(session.bounds.min, Math.round(session.baseStart + delta / session.scale)),
-    );
-    if (base === session.baseCurrent) return;
-    session.baseCurrent = base;
-    setDragBase({ side: session.side, base });
-  }, []);
+  const movePanelResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const session = resizeSessionRef.current;
+      if (!session || e.pointerId !== session.pointerId) return;
+      session.latestClientX = e.clientX;
+      // rAF 合帧：一帧最多求解一次、写一次 DOM，渲染路径完全不感知
+      session.rafId ??= requestAnimationFrame(runResizeFrame);
+    },
+    [runResizeFrame],
+  );
 
   const endPanelResize = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const session = resizeSessionRef.current;
       if (!session || e.pointerId !== session.pointerId) return;
-      resizeSessionRef.current = null;
-      setResizingSide(null);
+      if (session.rafId !== null) {
+        cancelAnimationFrame(session.rafId);
+        session.rafId = null;
+      }
       if (session.baseCurrent === session.baseStart) {
-        // 只是点了一下：撤掉覆盖值，别让没动过的宽度顶住布局
-        setDragBase((current) => (current && current.side === session.side ? null : current));
+        // 只是点了一下：候选宽度没动过（或回到了起点），撤掉本次手势可能写过的
+        // 覆盖值，别让没动过的宽度顶住布局；先前手势留下的覆盖值不动。
+        resizeSessionRef.current = null;
+        if (session.touchedOverride) liveOverrideRef.current = null;
+        setResizingSide(null);
         return;
       }
-      commitPanelBase(session.side, session.baseCurrent);
+      // 落盘一次；store 拿到新值之前会话还活着（自愈 effect 把 DOM 宽度钉在
+      // 拖动终值上），拿到之后再交还 React——早交还就会先按旧宽度渲染一帧，
+      // 看起来就是「松手弹回」。
+      const { side, baseCurrent: base } = session;
+      void commitPanelBase(side, base).then(() => {
+        const override = liveOverrideRef.current;
+        if (override && override.side === side && override.base === base) {
+          liveOverrideRef.current = null;
+        }
+        // 期间若已经开出新的一次调整，会话已被它替换，这里不动它的状态。
+        if (resizeSessionRef.current === session) {
+          resizeSessionRef.current = null;
+          setResizingSide(null);
+        }
+      });
     },
     [commitPanelBase],
   );
 
   const nudgePanelResize = useCallback(
     (side: PanelSide, delta: number) => {
+      const containerWidth = mainRowWidthRef.current;
+      if (containerWidth <= 0) return;
       const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
       const layout = normalizeWorkspaceLayout(workspaceLayout);
-      const current =
-        dragBase && dragBase.side === side
-          ? dragBase.base
-          : side === 'sidebar'
-            ? layout.sidebarBaseWidth
-            : dockBaseWidthOf(layout);
+      const override = liveOverrideRef.current;
+      // 同 startPanelResize：store 里可能存着撞墙虚高的旧基准，先夹进响应区间
+      const current = Math.min(
+        bounds.max,
+        Math.max(
+          bounds.min,
+          override && override.side === side
+            ? override.base
+            : side === 'sidebar'
+              ? layout.sidebarBaseWidth
+              : dockBaseWidthOf(layout),
+        ),
+      );
       const base = Math.min(
         bounds.max,
         Math.max(bounds.min, current + Math.round(delta / resolveWorkspaceScale(layoutWidth))),
       );
       if (base === current) return;
-      setDragBase({ side, base });
+      const solved = resolveWorkspaceLayout({
+        containerWidth,
+        settings: { ...layout, ...baseWidthPatch(side, layout, base) },
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+      });
+      liveOverrideRef.current = {
+        side,
+        base,
+        layout: solved,
+        containerWidth,
+        sidebarOpen,
+        agentOpen: agentPanelOpen,
+        isExclusive,
+      };
+      applyDragWidths(solved);
       pendingNudgeRef.current = { side, base };
       if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
       nudgeTimerRef.current = setTimeout(() => {
         nudgeTimerRef.current = null;
         const pending = pendingNudgeRef.current;
         pendingNudgeRef.current = null;
-        if (pending) commitPanelBase(pending.side, pending.base);
+        if (!pending) return;
+        void commitPanelBase(pending.side, pending.base).then(() => {
+          const o = liveOverrideRef.current;
+          if (o && o.side === pending.side && o.base === pending.base) {
+            liveOverrideRef.current = null;
+          }
+        });
       }, NUDGE_COMMIT_MS);
     },
-    [dockBounds, commitPanelBase, dragBase, layoutWidth, sidebarBounds, workspaceLayout],
+    [
+      agentPanelOpen,
+      applyDragWidths,
+      commitPanelBase,
+      dockBounds,
+      isExclusive,
+      layoutWidth,
+      sidebarBounds,
+      sidebarOpen,
+      workspaceLayout,
+    ],
   );
 
   const resetPanelWidth = useCallback(
     (side: PanelSide) => {
+      // 双击复位会改写该栏宽度，未决的方向键提交不许再盖上来
+      cancelPendingNudge();
       const bounds = side === 'sidebar' ? sidebarBounds : dockBounds;
       // 复位到「当前停在 dock 上的那个面板」自己的默认宽度
       const fallback = defaultBaseWidthOf(side, workspaceLayout);
       const base = Math.min(bounds.max, Math.max(bounds.min, fallback));
-      setDragBase({ side, base });
-      commitPanelBase(side, base);
+      void commitPanelBase(side, base).then(() => {
+        const override = liveOverrideRef.current;
+        if (override && override.side === side) liveOverrideRef.current = null;
+      });
     },
-    [dockBounds, commitPanelBase, sidebarBounds, workspaceLayout],
+    [cancelPendingNudge, commitPanelBase, dockBounds, sidebarBounds, workspaceLayout],
   );
 
   // 拖动期间把光标钉死：终端（xterm 自带 cursor: text）之类的内容会盖掉 body 上的继承值，
@@ -434,11 +606,37 @@ export default function App() {
     return () => document.body.classList.remove(className);
   }, [resizingSide]);
 
+  // 自愈：候选宽度尚未落盘期间，任何其他原因触发的渲染（流式消息、store 事件）
+  // 都会用 store 旧宽度重写 inline style；渲染完成后立刻把覆盖值重新套回去，
+  // 避免单帧跳变。求解输入已变的（窗口缩放、开合切换、视图互换）覆盖值作废。
+  // 没有覆盖值时把 DOM 对齐到本次渲染的求解结果：手势期间的直写不经过 React，
+  // React 对「值没变」的渲染会跳过 DOM 写入，不对账就会在 React 视角之外留残值
+  // （落盘失败时尤其如此——松手后 DOM 必须回到 store 的真相）。
+  useLayoutEffect(() => {
+    const override = liveOverrideRef.current;
+    if (override) {
+      if (
+        override.containerWidth !== mainRowWidthRef.current ||
+        override.sidebarOpen !== effectiveSidebarOpen ||
+        override.agentOpen !== effectiveAgentPanelOpen ||
+        override.isExclusive !== isExclusive
+      ) {
+        liveOverrideRef.current = null;
+      } else {
+        applyDragWidths(override.layout);
+        return;
+      }
+    }
+    applyDragWidths(resolvedLayout);
+  });
+
   useEffect(
     () => () => {
-      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+      cancelPendingNudge();
+      const session = resizeSessionRef.current;
+      if (session && session.rafId !== null) cancelAnimationFrame(session.rafId);
     },
-    [],
+    [cancelPendingNudge],
   );
 
   useEffect(() => {
@@ -581,6 +779,7 @@ export default function App() {
           <NavRail activeId={activeId} onChange={handleNavChange} />
 
           <aside
+            ref={sidebarAsideRef}
             data-region="sidebar"
             className="layout-contained flex-shrink-0 bg-zinc-900 border-r border-zinc-800 overflow-hidden"
             style={{
@@ -591,7 +790,7 @@ export default function App() {
                 : `width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1), border-right-width ${SETTINGS_LEFT_PANEL_COLLAPSE_MS}ms cubic-bezier(0.16, 1, 0.3, 1)`,
             }}
           >
-            <div style={{ width: `${sidebarWidth}px`, height: '100%' }}>
+            <div ref={sidebarInnerRef} style={{ width: `${sidebarWidth}px`, height: '100%' }}>
               {sidebarProvider && sidebarProvider.pluginId !== 'builtin' ? (
                 <PluginWebviewSlot key={`${sidebarProvider.id}-${pluginRefreshKey}`} provider={sidebarProvider} />
               ) : SidebarView ? (
@@ -660,6 +859,7 @@ export default function App() {
           </div>
 
           <div
+            ref={dockWrapRef}
             className="layout-contained flex overflow-hidden flex-shrink-0"
             style={{
               width: dockVisible ? `${dockWidth + 4}px` : '0px',
@@ -685,6 +885,7 @@ export default function App() {
                   onReset={() => resetPanelWidth('dock')}
                 />
                 <aside
+                  ref={dockAsideRef}
                   data-region={agentPrimary ? 'center' : 'agent'}
                   className="layout-contained flex flex-col overflow-hidden border-l border-zinc-800 flex-shrink-0"
                   style={{ width: `${dockWidth}px` }}
