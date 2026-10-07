@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   switchConversation: vi.fn(async () => {}),
   activeConversationId: null as string | null,
   activeSessionId: null as string | null,
+  markInterruptedJobsRead: vi.fn(),
 }));
 
 // 只替换数据来源：本用例断言的是「标签怎么显示、点击怎么跳」，
@@ -34,7 +35,11 @@ vi.mock('@/stores/taskStore', () => ({
 }));
 vi.mock('@/stores/jobStore', () => ({
   useJobStore: (sel: (s: Record<string, unknown>) => unknown) =>
-    sel({ jobs: mocks.jobs, killJob: vi.fn() }),
+    sel({
+      jobs: mocks.jobs,
+      killJob: vi.fn(),
+      markInterruptedJobsRead: mocks.markInterruptedJobsRead,
+    }),
 }));
 vi.mock('@/stores/sessionStore', () => ({
   useSessionStore: (sel: (s: Record<string, unknown>) => unknown) =>
@@ -184,6 +189,33 @@ describe('任务与作业中心 · 本机子任务的会话标签', () => {
     await render();
 
     expect(document.body.textContent ?? '').toContain('生产机（自动连接）');
+  });
+});
+
+describe('任务与作业中心 · interrupted 作业的已读记账', () => {
+  it('Jobs 页签亮出来时把作业列表交给已读记账（与桌面抽屉同一口径）', async () => {
+    mocks.jobs = {
+      local_job_1: jobInfo({ jobId: 'local_job_1', status: 'interrupted' }),
+      local_job_2: jobInfo({ jobId: 'local_job_2', status: 'running' }),
+    };
+
+    await render('jobs');
+
+    expect(mocks.markInterruptedJobsRead).toHaveBeenCalledTimes(1);
+    expect(mocks.markInterruptedJobsRead).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ jobId: 'local_job_1' }),
+        expect.objectContaining({ jobId: 'local_job_2' }),
+      ]),
+    );
+  });
+
+  it('开在「Agent 任务」页签不记账（没看到作业就不算看过）', async () => {
+    mocks.jobs = { local_job_1: jobInfo({ jobId: 'local_job_1', status: 'interrupted' }) };
+
+    await render('agents');
+
+    expect(mocks.markInterruptedJobsRead).not.toHaveBeenCalled();
   });
 });
 

@@ -3,11 +3,23 @@ import type { JobInfo } from '@/lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { subscribeTauriEvent } from '@/lib/tauriEvent';
 import { getErrorMessage } from '@/lib/errors';
+import {
+  loadReadInterruptedJobs,
+  markInterruptedJobsRead as markReadInterrupted,
+  saveReadInterruptedJobs,
+  type ReadInterruptedJobs,
+} from '@/lib/jobReadState';
 import * as tauri from '@/lib/tauri';
 
 interface JobState {
   /** 全部已知作业（运行中 + 已完结），按 jobId 索引。 */
   jobs: Record<string, JobInfo>;
+  /**
+   * 已读的 interrupted 作业（jobId → startedAtMillis，lib/jobReadState 持久化）：
+   * 用户在任务/作业中心看过结局说明的。警示胶囊只数**未读**的 interrupted
+   * （见 `taskCenterEntry`）——否则这颗警示要挂满台账的 7 天保留期。
+   */
+  readInterrupted: ReadInterruptedJobs;
   /**
    * 拉取后台作业列表并合并进 store。
    * @param sessionId 会话 ID；空 / null = 拉取全部会话的作业（启动恢复用）。
@@ -17,6 +29,11 @@ interface JobState {
   fetchJobs: (sessionId?: string | null) => Promise<void>;
   killJob: (jobId: string) => Promise<void>;
   upsertJob: (job: JobInfo) => void;
+  /**
+   * 把这批作业里的 interrupted 记成已读（任务/作业中心的 Jobs 页签亮出来时调，
+   * 桌面抽屉与移动端 sheet 共用同一口径）。没有新记账时不更新 store、不回写。
+   */
+  markInterruptedJobsRead: (jobs: JobInfo[]) => void;
   /** 监听后端 job://started / job://updated 事件；返回解绑函数。 */
   initEventListener: () => () => void;
 }
@@ -65,6 +82,8 @@ export function mapJob(raw: Record<string, unknown>): JobInfo {
 export const useJobStore = create<JobState>((set, get) => ({
   jobs: {},
 
+  readInterrupted: loadReadInterruptedJobs(),
+
   fetchJobs: async (sessionId?: string | null) => {
     try {
       const rawList = await tauri.jobList(sessionId ?? null, null);
@@ -97,6 +116,13 @@ export const useJobStore = create<JobState>((set, get) => ({
         },
       },
     }));
+  },
+
+  markInterruptedJobsRead: (jobs: JobInfo[]) => {
+    const next = markReadInterrupted(get().readInterrupted, jobs);
+    if (next === get().readInterrupted) return;
+    set({ readInterrupted: next });
+    saveReadInterruptedJobs(next);
   },
 
   initEventListener: () => {

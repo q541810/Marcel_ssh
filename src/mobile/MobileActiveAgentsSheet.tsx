@@ -48,6 +48,16 @@ export default function MobileActiveAgentsSheet({
     if (open && initialTab) setActiveTab(initialTab);
   }, [open, initialTab]);
 
+  // Jobs 页签真正亮出来才记「已读」，与桌面 AgentTasksDrawer 同一口径：
+  // interrupted 作业的警示胶囊只数未读的（见 taskCenterEntry），看过结局
+  // 说明就该摘掉；开在 agents 页就关掉不算看过。
+  const markInterruptedJobsRead = useJobStore((s) => s.markInterruptedJobsRead);
+  useEffect(() => {
+    if (open && activeTab === 'jobs') {
+      markInterruptedJobsRead(Object.values(jobs));
+    }
+  }, [open, activeTab, jobs, markInterruptedJobsRead]);
+
   const runningTasks = getActiveRunningTasks(tasks);
   const jobList = Object.values(jobs).sort((a, b) => b.startedAtMillis - a.startedAtMillis);
   const runningJobs = jobList.filter((j) => j.status === 'running');

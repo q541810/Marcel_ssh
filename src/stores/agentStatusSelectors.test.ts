@@ -161,5 +161,26 @@ describe('agentStatusSelectors', () => {
       expect(entry.attentionJobs.map((j) => j.jobId)).toEqual(['j1']);
       expect(entry.initialTab).toBe('jobs');
     });
+
+    it('已读的 interrupted 不计入警示：空闲且全部读过时入口消失', () => {
+      const jobs = {
+        'j1': mockJob({ jobId: 'j1', status: 'interrupted' }),
+        'j2': mockJob({ jobId: 'j2', status: 'interrupted', startedAtMillis: 2 }),
+      };
+      const entry = taskCenterEntry({}, jobs, null, { j1: 1, j2: 2 });
+      expect(entry.visible).toBe(false);
+      expect(entry.attentionJobs).toEqual([]);
+    });
+
+    it('只读过一部分时，未读的照旧触发琥珀警示', () => {
+      const jobs = {
+        'j1': mockJob({ jobId: 'j1', status: 'interrupted' }),
+        'j2': mockJob({ jobId: 'j2', status: 'interrupted', startedAtMillis: 2 }),
+      };
+      const entry = taskCenterEntry({}, jobs, null, { j1: 1 });
+      expect(entry.visible).toBe(true);
+      expect(entry.attentionJobs.map((j) => j.jobId)).toEqual(['j2']);
+      expect(entry.initialTab).toBe('jobs');
+    });
   });
 });

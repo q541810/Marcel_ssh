@@ -32,13 +32,15 @@ export function AgentPanelHeader({
 }: AgentPanelHeaderProps) {
   const [tokenPopoverOpen, setTokenPopoverOpen] = useState(false);
   const jobs = useJobStore((s) => s.jobs);
+  // interrupted 作业的已读表：读过结局说明的不再触发警示胶囊（口径见 taskCenterEntry）
+  const readInterrupted = useJobStore((s) => s.readInterrupted);
   // 占用环读数（百分比 / 未配置窗口的降级都由 `lib/tokenUsage.ts` 定，
   // 与移动端共用同一份口径）
   const meter = contextMeterView(activeUsageView?.usage, activeUsageView?.windowTokens);
   // 任务与作业中心入口的判定与内容（与移动端共用一份，见 taskCenterEntry）
   const taskCenter = useMemo(
-    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null),
-    [tasks, jobs, activeConversationId],
+    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null, readInterrupted),
+    [tasks, jobs, activeConversationId, readInterrupted],
   );
 
   return (

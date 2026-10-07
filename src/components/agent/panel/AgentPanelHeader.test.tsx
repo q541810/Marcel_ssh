@@ -8,11 +8,16 @@ import type { JobInfo } from '@/lib/types';
 
 const mocks = vi.hoisted(() => ({
   jobs: {} as Record<string, JobInfo>,
+  readInterrupted: {} as Record<string, number>,
 }));
 
 vi.mock('@/stores/jobStore', () => ({
   useJobStore: (selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ jobs: mocks.jobs, killJob: vi.fn() }),
+    selector({
+      jobs: mocks.jobs,
+      killJob: vi.fn(),
+      readInterrupted: mocks.readInterrupted,
+    }),
 }));
 
 // MultiHostPicker 是头部的无条件子组件，它的数据来源在此替换为空集。
@@ -45,6 +50,7 @@ let root: Root;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.jobs = {};
+  mocks.readInterrupted = {};
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -132,6 +138,32 @@ describe('AgentPanelHeader（原 AgentPanel 内联头部，行为不变）', () 
 
   it('只有中断作业（重启恢复）也必须给入口：文案指向未知结局', async () => {
     mocks.jobs = { 'job-1': jobInfo({ status: 'interrupted' }) };
+    await act(async () => {
+      root.render(<AgentPanelHeader {...baseProps()} />);
+    });
+
+    expect(container.textContent).toContain('1 个作业已中断');
+  });
+
+  it('读过结局说明的 interrupted 不再挂警示胶囊（已读记账，双端同口径）', async () => {
+    mocks.jobs = {
+      'job-1': jobInfo({ status: 'interrupted' }),
+      'job-2': jobInfo({ jobId: 'job-2', status: 'interrupted', startedAtMillis: 2 }),
+    };
+    mocks.readInterrupted = { 'job-1': 1, 'job-2': 2 };
+    await act(async () => {
+      root.render(<AgentPanelHeader {...baseProps()} />);
+    });
+
+    expect(container.textContent).not.toContain('个作业已中断');
+  });
+
+  it('只读过一部分时未读的照旧挂警示，计数只算未读', async () => {
+    mocks.jobs = {
+      'job-1': jobInfo({ status: 'interrupted' }),
+      'job-2': jobInfo({ jobId: 'job-2', status: 'interrupted', startedAtMillis: 2 }),
+    };
+    mocks.readInterrupted = { 'job-1': 1 };
     await act(async () => {
       root.render(<AgentPanelHeader {...baseProps()} />);
     });

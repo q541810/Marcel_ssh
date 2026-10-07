@@ -2,6 +2,7 @@ import type { AgentTask, JobInfo } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
 import { useConversationStore } from '@/stores/conversationStore';
 import { isTaskActive, isTaskBusy } from '@/lib/agentStatus';
+import type { ReadInterruptedJobs } from '@/lib/jobReadState';
 
 /**
  * 计算单个 Agent Task 的视觉状态
@@ -107,11 +108,19 @@ export function getActiveRunningTasks(tasks: Record<string, AgentTask>): AgentTa
  * ——它的失败当时已经回灌进对话，不欠交代）。而重启后的典型场景恰好是
  * 「没有任何任务在跑、也没有作业在跑」，只看 running 的话这些作业就永远
  * 没有入口（抽屉打不开、也看不到）。
+ *
+ * **已读不算**：用户在任务/作业中心看过结局说明（Jobs 页签亮出来即记已读，
+ * 见 `lib/jobReadState`）的 interrupted 不再计入警示——否则这颗琥珀警示胶囊
+ * 会在每个会话头上挂满台账的 7 天保留期，与用户是否已经看过无关。读过之后
+ * 若没有别的在跑，入口随之消失：信息已交付，空闲态回到没有胶囊的样子；
+ * 下次重启若有**新的**作业被打断，警示照旧再响一次。
  */
 export function taskCenterEntry(
   tasks: Record<string, AgentTask>,
   jobs: Record<string, JobInfo>,
   activeConversationId: string | null,
+  /** interrupted 作业的已读表（lib/jobReadState 持久化，调用方从 jobStore 订阅）。 */
+  readInterrupted: ReadInterruptedJobs = {},
 ): {
   visible: boolean;
   runningTasks: AgentTask[];
@@ -124,7 +133,9 @@ export function taskCenterEntry(
   const runningTasks = getActiveRunningTasks(tasks);
   const jobList = Object.values(jobs);
   const runningJobs = jobList.filter((j) => j.status === 'running');
-  const attentionJobs = jobList.filter((j) => j.status === 'interrupted');
+  const attentionJobs = jobList.filter(
+    (j) => j.status === 'interrupted' && !(j.jobId in readInterrupted),
+  );
 
   const visible =
     runningTasks.length > 1 ||

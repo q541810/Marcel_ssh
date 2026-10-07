@@ -209,9 +209,11 @@ export default function MobileAgentHost({
   // 那种状态下没有任何 running，只看 running 的话抽屉就永远打不开。
   // 判定与桌面 AgentPanel 共用 `taskCenterEntry`（见其注释）。
   const jobs = useJobStore((s) => s.jobs);
+  // interrupted 作业的已读表：读过结局说明的不再触发警示胶囊（口径见 taskCenterEntry）
+  const readInterrupted = useJobStore((s) => s.readInterrupted);
   const taskCenter = useMemo(
-    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null),
-    [tasks, jobs, activeConversationId],
+    () => taskCenterEntry(tasks, jobs, activeConversationId ?? null, readInterrupted),
+    [tasks, jobs, activeConversationId, readInterrupted],
   );
   const [agentsSheetTab, setAgentsSheetTab] = useState<"agents" | "jobs">("agents");
 

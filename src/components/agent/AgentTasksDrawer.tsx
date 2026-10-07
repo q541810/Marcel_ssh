@@ -45,6 +45,17 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
     if (open && initialTab) setActiveTab(initialTab);
   }, [open, initialTab]);
 
+  // Jobs 页签真正亮出来才记「已读」：interrupted 作业的琥珀警示胶囊只数未读的
+  // （见 taskCenterEntry），看过结局说明就该摘掉——口径对齐传输中心未读失败
+  // 角标的「展开即清零」，但这里必须停在 Jobs 页签（agents 页签看不到作业，
+  // 开在 agents 页就关掉不算看过）。
+  const markInterruptedJobsRead = useJobStore((s) => s.markInterruptedJobsRead);
+  useEffect(() => {
+    if (open && activeTab === 'jobs') {
+      markInterruptedJobsRead(Object.values(jobs));
+    }
+  }, [open, activeTab, jobs, markInterruptedJobsRead]);
+
   if (!presence.mounted) return null;
 
   const runningTasks = getActiveRunningTasks(tasks);
