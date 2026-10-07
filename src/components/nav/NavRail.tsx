@@ -3,7 +3,11 @@ import { HelpCircle, ArrowUpDown } from 'lucide-react';
 import HelpModal from '../HelpModal';
 import TransferQueue from '../sftp/TransferQueue';
 import { useViewStore, byNavGroup } from '@/stores/viewStore';
-import { useTransferStore, selectBadgeCount } from '@/stores/transferStore';
+import {
+  useTransferStore,
+  selectBadgeCount,
+  selectUnreadErrorCount,
+} from '@/stores/transferStore';
 import { registerTransferTarget } from '@/stores/transferFlyAnimation';
 import type { ViewIcon } from '@/lib/types';
 
@@ -29,6 +33,7 @@ function NavButton({
   active,
   onClick,
   badge,
+  badgeTone = 'indigo',
   buttonRef,
 }: {
   title: string;
@@ -36,6 +41,7 @@ function NavButton({
   active: boolean;
   onClick: () => void;
   badge?: number;
+  badgeTone?: 'indigo' | 'red';
   buttonRef?: React.Ref<HTMLButtonElement>;
 }) {
   return (
@@ -58,7 +64,12 @@ function NavButton({
       )}
       {icon}
       {badge !== undefined && badge > 0 && (
-        <span className="absolute top-1 right-1 min-w-4 h-4 px-1 rounded-full bg-indigo-500 text-[10px] leading-4 text-white text-center">
+        <span
+          key={badge}
+          className={`badge-pop-in absolute bottom-1 right-1 min-w-4 h-4 px-1 rounded-full text-[10px] leading-4 text-white text-center ${
+            badgeTone === 'red' ? 'bg-red-500' : 'bg-indigo-500'
+          }`}
+        >
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -72,9 +83,15 @@ export default function NavRail({ activeId, onChange }: Props) {
   const topItems = useMemo(() => byNavGroup(providers, 'top'), [providers]);
   const bottomItems = useMemo(() => byNavGroup(providers, 'bottom'), [providers]);
   const transferBadge = useTransferStore(selectBadgeCount);
+  const unreadErrorCount = useTransferStore(selectUnreadErrorCount);
   const transferOpen = useTransferStore((s) => s.open);
   const setTransferOpen = useTransferStore((s) => s.setOpen);
   const transferBtnRef = useRef<HTMLButtonElement>(null);
+  // 单角标位优先级：未读失败（红）> 进行中（靛蓝），对齐 MobileTabBar agent tab 的范式
+  const hasUnreadErrors = unreadErrorCount > 0;
+  const transferTitle = hasUnreadErrors
+    ? `传输中心（${unreadErrorCount} 个传输失败）`
+    : '传输中心';
 
   useEffect(() => {
     registerTransferTarget(transferBtnRef.current);
@@ -102,11 +119,12 @@ export default function NavRail({ activeId, onChange }: Props) {
           onClick={() => setHelpOpen(true)}
         />
         <NavButton
-          title="传输中心"
+          title={transferTitle}
           icon={<ArrowUpDown className="w-5 h-5" />}
           active={transferOpen}
           onClick={() => setTransferOpen(!transferOpen)}
-          badge={transferBadge}
+          badge={hasUnreadErrors ? unreadErrorCount : transferBadge}
+          badgeTone={hasUnreadErrors ? 'red' : 'indigo'}
           buttonRef={transferBtnRef}
         />
         {bottomItems.map((p) => (

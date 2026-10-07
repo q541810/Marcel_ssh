@@ -5,6 +5,7 @@ import {
   selectActiveOf,
   selectQueuedOf,
   selectBadgeCount,
+  selectUnreadErrorCount,
   laneOf,
   type TransferItem,
 } from '@/stores/transferStore';
@@ -29,7 +30,7 @@ function makeItem(patch: Partial<TransferItem> = {}): TransferItem {
 
 describe('transferStore', () => {
   beforeEach(() => {
-    useTransferStore.setState({ items: {}, order: [] });
+    useTransferStore.setState({ items: {}, order: [], open: false, unreadErrorIds: [] });
   });
 
   it('addItem inserts with queued status and preserves order', () => {
@@ -130,5 +131,94 @@ describe('transferStore', () => {
     useTransferStore.getState().updateItem(a.id, { status: 'active' });
     useTransferStore.getState().updateItem(b.id, { status: 'done' });
     expect(selectBadgeCount(useTransferStore.getState())).toBe(2);
+  });
+
+  it('error transition while panel closed records unread error', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    const state = useTransferStore.getState();
+    expect(state.unreadErrorIds).toEqual([a.id]);
+    expect(selectUnreadErrorCount(state)).toBe(1);
+  });
+
+  it('repeated error patches do not duplicate unread entries', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    useTransferStore.getState().updateItem(a.id, { statusText: '下载失败：again' });
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([a.id]);
+  });
+
+  it('non-error transitions never record unread', () => {
+    const a = makeItem();
+    const b = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().addItem(b);
+    useTransferStore.getState().updateItem(a.id, { status: 'done' });
+    useTransferStore.getState().updateItem(b.id, { status: 'cancelled' });
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([]);
+  });
+
+  it('errors while panel open are not recorded', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().setOpen(true);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([]);
+  });
+
+  it('setOpen(true) clears unread errors', () => {
+    const a = makeItem();
+    const b = makeItem();
+    for (const it of [a, b]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    useTransferStore.getState().updateItem(b.id, { status: 'error' });
+    useTransferStore.getState().setOpen(true);
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([]);
+  });
+
+  it('errors after closing the panel accumulate again', () => {
+    const a = makeItem();
+    const b = makeItem();
+    for (const it of [a, b]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    useTransferStore.getState().setOpen(true);
+    useTransferStore.getState().setOpen(false);
+    useTransferStore.getState().updateItem(b.id, { status: 'error' });
+    const state = useTransferStore.getState();
+    expect(state.unreadErrorIds).toEqual([b.id]);
+    expect(selectUnreadErrorCount(state)).toBe(1);
+  });
+
+  it('removeItem prunes unread errors (no ghost count)', () => {
+    const a = makeItem();
+    useTransferStore.getState().addItem(a);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    useTransferStore.getState().removeItem(a.id);
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([]);
+  });
+
+  it('clearFinished prunes unread errors of removed items', () => {
+    const a = makeItem();
+    const b = makeItem();
+    for (const it of [a, b]) useTransferStore.getState().addItem(it);
+    useTransferStore.getState().updateItem(a.id, { status: 'error' });
+    useTransferStore.getState().clearFinished();
+    expect(useTransferStore.getState().unreadErrorIds).toEqual([]);
+    expect(useTransferStore.getState().order).toEqual([b.id]);
+  });
+
+  it('finished-item overflow trim prunes unread errors of dropped items', () => {
+    const batch = Array.from({ length: 51 }, () => makeItem());
+    for (const it of batch) useTransferStore.getState().addItem(it);
+    for (const it of batch) useTransferStore.getState().updateItem(it.id, { status: 'error' });
+    expect(useTransferStore.getState().unreadErrorIds.length).toBe(51);
+    // 再入队 1 条触发完成项裁剪：最旧的失败项被裁掉，其未读记录同步修剪
+    useTransferStore.getState().addItem(makeItem());
+    const state = useTransferStore.getState();
+    expect(state.items[batch[0].id]).toBeUndefined();
+    expect(state.unreadErrorIds).not.toContain(batch[0].id);
+    expect(state.unreadErrorIds.length).toBe(50);
   });
 });

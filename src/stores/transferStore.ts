@@ -61,6 +61,13 @@ interface TransferCenterState {
   open: boolean;
   setOpen: (open: boolean) => void;
 
+  /**
+   * 面板关闭期间新失败、尚未被用户在传输中心里看过的条目 id
+   * （角标数字；对齐 taskStore.unreadCompletedConversations 的范式）。
+   * 不变式：unreadErrorIds ⊆ 现存条目。
+   */
+  unreadErrorIds: string[];
+
   addItem: (item: TransferItem) => void;
   updateItem: (id: string, patch: Partial<StoredTransferItem>) => void;
   removeItem: (id: string) => void;
@@ -71,8 +78,15 @@ export const useTransferStore = create<TransferCenterState>((set) => ({
   items: {},
   order: [],
   open: false,
+  unreadErrorIds: [],
 
-  setOpen: (open) => set({ open }),
+  // 展开传输中心即视为用户看过失败（焦点锁定），未读角标清零
+  setOpen: (open) =>
+    set((state) =>
+      open && state.unreadErrorIds.length > 0
+        ? { open, unreadErrorIds: [] }
+        : { open },
+    ),
 
   addItem: (item) =>
     set((state) => {
@@ -82,14 +96,20 @@ export const useTransferStore = create<TransferCenterState>((set) => ({
         [item.id]: { ...item, status: 'queued' },
       };
       let order = [...state.order, item.id];
+      let unreadErrorIds = state.unreadErrorIds;
       // 完成项超上限时裁剪最旧的完成项
       const finishedIds = order.filter((id) => isFinished(items[id].status));
       if (finishedIds.length > MAX_FINISHED_ITEMS) {
         const toDrop = new Set(finishedIds.slice(0, finishedIds.length - MAX_FINISHED_ITEMS));
         order = order.filter((id) => !toDrop.has(id));
         items = Object.fromEntries(order.map((id) => [id, items[id]]));
+        if (unreadErrorIds.some((id) => toDrop.has(id))) {
+          unreadErrorIds = unreadErrorIds.filter((id) => !toDrop.has(id));
+        }
       }
-      return { items, order };
+      return unreadErrorIds === state.unreadErrorIds
+        ? { items, order }
+        : { items, order, unreadErrorIds };
     }),
 
   updateItem: (id, patch) =>
@@ -104,7 +124,17 @@ export const useTransferStore = create<TransferCenterState>((set) => ({
       ) {
         return state;
       }
-      return { items: { ...state.items, [id]: { ...current, ...patch } } };
+      const items = { ...state.items, [id]: { ...current, ...patch } };
+      // 面板关闭时新落终态的失败计入未读角标（幂等）；面板开着视为用户已见
+      if (
+        patch.status === 'error' &&
+        current.status !== 'error' &&
+        !state.open &&
+        !state.unreadErrorIds.includes(id)
+      ) {
+        return { items, unreadErrorIds: [...state.unreadErrorIds, id] };
+      }
+      return { items };
     }),
 
   removeItem: (id) =>
@@ -112,16 +142,25 @@ export const useTransferStore = create<TransferCenterState>((set) => ({
       if (!state.items[id]) return state;
       const items = { ...state.items };
       delete items[id];
-      return { items, order: state.order.filter((x) => x !== id) };
+      if (!state.unreadErrorIds.includes(id)) {
+        return { items, order: state.order.filter((x) => x !== id) };
+      }
+      return {
+        items,
+        order: state.order.filter((x) => x !== id),
+        unreadErrorIds: state.unreadErrorIds.filter((x) => x !== id),
+      };
     }),
 
   clearFinished: () =>
     set((state) => {
       const order = state.order.filter((id) => !isFinished(state.items[id].status));
       if (order.length === state.order.length) return state;
+      const kept = new Set(order);
       return {
         order,
         items: Object.fromEntries(order.map((id) => [id, state.items[id]])),
+        unreadErrorIds: state.unreadErrorIds.filter((id) => kept.has(id)),
       };
     }),
 }));
@@ -130,7 +169,7 @@ export const useTransferStore = create<TransferCenterState>((set) => ({
 // Selectors（纯函数，可单测）
 // ---------------------------------------------------------------------------
 
-type TransferSnapshot = Pick<TransferCenterState, 'items' | 'order'>;
+type TransferSnapshot = Pick<TransferCenterState, 'items' | 'order' | 'unreadErrorIds'>;
 
 export function selectByLane(state: TransferSnapshot, lane: TransferLane): StoredTransferItem[] {
   return state.order
@@ -169,4 +208,9 @@ export function selectQueuedOf(state: TransferSnapshot, lane: TransferLane): Sto
 
 export function selectBadgeCount(state: TransferSnapshot): number {
   return state.order.filter((id) => !isFinished(state.items[id].status)).length;
+}
+
+/** 传输中心入口的未读失败数（红色角标；面板展开即清零） */
+export function selectUnreadErrorCount(state: TransferSnapshot): number {
+  return state.unreadErrorIds.length;
 }
