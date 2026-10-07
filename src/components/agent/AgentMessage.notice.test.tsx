@@ -166,7 +166,7 @@ describe('系统告知卡', () => {
     expect(el.textContent).toContain('构建（release）');
     // 状态不进折叠态，但「没跑好」这件事要靠卡片色调说出来
     expect(el.textContent).not.toContain('执行失败');
-    expect(el.innerHTML).toContain('border-red-800/60');
+    expect(el.innerHTML).toContain('text-red-400');
   });
 
   it('认不出的措辞：照原样显示，不吞内容', () => {

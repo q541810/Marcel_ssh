@@ -23,7 +23,7 @@ export function ConversationDisplaySection() {
       <SettingItem
         id="fold-turns"
         label="折叠已完成回合"
-        description="将已结束且步骤较多的回合收成一行“已执行 n 步 · 共 m 条消息”，点击展开过程"
+        description="收起已完成长回合的中间消息和工具调用，保留提问与最终答复；工具卡片分组不受此开关影响"
         sectionId="settings-display"
         keywords={['fold', 'turn', 'compact', 'process', '折叠', '回合', '过程', '对话显示']}
       >

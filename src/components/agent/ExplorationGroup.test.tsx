@@ -30,7 +30,10 @@ describe('isExplorationTool', () => {
     const html = renderToStaticMarkup(<ExplorationGroup messages={[message]} />);
     expect(html).not.toContain('含降级');
     expect(html).not.toContain('bg-amber');
-    expect(html).toContain('已探索');
+    expect(html).toContain('执行');
+    expect(html).toContain('http_get');
+    expect(html).not.toContain('已探索');
+    expect(html).not.toContain('次http_get');
   });
 
   it('keeps genuine website interception visible in a collapsed group', () => {

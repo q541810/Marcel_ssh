@@ -1,0 +1,55 @@
+.tool-call-summary {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.tool-call-summary-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call-summary-item {
+  display: inline-flex;
+  align-items: baseline;
+  vertical-align: baseline;
+  min-width: 0;
+  max-width: calc(100% - 2em);
+  animation: tool-summary-arrive 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.tool-call-summary-name {
+  min-width: 0;
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-summary-toggle {
+  min-height: 28px;
+  touch-action: manipulation;
+}
+
+.tool-summary-toggle:active { background: rgb(127 127 127 / 0.1); }
+.tool-summary-toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+
+@keyframes tool-summary-arrive {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (pointer: coarse) {
+  .tool-summary-toggle { min-height: 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-call-summary-item { animation: none; }
+  .tool-summary-toggle svg { transition: none; }
+}

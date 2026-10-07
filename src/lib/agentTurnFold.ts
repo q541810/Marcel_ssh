@@ -1,7 +1,7 @@
 /**
  * agentTurnFold.ts — 已结束回合（turn）的过程折叠分段纯函数。
  *
- * 语义（用户拍板 + 对齐 DSH「x 次工具调用 · x 条消息」的回合折叠思路）：
+ * 语义（回合过程折叠，独立于连续工具卡片的按工具名计数）：
  * - 回合边界：user 消息是硬边界。相邻两条 user 消息之间 = 一个回合；
  *   被 rollback / 新 user 打断的半截过程也算一个（已结束的）回合。
  * - 已结束判定：回合内最后一条「有回复内容的纯文本 assistant」= 答案；
@@ -26,10 +26,10 @@
  */
 
 import type { AgentMessage, TurnState } from "@/lib/types";
-import { isDeliverableTool, isSubagentTool } from "@/lib/toolCatalog";
+import { isSubagentTool } from "@/lib/toolCatalog";
+import { isDeliveredToolResult } from "@/lib/toolCallSummary";
 
-/** 过程 tool 消息达到该条数才把回合收成折叠（默认折叠阈值，对齐
- *  ExplorationGroup 探索工具 4 条 / plan 2 条的同类“组折叠”直觉）。 */
+/** 已完成回合的过程 tool 消息达到该条数才默认折叠。 */
 export const TOOL_FOLD_MIN = 3;
 
 /** 折叠控制行文案里显示的最大计数（超过显示 “n+”，避免超长回合撑爆标签）。 */
@@ -79,19 +79,6 @@ export interface TurnSegment {
 
 function isSubagentToolResult(msg: AgentMessage): boolean {
   return msg.role === 'tool' && !!msg.toolResult && isSubagentTool(msg.toolResult.toolName);
-}
-
-/**
- * 成功交付的交付物结果（如 render_html 图表）：折叠豁免、不计步数。
- * 失败 / 被拦的调用仍是过程的一部分，照常折叠。名字级声明在 `toolCatalog`
- * （`deliverable` 标志），单次调用的成败在这里结合 `toolResult` 判定。
- */
-function isDeliveredToolResult(msg: AgentMessage): boolean {
-  return msg.role === "tool"
-    && !!msg.toolResult
-    && isDeliverableTool(msg.toolResult.toolName)
-    && msg.toolResult.success
-    && !msg.toolResult.blocked;
 }
 
 /**
@@ -275,6 +262,7 @@ export function segmentTurns(
     const foldable = !(isTail && tailActive)
       && toolCallCount >= TOOL_FOLD_MIN
       && !before.some((m) => m.role === "system")
+      && !turn.some((m) => m.isExecuting || m.isLoading)
       && !turnStopVetoed(turn[userIndex]?.turnState);
 
     segments.push({
@@ -294,26 +282,14 @@ export function segmentTurns(
   return segments;
 }
 
-/**
- * 生成本地化折叠控制行文案（MSL 风格，对齐探索组「已探索 n 次读取」）。
- *
- * @param seg 回合段。
- * @returns 「已执行 n 步 · 共 m 条消息」/「已思考 n 轮 · 共 m 条消息」/「查看过程」。
- */
-export function turnFoldLabel(seg: {
-  readonly toolCallCount: number;
-  readonly messageCount: number;
-  readonly subagentCount: number;
-}): string {
-  const tool = seg.toolCallCount;
-  const msg = seg.messageCount;
-  const sub = seg.subagentCount;
-  const toolText = tool > 0 ? `已执行 ${tool} 步` : null;
-  const msgText = msg > 0 ? `共 ${msg} 条消息` : null;
-  const subText = sub > 0 ? `${sub} 个任务` : null;
-  const parts = [toolText, subText, msgText].filter(Boolean) as string[];
-  if (parts.length > 0) return parts.join(" · ");
-  return "查看过程";
+/** 整个回合的过程摘要：步骤与消息计数，和工具卡片分组保持独立。 */
+export function turnFoldLabel(seg: Pick<TurnSegment, 'toolCallCount' | 'messageCount' | 'subagentCount'>): string {
+  const parts = [
+    seg.toolCallCount > 0 ? `已执行 ${seg.toolCallCount} 步` : null,
+    seg.subagentCount > 0 ? `${seg.subagentCount} 个任务` : null,
+    seg.messageCount > 0 ? `共 ${seg.messageCount} 条消息` : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : '查看过程';
 }
 
 /** 折叠/展开时的按钮文案。 */

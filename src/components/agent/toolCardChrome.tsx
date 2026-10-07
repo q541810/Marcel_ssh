@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { toolIconPaths } from '@/lib/toolCatalog';
 
 /**
- * 工具调用卡的骨架：容器 + 标题行（图标胶囊 · 小标记 · 摘要 · 右侧箭头）+ 正文。
+ * 工具调用卡的骨架：轻量单行（图标 · 操作摘要 · 小标记 · 箭头）+ 按需展开的正文。
  *
  * 抽出来的理由：会话里的「系统告知」（`JobNoticeCard`）要长得跟工具卡一模一样
  * —— 同一个视觉语言，用户一眼就知道「这是系统/模型做的事，不是我说的话」。
@@ -31,7 +31,7 @@ export function ToolIcon({ toolName }: { toolName: string }) {
 export type ToolChipTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
 
 const CHIP_TONE_CLASS: Record<ToolChipTone, string> = {
-  neutral: 'bg-zinc-600/60 text-zinc-200',
+  neutral: 'text-zinc-400',
   info: 'bg-sky-500/10 text-sky-300',
   success: 'bg-emerald-500/10 text-emerald-300',
   warning: 'bg-amber-500/10 text-amber-300',
@@ -57,7 +57,7 @@ export function ToolChip({
 }) {
   return (
     <span
-      className={`${shrinkable ? 'min-w-0' : 'flex-shrink-0'} text-[11px] px-1.5 py-0.5 rounded-md font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
+      className={`${shrinkable ? 'min-w-0' : 'flex-shrink-0'} text-[11px] leading-4 px-1 py-0 rounded font-medium ${CHIP_TONE_CLASS[tone]} ${className}`}
       title={title}
     >
       {children}
@@ -69,9 +69,9 @@ export function ToolChip({
 export type ToolCardTone = 'default' | 'warning' | 'danger';
 
 const CONTAINER_TONE_CLASS: Record<ToolCardTone, string> = {
-  default: 'border-zinc-700/60 bg-zinc-800/50',
-  warning: 'border-amber-700/60 bg-amber-950/20',
-  danger: 'border-red-800/60 bg-red-950/30',
+  default: 'text-zinc-400',
+  warning: 'text-amber-400',
+  danger: 'text-red-400',
 };
 
 export function ToolCardFrame({
@@ -109,26 +109,29 @@ export function ToolCardFrame({
   return (
     <div
       ref={containerRef}
-      className={`min-w-0 max-w-full rounded-md border ${CONTAINER_TONE_CLASS[tone]}`}
+      className={`min-w-0 max-w-full rounded-md ${CONTAINER_TONE_CLASS[tone]}`}
     >
       <button
         type="button"
         onClick={onToggle}
-        className="group w-full min-w-0 text-left"
+        aria-expanded={onToggle && !busy ? expanded : undefined}
+        aria-disabled={busy || !onToggle || undefined}
+        title={typeof preview === 'string' && preview ? `${label} ${preview}` : label}
+        className="group block w-full min-w-0 rounded-md text-left transition-colors duration-150 hover:bg-zinc-800/30 active:bg-zinc-800/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 touch-manipulation motion-reduce:transition-none"
       >
-        <div className="flex items-center justify-between px-3 py-1.5 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
-              <ToolIcon toolName={toolName} />
-              <span>{label}</span>
-            </span>
-            {chips}
+        <div className="flex min-h-7 items-center gap-2 px-1 py-1 min-w-0 [@media(pointer:coarse)]:min-h-8">
+          <span className="shrink-0" aria-hidden="true">
+            <ToolIcon toolName={toolName} />
+          </span>
+          <div className="flex flex-1 items-center gap-2 min-w-0 overflow-hidden">
+            <span className={`min-w-0 truncate text-[13px] leading-5 font-normal ${preview ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>{label}</span>
             {preview && (
-              <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px] leading-5 font-normal text-zinc-400 font-mono">{preview}</span>
             )}
-            {trailing}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex min-w-0 max-w-[45%] items-center gap-1 overflow-hidden empty:hidden">{chips}</div>
+          {trailing}
+          <div className="flex items-center gap-1 flex-shrink-0">
             {busy ? (
               <svg
                 className="animate-spin h-4 w-4 flex-shrink-0 text-zinc-500"
@@ -150,9 +153,9 @@ export function ToolCardFrame({
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                 ></path>
               </svg>
-            ) : (
+            ) : onToggle ? (
               <svg
-                className={`w-4 h-4 flex-shrink-0 text-zinc-500 group-hover:text-zinc-300 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                className={`w-3 h-3 flex-shrink-0 text-zinc-500 group-hover:text-zinc-300 transition-transform duration-200 motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -164,7 +167,7 @@ export function ToolCardFrame({
                   d="M19 9l-7 7-7-7"
                 />
               </svg>
-            )}
+            ) : null}
           </div>
         </div>
       </button>

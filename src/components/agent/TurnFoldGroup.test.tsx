@@ -87,7 +87,7 @@ describe('TurnFoldGroup', () => {
   it('折叠态：渲染控制行 + user + 答案，不渲染过程', () => {
     const seg = buildFoldableSegment(4);
     mount(seg);
-    expect(container.textContent).toContain('已执行 4 步');
+    expect(container.textContent).toContain('已执行 4 步 · 共 1 条消息');
     expect(container.querySelector('[data-testid="user"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="answer"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="expanded"]')).toBeNull();
@@ -100,11 +100,12 @@ describe('TurnFoldGroup', () => {
     // 点控制行展开
     const btn = container.querySelector('button')!;
     act(() => btn.click());
-    expect(container.textContent).toContain('收起过程');
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(btn.getAttribute('aria-label')).toContain('收起过程');
     expect(container.querySelector('[data-testid="expanded"]')).not.toBeNull();
     // 再点收起
     act(() => container.querySelector('button')!.click());
-    expect(container.textContent).toContain('已执行 4 步');
+    expect(container.textContent).toContain('已执行 4 步 · 共 1 条消息');
     expect(container.querySelector('[data-testid="expanded"]')).toBeNull();
   });
 
@@ -121,7 +122,7 @@ describe('TurnFoldGroup', () => {
     expect(seg.foldable).toBe(true);
     expect(seg.toolCallCount).toBe(3);
     mount(seg, false, () => <div data-testid="deliverables">chart</div>);
-    expect(container.textContent).toContain('已执行 3 步');
+    expect(container.textContent).toContain('已执行 3 步 · 共 1 条消息');
     expect(container.querySelector('[data-testid="deliverables"]')).not.toBeNull();
     // 折叠态下过程区不渲染，交付物独立于它显示
     expect(container.querySelector('[data-testid="expanded"]')).toBeNull();

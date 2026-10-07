@@ -215,6 +215,7 @@ const ICON_FOLDER = [
   'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z',
 ];
 const ICON_MAGNIFIER = ['M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'];
+const ICON_PLAN = ['M9 6h11M9 12h11M9 18h11M3 6h.01M3 12h.01M3 18h.01'];
 /** 回读历史：时钟 + 回拨箭头（"把时间拨回去看原文"）。 */
 const ICON_HISTORY = [
   'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8',
@@ -474,20 +475,23 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
     approvalView: 'prompt',
     preview: (args) => clip(asArgString(args.description) || asArgString(args.prompt) || ''),
   },
-  // ── plan 工具：卡片位置渲染成一行状态文字（计划本体在 PlanList 里） ──
+  // ── plan 工具：共用轻量工具行，计划本体在 PlanList 里 ──
   {
     name: 'create_plan',
     label: '创建plan',
+    iconPaths: ICON_PLAN,
     group: 'plan',
   },
   {
     name: 'update_plan_item',
     label: '更新plan步骤',
+    iconPaths: ICON_PLAN,
     group: 'plan',
   },
   {
     name: 'edit_plan',
     label: '编辑plan',
+    iconPaths: ICON_PLAN,
     group: 'plan',
   },
 ];
@@ -633,8 +637,7 @@ export function toolLabel(toolName: string): string {
 /**
  * 卡片标题行显示什么名字。
  *
- * `isSkill` 单独返回：skill 调用不渲染成工具卡片，而是一行灰色文字
- * （「SKILL 名字」），调用方据此走另一条渲染分支。
+ * `isSkill` 单独返回供调用方识别来源；skill 与其他工具共用轻量工具行。
  */
 export function toolDisplayName(toolName: string): { display: string; isSkill: boolean } {
   if (isSkillTool(toolName)) {

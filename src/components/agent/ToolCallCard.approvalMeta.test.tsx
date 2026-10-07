@@ -104,7 +104,7 @@ describe('ToolCallCard 审批判定元信息', () => {
       expect(text, `不得用「${wrong}」描述 Jev 的 confidence`).not.toContain(wrong);
     }
     // 悬停说明把事情讲清楚。
-    const titled = el.querySelector('[title]');
+    const titled = el.querySelector('span.tabular-nums[title]');
     expect(titled?.getAttribute('title')).toContain('不是判定正确的概率');
   });
 

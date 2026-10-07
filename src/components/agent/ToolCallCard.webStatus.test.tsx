@@ -91,6 +91,15 @@ function baseResult(overrides: Partial<NonNullable<AgentMessage['toolResult']>> 
 }
 
 describe('ToolCallCard 联网工具状态标记', () => {
+  it.each(['create_plan', 'update_plan_item', 'edit_plan', 'skill_review'])('keeps %s results expandable in the shared tool row', (toolName) => {
+    const el = renderCard(baseResult({ toolName, summary: '操作摘要', result: '详细结果', metadata: undefined }));
+    expect(el.textContent).toContain('操作摘要');
+    expect(el.textContent).not.toContain('详细结果');
+    expand(el);
+    expect(el.textContent).toContain('详细结果');
+    expect(el.querySelector('button')?.getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('keeps an unrecovered page visible when another page in the batch succeeded', () => {
     const el = renderCard(baseResult({
       toolName: 'http_get', success: true,

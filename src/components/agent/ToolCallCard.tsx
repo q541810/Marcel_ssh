@@ -12,16 +12,14 @@ import { readWebToolStatus, webToolChips, webToolDetails, webToolNotice } from '
 import {
   asArgString,
   fileChangeToolName,
-  isPlanTool,
   isSubagentTool,
   toolDisplayName,
-  toolLabel,
   toolPreview,
   toolSpec,
 } from '@/lib/toolCatalog';
 // 卡片骨架（容器 + 标题行）与图标/小标记是共用的：「系统告知」卡用的是同一副
 // 壳（见 `jobNoticeCard`），样式只留这一份。
-import { ToolCardFrame, ToolChip, ToolIcon } from './toolCardChrome';
+import { ToolCardFrame, ToolChip } from './toolCardChrome';
 import { useMessageViewState } from './messageViewState';
 
 interface Props {
@@ -150,28 +148,8 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   // Handle tool result messages (from stored history or live stream)
   if (message.toolResult) {
     const tr = message.toolResult;
-    const { display: displayName, isSkill } = toolDisplayName(tr.toolName);
-    // Skill tools render as thinking-style text, not as cards
-    if (isSkill) {
-      return (
-        <div className="flex justify-start my-1">
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{tr.summary || displayName}</span>
-          </div>
-        </div>
-      );
-    }
-    // Plan tools render as lightweight status text (plan state shown in PlanList)
-    if (isPlanTool(tr.toolName)) {
-      return (
-        <div className="flex justify-start my-1">
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{toolLabel(tr.toolName)}</span>
-          </div>
-        </div>
-      );
-    }
-    const preview = toolPreview(tr.toolName, tr.arguments);
+    const { display: displayName } = toolDisplayName(tr.toolName);
+    const preview = toolPreview(tr.toolName, tr.arguments) || tr.summary;
     // 参数主体是文件改动的工具展开后渲染 diff；不认识的工具回退原始输出。
     const fileChangeTool = fileChangeToolName(tr.toolName);
     const isExecuting = message.isExecuting;
@@ -311,7 +289,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
               <button
                 type="button"
                 onClick={() => openSubConversation(meta)}
-                className="group/task w-full border-t border-zinc-700/50 px-3 py-1.5 text-left transition-colors"
+                className="group/task w-full ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5 text-left transition-colors"
               >
                 <span className="flex items-center gap-1.5 text-xs font-medium text-sky-400 group-hover/task:text-sky-300">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -326,7 +304,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
         )}
         {/* Model approval phase — distinct from execution progress */}
         {message.modelApproval?.status === 'checking' && (
-          <div className="border-t border-zinc-700/50 px-3 py-1.5">
+          <div className="ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5">
             <div className="flex items-center gap-2 text-xs text-indigo-400">
               <svg className="animate-spin h-3 w-3 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -337,7 +315,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </div>
         )}
         {message.modelApproval?.status === 'done' && message.modelApproval.decision === 'route_to_human' && (
-          <div className="border-t border-zinc-700/50 px-3 py-1.5">
+          <div className="ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5">
             <div className="text-xs text-amber-400 font-medium mb-0.5">模型建议人工审批</div>
             <ApprovalMeta
               engine={message.modelApproval.engine}
@@ -351,7 +329,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </div>
         )}
         {message.modelApproval?.status === 'done' && message.modelApproval.decision === 'block' && (
-          <div className="border-t border-zinc-700/50 px-3 py-1.5">
+          <div className="ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5">
             <div className="text-xs text-red-400 font-medium mb-0.5">模型阻止</div>
             <ApprovalMeta
               engine={message.modelApproval.engine}
@@ -368,7 +346,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             放在正文之前，先解释「发生了什么」再看内容，避免用户把验证页正文
             当成真实页面。正常情况不渲染，不占版面。 */}
         {webNotice && !isExecuting && (
-          <div className="border-t border-zinc-700/50 px-3 py-2">
+          <div className="ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-2">
             <div
               className={`rounded-lg border px-3 py-2 ${
                 webNotice.tone === 'danger'
@@ -396,7 +374,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </div>
         )}
         {expanded && !isExecuting && webDetails.length > 0 && (
-          <details className="border-t border-zinc-700/50 px-3 text-xs text-zinc-400">
+          <details className="ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 text-xs text-zinc-400">
             <summary className="min-h-11 py-3 cursor-pointer rounded-sm hover:text-zinc-300 active:text-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-400 touch-manipulation">
               获取详情
             </summary>
@@ -406,7 +384,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </details>
         )}
         {showOutput && (
-          <div className={`min-w-0 border-t border-zinc-700/50 px-3 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
+          <div className={`min-w-0 ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5 ${isExecuting ? '' : 'hidden'}`}>
             <pre
               ref={outputRef}
               onScroll={onOutputScroll}
@@ -420,7 +398,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           tr.success && fileChangeTool ? (
             <FileChangeView toolName={fileChangeTool} arguments={tr.arguments || {}} metadata={tr.metadata} />
           ) : (
-            <div className="min-w-0 border-t border-zinc-700/50 px-3 py-1.5">
+            <div className="min-w-0 ml-3 border-l border-zinc-700/50 pl-3 pr-1.5 py-1.5">
               {isSubagentTool(tr.toolName) && tr.success && (
                 <button
                   onClick={() => openSubConversation(tr.metadata)}
@@ -446,27 +424,7 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
   // Handle assistant messages with toolCall (live streaming tool call info)
   if (message.toolCall) {
     const tc = message.toolCall;
-    const { display: displayName, isSkill } = toolDisplayName(tc.name);
-    // Skill tools render as thinking-style text, not as cards
-    if (isSkill) {
-      return (
-        <div className="flex justify-start my-1">
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{displayName}</span>
-          </div>
-        </div>
-      );
-    }
-    // Plan tools render as lightweight status text
-    if (isPlanTool(tc.name)) {
-      return (
-        <div className="flex justify-start my-1">
-          <div className="flex items-center gap-1 text-xs text-zinc-500">
-            <span>{toolLabel(tc.name)}</span>
-          </div>
-        </div>
-      );
-    }
+    const { display: displayName } = toolDisplayName(tc.name);
     const preview = toolPreview(tc.name, tc.arguments);
     const timeoutSecs = toolSpec(tc.name)?.payload === 'command' ? commandTimeoutSecs : 0;
     // 多机操控：发起瞬间即显示目标机器（参数 host）。此分支无结果 metadata，
@@ -485,13 +443,13 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
       tcHostChars.length > 12 ? `${tcHostChars.slice(0, 12).join('')}…` : tcHost;
 
     return (
-      <div className="rounded-md border border-zinc-700/60 bg-zinc-800/50">
-        <div className="flex items-center justify-between px-3 py-1.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="flex items-center gap-1.5 flex-shrink-0 text-xs font-mono px-1.5 py-0.5 rounded-lg bg-zinc-700/80 text-zinc-300">
-              <ToolIcon toolName={tc.name} />
-              <span>{displayName}</span>
-            </span>
+      <ToolCardFrame
+        toolName={tc.name}
+        label={displayName}
+        preview={preview}
+        busy={message.isExecuting}
+        chips={
+          <>
             {tcHost && (
               <ToolChip
                 title={`目标机器：${tcHost}`}
@@ -517,20 +475,19 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
                 <span className="truncate">{tcModel}</span>
               </ToolChip>
             )}
-            {preview && (
-              <span className="text-sm text-zinc-400 truncate font-mono">{preview}</span>
-            )}
-            {timeoutSecs > 0 && (
+          </>
+        }
+        trailing={
+            timeoutSecs > 0 && (
               <span className="flex items-center gap-1 flex-shrink-0 text-xs text-amber-400">
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 {timeoutSecs}s
               </span>
-            )}
-          </div>
-        </div>
-      </div>
+            )
+        }
+      />
     );
   }
 

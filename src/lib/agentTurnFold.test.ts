@@ -408,20 +408,37 @@ describe('withTailTurnState', () => {
 });
 
 describe('turnFoldLabel', () => {
-  it('工具+消息 → “已执行 n 步 · 共 m 条消息”', () => {
-    expect(turnFoldLabel({ toolCallCount: 5, messageCount: 2, subagentCount: 0 }))
-      .toBe('已执行 5 步 · 共 2 条消息');
+  it('整个回合独立汇总步骤、中间消息和子任务', () => {
+    expect(turnFoldLabel({ toolCallCount: 4, messageCount: 2, subagentCount: 1 }))
+      .toBe('已执行 4 步 · 1 个任务 · 共 2 条消息');
   });
-  it('有 subagent → 追加“n 个任务”', () => {
-    expect(turnFoldLabel({ toolCallCount: 3, messageCount: 1, subagentCount: 2 }))
-      .toBe('已执行 3 步 · 2 个任务 · 共 1 条消息');
-  });
-  it('只有消息 → “共 m 条消息”', () => {
+  it('不显示没有发生的消息或任务计数', () => {
+    expect(turnFoldLabel({ toolCallCount: 3, messageCount: 0, subagentCount: 0 }))
+      .toBe('已执行 3 步');
     expect(turnFoldLabel({ toolCallCount: 0, messageCount: 2, subagentCount: 0 }))
       .toBe('共 2 条消息');
   });
-  it('全空 → “查看过程”', () => {
+  it('计数沿用回合语义，交付物与最终答复不算过程', () => {
+    const segment = segmentTurns([
+      user('u'), assistantText('middle', '处理中'), tool('t1'),
+      tool('t2'), tool('t3'), tool('viz', 'render_html'), assistantText('answer', '完成'),
+    ])[0];
+    expect(turnFoldLabel(segment)).toBe('已执行 3 步 · 共 1 条消息');
+  });
+  it('无过程的旧数据保持查看文案', () => {
     expect(turnFoldLabel({ toolCallCount: 0, messageCount: 0, subagentCount: 0 }))
       .toBe('查看过程');
+  });
+});
+
+describe('执行中工具的回合保护', () => {
+  it('即使有完成标记和末尾答案，执行中卡也不能被回合收起', () => {
+    const messages = [
+      { ...user('u'), turnState: 'completed' as const },
+      tool('t1'), tool('t2'), tool('t3'),
+      { ...tool('t4'), isExecuting: true },
+      assistantText('answer', 'done'),
+    ];
+    expect(segmentTurns(messages)[0].foldable).toBe(false);
   });
 });
