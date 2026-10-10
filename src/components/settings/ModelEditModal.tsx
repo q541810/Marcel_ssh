@@ -33,6 +33,8 @@ export interface ModelDraft {
   extraBody: Record<string, unknown> | null;
   /** 可用思考强度档位（每项为 trim 后的非空字符串）。 */
   reasoningEfforts: string[];
+  /** 非首位系统消息转为普通消息（严格模板后端兼容）。 */
+  demoteNonLeadingSystem: boolean;
 }
 
 const EXTRA_BODY_PLACEHOLDER = `{
@@ -57,6 +59,7 @@ export default function ModelEditModal({
   const [extraBodyText, setExtraBodyText] = useState('');
   const [extraBodyError, setExtraBodyError] = useState<string | null>(null);
   const [effortsText, setEffortsText] = useState('');
+  const [demoteNonLeadingSystem, setDemoteNonLeadingSystem] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   // 「更多」折叠区：高级参数默认收起；编辑已有模型且已有自定义参数时默认展开
   const [moreOpen, setMoreOpen] = useState(false);
@@ -73,8 +76,13 @@ export default function ModelEditModal({
       setExtraBodyText(body);
       const efforts = effortsToText(initial?.reasoningEfforts);
       setEffortsText(efforts);
-      // 编辑已有模型且已设高级参数/思考档位时默认展开，让用户直接看到
-      setMoreOpen(body.trim() !== '' || efforts.trim() !== '');
+      setDemoteNonLeadingSystem(initial?.demoteNonLeadingSystem ?? false);
+      // 编辑已有模型且已设高级参数/思考档位/兼容开关时默认展开，让用户直接看到
+      setMoreOpen(
+        body.trim() !== '' ||
+          efforts.trim() !== '' ||
+          (initial?.demoteNonLeadingSystem ?? false),
+      );
       setExtraBodyError(null);
       setLocalError(null);
     }
@@ -100,6 +108,7 @@ export default function ModelEditModal({
       contextWindow: Math.max(0, Math.trunc(contextWindow)),
       extraBody: textToExtraBody(extraBodyText),
       reasoningEfforts: textToEfforts(effortsText),
+      demoteNonLeadingSystem,
     };
     const checkErr = validate?.(draft);
     if (checkErr) {
@@ -213,7 +222,9 @@ export default function ModelEditModal({
               <path d="M6 4l4 4-4 4" />
             </svg>
             <span>更多</span>
-            {(extraBodyText.trim() !== '' || effortsText.trim() !== '') && (
+            {(extraBodyText.trim() !== '' ||
+              effortsText.trim() !== '' ||
+              demoteNonLeadingSystem) && (
               <span className="text-[11px] text-zinc-500 font-normal">
                 已设置高级参数
               </span>
@@ -263,6 +274,21 @@ export default function ModelEditModal({
                 <p className="text-[11px] text-zinc-500 mt-1">
                   以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
                 </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-200">非首位系统消息转为普通消息</div>
+                  <div className="text-[11px] text-zinc-500">
+                    严格模板后端兼容：对话中后段的系统消息（如当前计划状态）会以普通消息身份发送，
+                    并在开头注明「系统消息，非用户发言」；开启后每条多一行声明的开销
+                  </div>
+                </div>
+                <Toggle
+                  checked={demoteNonLeadingSystem}
+                  onChange={setDemoteNonLeadingSystem}
+                  label=""
+                />
               </div>
             </div>
           )}

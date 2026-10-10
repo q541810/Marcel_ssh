@@ -284,6 +284,7 @@ pub async fn llm_list_models(
         retry_on_timeout: true,
         vision: false,
         extra_body: None,
+        demote_non_leading_system: false,
     };
 
     let llm_manager = LlmManager::new(config)?;

@@ -51,13 +51,13 @@ pub struct LlmMessage {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub finish_reason: Option<String>,
     /// 持久化消息的 DB row id（`messages.id`，统一 id 域）：
-    /// 历史消息来自前端 `buildLlmHistory` 携带的 `dbId`；运行中新增消息由
+    /// 历史消息来自后端快照投影保留的 `dbId`；运行中新增消息由
     /// `save_msg` 返回的 id 回填。压缩时被压区间末条的 id 作为 `tail_db_id`
     /// 指针交给前端/DB 定位卡片——取代一切位置数数与指纹验证。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub db_id: Option<String>,
     /// `db_id` 是否对前端 store 可见（前端消息有 `dbId`）：
-    /// - history 入口（`buildLlmHistory` 携带 dbId 的消息）→ `true`；
+    /// - history 入口（快照投影保留 dbId 的消息）→ `true`；
     /// - 运行中 `save_msg`/`save_last_user_msg` 回填 → `false`（前端不知 id）。
     ///
     /// 自动 pressure 压缩按 `known_only` 收缩：区间末条必是前端能找到的消息，
@@ -202,6 +202,13 @@ pub struct LlmConfig {
     /// 旧设置 JSON 反序列化时 `null` 与 `None` 行为一致。
     #[serde(default)]
     pub extra_body: Option<serde_json::Value>,
+    /// 「非首位系统消息转为普通消息」：开启后，构建请求体时把消息列表里
+    /// **不在第一位**的 system 消息以 user 角色发送，并在内容前加一行声明
+    /// （见 `openai::DEMOTED_SYSTEM_NOTICE`），供「系统消息必须位于开头」的
+    /// 严格 chat template 后端（如按 Qwen 模板渲染的服务）使用。
+    /// 只改发出去的形状；内存消息、落库、前端展示均不受影响。默认关。
+    #[serde(default)]
+    pub demote_non_leading_system: bool,
 }
 
 fn default_provider() -> ProviderType {
@@ -251,6 +258,7 @@ impl Default for LlmConfig {
             retry_on_timeout: true,
             vision: false,
             extra_body: None,
+            demote_non_leading_system: false,
         }
     }
 }
@@ -329,6 +337,7 @@ mod tests {
             retry_on_timeout: true,
             vision: false,
             extra_body: None,
+            demote_non_leading_system: false,
         };
 
         // Serialize to JSON
@@ -466,6 +475,7 @@ mod tests {
             retry_on_timeout: true,
             vision: false,
             extra_body: Some(serde_json::json!({ "thinking": { "type": "enabled" } })),
+            demote_non_leading_system: false,
         };
         let json = serde_json::to_value(&config).expect("serialize");
         let extra = json
@@ -497,6 +507,7 @@ mod tests {
             retry_on_timeout: true,
             vision: false,
             extra_body: None,
+            demote_non_leading_system: false,
         };
         let json = serde_json::to_value(&config).expect("serialize");
         assert_eq!(

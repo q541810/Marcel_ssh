@@ -167,10 +167,14 @@ function MobileModelEditorSheet({
   const [effortsText, setEffortsText] = useState(
     (initial?.reasoningEfforts ?? []).join('\n'),
   );
-  // 「更多」折叠区：高级参数默认收起；编辑已有模型且已设置高级参数/思考档位时默认展开
+  const [demoteNonLeadingSystem, setDemoteNonLeadingSystem] = useState(
+    initial?.demoteNonLeadingSystem ?? false,
+  );
+  // 「更多」折叠区：高级参数默认收起；编辑已有模型且已设置高级参数/思考档位/兼容开关时默认展开
   const [moreOpen, setMoreOpen] = useState(
     extraBodyToText(initial?.extraBody).trim() !== '' ||
-      (initial?.reasoningEfforts ?? []).join('').trim() !== '',
+      (initial?.reasoningEfforts ?? []).join('').trim() !== '' ||
+      (initial?.demoteNonLeadingSystem ?? false),
   );
   const [error, setError] = useState<string | null>(null);
 
@@ -199,6 +203,7 @@ function MobileModelEditorSheet({
           contextWindow: Math.max(0, Math.trunc(contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
           reasoningEfforts: textToEfforts(effortsText),
+          demoteNonLeadingSystem,
         }
       : {
           ...createModel(channelId, trimmed),
@@ -207,6 +212,7 @@ function MobileModelEditorSheet({
           contextWindow: Math.max(0, Math.trunc(contextWindow)),
           extraBody: textToExtraBody(extraBodyText),
           reasoningEfforts: textToEfforts(effortsText),
+          demoteNonLeadingSystem,
         };
     onSaved(model);
     onClose();
@@ -285,7 +291,9 @@ function MobileModelEditorSheet({
               <path d="M6 4l4 4-4 4" />
             </svg>
             <span>更多</span>
-            {(extraBodyText.trim() !== '' || effortsText.trim() !== '') && (
+            {(extraBodyText.trim() !== '' ||
+              effortsText.trim() !== '' ||
+              demoteNonLeadingSystem) && (
               <span className="text-[11px] font-normal text-zinc-500">
                 已设置高级参数
               </span>
@@ -326,6 +334,20 @@ function MobileModelEditorSheet({
                 <p className="text-[11px] text-zinc-500">
                   以 JSON 对象形式追加到请求体（如 thinking、top_p）。执行前模型审批不会携带这些参数。
                 </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-zinc-200">非首位系统消息转为普通消息</div>
+                  <div className="text-[11px] leading-relaxed text-zinc-500">
+                    严格模板后端兼容：对话中后段的系统消息（如当前计划状态）会以普通消息身份发送，
+                    并在开头注明「系统消息，非用户发言」；开启后每条多一行声明的开销
+                  </div>
+                </div>
+                <Toggle
+                  checked={demoteNonLeadingSystem}
+                  onChange={setDemoteNonLeadingSystem}
+                />
               </div>
             </div>
           )}

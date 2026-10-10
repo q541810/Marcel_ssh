@@ -202,6 +202,7 @@ export function createModel(channelId: string, modelName: string): ModelEntry {
     contextWindow: 0,
     extraBody: null,
     reasoningEfforts: [],
+    demoteNonLeadingSystem: false,
   };
 }
 

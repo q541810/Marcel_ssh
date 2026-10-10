@@ -716,6 +716,12 @@ export interface ModelEntry {
    * `reasoning_effort`）。值原样透传为请求体顶层 `reasoning_effort`。
    */
   reasoningEfforts?: string[];
+  /**
+   * 「非首位系统消息转为普通消息」：开启后，请求体里不在第一位的 system
+   * 消息以 user 角色发送并在内容前声明「【系统消息，非用户发言】」，供
+   * 「系统消息必须位于开头」的严格模板后端使用。默认关。
+   */
+  demoteNonLeadingSystem?: boolean;
 }
 
 /** 场景槽位：把「辅助用途」绑定到具体模型。空 = 跟随会话主模型。 */

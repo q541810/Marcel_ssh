@@ -148,6 +148,13 @@ pub struct ModelEntry {
     /// 值原样透传为请求体顶层 `reasoning_effort`。
     #[serde(default)]
     pub reasoning_efforts: Vec<String>,
+    /// 「非首位系统消息转为普通消息」：开启后，构建请求体时把消息列表里
+    /// **不在第一位**的 system 消息以 user 角色发送并加声明前缀（见
+    /// `openai::DEMOTED_SYSTEM_NOTICE`），供「系统消息必须位于开头」的严格
+    /// chat template 后端（如按 Qwen 模板渲染的服务）使用。只改发出去的
+    /// 形状，内存消息/落库/前端展示不受影响。默认关。
+    #[serde(default)]
+    pub demote_non_leading_system: bool,
 }
 
 impl Default for ModelEntry {
@@ -162,6 +169,7 @@ impl Default for ModelEntry {
             context_window: 0,
             extra_body: None,
             reasoning_efforts: Vec::new(),
+            demote_non_leading_system: false,
         }
     }
 }
@@ -384,6 +392,7 @@ impl LlmRegistry {
             retry_on_timeout: self.net_policy.retry_on_timeout,
             vision: model.vision,
             extra_body: model.extra_body.clone(),
+            demote_non_leading_system: model.demote_non_leading_system,
         };
         Ok(ResolvedModel {
             config,
@@ -712,6 +721,7 @@ pub fn migrate_legacy_settings(settings: &mut AppSettings) -> bool {
                 context_window: 0,
                 extra_body: legacy.extra_body.clone(),
                 reasoning_efforts: Vec::new(),
+                demote_non_leading_system: false,
             };
             settings.llm_registry.last_used_model_id = model_id.clone();
             settings.llm_registry.channels.push(channel);
@@ -1111,6 +1121,7 @@ mod tests {
             context_window: 0,
             extra_body: None,
             reasoning_efforts: Vec::new(),
+            demote_non_leading_system: false,
         });
         settings.llm_registry.slots.default_model_id = model_id.clone();
 
@@ -1155,6 +1166,24 @@ mod tests {
         )
         .unwrap();
         assert!(parsed.models[0].reasoning_efforts.is_empty());
+    }
+
+    /// 「非首位系统消息转为普通消息」默认关：旧设置 JSON（缺字段）反序列化为
+    /// false，序列化时字段名稳定（camelCase），开启值能完整往返。
+    #[test]
+    fn demote_non_leading_system_defaults_off_and_round_trips() {
+        let mut r = sample_registry();
+        assert!(!r.models[0].demote_non_leading_system);
+        let parsed: LlmRegistry = serde_json::from_str(
+            r#"{"channels":[],"models":[{"id":"x","channelId":"c","modelName":"m"}],"slots":{},"netPolicy":{}}"#,
+        )
+        .unwrap();
+        assert!(!parsed.models[0].demote_non_leading_system);
+        r.models[0].demote_non_leading_system = true;
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("demoteNonLeadingSystem\":true"));
+        let parsed: LlmRegistry = serde_json::from_str(&json).unwrap();
+        assert!(parsed.models[0].demote_non_leading_system);
     }
 
     #[test]

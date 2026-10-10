@@ -593,6 +593,31 @@ fn build_request_body(
     build_request_body_with_max_tokens(config, messages, tools, stream, None)
 }
 
+/// 降格的非首位系统消息在内容前加的声明：这条文本虽以 user 身份到达，
+/// 但来自系统，不是用户发言（见 `LlmConfig.demote_non_leading_system`）。
+pub(crate) const DEMOTED_SYSTEM_NOTICE: &str = "【系统消息，非用户发言】\n";
+
+/// 给降格系统消息的内容加声明前缀。系统消息不携带图片（正常只会是纯文本）；
+/// 异常形态（数组内容）时把声明插为首段文本。
+fn prefix_demoted_system_notice(content: RequestContent) -> RequestContent {
+    match content {
+        RequestContent::Text(text) => {
+            RequestContent::Text(format!("{DEMOTED_SYSTEM_NOTICE}{text}"))
+        }
+        RequestContent::Parts(mut parts) => {
+            parts.insert(
+                0,
+                RequestContentPart {
+                    part_type: "text",
+                    text: Some(DEMOTED_SYSTEM_NOTICE.to_string()),
+                    image_url: None,
+                },
+            );
+            RequestContent::Parts(parts)
+        }
+    }
+}
+
 /// `build_request_body` 的内嵌调用变体：可显式设 `max_tokens`（摘要截断保护）。
 fn build_request_body_with_max_tokens(
     config: &LlmConfig,
@@ -603,27 +628,39 @@ fn build_request_body_with_max_tokens(
 ) -> serde_json::Value {
     let messages = messages
         .iter()
-        .map(|m| RequestMessage {
-            role: m.role.to_string(),
-            content: build_request_content(m, config.vision),
-            tool_calls: m.tool_calls.as_ref().map(|tcs| {
-                tcs.iter()
-                    .map(|tc| RequestToolCall {
-                        id: tc.id.clone(),
-                        call_type: "function",
-                        function: RequestToolCallFunction {
-                            name: tc.name.clone(),
-                            arguments: serde_json::to_string(&tc.arguments)
-                                .unwrap_or_else(|_| "{}".into()),
-                        },
-                    })
-                    .collect()
-            }),
-            tool_call_id: m.tool_call_id.clone(),
-            // DeepSeek thinking 模式（默认开启）：带 tool_calls 的 assistant 消息
-            // 的 reasoning_content 必须完整回传，否则 400。非 DeepSeek 提供商的
-            // 响应没有 reasoning（messages 里为 None），保留逻辑与置 None 等价。
-            reasoning_content: m.reasoning_content.clone(),
+        .enumerate()
+        .map(|(idx, m)| {
+            // 「非首位系统消息转为普通消息」（`demote_non_leading_system`）：
+            // 严格 chat template（如 Qwen 系）要求 system 必须位于 messages[0]，
+            // 其余位置的 system 会被直接 400。开启后只改**发出去的形状**——
+            // 降格为 user 并在内容前声明身份；内存消息、落库、前端展示均不动。
+            let demoted = config.demote_non_leading_system && idx > 0 && m.role == LlmRole::System;
+            RequestMessage {
+                role: if demoted { "user" } else { m.role.to_string() },
+                content: if demoted {
+                    prefix_demoted_system_notice(build_request_content(m, config.vision))
+                } else {
+                    build_request_content(m, config.vision)
+                },
+                tool_calls: m.tool_calls.as_ref().map(|tcs| {
+                    tcs.iter()
+                        .map(|tc| RequestToolCall {
+                            id: tc.id.clone(),
+                            call_type: "function",
+                            function: RequestToolCallFunction {
+                                name: tc.name.clone(),
+                                arguments: serde_json::to_string(&tc.arguments)
+                                    .unwrap_or_else(|_| "{}".into()),
+                            },
+                        })
+                        .collect()
+                }),
+                tool_call_id: m.tool_call_id.clone(),
+                // DeepSeek thinking 模式（默认开启）：带 tool_calls 的 assistant 消息
+                // 的 reasoning_content 必须完整回传，否则 400。非 DeepSeek 提供商的
+                // 响应没有 reasoning（messages 里为 None），保留逻辑与置 None 等价。
+                reasoning_content: m.reasoning_content.clone(),
+            }
         })
         .collect();
 
@@ -884,6 +921,7 @@ mod build_request_body_tests {
             retry_on_timeout: true,
             vision: false,
             extra_body: None,
+            demote_non_leading_system: false,
         }
     }
 
@@ -1104,6 +1142,80 @@ mod build_request_body_tests {
             "extra_body 故意覆盖类型化字段是设计行为（force override）"
         );
     }
+
+    /// 开关默认关：非首位 system 原样保留（与历史行为逐字节一致）。
+    #[test]
+    fn demote_off_keeps_non_leading_system() {
+        let cfg = base_config();
+        assert!(!cfg.demote_non_leading_system);
+        let msgs = vec![
+            LlmMessage::system("你是助手。"),
+            LlmMessage::user("说一个字"),
+            LlmMessage::system("当前计划:\n[▶] 1. 干活"),
+        ];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let messages = body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages");
+        assert_eq!(
+            messages[2].get("role").and_then(|v| v.as_str()),
+            Some("system")
+        );
+        assert_eq!(
+            messages[2].get("content").and_then(|v| v.as_str()),
+            Some("当前计划:\n[▶] 1. 干活")
+        );
+    }
+
+    /// 开关开：非首位 system 降格为 user 并在内容前带声明；首位 system 不动。
+    #[test]
+    fn demote_on_converts_non_leading_system_to_declared_user() {
+        let mut cfg = base_config();
+        cfg.demote_non_leading_system = true;
+        let msgs = vec![
+            LlmMessage::system("你是助手。"),
+            LlmMessage::user("说一个字"),
+            LlmMessage::system("当前计划:\n[▶] 1. 干活"),
+        ];
+        let body = build_request_body(&cfg, &msgs, &[], true);
+        let messages = body
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .expect("messages");
+        // 首位 system 原样
+        assert_eq!(
+            messages[0].get("role").and_then(|v| v.as_str()),
+            Some("system")
+        );
+        assert_eq!(
+            messages[0].get("content").and_then(|v| v.as_str()),
+            Some("你是助手。")
+        );
+        // 非首位 system → user + 声明前缀
+        assert_eq!(
+            messages[2].get("role").and_then(|v| v.as_str()),
+            Some("user")
+        );
+        assert_eq!(
+            messages[2].get("content").and_then(|v| v.as_str()),
+            Some(format!("{}当前计划:\n[▶] 1. 干活", DEMOTED_SYSTEM_NOTICE).as_str())
+        );
+    }
+
+    /// 开关开但没有非首位 system：请求与关着时完全一致。
+    #[test]
+    fn demote_on_without_non_leading_system_is_noop() {
+        let mut on = base_config();
+        on.demote_non_leading_system = true;
+        let off = base_config();
+        let msgs = vec![LlmMessage::system("你是助手。"), LlmMessage::user("hi")];
+        assert_eq!(
+            build_request_body(&on, &msgs, &[], true),
+            build_request_body(&off, &msgs, &[], true),
+            "无非首位 system 时开关应为 no-op"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1125,6 +1237,7 @@ mod vision_request_tests {
             retry_on_timeout: true,
             vision,
             extra_body: None,
+            demote_non_leading_system: false,
         }
     }
 

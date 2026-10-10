@@ -151,6 +151,7 @@ export default function ChannelEditModal({
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,
         reasoningEfforts: m.reasoningEfforts,
+        demoteNonLeadingSystem: m.demoteNonLeadingSystem,
       };
       setLocalModels((prev) =>
         prev.map((x) => (x.id === updated.id ? updated : x)),
@@ -164,6 +165,7 @@ export default function ChannelEditModal({
         contextWindow: m.contextWindow,
         extraBody: m.extraBody,
         reasoningEfforts: m.reasoningEfforts,
+        demoteNonLeadingSystem: m.demoteNonLeadingSystem,
       };
       setLocalModels((prev) => [...prev, full]);
     }

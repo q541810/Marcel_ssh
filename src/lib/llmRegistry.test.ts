@@ -98,6 +98,13 @@ describe('modelReasoningEfforts / effortValidForModel', () => {
     expect(modelReasoningEfforts(m)).toEqual([]);
   });
 
+  it('createModel defaults demoteNonLeadingSystem to false (serde camelCase 契约)', () => {
+    const m = createModel('ch', 'qwen3.8-27b');
+    // 字段名与 Rust ModelEntry 的 serde rename_all=camelCase 对齐：
+    // demote_non_leading_system ↔ demoteNonLeadingSystem，写错会静默丢配置。
+    expect(m).toHaveProperty('demoteNonLeadingSystem', false);
+  });
+
   it('normalizes whitespace and duplicates, keeps first order', () => {
     const m = createModel('ch', 'deepseek-reasoner');
     m.reasoningEfforts = [' low ', 'low', '', 'high', 'max'];
