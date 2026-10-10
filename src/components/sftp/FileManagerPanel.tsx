@@ -1285,9 +1285,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {previewFile && (
         <ImagePreviewModal
+          key={`${sessionId}:${previewFile.path}`}
           open={!!previewFile}
-          sessionId={sessionId}
-          filePath={previewFile.path}
+          source={{ kind: 'sftp', sessionId, filePath: previewFile.path }}
           fileName={previewFile.name}
           fileSize={previewFile.size}
           onClose={() => setPreviewFile(null)}

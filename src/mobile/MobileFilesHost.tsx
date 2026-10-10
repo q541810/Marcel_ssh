@@ -1388,9 +1388,9 @@ export default function MobileFilesHost({
 
       {previewFile && (
         <MobileImageViewer
+          key={`${sessionId}:${previewFile.path}`}
           open={!!previewFile}
-          sessionId={sessionId}
-          filePath={previewFile.path}
+          source={{ kind: 'sftp', sessionId, filePath: previewFile.path }}
           fileName={previewFile.name}
           fileSize={previewFile.size}
           onClose={() => setPreviewFile(null)}
