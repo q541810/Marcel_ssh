@@ -1,0 +1,2903 @@
+[
+  {
+    "name": "conversationStore > keeps full file contents for model history after reload and restores the input on rollback",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "file-message",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "分析这份日志\n\n===== 文件名: app.log =====\n完整日志\n\n",
+            "imagePaths": [
+              "images/a.png"
+            ],
+            "dbId": "file-message"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "分析这份日志\n\n===== 文件名: app.log =====\n完整日志\n\n",
+        "dbId": "file-message",
+        "imagePaths": [
+          "images/a.png"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > returns empty array for unknown conversation",
+    "snapshot": {
+      "entries": []
+    },
+    "storedMessages": [],
+    "expected": []
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > returns plain user+assistant conversation unchanged",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "hello"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "hi there",
+            "reasoningContent": "thought"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "what is 2+2?"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "4"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "hello"
+      },
+      {
+        "role": "assistant",
+        "content": "hi there",
+        "reasoningContent": "thought"
+      },
+      {
+        "role": "user",
+        "content": "what is 2+2?"
+      },
+      {
+        "role": "assistant",
+        "content": "4"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > excludes loading messages",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "run task"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "isLoading": true
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "run task"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > excludes system messages",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "hi"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "retrying..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "answer"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "hi"
+      },
+      {
+        "role": "assistant",
+        "content": "answer"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > emits a user checkpoint for a done compaction card, positioned at the card site",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "【上下文已压缩】已整理 3 条历史消息（约 1000 tokens）",
+            "compaction": {
+              "status": "done",
+              "summary": "## Primary Request\n- build a terminal"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "continue"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "ok"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.\n\n<compacted-summary>\n## Primary Request\n- build a terminal\n</compacted-summary>"
+      },
+      {
+        "role": "user",
+        "content": "continue"
+      },
+      {
+        "role": "assistant",
+        "content": "ok"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > skips running compaction cards and other system notices in history",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "上下文压缩中…",
+            "compaction": {
+              "status": "running"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "done"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "role": "assistant",
+        "content": "done"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > synthesizes assistant(tool_calls)+tool from tool message with preceding assistant text",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "list files"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Let me check the directory..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "execute_command",
+              "result": "file.txt\ndir/",
+              "arguments": {
+                "command": "ls"
+              },
+              "toolCallId": "call-1"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Found 2 items."
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "list files"
+      },
+      {
+        "role": "assistant",
+        "content": "Let me check the directory...",
+        "toolCalls": [
+          {
+            "id": "call-1",
+            "name": "execute_command",
+            "arguments": {
+              "command": "ls"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "file.txt\ndir/",
+        "toolCallId": "call-1"
+      },
+      {
+        "role": "assistant",
+        "content": "Found 2 items."
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > synthesizes with empty content when no preceding assistant",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "do thing"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "content here",
+              "arguments": {
+                "path": "/tmp/x"
+              },
+              "toolCallId": "call-2"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "do thing"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "call-2",
+            "name": "read_file",
+            "arguments": {
+              "path": "/tmp/x"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "content here",
+        "toolCallId": "call-2"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > skips tool message without toolCallId",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "do"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "old_tool",
+              "result": "legacy"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "done"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "do"
+      },
+      {
+        "role": "assistant",
+        "content": "done"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > handles multiple tool calls in one conversation",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "check files"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Checking..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "execute_command",
+              "result": "a.txt\nb.txt",
+              "arguments": {
+                "command": "ls"
+              },
+              "toolCallId": "call-a"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Now reading..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "content of a.txt",
+              "arguments": {
+                "path": "a.txt"
+              },
+              "toolCallId": "call-b"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "All done!"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "check files"
+      },
+      {
+        "role": "assistant",
+        "content": "Checking...",
+        "toolCalls": [
+          {
+            "id": "call-a",
+            "name": "execute_command",
+            "arguments": {
+              "command": "ls"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "a.txt\nb.txt",
+        "toolCallId": "call-a"
+      },
+      {
+        "role": "assistant",
+        "content": "Now reading...",
+        "toolCalls": [
+          {
+            "id": "call-b",
+            "name": "read_file",
+            "arguments": {
+              "path": "a.txt"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "content of a.txt",
+        "toolCallId": "call-b"
+      },
+      {
+        "role": "assistant",
+        "content": "All done!"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > 并行 tool 保留在同一条 assistant（live UI：文案 assistant + 连续 tool）",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "check both"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Checking..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "execute_command",
+              "result": "a.txt",
+              "arguments": {
+                "command": "ls"
+              },
+              "toolCallId": "call-a"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "file body",
+              "arguments": {
+                "path": "a.txt"
+              },
+              "toolCallId": "call-b"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Done."
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "check both"
+      },
+      {
+        "role": "assistant",
+        "content": "Checking...",
+        "toolCalls": [
+          {
+            "id": "call-a",
+            "name": "execute_command",
+            "arguments": {
+              "command": "ls"
+            }
+          },
+          {
+            "id": "call-b",
+            "name": "read_file",
+            "arguments": {
+              "path": "a.txt"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "a.txt",
+        "toolCallId": "call-a"
+      },
+      {
+        "role": "tool",
+        "content": "file body",
+        "toolCallId": "call-b"
+      },
+      {
+        "role": "assistant",
+        "content": "Done."
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > reload 后使用 assistant.toolCalls，不把并行 tool 拆成多条 assistant",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Running...",
+            "toolCalls": [
+              {
+                "id": "call-a",
+                "name": "execute_command",
+                "arguments": {
+                  "command": "ls"
+                }
+              },
+              {
+                "id": "call-b",
+                "name": "system_info",
+                "arguments": {
+                  "category": "os"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "execute_command",
+              "result": "ok",
+              "arguments": {
+                "command": "ls"
+              },
+              "toolCallId": "call-a"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "system_info",
+              "result": "Linux",
+              "arguments": {
+                "category": "os"
+              },
+              "toolCallId": "call-b"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "role": "assistant",
+        "content": "Running...",
+        "toolCalls": [
+          {
+            "id": "call-a",
+            "name": "execute_command",
+            "arguments": {
+              "command": "ls"
+            }
+          },
+          {
+            "id": "call-b",
+            "name": "system_info",
+            "arguments": {
+              "category": "os"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-a"
+      },
+      {
+        "role": "tool",
+        "content": "Linux",
+        "toolCallId": "call-b"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > uses toolResult.arguments for toolCalls, falling back to empty object",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "Running..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "web_search",
+              "result": "search results",
+              "toolCallId": "call-3"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "role": "assistant",
+        "content": "Running...",
+        "toolCalls": [
+          {
+            "id": "call-3",
+            "name": "web_search",
+            "arguments": {}
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "search results",
+        "toolCallId": "call-3"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory > handles tool with toolResult.result taking precedence over tool message content",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "hi"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "stale content",
+            "toolResult": {
+              "toolName": "cmd",
+              "result": "fresh result",
+              "toolCallId": "call-4"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "hi"
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "call-4",
+            "name": "cmd",
+            "arguments": {}
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "fresh result",
+        "toolCallId": "call-4"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > strips dangling tool_calls at the end (app restart mid-tool)",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "调研一下"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "让我看看",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "调研一下"
+      },
+      {
+        "role": "assistant",
+        "content": "让我看看"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > removes empty assistant whose tool_calls were all stripped",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              },
+              {
+                "id": "call-2",
+                "name": "tool_1",
+                "arguments": {
+                  "x": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "继续"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "user",
+        "content": "继续"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > keeps only replied tool_calls when partially replied",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "开始",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              },
+              {
+                "id": "call-2",
+                "name": "tool_1",
+                "arguments": {
+                  "x": 1
+                }
+              },
+              {
+                "id": "call-3",
+                "name": "tool_2",
+                "arguments": {
+                  "x": 2
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-1"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-3"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "继续"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "开始",
+        "toolCalls": [
+          {
+            "id": "call-1",
+            "name": "tool_0",
+            "arguments": {
+              "x": 0
+            }
+          },
+          {
+            "id": "call-3",
+            "name": "tool_2",
+            "arguments": {
+              "x": 2
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-1"
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-3"
+      },
+      {
+        "role": "user",
+        "content": "继续"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > keeps closed groups untouched (normal stop + user follow-up)",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "开始",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              },
+              {
+                "id": "call-2",
+                "name": "tool_1",
+                "arguments": {
+                  "x": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-1"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-2"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "继续"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "开始",
+        "toolCalls": [
+          {
+            "id": "call-1",
+            "name": "tool_0",
+            "arguments": {
+              "x": 0
+            }
+          },
+          {
+            "id": "call-2",
+            "name": "tool_1",
+            "arguments": {
+              "x": 1
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-1"
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-2"
+      },
+      {
+        "role": "user",
+        "content": "继续"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > settles groups independently: open group stripped, closed group kept",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "第一步",
+            "toolCalls": [
+              {
+                "id": "call-a",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "第二步",
+            "toolCalls": [
+              {
+                "id": "call-b",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-b"
+            }
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "继续"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "第一步"
+      },
+      {
+        "role": "assistant",
+        "content": "第二步",
+        "toolCalls": [
+          {
+            "id": "call-b",
+            "name": "tool_0",
+            "arguments": {
+              "x": 0
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-b"
+      },
+      {
+        "role": "user",
+        "content": "继续"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > strips tool_calls when user message interrupts an open group",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "开始",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "tool_0",
+                "arguments": {
+                  "x": 0
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "手动打断"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "开始"
+      },
+      {
+        "role": "user",
+        "content": "手动打断"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > carries reasoningContent on assistant(tool_calls) messages",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "让我看看",
+            "reasoningContent": "先列目录",
+            "toolCalls": [
+              {
+                "id": "call-1",
+                "name": "execute_command",
+                "arguments": {
+                  "command": "ls"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-1"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "让我看看",
+        "toolCalls": [
+          {
+            "id": "call-1",
+            "name": "execute_command",
+            "arguments": {
+              "command": "ls"
+            }
+          }
+        ],
+        "reasoningContent": "先列目录"
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-1"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > carries reasoningContent when tool is mounted onto a plain assistant",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "开始检查",
+            "reasoningContent": "思考中..."
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "tool",
+            "content": "",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "ok",
+              "toolCallId": "call-1"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "开始检查",
+        "toolCalls": [
+          {
+            "id": "call-1",
+            "name": "read_file",
+            "arguments": {}
+          }
+        ],
+        "reasoningContent": "思考中..."
+      },
+      {
+        "role": "tool",
+        "content": "ok",
+        "toolCallId": "call-1"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > buildLlmHistory protocol closure > keeps reasoningContent on plain assistant messages unchanged",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "x"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "完成",
+            "reasoningContent": "思考结论"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "x"
+      },
+      {
+        "role": "assistant",
+        "content": "完成",
+        "reasoningContent": "思考结论"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 无可压区间（attempted=false）时插入\"无需压缩\"通知",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 摘要失败且 Skipped 事件丢失（attempted=true + 残留 running 卡）时把卡转为未完成文本",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "上下文压缩中…",
+            "compaction": {
+              "status": "running"
+            }
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 摘要失败但事件已正常处理（attempted=true + 无残留卡）时不重复插入",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "上下文压缩未完成：摘要被输出长度上限截断（生成不完整），已放弃本次压缩"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 命令失败（未配置 LLM）且无 running 卡时插入失败提示",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 压缩成功时结果路径不操作 store（live 更新由 Done 事件负责，原文全保留）",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "ok"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "next"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      },
+      {
+        "role": "assistant",
+        "content": "ok"
+      },
+      {
+        "role": "user",
+        "content": "next"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 压缩期间同步占位：第二次压缩被拒且不打后端，命令返回后解锁",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 命令抛错 之后占位必须释放（否则该会话输入永久禁用）",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 被跳过（attempted=false） 之后占位必须释放（否则该会话输入永久禁用）",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "conversationStore > compactConversation 手动压缩反馈 > 取消压缩只转发给后端，不提前解锁（解锁交给命令返回后的 finally）",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "go"
+          }
+        }
+      ]
+    },
+    "storedMessages": [],
+    "expected": [
+      {
+        "role": "user",
+        "content": "go"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > notice与图片原样保留",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-image",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "检查图片\r\n",
+            "imagePaths": [
+              "images/one.png",
+              "images/two.png"
+            ],
+            "dbId": "u-image"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-done",
+          "reasoningContent": "逐图比较",
+          "fallback": {
+            "role": "assistant",
+            "content": "看到了",
+            "reasoningContent": "逐图比较",
+            "dbId": "a-done"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "n-job",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "notice",
+            "content": "后台作业已完成",
+            "dbId": "n-job"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-image",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "检查图片\r\n",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "imagePathsJson": "[\"images/one.png\",\"images/two.png\"]"
+      },
+      {
+        "id": "a-done",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "看到了",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "reasoningContent": "逐图比较"
+      },
+      {
+        "id": "n-job",
+        "conversationId": "fixture-conversation",
+        "role": "notice",
+        "content": "后台作业已完成",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "检查图片\r\n",
+        "dbId": "u-image",
+        "imagePaths": [
+          "images/one.png",
+          "images/two.png"
+        ]
+      },
+      {
+        "role": "assistant",
+        "content": "看到了",
+        "dbId": "a-done",
+        "reasoningContent": "逐图比较"
+      },
+      {
+        "role": "user",
+        "content": "后台作业已完成",
+        "dbId": "n-job"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 新格式并行tool完整回执与reasoning",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-tools",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "检查两个路径",
+            "dbId": "u-tools"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-tools",
+          "reasoningContent": "需要两个文件",
+          "fallback": {
+            "role": "assistant",
+            "content": "先读取",
+            "reasoningContent": "需要两个文件",
+            "toolCalls": [
+              {
+                "id": "call-a",
+                "name": "read_file",
+                "arguments": {
+                  "path": "/a"
+                }
+              },
+              {
+                "id": "call-b",
+                "name": "read_file",
+                "arguments": {
+                  "path": "/b"
+                }
+              }
+            ],
+            "dbId": "a-tools"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-a",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "内容 A\n",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "内容 A\n",
+              "arguments": {
+                "path": "/a"
+              },
+              "toolCallId": "call-a"
+            },
+            "dbId": "t-a"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-b",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "内容 B\r\n",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "内容 B\r\n",
+              "arguments": {
+                "path": "/b"
+              },
+              "toolCallId": "call-b"
+            },
+            "dbId": "t-b"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-tools",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "检查两个路径",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "a-tools",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "先读取",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "reasoningContent": "需要两个文件",
+        "toolCallsJson": "[{\"id\":\"call-a\",\"name\":\"read_file\",\"arguments\":{\"path\":\"/a\"}},{\"id\":\"call-b\",\"name\":\"read_file\",\"arguments\":{\"path\":\"/b\"}}]"
+      },
+      {
+        "id": "t-a",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "内容 A\n",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "{\"id\":\"call-a\",\"name\":\"read_file\",\"arguments\":{\"path\":\"/a\"},\"success\":true}"
+      },
+      {
+        "id": "t-b",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "内容 B\r\n",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "{\"id\":\"call-b\",\"name\":\"read_file\",\"arguments\":{\"path\":\"/b\"},\"success\":true}"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "检查两个路径",
+        "dbId": "u-tools"
+      },
+      {
+        "role": "assistant",
+        "content": "先读取",
+        "toolCalls": [
+          {
+            "id": "call-a",
+            "name": "read_file",
+            "arguments": {
+              "path": "/a"
+            }
+          },
+          {
+            "id": "call-b",
+            "name": "read_file",
+            "arguments": {
+              "path": "/b"
+            }
+          }
+        ],
+        "dbId": "a-tools",
+        "reasoningContent": "需要两个文件"
+      },
+      {
+        "role": "tool",
+        "content": "内容 A\n",
+        "toolCallId": "call-a",
+        "dbId": "t-a"
+      },
+      {
+        "role": "tool",
+        "content": "内容 B\r\n",
+        "toolCallId": "call-b",
+        "dbId": "t-b"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 旧数组tool与缺元数据tool",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-legacy",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "旧会话",
+            "dbId": "u-legacy"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-legacy",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "assistant",
+            "content": "读取旧内容",
+            "dbId": "a-legacy"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-legacy",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "[read_file] old content",
+            "toolResult": {
+              "toolName": "read_file",
+              "result": "[read_file] old content",
+              "arguments": {
+                "path": "/old"
+              },
+              "toolCallId": "legacy-call"
+            },
+            "dbId": "t-legacy"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-no-json",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "[bash] 无关联 id 的旧输出",
+            "toolResult": {
+              "toolName": "bash",
+              "result": "[bash] 无关联 id 的旧输出"
+            },
+            "dbId": "t-no-json"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-legacy",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "旧会话",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "a-legacy",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "读取旧内容",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "t-legacy",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "[read_file] old content",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "[{\"id\":\"legacy-call\",\"name\":\"read_file\",\"arguments\":{\"path\":\"/old\"}}]"
+      },
+      {
+        "id": "t-no-json",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "[bash] 无关联 id 的旧输出",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "旧会话",
+        "dbId": "u-legacy"
+      },
+      {
+        "role": "assistant",
+        "content": "读取旧内容",
+        "toolCalls": [
+          {
+            "id": "legacy-call",
+            "name": "read_file",
+            "arguments": {
+              "path": "/old"
+            }
+          }
+        ],
+        "dbId": "a-legacy"
+      },
+      {
+        "role": "tool",
+        "content": "[read_file] old content",
+        "toolCallId": "legacy-call",
+        "dbId": "t-legacy"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 坏JSON不丢正文与其他正常行",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-corrupt",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "===== 文件名: raw.txt =====\n保持原文\r\n",
+            "dbId": "u-corrupt"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-corrupt",
+          "reasoningContent": "保留思考",
+          "fallback": {
+            "role": "assistant",
+            "content": "保留助手正文",
+            "reasoningContent": "保留思考",
+            "dbId": "a-corrupt"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-corrupt",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "坏工具元数据的输出",
+            "dbId": "t-corrupt"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "u-after",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "继续",
+            "dbId": "u-after"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-corrupt",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "===== 文件名: raw.txt =====\n保持原文\r\n",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "imagePathsJson": "{bad",
+        "userInputJson": "{broken"
+      },
+      {
+        "id": "a-corrupt",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "保留助手正文",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "[{",
+        "reasoningContent": "保留思考"
+      },
+      {
+        "id": "t-corrupt",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "坏工具元数据的输出",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "{bad"
+      },
+      {
+        "id": "u-after",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "继续",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "===== 文件名: raw.txt =====\n保持原文\r\n",
+        "dbId": "u-corrupt"
+      },
+      {
+        "role": "assistant",
+        "content": "保留助手正文",
+        "dbId": "a-corrupt",
+        "reasoningContent": "保留思考"
+      },
+      {
+        "role": "user",
+        "content": "继续",
+        "dbId": "u-after"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 最新压缩卡生成checkpoint且不带DBid",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-archive",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "之前的原文",
+            "dbId": "u-archive"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "old-card",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\n旧摘要",
+            "compaction": {
+              "status": "done",
+              "summary": "旧摘要"
+            },
+            "dbId": "old-card"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-between",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "assistant",
+            "content": "后来输出",
+            "dbId": "a-between"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "new-card",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "【上下文已压缩】已整理 3 条历史消息（约 30 tokens）\n\n## Primary Request\n- 保留目标",
+            "compaction": {
+              "status": "done",
+              "summary": "## Primary Request\n- 保留目标"
+            },
+            "dbId": "new-card"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "u-tail",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "现在继续",
+            "dbId": "u-tail"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-archive",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "之前的原文",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "old-card",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\n旧摘要",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "a-between",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "后来输出",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "new-card",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "【上下文已压缩】已整理 3 条历史消息（约 30 tokens）\n\n## Primary Request\n- 保留目标",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "u-tail",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "现在继续",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.\n\n<compacted-summary>\n## Primary Request\n- 保留目标\n</compacted-summary>"
+      },
+      {
+        "role": "user",
+        "content": "现在继续",
+        "dbId": "u-tail"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 空摘要done卡保留原来的屏蔽边界",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-hidden",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "在空卡前",
+            "dbId": "u-hidden"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "empty-card",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "【上下文已压缩】",
+            "compaction": {
+              "status": "done"
+            },
+            "dbId": "empty-card"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "u-visible",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "卡后仍保留",
+            "dbId": "u-visible"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-hidden",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "在空卡前",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "empty-card",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "【上下文已压缩】",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "u-visible",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "卡后仍保留",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "卡后仍保留",
+        "dbId": "u-visible"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > checkpoint只去掉ECMAScript前导空白且保留尾白",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "bom-card",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\n﻿ 摘要正文尾部空白\n\t ",
+            "compaction": {
+              "status": "done",
+              "summary": "摘要正文尾部空白\n\t "
+            },
+            "dbId": "bom-card"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "bom-card",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "【上下文已压缩】已整理 1 条历史消息（约 10 tokens）\n\n﻿ 摘要正文尾部空白\n\t ",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.\n\n<compacted-summary>\n摘要正文尾部空白\n\t \n</compacted-summary>"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > checkpoint前导U0085按旧JS语义保留",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "next-line-card",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "【上下文已压缩】\n正文",
+            "compaction": {
+              "status": "done",
+              "summary": "正文"
+            },
+            "dbId": "next-line-card"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "next-line-card",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "【上下文已压缩】\n正文",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.\n\n<compacted-summary>\n正文\n</compacted-summary>"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > loaded助手思考显式抑制",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-suppress",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "已有会话",
+            "dbId": "u-suppress"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "a-suppress",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "assistant",
+            "content": "已加载的回答",
+            "dbId": "a-suppress"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-suppress",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "已有会话",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "a-suppress",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "已加载的回答",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "reasoningContent": "库中仍有的中间思考"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "已有会话",
+        "dbId": "u-suppress"
+      },
+      {
+        "role": "assistant",
+        "content": "已加载的回答",
+        "dbId": "a-suppress"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 空正文助手保留reasoning",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "a-thinking",
+          "reasoningContent": "完整思考文本",
+          "fallback": {
+            "role": "assistant",
+            "content": "",
+            "reasoningContent": "完整思考文本",
+            "dbId": "a-thinking"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "a-thinking",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "reasoningContent": "完整思考文本"
+      }
+    ],
+    "expected": [
+      {
+        "role": "assistant",
+        "content": "",
+        "dbId": "a-thinking",
+        "reasoningContent": "完整思考文本"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > 普通system通知不进入请求",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-notice",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "保持我的输入",
+            "dbId": "u-notice"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "s-warning",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "system",
+            "content": "LLM 错误：连接断开",
+            "dbId": "s-warning"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-notice",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "保持我的输入",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      },
+      {
+        "id": "s-warning",
+        "conversationId": "fixture-conversation",
+        "role": "system",
+        "content": "LLM 错误：连接断开",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "保持我的输入",
+        "dbId": "u-notice"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > loaded前缀与取消后live半截正文",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-old",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "旧请求",
+            "dbId": "u-old"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "user",
+            "content": "当前请求"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "已经显示的半截答案",
+            "reasoningContent": "已显示的思考"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "system",
+            "content": "LLM 错误：连接断开"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-old",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "旧请求",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "旧请求",
+        "dbId": "u-old"
+      },
+      {
+        "role": "user",
+        "content": "当前请求"
+      },
+      {
+        "role": "assistant",
+        "content": "已经显示的半截答案",
+        "reasoningContent": "已显示的思考"
+      }
+    ]
+  },
+  {
+    "name": "持久化历史迁移基线 > live连续截断已合并的正文不按DB重新切行",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "u-before",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "user",
+            "content": "旧请求",
+            "dbId": "u-before"
+          }
+        },
+        {
+          "kind": "transient",
+          "message": {
+            "role": "assistant",
+            "content": "第一段\n第二段"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "u-before",
+        "conversationId": "fixture-conversation",
+        "role": "user",
+        "content": "旧请求",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z"
+      }
+    ],
+    "expected": [
+      {
+        "role": "user",
+        "content": "旧请求",
+        "dbId": "u-before"
+      },
+      {
+        "role": "assistant",
+        "content": "第一段\n第二段"
+      }
+    ]
+  },
+  {
+    "name": "中间缺字段tool调用不影响合法a-b顺序",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "a-mixed",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "id": "a",
+                "name": "tool_a",
+                "arguments": {}
+              },
+              {
+                "arguments": {}
+              },
+              {
+                "id": "b",
+                "name": "tool_b",
+                "arguments": {}
+              }
+            ],
+            "dbId": "a-mixed"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-b",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "B",
+            "toolResult": {
+              "toolName": "tool_b",
+              "result": "B",
+              "arguments": {},
+              "toolCallId": "b"
+            },
+            "dbId": "t-b"
+          }
+        },
+        {
+          "kind": "stored",
+          "id": "t-a",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "tool",
+            "content": "A",
+            "toolResult": {
+              "toolName": "tool_a",
+              "result": "A",
+              "arguments": {},
+              "toolCallId": "a"
+            },
+            "dbId": "t-a"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "a-mixed",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "[{\"id\":\"a\",\"name\":\"tool_a\",\"arguments\":{}},{},{\"id\":\"b\",\"name\":\"tool_b\",\"arguments\":{}}]"
+      },
+      {
+        "id": "t-b",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "B",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "{\"id\":\"b\",\"name\":\"tool_b\",\"arguments\":{}}"
+      },
+      {
+        "id": "t-a",
+        "conversationId": "fixture-conversation",
+        "role": "tool",
+        "content": "A",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "{\"id\":\"a\",\"name\":\"tool_a\",\"arguments\":{}}"
+      }
+    ],
+    "expected": [
+      {
+        "role": "assistant",
+        "content": "",
+        "toolCalls": [
+          {
+            "id": "a",
+            "name": "tool_a",
+            "arguments": {}
+          },
+          {
+            "id": "b",
+            "name": "tool_b",
+            "arguments": {}
+          }
+        ],
+        "dbId": "a-mixed"
+      },
+      {
+        "role": "tool",
+        "content": "B",
+        "toolCallId": "b",
+        "dbId": "t-b"
+      },
+      {
+        "role": "tool",
+        "content": "A",
+        "toolCallId": "a",
+        "dbId": "t-a"
+      }
+    ]
+  },
+  {
+    "name": "全缺字段tool调用且无正文思考时助手被删",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "invalid-only",
+          "reasoningContent": null,
+          "fallback": {
+            "role": "assistant",
+            "content": "",
+            "toolCalls": [
+              {
+                "arguments": {}
+              }
+            ],
+            "dbId": "invalid-only"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "invalid-only",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "[{}]"
+      }
+    ],
+    "expected": []
+  },
+  {
+    "name": "全缺字段tool调用仍保留助手思考",
+    "snapshot": {
+      "entries": [
+        {
+          "kind": "stored",
+          "id": "invalid-thinking",
+          "reasoningContent": "必须保留的思考",
+          "fallback": {
+            "role": "assistant",
+            "content": "",
+            "reasoningContent": "必须保留的思考",
+            "toolCalls": [
+              {
+                "arguments": {}
+              }
+            ],
+            "dbId": "invalid-thinking"
+          }
+        }
+      ]
+    },
+    "storedMessages": [
+      {
+        "id": "invalid-thinking",
+        "conversationId": "fixture-conversation",
+        "role": "assistant",
+        "content": "",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "toolCallsJson": "[{}]",
+        "reasoningContent": "必须保留的思考"
+      }
+    ],
+    "expected": [
+      {
+        "role": "assistant",
+        "content": "",
+        "dbId": "invalid-thinking",
+        "reasoningContent": "必须保留的思考"
+      }
+    ]
+  }
+]

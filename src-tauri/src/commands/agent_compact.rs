@@ -2,11 +2,11 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::agent::agent_loop::forward_compaction_event;
+use crate::agent::conversation::HistorySnapshot;
 use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::manager::AgentManager;
 use crate::error::AppError;
 use crate::llm::manager::LlmManager;
-use crate::llm::provider::LlmMessage;
 use crate::AppState;
 
 /// 手动压缩命令的结果。
@@ -34,8 +34,8 @@ pub struct CompactionCommandResult {
 /// 手动压缩指定会话的上下文（命令面板「压缩上下文」）。
 ///
 /// 与自动压缩走**同一条路径**：
-/// - `history` 由前端 `buildLlmHistory` 提供（与 `agent_start_task` 同一来源，
-///   已做过 tool 调用协议闭合修正）——压缩对象就是 LLM 实际看到的历史；
+/// - `history_snapshot` 与 `agent_start_task` 走同一后端投影，包含调用时的
+///   实时消息和落库引用；压缩对象与常规请求的历史一致，工具协议已闭合；
 /// - 压缩事件经 `forward_compaction_event` 实时转发到
 ///   `agent://stream/{task_id}`（task_id 由前端生成，作为事件通道），前端
 ///   复用 `attachStreamListener` + `handleCompaction*` 显示卡片；
@@ -48,7 +48,7 @@ pub async fn agent_compact_conversation(
     state: State<'_, AppState>,
     conversation_id: String,
     task_id: String,
-    history: Vec<LlmMessage>,
+    history_snapshot: HistorySnapshot,
 ) -> Result<CompactionCommandResult, AppError> {
     // busy 守卫：同一会话有任务正在运行时拒绝手动压缩（对齐 DSH compactNow
     // 的 idle 语义，避免运行中任务与手动替换并发造成竞态）。
@@ -111,7 +111,10 @@ pub async fn agent_compact_conversation(
         .current_tool_definitions(&conversation_id)
         .await;
 
-    let mut messages: Vec<LlmMessage> = history;
+    let mut messages = state
+        .conversation_db
+        .resolve_llm_history(&conversation_id, &history_snapshot)
+        .map_err(|error| AppError::Agent(format!("读取会话历史失败：{error}")))?;
     if messages.is_empty() {
         return Ok(CompactionCommandResult {
             compacted: false,
@@ -123,7 +126,7 @@ pub async fn agent_compact_conversation(
             attempted: false,
         });
     }
-    // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
+    // 快照投影保留前端可定位的 dbId，携带它的消息对前端 store 可见
     // （db_id_known=true，与 run_agent_loop 入口同规则）。
     for m in &mut messages {
         if m.db_id.is_some() {

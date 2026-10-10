@@ -27,6 +27,8 @@ use crate::AppState;
 mod phases;
 mod tool_exec;
 
+#[cfg(all(test, target_os = "windows"))]
+mod scripted_tests;
 
 use self::phases::{
     finish_text_reply, persist_assistant_tool_calls, prepare_turn, report_max_rounds_exceeded,

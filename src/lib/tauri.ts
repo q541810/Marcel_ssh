@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isDebugSession } from "@/lib/debugServer";
 import { getErrorMessage } from "./errors";
+import type { HistorySnapshot } from "./historySnapshot";
 import type {
   ActiveMessagesResult,
   AppBootstrapData,
@@ -113,19 +114,7 @@ export async function agentStartTask(
   prompt: string,
   mode: string,
   conversationId: string,
-  history: {
-    role: string;
-    content: string;
-    toolCalls?: Array<{
-      id: string;
-      name: string;
-      arguments: Record<string, unknown>;
-    }>;
-    toolCallId?: string;
-    reasoningContent?: string;
-    imagePaths?: string[];
-    dbId?: string;
-  }[],
+  historySnapshot: HistorySnapshot,
   taskId?: string,
   modelId?: string | null,
   /**
@@ -140,7 +129,7 @@ export async function agentStartTask(
     prompt,
     mode,
     conversationId,
-    history,
+    historySnapshot,
     taskId,
     modelId: modelId ?? null,
     origin: origin ?? null,
@@ -291,30 +280,18 @@ export interface AgentCompactResult {
 }
 
 /** 手动压缩指定会话的上下文（命令面板「压缩上下文」）。
- *  history 由 buildLlmHistory 提供（与 agent_start_task 同一来源）；
+ *  historySnapshot 只携带当前消息事实，由后端按与 agent_start_task 相同规则投影；
  *  taskId 由前端生成，作为 `agent://stream/{taskId}` 事件通道（压缩事件
  *  实时转发，前端复用 attachStreamListener 显示卡片）。 */
 export async function agentCompactConversation(
   conversationId: string,
-  history: {
-    role: string;
-    content: string;
-    toolCalls?: Array<{
-      id: string;
-      name: string;
-      arguments: Record<string, unknown>;
-    }>;
-    toolCallId?: string;
-    reasoningContent?: string;
-    imagePaths?: string[];
-    dbId?: string;
-  }[],
+  historySnapshot: HistorySnapshot,
   taskId: string,
 ): Promise<AgentCompactResult> {
   return invoke<AgentCompactResult>("agent_compact_conversation", {
     conversationId,
     taskId,
-    history,
+    historySnapshot,
   });
 }
 

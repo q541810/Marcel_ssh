@@ -1,12 +1,13 @@
 // 会话与历史落库（ConversationDb，SQLite）。
 //
-// [`ConversationDb`] 用一把 `Mutex<Connection>` 顶起六块职责，拆在同目录的子模块里
+// [`ConversationDb`] 用一把 `Mutex<Connection>` 承担会话相关职责，拆在同目录的子模块里
 // —— 每个文件是同一个 `impl ConversationDb` 的一份切片，共享同一把锁：
 //
 // - `model.rs`         数据形状（Conversation / 错误 / 跨设备同步快照等）
 // - `conversations.rs` 会话表 CRUD（列表、改名、置顶、模型与档位记忆、级联删除、全文搜索）
 // - `messages.rs`      消息行存取（列清单唯一来源、归档翻页、回合收尾状态）
 // - `history.rs`       历史回读（agent 只读入口：窗口、概览、检索、锚点）
+// - `llm_history.rs`   请求历史投影（实时快照 / 落库引用、压缩边界、工具协议闭合）
 // - `compaction.rs`    压缩落库（插卡、吸收旧卡、定位）
 // - `usage.rs`         token 用量（累计 + 最近一次请求快照 + 「含子对话」口径）
 // - `plans.rs`         plan 与快照存取
@@ -16,6 +17,7 @@
 mod compaction;
 mod conversations;
 mod history;
+mod llm_history;
 mod messages;
 mod model;
 mod plans;
@@ -25,6 +27,7 @@ pub use history::{
     CardBrief, HistoryError, HistoryHit, HistoryOverview, HistoryRead, HistoryWindow, MsgBrief,
     WindowStart,
 };
+pub use llm_history::HistorySnapshot;
 pub use messages::{ActiveMessagesResult, EarlierMessagesResult, StoredMessage};
 pub use model::{
     Conversation, ConversationError, ConversationSearchResult, ConversationWithMessages,

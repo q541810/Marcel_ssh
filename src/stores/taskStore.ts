@@ -457,7 +457,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         attachStreamListener(taskId, conversationId, loadingAssistantId),
         attachPlanListener(taskId),
       ]);
-      const llmHistory = conversationStore.buildLlmHistory(conversationId);
+      const historySnapshot = conversationStore.snapshotHistory(conversationId);
       // 会话级模型选择：当前 conversation 的 modelId（无 = 跟随全局默认）
       const convModelId =
         useConversationStore.getState().conversations[conversationId]?.modelId ?? null;
@@ -466,7 +466,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         requestPrompt,
         mode,
         conversationId,
-        llmHistory,
+        historySnapshot,
         taskId,
         convModelId,
         isJobNotice ? "job_notice" : undefined,

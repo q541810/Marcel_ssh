@@ -1,11 +1,11 @@
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
+use crate::agent::conversation::HistorySnapshot;
 use crate::agent::conversation_persister::PromptOrigin;
 use crate::agent::manager::{AgentManager, AgentRole, AgentSpec};
 use crate::agent::task::AgentMode;
 use crate::error::AppError;
-use crate::llm::provider::LlmMessage;
 use crate::AppState;
 
 #[tauri::command]
@@ -15,7 +15,7 @@ pub async fn agent_start_task(
     session_id: String,
     prompt: String,
     mode: AgentMode,
-    history: Vec<LlmMessage>,
+    history_snapshot: HistorySnapshot,
     conversation_id: String,
     task_id: Option<String>,
     model_id: Option<String>,
@@ -43,6 +43,12 @@ pub async fn agent_start_task(
     // 会话级模型选择（llmRegistry 模型条目 id）；None = 跟随全局默认模型。
     // manager.spawn 的 resolve_override 会按 id 解析，找不到时回落默认。
     let model_override = model_id.filter(|s| !s.trim().is_empty());
+    // 快照保留调用时的实时消息与可定位锚点；请求角色、压缩边界和工具协议统一
+    // 在后端投影，不把仅落库的内部补问混入此前不可见的实时历史。
+    let history = state
+        .conversation_db
+        .resolve_llm_history(&conversation_id, &history_snapshot)
+        .map_err(|error| AppError::Agent(format!("读取会话历史失败：{error}")))?;
     let spec = AgentSpec {
         task_id: task_id.clone(),
         mode,

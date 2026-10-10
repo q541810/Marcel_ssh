@@ -28,7 +28,7 @@ use super::{escape_like, make_match_snippet};
 //   · `(created_at, rowid)` 行序比较在 SQL 片段里 6 处、Rust 里 2 处各写一遍；
 //   · 前端还有自己的一份等价信号：`compaction?.status === 'done'`（从 DB 重载时
 //     `parseCompactionSummary` 会把带前缀的行强制置成 done，两套信号因此等价，
-//     由 `messageConversion.test.ts` 与 `conversationStore.test.ts` 钉住）。
+//     由 `messageConversion.test.ts` 与 `llm_history.rs` 的共享基线钉住）。
 // 改这条规则时这几处必须一起想，见各处交叉引用注释。
 
 /// 行序游标：`messages` 的 `(created_at ASC, rowid ASC)` 位置。

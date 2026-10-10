@@ -2,7 +2,6 @@ import { create } from 'zustand';
 import type {
   AgentMessage,
   AgentConversation,
-  StoredMessage,
   TurnState,
   UserInputMetadata,
 } from '@/lib/types';
@@ -10,14 +9,14 @@ import * as tauri from '@/lib/tauri';
 import type { AgentCompactResult } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import { validateUserInput } from '@/lib/userInput';
-import { draftConversationIdFor, draftKeyFor, useAgentDraftStore } from './agentDraftStore';
+import { createHistorySnapshot, type HistorySnapshot } from '@/lib/historySnapshot';
 import {
   storedMessageToAgentMessage,
   clearIntermediateReasoning,
-  compactionCheckpoint,
 } from './messageConversion';
 import { useTaskStore } from './taskStore';
 import { useTurnFoldStore } from './turnFoldStore';
+import { draftConversationIdFor, draftKeyFor, useAgentDraftStore } from './agentDraftStore';
 import { useSettingsStore } from './settingsStore';
 import { effectiveModelId } from '@/lib/llmRegistry';
 import { interruptNoticeKind, type InterruptNoticeKind } from '@/lib/toolCatalog';
@@ -119,15 +118,8 @@ export interface ConversationState {
   /** 把回合收尾状态写到该对话尾回合的锚点（最后一条 user 消息）上。
    *  与后端 `messages.turn_state` 同一落点；仅 completed 允许折叠回合。 */
   markTailTurnState: (conversationId: string, state: TurnState) => void;
-  buildLlmHistory: (conversationId: string) => Array<{
-    role: string;
-    content: string;
-    reasoningContent?: string;
-    toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-    toolCallId?: string;
-    imagePaths?: string[];
-    dbId?: string;
-  }>;
+  /** 冻结当前消息事实；LLM 请求历史由后端统一构建。 */
+  snapshotHistory: (conversationId: string) => HistorySnapshot;
 }
 
 function rememberActiveForConnection(
@@ -156,113 +148,6 @@ function pickPreferredConversationId(
     .filter((c) => c.connectionId === connectionId && !c.parentConversationId)
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   return sorted[0]?.id ?? null;
-}
-
-type LlmHistoryItem = {
-  role: string;
-  content: string;
-  reasoningContent?: string;
-  toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
-  toolCallId?: string;
-  imagePaths?: string[];
-  /** 持久化消息的 DB row id（统一 id 域）：后端据此给 loop 消息带 db_id，
-   *  压缩的 tail_db_id 指针依赖它（load 的消息必有；运行中消息由后端 save 回填）。 */
-  dbId?: string;
-};
-
-/**
- * LLM 协议要求：assistant 消息的 tool_calls 必须全部被紧随的 tool 消息回复。
- * 应用重启/崩溃（tool 执行中进程退出）会在历史里留下未闭合的 tool_calls ——
- * assistant(tool_calls) 后没有对应 tool 回复，直接发送会 400
- * ("must be followed by tool messages responding to each tool_call_id")。
- * 发送前做一次闭合校验：
- * - 全部已回复（正常历史 / 用户停止任务后后端补的 aborted tool 消息）：原样保留
- * - 部分已回复：toolCalls 过滤为已回复子集（按 id 匹配，保持原顺序）
- * - 全部未回复且 content 非空：移除 toolCalls，降级为纯 assistant 文本
- * - 全部未回复且 content 为空：整条移除（避免空消息）
- */
-function closeToolCallGroups(output: LlmHistoryItem[]): LlmHistoryItem[] {
-  const result: LlmHistoryItem[] = [];
-  let openIdx: number | null = null;
-  let replied = new Set<string>();
-
-  const settle = () => {
-    if (openIdx == null) return;
-    // 先保存局部 idx 与 replied 快照：openIdx/replied 重置后再用会导致
-    // result[null] 附加 'null' 属性（JSON 不可见但 toEqual 失败）以及
-    // kept 恒为空（闭合组被误判未闭合而误裁剪）。
-    const idx = openIdx;
-    const item = result[idx];
-    const calls = item.toolCalls;
-    const repliedSnapshot = replied;
-    openIdx = null;
-    replied = new Set();
-    if (!calls || calls.length === 0) return;
-    const kept = calls.filter((c) => repliedSnapshot.has(c.id));
-    if (kept.length === calls.length) return;
-    if (kept.length > 0) {
-      result[idx] = { ...item, toolCalls: kept };
-    } else if (item.content.trim() === '' && !item.reasoningContent) {
-      result.splice(idx, 1);
-    } else {
-      const { toolCalls: _drop, ...rest } = item;
-      result[idx] = rest;
-    }
-  };
-
-  for (const item of output) {
-    if (item.role === 'assistant' && item.toolCalls && item.toolCalls.length > 0) {
-      // 新组开始：结算上一组（若未闭合则裁剪）
-      settle();
-      openIdx = result.length;
-      replied = new Set();
-      result.push(item);
-      continue;
-    }
-    if (item.role === 'tool' && openIdx != null && item.toolCallId) {
-      replied.add(item.toolCallId);
-    }
-    if (item.role === 'user') {
-      settle();
-    }
-    result.push(item);
-  }
-  settle();
-  return result;
-}
-
-/**
- * 协议合法性最后防线：确保每条 tool 消息都有前置的 assistant(tool_calls)，
- * 且每个 assistant 的 tool_calls 都被回复。
- * 裁剪（closeToolCallGroups）可能导致 tool 消息失去前置 assistant——
- * 孤立 tool 属于异常数据（正常历史中 tool 必跟在 assistant(tool_calls) 后），
- * 直接移除，不合成新消息（合成的空 content assistant 在 DeepSeek thinking
- * 模式下会触发 "reasoning_content must be passed back" 400）。
- */
-function enforceToolProtocol(output: LlmHistoryItem[]): LlmHistoryItem[] {
-  const result: LlmHistoryItem[] = [];
-  let hasOpenCalls = false;
-  for (const item of output) {
-    if (item.role === 'assistant' && item.toolCalls && item.toolCalls.length > 0) {
-      hasOpenCalls = true;
-      result.push(item);
-      continue;
-    }
-    if (item.role === 'tool' && item.toolCallId) {
-      if (!hasOpenCalls) {
-        // 孤立 tool 消息（无前置 assistant(tool_calls)）：异常数据，直接丢弃
-        continue;
-      }
-      result.push(item);
-      continue;
-    }
-    if (item.role === 'assistant') {
-      // 纯 assistant 文本：结束当前 tool 组（tool 消息必须紧跟 assistant(tool_calls)）
-      hasOpenCalls = false;
-    }
-    result.push(item);
-  }
-  return result;
 }
 
 /** 快速切换 SSH tab 时丢弃过期的 sync 结果 */
@@ -743,7 +628,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           : null;
       })()
       : null;
-        await tauri.agentDeleteConversation(conversationId);
+    await tauri.agentDeleteConversation(conversationId);
     // 级联：主对话 + 其全部子agent对话（后端已级联删 DB）。
     // 在 set 之前从当前 map 快照收集（set 后子对话条目已不存在）。
     const ids = [
@@ -877,7 +762,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         );
       }
     }
-
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {
@@ -1392,15 +1276,15 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     // 发送、`/` 菜单、撤回、后台作业自动继续全部让路。
     //
     // 快照必须先于上锁，且两者之间**没有任何 await**（都是同步代码，别的写入
-    // 插不进来）：先上锁再算快照的话，`buildLlmHistory` 万一抛错锁就泄留了。
+    // 插不进来）：先上锁再算快照的话，取样万一抛错锁就泄留了。
     // 压缩的卡片按「提交那一刻的队尾」落位（后端 `persist_compaction`、前端
     // `applyCompactionSplice` 的 manual 分支），从这份快照到提交之间隔着一次完整
     // 的摘要调用——这期间写进来的消息会被卡片盖到后面，再被归档边界（最新一张卡
     // 之前的行）从后续请求里抹掉，占位就是为了让这个窗口一次都不出现。
     const taskId = crypto.randomUUID();
-    // 压缩对象 = buildLlmHistory 产物（与 agent_start_task 同源，tool 协议
-    // 已闭合修正，避免中断遗留的未闭合 tool 调用组导致无法压缩）
-    const history = get().buildLlmHistory(conversationId);
+    // 与 agent_start_task 同源的原始消息快照；压缩边界和 tool 协议闭合由
+    // 后端统一投影，不在前端另造一份模型历史。
+    const historySnapshot = get().snapshotHistory(conversationId);
     useTaskStore.getState().beginCompaction(conversationId);
     try {
       // 完整复用现有 stream 监听：后端把压缩事件实时转发到
@@ -1408,7 +1292,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       // handleCompactionStart/Progress/Done/Skipped —— 进行中卡片、原位替换、
       // attempted 区分、进度实时文本全在其中。
       await attachStreamListener(taskId, conversationId, '');
-      const result = await tauri.agentCompactConversation(conversationId, history, taskId);
+      const result = await tauri.agentCompactConversation(conversationId, historySnapshot, taskId);
       // live store 的原位插入由 Done 事件路径（handleCompactionDone）负责；
       // 结果路径不再操作 store——原文全保留，事件丢失时缺的只是卡片标记
       // （DB 已由后端落库，重载可见），无副作用风险。
@@ -1627,168 +1511,6 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     });
   },
 
-  buildLlmHistory: (conversationId: string) => {
-    const msgs = get().messages[conversationId] || [];
-
-    const output: ReturnType<ConversationState['buildLlmHistory']> = [];
-    let pendingAssistantIndex: number | null = null;
-    /** 为 true 时，后续连续 tool 消息追加到同一条 assistant 的 toolCalls */
-    let openToolGroup = false;
-    let prevOutputRole: string | null = null;
-
-    // 请求侧屏蔽：最后一张 done 卡（被压区间末尾的边界标记）之前的所有内容
-    // 不进 LLM 请求（原文仍全部可见，仅请求屏蔽）。卡片由 live splice /
-    // 持久化 created_at 定位在 span 末尾 → "卡前"恰为被压区间（手动压到最末时
-    // 卡在对话末尾 → 全部屏蔽 → 请求只剩 checkpoint）。旧卡已被吸收，恒单卡。
-    let lastCardIdx = -1;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === 'system' && msgs[i].compaction?.status === 'done') {
-        lastCardIdx = i;
-        break;
-      }
-    }
-
-    for (let i = 0; i < msgs.length; i++) {
-      const m = msgs[i];
-      if (m.isLoading) continue;
-      if (i < lastCardIdx) continue; // 屏蔽卡前内容（被压区间 + 通知）
-
-      if (m.role === 'system') {
-        // 压缩 done 卡 → user 角色 checkpoint（framing 与后端逐字节一致，
-        // 二次压缩的 PRIOR checkpoint 识别依赖它），让模型把压缩历史当作
-        // 既有背景；其余 system（通知/运行中卡）照旧跳过。
-        const checkpoint = compactionCheckpoint(m);
-        if (checkpoint) {
-          output.push(checkpoint);
-          pendingAssistantIndex = null;
-          openToolGroup = false;
-          prevOutputRole = 'user';
-        }
-        continue;
-      }
-
-      if (m.role === 'user' || m.role === 'notice') {
-        // `notice` = 系统替后台作业写的结算告知（自动继续那一轮的 prompt）。
-        // 对模型而言它就是一条 user 消息 —— 与 DSH 把插件告知当 user 消息交给
-        // 模型同一语义（那边靠 message source 区分，这边靠落库 role）。
-        const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
-          role: 'user',
-          content: m.content,
-          ...(m.dbId ? { dbId: m.dbId } : {}),
-        };
-        if (m.imagePaths && m.imagePaths.length > 0) {
-          item.imagePaths = m.imagePaths;
-        }
-        output.push(item);
-        pendingAssistantIndex = null;
-        openToolGroup = false;
-        prevOutputRole = 'user';
-        continue;
-      }
-
-      if (m.role === 'assistant') {
-        const fullCalls =
-          m.toolCalls && m.toolCalls.length > 0
-            ? m.toolCalls
-            : m.toolCall
-              ? [m.toolCall]
-              : null;
-
-        if (fullCalls) {
-          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
-            role: 'assistant',
-            content: m.content,
-            toolCalls: fullCalls.map((tc) => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments || {},
-            })),
-            ...(m.dbId ? { dbId: m.dbId } : {}),
-          };
-          // DeepSeek thinking 模式：带 tool_calls 的 assistant 必须回传
-          // reasoning_content（落库已保留，重载后这里原样带上）
-          if (m.reasoningContent) {
-            item.reasoningContent = m.reasoningContent;
-          }
-          output.push(item);
-          // assistant 已带完整 tool_calls，后续 tool 只负责 result
-          pendingAssistantIndex = null;
-          openToolGroup = true;
-        } else {
-          const item: ReturnType<ConversationState['buildLlmHistory']>[number] = {
-            role: 'assistant',
-            content: m.content,
-            ...(m.dbId ? { dbId: m.dbId } : {}),
-          };
-          if (m.reasoningContent) {
-            item.reasoningContent = m.reasoningContent;
-          }
-          output.push(item);
-          pendingAssistantIndex = output.length - 1;
-          openToolGroup = false;
-        }
-        prevOutputRole = 'assistant';
-        continue;
-      }
-
-      if (m.role === 'tool' && m.toolResult && m.toolResult.toolCallId) {
-        const toolContent = m.toolResult.result || m.content;
-        const callEntry = {
-          id: m.toolResult.toolCallId,
-          name: m.toolResult.toolName,
-          arguments: m.toolResult.arguments || {},
-        };
-
-        if (pendingAssistantIndex != null) {
-          // 纯文案 assistant 后的第一个 tool：把 toolCalls 挂上去。
-          // reasoningContent 一并带上（DeepSeek thinking 模式回传要求）；
-          // dbId 保留（压缩定位锚点）。
-          const prev = output[pendingAssistantIndex];
-          output[pendingAssistantIndex] = {
-            role: 'assistant',
-            content: prev.content,
-            toolCalls: [callEntry],
-            ...(prev.reasoningContent ? { reasoningContent: prev.reasoningContent } : {}),
-            ...(prev.dbId ? { dbId: prev.dbId } : {}),
-          };
-          pendingAssistantIndex = null;
-          openToolGroup = true;
-        } else if (openToolGroup) {
-          // 并行/连续 tool：追加到最近一条带 toolCalls 的 assistant
-          for (let i = output.length - 1; i >= 0; i--) {
-            const prev = output[i];
-            if (prev.role === 'assistant' && prev.toolCalls) {
-              const exists = prev.toolCalls.some((tc) => tc.id === callEntry.id);
-              if (!exists) {
-                prev.toolCalls = [...prev.toolCalls, callEntry];
-              }
-              break;
-            }
-            if (prev.role === 'user') break;
-          }
-        } else {
-          // 孤立 tool（UI store 里没有前导 assistant）：合成一条单 call 的 assistant
-          output.push({
-            role: 'assistant',
-            content: '',
-            toolCalls: [callEntry],
-          });
-          openToolGroup = true;
-        }
-
-        output.push({
-          role: 'tool',
-          content: toolContent,
-          toolCallId: m.toolResult.toolCallId,
-          ...(m.dbId ? { dbId: m.dbId } : {}),
-        });
-        prevOutputRole = 'tool';
-      } else {
-        openToolGroup = false;
-      }
-    }
-
-    // 协议闭合校验：裁剪重启/崩溃残留的未闭合 tool_calls，避免 LLM 400
-    return enforceToolProtocol(closeToolCallGroups(output));
-  },
+  snapshotHistory: (conversationId: string) =>
+    createHistorySnapshot(get().messages[conversationId] ?? []),
 }));

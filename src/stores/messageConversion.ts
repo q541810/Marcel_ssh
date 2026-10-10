@@ -116,7 +116,7 @@ class AssistantMessageStrategy implements MessageConversionStrategy {
       }> = Array.isArray(raw) ? raw : [raw];
 
       if (persistedCalls.length > 0) {
-        // 只填 toolCalls（复数），供 buildLlmHistory 跨 task 还原并行调用。
+        // 只填 toolCalls（复数），消息快照据此让后端跨 task 还原并行调用。
         // 不设 toolCall：AgentMessageList 会对 assistant+toolCall 再渲一张 ToolCallCard，
         // 与后续 role=tool 卡片重复，且会盖住 assistant 文案。
         base.toolCalls = persistedCalls.map((c) => ({
@@ -344,17 +344,6 @@ export function clearIntermediateReasoning(messages: AgentMessage[]): AgentMessa
 
 // ───────────────────────── 压缩视图重建（id 指针定位 + 重启重建） ─────────────────────────
 
-/**
- * 镜像 `templates/context/压缩前言.hbs`（保持逐字节一致；改后端模板时同步这里）。
- * Rust 侧有 `checkpoint_preamble_matches_frontend_copy` 钉住模板渲染结果，
- * 但跨语言无法自动比对，所以两边都要手改。
- */
-export const CHECKPOINT_PREAMBLE =
-  'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. Treat the captured context as established background and build on it without restating it. Continue the task directly from the messages that follow, without acknowledging this checkpoint. You can still read the condensed span in full: call read_history to retrieve it rather than re-running work whose original output is no longer available.';
-
-const SUMMARY_OPEN_TAG = '<compacted-summary>';
-const SUMMARY_CLOSE_TAG = '</compacted-summary>';
-
 /** 后端 Done 事件携带的定位信息：统一 id 指针（取代位置数数与指纹验证）。 */
 export interface CompactionTailSpec {
   /** 被压区间末条消息的 DB row id（`AgentMessage.dbId`）。 */
@@ -441,18 +430,4 @@ export function applyCompactionSplice(
   const insertAt = out.findIndex((m) => m.id === tailMsgId) + 1;
   out.splice(insertAt, 0, card);
   return { msgs: out, removedIds, applied: true };
-}
-
-/** done 压缩卡 → user 角色 checkpoint（framing 与后端逐字节一致，二次压缩的
- *  PRIOR checkpoint 识别依赖它）；非 done / 无摘要 → null。 */
-export function compactionCheckpoint(
-  card: AgentMessage,
-): { role: 'user'; content: string } | null {
-  if (card.compaction?.status !== 'done') return null;
-  const summary = card.compaction.summary;
-  if (!summary) return null;
-  return {
-    role: 'user',
-    content: `${CHECKPOINT_PREAMBLE}\n\n${SUMMARY_OPEN_TAG}\n${summary}\n${SUMMARY_CLOSE_TAG}`,
-  };
 }

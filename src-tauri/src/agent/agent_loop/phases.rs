@@ -52,7 +52,7 @@ pub(super) fn prepare_turn(
         .with_prompt_origin(prompt_origin)
         .with_user_input(user_input);
 
-    // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
+    // history 由后端从有序快照投影：携带 dbId 的消息对前端 store 可见
     // （db_id_known=true，自动 pressure 压缩据此收缩到前端能找到的区间末条）；
     // 运行中 save 回填的消息保持 false（前端不知 id）。
     for m in &mut *messages {

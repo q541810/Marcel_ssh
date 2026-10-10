@@ -1,12 +1,12 @@
 /**
- * 压缩方案前端算法测试（id 指针定位 + checkpoint 输出）。
+ * 压缩方案前端算法测试（id 指针定位）。
  *
  * 被测对象是 `messageConversion.ts` 里已落地的纯函数：
- *   applyCompactionSplice / compactionCheckpoint。
+ *   applyCompactionSplice。
  *
  * 覆盖：id 指针定位插入（原文全保留、卡片插在被压末条之后）、吸收旧卡 +
  * 移除运行中卡、幂等、找不到指针的降级（不插卡、不屏蔽）、无校验语义
- * （legacy/孤儿 tool 行不影响定位）、checkpoint framing 逐字节镜像。
+ * （legacy/孤儿 tool 行不影响定位）。checkpoint 输出由后端共享fixture覆盖。
  *
  * 注意：持久化由后端按同一 id 结构化落库（卡片 created_at = 被压末行，
  * `load_messages` 行序 = 原文 + 卡片紧贴末条），前端**不做**重启回放——
@@ -16,12 +16,7 @@ import { describe, it, expect } from 'vitest';
 import type { AgentMessage } from './types';
 import {
   applyCompactionSplice,
-  compactionCheckpoint,
-  CHECKPOINT_PREAMBLE,
 } from '../stores/messageConversion';
-
-const SUMMARY_OPEN_TAG = '<compacted-summary>';
-const SUMMARY_CLOSE_TAG = '</compacted-summary>';
 
 // ───────────────────────── 测试数据辅助 ─────────────────────────
 
@@ -66,7 +61,7 @@ const legacyTool = (dbId?: string): AgentMessage => ({
     result: 'out',
     success: true,
     blocked: false,
-  }, // 无 toolCallId → buildLlmHistory 丢弃
+  }, // 无 toolCallId → 后端历史投影丢弃
   ...(dbId ? { dbId } : {}),
 });
 const doneCard = (summary: string): AgentMessage => ({
@@ -180,7 +175,7 @@ describe('applyCompactionSplice id 指针定位', () => {
     expect(r.msgs.map((m) => m.id)).toEqual([m1.id, m2.id, m3.id, r.msgs[r.msgs.length - 1].id]);
   });
 
-  it('手动：尾部有 system 通知时卡片仍追加到末尾（buildLlmHistory 跳过通知，无影响）', () => {
+  it('手动：尾部有 system 通知时卡片仍追加到末尾（后端历史投影跳过通知，无影响）', () => {
     const m1 = u('u1', 'row-1');
     const note = { id: 's1', role: 'system' as const, content: '一些通知', timestamp: '' };
     const r = applyCompactionSplice([m1, note], { tailDbId: null }, doneCard('s'), undefined, {
@@ -189,27 +184,6 @@ describe('applyCompactionSplice id 指针定位', () => {
     expect(r.applied).toBe(true);
     expect(r.msgs[r.msgs.length - 1].compaction?.status).toBe('done');
     expect(r.msgs).toHaveLength(3);
-  });
-});
-
-// ───────────────────────── checkpoint 与历史构建 ─────────────────────────
-
-describe('compactionCheckpoint（buildLlmHistory 压缩分支）', () => {
-  it('done 卡 → user 角色，framing 与后端逐字节一致', () => {
-    const card = doneCard('## Primary Request\n- build a terminal');
-    const cp = compactionCheckpoint(card);
-    expect(cp).toEqual({
-      role: 'user',
-      content:
-        `${CHECKPOINT_PREAMBLE}\n\n${SUMMARY_OPEN_TAG}\n` +
-        '## Primary Request\n- build a terminal\n' +
-        `${SUMMARY_CLOSE_TAG}`,
-    });
-  });
-
-  it('运行中卡 / 无摘要的 done 卡 → 不输出 checkpoint', () => {
-    expect(compactionCheckpoint(runningCard())).toBeNull();
-    expect(compactionCheckpoint({ ...doneCard('s'), compaction: { status: 'done' } })).toBeNull();
   });
 });
 
