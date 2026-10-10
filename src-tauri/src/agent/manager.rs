@@ -203,8 +203,8 @@ fn take_pending_cancel(task_id: &str) -> bool {
 ///
 /// 所以：
 /// - 任务在册 → 置取消态（`transition_to`，Cancelled 是吸收态、重复写幂等）
-///   并置位取消信号；级联（子 agent / 后台作业 / 待审批交互）仍由调用方负责，
-///   那是一整套停止语义，不塞进这里。
+///   并置位取消信号；级联（子 agent / 后台作业 / 待审批交互）仍由调用方负责 ——
+///   完整的停止语义见 [`stop_task_cascade`]，这里只落实「在册 / 不在册」两条最小分支。
 /// - 任务不在册 → 记一枚墓碑，等 `spawn` 注册完取消表后认领。
 ///
 /// **不要在持有 `agent_tasks` 写锁时调用**：本函数要读写同一把锁
@@ -235,6 +235,164 @@ fn apply_pending_cancel(
     // 必须在取消表注册**之后**调用：表里没有接收端时 send 会丢，而 agent loop
     // 只在取消信号上中断正在进行的 LLM 调用（任务状态是每轮开头才查）。
     cancel.cancel(task_id);
+}
+
+/// 收集 task_id 及其全部后代子任务（`subagent` / `local_subagent` 工具派发的
+/// 子 agent）。
+///
+/// 子agent不能再派发子agent（plan 工具集无 subagent 工具 + 工具内嵌套防御），
+/// 一层即可覆盖全部后代；这里仍用 BFS，防御任何残留的多层结构。
+pub(crate) fn collect_descendant_tasks(
+    tasks: &HashMap<String, AgentTask>,
+    task_id: &str,
+) -> Vec<String> {
+    let mut to_cancel: Vec<String> = vec![task_id.to_string()];
+    let mut idx = 0;
+    while idx < to_cancel.len() {
+        let parent = to_cancel[idx].clone();
+        for (tid, t) in tasks.iter() {
+            if t.parent_task_id.as_deref() == Some(parent.as_str()) && !to_cancel.contains(tid) {
+                to_cancel.push(tid.clone());
+            }
+        }
+        idx += 1;
+    }
+    to_cancel
+}
+
+/// 停止一个任务及其全部后代 —— **「点停止」的唯一实现**。
+///
+/// 两个触发入口共用它，保证两条路径上的停止语义逐项一致：
+/// - `agent_stop_task` 命令（用户点停止按钮）；
+/// - SSH 会话断开观察者（见 [`stop_tasks_for_disconnected_session`]）。
+///
+/// 一次停止含四件事：任务收成 `Cancelled`（吸收态、幂等）、解除挂起的审批 /
+/// 提问、置位取消信号（中断在飞的 LLM 调用），以及连带停掉该任务名下的远端与
+/// 本机命令及后台作业。
+///
+/// 返回本次涉及的 task id 个数（含后代，以及「不在册」时那枚墓碑），供调用方记日志。
+pub(crate) async fn stop_task_cascade(app: &AppHandle, state: &AppState, task_id: &str) -> usize {
+    // 级联取消：停掉该任务及其全部子agent。子任务与主任务一样要置
+    // Cancelled——子agent loop 的退出检查（is_task_cancelled）只看 status，
+    // 不置状态的话取消场景会被 subagent 工具误报为「执行失败」。
+    let tasks_to_cancel = {
+        let tasks = state.agent_tasks.read();
+        collect_descendant_tasks(&tasks, task_id)
+    };
+
+    let requested_while_absent = {
+        let mut tasks = state.agent_tasks.write();
+        let mut found = false;
+        for tid in &tasks_to_cancel {
+            if let Some(task) = tasks.get_mut(tid) {
+                // 经 `transition_to` 而非直接赋值：写状态的规则只有一处
+                // （重复写 Cancelled 是幂等的空操作）。
+                task.transition_to(AgentStatus::Cancelled);
+                found = true;
+            }
+        }
+        !found
+    };
+
+    // 任务还没在册：组装期间点停止（`spawn` 要先做设置/MCP/skill 读取与模型解析
+    // 才把任务写进表，配了不可达的 MCP 时这个窗口可达数十秒）。这里必须把取消
+    // 请求**记下来**并当成功返回，而不是回一句 Task not found——那会变成前端看不见
+    // 的 rejection，任务随后照常启动、照常跑完。
+    // 注意：必须在释放上面的写锁之后再调用（本函数要再取同一把锁）。
+    if requested_while_absent {
+        request_cancel(state, task_id);
+        log::info!(
+            "Stop requested before task {} was registered; recording it",
+            task_id
+        );
+        return tasks_to_cancel.len();
+    }
+
+    // 解除挂起交互：经 AgentInteractionManager 取消并在队列中淘汰，通知前端更新
+    for tid in &tasks_to_cancel {
+        state.agent_interaction.cancel_task_interactions(app, tid);
+    }
+
+    for tid in &tasks_to_cancel {
+        state.task_cancel.cancel(tid);
+        // bash 以 Agent task_id 注册到统一命令 manager；任务停止属级联
+        // 取消 → Task，与界面直接取消（User）、Agent job_kill（Agent）
+        // 区分，job_output 的终止来源文案据此渲染。
+        // 前台执行走 cancel_with_reason（注册表最后一条 exec）；
+        // 后台作业可能多条并存，cancel_task_jobs 逐个 kill + 释放
+        // 结算通知通道（让挂起的 agent loop 立即醒来以取消收场）。
+        let _ = state
+            .command_exec
+            .cancel_with_reason(tid, crate::command_exec::CancelReason::Task)
+            .await;
+        let _ = state.command_exec.cancel_task_jobs(tid).await;
+        // 本机执行是另一套 manager（没有 SSH 会话可断连级联，见 AppState 的
+        // `local_command_exec` 注释），停止任务同样要停它名下的本机作业与前台
+        // 执行——否则用户点了停止，本机上跑的构建 / 脚本还在继续。两类调用的
+        // 分工与上面完全一致（前台走注册表，后台作业逐个终止）。
+        let _ = state
+            .local_command_exec
+            .cancel_with_reason(tid, crate::command_exec::CancelReason::Task)
+            .await;
+        let _ = state.local_command_exec.cancel_task_jobs(tid).await;
+    }
+    if tasks_to_cancel.len() > 1 {
+        log::info!(
+            "Cancelled task {} and {} sub-agent(s)",
+            task_id,
+            tasks_to_cancel.len() - 1
+        );
+    }
+    tasks_to_cancel.len()
+}
+
+/// 会话 → 绑在它上面、**仍在运行**的任务 id 列表（纯函数，便于测试）。
+///
+/// 只取运行中的：终态任务不收停止——`transition_to` 只把 `Cancelled` 当吸收态，
+/// 对一个刚 `Completed` 的任务写 `Cancelled` 是实打实地改写状态。
+fn running_task_ids_in(tasks: &HashMap<String, AgentTask>, session_id: &str) -> Vec<String> {
+    tasks
+        .values()
+        .filter(|t| t.session_id == session_id && t.status.is_running())
+        .map(|t| t.id.clone())
+        .collect()
+}
+
+/// [`running_task_ids_in`] 的 `AppState` 版本。
+pub(crate) fn running_task_ids_for_session(state: &AppState, session_id: &str) -> Vec<String> {
+    running_task_ids_in(&state.agent_tasks.read(), session_id)
+}
+
+/// SSH 会话断开：把绑在该会话上的在跑任务逐个按「点停止」收场（各带子 agent 级联）。
+///
+/// 为什么要停：会话没了，这些任务依赖的工具一个也做不成；而前端在断连路径上会
+/// 把任务就地收成「已取消」并拆掉事件通道，之后它们在界面上既看不见、也没有入口
+/// 再停（停止按钮只对运行中的任务亮）。不停的话就是白烧 token 往会话里写消息。
+///
+/// 为什么走「点停止」这套：它已是四层（任务状态 / 落库 turn_state / 前端 store /
+/// UI）验证过的一致性收尾，另起一套只会分叉。
+///
+/// 停的范围是**这一棵棵任务树**：同一棵树上的子 agent 可能跑在别的机器上
+/// （multi_host），它们照样在级联里被停掉 —— 会话断了，这次行动已经没有意义。
+pub(crate) async fn stop_tasks_for_disconnected_session(
+    app: &AppHandle,
+    state: &AppState,
+    session_id: &str,
+) {
+    let task_ids = running_task_ids_for_session(state, session_id);
+    if task_ids.is_empty() {
+        return;
+    }
+    log::info!(
+        "SSH 会话 {} 断开：级联停止 {} 个 agent 任务（含其子 agent）",
+        session_id,
+        task_ids.len()
+    );
+    for tid in &task_ids {
+        // 同一棵树可能有多个任务都绑在这个会话上（子 agent 不传 host 时继承父
+        // 会话），逐个调是幂等的。
+        stop_task_cascade(app, state, tid).await;
+    }
 }
 
 /// 统一管理 agent 的组装与生命周期。
@@ -608,6 +766,31 @@ impl AgentManager {
                 task_id
             );
             // 任务记录此刻已提交 → 走「在册」那条路（置取消态 + 发信号）。
+            request_cancel(&self.state, &task_id);
+        }
+
+        // 出生即孤儿：组装期间这个 SSH 会话已经断开了。
+        //
+        // 断连观察者按会话查 `agent_tasks`（见 `stop_tasks_for_disconnected_session`），
+        // 而任务要到最后才登记进去 —— 组装窗口里生出来的任务于是会带着一个死会话
+        // 开跑：每一轮工具都注定失败，只有 token 在烧。这里与「组装期间用户点了
+        // 停止」同样处理：收取消态 + 发信号，loop 第一轮开头就退出、收尾走
+        // `TurnState::Cancelled`。
+        //
+        // 退出条件是「会话不在册」而不是「刚断过」：会话 id 只会因真正断开而从
+        // `connections` 消失（重连复用同一 id 会重新登记），所以这里不会误伤
+        // 重连后的新任务。
+        //
+        // 本机子 agent 不适用：它的会话是哨兵 `"local"`，压根没有 SSH 会话
+        // （`is_connected` 对它恒为 false，不特判会把每个本机子 agent 当场收掉）。
+        if !spec.role.is_local_side()
+            && !self.state.ssh_manager.is_connected(&spec.session_id).await
+        {
+            log::info!(
+                "Agent task {} 的 SSH 会话 {} 已不存在（组装期间断开），开局即按停止收场",
+                task_id,
+                spec.session_id
+            );
             request_cancel(&self.state, &task_id);
         }
 
@@ -1262,6 +1445,166 @@ mod tests {
     /// 墓碑表是进程级的，测试各用唯一 id 互不干扰。
     fn unique_id(tag: &str) -> String {
         format!("test-{tag}-{}", uuid::Uuid::new_v4())
+    }
+
+    /// 指定会话 / 状态 / 父任务的测试任务（`make_task` 的完整版）。
+    fn task_with(id: &str, session: &str, status: AgentStatus, parent: Option<&str>) -> AgentTask {
+        let mut t = make_task(id);
+        t.session_id = session.to_string();
+        t.status = status;
+        t.parent_task_id = parent.map(String::from);
+        t
+    }
+
+    /// 会话 → 在跑任务：只认**这个会话**上**还没到终态**的任务。
+    /// 终态任务（Completed / Failed / Cancelled）不能收停止 —— `transition_to`
+    /// 只把 `Cancelled` 当吸收态，对刚完成的任务写 `Cancelled` 是改写状态。
+    #[test]
+    fn session_lookup_keeps_only_running_tasks_of_that_session() {
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "sess-a", AgentStatus::Executing, None),
+            ),
+            (
+                "approval".to_string(),
+                task_with("approval", "sess-a", AgentStatus::WaitingApproval, None),
+            ),
+            (
+                "planning".to_string(),
+                task_with("planning", "sess-a", AgentStatus::Planning, None),
+            ),
+            (
+                "done".to_string(),
+                task_with("done", "sess-a", AgentStatus::Completed, None),
+            ),
+            (
+                "failed".to_string(),
+                task_with("failed", "sess-a", AgentStatus::Failed, None),
+            ),
+            (
+                "cancelled".to_string(),
+                task_with("cancelled", "sess-a", AgentStatus::Cancelled, None),
+            ),
+            (
+                "other".to_string(),
+                task_with("other", "sess-b", AgentStatus::Executing, None),
+            ),
+            (
+                "local-sub".to_string(),
+                task_with("local-sub", "local", AgentStatus::Executing, Some("main")),
+            ),
+        ]);
+
+        let mut got = running_task_ids_in(&tasks, "sess-a");
+        got.sort();
+        assert_eq!(got, vec!["approval", "main", "planning"]);
+
+        // 别的会话照旧在跑，本机子 agent 的哨兵会话不会被当成 SSH 会话。
+        assert_eq!(running_task_ids_in(&tasks, "sess-b"), vec!["other"]);
+        assert!(running_task_ids_in(&tasks, "nobody").is_empty());
+    }
+
+    /// 不传 host 的子 agent 继承父会话 —— 同一个会话上可能挂着同一棵树里的
+    /// 多个任务，逐个调 `stop_task_cascade` 必须都是幂等的（这里只锁筛选取全，
+    /// 幂等性由 `transition_to` 的吸收态保证）。
+    #[test]
+    fn session_lookup_covers_sub_agents_inheriting_the_parent_session() {
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "sess-a", AgentStatus::Executing, None),
+            ),
+            (
+                "sub".to_string(),
+                task_with("sub", "sess-a", AgentStatus::Executing, Some("main")),
+            ),
+        ]);
+        let mut got = running_task_ids_in(&tasks, "sess-a");
+        got.sort();
+        assert_eq!(got, vec!["main", "sub"]);
+    }
+
+    #[test]
+    fn collect_descendant_tasks_includes_self_and_direct_subtasks() {
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "s1", AgentStatus::Executing, None),
+            ),
+            (
+                "sub1".to_string(),
+                task_with("sub1", "s1", AgentStatus::Executing, Some("main")),
+            ),
+            (
+                "sub2".to_string(),
+                task_with("sub2", "s1", AgentStatus::Executing, Some("main")),
+            ),
+            (
+                "other".to_string(),
+                task_with("other", "s1", AgentStatus::Executing, None),
+            ),
+        ]);
+        let got = collect_descendant_tasks(&tasks, "main");
+        assert_eq!(got.len(), 3);
+        assert!(got.contains(&"main".to_string()));
+        assert!(got.contains(&"sub1".to_string()));
+        assert!(got.contains(&"sub2".to_string()));
+        assert!(!got.contains(&"other".to_string()));
+    }
+
+    #[test]
+    fn collect_descendant_tasks_bfs_covers_nested_layers() {
+        // 防御性 BFS：即使未来出现多层嵌套（当前嵌套被工具集与工具内检查双重拦截），
+        // 级联取消也能一次覆盖全部后代。
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "s1", AgentStatus::Executing, None),
+            ),
+            (
+                "sub1".to_string(),
+                task_with("sub1", "s1", AgentStatus::Executing, Some("main")),
+            ),
+            (
+                "sub2".to_string(),
+                task_with("sub2", "s1", AgentStatus::Executing, Some("sub1")),
+            ),
+            (
+                "sub3".to_string(),
+                task_with("sub3", "s1", AgentStatus::Executing, Some("sub2")),
+            ),
+        ]);
+        let got = collect_descendant_tasks(&tasks, "main");
+        assert_eq!(got.len(), 4);
+        assert!(got.contains(&"sub3".to_string()));
+    }
+
+    #[test]
+    fn collect_descendant_tasks_missing_task_returns_only_self() {
+        let tasks = HashMap::from([(
+            "other".to_string(),
+            task_with("other", "s1", AgentStatus::Executing, None),
+        )]);
+        let got = collect_descendant_tasks(&tasks, "ghost");
+        assert_eq!(got, vec!["ghost".to_string()]);
+    }
+
+    #[test]
+    fn collect_descendant_tasks_child_of_other_task_not_collected() {
+        let tasks = HashMap::from([
+            (
+                "main".to_string(),
+                task_with("main", "s1", AgentStatus::Executing, None),
+            ),
+            (
+                "sub".to_string(),
+                task_with("sub", "s1", AgentStatus::Executing, Some("main")),
+            ),
+        ]);
+        let got = collect_descendant_tasks(&tasks, "sub");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0], "sub");
     }
 
     /// 「组装期间收到的停止」不能丢：记下之后必须能被 `spawn` 侧取走，且取走是

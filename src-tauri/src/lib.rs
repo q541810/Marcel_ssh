@@ -846,6 +846,37 @@ pub fn run() {
                 });
             }
 
+            // 断连级联停止 agent 任务：会话真正断开（主动 disconnect 或远端掉线）
+            // 时，把绑在该会话上的任务按「点停止」同一套语义停掉（含全部子 agent）
+            // —— 会话没了，它们依赖的工具一个也做不成；而前端在断连路径上会把
+            // 任务就地收成「已取消」并拆掉事件通道，之后界面上既看不见、也没有
+            // 入口再停（停止按钮只对运行中的任务亮）。
+            {
+                let state = app.state::<AppState>();
+                let app_handle = app.handle().clone();
+                let ssh_mgr = state.ssh_manager.clone();
+                tauri::async_runtime::spawn(async move {
+                    ssh_mgr
+                        .register_disconnect_observer(std::sync::Arc::new(move |session_id| {
+                            // 观察者在终端驱动的收尾路径上被**同步**调用，不能阻塞：
+                            // 级联停止要 await 任务表、交互队列与命令取消，挪进运行时。
+                            let app = app_handle.clone();
+                            let sid = session_id.to_string();
+                            tauri::async_runtime::spawn(async move {
+                                let Some(state) = app.try_state::<AppState>() else {
+                                    return;
+                                };
+                                let state: AppState = state.inner().clone();
+                                crate::agent::manager::stop_tasks_for_disconnected_session(
+                                    &app, &state, &sid,
+                                )
+                                .await;
+                            });
+                        }))
+                        .await;
+                });
+            }
+
             // 无感更新器：启动清理 + 恢复未装上的安装包 + 后台检查循环。
             // 全平台启动；退出时静默安装只在 Windows 有意义（见下方 RunEvent::Exit）。
             crate::updater::init(app.handle());

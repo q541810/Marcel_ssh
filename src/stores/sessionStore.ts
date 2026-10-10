@@ -477,6 +477,10 @@ async function attachSessionStatusListener(sessionId: string) {
       if (parsed.status === "connected") {
         store.updateSessionStatus(sessionId, "connected");
       } else if (parsed.status === "disconnected") {
+        // 任务不在这里收尾：后端断连观察者已按会话级联停止它们（与停止按钮同一
+        // 套语义，见 `agent::manager::stop_task_cascade`），界面由那条
+        // `StreamEvent::Cancelled` → `handleCancelled` 落定；主动断开那一侧走的是
+        // `sessionConversationBindingManager.onSessionDisconnected` 的本地收尾。
         store.updateSessionStatus(sessionId, "disconnected", parsed.reason);
         const fn = statusListeners.get(sessionId);
         if (fn) {
