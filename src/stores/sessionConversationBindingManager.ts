@@ -3,7 +3,8 @@ import { useConversationStore } from './conversationStore';
 import { useTaskStore, finalizeTaskLocally } from './taskStore';
 import { isTaskBusy } from '@/lib/agentStatus';
 import { isLocalSessionId } from '@/lib/toolCatalog';
-import type { Session } from '@/lib/types';
+import type { AgentConversation, Session } from '@/lib/types';
+import { agentCreateConversation } from '@/lib/tauri';
 
 /**
  * SessionConversationBindingManager
@@ -95,6 +96,37 @@ class SessionConversationBindingManager {
     return occupied;
   }
 
+  /** 连接和删除后恢复共用同一条分配规则：同连接、主对话、未被别的在线标签占用。 */
+  private findAvailableConversation(connectionId: string, sessionId: string): AgentConversation | undefined {
+    const occupiedIds = this.getOccupiedConversationIds(sessionId);
+    return Object.values(useConversationStore.getState().conversations)
+      .filter((c) => c.connectionId === connectionId && !c.parentConversationId)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .find((c) => !occupiedIds.has(c.id));
+  }
+
+  /**
+   * 删除后的恢复只准备候选，绝不顺带激活页面。
+   * 调用方在消息就绪后核对选择意图和占用，再一次提交绑定及展示状态。
+   */
+  public async prepareReplacementAfterDeletion(
+    sessionId: string,
+    connectionId: string,
+    stillCurrent: () => boolean,
+  ): Promise<{ conversation: AgentConversation; created: boolean } | null> {
+    if (!stillCurrent()) return null;
+    const available = this.findAvailableConversation(connectionId, sessionId);
+    if (available) return { conversation: available, created: false };
+    const id = await agentCreateConversation(sessionId);
+    // 已发出的建库不能撤销；用户已切走时仅留下未激活的空历史，下次列表加载可见。
+    if (!stillCurrent()) return null;
+    const now = new Date().toISOString();
+    return {
+      conversation: { id, connectionId, title: '新会话', createdAt: now, updatedAt: now },
+      created: true,
+    };
+  }
+
   /**
    * 智能切换或跳转对话：
    * - 若目标 conversation 正在被另一个在线 Session A 占用（例如在 A 中正在运行或已打开）：
@@ -154,13 +186,7 @@ class SessionConversationBindingManager {
     }
 
     // 查找本 connection 下所有主对话
-    const occupiedIds = this.getOccupiedConversationIds(sessionId);
-    const availableConvs = Object.values(afterLoad.conversations)
-      .filter((c) => c.connectionId === connectionId && !c.parentConversationId)
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-
-    // 挑选一个未被其他在线 Tab 占用的对话
-    const freeConv = availableConvs.find((c) => !occupiedIds.has(c.id));
+    const freeConv = this.findAvailableConversation(connectionId, sessionId);
 
     if (freeConv) {
       convStore.bindConversationToSession(sessionId, freeConv.id, connectionId);
@@ -195,20 +221,24 @@ class SessionConversationBindingManager {
     // 会话断开时，收尾属于该 sessionId 的孤儿 running / waiting_approval tasks：
     // 界面上的转圈与「待审批」标注都由任务状态驱动，不收尾就会一直亮着。
     //
-    // **必须**经 `finalizeTaskLocally`（而不是就地改 status）：断连只是
-    // 「没有人再看这条流」，任务的 agent loop 仍在后端跑、仍会继续发事件。
-    // 只改 status 会同时丢掉三件收尾 —— 在飞卡片永久转圈、流通道没人拆
-    // （晚到的终态事件会把**新回合**的锚点写成 completed、并删掉新任务正在飞
-    // 的工具卡）、回合收尾状态不写（折叠判定只能拿 running 去猜）。
+    // **必须**经 `finalizeTaskLocally`（而不是就地改 status）：只改 status 会
+    // 同时丢掉三件收尾 —— 在飞卡片永久转圈、流通道没人拆（晚到的终态事件会把
+    // **新回合**的锚点写成 completed、并删掉新任务正在飞的工具卡）、回合收尾
+    // 状态不写（折叠判定只能拿 running 去猜）。
     //
-    // 这里**不**向后端下发停止命令，理由有两条：
-    // 1. 后端断连观察者刻意只取消交互与命令、不结束 agent loop（`lib.rs`），
-    //    前端单方面发停止会与那条既有语义打架；
-    // 2. 断的是**这一个** SSH 会话，多机任务的子 agent 可能跑在别的机器上
-    //    （`multi_host`），`agent_stop_task` 的级联会连它们一起误杀。
-    // 代价是后端的这条任务会继续跑到自己的收尾检查点，其产出仍会落库
-    // （重连后 load 得到完整历史）；前端不再接收它的事件，所以不会再污染
-    // 任何对话的内存态 —— 这正是收尾要先把通道拆掉的原因。
+    // 同一件事的另一半在后端：断连观察者按会话级联停止这些任务（
+    // `agent::manager::stop_task_cascade`，与停止按钮同一套语义，含全部子 agent），
+    // 所以这里标的「已取消」是真的取消了 —— 命令、后台作业、在飞的 LLM 调用都
+    // 随之收场。
+    //
+    // 前端**不**为这些任务下发停止命令：断的是**这一个** SSH 会话，多机任务的
+    // 子 agent 可能跑在别的机器上（`multi_host`），按单个任务下发会连它们一起
+    // 误杀；后端观察者按「会话 → 任务树」停，边界才是对的。
+    //
+    // 为什么还要在本地同步收尾一遍，而不是等后端那条 `StreamEvent::Cancelled`
+    // 自己落下来：通道必须**先**拆 —— 晚到的终态事件会按「自然结束」处理，把新
+    // 回合的锚点写成 completed、并删掉新任务正在飞的工具卡。本地收尾之后那条
+    // 事件在界面上就没有接收端了（后端仍会照常落库）。
     const taskStore = useTaskStore.getState();
     for (const [tid, task] of Object.entries(taskStore.tasks)) {
       if (task.sessionId === sessionId && isTaskBusy(task.status)) {

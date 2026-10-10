@@ -10,7 +10,7 @@ import * as tauri from '@/lib/tauri';
 import type { AgentCompactResult } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
 import { validateUserInput } from '@/lib/userInput';
-import { draftKeyFor, useAgentDraftStore } from './agentDraftStore';
+import { draftConversationIdFor, draftKeyFor, useAgentDraftStore } from './agentDraftStore';
 import {
   storedMessageToAgentMessage,
   clearIntermediateReasoning,
@@ -717,7 +717,33 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   deleteConversation: async (conversationId: string) => {
-    await tauri.agentDeleteConversation(conversationId);
+    const before = get();
+    const selectionGeneration = activeSelectionGeneration;
+    const syncGeneration = syncActiveGeneration;
+    const belongsToDeletion = (id: string | null | undefined) => !!id && (
+      id === conversationId || before.conversations[id]?.parentConversationId === conversationId
+    );
+    // 只恢复真正失去当前绑定的在线标签；离线历史和后台对话删除仍按原规则处理。
+    // manager 依赖 SSH/终端模块，按需加载以维持会话数据层本身的独立读取能力。
+    const recovery = belongsToDeletion(before.activeConversationId)
+      && Object.values(before.activeConversationBySession).some(belongsToDeletion)
+      ? await (async () => {
+        const [{ useSessionStore }, { sessionConversationBindingManager: manager }] = await Promise.all([
+          import('./sessionStore'), import('./sessionConversationBindingManager'),
+        ]);
+        const sessionState = useSessionStore.getState();
+        const sessionId = sessionState.activeSessionId;
+        const session = sessionId ? sessionState.sessions[sessionId] : undefined;
+        if (activeSelectionGeneration !== selectionGeneration || syncActiveGeneration !== syncGeneration
+          || get().activeConversationId !== before.activeConversationId) return null;
+        return sessionId && session?.status === 'connected' && session.configId
+          && belongsToDeletion(before.activeConversationBySession[sessionId])
+          && get().activeConversationBySession[sessionId] === before.activeConversationBySession[sessionId]
+          ? { sessionId, connectionId: session.configId, sessionStore: useSessionStore, manager }
+          : null;
+      })()
+      : null;
+        await tauri.agentDeleteConversation(conversationId);
     // 级联：主对话 + 其全部子agent对话（后端已级联删 DB）。
     // 在 set 之前从当前 map 快照收集（set 后子对话条目已不存在）。
     const ids = [
@@ -770,6 +796,88 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       useTurnFoldStore.getState().clearConversation(id);
       useAgentDraftStore.getState().discard(draftKeyFor(id, null));
     }
+
+    if (!recovery || get().activeConversationBySession[recovery.sessionId]) return;
+    const expectedActive = get().activeConversationId;
+    const stillCurrent = () => {
+      const sessions = recovery.sessionStore.getState();
+      const currentSession = sessions.sessions[recovery.sessionId];
+      const state = get();
+      return activeSelectionGeneration === selectionGeneration
+        && syncActiveGeneration === syncGeneration
+        && sessions.activeSessionId === recovery.sessionId
+        && currentSession?.status === 'connected'
+        && currentSession.configId === recovery.connectionId
+        // 连续删除会让默认回退页再次变化；显式切换仍由上面的意图代际拦截。
+        && (state.activeConversationId === expectedActive
+          || (!!expectedActive && !state.conversations[expectedActive]))
+        && !state.activeConversationBySession[recovery.sessionId];
+    };
+    try {
+      while (stillCurrent()) {
+        const replacement = await recovery.manager.prepareReplacementAfterDeletion(
+          recovery.sessionId, recovery.connectionId, stillCurrent,
+        );
+        if (!replacement || !stillCurrent()) return;
+        const { conversation, created } = replacement;
+        const id = conversation.id;
+        // 与 syncActiveToSession 的热路径一致：已有缓存/在飞对话不重载，冷历史先拉齐。
+        const needsLoad = !created && !get().messages[id]?.length && !conversationIsBusy(id);
+        const [activeRes, storedPlans] = needsLoad
+          ? await Promise.all([
+            tauri.agentLoadActiveMessages(id),
+            tauri.agentLoadPlansByConversation(id),
+          ])
+          : [null, null];
+        if (!stillCurrent()) return;
+        if ((!created && !get().conversations[id])
+          || recovery.manager.getOccupiedConversationIds(recovery.sessionId).has(id)) {
+          continue; // 等待期间候选被删或被别的标签占用，按同一规则重新挑选。
+        }
+        const preserveLive = conversationIsBusy(id) || !!get().messages[id]?.length;
+        const loadedMessages = activeRes && !preserveLive
+          ? clearIntermediateReasoning(activeRes.messages.map(storedMessageToAgentMessage))
+          : null;
+        // 占用检查与提交之间没有 await，不会双重绑定，也不会覆盖后来产生的消息。
+        set((state) => ({
+          conversations: created && !state.conversations[id]
+            ? reorderByUpdatedAt({ ...state.conversations, [id]: conversation })
+            : state.conversations,
+          messages: loadedMessages || (created && !state.messages[id])
+            ? { ...state.messages, [id]: loadedMessages ?? [] }
+            : state.messages,
+          hasEarlierMessages: activeRes && !preserveLive
+            ? { ...state.hasEarlierMessages, [id]: activeRes.hasEarlier }
+            : state.hasEarlierMessages,
+          activeConversationId: id,
+          activeConversationBySession: { ...state.activeConversationBySession, [recovery.sessionId]: id },
+          activeConversationByConnection: rememberActiveForConnection(
+            state.activeConversationByConnection, recovery.connectionId, id,
+          ),
+        }));
+        if (storedPlans && !preserveLive) useTaskStore.getState().loadPersistedPlans(id, storedPlans);
+        restoreRunningTaskForConversation(id);
+        useTaskStore.getState().clearConversationUnreadCompleted(id);
+        return;
+      }
+    } catch (error) {
+      // 删除已经提交；恢复失败不能让全局历史页把它误判成「没删掉」。
+      if (stillCurrent()) {
+        const state = get();
+        const draftConversationId = draftConversationIdFor({
+          activeConversationId: state.activeConversationId,
+          conversations: state.conversations,
+          activeConversationBySession: state.activeConversationBySession,
+          activeSessionId: recovery.sessionId,
+          activeConfigId: recovery.connectionId,
+        });
+        useAgentDraftStore.getState().setNotice(
+          draftKeyFor(draftConversationId, recovery.sessionId),
+          `会话已删除，但自动打开会话失败：${getErrorMessage(error)}。请新建会话或从历史记录重新选择。`,
+        );
+      }
+    }
+
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {

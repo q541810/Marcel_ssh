@@ -37,6 +37,7 @@ vi.mock('@/lib/tauri', () => ({
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useTaskStore } from '@/stores/taskStore';
+import { resetAgentDrafts, useAgentDraftStore } from '@/stores/agentDraftStore';
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
 import type { Session, AgentConversation, AgentMessage, AgentTask } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
@@ -56,6 +57,33 @@ function makeTask(overrides: Partial<AgentTask>): AgentTask {
     createdAt: '',
     ...overrides,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function seedDeletionRecovery(withFreeConversation = false) {
+  const makeConversation = (id: string, updatedAt: string): AgentConversation => ({
+    id, connectionId: 'conn-1', title: id, createdAt: updatedAt, updatedAt,
+  });
+  useSessionStore.setState({
+    activeSessionId: 'sess-a',
+    sessions: { 'sess-a': makeSession('sess-a'), 'sess-b': makeSession('sess-b') },
+  });
+  useConversationStore.setState({
+    activeConversationId: 'conv-a',
+    activeConversationBySession: { 'sess-a': 'conv-a', 'sess-b': 'conv-b' },
+    activeConversationByConnection: { 'conn-1': 'conv-a' },
+    conversations: {
+      'conv-a': makeConversation('conv-a', '2026-01-03T00:00:00Z'),
+      'conv-b': makeConversation('conv-b', '2026-01-02T00:00:00Z'),
+      ...(withFreeConversation ? { 'conv-free': makeConversation('conv-free', '2026-01-01T00:00:00Z') } : {}),
+    },
+    messages: { 'conv-a': [], 'conv-b': [], ...(withFreeConversation ? { 'conv-free': [] } : {}) },
+  });
 }
 
 describe('SessionConversationBindingManager', () => {
@@ -230,6 +258,191 @@ describe('SessionConversationBindingManager', () => {
 
     sessionConversationBindingManager.onSessionDisconnected('sess-a');
     expect(useConversationStore.getState().activeConversationBySession['sess-a']).toBeUndefined();
+  });
+
+  describe('删除后恢复当前在线标签的绑定', () => {
+    beforeEach(() => {
+      resetAgentDrafts();
+      useTaskStore.setState({ tasks: {}, activeTaskId: null, plans: {}, compacting: {} });
+      vi.mocked(tauri.agentDeleteConversation).mockResolvedValue(undefined);
+      vi.mocked(tauri.agentCreateConversation).mockResolvedValue('conv-replacement');
+      vi.mocked(tauri.agentLoadActiveMessages).mockResolvedValue({ messages: [], hasEarlier: false, checkpointId: null });
+      vi.mocked(tauri.agentLoadPlansByConversation).mockResolvedValue([]);
+      vi.mocked(tauri.agentListConversationsByConnection).mockImplementation(async () =>
+        Object.values(useConversationStore.getState().conversations));
+    });
+
+    it('删除当前会话后绑定空闲历史，跳过其他在线标签占用的会话', async () => {
+      seedDeletionRecovery(true);
+      const cached: AgentMessage = { id: 'cached', role: 'user', content: '已有历史', timestamp: '' };
+      useConversationStore.setState((state) => ({ messages: { ...state.messages, 'conv-free': [cached] } }));
+
+      await useConversationStore.getState().deleteConversation('conv-a');
+
+      const state = useConversationStore.getState();
+      expect(state.activeConversationBySession).toEqual({ 'sess-a': 'conv-free', 'sess-b': 'conv-b' });
+      expect(state.activeConversationId).toBe('conv-free');
+      expect(state.activeConversationByConnection['conn-1']).toBe('conv-free');
+      expect(state.messages['conv-free']).toEqual([cached]);
+      expect(tauri.agentCreateConversation).not.toHaveBeenCalled();
+      expect(tauri.agentLoadActiveMessages).not.toHaveBeenCalled();
+    });
+
+    it('删除当前会话后剩余历史全被占用，创建并绑定独立新会话', async () => {
+      seedDeletionRecovery();
+
+      await useConversationStore.getState().deleteConversation('conv-a');
+
+      expect(tauri.agentCreateConversation).toHaveBeenCalledWith('sess-a');
+      const state = useConversationStore.getState();
+      expect(state.activeConversationBySession).toEqual({ 'sess-a': 'conv-replacement', 'sess-b': 'conv-b' });
+      expect(state.activeConversationId).toBe('conv-replacement');
+      expect(state.conversations['conv-replacement']).toMatchObject({ connectionId: 'conn-1', title: '新会话' });
+      expect(state.messages['conv-replacement']).toEqual([]);
+    });
+
+    it('恢复冷历史时加载正文和附件元数据，完成前不把占用会话绑定给当前标签', async () => {
+      seedDeletionRecovery(true);
+      vi.mocked(tauri.agentLoadActiveMessages).mockResolvedValue({
+        messages: [{
+          id: 'stored', conversationId: 'conv-free', role: 'user', content: '原文',
+          timestamp: '2026-01-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z',
+          userInputJson: '{"version":1,"text":"原文","textAttachments":[]}',
+        }],
+        hasEarlier: true, checkpointId: null,
+      });
+
+      await useConversationStore.getState().deleteConversation('conv-a');
+
+      expect(tauri.agentLoadActiveMessages).toHaveBeenCalledWith('conv-free');
+      expect(tauri.agentLoadPlansByConversation).toHaveBeenCalledWith('conv-free');
+      expect(useConversationStore.getState().messages['conv-free'][0]).toMatchObject({
+        content: '原文', userInput: { version: 1, text: '原文', textAttachments: [] },
+      });
+      expect(useConversationStore.getState().hasEarlierMessages['conv-free']).toBe(true);
+    });
+
+    it.each(['switch-tab', 'disconnect', 'select-other'] as const)(
+      '删除等待期间 %s，清理成功后不抢用户的新页面', async (action) => {
+        seedDeletionRecovery(true);
+        const pending = deferred<void>();
+        vi.mocked(tauri.agentDeleteConversation).mockReturnValueOnce(pending.promise);
+        const deletion = useConversationStore.getState().deleteConversation('conv-a');
+        if (action === 'switch-tab') {
+          useSessionStore.setState({ activeSessionId: 'sess-b' });
+          useConversationStore.setState({ activeConversationId: 'conv-b' });
+        } else if (action === 'disconnect') {
+          useSessionStore.setState((state) => ({ sessions: {
+            ...state.sessions, 'sess-a': { ...state.sessions['sess-a'], status: 'disconnected' },
+          } }));
+        } else {
+          await useConversationStore.getState().switchConversation('conv-free', 'sess-a');
+        }
+        pending.resolve(undefined);
+        await deletion;
+
+        expect(tauri.agentCreateConversation).not.toHaveBeenCalled();
+        if (action === 'switch-tab') {
+          expect(useSessionStore.getState().activeSessionId).toBe('sess-b');
+          expect(useConversationStore.getState().activeConversationId).toBe('conv-b');
+        } else if (action === 'select-other') {
+          expect(useConversationStore.getState().activeConversationId).toBe('conv-free');
+          expect(useConversationStore.getState().activeConversationBySession['sess-a']).toBe('conv-free');
+        } else {
+          expect(useConversationStore.getState().activeConversationBySession['sess-a']).toBeUndefined();
+        }
+      },
+    );
+
+    it('自动新建等待期间用户自己新建，迟到自动结果不覆盖手动选择', async () => {
+      seedDeletionRecovery();
+      const pending = deferred<string>();
+      vi.mocked(tauri.agentCreateConversation).mockReturnValueOnce(pending.promise).mockResolvedValueOnce('manual-new');
+      const deletion = useConversationStore.getState().deleteConversation('conv-a');
+      await vi.waitFor(() => expect(tauri.agentCreateConversation).toHaveBeenCalledTimes(1));
+      await useConversationStore.getState().newConversation('sess-a', 'conn-1');
+      pending.resolve('late-auto-new');
+      await deletion;
+
+      expect(useConversationStore.getState().activeConversationId).toBe('manual-new');
+      expect(useConversationStore.getState().activeConversationBySession['sess-a']).toBe('manual-new');
+    });
+
+    it('用户已点击另一个会话但尚未加载完成时，旧恢复结果也作废', async () => {
+      seedDeletionRecovery(true);
+      const recoveryLoad = deferred<Awaited<ReturnType<typeof tauri.agentLoadActiveMessages>>>();
+      const manualLoad = deferred<Awaited<ReturnType<typeof tauri.agentLoadActiveMessages>>>();
+      vi.mocked(tauri.agentLoadActiveMessages).mockImplementation((id) =>
+        id === 'conv-free' ? recoveryLoad.promise : manualLoad.promise);
+      const deletion = useConversationStore.getState().deleteConversation('conv-a');
+      await vi.waitFor(() => expect(tauri.agentLoadActiveMessages).toHaveBeenCalledWith('conv-free'));
+      const selection = useConversationStore.getState().switchConversation('conv-b', 'sess-a');
+      recoveryLoad.resolve({ messages: [], hasEarlier: false, checkpointId: null });
+      await deletion;
+      expect(useConversationStore.getState().activeConversationBySession['sess-a']).toBeUndefined();
+      manualLoad.resolve({ messages: [], hasEarlier: false, checkpointId: null });
+      await selection;
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-b');
+    });
+
+    it('候选加载期间被别的在线标签占用，重新分配而不双重绑定', async () => {
+      seedDeletionRecovery(true);
+      const pending = deferred<Awaited<ReturnType<typeof tauri.agentLoadActiveMessages>>>();
+      vi.mocked(tauri.agentLoadActiveMessages).mockReturnValueOnce(pending.promise);
+      const deletion = useConversationStore.getState().deleteConversation('conv-a');
+      await vi.waitFor(() => expect(tauri.agentLoadActiveMessages).toHaveBeenCalledWith('conv-free'));
+      useSessionStore.setState((state) => ({ sessions: { ...state.sessions, 'sess-c': makeSession('sess-c') } }));
+      useConversationStore.getState().bindConversationToSession('sess-c', 'conv-free', 'conn-1');
+      pending.resolve({ messages: [], hasEarlier: false, checkpointId: null });
+      await deletion;
+
+      expect(useConversationStore.getState().activeConversationBySession).toEqual({
+        'sess-a': 'conv-replacement', 'sess-b': 'conv-b', 'sess-c': 'conv-free',
+      });
+    });
+
+    it('当前空闲候选加载期间又被删除，继续恢复且不重建已删历史', async () => {
+      seedDeletionRecovery(true);
+      useConversationStore.setState((state) => ({ conversations: {
+        ...state.conversations,
+        'conv-free': { ...state.conversations['conv-free'], updatedAt: '2026-01-04T00:00:00Z' },
+      } }));
+      const pending = deferred<Awaited<ReturnType<typeof tauri.agentLoadActiveMessages>>>();
+      vi.mocked(tauri.agentLoadActiveMessages).mockReturnValueOnce(pending.promise);
+      const deletion = useConversationStore.getState().deleteConversation('conv-a');
+      await vi.waitFor(() => expect(tauri.agentLoadActiveMessages).toHaveBeenCalledWith('conv-free'));
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-free');
+      await useConversationStore.getState().deleteConversation('conv-free');
+      pending.resolve({ messages: [], hasEarlier: false, checkpointId: null });
+      await deletion;
+
+      const state = useConversationStore.getState();
+      expect(state.activeConversationBySession).toEqual({ 'sess-a': 'conv-replacement', 'sess-b': 'conv-b' });
+      expect(state.activeConversationId).toBe('conv-replacement');
+      expect(state.conversations['conv-free']).toBeUndefined();
+      expect(state.messages['conv-free']).toBeUndefined();
+    });
+
+    it('恢复失败不把已成功删除报告成失败，并保留可操作的原因', async () => {
+      seedDeletionRecovery();
+      vi.mocked(tauri.agentCreateConversation).mockRejectedValueOnce({ kind: 'Io', message: '数据库暂不可用' });
+
+      await expect(useConversationStore.getState().deleteConversation('conv-a')).resolves.toBeUndefined();
+
+      expect(useConversationStore.getState().conversations['conv-a']).toBeUndefined();
+      expect(useAgentDraftStore.getState().getDraft('session:sess-a').notice).toContain('数据库暂不可用');
+      expect(useAgentDraftStore.getState().getDraft('session:sess-a').notice).toContain('新建');
+    });
+
+    it('离线历史删除和非当前会话删除维持原行为，不启动自动分配', async () => {
+      seedDeletionRecovery(true);
+      await useConversationStore.getState().deleteConversation('conv-free');
+      expect(useConversationStore.getState().activeConversationId).toBe('conv-a');
+      useSessionStore.setState({ activeSessionId: null, sessions: {} });
+      await useConversationStore.getState().deleteConversation('conv-a');
+      expect(tauri.agentCreateConversation).not.toHaveBeenCalled();
+      expect(tauri.agentLoadActiveMessages).not.toHaveBeenCalled();
+    });
   });
 
   describe('onSessionDisconnected 的任务收尾', () => {
