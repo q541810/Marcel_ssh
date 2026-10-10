@@ -123,24 +123,29 @@ mod tests {
         }
     }
 
+    /// 作者契约：方向性规范 + 小规模实例 + **恰好一个**完整示例。示例一多，
+    /// 模型就会把所有内容塞进同一个形状，「一切服务于你想表达的内容」名存实
+    /// 亡。required 钉住契约与唯一示例（marcel-queue-demo），forbidden 钉住
+    /// 旧模板不得回归，`<canvas` 恰好一次钉住「只有一个完整示例」——将来要
+    /// 加第二个示例，必须先确认那不是在造模板，再改这里的计数。
     #[test]
-    fn visualize_skill_keeps_full_authoring_contract_and_examples() {
+    fn visualize_skill_keeps_authoring_contract_and_single_example() {
         let def = BUILTIN_SKILLS
             .iter()
             .find(|def| def.id == "builtin.visualize")
             .expect("builtin.visualize must be registered");
         let parsed = process_md(def.content, def.id).expect("visualize skill must parse");
         for required in [
+            "一切服务于你想表达的内容",
             "--viz-series-1",
             ".viz-controls",
             "chart.js@4.4.1",
-            "new Chart(ctx",
             "chart.update()",
-            "new ResizeObserver(draw)",
-            "不要从零发明仪表盘布局",
+            "ResizeObserver",
+            "function springTo(state, target, render)",
+            "marcel-queue-demo",
             "动效是硬性验收项",
             "可中断性最重要",
-            "function springTo(state, target, render)",
             "采用高召回策略",
             "不要先询问“要不要做图”",
             "项目没有 Mermaid 展示能力",
@@ -151,6 +156,17 @@ mod tests {
                 "visualize skill 缺少关键契约/示例: {required}"
             );
         }
+        for forbidden in ["sim-cooling", "cmp-langs", "必须从这里改"] {
+            assert!(
+                !parsed.prompt.contains(forbidden),
+                "visualize skill 不应再提供整页模板: {forbidden}"
+            );
+        }
+        assert_eq!(
+            parsed.prompt.matches("<canvas").count(),
+            1,
+            "visualize skill 只允许一个完整示例；多出来的都会变成模板"
+        );
     }
 
     #[test]
