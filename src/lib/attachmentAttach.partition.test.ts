@@ -14,8 +14,9 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 describe("ATTACH_FILE_PICKER_FILTERS", () => {
-  it("has the three filters in order: 图片 / 文本 / 所有文件", () => {
+  it("defaults to mixed image/text selection, with focused filters and an all-files fallback", () => {
     expect(ATTACH_FILE_PICKER_FILTERS.map((f) => f.name)).toEqual([
+      "图片和文本文件",
       "图片",
       "文本",
       "所有文件",
@@ -30,15 +31,22 @@ describe("ATTACH_FILE_PICKER_FILTERS", () => {
         expect(ext).toBe(ext.trim().toLowerCase());
       }
     }
-    expect(ATTACH_FILE_PICKER_FILTERS[2].extensions).toEqual(["*"]);
+    expect(ATTACH_FILE_PICKER_FILTERS[3].extensions).toEqual(["*"]);
   });
 
   it("listed extensions are all classifiable (filter guides, never blocks)", () => {
-    for (const filter of ATTACH_FILE_PICKER_FILTERS.slice(0, 2)) {
+    for (const filter of ATTACH_FILE_PICKER_FILTERS.slice(0, -1)) {
       for (const ext of filter.extensions) {
         expect(classifyAttachment(`file.${ext}`)).not.toBe("unsupported");
       }
     }
+  });
+
+  it("builds the mixed filter from the same image and text extension lists", () => {
+    expect(ATTACH_FILE_PICKER_FILTERS[0].extensions).toEqual([
+      ...ATTACH_FILE_PICKER_FILTERS[1].extensions,
+      ...ATTACH_FILE_PICKER_FILTERS[2].extensions,
+    ]);
   });
 });
 

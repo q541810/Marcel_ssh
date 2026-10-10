@@ -7,6 +7,8 @@ interface Props {
   className?: string;
   removable?: boolean;
   onRemove?: () => void;
+  onPreview?: (src: string) => void;
+  label?: string;
 }
 
 /** Thumbnail for a persisted relative image path under config images/. */
@@ -15,6 +17,8 @@ export default function MessageImageThumb({
   className = '',
   removable,
   onRemove,
+  onPreview,
+  label = '图片',
 }: Props) {
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -40,28 +44,40 @@ export default function MessageImageThumb({
   if (failed) {
     return (
       <div
+        role="img"
+        aria-label={`${label}无法显示`}
         className={`flex items-center justify-center rounded-md bg-zinc-800 text-[10px] text-zinc-500 ${className}`}
-        title="图片缺失"
+        title="图片缺失或无法读取"
       >
-        [image]
+        图片不可用
       </div>
     );
   }
 
   if (!src) {
     return (
-      <div className={`rounded-md bg-zinc-800 animate-pulse ${className}`} />
+      <div role="status" aria-label={`${label}正在加载`} className={`rounded-md bg-zinc-800 animate-pulse motion-reduce:animate-none ${className}`} />
     );
   }
 
   return (
     <div className={`relative group/img ${className}`}>
-      <img
+      {onPreview ? (
+        <button
+          type="button"
+          onClick={() => onPreview(src)}
+          aria-label={`预览 ${label}`}
+          aria-haspopup="dialog"
+          className="h-full w-full rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+        >
+          <img src={src} alt={label} className="h-full w-full object-cover rounded-md border border-zinc-700" onError={() => setFailed(true)} />
+        </button>
+      ) : <img
         src={src}
         alt=""
         className="h-full w-full object-cover rounded-md border border-zinc-700"
         onError={() => setFailed(true)}
-      />
+      />}
       {removable && (
         <button
           type="button"

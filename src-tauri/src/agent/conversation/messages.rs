@@ -31,6 +31,7 @@ const MESSAGES_COLUMNS: &[&str] = &[
     "reasoning_content",
     "image_paths_json",
     "turn_state",
+    "user_input_json",
 ];
 
 /// `SELECT <全部列> FROM messages` 用的列清单（拼一次复用，别每处各写一遍）。
@@ -91,6 +92,10 @@ pub struct StoredMessage {
     /// 「按消息形态判定」的既有行为（不清空、不重置任何东西）。
     /// 读到不认识的字符串同样回落 `None`（见 `TurnState::from_db_str`）。
     pub turn_state: Option<String>,
+    /// 用户输入与文本附件的展示快照；content 始终是完整模型输入。
+    /// 前端验证版本、结构和重组一致性，缺失或损坏时仍按 content 展示。
+    #[serde(default)]
+    pub user_input_json: Option<String>,
 }
 
 /// 活跃消息段加载结果（用于首次加载会话时从最新 Compaction Checkpoint 开始切片）。
@@ -390,6 +395,7 @@ impl ConversationDb {
                 .ok()
                 .flatten()
                 .filter(|raw| TurnState::from_db_str(raw).is_some()),
+            user_input_json: row.get(10).ok(),
         })
     }
 
@@ -459,6 +465,31 @@ impl ConversationDb {
         reasoning_content: Option<&str>,
         image_paths_json: Option<&str>,
     ) -> RusqliteResult<StoredMessage> {
+        self.save_message_with_user_input(
+            conversation_id,
+            role,
+            content,
+            timestamp,
+            tool_calls_json,
+            reasoning_content,
+            image_paths_json,
+            None,
+        )
+    }
+
+    /// 正常开轮与启动失败补写共用；旧保存入口继续传 None，保持调用契约。
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_message_with_user_input(
+        &self,
+        conversation_id: &str,
+        role: &str,
+        content: &str,
+        timestamp: &str,
+        tool_calls_json: Option<&str>,
+        reasoning_content: Option<&str>,
+        image_paths_json: Option<&str>,
+        user_input_json: Option<&str>,
+    ) -> RusqliteResult<StoredMessage> {
         let now = Utc::now();
         let id = Uuid::new_v4().to_string();
         let now_str = now.to_rfc3339();
@@ -479,6 +510,7 @@ impl ConversationDb {
                 // 回合收尾状态不在这里写：只有回合首条 user 行需要，由
                 // `begin_turn_state` / `set_message_turn_state` 事后 UPDATE。
                 None::<&str>,
+                user_input_json,
             ),
         )?;
         drop(conn);
@@ -496,6 +528,7 @@ impl ConversationDb {
             reasoning_content: reasoning_content.map(String::from),
             image_paths_json: image_paths_json.map(String::from),
             turn_state: None,
+            user_input_json: user_input_json.map(String::from),
         })
     }
 
@@ -614,6 +647,21 @@ impl ConversationDb {
     ) -> RusqliteResult<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        // 旧客户端快照不认识新字段。整体替换前先保留同 id 的附件快照，
+        // 避免「缺失」被 DELETE + INSERT 解释成清空；正文仍以传入快照为准。
+        let existing_inputs: std::collections::HashMap<String, String> =
+            if messages.iter().any(|m| m.user_input_json.is_none()) {
+                let mut stmt = tx.prepare(
+                    "SELECT id, user_input_json FROM messages
+                     WHERE conversation_id = ?1 AND user_input_json IS NOT NULL",
+                )?;
+                let rows = stmt.query_map([conversation_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                rows.collect::<RusqliteResult<_>>()?
+            } else {
+                std::collections::HashMap::new()
+            };
         tx.execute(
             "DELETE FROM messages WHERE conversation_id = ?1",
             [conversation_id],
@@ -638,6 +686,9 @@ impl ConversationDb {
                     // 跨设备同步的回合收尾状态照搬（同一台设备上被判定过的
                     // 回合，同步到别处不能突然变成「可以折叠」）
                     &m.turn_state,
+                    m.user_input_json
+                        .as_ref()
+                        .or_else(|| existing_inputs.get(&m.id)),
                 ),
             )?;
         }
@@ -1143,9 +1194,10 @@ mod tests {
         let tools = r#"[{"id":"call_1","name":"bash"}]"#;
         let reasoning = "先看目录再看文件";
         let images = r#"["/tmp/one.png","/tmp/two.png"]"#;
+        let user_input = r#"{"version":1,"text":"提问","textAttachments":[]}"#;
 
         let early = db
-            .save_message_with_images(
+            .save_message_with_user_input(
                 &conv.id,
                 "assistant",
                 "早的消息",
@@ -1153,6 +1205,7 @@ mod tests {
                 Some(tools),
                 Some(reasoning),
                 Some(images),
+                Some(user_input),
             )
             .expect("early");
 
@@ -1168,7 +1221,7 @@ mod tests {
         .expect("checkpoint");
 
         let late = db
-            .save_message_with_images(
+            .save_message_with_user_input(
                 &conv.id,
                 "assistant",
                 "晚的消息",
@@ -1176,6 +1229,7 @@ mod tests {
                 Some(tools),
                 Some(reasoning),
                 Some(images),
+                Some(user_input),
             )
             .expect("late");
 
@@ -1194,6 +1248,11 @@ mod tests {
                 m.image_paths_json.as_deref(),
                 Some(images),
                 "{what}: images"
+            );
+            assert_eq!(
+                m.user_input_json.as_deref(),
+                Some(user_input),
+                "{what}: user input"
             );
             assert!(
                 m.content == "早的消息" || m.content == "晚的消息" || m.content == "唯一一条",
@@ -1243,7 +1302,7 @@ mod tests {
             let plain = db
                 .create_conversation("conn_2", "no-checkpoint")
                 .expect("conv2");
-            db.save_message_with_images(
+            db.save_message_with_user_input(
                 &plain.id,
                 "assistant",
                 "唯一一条",
@@ -1251,12 +1310,69 @@ mod tests {
                 Some(tools),
                 Some(reasoning),
                 Some(images),
+                Some(user_input),
             )
             .expect("plain msg");
             let active = db.load_active_messages(&plain.id).expect("active plain");
             assert_eq!(active.messages.len(), 1);
             assert_rich(&active.messages[0], "load_active_messages(无卡片)");
         }
+    }
+
+    #[test]
+    fn user_input_metadata_upserts_without_erasing_it_for_legacy_snapshots() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "附件同步").unwrap();
+        let metadata = r#"{"version":1,"text":"分析","textAttachments":[{"id":"f1","name":"app.log","content":"完整日志\n"}]}"#;
+        let content = "分析\n\n===== 文件名: app.log =====\n完整日志\n";
+        let original = db
+            .save_message_with_user_input(
+                &conv.id,
+                "user",
+                content,
+                "2026-01-01T00:00:00Z",
+                None,
+                None,
+                None,
+                Some(metadata),
+            )
+            .unwrap();
+
+        // 插入另一个同步目标，再更新已有 id：INSERT/UPSERT 都要携带元数据。
+        let mut synced = original.clone();
+        synced.id = "synced-user".into();
+        db.replace_messages(&conv.id, &[synced.clone()]).unwrap();
+        synced.timestamp = "2026-01-01T00:00:01Z".into();
+        db.replace_messages(&conv.id, &[synced.clone()]).unwrap();
+        let rows = db.load_messages(&conv.id).unwrap();
+        let saved = rows.iter().find(|m| m.id == synced.id).unwrap();
+        assert_eq!(saved.user_input_json.as_deref(), Some(metadata));
+        assert_eq!(saved.content, content);
+        assert_eq!(saved.timestamp, synced.timestamp);
+
+        // 旧版本同步来的字段缺失不能清掉已经存在的新元数据。
+        let mut legacy_json = serde_json::to_value(&synced).unwrap();
+        legacy_json.as_object_mut().unwrap().remove("userInputJson");
+        let legacy: StoredMessage = serde_json::from_value(legacy_json).unwrap();
+        assert!(legacy.user_input_json.is_none());
+        db.replace_messages(&conv.id, &[legacy]).unwrap();
+        let rows = db.load_messages(&conv.id).unwrap();
+        assert_eq!(
+            rows.iter()
+                .find(|m| m.id == synced.id)
+                .unwrap()
+                .user_input_json
+                .as_deref(),
+            Some(metadata)
+        );
+
+        // 损坏元数据不影响原文读取，展示层负责退回全文。
+        synced.user_input_json = Some("{broken".into());
+        db.replace_messages(&conv.id, &[synced.clone()]).unwrap();
+        let rows = db.load_messages(&conv.id).unwrap();
+        let damaged = rows.iter().find(|m| m.id == synced.id).unwrap();
+        assert_eq!(damaged.content, content);
+        assert_eq!(damaged.user_input_json.as_deref(), Some("{broken"));
     }
 
     /// 回合收尾状态：写进锚点行后，每条读取路径都要能读到（漏列 = 静默变 None

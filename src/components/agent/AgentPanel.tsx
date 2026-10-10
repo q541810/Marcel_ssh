@@ -6,7 +6,6 @@ import {
   useCallback,
 } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import * as tauri from "@/lib/tauri";
 import { useAgent } from "@/hooks/useAgent";
 import { useTaskStore } from "@/stores/taskStore";
 import { AgentTasksDrawer } from "./AgentTasksDrawer";
@@ -27,19 +26,15 @@ import {
 import { dockPanelOf } from "@/lib/workspaceLayout";
 import { currentVision } from "@/lib/llmRegistry";
 import type { AgentMessage } from "@/lib/types";
-import {
-  type PendingImage,
-  revokePendingImages,
-  pendingImageFromDataUrl,
-  MAX_ATTACH_IMAGES,
-} from "@/lib/imageAttach";
 import ChatHistoryModal from "@/components/settings/ChatHistoryModal";
 import AgentTranscript from "./AgentTranscript";
 import { isCommandDraft } from "./agentCommandEntries";
 import PlanList from "./PlanList";
 import type { AgentCommandMenuHandle } from "./AgentCommandMenu";
 import { notifyInputStopped } from "./panel/inputActivity";
-import { useAgentPanelAttachments } from "./panel/useAgentPanelAttachments";
+import { useAgentAttachments } from "@/hooks/useAgentAttachments";
+import { useAgentDraftActions } from "@/hooks/useAgentDraftActions";
+import { EMPTY_DRAFT, useAgentDraftStore } from "@/stores/agentDraftStore";
 import ContentWidthHandles from "./panel/ContentWidthHandles";
 import {
   agentContentMaxCss,
@@ -65,7 +60,6 @@ export default function AgentPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<AgentCommandMenuHandle>(null);
   const rollbackNoticeTimerRef = useRef<number | null>(null);
-  const sendingRef = useRef(false);
   const activeSession = useSessionStore((s) => {
     return s.activeSessionId ? (s.sessions[s.activeSessionId] ?? null) : null;
   });
@@ -73,7 +67,6 @@ export default function AgentPanel() {
   const activeSessionId = activeSession?.id ?? null;
   const activeConfigId = activeSession?.configId;
   const {
-    sendPrompt,
     stopActiveTask,
     mode,
     setMode,
@@ -81,6 +74,9 @@ export default function AgentPanel() {
     isRunning,
     conversations,
     activeConversationId,
+    draftKey,
+    draftConversationId,
+    draftSendUnavailableReason,
     newConversation,
     switchConversation,
     renameConversation,
@@ -88,7 +84,6 @@ export default function AgentPanel() {
     setConversationPinned,
     setConversationModel,
     setConversationEffort,
-    rollbackToMessage,
     activeUsageView,
     syncActiveToConnection,
   } = useAgent({ subscribeMessages: false, subscribeDraft: false });
@@ -188,11 +183,13 @@ export default function AgentPanel() {
     publishContentWidth();
   }, [publishContentWidth]);
 
-  const attachments = useAgentPanelAttachments({
+  const attachments = useAgentAttachments({
     visionEnabled,
     canInteract,
-    activeConversationId,
-    setInput,
+    conversationId: draftConversationId,
+    sessionId: activeSessionId,
+    subscribeText: false,
+    sendUnavailableReason: draftSendUnavailableReason,
   });
 
   const handleBackToParent = useCallback(() => {
@@ -220,65 +217,12 @@ export default function AgentPanel() {
     [],
   );
 
-  const handleSend = async () => {
-    // 压缩中把消息发出去 = 消息会被随后落下的压缩卡盖到后面、再被归档边界
-    // 从后续请求里抹掉（见 taskStore.compacting 的注释）。返回键与发送键同一
-    // 判定；屏幕上常驻的原因说明负责让用户知道为什么没反应。
-    if (isRunning || isCompacting || sendingRef.current) return;
-    const prompt = useTaskStore.getState().inputDraft.trim();
-    const images = visionEnabled ? attachments.pendingImages : [];
-    if ((!prompt && images.length === 0) || !canInteract) return;
-    if (!visionEnabled && attachments.pendingImages.length > 0) {
-      attachments.clearPendingImages({ deleteDisk: true });
-      attachments.showAttachHint("当前模型未开启「视觉 / 支持图片」");
-      return;
-    }
-    sendingRef.current = true;
-    userJustSentRef.current = true;
-    const snapshotImages = images;
-    const dataUrls = images.map((i) => i.dataUrl);
-    const oldPersisted = images
-      .map((i) => i.persistedPath)
-      .filter((p): p is string => !!p);
-    setInput("");
-    notifyInputStopped();
-    // 只清 UI 状态，blob URL 等成功后再 revoke；save 失败可原样回滚
-    attachments.setPendingImages([]);
-    try {
-      await sendPrompt(
-        activeSessionId!,
-        prompt,
-        activeConfigId,
-        dataUrls,
-        oldPersisted,
-      );
-      revokePendingImages(snapshotImages);
-    } catch (err) {
-      console.error("Failed to start task:", err);
-      const stage = (err as Error & { stage?: string })?.stage;
-      if (stage === "start_task") {
-        // 消息（含新图）已进会话；旧落盘图已在 save 后删除
-        revokePendingImages(snapshotImages);
-        return;
-      }
-      // save 失败或其它：恢复输入与预览，旧落盘图保留
-      setInput(prompt);
-      attachments.setPendingImages(snapshotImages);
-      userJustSentRef.current = false;
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    } finally {
-      sendingRef.current = false;
-    }
-  };
-
   // ── `/` 命令面板 ─────────────────────────────────────────────────────
   // 输入以 "/" 开头且不含空格时激活（含空格视为普通文本，避免路径输入误弹）。
   // 唤出门控（任务运行中/压缩中不唤出，理由见共享函数注释）与移动端
   // `MobileAgentHost` 共用 `canOpenCommandMenu`。
   // 键盘事件在打开时交给面板组件处理（↑↓/Enter/Esc/子菜单 Backspace）。
-  const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
+  const commandDraft = useAgentDraftStore((s) => isCommandDraft((s.drafts[draftKey] ?? EMPTY_DRAFT).text));
   const commandMenuOpen = canOpenCommandMenu(
     commandDraft,
     activeConversationId,
@@ -330,7 +274,7 @@ export default function AgentPanel() {
   };
 
   const showRollbackNotice = useCallback((removedCount: number) => {
-    setRollbackNotice(`已撤回 ${removedCount} 条消息，原消息已放回输入框`);
+    setRollbackNotice(`已撤回 ${removedCount} 条消息，文字与附件已恢复到草稿`);
     if (rollbackNoticeTimerRef.current !== null) {
       window.clearTimeout(rollbackNoticeTimerRef.current);
     }
@@ -340,60 +284,16 @@ export default function AgentPanel() {
     }, 4200);
   }, []);
 
-  const handleRollbackMessage = useCallback(async (message: AgentMessage) => {
-    // 压缩中同样不许撤回：撤回会删掉压缩区间里的 DB 行，而这次压缩的卡片正按
-    // 「提交那一刻的队尾」落位 —— 锚点被抽掉，落库要么失败要么落到错的位置。
-    if (!activeConversationId || isRunning || isCompacting) return;
-    try {
-      const result = await rollbackToMessage(activeConversationId, message.id);
-      setInput(result.prompt);
-
-      // 先清当前预览（若有撤回恢复的落盘图也删掉）
-      attachments.clearPendingImages({ deleteDisk: true });
-      const paths = result.imagePaths?.length
-        ? result.imagePaths
-        : (message.imagePaths ?? []);
-      if (paths.length > 0 && visionEnabled) {
-        const restored: PendingImage[] = [];
-        const failedPaths: string[] = [];
-        for (const path of paths.slice(0, MAX_ATTACH_IMAGES)) {
-          try {
-            const dataUrl = await tauri.agentReadMessageImage(path);
-            restored.push(pendingImageFromDataUrl(dataUrl, path));
-          } catch (err) {
-            console.warn("Failed to restore image after rollback:", path, err);
-            failedPaths.push(path);
-          }
-        }
-        // 超出上限的路径也视为未进预览，删掉
-        if (paths.length > MAX_ATTACH_IMAGES) {
-          failedPaths.push(...paths.slice(MAX_ATTACH_IMAGES));
-        }
-        if (failedPaths.length > 0) {
-          void attachments.deletePersistedPaths(failedPaths);
-        }
-        if (restored.length > 0) {
-          attachments.setPendingImages(restored);
-        } else if (paths.length > 0) {
-          attachments.showAttachHint("原消息图片恢复失败");
-        }
-      } else if (paths.length > 0 && !visionEnabled) {
-        // 未回到预览：清磁盘
-        void attachments.deletePersistedPaths(paths);
-        attachments.showAttachHint("当前模型未开启「视觉 / 支持图片」，图片未恢复");
-      }
-
-      showRollbackNotice(result.removedCount);
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    } catch (err) {
-      console.error("Failed to rollback message:", err);
-    }
-  }, [
-    activeConversationId, isRunning, isCompacting, rollbackToMessage, setInput,
-    attachments, visionEnabled, showRollbackNotice,
-  ]);
+  const { send: handleSend, rollback: handleRollbackMessage, sending } = useAgentDraftActions({
+    attachments,
+    sessionId: activeSessionId,
+    connectionId: activeConfigId,
+    conversationId: draftConversationId,
+    canInteract,
+    userJustSentRef,
+    onRollback: showRollbackNotice,
+    onSend: notifyInputStopped,
+  });
 
   const handleCopyMessage = useCallback(async (message: AgentMessage) => {
     try {
@@ -462,7 +362,7 @@ export default function AgentPanel() {
       <AgentTranscript
         conversationId={activeConversationId}
         canInteract={canInteract}
-        rollbackDisabled={isRunning || isCompacting}
+        rollbackDisabled={isRunning || isCompacting || sending}
         onRollback={handleRollbackMessage}
         onCopy={handleCopyMessage}
         userJustSentRef={userJustSentRef}

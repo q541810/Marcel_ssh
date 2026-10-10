@@ -41,6 +41,7 @@ pub(super) fn prepare_turn(
     conv_db: std::sync::Arc<ConversationDb>,
     conversation_id: &str,
     prompt_origin: PromptOrigin,
+    user_input: Option<serde_json::Value>,
     messages: &mut Vec<LlmMessage>,
     state: &AppState,
     task_id: &str,
@@ -48,7 +49,8 @@ pub(super) fn prepare_turn(
     // 唤醒轮：prompt 是系统替后台作业写的结算告知，不是用户打的字。
     let is_notice_turn = !prompt_origin.is_user_input();
     let persister = ConversationPersister::new(conv_db, conversation_id.to_string())
-        .with_prompt_origin(prompt_origin);
+        .with_prompt_origin(prompt_origin)
+        .with_user_input(user_input);
 
     // history 来自前端 buildLlmHistory：携带 dbId 的消息对前端 store 可见
     // （db_id_known=true，自动 pressure 压缩据此收缩到前端能找到的区间末条）；

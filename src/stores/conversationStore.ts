@@ -4,10 +4,13 @@ import type {
   AgentConversation,
   StoredMessage,
   TurnState,
+  UserInputMetadata,
 } from '@/lib/types';
 import * as tauri from '@/lib/tauri';
 import type { AgentCompactResult } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/errors';
+import { validateUserInput } from '@/lib/userInput';
+import { draftKeyFor, useAgentDraftStore } from './agentDraftStore';
 import {
   storedMessageToAgentMessage,
   clearIntermediateReasoning,
@@ -68,7 +71,7 @@ export interface ConversationState {
   rollbackToMessage: (
     conversationId: string,
     messageId: string,
-  ) => Promise<{ prompt: string; removedCount: number; imagePaths: string[] }>;
+  ) => Promise<{ prompt: string; removedCount: number; imagePaths: string[]; userInput?: UserInputMetadata }>;
   clearConnectionConversations: (connectionId: string) => void;
   loadConnectionConversations: (connectionId: string) => Promise<void>;
   /** 将 UI 上的 active 对话切换到指定 SSH session / connection */
@@ -765,10 +768,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     for (const id of ids) {
       useTaskStore.getState().clearPlansByConversation(id);
       useTurnFoldStore.getState().clearConversation(id);
+      useAgentDraftStore.getState().discard(draftKeyFor(id, null));
     }
   },
 
   rollbackToMessage: async (conversationId: string, messageId: string) => {
+    const hadConversation = !!get().conversations[conversationId];
     let msgs = get().messages[conversationId] || [];
     let index = msgs.findIndex((m) => m.id === messageId);
     // 目标不在当前活跃切片中：逐页补齐更早历史再寻找（归档现在是真分页，
@@ -793,26 +798,32 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       target.timestamp,
     );
 
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [conversationId]: (state.messages[conversationId] || []).slice(0, index),
-      },
-    }));
+    // 删除或断线清理过的缓存不能被迟到结果重建；草稿是否仍可恢复由其 owner 判定。
+    // 只依据明确的「存在 → 移除」，兼容只有消息缓存的旧调用。
+    if (!hadConversation || get().conversations[conversationId]) {
+      set((state) => ({
+        messages: {
+          ...state.messages,
+          [conversationId]: (state.messages[conversationId] || []).slice(0, index),
+        },
+      }));
 
-    // 仅当后端按快照调整过 plan 时同步 UI；旧数据无快照则不动 plan
-    if (truncateResult.planAdjusted) {
-      useTaskStore.getState().applyPlanAfterTruncate(
-        conversationId,
-        truncateResult.plan ?? null,
-        truncateResult.planTaskId ?? null,
-      );
+      // 仅当后端按快照调整过 plan 时同步 UI；旧数据无快照则不动 plan
+      if (truncateResult.planAdjusted) {
+        useTaskStore.getState().applyPlanAfterTruncate(
+          conversationId,
+          truncateResult.plan ?? null,
+          truncateResult.planTaskId ?? null,
+        );
+      }
     }
 
+    const userInput = validateUserInput(target.content, target.userInput);
     return {
-      prompt: target.content,
+      prompt: userInput ? userInput.text : target.content,
       removedCount: truncateResult.deletedMessages || removedCount,
       imagePaths: target.imagePaths ?? [],
+      ...(userInput ? { userInput } : {}),
     };
   },
 

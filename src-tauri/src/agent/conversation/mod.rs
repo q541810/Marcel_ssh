@@ -175,6 +175,12 @@ impl ConversationDb {
             log::info!("Migration complete: turn_state column added");
         }
 
+        // 用户输入展示快照：旧行保持 NULL，正文仍是完整模型输入，不猜测或改写历史。
+        if !column_exists(&conn, "messages", "user_input_json") {
+            conn.execute("ALTER TABLE messages ADD COLUMN user_input_json TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+        }
+
         // Migration: add parent_conversation_id for subagent (subagent tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
@@ -395,6 +401,24 @@ mod tests {
         // 打开旧库：迁移必须成功、数据必须保留、新列必须可用
         let db = ConversationDb::new(&db_path).expect("old-schema db must open and migrate");
 
+        let old_messages = db.load_messages("conv-old").expect("load old messages");
+        assert_eq!(old_messages[0].content, "hello");
+        assert!(old_messages[0].user_input_json.is_none());
+        let metadata = r#"{"version":1,"text":"新消息","textAttachments":[]}"#;
+        let added = db
+            .save_message_with_user_input(
+                "conv-old",
+                "user",
+                "新消息",
+                "2026-01-02T00:00:00Z",
+                None,
+                None,
+                None,
+                Some(metadata),
+            )
+            .expect("write migrated column");
+        assert_eq!(added.user_input_json.as_deref(), Some(metadata));
+
         let convs = db.list_conversations("conn-1").expect("list");
         assert_eq!(convs.len(), 1);
         assert_eq!(convs[0].id, "conv-old");
@@ -489,8 +513,10 @@ mod tests {
         );
         // 历史消息保留
         let msgs = db.load_messages("conv-old").expect("load");
-        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs.len(), 2, "旧消息保留，新增附件快照列可写");
         assert_eq!(msgs[0].content, "hello");
+        assert!(msgs[0].user_input_json.is_none());
+        assert_eq!(msgs[1].user_input_json.as_deref(), Some(metadata));
         // 旧库迁移后 turn_state 列可用：旧数据缺省为空（= 「没有记录」，
         // 前端回落按消息形态判定 —— 不动既有会话的折叠表现）
         assert!(msgs[0].turn_state.is_none());

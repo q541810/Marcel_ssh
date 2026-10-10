@@ -6,8 +6,11 @@ import {
   conversationIsCompacting,
 } from '@/stores/conversationStore';
 import { useTaskStore } from '@/stores/taskStore';
+import { draftKeyFor, resetAgentDrafts, useAgentDraftStore } from './agentDraftStore';
 import { getStreamState, setStreamState } from './agentStreamHandlers';
 import type { AgentMessage, AgentTask, AgentConversation, StoredMessage } from '@/lib/types';
+import { composeUserInput } from '@/lib/userInput';
+import { storedMessageToAgentMessage } from './messageConversion';
 
 const {
   agentListConversationsByConnection,
@@ -63,6 +66,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 describe('conversationStore', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetAgentDrafts();
     listen.mockResolvedValue(() => {});
     agentLoadPlansByConversation.mockResolvedValue([]);
     agentLoadActiveMessages.mockImplementation(async (convId: string) => {
@@ -360,6 +364,26 @@ describe('conversationStore', () => {
     });
     expect(agentTruncateConversation).toHaveBeenCalledWith('conv-1', '2026-01-01T00:01:00Z');
     expect(useConversationStore.getState().messages['conv-1'].map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('rolls back legacy text unchanged even when it resembles an imported file', async () => {
+    const content = '用户正文\n\n===== 文件名: manual.txt =====\n自己输入的内容';
+    useConversationStore.setState({ messages: { 'conv-1': [makeMessage({ id: 'legacy', content })] } });
+    agentTruncateConversation.mockResolvedValue({ deletedMessages: 1, planAdjusted: false });
+    expect(await useConversationStore.getState().rollbackToMessage('conv-1', 'legacy')).toEqual({
+      prompt: content, imagePaths: [], removedCount: 1,
+    });
+  });
+
+  it('ignores inconsistent live metadata when rolling back instead of losing the original text', async () => {
+    const userInput = { version: 1 as const, text: '过期元数据', textAttachments: [] };
+    useConversationStore.setState({ messages: { 'conv-1': [makeMessage({
+      id: 'mismatch', content: '完整原文', userInput,
+    })] } });
+    agentTruncateConversation.mockResolvedValue({ deletedMessages: 1, planAdjusted: false });
+    expect(await useConversationStore.getState().rollbackToMessage('conv-1', 'mismatch')).toEqual({
+      prompt: '完整原文', imagePaths: [], removedCount: 1,
+    });
   });
 
   it('rejects rollback for non-user messages', async () => {
@@ -1053,6 +1077,15 @@ describe('conversationStore', () => {
         },
       });
 
+      const drafts = useAgentDraftStore.getState();
+      for (const id of ['main-conv', 'sub-conv-1', 'other-conv']) {
+        await drafts.restoreMessage(draftKeyFor(id, null), {
+          text: `${id} 的草稿`,
+          textAttachments: [{ id: `${id}-file`, name: '日志.txt', content: id }],
+        });
+      }
+      const pendingSend = drafts.takeSendSnapshot(draftKeyFor('main-conv', null))!;
+
       await useConversationStore.getState().deleteConversation('main-conv');
 
       const state = useConversationStore.getState();
@@ -1064,6 +1097,37 @@ describe('conversationStore', () => {
       expect(state.messages['sub-conv-1']).toBeUndefined();
       // active 被删除 → 切换到其他主对话
       expect(state.activeConversationId).toBe('other-conv');
+      // 显式删除才释放草稿和在飞快照；晚到的失败不能复活已删除内容。
+      drafts.finishSend(pendingSend, { status: 'rejected' });
+      expect(useAgentDraftStore.getState().drafts['conv:main-conv']).toBeUndefined();
+      expect(useAgentDraftStore.getState().drafts['conv:sub-conv-1']).toBeUndefined();
+      expect(useAgentDraftStore.getState().sending['conv:main-conv']).toBeUndefined();
+      expect(drafts.getDraft('conv:other-conv').attachments[0].content).toBe('other-conv');
+    });
+
+    it('删除失败或仅清理断线缓存时保留草稿', async () => {
+      const now = new Date().toISOString();
+      useConversationStore.setState({
+        conversations: {
+          'keep-conv': {
+            id: 'keep-conv', connectionId: 'conn-1', title: '保留',
+            createdAt: now, updatedAt: now,
+          },
+        },
+      });
+      const drafts = useAgentDraftStore.getState();
+      await drafts.restoreMessage('conv:keep-conv', {
+        text: '尚未发送',
+        textAttachments: [{ id: 'file', name: '日志.txt', content: '完整日志' }],
+      });
+      const previous = drafts.getDraft('conv:keep-conv');
+      agentDeleteConversation.mockRejectedValueOnce({ kind: 'Database', message: '删除失败' });
+
+      await expect(useConversationStore.getState().deleteConversation('keep-conv')).rejects.toMatchObject({ message: '删除失败' });
+      expect(drafts.getDraft('conv:keep-conv')).toBe(previous);
+
+      useConversationStore.getState().clearConnectionConversations('conn-1');
+      expect(drafts.getDraft('conv:keep-conv')).toBe(previous);
     });
 
     it('keeps parent when deleting a sub-conversation only', async () => {

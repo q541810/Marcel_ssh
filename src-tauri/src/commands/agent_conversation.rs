@@ -542,6 +542,7 @@ pub async fn agent_save_user_message(
     content: String,
     timestamp: String,
     image_paths: Option<Vec<String>>,
+    user_input: Option<serde_json::Value>,
 ) -> Result<(), AppError> {
     if conversation_id.is_empty() {
         return Err(AppError::Agent("conversation_id 不能为空".into()));
@@ -550,9 +551,12 @@ pub async fn agent_save_user_message(
         .as_ref()
         .filter(|p| !p.is_empty())
         .and_then(|p| serde_json::to_string(p).ok());
+    let user_input_json = user_input
+        .as_ref()
+        .and_then(|input| serde_json::to_string(input).ok());
     state
         .conversation_db
-        .save_message_with_images(
+        .save_message_with_user_input(
             &conversation_id,
             "user",
             &content,
@@ -560,6 +564,7 @@ pub async fn agent_save_user_message(
             None,
             None,
             image_paths_json.as_deref(),
+            user_input_json.as_deref(),
         )
         .map_err(|e| AppError::Agent(format!("保存用户消息失败: {}", e)))?;
 

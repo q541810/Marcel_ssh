@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { open } from "@tauri-apps/plugin-dialog";
 import { ArrowUp, ChevronDown, Plus, Square, X } from "lucide-react";
 import { Pencil, Pin, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
+import { useAgentAttachments } from "@/hooks/useAgentAttachments";
+import { useAgentDraftActions } from "@/hooks/useAgentDraftActions";
+import { EMPTY_DRAFT, useAgentDraftStore } from "@/stores/agentDraftStore";
+import DraftAttachments from "@/components/agent/DraftAttachments";
 import { useTaskStore } from "@/stores/taskStore";
 import { useJobStore } from "@/stores/jobStore";
 import { getConversationAgentStatus, taskCenterEntry } from "@/stores/agentStatusSelectors";
@@ -55,22 +58,6 @@ import {
   type AgentEmptyStateReason,
 } from "./agentUi";
 import { resolveSessionDisplayName, sessionStatusLabel } from "./sessionUi";
-import {
-  type PendingImage,
-  revokePendingImages,
-  compressImageFile,
-  MAX_ATTACH_IMAGES,
-} from "@/lib/imageAttach";
-import {
-  blobToText,
-  wrapTextAttachment,
-  base64ToBlob,
-  readLocalAttachment,
-  MAX_TEXT_FILE_BYTES,
-  ATTACH_FILE_PICKER_FILTERS,
-  partitionAttachmentPaths,
-  unsupportedAttachmentHint,
-} from "@/lib/attachmentAttach";
 
 interface MobileAgentHostProps {
   /** When false, host stays mounted but hidden (tab keep-alive). */
@@ -120,7 +107,6 @@ export default function MobileAgentHost({
   const emptyReason = agentEmptyStateReason(activeSession);
 
   const {
-    sendPrompt,
     stopActiveTask,
     mode,
     setMode,
@@ -128,6 +114,9 @@ export default function MobileAgentHost({
     isRunning,
     conversations,
     activeConversationId,
+    draftKey,
+    draftConversationId,
+    draftSendUnavailableReason,
     newConversation,
     switchConversation,
     loadConversation,
@@ -137,7 +126,6 @@ export default function MobileAgentHost({
     setConversationModel,
     setConversationEffort,
     syncActiveToConnection,
-    rollbackToMessage,
     activeUsageView,
   } = useAgent({ subscribeMessages: false, subscribeDraft: false });
 
@@ -150,6 +138,14 @@ export default function MobileAgentHost({
   // 图片支持按「当前会话实际生效模型」判定（会话记忆 → 全局最近使用）
   const registry = useSettingsStore((s) => s.settings.llmRegistry);
   const visionEnabled = currentVision(registry, activeConversation?.modelId ?? null);
+  const attachments = useAgentAttachments({
+    conversationId: draftConversationId,
+    sessionId: activeSession?.id ?? null,
+    visionEnabled,
+    canInteract,
+    subscribeText: false,
+    sendUnavailableReason: draftSendUnavailableReason,
+  });
   // 本会话是否正在手动压缩上下文（订阅而非直接读：压缩一开始就要禁用发送并
   // 显示原因，不能等第一条压缩事件把它带出来）
   const isCompacting = useTaskStore(compactingSelectorOf(activeConversationId));
@@ -171,14 +167,8 @@ export default function MobileAgentHost({
   const [usageSheetOpen, setUsageSheetOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [rollbackHint, setRollbackHint] = useState<string | null>(null);
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
-  const [attachHint, setAttachHint] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const sendingRef = useRef(false);
   const rollbackHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-  const attachHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
   const userJustSentRef = useRef(false);
@@ -324,225 +314,23 @@ export default function MobileAgentHost({
     );
   }, []);
 
-  const showAttachHint = useCallback((text: string) => {
-    setAttachHint(text);
-    if (attachHintTimerRef.current) clearTimeout(attachHintTimerRef.current);
-    attachHintTimerRef.current = setTimeout(() => setAttachHint(null), 3200);
+  useEffect(() => () => {
+    if (rollbackHintTimerRef.current) clearTimeout(rollbackHintTimerRef.current);
   }, []);
 
-  /** 清空图片预览（不删盘：撤回恢复图不适用于移动端无图场景，仅 blob 回收）。 */
-  const clearPendingImages = useCallback(() => {
-    setPendingImages((prev) => {
-      revokePendingImages(prev);
-      return [];
-    });
-  }, []);
+  const onRollbackRestored = useCallback((removedCount: number) => {
+    showRollbackHint(`已撤回 ${removedCount} 条消息，文字与附件已恢复到草稿`);
+  }, [showRollbackHint]);
 
-  const removePendingImage = useCallback(
-    (id: string) => {
-      setPendingImages((prev) => {
-        const target = prev.find((p) => p.id === id);
-        if (target) revokePendingImages([target]);
-        return prev.filter((p) => p.id !== id);
-      });
-    },
-    [],
-  );
-
-  /** 切换对话 / 会话时清空附件预览，避免把 A 会话的图片带到 B。 */
-  useEffect(() => {
-    clearPendingImages();
-  }, [activeConversationId, clearPendingImages]);
-
-  /** 卸载时清理计时器 + blob URL。 */
-  useEffect(() => {
-    return () => {
-      if (rollbackHintTimerRef.current)
-        clearTimeout(rollbackHintTimerRef.current);
-      if (attachHintTimerRef.current)
-        clearTimeout(attachHintTimerRef.current);
-      setPendingImages((prev) => {
-        revokePendingImages(prev);
-        return [];
-      });
-    };
-  }, []);
-
-  /** Vision OFF：清空已挂起图片。 */
-  useEffect(() => {
-    if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages();
-      showAttachHint("当前模型未开启「视觉 / 支持图片」");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to vision toggle
-  }, [visionEnabled]);
-
-  /** 追加文本附件到输入框草稿（带文件名标记）。 */
-  const appendTextAttachment = useCallback(
-    (text: string) => {
-      setInputDraft((prev) => (prev ? prev + text : text));
-    },
-    [setInputDraft],
-  );
-
-  /** 统一处理一组本地路径（文件选择器返回）：图片 → 预览区，文本 → 插入输入框。 */
-  const handleAttachmentPaths = useCallback(
-    async (paths: string[]) => {
-      if (paths.length === 0) return;
-
-      const { imagePaths, textPaths, unsupported } =
-        await partitionAttachmentPaths(paths);
-
-      // 明确提示不支持的文件，避免静默吞掉（如 .zip/.exe/.pdf）
-      if (unsupported.length > 0) {
-        showAttachHint(unsupportedAttachmentHint(unsupported.map((u) => u.name)));
-      }
-
-      // 图片 → 预览（读本地 → 压缩，与桌面 ctrl+v 同链路）
-      if (imagePaths.length > 0) {
-        if (!visionEnabled) {
-          clearPendingImages();
-          showAttachHint("当前模型未开启「视觉 / 支持图片」");
-        } else {
-          const room = MAX_ATTACH_IMAGES - pendingImages.length;
-          const added: PendingImage[] = [];
-          for (const p of imagePaths.slice(0, room)) {
-            try {
-              const { base64 } = await readLocalAttachment(p);
-              const blob = base64ToBlob(base64, "image/*");
-              const { dataUrl, previewUrl } = await compressImageFile(blob);
-              added.push({ id: crypto.randomUUID(), previewUrl, dataUrl });
-            } catch {
-              // skip broken files
-            }
-          }
-          if (added.length > 0) {
-            setPendingImages((prev) =>
-              [...prev, ...added].slice(0, MAX_ATTACH_IMAGES),
-            );
-          }
-          if (imagePaths.length > room) {
-            showAttachHint(`最多 ${MAX_ATTACH_IMAGES} 张，已忽略多余图片`);
-          }
-        }
-      }
-
-      // 文本 → 输入框
-      for (const p of textPaths) {
-        try {
-          const { name, base64, size } = await readLocalAttachment(p);
-          if (size > MAX_TEXT_FILE_BYTES) {
-            showAttachHint(
-              `「${name}」超过 ${Math.round(MAX_TEXT_FILE_BYTES / 1024 / 1024)}MB，已跳过`,
-            );
-            continue;
-          }
-          const content = await blobToText(base64ToBlob(base64));
-          appendTextAttachment(wrapTextAttachment(name, content));
-        } catch {
-          const name = p.split(/[/\\]/).pop() || p;
-          showAttachHint(`读取「${name}」失败`);
-        }
-      }
-    },
-    [
-      visionEnabled,
-      pendingImages.length,
-      clearPendingImages,
-      showAttachHint,
-      appendTextAttachment,
-    ],
-  );
-
-  /** 附件按钮：系统文件选择器（图片 / 文本 / 所有文件）。Android 取消会 reject。 */
-  const handleAttach = useCallback(async () => {
-    if (!canInteract || !ids) return;
-    try {
-      const selected = await open({
-        multiple: true,
-        title: "添加图片和文件",
-        filters: ATTACH_FILE_PICKER_FILTERS,
-      });
-      if (!selected) return;
-      const paths = Array.isArray(selected) ? selected : [selected];
-      await handleAttachmentPaths(paths);
-    } catch (err) {
-      // Android 上取消文件选择器是 reject 而非返回 null，不当作错误
-      const message = err instanceof Error ? err.message : "";
-      if (/cancel|cancelled|dismiss/i.test(message)) return;
-      showAttachHint("打开文件选择器失败");
-    }
-  }, [canInteract, ids, handleAttachmentPaths, showAttachHint]);
-
-  const handleSend = useCallback(async () => {
-    if (conversationBusy || sendingRef.current) return;
-    const inputDraft = useTaskStore.getState().inputDraft;
-    if (!canSendAgentPrompt(activeSession, conversationBusy, inputDraft, pendingImages.length > 0)) return;
-    if (!ids) return;
-    const prompt = inputDraft.trim();
-    const images = visionEnabled ? pendingImages : [];
-    if ((!prompt && images.length === 0) || !canInteract) return;
-    if (!visionEnabled && pendingImages.length > 0) {
-      clearPendingImages();
-      showAttachHint("当前模型未开启「视觉 / 支持图片」");
-      return;
-    }
-    const snapshotImages = images;
-    const dataUrls = images.map((i) => i.dataUrl);
-    sendingRef.current = true;
-    userJustSentRef.current = true;
-    setInputDraft("");
-    setPendingImages([]);
-    try {
-      await sendPrompt(ids.sessionId, prompt, ids.configId, dataUrls);
-      revokePendingImages(snapshotImages);
-    } catch (err) {
-      console.error("Failed to start task:", err);
-      // 失败恢复：输入与预览原样回滚（对齐桌面 handleSend 语义）
-      setInputDraft(prompt);
-      setPendingImages(snapshotImages);
-      userJustSentRef.current = false;
-    } finally {
-      sendingRef.current = false;
-    }
-  }, [
-    activeSession,
-    ids,
-    conversationBusy,
+  const { send: handleSend, rollback: handleRollbackMessage, sending } = useAgentDraftActions({
+    attachments,
+    sessionId: ids?.sessionId ?? null,
+    connectionId: ids?.configId,
+    conversationId: draftConversationId,
     canInteract,
-    sendPrompt,
-    setInputDraft,
-    visionEnabled,
-    pendingImages,
-    clearPendingImages,
-    showAttachHint,
-  ]);
-
-  const handleRollbackMessage = useCallback(
-    async (message: AgentMessage) => {
-      // 压缩中同样不许撤回：撤回会删掉压缩区间里的 DB 行，而这次压缩的卡片正按
-      // 「提交那一刻的队尾」落位 —— 锚点被抽掉，落库要么失败要么落到错的位置。
-      if (!activeConversationId || conversationBusy) return;
-      try {
-        const result = await rollbackToMessage(
-          activeConversationId,
-          message.id,
-        );
-        setInputDraft(result.prompt);
-        showRollbackHint(`已撤回 ${result.removedCount} 条消息`);
-      } catch (err) {
-        console.error("Failed to rollback message:", err);
-        showRollbackHint("撤回失败");
-      }
-    },
-    [
-      activeConversationId,
-      conversationBusy,
-      rollbackToMessage,
-      setInputDraft,
-      showRollbackHint,
-    ],
-  );
+    userJustSentRef,
+    onRollback: onRollbackRestored,
+  });
 
   const handleCopyMessage = useCallback(async (message: AgentMessage) => {
     try {
@@ -556,7 +344,7 @@ export default function MobileAgentHost({
   // 手机端以触摸点选为主；软键盘回车/发送语义不变。
   // 唤出门控（任务运行中/压缩中不唤出，理由见共享函数注释）与桌面
   // `AgentPanel` 共用 `canOpenCommandMenu`。
-  const commandDraft = useTaskStore((s) => isCommandDraft(s.inputDraft));
+  const commandDraft = useAgentDraftStore((s) => isCommandDraft((s.drafts[draftKey] ?? EMPTY_DRAFT).text));
   const commandMenuOpen = canOpenCommandMenu(
     commandDraft,
     activeConversationId,
@@ -715,7 +503,7 @@ export default function MobileAgentHost({
       <AgentTranscript
         conversationId={activeConversationId}
         canInteract={canInteract}
-        rollbackDisabled={conversationBusy}
+        rollbackDisabled={conversationBusy || sending}
         userJustSentRef={userJustSentRef}
         onRollback={handleRollbackMessage}
         onCopy={handleCopyMessage}
@@ -996,7 +784,7 @@ export default function MobileAgentHost({
           </div>
         </div>
       ) : (
-        <AgentDraft>{(inputDraft) => (
+        <AgentDraft draftKey={draftKey}>{(inputDraft) => (
         <div className="relative flex-shrink-0 border-t border-zinc-800 p-3">
           {/* `/` 命令面板：锚定输入框上方，触摸点选执行；遮罩点击/返回键关闭 */}
           {commandMenuOpen && (
@@ -1015,11 +803,6 @@ export default function MobileAgentHost({
             onCompact={handleCompact}
             onClose={() => setInputDraft("")}
           />
-          {attachHint && (
-            <div className="mb-2 rounded-lg border border-amber-800/50 bg-amber-950/60 px-2.5 py-1.5 text-xs text-amber-200">
-              {attachHint}
-            </div>
-          )}
           {/* 压缩中常驻的原因说明（与桌面同文案）：发送键这时是「取消压缩」，
               回车也发不出去，没有这一行用户只会觉得输入框坏了。 */}
           {isCompacting && (
@@ -1028,36 +811,17 @@ export default function MobileAgentHost({
               正在压缩上下文，完成后即可发送（可点右下角取消）
             </div>
           )}
-          {pendingImages.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {pendingImages.map((img) => (
-                <div key={img.id} className="relative h-14 w-14">
-                  <img
-                    src={img.previewUrl}
-                    alt=""
-                    className="h-full w-full rounded-lg border border-zinc-600 object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removePendingImage(img.id)}
-                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-[11px] leading-none text-zinc-300 active:bg-red-600 active:text-white"
-                    title="移除"
-                    aria-label="移除图片"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <DraftAttachments attachments={attachments} mobile />
           <div className="agent-input rounded-2xl border border-zinc-700 bg-zinc-900 focus-within:border-indigo-500">
             {/* 移动端不拦截回车：软键盘/IME 的「换行」键走 textarea 原生行为插入换行
                 （含拼音组合中确认候选词的回车，不会误发）；发送只走右侧按钮——
                 手机上没有 shift+Enter，若拦截回车则多行输入无法换行。桌面端语义不受影响。 */}
             <AgentTextarea
+              draftKey={draftKey}
               ref={inputRef}
               rows={1}
               maxHeight={120}
+              onPaste={attachments.handlePaste}
               placeholder={
                 !canInteract
                   ? "请先连接服务器…"
@@ -1072,9 +836,9 @@ export default function MobileAgentHost({
               {/* 附件按钮：图片/文本文件导入 */}
               <button
                 type="button"
-                onClick={() => void handleAttach()}
+                onClick={() => void attachments.handleAttach()}
                 disabled={!canInteract || !ids}
-                className="flex-shrink-0 p-1.5 -ml-0.5 text-zinc-400 active:text-zinc-200 active:bg-zinc-800 rounded-full transition-transform duration-150 active:scale-90 disabled:opacity-40"
+                className="flex h-11 w-11 flex-shrink-0 items-center justify-center -ml-0.5 text-zinc-400 active:text-zinc-200 active:bg-zinc-800 rounded-full transition-transform duration-150 active:scale-90 disabled:opacity-40"
                 title="添加图片或文本文件"
                 aria-label="添加图片或文本文件"
               >
@@ -1194,9 +958,9 @@ export default function MobileAgentHost({
                     ? handleCancelCompaction()
                     : void handleSend()
               }
-              disabled={!isRunning && !isCompacting && !(!!ids && canSendAgentPrompt(
-                activeSession, conversationBusy, inputDraft, pendingImages.length > 0,
-              ))}
+              disabled={!isRunning && !isCompacting && (sending || !!attachments.sendBlockedReason || !(!!ids && canSendAgentPrompt(
+                activeSession, conversationBusy, inputDraft, attachments.items.length > 0,
+              )))}
               className={`mr-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg text-white transition-transform duration-150 active:scale-95 disabled:opacity-40 ${
                 isRunning
                   ? "bg-red-600 active:bg-red-500"

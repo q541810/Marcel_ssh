@@ -1158,6 +1158,7 @@ mod tests {
             reasoning_content: None,
             image_paths_json: None,
             turn_state: None,
+            user_input_json: None,
         }
     }
 

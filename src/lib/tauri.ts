@@ -11,6 +11,7 @@ import type {
   AppSettings,
   AgentConversation,
   StoredMessage,
+  UserInputMetadata,
   ConversationSearchResult,
   AgentTaskPlan,
   Skill,
@@ -132,6 +133,7 @@ export async function agentStartTask(
    * 结算告知（自动继续）。决定这条消息在会话里的身份与「算不算用户输入」。
    */
   origin?: 'job_notice',
+  userInput?: UserInputMetadata,
 ): Promise<string> {
   return invoke<string>("agent_start_task", {
     sessionId,
@@ -142,6 +144,7 @@ export async function agentStartTask(
     taskId,
     modelId: modelId ?? null,
     origin: origin ?? null,
+    userInput: userInput ?? null,
   });
 }
 
@@ -213,12 +216,14 @@ export async function agentSaveUserMessage(
   content: string,
   timestamp: string,
   imagePaths?: string[],
+  userInput?: UserInputMetadata,
 ): Promise<void> {
   return invoke("agent_save_user_message", {
     conversationId,
     content,
     timestamp,
     imagePaths: imagePaths ?? null,
+    userInput: userInput ?? null,
   });
 }
 

@@ -725,6 +725,7 @@ impl AgentTool for SubagentTool {
             // 子 agent 的 prompt 是父 agent 写的派发任务，但它在自己的子会话里
             // 就是「这一轮用户说的话」——按用户输入落库（子会话没有唤醒轮）。
             prompt_origin: PromptOrigin::User,
+            user_input: None,
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {

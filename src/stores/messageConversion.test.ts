@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import type { StoredMessage } from '@/lib/types';
+import { composeUserInput } from '@/lib/userInput';
 
 describe('storedMessageToAgentMessage', () => {
   // Helper to create base StoredMessage
@@ -35,6 +36,41 @@ describe('storedMessageToAgentMessage', () => {
       expect(result.content).toBe('System info');
       expect(result.toolCall).toBeUndefined();
       expect(result.toolResult).toBeUndefined();
+    });
+  });
+
+  describe('用户输入和文本附件快照', () => {
+    const userInput = {
+      version: 1 as const,
+      text: '分析日志',
+      textAttachments: [{ id: 'f1', name: '服务.log', content: '第一行\n完整正文\n', size: 33 }],
+    };
+    const content = composeUserInput(userInput);
+
+    it('restores explicit metadata while retaining full model content and images', () => {
+      const message = storedMessageToAgentMessage(createStoredMessage({
+        content, userInputJson: JSON.stringify(userInput), imagePathsJson: '["images/one.png"]',
+      }));
+      expect(message.userInput).toEqual(userInput);
+      expect(message.content).toBe(content);
+      expect(message.imagePaths).toEqual(['images/one.png']);
+    });
+
+    it.each([undefined, null, '{broken', JSON.stringify({ ...userInput, version: 9 }),
+      JSON.stringify({ ...userInput, text: '别的内容' })])('keeps old or corrupt rows intact: %s', (userInputJson) => {
+      const message = storedMessageToAgentMessage(createStoredMessage({ content, userInputJson }));
+      expect(message.userInput).toBeUndefined();
+      expect(message.content).toBe(content);
+    });
+
+    it('does not attach user presentation metadata to assistant or notice messages', () => {
+      for (const role of ['assistant', 'notice', 'system']) {
+        const message = storedMessageToAgentMessage(createStoredMessage({
+          role, content, userInputJson: JSON.stringify(userInput),
+        }));
+        expect(message.userInput).toBeUndefined();
+        expect(message.content).toBe(content);
+      }
     });
   });
 

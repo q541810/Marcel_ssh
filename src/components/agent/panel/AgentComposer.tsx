@@ -7,13 +7,14 @@ import AgentCommandMenu, {
 } from "../AgentCommandMenu";
 import { ReasoningEffortPicker } from "../ReasoningEffortPicker";
 import { notifyInputTyping } from "./inputActivity";
-import type { AgentPanelAttachments } from "./useAgentPanelAttachments";
+import type { AgentAttachments } from "@/hooks/useAgentAttachments";
+import DraftAttachments from "../DraftAttachments";
 import { ModeSelector } from "./ModeSelector";
 import { SendControlButton } from "./SendControlButton";
 
 type AgentComposerProps = {
-  /** 附件域（AgentPanel 里的 useAgentPanelAttachments 返回值）。 */
-  attachments: AgentPanelAttachments;
+  /** 双端共用附件 manager 的事件适配。 */
+  attachments: AgentAttachments;
   mode: AgentMode;
   setMode: (mode: AgentMode) => void;
   isRunning: boolean;
@@ -71,10 +72,7 @@ export function AgentComposer({
   onCancelCompaction,
 }: AgentComposerProps) {
   const {
-    attachHint,
-    pendingImages,
     dragOver,
-    removePendingImage,
     handleDragOver,
     handleDragLeave,
     handleDrop,
@@ -86,7 +84,7 @@ export function AgentComposer({
   );
 
   return (
-    <AgentDraft>{(input) => (
+    <AgentDraft draftKey={attachments.draftKey}>{(input) => (
     <div
       className="flex-shrink-0 p-3 border-t border-zinc-800 [container-type:inline-size]"
       onDragOver={handleDragOver}
@@ -94,11 +92,6 @@ export function AgentComposer({
       onDrop={handleDrop}
     >
       <div className="agent-content-column">
-      {attachHint && (
-        <div className="mb-2 px-2 py-1.5 rounded-md bg-amber-950/60 border border-amber-800/50 text-xs text-amber-200">
-          {attachHint}
-        </div>
-      )}
       {/* 压缩中常驻的原因说明：发送键这时是「取消压缩」，回车也发不出去，
           没有这一行用户只会觉得输入框坏了。配色跟随会话里那张进行中卡。 */}
       {isCompacting && (
@@ -107,27 +100,7 @@ export function AgentComposer({
           正在压缩上下文，完成后即可发送（可点右下角取消）
         </div>
       )}
-      {pendingImages.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2">
-          {pendingImages.map((img) => (
-            <div key={img.id} className="relative h-14 w-14">
-              <img
-                src={img.previewUrl}
-                alt=""
-                className="h-full w-full object-cover rounded-md border border-zinc-600"
-              />
-              <button
-                type="button"
-                onClick={() => removePendingImage(img.id)}
-                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-zinc-900 border border-zinc-600 text-zinc-300 hover:text-white hover:bg-red-600 flex items-center justify-center text-[10px] leading-none"
-                title="移除"
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <DraftAttachments attachments={attachments} />
       <div
         className={`agent-input relative rounded-2xl bg-zinc-800 border transition-colors focus-within:border-indigo-500 ${
           dragOver
@@ -148,6 +121,7 @@ export function AgentComposer({
         />
         {/* Input field — 顶部整行，操作工具条移至下方 */}
         <AgentTextarea
+          draftKey={attachments.draftKey}
           ref={inputRef}
           rows={1}
           maxHeight={96}
@@ -232,7 +206,7 @@ export function AgentComposer({
             disabled={
               !isRunning &&
               !isCompacting &&
-              ((!input.trim() && pendingImages.length === 0) || !canInteract)
+              ((!input.trim() && attachments.items.length === 0) || !!attachments.sendBlockedReason || !canInteract)
             }
             onSend={onSend}
             onStop={onStop}

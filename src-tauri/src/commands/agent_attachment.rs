@@ -1,18 +1,35 @@
 //! Agent 输入框附件：读取本地文件（普通路径 / Android SAF content:// URI），
-//! 以 base64 + 文件名返回给前端（图片走压缩预览链路，文本走解码插入链路）。
+//! 以 base64 + 文件名返回给前端，供图片压缩预览和文本附件解码。
 //! 纯只读命令，不落库、不触发 sync。
 
 use serde::Serialize;
 use std::path::Path;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::commands::sftp::{open_content_uri_file, ContentOpenMode};
 use crate::error::AppError;
 use crate::util::{is_content_uri, validate_local_path};
 
 /// 附件读取硬上限：文本单文件 5MB 由前端限制，后端再给一个更宽的兜底，
-/// 防止误传超大文件打爆内存。图片走前端压缩（<5MB），不会触到该上限。
+/// 防止误传超大文件打爆内存。图片也先检查原始文件大小，再在前端压缩。
 pub const MAX_ATTACHMENT_READ_BYTES: u64 = 10 * 1024 * 1024;
+
+/// 最多读取上限加一个字节，以便识别超限，同时约束未知大小的 SAF 流。
+async fn read_attachment_bytes(reader: impl AsyncRead + Unpin) -> Result<Vec<u8>, AppError> {
+    let mut data = Vec::new();
+    reader
+        .take(MAX_ATTACHMENT_READ_BYTES + 1)
+        .read_to_end(&mut data)
+        .await
+        .map_err(|e| AppError::Agent(format!("读取文件失败: {}", e)))?;
+    if data.len() as u64 > MAX_ATTACHMENT_READ_BYTES {
+        return Err(AppError::Agent(format!(
+            "文件过大，单文件限制为 {} MB",
+            MAX_ATTACHMENT_READ_BYTES / 1_048_576
+        )));
+    }
+    Ok(data)
+}
 
 #[derive(Serialize)]
 pub struct LocalFilePayload {
@@ -33,7 +50,7 @@ pub async fn agent_read_local_file(
 ) -> Result<LocalFilePayload, AppError> {
     let path = validate_local_path(&path)?;
 
-    // 超大文件直接拒绝：不读进内存（size 未知的 content:// 以读入后检查兜底）。
+    // 已知大小先拒绝；读取时仍有界，覆盖大小未知和读取期间增长的文件。
     if !is_content_uri(&path) {
         let meta = tokio::fs::metadata(&path)
             .await
@@ -50,25 +67,14 @@ pub async fn agent_read_local_file(
     let name = local_file_name(&path).await?;
 
     let data = if is_content_uri(&path) {
-        let mut file = open_content_uri_file(&app, path, ContentOpenMode::Read).await?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)
+        let file = open_content_uri_file(&app, path, ContentOpenMode::Read).await?;
+        read_attachment_bytes(file).await?
+    } else {
+        let file = tokio::fs::File::open(&path)
             .await
             .map_err(|e| AppError::Agent(format!("读取文件失败: {}", e)))?;
-        buf
-    } else {
-        tokio::fs::read(&path)
-            .await
-            .map_err(|e| AppError::Agent(format!("读取文件失败: {}", e)))?
+        read_attachment_bytes(file).await?
     };
-
-    if data.len() as u64 > MAX_ATTACHMENT_READ_BYTES {
-        return Err(AppError::Agent(format!(
-            "文件过大 ({} MB)，单文件限制为 {} MB",
-            data.len() as f64 / 1_048_576.0,
-            MAX_ATTACHMENT_READ_BYTES as f64 / 1_048_576.0
-        )));
-    }
 
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
     Ok(LocalFilePayload {
@@ -118,6 +124,43 @@ pub async fn agent_get_local_file_name(path: String) -> Result<String, AppError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bounded_read_accepts_empty_and_regular_text() {
+        assert!(
+            read_attachment_bytes(std::io::Cursor::new(Vec::<u8>::new()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            read_attachment_bytes(std::io::Cursor::new(b"port=22"))
+                .await
+                .unwrap(),
+            b"port=22"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_read_accepts_exact_limit() {
+        let bytes = vec![b'x'; MAX_ATTACHMENT_READ_BYTES as usize];
+        assert_eq!(
+            read_attachment_bytes(std::io::Cursor::new(bytes))
+                .await
+                .unwrap()
+                .len(),
+            MAX_ATTACHMENT_READ_BYTES as usize
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_unknown_length_stream_stops_before_reading_the_remainder() {
+        let bytes = vec![b'x'; MAX_ATTACHMENT_READ_BYTES as usize + 4096];
+        let mut reader = std::io::Cursor::new(bytes);
+        let error = read_attachment_bytes(&mut reader).await.unwrap_err();
+        assert!(error.to_string().contains("单文件限制为 10 MB"));
+        assert_eq!(reader.position(), MAX_ATTACHMENT_READ_BYTES + 1);
+    }
 
     #[tokio::test]
     async fn plain_path_takes_basename() {

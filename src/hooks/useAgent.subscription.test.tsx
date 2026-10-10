@@ -3,14 +3,17 @@ import { act, Profiler, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgent } from './useAgent';
+import { useAgentAttachments } from './useAgentAttachments';
 import { useTaskStore } from '@/stores/taskStore';
+import { draftKeyFor, resetAgentDrafts, useAgentDraftStore } from '@/stores/agentDraftStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { useSessionStore } from '@/stores/sessionStore';
 import { useUpdateStore } from '@/stores/updateStore';
 import { createDefaultStreamHandler } from '@/stores/storeStreamAdapter';
 import { cleanupStreamState, handleTextDelta } from '@/stores/agentStreamHandlers';
 import { bus } from '@/plugins/injection/bus';
-import { agentStopTask, installUpdateNow } from '@/lib/tauri';
+import { agentLoadActiveMessages, agentStopTask, installUpdateNow } from '@/lib/tauri';
 import type { AgentConversation, AgentTask, AgentTaskPlan, ContextUsageEvent } from '@/lib/types';
 import PlanList from '@/components/agent/PlanList';
 import TerminalToolbar from '@/components/terminal/TerminalToolbar';
@@ -18,6 +21,10 @@ import UpdatePill from '@/components/layout/UpdatePill';
 
 // 只隔离 IPC 和 SSH/xterm 边界；task/conversation store、流处理器和被测组件均为真实实现。
 vi.mock('@/lib/tauri', () => ({
+  agentCreateConversation: vi.fn(),
+  agentDeleteConversation: vi.fn().mockResolvedValue(undefined),
+  agentLoadActiveMessages: vi.fn(),
+  agentLoadPlansByConversation: vi.fn().mockResolvedValue([]),
   agentStopTask: vi.fn().mockResolvedValue(undefined),
   installUpdateNow: vi.fn().mockResolvedValue(undefined),
 }));
@@ -69,6 +76,18 @@ function AgentConsumer() {
   agent = useAgent();
   agentRenders++;
   return <output>{agent.messages.map((m) => m.content).join('')}{agent.activeTask?.status}</output>;
+}
+
+function DraftConsumer() {
+  agent = useAgent();
+  const attachments = useAgentAttachments({
+    conversationId: agent.draftConversationId,
+    sessionId: 'session-1',
+    visionEnabled: true,
+    canInteract: true,
+    sendUnavailableReason: agent.draftSendUnavailableReason,
+  });
+  return <output>{attachments.notice}</output>;
 }
 
 function FixedActionConsumer() {
@@ -123,7 +142,9 @@ beforeEach(() => {
   });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
   useTaskStore.setState(useTaskStore.getInitialState(), true);
+  resetAgentDrafts();
   useConversationStore.setState(useConversationStore.getInitialState(), true);
+  useSessionStore.setState({ activeSessionId: null, sessions: {} });
   useSettingsStore.setState(useSettingsStore.getInitialState(), true);
   useUpdateStore.setState(useUpdateStore.getInitialState(), true);
   useConversationStore.setState({
@@ -155,6 +176,93 @@ afterEach(async () => {
 });
 
 describe('Agent 订阅隔离（真实 store + stream + React 挂载）', () => {
+  it.each([true, false])('同配置多标签同步空窗隔离草稿（目标已有绑定=%s）', async (hasBinding) => {
+    useSessionStore.setState({
+      activeSessionId: 'session-2',
+      sessions: Object.fromEntries(['session-1', 'session-2'].map((id) => [id, {
+        id, connectionId: 'connection', configId: 'connection', status: 'connected' as const, createdAt: timestamp,
+      }])),
+    });
+    useConversationStore.setState({
+      activeConversationBySession: {
+        'session-1': CURRENT,
+        ...(hasBinding ? { 'session-2': BACKGROUND } : {}),
+      },
+    });
+    useAgentDraftStore.getState().setText(`conv:${CURRENT}`, '第一标签的草稿');
+    await mount(<AgentConsumer />);
+
+    expect(agent.draftKey).toBe('session:session-2');
+    expect(agent.draftSendUnavailableReason).toBe('会话尚未就绪，可继续编辑并添加附件');
+    await act(async () => { agent.setInputDraft('第二标签正在输入'); });
+    expect(useAgentDraftStore.getState().getDraft(`conv:${CURRENT}`).text).toBe('第一标签的草稿');
+    expect(useAgentDraftStore.getState().getDraft('session:session-2').text).toBe('第二标签正在输入');
+
+    await act(async () => {
+      useConversationStore.setState({
+        activeConversationId: BACKGROUND,
+        activeConversationBySession: { 'session-1': CURRENT, 'session-2': BACKGROUND },
+      });
+    });
+    expect(agent.draftKey).toBe(`conv:${BACKGROUND}`);
+    expect(agent.draftSendUnavailableReason).toBeNull();
+  });
+
+  it('当前标签打开自己的子对话时保留该子对话的草稿归属', async () => {
+    useSessionStore.setState({
+      activeSessionId: 'session-1',
+      sessions: { 'session-1': {
+        id: 'session-1', connectionId: 'connection', configId: 'connection', status: 'connected', createdAt: timestamp,
+      } },
+    });
+    useConversationStore.setState((state) => ({
+      activeConversationId: 'child',
+      activeConversationBySession: { 'session-1': CURRENT },
+      conversations: { ...state.conversations, child: { ...conversation('child'), parentConversationId: CURRENT } },
+    }));
+    await mount(<AgentConsumer />);
+    expect(agent.draftKey).toBe('conv:child');
+    expect(agent.draftSendUnavailableReason).toBeNull();
+  });
+
+  it('删除后空闲历史已成为可见草稿时，恢复失败提示仍出现在当前输入区', async () => {
+    useSessionStore.setState({
+      activeSessionId: 'session-1',
+      sessions: Object.fromEntries(['session-1', 'session-2'].map((id) => [id, {
+        id, connectionId: 'connection', configId: 'connection', status: 'connected' as const, createdAt: timestamp,
+      }])),
+    });
+    useConversationStore.setState({
+      activeConversationBySession: { 'session-1': CURRENT, 'session-2': 'occupied' },
+      activeConversationByConnection: { connection: CURRENT },
+      conversations: {
+        [CURRENT]: conversation(CURRENT),
+        [BACKGROUND]: { ...conversation(BACKGROUND), updatedAt: '2026-09-26T00:00:00.000Z' },
+        occupied: conversation('occupied'),
+      },
+    });
+    useTaskStore.setState({ tasks: {}, activeTaskId: null, plans: {}, compacting: {} });
+    let rejectLoad!: (reason: unknown) => void;
+    const pending = new Promise<Awaited<ReturnType<typeof agentLoadActiveMessages>>>((_, reject) => { rejectLoad = reject; });
+    vi.mocked(agentLoadActiveMessages).mockReturnValueOnce(pending);
+    await mount(<DraftConsumer />);
+    let deletion!: Promise<void>;
+    await act(async () => {
+      deletion = useConversationStore.getState().deleteConversation(CURRENT);
+      await vi.waitFor(() => expect(agentLoadActiveMessages).toHaveBeenCalledWith(BACKGROUND));
+    });
+    expect(agent.draftKey).toBe(`conv:${BACKGROUND}`);
+    await act(async () => {
+      rejectLoad({ kind: 'Io', message: '历史暂时无法读取' });
+      await deletion;
+    });
+
+    expect(host.textContent).toContain('历史暂时无法读取');
+    expect(host.textContent).toContain('会话已删除');
+    expect(useAgentDraftStore.getState().getDraft('session:session-1').notice).toBeNull();
+    expect(useConversationStore.getState().conversations[CURRENT]).toBeUndefined();
+  });
+
   it('固定 action 消费者不随后台 100 个流帧重渲染', async () => {
     await mount(<FixedActionConsumer />);
     await textFrames(BACKGROUND);
@@ -265,7 +373,8 @@ describe('Agent 订阅隔离（真实 store + stream + React 挂载）', () => {
 
   it.each([null, 'unloaded-conversation'])('空/未加载会话 %s 使用稳定空消息，读取不清空原数据', async (id) => {
     useConversationStore.setState({ activeConversationId: id });
-    useTaskStore.setState({ activeTaskId: 'missing-task', inputDraft: 'keep draft' });
+    useTaskStore.setState({ activeTaskId: 'missing-task' });
+    useAgentDraftStore.getState().setText(draftKeyFor(id, null), 'keep draft');
     const conversationsBefore = useConversationStore.getState();
     const tasksBefore = useTaskStore.getState();
     await mount(<><AgentConsumer /><PlanList /></>);

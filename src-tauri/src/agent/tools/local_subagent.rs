@@ -585,6 +585,7 @@ impl AgentTool for LocalSubagentTool {
             model_override,
             prompt_extra: vec![sub_instruction, local_instruction],
             prompt_origin: PromptOrigin::User,
+            user_input: None,
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {

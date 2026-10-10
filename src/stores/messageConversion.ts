@@ -1,5 +1,6 @@
 import type { StoredMessage, AgentMessage } from '@/lib/types';
 import { normalizeDisposition } from '@/lib/disposition';
+import { validateUserInput } from '@/lib/userInput';
 
 // ───────────────────────── Conversion Strategies ─────────────────────────
 
@@ -289,6 +290,14 @@ export function storedMessageToAgentMessage(m: StoredMessage): AgentMessage {
     // null —— 这里 `null` → `undefined`，与 live 写入（没有记录）同一形态。
     turnState: m.turnState ?? undefined,
   };
+
+  if (m.role === 'user' && m.userInputJson) {
+    try {
+      base.userInput = validateUserInput(m.content, JSON.parse(m.userInputJson));
+    } catch {
+      // 无可靠附件结构：仍展示完整 content，不改写旧消息。
+    }
+  }
 
   // 压缩摘要落库消息：还原为 CompactionCard 展示（done 卡，默认展开摘要）
   const compaction = parseCompactionSummary(m.content);

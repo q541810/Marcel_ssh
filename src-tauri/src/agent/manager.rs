@@ -108,6 +108,8 @@ pub struct AgentSpec {
     /// （落库 role，见 [`PromptOrigin`]）与「算不算用户输入」（自动继续的预算
     /// 只由用户输入重置）。主任务由 IPC 给，子任务恒为用户输入。
     pub prompt_origin: PromptOrigin,
+    /// 用户输入与文本附件的展示快照，仅保存到本轮 user 行，不参与模型消息拼装。
+    pub user_input: Option<serde_json::Value>,
     /// 审批语义覆盖：`None` = 跟随自身 `mode`（Plan 模式默认与 Auto 一样不弹
     /// 人审，除非设置了 `plan_mode_requires_approval`）；`Some(Auto)` = 命令执行
     /// 静默放行不弹人审（模型审批的 route_to_human 也不转人审），仅保留 风险
@@ -809,6 +811,7 @@ impl AgentManager {
             // `ToolContext` 挂上 `AppState.local_command_exec` 并置 `local_side`。
             local_side: spec.role.is_local_side(),
             prompt_origin: spec.prompt_origin,
+            user_input: spec.user_input,
         };
 
         let state_cleanup = self.state.clone();

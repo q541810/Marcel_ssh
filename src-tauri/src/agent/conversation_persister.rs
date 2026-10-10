@@ -64,6 +64,8 @@ pub(crate) struct ConversationPersister {
     pub conversation_id: String,
     /// 本任务这一轮 prompt 的来源（决定 `begin_turn` 落库的 role）。
     prompt_origin: PromptOrigin,
+    /// 只随本轮 user 锚点保存的展示快照；不加入模型消息或工具输出。
+    user_input: Option<serde_json::Value>,
 }
 
 impl ConversationPersister {
@@ -72,12 +74,18 @@ impl ConversationPersister {
             conv_db,
             conversation_id,
             prompt_origin: PromptOrigin::User,
+            user_input: None,
         }
     }
 
     /// 换掉本轮 prompt 的来源（只有「唤醒轮」会用到：它的 prompt 是作业告知）。
     pub fn with_prompt_origin(mut self, origin: PromptOrigin) -> Self {
         self.prompt_origin = origin;
+        self
+    }
+
+    pub fn with_user_input(mut self, input: Option<serde_json::Value>) -> Self {
+        self.user_input = input;
         self
     }
 
@@ -131,9 +139,15 @@ impl ConversationPersister {
                     serde_json::to_string(paths).ok()
                 }
             });
+            // 展示协议只有前端的一份 compose/validate；后端原样持久化，模型仍读 content。
+            let user_input_json = self
+                .user_input
+                .as_ref()
+                .filter(|_| self.prompt_origin.is_user_input())
+                .and_then(|input| serde_json::to_string(input).ok());
             let saved = self
                 .conv_db
-                .save_message_with_images(
+                .save_message_with_user_input(
                     &self.conversation_id,
                     self.prompt_origin.db_role(),
                     &messages[idx].content,
@@ -141,6 +155,7 @@ impl ConversationPersister {
                     None,
                     None,
                     image_paths_json.as_deref(),
+                    user_input_json.as_deref(),
                 )
                 .ok();
             if let Some(stored) = saved {
@@ -346,6 +361,74 @@ mod tests {
             .expect("rollback");
         persister.end_turn(&anchor, TurnState::Completed);
         assert!(db.load_messages(&conv.id).expect("load").is_empty());
+    }
+
+    #[test]
+    fn user_input_metadata_is_saved_with_the_turn_and_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("attachments.db");
+        let db = std::sync::Arc::new(ConversationDb::new(&path).unwrap());
+        let conv = db.create_conversation("conn_1", "附件").unwrap();
+        let content = "分析\n\n===== 文件名: app.log =====\n完整日志\n\n";
+        let input = serde_json::json!({
+            "version": 1, "text": "分析", "textAttachments": [
+                {"id": "f1", "name": "app.log", "content": "完整日志\n\n", "size": 14}
+            ]
+        });
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone())
+            .with_user_input(Some(input.clone()));
+        let mut message = LlmMessage::user(content);
+        message.image_paths = Some(vec!["images/one.png".into()]);
+        let mut messages = vec![
+            LlmMessage::user("旧轮"),
+            LlmMessage::assistant("好的"),
+            message,
+        ];
+        let anchor = persister.begin_turn(&mut messages).unwrap();
+        persister.end_turn(&anchor, TurnState::Completed);
+        // 元数据不参与模型文本拼装，文件全文仍在 user.content，且只保存本轮 user。
+        assert_eq!(messages[2].content, content);
+        let rows = db.load_messages(&conv.id).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].content, content);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(rows[0].user_input_json.as_deref().unwrap())
+                .unwrap(),
+            input
+        );
+        assert_eq!(
+            rows[0].image_paths_json.as_deref(),
+            Some(r#"["images/one.png"]"#)
+        );
+        drop(persister);
+        drop(db);
+
+        let reopened = ConversationDb::new(&path).unwrap();
+        let rows = reopened.load_messages(&conv.id).unwrap();
+        assert_eq!(rows[0].content, content);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(rows[0].user_input_json.as_deref().unwrap())
+                .unwrap(),
+            input
+        );
+        assert_eq!(rows[0].turn_state.as_deref(), Some("completed"));
+    }
+
+    #[test]
+    fn job_notices_do_not_inherit_user_attachment_metadata() {
+        let db = std::sync::Arc::new(ConversationDb::in_memory().unwrap());
+        let conv = db.create_conversation("conn_1", "作业").unwrap();
+        let persister = ConversationPersister::new(db.clone(), conv.id.clone())
+            .with_prompt_origin(PromptOrigin::JobNotice)
+            .with_user_input(Some(
+                serde_json::json!({"version":1,"text":"旧草稿","textAttachments":[]}),
+            ));
+        let mut messages = vec![LlmMessage::user("作业完成")];
+        persister.begin_turn(&mut messages).unwrap();
+        let rows = db.load_messages(&conv.id).unwrap();
+        assert_eq!(rows[0].role, ROLE_NOTICE);
+        assert_eq!(rows[0].content, "作业完成");
+        assert!(rows[0].user_input_json.is_none());
     }
 
     /// 没有可锚定的 user 消息（空 prompt 且无图）→ 不记录收尾状态，

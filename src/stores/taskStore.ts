@@ -6,6 +6,7 @@ import type {
   AgentTaskPlan,
   ConversationUsage,
   ContextUsageEvent,
+  UserInputMetadata,
 } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { getErrorMessage } from "@/lib/errors";
@@ -25,6 +26,14 @@ import {
   DEBUG_67_DEFAULT_TOKEN_LIMIT,
 } from "./debugStore";
 import { usageFromContextEvent } from "@/lib/tokenUsage";
+import { composeUserInput, validateUserInput } from "@/lib/userInput";
+import { MAX_ATTACH_IMAGES } from "@/lib/imageAttach";
+
+export interface StartTaskOptions {
+  conversationId?: string;
+  jobNotice?: boolean;
+  userInput?: UserInputMetadata;
+}
 
 /** 一个会话的 token 用量读数（实时事件写进来，重启后由会话数据兜底）。 */
 export interface ConversationUsageEntry {
@@ -37,7 +46,6 @@ export interface TaskState {
   tasks: Record<string, AgentTask>;
   activeTaskId: string | null;
   mode: AgentMode;
-  inputDraft: string;
   plans: Record<string, AgentTaskPlan>;
   plansDirty: boolean;
   /**
@@ -89,12 +97,10 @@ export interface TaskState {
      *   role=notice（界面上是独立告知卡），且**不算用户输入**（自动继续的
      *   额度只由真的用户输入重置）。
      */
-    options?: { conversationId?: string; jobNotice?: boolean },
+    options?: StartTaskOptions,
   ) => Promise<string>;
   stopTask: (taskId: string) => Promise<void>;
   setMode: (mode: AgentMode) => void;
-  /** 支持函数式更新（追加文本附件用 `(prev) => ...`）。 */
-  setInputDraft: (text: string | ((prev: string) => string)) => void;
   updateTaskStatus: (taskId: string, status: AgentTask["status"]) => void;
   setPlan: (taskId: string, plan: AgentTaskPlan) => void;
   getActivePlan: () => AgentTaskPlan | null;
@@ -272,7 +278,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   tasks: {},
   activeTaskId: null,
   mode: "agent",
-  inputDraft: "",
   plans: {},
   plansDirty: false,
   usageByConversation: {},
@@ -285,18 +290,31 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     connectionId?: string,
     imageDataUrls?: string[],
     replaceImagePaths?: string[],
-    options?: { conversationId?: string; jobNotice?: boolean },
+    options?: StartTaskOptions,
   ) => {
     const { mode } = get();
     const isJobNotice = options?.jobNotice === true;
+    const requestPrompt = options?.userInput && !isJobNotice
+      ? composeUserInput(options.userInput)
+      : prompt;
+    const userInput = !isJobNotice
+      ? validateUserInput(requestPrompt, options?.userInput)
+      : undefined;
+    if (options?.userInput && !isJobNotice && !userInput) {
+      throw new Error("附件内容无效，请检查后重新发送");
+    }
+    const requestedImages = imageDataUrls ?? [];
+    if (requestedImages.length > MAX_ATTACH_IMAGES) {
+      throw new Error(`最多可发送 ${MAX_ATTACH_IMAGES} 张图片，请移除多余图片`);
+    }
     const conversationStore = useConversationStore.getState();
     // 先按全局兜底模型判断能否附图（新会话 title 需要）；ensure 拿到真实
     // 会话后按「会话记忆 → 全局最近使用」的生效模型再精算一次。
     const settingsStore = useSettingsStore.getState();
     const vision = currentVision(settingsStore.settings.llmRegistry);
-    const images = vision ? (imageDataUrls ?? []).slice(0, 5) : [];
+    const images = vision ? requestedImages : [];
 
-    const titleSeed = prompt.trim() || (images.length > 0 ? "[image]" : "");
+    const titleSeed = userInput?.text.trim() || userInput?.textAttachments[0]?.name || prompt.trim() || (images.length > 0 ? "[image]" : "");
     // 指定会话（自动继续）时不走 ensureConversation：它的选择依据是「当前
     // 活跃会话」，会给别的会话开轮时开错地方，并把界面切过去。
     const conversationId =
@@ -318,7 +336,12 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       useSettingsStore.getState().settings.llmRegistry,
       conv?.modelId ?? null,
     );
-    const allowedImages = effectiveVision ? (imageDataUrls ?? []).slice(0, 5) : [];
+    if (requestedImages.length > 0 && !effectiveVision) {
+      const error = new Error("当前模型不支持图片，请更换模型或移除图片后发送");
+      Object.assign(error, { conversationId });
+      throw error;
+    }
+    const allowedImages = requestedImages;
 
     const userMessageId = crypto.randomUUID();
     let imagePaths: string[] | undefined;
@@ -353,6 +376,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         ]);
         const e = err instanceof Error ? err : new Error(getErrorMessage(err));
         (e as Error & { stage?: string }).stage = "save_images";
+        Object.assign(e, { conversationId });
         throw e;
       }
     }
@@ -361,7 +385,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       id: userMessageId,
       // 自动继续那一轮：这条是系统替作业写的告知，不是用户打的字。
       role: isJobNotice ? "notice" : "user",
-      content: prompt,
+      content: requestPrompt,
+      ...(userInput ? { userInput } : {}),
       timestamp: new Date().toISOString(),
       imagePaths,
     };
@@ -387,7 +412,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       id: taskId,
       sessionId,
       conversationId,
-      prompt,
+      prompt: requestPrompt,
       mode,
       status: "planning",
       hasPlan: false,
@@ -438,13 +463,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         useConversationStore.getState().conversations[conversationId]?.modelId ?? null;
       await tauri.agentStartTask(
         sessionId,
-        prompt,
+        requestPrompt,
         mode,
         conversationId,
         llmHistory,
         taskId,
         convModelId,
         isJobNotice ? "job_notice" : undefined,
+        userInput,
       );
     } catch (err) {
       cleanupTaskListeners(taskId);
@@ -461,9 +487,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       try {
         await tauri.agentSaveUserMessage(
           conversationId,
-          prompt,
+          requestPrompt,
           userMessage.timestamp,
           imagePaths,
+          userInput,
         );
       } catch (persistErr) {
         console.warn(
@@ -482,6 +509,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       ]);
       const e = err instanceof Error ? err : new Error(getErrorMessage(err));
       (e as Error & { stage?: string }).stage = "start_task";
+      Object.assign(e, { conversationId });
       throw e;
     }
 
@@ -525,13 +553,6 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         console.error("[taskStore] persist defaultAgentMode failed", err);
       });
     }
-  },
-
-  setInputDraft: (text: string | ((prev: string) => string)) => {
-    set((state) => ({
-      inputDraft:
-        typeof text === "function" ? text(state.inputDraft) : text,
-    }));
   },
 
   updateTaskStatus: (taskId: string, status: AgentTask["status"]) => {

@@ -1,6 +1,7 @@
-import { memo, useState, useEffect, useRef, type ReactNode } from 'react';
+import { memo, useMemo, useState, useEffect, useRef, type ReactNode } from 'react';
 import type { AgentMessage as AgentMessageType } from '@/lib/types';
-import MessageImageThumb from './MessageImageThumb';
+import UserMessageAttachments from './UserMessageAttachments';
+import { validateUserInput } from '@/lib/userInput';
 import MarkdownBody from './MarkdownBody';
 import { useMessageViewState } from './messageViewState';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -238,6 +239,10 @@ function AgentMessage({
   const isTool = message.role === 'tool';
   // 后台作业的结算告知（自动继续那一轮的 prompt）：系统写的，不是用户打的字。
   const isNotice = message.role === 'notice';
+  const userInput = useMemo(
+    () => isUser ? validateUserInput(message.content, message.userInput) : undefined,
+    [isUser, message.content, message.userInput],
+  );
   // 思考只在输出过程中显示（isThinking），回复完成后即消失（完成即删）；
   // 带 tool_calls 的消息 live 时 handleToolCallStart 已清 reasoningContent，
   // 无需单独条件。reasoningContent 字段始终保留供 LLM 回传
@@ -262,23 +267,17 @@ function AgentMessage({
   if (isUser) {
     const sentAt = new Date(message.timestamp).toLocaleString();
     const images = message.imagePaths ?? [];
+    // 日常阅读保持附件形态；全文检索时保留原文高亮，命中文件正文也能看见。
+    const displayContent = searchKeyword?.trim() ? message.content : userInput?.text ?? message.content;
     return (
       <div className="group flex justify-end my-1">
-        <div className="flex max-w-[80%] flex-col items-end">
-          {images.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap justify-end gap-1.5 max-w-full">
-              {images.map((path) => (
-                <MessageImageThumb
-                  key={path}
-                  relativePath={path}
-                  className="h-16 w-16"
-                />
-              ))}
-            </div>
+        <div className="flex min-w-0 max-w-[80%] flex-col items-end">
+          {(images.length > 0 || (userInput?.textAttachments.length ?? 0) > 0) && (
+            <UserMessageAttachments files={userInput?.textAttachments ?? []} imagePaths={images} mobile={alwaysShowActions} />
           )}
-          {message.content ? (
-            <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-white whitespace-pre-wrap">
-              {highlightPlainText(message.content, searchKeyword)}
+          {displayContent ? (
+            <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap [overflow-wrap:anywhere]">
+              {highlightPlainText(displayContent, searchKeyword)}
             </div>
           ) : null}
           <div

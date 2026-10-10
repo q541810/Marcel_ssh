@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { useTaskStore } from '@/stores/taskStore';
+import { useTaskStore, type StartTaskOptions } from '@/stores/taskStore';
 import { useConversationStore } from '@/stores/conversationStore';
+import { useSessionStore } from '@/stores/sessionStore';
+import { draftConversationIdFor, draftKeyFor, EMPTY_DRAFT, useAgentDraftStore } from '@/stores/agentDraftStore';
 import { bus } from '@/plugins/injection/bus';
 import { isTaskBusy } from '@/lib/agentStatus';
 import { conversationUsageView } from '@/lib/tokenUsage';
@@ -15,6 +17,7 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
     // 会话列表由双端 UI 展示，元数据变化仍须响应；消息只订阅当前会话的桶。
     conversations: s.conversations,
     activeConversationId: s.activeConversationId,
+    activeConversationBySession: s.activeConversationBySession,
     messages: subscribeMessages && s.activeConversationId
       ? (s.messages[s.activeConversationId] ?? EMPTY_MESSAGES)
       : EMPTY_MESSAGES,
@@ -32,15 +35,33 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
     syncActiveToSession: s.syncActiveToSession,
   })));
   const { activeConversationId } = conversation;
+  const { activeSessionId, activeConfigId } = useSessionStore(useShallow((s) => ({
+    activeSessionId: s.activeSessionId,
+    activeConfigId: s.activeSessionId ? s.sessions[s.activeSessionId]?.configId : undefined,
+  })));
+  const boundId = activeSessionId ? conversation.activeConversationBySession[activeSessionId] : undefined;
+  const draftConversationId = draftConversationIdFor({
+    activeConversationId,
+    conversations: conversation.conversations,
+    activeConversationBySession: conversation.activeConversationBySession,
+    activeSessionId,
+    activeConfigId,
+  });
+  const draftSyncing = !!activeSessionId && !!(activeConversationId || boundId) && !draftConversationId;
+  const draftKey = draftKeyFor(draftConversationId, activeSessionId);
+  const inputDraft = useAgentDraftStore((s) =>
+    subscribeDraft ? (s.drafts[draftKey] ?? EMPTY_DRAFT).text : '',
+  );
+  const setInputDraft = useCallback((text: string | ((previous: string) => string)) => {
+    useAgentDraftStore.getState().setText(draftKey, text);
+  }, [draftKey]);
   const task = useTaskStore(useShallow((s) => ({
     activeTask: s.activeTaskId ? (s.tasks[s.activeTaskId] ?? null) : null,
     activeUsage: activeConversationId ? s.usageByConversation[activeConversationId] : undefined,
     mode: s.mode,
-    inputDraft: subscribeDraft ? s.inputDraft : '',
     startTask: s.startTask,
     stopTask: s.stopTask,
     setMode: s.setMode,
-    setInputDraft: s.setInputDraft,
   })));
   const { activeTask, startTask, stopTask } = task;
 
@@ -73,8 +94,9 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
       connectionId?: string,
       imageDataUrls?: string[],
       replaceImagePaths?: string[],
+      options?: StartTaskOptions,
     ) => {
-      return startTask(sessionId, prompt, connectionId, imageDataUrls, replaceImagePaths);
+      return startTask(sessionId, prompt, connectionId, imageDataUrls, replaceImagePaths, options);
     },
     [startTask],
   );
@@ -90,12 +112,15 @@ export function useAgent({ subscribeMessages = true, subscribeDraft = true } = {
     activeTask,
     isRunning,
     mode: task.mode,
-    inputDraft: task.inputDraft,
+    draftKey,
+    draftConversationId,
+    draftSendUnavailableReason: draftSyncing ? '会话尚未就绪，可继续编辑并添加附件' : null,
+    inputDraft,
     /** 当前会话的用量读数（含子 agent）；无会话/无数据时为 null。 */
     activeUsageView,
     sendPrompt,
     stopActiveTask,
     setMode: task.setMode,
-    setInputDraft: task.setInputDraft,
+    setInputDraft,
   };
 }

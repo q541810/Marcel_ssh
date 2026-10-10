@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AgentPanel from '@/components/agent/AgentPanel';
 import MobileAgentHost from '@/mobile/MobileAgentHost';
 import { useTaskStore } from '@/stores/taskStore';
+import { draftKeyFor, resetAgentDrafts, useAgentDraftStore } from '@/stores/agentDraftStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useJobStore } from '@/stores/jobStore';
@@ -118,6 +119,7 @@ beforeEach(() => {
   Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: vi.fn() });
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
   useTaskStore.setState(useTaskStore.getInitialState(), true);
+  resetAgentDrafts();
   useConversationStore.setState(useConversationStore.getInitialState(), true);
   useSettingsStore.setState(useSettingsStore.getInitialState(), true);
   useJobStore.setState(useJobStore.getInitialState(), true);
@@ -176,7 +178,7 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
 
   it('输入草稿立即更新且不重解析历史 Markdown', async () => {
     await mount(Host);
-    await act(async () => { useTaskStore.getState().setInputDraft('new draft'); });
+    await act(async () => { useAgentDraftStore.getState().setText(draftKeyFor(CURRENT, 'session'), 'new draft'); });
     expect(host.querySelector('textarea')?.value).toBe('new draft');
     expect(counts.host).toBe(0);
     expect(counts.markdown.get(STATIC_MARKDOWN) ?? 0).toBe(0);
@@ -195,7 +197,7 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
     }
     expect(reads).toBe(10);
     expect(counts.host).toBe(0);
-    await act(async () => { useTaskStore.getState().setInputDraft('restored\ntext'); });
+    await act(async () => { useAgentDraftStore.getState().setText(draftKeyFor(CURRENT, 'session'), 'restored\ntext'); });
     expect(input.value).toBe('restored\ntext');
     expect(reads).toBe(11);
   });
@@ -223,7 +225,7 @@ describe.each([['desktop', AgentPanel], ['mobile', MobileAgentHost]] as const)('
 
 it('手机隐藏页不解析流式消息，恢复时显示最新内容且草稿不丢', async () => {
   await mount(MobileAgentHost);
-  await act(async () => { useTaskStore.getState().setInputDraft('keep draft'); });
+  await act(async () => { useAgentDraftStore.getState().setText(draftKeyFor(CURRENT, 'session'), 'keep draft'); });
   await act(async () => { root.render(<MobileAgentHost visible={false} />); });
   resetCounts();
   await textFrames(CURRENT);

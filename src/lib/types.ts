@@ -476,6 +476,21 @@ export interface AgentTask {
   modelId?: string;
 }
 
+/** 导入时的文本快照；发送、预览和撤回都不重新读取源文件。 */
+export interface UserTextAttachment {
+  id: string;
+  name: string;
+  content: string;
+  size?: number;
+}
+
+/** 展示与撤回使用的显式结构；消息 content 始终保留完整模型输入。 */
+export interface UserInputMetadata {
+  version: 1;
+  text: string;
+  textAttachments: UserTextAttachment[];
+}
+
 export interface AgentMessage {
   id: string;
   /**
@@ -520,6 +535,8 @@ export interface AgentMessage {
   reasoningContent?: string;
   /** Relative paths under config images/ for user-attached images */
   imagePaths?: string[];
+  /** 仅 user 消息使用；读取时须校验它能无损重组为 content。 */
+  userInput?: UserInputMetadata;
   /** Current retry attempt number (1-based) for isRetrying messages */
   retryAttempt?: number;
   /** Max retry attempts for isRetrying messages */
@@ -1212,6 +1229,8 @@ export interface StoredMessage {
   reasoningContent?: string | null;
   /** JSON array of relative image paths */
   imagePathsJson?: string | null;
+  /** JSON-encoded UserInputMetadata. Missing/corrupt data keeps content unchanged. */
+  userInputJson?: string | null;
   /** 回合收尾状态（`TurnState`）：只写在回合首条 user 消息行上，
    *  `null`/缺失 = 没有记录。后端已把不认识的字符串折成 `null`。 */
   turnState?: TurnState | null;

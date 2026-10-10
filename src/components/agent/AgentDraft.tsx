@@ -1,21 +1,22 @@
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, type ReactNode, type TextareaHTMLAttributes } from 'react';
-import { useTaskStore } from '@/stores/taskStore';
+import { EMPTY_DRAFT, useAgentDraftStore } from '@/stores/agentDraftStore';
 
 /** Draft updates belong to the composer, not the transcript or its host. */
-export function AgentDraft({ children }: { children: (draft: string) => ReactNode }) {
-  const draft = useTaskStore((s) => s.inputDraft);
+export function AgentDraft({ draftKey, children }: { draftKey: string; children: (draft: string) => ReactNode }) {
+  const draft = useAgentDraftStore((s) => (s.drafts[draftKey] ?? EMPTY_DRAFT).text);
   return children(draft);
 }
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'> & {
+  draftKey: string;
   maxHeight: number;
   onTyping?: () => void;
 };
 
 export const AgentTextarea = forwardRef<HTMLTextAreaElement, Props>(
-  function AgentTextarea({ maxHeight, onTyping, ...props }, forwardedRef) {
-    const draft = useTaskStore((s) => s.inputDraft);
-    const setDraft = useTaskStore((s) => s.setInputDraft);
+  function AgentTextarea({ draftKey, maxHeight, onTyping, ...props }, forwardedRef) {
+    const draft = useAgentDraftStore((s) => (s.drafts[draftKey] ?? EMPTY_DRAFT).text);
+    const setDraft = useAgentDraftStore((s) => s.setText);
     const ref = useRef<HTMLTextAreaElement | null>(null);
     // One measurement after the value is committed, including restore/clear/attachments.
     const resize = useCallback(() => {
@@ -48,7 +49,7 @@ export const AgentTextarea = forwardRef<HTMLTextAreaElement, Props>(
       }}
       value={draft}
       onChange={(event) => {
-        setDraft(event.target.value);
+        setDraft(draftKey, event.target.value);
         onTyping?.();
       }}
     />;

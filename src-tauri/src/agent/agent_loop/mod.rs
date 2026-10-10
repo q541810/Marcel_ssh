@@ -27,6 +27,7 @@ use crate::AppState;
 mod phases;
 mod tool_exec;
 
+
 use self::phases::{
     finish_text_reply, persist_assistant_tool_calls, prepare_turn, report_max_rounds_exceeded,
     request_round_reply, resolve_summarizer_manager, RoundOutcome, TextReplyOutcome,
@@ -260,6 +261,7 @@ pub(crate) struct LoopContext {
     /// 以及这一轮是不是「唤醒轮」（唤醒轮不触发计划收尾提醒——那个标记按
     /// 任务算，唤醒一次就重来一遍，会把模型念烦）。
     pub prompt_origin: PromptOrigin,
+    pub user_input: Option<serde_json::Value>,
 }
 
 /// The main agentic loop:
@@ -301,6 +303,7 @@ pub(crate) async fn run_agent_loop(
         is_subtask,
         local_side,
         prompt_origin,
+        user_input,
     } = ctx;
 
     // 回合准备（原开头段原样搬出）：唤醒轮标记、persister 构建、db_id_known
@@ -309,6 +312,7 @@ pub(crate) async fn run_agent_loop(
         conv_db,
         &conversation_id,
         prompt_origin,
+        user_input,
         &mut messages,
         &state,
         &task_id,

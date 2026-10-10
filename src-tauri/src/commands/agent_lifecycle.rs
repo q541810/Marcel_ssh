@@ -24,6 +24,7 @@ pub async fn agent_start_task(
     // 它决定这条消息在会话里的身份（落库 role）与「算不算用户输入」——
     // 认不出来一律当用户输入，见 `PromptOrigin::from_ipc`。
     origin: Option<String>,
+    user_input: Option<serde_json::Value>,
 ) -> Result<String, AppError> {
     // 兜底守卫：该会话正在手动压缩上下文 → 拒绝开这一轮。
     //
@@ -55,6 +56,7 @@ pub async fn agent_start_task(
         model_override,
         prompt_extra: Vec::new(),
         prompt_origin: PromptOrigin::from_ipc(origin.as_deref()),
+        user_input,
     };
     let manager = AgentManager::new(state.inner().clone());
     let handle = manager.spawn(&app, spec).await?;

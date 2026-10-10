@@ -54,11 +54,12 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 export async function compressImageFile(file: Blob): Promise<{ dataUrl: string; previewUrl: string }> {
   const img = await loadImageFromBlob(file);
   let { width, height } = img;
+  if (width <= 0 || height <= 0) throw new Error('图片尺寸无效');
   const maxEdge = Math.max(width, height);
   if (maxEdge > MAX_IMAGE_EDGE) {
     const scale = MAX_IMAGE_EDGE / maxEdge;
-    width = Math.round(width * scale);
-    height = Math.round(height * scale);
+    width = Math.max(1, Math.round(width * scale));
+    height = Math.max(1, Math.round(height * scale));
   }
 
   const canvas = document.createElement('canvas');
@@ -80,6 +81,9 @@ export async function compressImageFile(file: Blob): Promise<{ dataUrl: string; 
     quality = Math.max(0.4, quality - 0.1);
   }
   if (!blob) throw new Error('图片压缩失败');
+  if (blob.size > TARGET_IMAGE_BYTES) {
+    throw new Error('图片压缩后仍超过 5 MB，请缩小图片后重试');
+  }
 
   const dataUrl = await blobToDataUrl(blob);
   const previewUrl = URL.createObjectURL(blob);

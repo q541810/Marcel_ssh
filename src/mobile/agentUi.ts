@@ -19,12 +19,12 @@ export function canSendAgentPrompt(
    */
   busy: boolean,
   draft: string,
-  hasImages = false,
+  hasAttachments = false,
 ): boolean {
   if (busy) return false;
   if (!session || session.status !== 'connected') return false;
   if (!session.configId) return false;
-  return draft.trim().length > 0 || hasImages;
+  return draft.trim().length > 0 || hasAttachments;
 }
 
 export function agentEmptyStateReason(

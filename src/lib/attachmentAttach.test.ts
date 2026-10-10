@@ -8,6 +8,7 @@ import {
   wrapTextAttachment,
   resolveAttachmentName,
   MAX_TEXT_FILE_BYTES,
+  isAttachmentDialogCancelled,
 } from "./attachmentAttach";
 
 // resolveAttachmentName 走 invoke("agent_get_local_file_name")，单测里 mock 掉
@@ -109,6 +110,25 @@ describe("decodeTextBytes", () => {
 
   it("keeps ascii as-is", () => {
     expect(decodeTextBytes(new Uint8Array([0x61, 0x62, 0x63]))).toBe("abc");
+  });
+
+  it("accepts BOM-marked UTF-16 text without treating its NUL bytes as binary", () => {
+    expect(decodeTextBytes(new Uint8Array([0xff, 0xfe, 0x61, 0, 0x62, 0]))).toBe("ab");
+    expect(decodeTextBytes(new Uint8Array([0xfe, 0xff, 0, 0x61, 0, 0x62]))).toBe("ab");
+  });
+
+  it("rejects obvious binary data instead of decoding it as configuration text", () => {
+    expect(() => decodeTextBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1]))).toThrow("二进制");
+    expect(() => decodeTextBytes(new Uint8Array([0, 0, 0, 20, 102, 116, 121, 112]))).toThrow("二进制");
+  });
+});
+
+describe("isAttachmentDialogCancelled", () => {
+  it("normalizes string, Error and AppError cancellation without hiding real failures", () => {
+    expect(isAttachmentDialogCancelled("File picker cancelled")).toBe(true);
+    expect(isAttachmentDialogCancelled(new Error("dialog dismissed"))).toBe(true);
+    expect(isAttachmentDialogCancelled({ kind: "Cancelled", message: "选择已取消" })).toBe(true);
+    expect(isAttachmentDialogCancelled({ kind: "Io", message: "Permission denied" })).toBe(false);
   });
 });
 

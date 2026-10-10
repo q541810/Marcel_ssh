@@ -109,6 +109,7 @@ impl ConversationDb {
                 None::<&str>,
                 None::<&str>,
                 None::<&str>,
+                None::<&str>,
             ),
         )?;
         tx.commit()?;
