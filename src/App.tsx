@@ -822,8 +822,9 @@ export default function App() {
           {/*
             主区域：默认停终端（含标签栏），开启「Agent 占主区域」后主区域停 Agent、
             终端主体换到右侧固定栏。标签栏不跟着走：它恒驻主区域顶条（此时在
-            Agent 上方），dock 里只停终端本体——终端没有可显示的会话时（dock
-            合上）标签栏也一并隐藏。区域名跟随**逻辑面板**而不是物理左右
+            Agent 上方），dock 里只停终端本体——dock 合上（终端没显示）时标签栏
+            照样在：只要还有 SSH 会话，这里就是唯一能看见/切换/重连它们的地方
+            （没有会话时 TabBar 自己返回 null）。区域名跟随**逻辑面板**而不是物理左右
             （center = 终端那一份视图 / agent = Agent 面板）：挂载点本身就是逻辑的
             （builtin.terminal 的 mount 就是 center），插件按区域名注入时不会因为
             用户换了布局而漂到另一边。
@@ -844,7 +845,7 @@ export default function App() {
               </div>
             ) : agentPrimary ? (
               <>
-                {dockMounted && dockVisible && <TabBar />}
+                <TabBar />
                 <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
                   {/* AgentPanel 是 lazy 的：agentPrimary 下它在主区域首帧就渲染，
                       没有边界的话，chunk 加载窗口内任何一个同步更新（启动时
