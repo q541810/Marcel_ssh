@@ -224,7 +224,7 @@ describe('attachTouchSelection', () => {
       setIntervalFn: ((fn: TimerHandler) => {
         edgeTick = fn as () => void;
         return 99 as unknown as ReturnType<typeof setInterval>;
-      }) as typeof setInterval,
+      }) as unknown as typeof setInterval,
       clearIntervalFn: (() => {
         edgeTick = null;
       }) as typeof clearInterval,
