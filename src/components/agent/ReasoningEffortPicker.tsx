@@ -305,7 +305,11 @@ export function ReasoningEffortPicker({
                           className={`reasoning-effort-model-option${active ? ' is-active' : ''}`}
                           onClick={() => {
                             onModelChange(model.id);
+                            // The model update is persisted asynchronously. Close the
+                            // whole popover immediately so the old model's slider does
+                            // not remain visible while that update is in flight.
                             setModelListOpen(false);
+                            setOpen(false);
                           }}
                         >
                           <span>{modelLabel(model)}</span>
