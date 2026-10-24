@@ -86,7 +86,12 @@ export default function AgentPanel() {
     newConversation,
     switchConversation,
     renameConversation,
-    deleteConversation,
+    archivedConversations,
+    archivedLoading,
+    loadArchivedConversations,
+    archiveConversation,
+    unarchiveConversation,
+    deleteArchivedConversation,
     setConversationPinned,
     setConversationModel,
     setConversationEffort,
@@ -397,6 +402,20 @@ export default function AgentPanel() {
     }
   };
 
+  const handleLoadArchived = useCallback(async () => {
+    if (!activeConfigId) return;
+    await loadArchivedConversations(activeConfigId);
+  }, [activeConfigId, loadArchivedConversations]);
+
+  const handleArchiveConversation = useCallback(
+    async (conversationId: string) => {
+      await archiveConversation(conversationId);
+      // 归档后刷新缓存：「已归档」徽标要立刻准确（缓存还没加载时是空表）
+      if (activeConfigId) await loadArchivedConversations(activeConfigId);
+    },
+    [archiveConversation, activeConfigId, loadArchivedConversations],
+  );
+
   const handleHistoryClick = () => {
     if (canInteract) {
       setHistoryDrawerOpen((v) => !v);
@@ -538,9 +557,16 @@ export default function AgentPanel() {
           tasks={tasks}
           unreadCompletedConversations={unreadCompletedConversations}
           onSelect={handleSelectConversation}
-          onDelete={deleteConversation}
+          onArchive={handleArchiveConversation}
           onPin={setConversationPinned}
           onRename={renameConversation}
+          archivedConversations={
+            activeConfigId ? (archivedConversations[activeConfigId] ?? []) : []
+          }
+          archivedLoading={!!activeConfigId && !!archivedLoading[activeConfigId]}
+          onLoadArchived={handleLoadArchived}
+          onUnarchive={unarchiveConversation}
+          onDeletePermanently={deleteArchivedConversation}
         />
       )}
 

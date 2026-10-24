@@ -398,10 +398,12 @@ export async function agentListConversationsByConnection(
 export async function agentSearchConversations(
   keyword: string,
   connectionId?: string,
+  includeArchived?: boolean,
 ): Promise<ConversationSearchResult[]> {
   return invoke<ConversationSearchResult[]>("agent_search_conversations", {
     keyword,
     connectionId: connectionId ?? null,
+    includeArchived: includeArchived ?? false,
   });
 }
 
@@ -435,6 +437,39 @@ export async function agentLoadPlansByConversation(
     "agent_load_plans_by_conversation",
     { conversationId },
   );
+}
+
+/** 归档会话：从默认列表/搜索/回忆里收起，消息与 plan 保留，可恢复。 */
+export async function agentArchiveConversation(
+  conversationId: string,
+): Promise<void> {
+  return invoke("agent_archive_conversation", { conversationId });
+}
+
+/** 恢复归档会话：回到默认列表的原日期分组。 */
+export async function agentUnarchiveConversation(
+  conversationId: string,
+): Promise<void> {
+  return invoke("agent_unarchive_conversation", { conversationId });
+}
+
+/** 某连接的归档会话列表（按归档时间倒序）。 */
+export async function agentListArchivedConversations(
+  connectionId: string,
+): Promise<AgentConversation[]> {
+  return invoke<AgentConversation[]>("agent_list_archived_conversations", {
+    connectionId,
+  });
+}
+
+/**
+ * 清理归档超过 `retentionDays` 天的会话（0 = 永不清理）。
+ * 返回实际清理的条数，供启动日志/调试使用。
+ */
+export async function agentPurgeExpiredArchived(
+  retentionDays: number,
+): Promise<number> {
+  return invoke<number>("agent_purge_expired_archived", { retentionDays });
 }
 
 export async function agentDeleteConversation(

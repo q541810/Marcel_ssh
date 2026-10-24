@@ -481,6 +481,7 @@ mod tests {
             pinned: false,
             usage: ConversationUsage::default(),
             context_window: None,
+            archived_at: None,
         };
         let conv_v = serde_json::to_value(&conv).expect("serialize conv");
         assert!(conv_v.get("usage").is_none(), "空用量不该发给前端");

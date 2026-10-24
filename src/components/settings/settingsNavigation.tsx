@@ -18,6 +18,7 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-command-policy': 'full',
   'settings-agent-system-prompt': 'full',
   'settings-notification': 'half',
+  'settings-conversations': 'half',
   'settings-memory': 'full',
   // 作用域目录 + 列表 + 整理助手，窄了列表就挤成一条缝
   'settings-memory-manage': 'full',
@@ -51,6 +52,7 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
       'settings-command-policy',
       'settings-agent-system-prompt',
       'settings-notification',
+      'settings-conversations',
     ],
   },
   {

@@ -12,6 +12,33 @@ use crate::AppState;
 /// terminal remains inert.
 const DEBUG_SERVER_ID: &str = "debug:msfakeserver";
 
+/// 归档保留天数上限（十年）。与前端设置项上限一致 —— 手改 settings.json 传入
+/// `u64::MAX` 时，`Utc::now() - Duration::days(..)` 会 panic，这里先夹住。
+const MAX_ARCHIVE_RETENTION_DAYS: u64 = 3650;
+
+/// 保留天数 → 实际用于计算截止时间的天数（夹到上限，避免极端值溢出 panic）。
+fn retention_window_days(retention_days: u64) -> i64 {
+    retention_days.min(MAX_ARCHIVE_RETENTION_DAYS) as i64
+}
+
+/// 归档前的「正在运行」判定，与前端 `conversationIsBusy` 同口径：
+/// 子树（主对话 + 子agent对话）里任一对话有运行中的任务，或正在手动压缩。
+///
+/// 放在命令层而不是前端，是因为 MCP / 插件等调用方可以绕过 UI 直接调命令 ——
+/// 前端拦截只保护「用户点按钮」这一条路径。
+fn conversation_subtree_is_busy(
+    tasks: &std::collections::HashMap<String, crate::agent::task::AgentTask>,
+    compactions: &crate::cancel::CancellationRegistry,
+    ids: &[String],
+) -> bool {
+    ids.iter().any(|id| {
+        compactions.is_registered(id)
+            || tasks
+                .values()
+                .any(|task| &task.conversation_id == id && task.status.is_running())
+    })
+}
+
 async fn connection_id_for_session(
     state: &AppState,
     session_id: &str,
@@ -261,8 +288,21 @@ pub async fn agent_list_conversations(
 
     let conversations = state
         .conversation_db
-        .list_conversations(&connection_id)
+        .list_active_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
+    Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
+}
+
+/// List archived conversations for a connection (archived view).
+#[tauri::command]
+pub async fn agent_list_archived_conversations(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> Result<Vec<Conversation>, AppError> {
+    let conversations = state
+        .conversation_db
+        .list_archived_conversations(&connection_id)
+        .map_err(|e| AppError::Agent(format!("Failed to list archived conversations: {}", e)))?;
     Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
 }
 
@@ -639,6 +679,86 @@ pub async fn agent_delete_conversation(
     Ok(())
 }
 
+/// 归档会话（含子agent对话）：默认列表/搜索/长期回忆不再返回它，但消息与
+/// plan 全部保留，可随时恢复。**不做二次确认是产品决定**（见归档按钮文案），
+/// 真正的不可逆操作只有归档视图里的「永久删除」。
+#[tauri::command]
+pub async fn agent_archive_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<(), AppError> {
+    // 级联范围与前端一致：主对话 + 子agent对话，任一在跑都拒绝。
+    let subtree = state
+        .conversation_db
+        .conversation_subtree_ids(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to archive conversation: {}", e)))?;
+    let tasks = state.agent_tasks.read();
+    if conversation_subtree_is_busy(&tasks, &state.compactions, &subtree) {
+        return Err(AppError::Agent(
+            "该会话正在运行，请先停止任务再归档".to_string(),
+        ));
+    }
+    drop(tasks);
+
+    let archived = state
+        .conversation_db
+        .archive_conversation_cascade(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to archive conversation: {}", e)))?;
+    log::info!(
+        "Archived conversation: {} (cascade: {})",
+        conversation_id,
+        archived.len()
+    );
+    // 刻意不清理 session_models / session_efforts / 记忆附属数据：
+    // 恢复后模型与档位记忆还要继续生效，归档只是「收起来」。
+    Ok(())
+}
+
+/// 恢复归档会话（含子agent对话）：回到默认列表的原日期分组。
+#[tauri::command]
+pub async fn agent_unarchive_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<(), AppError> {
+    let restored = state
+        .conversation_db
+        .unarchive_conversation_cascade(&conversation_id)
+        .map_err(|e| AppError::Agent(format!("Failed to unarchive conversation: {}", e)))?;
+    log::info!(
+        "Unarchived conversation: {} (cascade: {})",
+        conversation_id,
+        restored.len()
+    );
+    Ok(())
+}
+
+/// 清理归档超过 N 天的会话。`retention_days <= 0` 表示永不自动清理。
+/// 由前端在启动时按设置项调用（设置是前端的权威来源）。
+#[tauri::command]
+pub async fn agent_purge_expired_archived(
+    state: State<'_, AppState>,
+    retention_days: u64,
+) -> Result<usize, AppError> {
+    if retention_days == 0 {
+        return Ok(0);
+    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_window_days(retention_days));
+    let purged = state
+        .conversation_db
+        .purge_archived_before(&cutoff.to_rfc3339())
+        .map_err(|e| AppError::Agent(format!("Failed to purge archived conversations: {}", e)))?;
+    if !purged.is_empty() {
+        log::info!(
+            "Purged {} archived conversation(s) older than {} day(s)",
+            purged.len(),
+            retention_days
+        );
+        drop_session_models(&state, &purged);
+        forget_conversations_in_memory(&state, &purged);
+    }
+    Ok(purged.len())
+}
+
 /// Save compressed user images for a message. Returns relative paths under `images/`.
 /// `images_base64` items are raw base64 or data URLs (frontend already compressed).
 #[tauri::command]
@@ -891,7 +1011,7 @@ pub async fn agent_list_conversations_by_connection(
 ) -> Result<Vec<Conversation>, AppError> {
     let conversations = state
         .conversation_db
-        .list_conversations(&connection_id)
+        .list_active_conversations(&connection_id)
         .map_err(|e| AppError::Agent(format!("Failed to list conversations: {}", e)))?;
     Ok(overlay_session_models(&state, filter_sub_conversations(conversations)).await)
 }
@@ -903,15 +1023,18 @@ pub async fn agent_search_conversations(
     state: State<'_, AppState>,
     keyword: String,
     connection_id: Option<String>,
+    include_archived: Option<bool>,
 ) -> Result<Vec<ConversationSearchResult>, AppError> {
+    let include_archived = include_archived.unwrap_or(false);
     log::info!(
-        "agent_search_conversations: keyword_len={}, connection_filter={}",
+        "agent_search_conversations: keyword_len={}, connection_filter={}, include_archived={}",
         keyword.trim().chars().count(),
-        connection_id.is_some()
+        connection_id.is_some(),
+        include_archived
     );
     let results = state
         .conversation_db
-        .search_conversations(&keyword, connection_id.as_deref())
+        .search_conversations(&keyword, connection_id.as_deref(), include_archived)
         .map_err(|e| AppError::Agent(format!("Failed to search conversations: {}", e)))?;
     Ok(results)
 }
@@ -1024,4 +1147,77 @@ pub async fn agent_load_plans_by_conversation(
         }
     }
     Ok(plans)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::task::{AgentMode, AgentStatus, AgentTask};
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn task(conversation_id: &str, status: AgentStatus) -> AgentTask {
+        AgentTask {
+            id: format!("task-{}", conversation_id),
+            session_id: "s1".to_string(),
+            conversation_id: conversation_id.to_string(),
+            prompt: "p".to_string(),
+            mode: AgentMode::Agent,
+            status,
+            has_plan: false,
+            created_at: Utc::now(),
+            parent_task_id: None,
+            model_id: None,
+            turn_anchor_id: None,
+            parent_history_upto: None,
+        }
+    }
+
+    fn ids() -> Vec<String> {
+        vec!["conv-1".to_string(), "conv-sub".to_string()]
+    }
+
+    #[test]
+    fn running_task_on_sub_conversation_blocks_archive() {
+        let tasks: HashMap<String, AgentTask> =
+            [("t1".to_string(), task("conv-sub", AgentStatus::Executing))]
+                .into_iter()
+                .collect();
+        assert!(conversation_subtree_is_busy(
+            &tasks,
+            &crate::cancel::CancellationRegistry::new(),
+            &ids()
+        ));
+    }
+
+    #[test]
+    fn terminal_tasks_on_unrelated_conversations_do_not_block() {
+        let tasks: HashMap<String, AgentTask> = [
+            ("t1".to_string(), task("conv-1", AgentStatus::Completed)),
+            ("t2".to_string(), task("conv-other", AgentStatus::Executing)),
+        ]
+        .into_iter()
+        .collect();
+        assert!(!conversation_subtree_is_busy(
+            &tasks,
+            &crate::cancel::CancellationRegistry::new(),
+            &ids()
+        ));
+    }
+
+    #[test]
+    fn manual_compaction_counts_as_busy() {
+        let tasks: HashMap<String, AgentTask> = HashMap::new();
+        let compactions = crate::cancel::CancellationRegistry::new();
+        let _guard = compactions.try_register("conv-sub").expect("register");
+        assert!(conversation_subtree_is_busy(&tasks, &compactions, &ids()));
+    }
+
+    #[test]
+    fn retention_days_are_clamped_to_the_decade_cap() {
+        assert_eq!(retention_window_days(0), 0);
+        assert_eq!(retention_window_days(30), 30);
+        assert_eq!(retention_window_days(MAX_ARCHIVE_RETENTION_DAYS), 3650);
+        // 手改 settings.json 传入极端值：夹住而不是让 chrono panic
+        assert_eq!(retention_window_days(u64::MAX), 3650);
+    }
 }

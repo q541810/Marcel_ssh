@@ -4,6 +4,7 @@ import { AgentPolicySection } from './AgentPolicySection';
 import { AgentSystemPromptSection } from './AgentSystemPromptSection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
+import { ConversationArchiveSection } from './ConversationArchiveSection';
 import { ModelServiceSection } from './ModelServiceSection';
 import { NotificationSection } from './NotificationSection';
 import { MemoryManageSection, MemorySection } from './MemorySection';
@@ -63,6 +64,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-command-policy', element: <AgentPolicySection /> },
     { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },
+    { id: 'settings-conversations', element: <ConversationArchiveSection /> },
     { id: 'settings-memory', element: <MemorySection /> },
     { id: 'settings-memory-manage', element: <MemoryManageSection /> },
     { id: 'settings-experimental', element: <ToolCapabilitiesSection /> },

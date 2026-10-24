@@ -18,6 +18,7 @@ import { MobileAppearanceSection } from './settings/MobileAppearanceSection';
 import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSection';
 import { MobileMcpServerSection } from './settings/MobileMcpServerSection';
 import { MobileModelSection } from './settings/MobileModelSection';
+import { MobileArchiveSection } from './settings/MobileArchiveSection';
 import { MobileMemorySection } from './settings/MobileMemorySection';
 import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
 import { registerBackHandler } from './backHandler';
@@ -239,6 +240,12 @@ export default function MobileSettings({
           {activeCategory === 'memory' && (
             <div className="p-3">
               <MobileMemorySection />
+            </div>
+          )}
+
+          {activeCategory === 'conversations' && (
+            <div className="p-3">
+              <MobileArchiveSection />
             </div>
           )}
 

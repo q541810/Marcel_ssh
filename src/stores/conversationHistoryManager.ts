@@ -46,6 +46,9 @@ export interface ConversationHistoryState {
   // 5. 重命名操作状态（移动端/桌面端通用）
   renameTarget: AgentConversation | null;
   renameInput: string;
+
+  // 6. 归档视图：搜索与列表是否包含归档会话
+  showArchived: boolean;
 }
 
 export interface ConversationHistoryActions {
@@ -76,6 +79,14 @@ export interface ConversationHistoryActions {
   /** 置顶/取消置顶会话，同步历史侧列表与选中项；失败返回 false 且不改本地。 */
   setConversationPinned: (conversationId: string, pinned: boolean) => Promise<boolean>;
   deleteConversation: (conversationId: string) => Promise<void>;
+  /** 归档/恢复是否出现在搜索与列表里（归档视图开关）。 */
+  setShowArchived: (value: boolean) => void;
+  /** 归档会话：调 live store 后把历史侧列表与搜索结果同步移除。失败向上抛。 */
+  archiveConversation: (conversationId: string) => Promise<void>;
+  /** 恢复归档会话：调 live store 后重新加载该连接的会话列表。失败向上抛。 */
+  unarchiveConversation: (conversationId: string, connectionId: string) => Promise<void>;
+  /** 永久删除归档会话（仅归档视图）：硬删 + 清理选中/搜索结果。 */
+  deleteArchivedConversation: (conversationId: string) => Promise<void>;
 
   // 重置全部状态（关闭历史面板时调用）
   reset: () => void;
@@ -109,6 +120,8 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
 
   renameTarget: null,
   renameInput: '',
+
+  showArchived: false,
 
   loadAllConnections: async (connections: SavedConnection[]) => {
     if (connections.length === 0) {
@@ -323,7 +336,12 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
     set({ debouncedQuery: trimmed, loadingSearch: true });
 
     try {
-      const results = await tauri.agentSearchConversations(trimmed);
+      // 归档视图打开时连带搜归档项（默认不搜，避免「搜得到但列表里没有」）
+      const results = await tauri.agentSearchConversations(
+        trimmed,
+        undefined,
+        get().showArchived,
+      );
       if (seq === searchSeq) {
         set({ searchResults: results, loadingSearch: false });
       }
@@ -505,6 +523,60 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
     }
   },
 
+  setShowArchived: (value: boolean) => {
+    set({ showArchived: value });
+    // 搜索已有结果时立即按新口径重搜，不让用户手动再敲一遍
+    if (get().debouncedQuery.trim()) {
+      void get().performSearch(get().debouncedQuery);
+    }
+  },
+
+  archiveConversation: async (conversationId: string) => {
+    await useConversationStore.getState().archiveConversation(conversationId);
+    set((s) => ({
+      conversationsByConn: Object.fromEntries(
+        Object.entries(s.conversationsByConn).map(([connId, convs]) => [
+          connId,
+          convs.filter((c) => c.id !== conversationId),
+        ]),
+      ),
+      searchResults: s.searchResults.filter((r) => r.conversationId !== conversationId),
+      ...(s.selectedConvId === conversationId
+        ? {
+            selectedConvId: null,
+            selectedConv: null,
+            messages: [],
+            activeMatchIds: [],
+            matchIndex: 0,
+            highlightMessageId: null,
+          }
+        : {}),
+    }));
+  },
+
+  unarchiveConversation: async (conversationId: string, connectionId: string) => {
+    await useConversationStore.getState().unarchiveConversation(conversationId);
+    // 恢复后重新拉该连接的默认列表（会话回到原日期分组，不自动选中）
+    await get().loadConnectionConversations(connectionId);
+  },
+
+  deleteArchivedConversation: async (conversationId: string) => {
+    await useConversationStore.getState().deleteArchivedConversation(conversationId);
+    set((s) => ({
+      searchResults: s.searchResults.filter((r) => r.conversationId !== conversationId),
+      ...(s.selectedConvId === conversationId
+        ? {
+            selectedConvId: null,
+            selectedConv: null,
+            messages: [],
+            activeMatchIds: [],
+            matchIndex: 0,
+            highlightMessageId: null,
+          }
+        : {}),
+    }));
+  },
+
   reset: () => {
     if (searchTimer) {
       clearTimeout(searchTimer);
@@ -517,6 +589,7 @@ export const useConversationHistoryStore = create<ConversationHistoryStore>((set
     set({
       conversationsByConn: {},
       loadingConvs: false,
+      showArchived: false,
 
       selectedConnId: null,
       selectedConvId: null,

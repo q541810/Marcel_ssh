@@ -60,9 +60,14 @@ const baseProps = (overrides: Partial<DrawerProps> = {}): DrawerProps => ({
   tasks: {},
   unreadCompletedConversations: [],
   onSelect: vi.fn(async () => {}),
-  onDelete: vi.fn(async () => {}),
+  onArchive: vi.fn(async () => {}),
   onPin: vi.fn(async () => {}),
   onRename: vi.fn(async () => {}),
+  archivedConversations: [],
+  archivedLoading: false,
+  onLoadArchived: vi.fn(async () => {}),
+  onUnarchive: vi.fn(async () => {}),
+  onDeletePermanently: vi.fn(async () => {}),
   ...overrides,
 });
 
@@ -175,33 +180,87 @@ describe('AgentHistoryDrawer（原 AgentPanel 内联历史抽屉，行为不变�
     expect(onPin).toHaveBeenCalledWith('conv-1', false);
   });
 
-  it('删除按钮：onDelete 收到会话 id，失败也由抽屉兜住（不抛未处理拒绝）', async () => {
-    const onDelete = vi.fn(async () => {
-      throw new Error('boom');
-    });
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await render(baseProps({ onDelete }));
+  it('归档按钮：onArchive 收到会话 id，且不弹确认（归档可恢复）', async () => {
+    const onArchive = vi.fn(async () => {});
+    const confirmSpy = vi.spyOn(window, 'confirm');
+    await render(baseProps({ onArchive }));
 
     await act(async () => {
-      container.querySelector<HTMLButtonElement>('button[title="删除会话"]')!.click();
+      container.querySelector<HTMLButtonElement>('button[title="归档会话（可恢复）"]')!.click();
     });
 
-    expect(onDelete).toHaveBeenCalledWith('conv-1');
-    expect(errSpy).toHaveBeenCalledWith(
-      'Failed to delete conversation:',
-      expect.any(Error),
+    expect(onArchive).toHaveBeenCalledWith('conv-1');
+    expect(confirmSpy).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
+  it('归档失败：展示后端原因（如任务正在运行），不抛未处理拒绝', async () => {
+    const onArchive = vi.fn(async () => {
+      throw new Error('该会话正在运行，请先停止任务再归档');
+    });
+    await render(baseProps({ onArchive }));
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="归档会话（可恢复）"]')!.click();
+    });
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
+      '该会话正在运行，请先停止任务再归档',
     );
-    errSpy.mockRestore();
+  });
+
+  it('已归档视图：进入即加载，列表可恢复，永久删除先确认', async () => {
+    const onLoadArchived = vi.fn(async () => {});
+    const onUnarchive = vi.fn(async () => {});
+    const onDeletePermanently = vi.fn(async () => {});
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await render(
+      baseProps({
+        onLoadArchived,
+        onUnarchive,
+        onDeletePermanently,
+        archivedConversations: [
+          conv({
+            id: 'conv-old',
+            title: '旧会话',
+            archivedAt: '2026-10-02T08:00:00.000Z',
+          }),
+        ],
+      }),
+    );
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="查看已归档会话"]')!.click();
+    });
+    expect(onLoadArchived).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('旧会话');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="恢复到会话列表"]')!.click();
+    });
+    expect(onUnarchive).toHaveBeenCalledWith('conv-old');
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="永久删除"]')!.click();
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(onDeletePermanently).toHaveBeenCalledWith('conv-old');
+    confirmSpy.mockRestore();
+  });
+
+  it('归档视图为空时展示空状态', async () => {
+    await render(baseProps());
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="查看已归档会话"]')!.click();
+    });
+    expect(container.textContent).toContain('暂无归档会话');
   });
 
   it('关闭按钮走 onClose', async () => {
     const onClose = vi.fn();
     await render(baseProps({ onClose }));
 
-    // 抽屉头那一行（h3「历史会话」所在 .border-b）里唯一的按钮就是关闭钮
-    const closeButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (b) => b.closest('.border-b')?.querySelector('h3')?.textContent === '历史会话',
-    )!;
+    const closeButton = container.querySelector<HTMLButtonElement>('button[title="关闭"]')!;
     await act(async () => {
       closeButton.click();
     });

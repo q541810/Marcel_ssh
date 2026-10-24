@@ -236,6 +236,12 @@ fn default_max_tool_rounds() -> usize {
     500
 }
 
+/// 归档保留天数缺省值：30 天。与前端 `DEFAULT_SETTINGS.archiveRetentionDays`
+/// 必须一致（`frontend_default_values_match_backend_defaults` 守着这条）。
+fn default_archive_retention_days() -> u64 {
+    30
+}
+
 impl Default for AgentModeSettings {
     fn default() -> Self {
         Self {
@@ -800,6 +806,13 @@ pub struct AppSettings {
     /// processed and returned to the API as required by some models.
     #[serde(default)]
     pub hide_thinking_display: bool,
+    /// 归档会话自动清理天数（**0 = 永不清理**），默认 30 天。
+    ///
+    /// 权威值在前端（设置页），后端只负责持久化；清理由前端启动时把天数传给
+    /// `agent_purge_expired_archived`。缺这个字段的话设置页写进来的值会被
+    /// serde 静默丢弃，重启即失效。
+    #[serde(default = "default_archive_retention_days")]
+    pub archive_retention_days: u64,
     /// Notification preferences.
     #[serde(default)]
     pub notification_settings: NotificationSettings,
@@ -929,6 +942,7 @@ impl Default for AppSettings {
             ui_theme: UiThemeSettings::default(),
             custom_protected_paths: vec![],
             command_timeout_secs: default_command_timeout(),
+            archive_retention_days: default_archive_retention_days(),
             has_completed_onboarding: false,
             disabled_plugins: vec![],
             authorized_capabilities: HashMap::new(),

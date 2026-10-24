@@ -23,6 +23,7 @@ export type MobileSettingsCategoryId =
   | 'agent-policy'
   | 'agent-tools'
   | 'memory'
+  | 'conversations'
   | 'commands-skills'
   | 'mcp-server'
   | 'notification-background'
@@ -59,6 +60,11 @@ export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
     id: 'memory',
     title: '记忆',
     description: '长期记忆、后台复盘与整理助手',
+  },
+  {
+    id: 'conversations',
+    title: '会话与归档',
+    description: '归档保留天数与到期清理',
   },
   {
     id: 'commands-skills',

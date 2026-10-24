@@ -36,6 +36,10 @@ export interface ConversationState {
   activeConversationByConnection: Record<string, string>;
   /** 每个 SSH session 独占绑定的活跃对话，切 SSH Tab 时精准恢复 */
   activeConversationBySession: Record<string, string>;
+  /** 每连接的归档会话缓存（按需加载；归档/恢复/永久删除时增量维护） */
+  archivedConversations: Record<string, AgentConversation[]>;
+  /** 归档列表的在飞标记（按连接） */
+  archivedLoading: Record<string, boolean>;
 
   addMessage: (message: AgentMessage) => void;
   clearMessages: () => void;
@@ -68,6 +72,14 @@ export interface ConversationState {
     reasoningEffort: string | null,
   ) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
+  /** 加载某连接的归档会话（归档视图打开时调用）。 */
+  loadArchivedConversations: (connectionId: string) => Promise<AgentConversation[]>;
+  /** 归档当前会话：可恢复；正在运行/压缩的会话拒绝归档。 */
+  archiveConversation: (conversationId: string) => Promise<void>;
+  /** 恢复归档会话：回到默认列表（不改 updatedAt，回原日期分组）。 */
+  unarchiveConversation: (conversationId: string) => Promise<void>;
+  /** 永久删除（仅归档视图提供）：落库删除 + 清归档缓存。 */
+  deleteArchivedConversation: (conversationId: string) => Promise<void>;
   /**
    * 分叉：后端把锚点所在回合（缺省 = 整个会话）之前的历史复制成独立的新会话，
    * 这里只负责把它登记进 `conversations`（不切换、不动当前 active）。
@@ -290,6 +302,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   activeConversationId: null,
   activeConversationByConnection: {},
   activeConversationBySession: {},
+  archivedConversations: {},
+  archivedLoading: {},
 
   bindConversationToSession: (sessionId: string, conversationId: string, connectionId?: string) => {
     set((state) => {
@@ -539,6 +553,183 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
           [conversationId]: { ...conv, pinned },
         }),
       };
+    });
+  },
+
+  /** 加载某连接的归档列表（归档视图打开时调用）。失败只影响归档视图，不抛出。 */
+  loadArchivedConversations: async (connectionId: string) => {
+    set((s) => ({ archivedLoading: { ...s.archivedLoading, [connectionId]: true } }));
+    try {
+      const convs = await tauri.agentListArchivedConversations(connectionId);
+      set((s) => ({
+        archivedConversations: { ...s.archivedConversations, [connectionId]: convs },
+      }));
+      return convs;
+    } catch (err) {
+      console.error(
+        '[conversationStore] loadArchivedConversations failed:',
+        getErrorMessage(err),
+      );
+      return [];
+    } finally {
+      set((s) => {
+        const next = { ...s.archivedLoading };
+        delete next[connectionId];
+        return { archivedLoading: next };
+      });
+    }
+  },
+
+  /**
+   * 归档会话（可恢复）。与删除的核心差别：不清 plan / 草稿 / 模型记忆，
+   * 只把它从默认列表收进归档。
+   *
+   * 当前打开的会话被归档时**先归档、成功后再切走**（复用 switchConversation，
+   * 而不是删除那套恢复循环）：归档是可逆的，没必要为它重建整段绑定恢复。
+   * 顺序很重要 —— 先切走再归档的话，后端拒绝（任务被 MCP 抢先跑起来等）时
+   * 用户已经被切走，会话却还在列表里，留下一个没人解释的中间态。
+   */
+  archiveConversation: async (conversationId: string) => {
+    const before = get();
+    const target = before.conversations[conversationId];
+    if (!target) return;
+
+    // 主对话 + 子agent对话：与后端级联口径一致，任一在跑都不许归档
+    const ids = [
+      conversationId,
+      ...Object.values(before.conversations)
+        .filter((c) => c.parentConversationId === conversationId)
+        .map((c) => c.id),
+    ];
+    if (ids.some((id) => conversationIsBusy(id))) {
+      throw new Error('该会话正在运行，请先停止任务再归档');
+    }
+
+    // 先落库：失败就直接抛出，界面（当前会话 / 列表）一点不动。
+    await tauri.agentArchiveConversation(conversationId);
+
+    const archivedAt = new Date().toISOString();
+    const activeId = before.activeConversationId;
+    const activeWasArchived = !!activeId && ids.includes(activeId);
+    const sessionId = activeWasArchived
+      ? Object.entries(before.activeConversationBySession).find(
+          ([, cid]) => cid === activeId,
+        )?.[0] ?? null
+      : null;
+    const remaining: Record<string, AgentConversation> = {};
+    for (const [id, conv] of Object.entries(before.conversations)) {
+      if (!ids.includes(id)) remaining[id] = conv;
+    }
+    const replacement = activeWasArchived
+      ? pickPreferredConversationId(
+          remaining,
+          target.connectionId,
+          before.activeConversationByConnection[target.connectionId],
+        )
+      : null;
+
+    // 归档已成功，切走失败不能再回滚（库里已经归档了）；记下错误，等状态
+    // 收干净之后再抛给调用方，避免「归档成功但界面报失败」。
+    let switchError: unknown = null;
+    if (activeWasArchived) {
+      try {
+        if (replacement) {
+          await get().switchConversation(replacement, sessionId ?? undefined);
+        } else if (sessionId) {
+          // 没有可切的旧会话：新开一条，输入区不至于落空
+          await get().newConversation(sessionId, target.connectionId);
+        }
+      } catch (err) {
+        switchError = err;
+      }
+    }
+    set((state) => {
+      const conversations = { ...state.conversations };
+      const messages = { ...state.messages };
+      for (const id of ids) {
+        delete conversations[id];
+        delete messages[id];
+      }
+      const bySession = { ...state.activeConversationBySession };
+      for (const [sid, cid] of Object.entries(bySession)) {
+        if (ids.includes(cid)) delete bySession[sid];
+      }
+      const byConnection = { ...state.activeConversationByConnection };
+      for (const [connId, cid] of Object.entries(byConnection)) {
+        if (ids.includes(cid)) delete byConnection[connId];
+      }
+
+      // 没有替代会话可切（也没绑定 SSH 会话）时，active 会指向已不在列表里的
+      // 会话；这里兜底清空，下次发送走 ensureConversation 自愈。
+      let activeConversationId = state.activeConversationId;
+      if (activeConversationId && ids.includes(activeConversationId)) {
+        // 切走失败时不要硬选一条没加载过消息的会话：清空 active，
+        // 下次发送走 ensureConversation 自愈。
+        activeConversationId = switchError
+          ? null
+          : pickPreferredConversationId(
+              conversations,
+              target.connectionId,
+              undefined,
+            );
+        if (activeConversationId) {
+          byConnection[target.connectionId] = activeConversationId;
+        }
+      }
+
+      const list = state.archivedConversations[target.connectionId];
+      const archivedItem: AgentConversation = { ...target, archivedAt, pinned: false };
+      const archivedConversations = list
+        ? {
+            ...state.archivedConversations,
+            [target.connectionId]: [
+              archivedItem,
+              ...list.filter((c) => c.id !== conversationId),
+            ],
+          }
+        : state.archivedConversations;
+
+      return {
+        conversations,
+        messages,
+        activeConversationId,
+        activeConversationBySession: bySession,
+        activeConversationByConnection: byConnection,
+        archivedConversations,
+      };
+    });
+    useTaskStore.getState().clearConversationUnreadCompleted(conversationId);
+    if (switchError) throw switchError;
+  },
+
+  /** 恢复归档会话：拉回元数据并重新并入默认列表（不自动切过去）。 */
+  unarchiveConversation: async (conversationId: string) => {
+    await tauri.agentUnarchiveConversation(conversationId);
+    const conv = await tauri.agentGetConversation(conversationId);
+    set((state) => {
+      const list = state.archivedConversations[conv.connectionId] ?? [];
+      return {
+        conversations: reorderByUpdatedAt({ ...state.conversations, [conv.id]: conv }),
+        messages: state.messages[conv.id]
+          ? state.messages
+          : { ...state.messages, [conv.id]: [] },
+        archivedConversations: {
+          ...state.archivedConversations,
+          [conv.connectionId]: list.filter((c) => c.id !== conv.id),
+        },
+      };
+    });
+  },
+
+  /** 永久删除（仅归档视图）：走原有硬删逻辑，再把归档缓存里的条目摘掉。 */
+  deleteArchivedConversation: async (conversationId: string) => {
+    await get().deleteConversation(conversationId);
+    set((state) => {
+      const archivedConversations: Record<string, AgentConversation[]> = {};
+      for (const [connId, list] of Object.entries(state.archivedConversations)) {
+        archivedConversations[connId] = list.filter((c) => c.id !== conversationId);
+      }
+      return { archivedConversations };
     });
   },
 

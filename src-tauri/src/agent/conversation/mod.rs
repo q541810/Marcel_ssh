@@ -85,7 +85,8 @@ impl ConversationDb {
                 efforts_json TEXT,
                 pinned INTEGER NOT NULL DEFAULT 0,
                 usage_json TEXT,
-                forked_from_id TEXT
+                forked_from_id TEXT,
+                archived_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS messages (
@@ -267,6 +268,21 @@ impl ConversationDb {
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
             log::info!("Migration complete: forked_from_id column added");
         }
+
+        // Migration: add archived_at —— 会话归档（见 Conversation::archived_at）。
+        // 旧库 ALTER 加列；缺省 NULL = 未归档（旧数据的列表与行为完全不变）。
+        if !column_exists(&conn, "conversations", "archived_at") {
+            log::info!("Migrating conversation database: adding archived_at column");
+            conn.execute("ALTER TABLE conversations ADD COLUMN archived_at TEXT", [])
+                .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: archived_at column added");
+        }
+        // 归档列表按「连接 + 归档时间」取，顺带覆盖按连接等值查未归档项的最左前缀。
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_conversations_archived ON conversations(connection_id, archived_at)",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
 
         // Migration: plan_snapshots for older DBs that already had plans table only
         conn.execute_batch(
@@ -539,6 +555,24 @@ mod tests {
                 .expect("exists")
                 .pinned
         );
+
+        // 旧库迁移后 archived_at 列可用：缺省 = 未归档（列表与行为不变），
+        // 归档/恢复都能落库
+        assert!(convs[0].archived_at.is_none());
+        assert!(db.archive_conversation("conv-old").expect("archive"));
+        assert!(db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists")
+            .archived_at
+            .is_some());
+        assert!(db.unarchive_conversation("conv-old").expect("unarchive"));
+        assert!(db
+            .get_conversation("conv-old")
+            .expect("get")
+            .expect("exists")
+            .archived_at
+            .is_none());
 
         // 旧库迁移后 usage_json 列可用：旧数据缺省 = 整块为空（前端显示 `—`，
         // 不是 0），记一轮之后能读回累计值

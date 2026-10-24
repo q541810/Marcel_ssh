@@ -25,6 +25,9 @@ const {
   agentCompactConversation,
   agentCancelCompaction,
   agentSetConversationPinned,
+  agentArchiveConversation,
+  agentUnarchiveConversation,
+  agentListArchivedConversations,
   listen,
 } = vi.hoisted(() => ({
   agentListConversationsByConnection: vi.fn(),
@@ -39,6 +42,9 @@ const {
   agentCompactConversation: vi.fn(),
   agentCancelCompaction: vi.fn(),
   agentSetConversationPinned: vi.fn(),
+  agentArchiveConversation: vi.fn(),
+  agentUnarchiveConversation: vi.fn(),
+  agentListArchivedConversations: vi.fn(),
   listen: vi.fn(),
 }));
 
@@ -55,6 +61,9 @@ vi.mock('@/lib/tauri', () => ({
   agentCompactConversation,
   agentCancelCompaction,
   agentSetConversationPinned,
+  agentArchiveConversation,
+  agentUnarchiveConversation,
+  agentListArchivedConversations,
 }));
 
 // compactConversation 经 attachStreamListener 订阅 `agent://stream/{taskId}`；
@@ -1679,6 +1688,176 @@ describe('conversationStore', () => {
       await expect(
         useConversationStore.getState().rollbackToMessage('conv-1', 'ghost'),
       ).rejects.toThrow('消息不存在');
+    });
+  });
+
+  describe('归档会话', () => {
+    const now = '2026-10-01T08:00:00.000Z';
+
+    function health(overrides: Partial<AgentConversation> = {}): AgentConversation {
+      return {
+        id: 'conv-1',
+        connectionId: 'conn-1',
+        title: '会话',
+        createdAt: now,
+        updatedAt: now,
+        pinned: false,
+        ...overrides,
+      };
+    }
+
+    it('归档：主对话 + 子agent一起移出列表，进入归档缓存，pin 被清掉', async () => {
+      agentArchiveConversation.mockResolvedValue(undefined);
+      agentLoadConversation.mockResolvedValue([]);
+      useConversationStore.setState({
+        conversations: {
+          'conv-1': health({ pinned: true }),
+          'conv-sub': health({ id: 'conv-sub', parentConversationId: 'conv-1' }),
+          'conv-2': health({ id: 'conv-2' }),
+        },
+        messages: { 'conv-1': [makeMessage()], 'conv-sub': [], 'conv-2': [] },
+        activeConversationId: 'conv-1',
+        activeConversationBySession: {},
+        activeConversationByConnection: { 'conn-1': 'conv-1' },
+        archivedConversations: { 'conn-1': [] },
+      });
+
+      await useConversationStore.getState().archiveConversation('conv-1');
+
+      expect(agentArchiveConversation).toHaveBeenCalledWith('conv-1');
+      const state = useConversationStore.getState();
+      expect(Object.keys(state.conversations)).toEqual(['conv-2']);
+      expect(state.messages['conv-1']).toBeUndefined();
+      expect(state.messages['conv-sub']).toBeUndefined();
+      // 当前会话被归档：同连接还有别的会话时兜底切过去
+      expect(state.activeConversationId).toBe('conv-2');
+      expect(state.activeConversationByConnection['conn-1']).toBe('conv-2');
+      expect(state.archivedConversations['conn-1'].map((c) => c.id)).toEqual(['conv-1']);
+      expect(state.archivedConversations['conn-1'][0].pinned).toBe(false);
+      expect(state.archivedConversations['conn-1'][0].archivedAt).toBeTruthy();
+    });
+
+    it('归档唯一会话：active 清空（下次发送走 ensureConversation 自愈）', async () => {
+      agentArchiveConversation.mockResolvedValue(undefined);
+      useConversationStore.setState({
+        conversations: { 'conv-1': health() },
+        messages: { 'conv-1': [makeMessage()] },
+        activeConversationId: 'conv-1',
+        activeConversationBySession: {},
+        activeConversationByConnection: { 'conn-1': 'conv-1' },
+        archivedConversations: { 'conn-1': [] },
+      });
+
+      await useConversationStore.getState().archiveConversation('conv-1');
+
+      const state = useConversationStore.getState();
+      expect(state.activeConversationId).toBeNull();
+      expect(state.activeConversationByConnection).toEqual({});
+      expect(state.archivedConversations['conn-1']).toHaveLength(1);
+    });
+
+    it('运行中的会话拒绝归档（与删除同一道保护，且不落库）', async () => {
+      useConversationStore.setState({
+        conversations: { 'conv-1': health() },
+        messages: {},
+      });
+      useTaskStore.setState({
+        tasks: {
+          t1: {
+            id: 't1',
+            sessionId: 's1',
+            conversationId: 'conv-1',
+            prompt: 'p',
+            mode: 'agent',
+            status: 'executing',
+            createdAt: now,
+          },
+        },
+      });
+
+      await expect(
+        useConversationStore.getState().archiveConversation('conv-1'),
+      ).rejects.toThrow('正在运行');
+      expect(agentArchiveConversation).not.toHaveBeenCalled();
+      expect(useConversationStore.getState().conversations['conv-1']).toBeDefined();
+    });
+
+    it('后端拒绝归档时不切走、列表不变（先归档后切走）', async () => {
+      // 后端守卫拒绝（MCP 抢先跑起任务等）：失败必须原地不动，
+      // 否则用户已被切走、会话却还在列表里。
+      agentArchiveConversation.mockRejectedValue(
+        new Error('该会话正在运行，请先停止任务再归档'),
+      );
+      useConversationStore.setState({
+        conversations: {
+          'conv-1': health(),
+          'conv-2': health({ id: 'conv-2' }),
+        },
+        messages: { 'conv-1': [makeMessage()], 'conv-2': [] },
+        activeConversationId: 'conv-1',
+        activeConversationBySession: {},
+        activeConversationByConnection: { 'conn-1': 'conv-1' },
+        archivedConversations: { 'conn-1': [] },
+      });
+
+      await expect(
+        useConversationStore.getState().archiveConversation('conv-1'),
+      ).rejects.toThrow('正在运行');
+
+      const state = useConversationStore.getState();
+      expect(state.activeConversationId).toBe('conv-1');
+      expect(Object.keys(state.conversations).sort()).toEqual([
+        'conv-1',
+        'conv-2',
+      ]);
+      expect(state.messages['conv-1']).toBeDefined();
+      expect(state.archivedConversations['conn-1']).toEqual([]);
+    });
+
+    it('恢复：回到列表并清掉归档缓存，不自动切过去', async () => {
+      agentUnarchiveConversation.mockResolvedValue(undefined);
+      agentGetConversation.mockResolvedValue(health());
+      useConversationStore.setState({
+        conversations: {},
+        messages: {},
+        activeConversationId: null,
+        archivedConversations: {
+          'conn-1': [health({ archivedAt: '2026-10-02T00:00:00.000Z' })],
+        },
+      });
+
+      await useConversationStore.getState().unarchiveConversation('conv-1');
+
+      expect(agentUnarchiveConversation).toHaveBeenCalledWith('conv-1');
+      const state = useConversationStore.getState();
+      expect(state.conversations['conv-1'].id).toBe('conv-1');
+      expect(state.archivedConversations['conn-1']).toEqual([]);
+      expect(state.activeConversationId).toBeNull();
+    });
+
+    it('loadArchivedConversations 写入缓存，失败回退空表且不抛', async () => {
+      agentListArchivedConversations.mockResolvedValue([
+        health({ archivedAt: '2026-10-02T00:00:00.000Z' }),
+      ]);
+
+      const list = await useConversationStore
+        .getState()
+        .loadArchivedConversations('conn-1');
+
+      expect(list).toHaveLength(1);
+      let state = useConversationStore.getState();
+      expect(state.archivedConversations['conn-1']).toHaveLength(1);
+      expect(state.archivedLoading['conn-1']).toBeUndefined();
+
+      agentListArchivedConversations.mockRejectedValue(new Error('boom'));
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const failed = await useConversationStore
+        .getState()
+        .loadArchivedConversations('conn-1');
+      expect(failed).toEqual([]);
+      state = useConversationStore.getState();
+      expect(state.archivedConversations['conn-1']).toHaveLength(1);
+      errSpy.mockRestore();
     });
   });
 });

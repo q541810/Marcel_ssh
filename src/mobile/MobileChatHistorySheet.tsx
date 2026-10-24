@@ -19,7 +19,9 @@ import {
   groupSearchResultsByConnection,
   formatMatchCountLabel,
 } from '@/stores/conversationHistoryManager';
-import { Pencil, Pin } from 'lucide-react';
+import { Archive, ArchiveRestore, Pencil, Pin, Trash2 } from 'lucide-react';
+import { getErrorMessage } from '@/lib/errors';
+import { useConversationStore } from '@/stores/conversationStore';
 import AgentMessageList from '@/components/agent/AgentMessageList';
 import { MOBILE_MAX_RETAINED_VIEWS } from '@/lib/retainedViews';
 import MobileSheet from './ui/MobileSheet';
@@ -89,6 +91,21 @@ export default function MobileChatHistorySheet({
   const confirmRename = useConversationHistoryStore((s) => s.confirmRename);
   const reset = useConversationHistoryStore((s) => s.reset);
 
+  // 归档 / 恢复 / 永久删除（与桌面 ChatHistoryModal 同一套 manager 动作）
+  const showArchived = useConversationHistoryStore((s) => s.showArchived);
+  const setShowArchived = useConversationHistoryStore((s) => s.setShowArchived);
+  const archiveConversation = useConversationHistoryStore((s) => s.archiveConversation);
+  const unarchiveConversation = useConversationHistoryStore((s) => s.unarchiveConversation);
+  const deleteArchivedConversation = useConversationHistoryStore(
+    (s) => s.deleteArchivedConversation,
+  );
+  const archivedByConn = useConversationStore((s) => s.archivedConversations);
+  const loadArchivedConversations = useConversationStore(
+    (s) => s.loadArchivedConversations,
+  );
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AgentConversation | null>(null);
+
   const isSearching = debouncedQuery.trim().length > 0;
 
   // 打开/关闭时重置与加载状态
@@ -108,6 +125,47 @@ export default function MobileChatHistorySheet({
       void loadAllConnections(connections);
     }
   }, [open, connections, loadAllConnections]);
+
+  // 打开「显示已归档」时补拉各连接的归档缓存（手机上只在这里用到它）
+  useEffect(() => {
+    if (!open || !showArchived) return;
+    for (const conn of connections) {
+      void loadArchivedConversations(conn.id);
+    }
+  }, [open, showArchived, connections, loadArchivedConversations]);
+
+  const handleArchive = async (conversationId: string) => {
+    setArchiveError(null);
+    try {
+      await archiveConversation(conversationId);
+    } catch (err) {
+      setArchiveError(getErrorMessage(err));
+    }
+  };
+
+  const handleRestoreArchived = async (conv: AgentConversation) => {
+    setArchiveError(null);
+    try {
+      await unarchiveConversation(conv.id, conv.connectionId);
+      // 恢复后归档缓存里已没有它，但当前展开的分组要立刻消失：
+      // manager 与 conversationStore 各自更新，这里只需重新拉一次确认。
+      await loadArchivedConversations(conv.connectionId);
+    } catch (err) {
+      setArchiveError(getErrorMessage(err));
+    }
+  };
+
+  const handleDeleteArchived = async () => {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    setArchiveError(null);
+    try {
+      await deleteArchivedConversation(target.id);
+      setDeleteTarget(null);
+    } catch (err) {
+      setArchiveError(getErrorMessage(err));
+    }
+  };
 
   const handleStartRename = (e: React.MouseEvent, conv: AgentConversation) => {
     e.stopPropagation();
@@ -295,9 +353,36 @@ export default function MobileChatHistorySheet({
                 </button>
               )}
             </div>
+            <div className="mt-1.5 flex items-center justify-between px-0.5">
+              <button
+                type="button"
+                onClick={() => setShowArchived(!showArchived)}
+                aria-pressed={showArchived}
+                className={
+                  "flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] " +
+                  (showArchived
+                    ? "border-amber-700/60 bg-amber-950/40 text-amber-300"
+                    : "border-edge bg-zinc-800/60 text-zinc-400")
+                }
+              >
+                <Archive className="h-3 w-3" />
+                显示已归档
+              </button>
+              <span className="text-[10px] text-zinc-600">
+                {showArchived ? '搜索与列表均包含归档' : '归档可在清理前恢复'}
+              </span>
+            </div>
           </div>
 
           <div className="px-3 pb-3">
+            {archiveError && (
+              <div
+                role="alert"
+                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+              >
+                {archiveError}
+              </div>
+            )}
             {isSearching ? (
               <>
                 {loadingSearch && (
@@ -432,16 +517,78 @@ export default function MobileChatHistorySheet({
                                       <button
                                         type="button"
                                         onClick={(e) => handleStartRename(e, conv)}
-                                        className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
                                         aria-label={`重命名 ${conv.title}`}
                                       >
                                         <Pencil className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void handleArchive(conv.id);
+                                        }}
+                                        className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                        aria-label={`归档 ${conv.title}`}
+                                        title="归档会话（可恢复）"
+                                      >
+                                        <Archive className="h-3.5 w-3.5" />
                                       </button>
                                     </li>
                                   ))}
                                 </ul>
                               </div>
                             ))}
+                          </div>
+                        )}
+                        {expanded && showArchived && (
+                          <div className="mt-2 space-y-1">
+                            <div className="px-2 text-[10px] font-semibold uppercase tracking-wider text-amber-500/80">
+                              已归档
+                            </div>
+                            {(archivedByConn[conn.id] ?? []).length === 0 ? (
+                              <p className="px-2 py-2 text-xs text-zinc-600">
+                                该连接暂无归档会话
+                              </p>
+                            ) : (
+                              <ul className="space-y-1">
+                                {(archivedByConn[conn.id] ?? []).map((conv) => (
+                                  <li
+                                    key={conv.id}
+                                    className="flex items-center gap-1 rounded-lg border border-amber-900/30 bg-amber-950/20"
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => openConversation(conv)}
+                                      className="min-w-0 flex-1 rounded-lg px-3 py-2.5 text-left text-sm text-zinc-300 active:bg-state-soft"
+                                    >
+                                      <div className="truncate font-medium">{conv.title}</div>
+                                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                                        归档于 {conv.archivedAt ? new Date(conv.archivedAt).toLocaleString() : '未知时间'}
+                                      </div>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleRestoreArchived(conv)}
+                                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                                      aria-label={`恢复 ${conv.title}`}
+                                      title="恢复会话"
+                                    >
+                                      <ArchiveRestore className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteTarget(conv)}
+                                      className="mr-1.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-red-400/80 active:bg-red-950/40"
+                                      aria-label={`永久删除 ${conv.title}`}
+                                      title="永久删除"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         )}
                       </div>
@@ -488,6 +635,43 @@ export default function MobileChatHistorySheet({
               className="flex-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 active:bg-indigo-500"
             >
               保存
+            </button>
+          </div>
+        </div>
+      </MobileSheet>
+
+      <MobileSheet
+        open={deleteTarget != null}
+        onClose={() => setDeleteTarget(null)}
+        title="永久删除会话"
+      >
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          <p className="text-sm leading-relaxed text-zinc-300">
+            永久删除「{deleteTarget?.title ?? '该会话'}」？消息会一起删除，此操作不可撤销。
+            若只是想让它从列表里消失，请改用归档。
+          </p>
+          {archiveError && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+            >
+              {archiveError}
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void handleDeleteArchived()}
+              className="flex-1 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-medium text-white active:bg-red-500"
+            >
+              永久删除
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteTarget(null)}
+              className="flex-1 rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-medium text-zinc-300 active:bg-state-mid"
+            >
+              取消
             </button>
           </div>
         </div>

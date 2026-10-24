@@ -1029,6 +1029,11 @@ export interface AppSettings {
    *  descriptions, etc.). The actual SSH connection still uses the real
    *  values — only their on-screen display is masked. */
   privacyMode: boolean;
+  /**
+   * 归档会话保留天数（**0 = 永不清理**），默认 30。
+   * 归档项超过这个天数后，启动时由前端调用 `agent_purge_expired_archived` 永久删除。
+   */
+  archiveRetentionDays: number;
   notificationSettings: NotificationSettings;
   /** 移动端独立通知开关（设备本地）。桌面端读写无副作用，UI 不暴露。 */
   mobileNotificationSettings: MobileNotificationSettings;
@@ -1297,6 +1302,12 @@ export interface AgentConversation {
    * 影响。切换置顶**不改 `updatedAt`**，所以取消置顶不会打乱时间序。
    */
   pinned?: boolean;
+  /**
+   * 归档时间（ISO 字符串）。有值 = 已归档：默认列表 / 搜索 / 长期回忆都不再
+   * 出现，但消息仍在、可恢复。与 `pinned` 一样是列表视图元数据，
+   * 归档 / 恢复都**不改 `updatedAt`**。
+   */
+  archivedAt?: string | null;
   /**
    * **生效的上下文窗口**（tokens；`undefined`/0 = 未配置）。
    *

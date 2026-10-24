@@ -10,6 +10,37 @@ use super::{escape_like, make_match_snippet};
 
 use super::ConversationDb;
 
+/// 会话表的列清单（顺序必须与 [`conversation_from_row`] 一致）。
+/// 列表 / 详情 / 归档列表共用这一份，新增列时只改这里。
+const CONVERSATION_COLUMNS: &str = "id, connection_id, title, created_at, updated_at, \
+     parent_conversation_id, model_id, pinned, usage_json, forked_from_id, archived_at";
+
+fn conversation_from_row(row: &rusqlite::Row<'_>) -> RusqliteResult<Conversation> {
+    Ok(Conversation {
+        id: row.get(0)?,
+        connection_id: row.get(1)?,
+        title: row.get(2)?,
+        created_at: row
+            .get::<_, String>(3)?
+            .parse()
+            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+        updated_at: row
+            .get::<_, String>(4)?
+            .parse()
+            .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
+        parent_conversation_id: row.get(5).ok(),
+        forked_from_id: row.get(9).ok(),
+        model_id: row.get(6).ok(),
+        reasoning_effort: None,
+        pinned: row.get(7)?,
+        usage: ConversationUsage::from_json_column(row.get(8).ok()),
+        context_window: None,
+        archived_at: row
+            .get::<_, Option<String>>(10)?
+            .and_then(|s| s.parse().ok()),
+    })
+}
+
 impl ConversationDb {
     pub fn create_conversation(
         &self,
@@ -68,44 +99,63 @@ impl ConversationDb {
             pinned: false,
             usage: ConversationUsage::default(),
             context_window: None,
+            archived_at: None,
         })
     }
 
+    /// 列出某连接下**全部**会话（含归档）。删除/清理/同步等内部路径用它；
+    /// 界面列表请用 [`Self::list_active_conversations`]，否则归档项会重新冒出来。
     pub fn list_conversations(&self, connection_id: &str) -> RusqliteResult<Vec<Conversation>> {
+        self.query_conversations(
+            &format!(
+                "SELECT {CONVERSATION_COLUMNS} FROM conversations
+                 WHERE connection_id = ?1
+                 ORDER BY pinned DESC, updated_at DESC"
+            ),
+            [connection_id],
+        )
+    }
+
+    /// 界面默认列表：不含归档项（归档项走 [`Self::list_archived_conversations`]）。
+    pub fn list_active_conversations(
+        &self,
+        connection_id: &str,
+    ) -> RusqliteResult<Vec<Conversation>> {
+        self.query_conversations(
+            &format!(
+                "SELECT {CONVERSATION_COLUMNS} FROM conversations
+                 WHERE connection_id = ?1 AND archived_at IS NULL
+                 ORDER BY pinned DESC, updated_at DESC"
+            ),
+            [connection_id],
+        )
+    }
+
+    /// 归档列表：按归档时间从新到旧（与默认列表的时间序分开）。
+    pub fn list_archived_conversations(
+        &self,
+        connection_id: &str,
+    ) -> RusqliteResult<Vec<Conversation>> {
+        self.query_conversations(
+            &format!(
+                "SELECT {CONVERSATION_COLUMNS} FROM conversations
+                 WHERE connection_id = ?1 AND archived_at IS NOT NULL
+                 ORDER BY archived_at DESC"
+            ),
+            [connection_id],
+        )
+    }
+
+    fn query_conversations<P: rusqlite::Params>(
+        &self,
+        sql: &str,
+        params: P,
+    ) -> RusqliteResult<Vec<Conversation>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id, pinned, usage_json, forked_from_id
-             FROM conversations
-             WHERE connection_id = ?1
-             ORDER BY pinned DESC, updated_at DESC",
-        )?;
-
-        let conversations = stmt
-            .query_map([connection_id], |row| {
-                Ok(Conversation {
-                    id: row.get(0)?,
-                    connection_id: row.get(1)?,
-                    title: row.get(2)?,
-                    created_at: row
-                        .get::<_, String>(3)?
-                        .parse()
-                        .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
-                    updated_at: row
-                        .get::<_, String>(4)?
-                        .parse()
-                        .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
-                    parent_conversation_id: row.get(5).ok(),
-                    forked_from_id: row.get(9).ok(),
-                    model_id: row.get(6).ok(),
-                    reasoning_effort: None,
-                    pinned: row.get(7)?,
-                    usage: ConversationUsage::from_json_column(row.get(8).ok()),
-                    context_window: None,
-                })
-            })?
-            .collect::<RusqliteResult<Vec<_>>>()?;
-
-        Ok(conversations)
+        let mut stmt = conn.prepare(sql)?;
+        let rows = stmt.query_map(params, conversation_from_row)?;
+        let out = rows.collect::<RusqliteResult<Vec<_>>>()?;
+        Ok(out)
     }
 
     /// 全文搜索消息内容，按会话聚合。
@@ -116,6 +166,7 @@ impl ConversationDb {
         &self,
         keyword: &str,
         connection_id: Option<&str>,
+        include_archived: bool,
     ) -> RusqliteResult<Vec<ConversationSearchResult>> {
         const MAX_MESSAGE_IDS: usize = 200;
         const MAX_CONVERSATIONS: usize = 100;
@@ -128,27 +179,40 @@ impl ConversationDb {
         let pattern = format!("%{}%", escape_like(keyword));
         let conn = self.conn.lock().unwrap();
 
-        // 先按会话 updated_at 倒序、消息 created_at 升序取出匹配行，再在内存聚合
-        let sql = if connection_id.is_some() {
-            "SELECT m.id, m.content, m.created_at,
-                    c.id, c.title, c.connection_id, c.updated_at
-             FROM messages m
-             INNER JOIN conversations c ON c.id = m.conversation_id
-             WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-               AND c.connection_id = ?2
-               AND c.parent_conversation_id IS NULL
-             ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+        // 默认只搜未归档会话；归档视图打开「显示已归档」时显式放开。
+        let archive_clause = if include_archived {
+            ""
         } else {
-            "SELECT m.id, m.content, m.created_at,
-                    c.id, c.title, c.connection_id, c.updated_at
-             FROM messages m
-             INNER JOIN conversations c ON c.id = m.conversation_id
-             WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
-               AND c.parent_conversation_id IS NULL
-             ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+            "AND c.archived_at IS NULL"
         };
 
-        let mut stmt = conn.prepare(sql)?;
+        // 先按会话 updated_at 倒序、消息 created_at 升序取出匹配行，再在内存聚合
+        let sql = if connection_id.is_some() {
+            format!(
+                "SELECT m.id, m.content, m.created_at,
+                        c.id, c.title, c.connection_id, c.updated_at
+                 FROM messages m
+                 INNER JOIN conversations c ON c.id = m.conversation_id
+                 WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                   AND c.connection_id = ?2
+                   AND c.parent_conversation_id IS NULL
+                   {archive_clause}
+                 ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+            )
+        } else {
+            format!(
+                "SELECT m.id, m.content, m.created_at,
+                        c.id, c.title, c.connection_id, c.updated_at
+                 FROM messages m
+                 INNER JOIN conversations c ON c.id = m.conversation_id
+                 WHERE m.content LIKE ?1 ESCAPE '\\' COLLATE NOCASE
+                   AND c.parent_conversation_id IS NULL
+                   {archive_clause}
+                 ORDER BY c.updated_at DESC, m.created_at ASC, m.rowid ASC"
+            )
+        };
+
+        let mut stmt = conn.prepare(&sql)?;
 
         type RowTuple = (String, String, String, String, String, String, String);
 
@@ -250,10 +314,20 @@ impl ConversationDb {
         &self,
         conversation_id: &str,
     ) -> RusqliteResult<Vec<String>> {
-        let mut to_delete: Vec<String> = vec![conversation_id.to_string()];
+        let to_delete = self.collect_descendants(conversation_id)?;
+        // 先删子对话再删自身（顺序无硬性要求，逐个走完整清理逻辑）
+        for id in to_delete.iter().rev() {
+            self.delete_conversation(id)?;
+        }
+        Ok(to_delete)
+    }
+
+    /// 该会话 + 全部子agent对话的 id（含自身，BFS 防御多层残结构）。
+    fn collect_descendants(&self, conversation_id: &str) -> RusqliteResult<Vec<String>> {
+        let mut ids: Vec<String> = vec![conversation_id.to_string()];
         let mut idx = 0;
-        while idx < to_delete.len() {
-            let parent = to_delete[idx].clone();
+        while idx < ids.len() {
+            let parent = ids[idx].clone();
             let children: Vec<String> = {
                 let conn = self.conn.lock().unwrap();
                 let mut stmt =
@@ -265,17 +339,88 @@ impl ConversationDb {
                 rows
             };
             for child in children {
-                if !to_delete.contains(&child) {
-                    to_delete.push(child);
+                if !ids.contains(&child) {
+                    ids.push(child);
                 }
             }
             idx += 1;
         }
-        // 先删子对话再删自身（顺序无硬性要求，逐个走完整清理逻辑）
-        for id in to_delete.iter().rev() {
+        Ok(ids)
+    }
+
+    /// 归档：写 archived_at、清 pinned，**不动 updated_at**。
+    /// 幂等：重复归档不刷新归档时间（保留期从第一次归档算起）。
+    pub fn archive_conversation(&self, conversation_id: &str) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE conversations
+             SET archived_at = COALESCE(archived_at, ?1), pinned = 0
+             WHERE id = ?2",
+            (Utc::now().to_rfc3339(), conversation_id),
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// 恢复：清除 archived_at，**不动 updated_at**（回到原日期分组）。
+    pub fn unarchive_conversation(&self, conversation_id: &str) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE conversations SET archived_at = NULL WHERE id = ?1",
+            [conversation_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    /// 级联归档：主对话 + 全部子agent对话（与删除同一条 BFS）。
+    pub fn archive_conversation_cascade(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Vec<String>> {
+        let ids = self.collect_descendants(conversation_id)?;
+        for id in &ids {
+            self.archive_conversation(id)?;
+        }
+        Ok(ids)
+    }
+
+    /// 归档/恢复会覆盖的会话 id 集合（主对话 + 子agent对话）。
+    /// 命令层在写库前用它做「正在运行」守卫，保证判定范围与级联范围一致。
+    pub fn conversation_subtree_ids(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Vec<String>> {
+        self.collect_descendants(conversation_id)
+    }
+
+    /// 级联恢复：主对话 + 全部子agent对话。
+    pub fn unarchive_conversation_cascade(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Vec<String>> {
+        let ids = self.collect_descendants(conversation_id)?;
+        for id in &ids {
+            self.unarchive_conversation(id)?;
+        }
+        Ok(ids)
+    }
+
+    /// 清理归档超过截止时间的会话（含子对话），返回被清理的 id。
+    /// 走完整删除逻辑：消息 / plan / 快照 / 图片一并清掉。
+    pub fn purge_archived_before(&self, cutoff_rfc3339: &str) -> RusqliteResult<Vec<String>> {
+        let ids: Vec<String> = {
+            let conn = self.conn.lock().unwrap();
+            let mut stmt = conn.prepare(
+                "SELECT id FROM conversations
+                 WHERE archived_at IS NOT NULL AND archived_at < ?1",
+            )?;
+            let rows = stmt.query_map([cutoff_rfc3339], |row| row.get(0))?;
+            let collected = rows.filter_map(|r| r.ok()).collect();
+            collected
+        };
+        for id in &ids {
             self.delete_conversation(id)?;
         }
-        Ok(to_delete)
+        Ok(ids)
     }
 
     pub fn delete_conversations_by_connection(&self, connection_id: &str) -> RusqliteResult<()> {
@@ -334,33 +479,10 @@ impl ConversationDb {
     /// 读取单个会话的元数据（不含消息）。
     pub fn get_conversation(&self, conversation_id: &str) -> RusqliteResult<Option<Conversation>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, connection_id, title, created_at, updated_at, parent_conversation_id, model_id, pinned, usage_json, forked_from_id
-             FROM conversations
-             WHERE id = ?1",
-        )?;
-        let mut rows = stmt.query_map([conversation_id], |row| {
-            Ok(Conversation {
-                id: row.get(0)?,
-                connection_id: row.get(1)?,
-                title: row.get(2)?,
-                created_at: row
-                    .get::<_, String>(3)?
-                    .parse()
-                    .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
-                updated_at: row
-                    .get::<_, String>(4)?
-                    .parse()
-                    .unwrap_or(chrono::DateTime::<Utc>::MIN_UTC),
-                parent_conversation_id: row.get(5).ok(),
-                forked_from_id: row.get(9).ok(),
-                model_id: row.get(6).ok(),
-                reasoning_effort: None,
-                pinned: row.get(7)?,
-                usage: ConversationUsage::from_json_column(row.get(8).ok()),
-                context_window: None,
-            })
-        })?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CONVERSATION_COLUMNS} FROM conversations WHERE id = ?1"
+        ))?;
+        let mut rows = stmt.query_map([conversation_id], conversation_from_row)?;
         match rows.next() {
             Some(Ok(c)) => Ok(Some(c)),
             Some(Err(e)) => Err(e),
@@ -426,8 +548,8 @@ impl ConversationDb {
     pub fn upsert_conversation(&self, conv: &Conversation) -> RusqliteResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, pinned, forked_from_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO conversations (id, connection_id, title, created_at, updated_at, parent_conversation_id, pinned, forked_from_id, archived_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 connection_id = excluded.connection_id,
                 title = excluded.title,
@@ -435,7 +557,10 @@ impl ConversationDb {
                 updated_at = excluded.updated_at,
                 parent_conversation_id = excluded.parent_conversation_id,
                 pinned = excluded.pinned,
-                forked_from_id = excluded.forked_from_id",
+                forked_from_id = excluded.forked_from_id,
+                -- 归档状态必须随快照同步：漏掉这一列，另一端 pull 会把归档项
+                -- 复活成正常会话，用户会以为归档丢了。
+                archived_at = excluded.archived_at",
             (
                 &conv.id,
                 &conv.connection_id,
@@ -445,6 +570,7 @@ impl ConversationDb {
                 &conv.parent_conversation_id,
                 conv.pinned as i64,
                 &conv.forked_from_id,
+                conv.archived_at.map(|t| t.to_rfc3339()),
             ),
         )?;
         Ok(())
@@ -573,10 +699,10 @@ mod tests {
         )
         .expect("msg");
 
-        let empty = db.search_conversations("   ", None).expect("search empty");
+        let empty = db.search_conversations("   ", None, false).expect("search empty");
         assert!(empty.is_empty());
 
-        let all = db.search_conversations("world", None).expect("search");
+        let all = db.search_conversations("world", None, false).expect("search");
         assert_eq!(all.len(), 2);
         // c2 was touched later via save_message → higher updated_at
         assert_eq!(all[0].conversation_id, c2.id);
@@ -589,12 +715,12 @@ mod tests {
         assert_eq!(all[1].matched_message_ids.len(), 2);
 
         let only_c1 = db
-            .search_conversations("world", Some("conn_1"))
+            .search_conversations("world", Some("conn_1"), false)
             .expect("filter");
         assert_eq!(only_c1.len(), 1);
         assert_eq!(only_c1[0].conversation_id, c1.id);
 
-        let none = db.search_conversations("zzzzz", None).expect("none");
+        let none = db.search_conversations("zzzzz", None, false).expect("none");
         assert!(none.is_empty());
     }
 
@@ -656,6 +782,113 @@ mod tests {
             .list_conversations("conn_1")
             .expect("Failed to list conversations");
         assert!(conversations.is_empty());
+    }
+
+    /// 归档 = 从默认列表/搜索里消失 + 消息保留 + 清置顶 + 可恢复。
+    #[test]
+    fn archived_conversations_are_hidden_restorable_and_keep_messages() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "A").unwrap();
+        db.save_message(
+            &conv.id,
+            "user",
+            "hello archive",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .unwrap();
+        db.set_conversation_pinned(&conv.id, true).unwrap();
+
+        let archived = db.archive_conversation_cascade(&conv.id).unwrap();
+        assert_eq!(archived, vec![conv.id.clone()]);
+
+        assert!(db.list_active_conversations("conn_1").unwrap().is_empty());
+        let archived_list = db.list_archived_conversations("conn_1").unwrap();
+        assert_eq!(archived_list.len(), 1);
+        assert!(archived_list[0].archived_at.is_some());
+        assert!(!archived_list[0].pinned, "归档必须清掉置顶，否则污染置顶组");
+        // 内部全量列表仍能看到（删除/同步等路径依赖它）
+        assert_eq!(db.list_conversations("conn_1").unwrap().len(), 1);
+        assert_eq!(db.load_messages(&conv.id).unwrap().len(), 1, "消息必须保留");
+
+        // 默认搜索看不到，显式 include_archived 才返回
+        assert!(db
+            .search_conversations("hello", None, false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.search_conversations("hello", None, true).unwrap().len(),
+            1
+        );
+
+        db.unarchive_conversation_cascade(&conv.id).unwrap();
+        assert_eq!(db.list_active_conversations("conn_1").unwrap().len(), 1);
+        assert!(db
+            .list_archived_conversations("conn_1")
+            .unwrap()
+            .is_empty());
+        assert!(db
+            .get_conversation(&conv.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_none());
+    }
+
+    /// 子agent对话随父会话一起归档/恢复（与删除同一条 BFS）。
+    #[test]
+    fn archive_cascades_to_sub_conversations() {
+        let db = create_test_db();
+        let parent = db.create_conversation("conn_1", "parent").unwrap();
+        let sub = db
+            .create_sub_conversation("conn_1", "sub", &parent.id)
+            .unwrap();
+
+        let ids = db.archive_conversation_cascade(&parent.id).unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&sub.id));
+        assert!(db
+            .get_conversation(&sub.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_some());
+
+        db.unarchive_conversation_cascade(&parent.id).unwrap();
+        assert!(db
+            .get_conversation(&sub.id)
+            .unwrap()
+            .unwrap()
+            .archived_at
+            .is_none());
+    }
+
+    /// 保留期清理只删「归档且超过截止时间」的会话。
+    #[test]
+    fn purge_removes_only_expired_archived_conversations() {
+        let db = create_test_db();
+        let old = db.create_conversation("conn_1", "old").unwrap();
+        let fresh = db.create_conversation("conn_1", "fresh").unwrap();
+        let active = db.create_conversation("conn_1", "active").unwrap();
+        db.archive_conversation(&old.id).unwrap();
+        db.archive_conversation(&fresh.id).unwrap();
+        // 把 old 的归档时间拨回 2020 年
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE conversations SET archived_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                [&old.id],
+            )
+            .unwrap();
+
+        let cutoff = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let purged = db.purge_archived_before(&cutoff).unwrap();
+        assert_eq!(purged, vec![old.id.clone()]);
+        assert!(db.get_conversation(&old.id).unwrap().is_none());
+        assert!(db.get_conversation(&fresh.id).unwrap().is_some());
+        assert!(db.get_conversation(&active.id).unwrap().is_some());
     }
 
     #[test]
@@ -884,7 +1117,7 @@ mod tests {
         )
         .expect("msg sub");
 
-        let results = db.search_conversations("needle", None).expect("search");
+        let results = db.search_conversations("needle", None, false).expect("search");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].conversation_id, parent.id);
     }

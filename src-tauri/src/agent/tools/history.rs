@@ -1144,6 +1144,7 @@ mod tests {
             // 整棵测试树都跑不起来）。
             usage: ConversationUsage::default(),
             context_window: None,
+            archived_at: None,
         }
     }
 

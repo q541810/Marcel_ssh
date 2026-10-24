@@ -132,6 +132,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   /** 默认开启：只折叠「已完成且过程较长的回合」。 */
   foldCompletedTurns: true,
   privacyMode: false,
+  /** 归档会话保留 30 天后自动清理（0 = 永不清理），与后端默认值一致。 */
+  archiveRetentionDays: 30,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,
   mobileNotificationSettings: DEFAULT_MOBILE_NOTIFICATION_SETTINGS,
   mobileBackgroundSettings: DEFAULT_MOBILE_BACKGROUND_SETTINGS,
@@ -263,6 +265,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
       experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
       memorySettings: { ...DEFAULT_MEMORY_SETTINGS, ...(fromDisk.memorySettings ?? {}) },
+      // 旧配置没有归档保留天数：按默认 30 天兜底（与 Rust 默认值一致）
+      archiveRetentionDays: fromDisk.archiveRetentionDays ?? 30,
       fileManagerPaths: fromDisk.fileManagerPaths ?? {},
       workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       // 应用主题：缺字段/非法颜色由 normalizeUiTheme 按默认值兜底（兼容旧数据 = 保持原样 + 默认填充）。
@@ -311,6 +315,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         llmRegistry: normalizeRegistry(fromDisk.llmRegistry),
         experimentalSettings: hydrateExperimental(fromDisk.experimentalSettings),
         memorySettings: { ...DEFAULT_MEMORY_SETTINGS, ...(fromDisk.memorySettings ?? {}) },
+        // 旧配置没有归档保留天数：按默认 30 天兜底（与 Rust 默认值一致）
+        archiveRetentionDays: fromDisk.archiveRetentionDays ?? 30,
         fileManagerPaths: fromDisk.fileManagerPaths ?? {},
         workspaceLayout: normalizeWorkspaceLayout(fromDisk.workspaceLayout),
       // 应用主题：缺字段/非法颜色由 normalizeUiTheme 按默认值兜底（兼容旧数据 = 保持原样 + 默认填充）。

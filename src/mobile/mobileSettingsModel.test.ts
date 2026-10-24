@@ -22,6 +22,7 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
       'agent-policy',
       'agent-tools',
       'memory',
+      'conversations',
       'commands-skills',
       'mcp-server',
       'notification-background',
@@ -37,6 +38,7 @@ describe('MOBILE_SETTINGS_CATEGORIES', () => {
   it('resolves category by id', () => {
     expect(getMobileSettingsCategory('llm')?.title).toBe('模型服务');
     expect(getMobileSettingsCategory('agent-tools')?.title).toBe('Agent 工具');
+    expect(getMobileSettingsCategory('conversations')?.title).toBe('会话与归档');
     expect(getMobileSettingsCategory('commands-skills')?.title).toBe('快捷命令与技能');
     expect(getMobileSettingsCategory('notification-background')?.title).toBe('通知与后台');
     expect(getMobileSettingsCategory('nope')).toBeUndefined();

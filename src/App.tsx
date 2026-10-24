@@ -31,7 +31,7 @@ import { useMarketStore } from '@/stores/marketStore';
 import { useJobStore } from '@/stores/jobStore';
 import { useViewStore, byMount } from '@/stores/viewStore';
 import { attachTransferListeners, detachTransferListeners } from '@/stores/sftpTransferManager';
-import { appReady, sftpPreviewCleanup } from '@/lib/tauri';
+import { appReady, agentPurgeExpiredArchived, sftpPreviewCleanup } from '@/lib/tauri';
 import { playNotificationSound } from '@/lib/notificationSound';
 import { useTauriEvent } from '@/hooks/useTauriEvent';
 import type { AgentMode, ViewProvider, WorkspaceLayoutSettings } from '@/lib/types';
@@ -703,6 +703,24 @@ export default function App() {
     notifyNavChange(null, activeId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 归档清理：等设置加载完成后再跑（天数来自设置）。0 = 永不清理。
+  // 只在启动后跑一次：这是「下次启动时清理」的约定，不在设置改动时立即删数据。
+  const archivePurgedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || archivePurgedRef.current) return;
+    archivePurgedRef.current = true;
+    const retentionDays =
+      useSettingsStore.getState().settings.archiveRetentionDays ?? 30;
+    if (retentionDays <= 0) return;
+    void agentPurgeExpiredArchived(retentionDays)
+      .then((count) => {
+        if (count > 0) console.info(`已清理 ${count} 条过期归档会话`);
+      })
+      .catch((err) => {
+        console.warn('清理过期归档会话失败:', err);
+      });
+  }, [settingsLoaded]);
 
   useEffect(() => {
     if (!settingsLoaded) return;

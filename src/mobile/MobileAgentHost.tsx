@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ArrowUp, Bookmark, ChevronDown, ChevronRight, Plus, Square, X } from "lucide-react";
-import { Pencil, Pin, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Pencil, Pin, Trash2 } from "lucide-react";
 import { useAgent } from "@/hooks/useAgent";
 import { useAgentAttachments } from "@/hooks/useAgentAttachments";
 import { useAgentDraftActions } from "@/hooks/useAgentDraftActions";
@@ -129,8 +129,13 @@ export default function MobileAgentHost({
     switchConversation,
     loadConversation,
     renameConversation,
-    deleteConversation,
     setConversationPinned,
+    archivedConversations,
+    archivedLoading,
+    loadArchivedConversations,
+    archiveConversation,
+    unarchiveConversation,
+    deleteArchivedConversation,
     setConversationModel,
     setConversationEffort,
     syncActiveToConnection,
@@ -166,6 +171,9 @@ export default function MobileAgentHost({
 
   const [modeOpen, setModeOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 抽屉两种视图：默认列表 / 已归档（归档先落库、再切走，见 conversationStore）。 */
+  const [historyMode, setHistoryMode] = useState<"active" | "archived">("active");
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const modePresence = useAnimatedPresence(modeOpen);
   const historyPresence = useAnimatedPresence(historyOpen);
   /** 未连接时的只读历史浏览面板（对齐桌面 AgentPanel 的 ChatHistoryModal 分支） */
@@ -299,19 +307,47 @@ export default function MobileAgentHost({
     [ids?.sessionId],
   );
 
+  const configId = ids?.configId ?? null;
+  const archivedList = configId ? (archivedConversations[configId] ?? []) : [];
+  const archivedLoadingNow = configId ? !!archivedLoading[configId] : false;
+
+  const handleArchiveConversation = useCallback(
+    async (conversationId: string) => {
+      setArchiveError(null);
+      try {
+        await archiveConversation(conversationId);
+      } catch (err) {
+        setArchiveError(getErrorMessage(err));
+      }
+    },
+    [archiveConversation],
+  );
+
+  const handleRestoreConversation = useCallback(
+    async (conversationId: string) => {
+      setArchiveError(null);
+      try {
+        await unarchiveConversation(conversationId);
+      } catch (err) {
+        setArchiveError(getErrorMessage(err));
+      }
+    },
+    [unarchiveConversation],
+  );
+
   const handleDeleteConversation = useCallback(async () => {
     if (!deleteTargetId) return;
     const id = deleteTargetId;
     setDeleteTargetId(null);
     try {
-      await deleteConversation(id);
+      await deleteArchivedConversation(id);
     } catch (err) {
-      console.error("Failed to delete conversation:", err);
+      setArchiveError(getErrorMessage(err));
     }
-  }, [deleteTargetId, deleteConversation]);
+  }, [deleteTargetId, deleteArchivedConversation]);
 
   const deleteTargetTitle = deleteTargetId
-    ? (conversations[deleteTargetId]?.title ?? "该会话")
+    ? (archivedList.find((c) => c.id === deleteTargetId)?.title ?? "该会话")
     : "";
 
   const showRollbackHint = useCallback((text: string) => {
@@ -534,6 +570,9 @@ export default function MobileAgentHost({
           onClick={() => {
             // 对齐桌面 AgentPanel：已连接切会话，未连接只读浏览全部历史
             if (canInteract) {
+              // 每次打开都从默认列表进入，并清掉上次的归档错误
+              setHistoryMode("active");
+              setArchiveError(null);
               setHistoryOpen((v) => !v);
             } else {
               setHistoryBrowserOpen(true);
@@ -614,17 +653,103 @@ export default function MobileAgentHost({
                 : "mobile-sheet-enter"
             }`}
           >
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-100">历史会话</h3>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setHistoryMode("active")}
+                  className={
+                    "rounded-lg px-2 py-1 text-xs font-medium " +
+                    (historyMode === "active"
+                      ? "bg-zinc-800 text-zinc-100"
+                      : "text-zinc-400 active:bg-state-soft/60")
+                  }
+                >
+                  历史会话
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArchiveError(null);
+                    setHistoryMode("archived");
+                    if (configId) void loadArchivedConversations(configId);
+                  }}
+                  className={
+                    "rounded-lg px-2 py-1 text-xs font-medium " +
+                    (historyMode === "archived"
+                      ? "bg-amber-950/50 text-amber-300"
+                      : "text-zinc-400 active:bg-state-soft/60")
+                  }
+                >
+                  已归档{archivedList.length > 0 ? ` (${archivedList.length})` : ""}
+                </button>
+              </div>
               <button
                 type="button"
-                onClick={() => setHistoryOpen(false)}
+                onClick={() => {
+                  setHistoryOpen(false);
+                  setHistoryMode("active");
+                }}
                 className="text-xs text-zinc-400"
               >
                 关闭
               </button>
             </div>
-            {sessionConversations.length === 0 ? (
+            {archiveError && (
+              <div
+                role="alert"
+                className="mb-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-xs text-red-300"
+              >
+                {archiveError}
+              </div>
+            )}
+            {historyMode === "archived" ? (
+              <div className="space-y-2">
+                {archivedLoadingNow && (
+                  <p className="py-6 text-center text-sm text-zinc-500">
+                    加载归档会话…
+                  </p>
+                )}
+                {!archivedLoadingNow && archivedList.length === 0 && (
+                  <p className="py-6 text-center text-sm text-zinc-500">
+                    暂无归档会话
+                  </p>
+                )}
+                {archivedList.map((conv) => (
+                  <div
+                    key={conv.id}
+                    className="flex items-center gap-1 rounded-lg border border-amber-900/30 bg-amber-950/20"
+                  >
+                    <div className="min-w-0 flex-1 px-3 py-2">
+                      <div className="truncate text-sm font-medium text-zinc-300">
+                        {conv.title}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-zinc-500">
+                        归档于 {conv.archivedAt ? new Date(conv.archivedAt).toLocaleString() : '未知时间'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleRestoreConversation(conv.id)}
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                      aria-label={`恢复 ${conv.title}`}
+                      title="恢复会话"
+                    >
+                      <ArchiveRestore className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTargetId(conv.id)}
+                      className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-red-400/80 active:bg-red-950/40"
+                      aria-label={`永久删除 ${conv.title}`}
+                      title="永久删除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : sessionConversations.length === 0 ? (
               <p className="py-6 text-center text-sm text-zinc-500">
                 暂无历史会话
               </p>
@@ -691,11 +816,12 @@ export default function MobileAgentHost({
                             </button>
                             <button
                               type="button"
-                              onClick={() => setDeleteTargetId(conv.id)}
-                              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-red-400"
-                              aria-label={`删除 ${conv.title}`}
+                              onClick={() => void handleArchiveConversation(conv.id)}
+                              className="mr-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-zinc-400 active:bg-state-soft active:text-zinc-200"
+                              aria-label={`归档 ${conv.title}`}
+                              title="归档会话（可恢复）"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Archive className="h-3.5 w-3.5" />
                             </button>
                           </li>
                         );
@@ -752,18 +878,19 @@ export default function MobileAgentHost({
       <MobileSheet
         open={deleteTargetId != null}
         onClose={() => setDeleteTargetId(null)}
-        title="确认删除"
+        title="永久删除会话"
       >
         <div className="flex flex-col gap-2 px-4 pb-4">
           <p className="pb-1 text-sm text-zinc-400">
-            删除会话「{deleteTargetTitle}」？此操作不可撤销。
+            永久删除会话「{deleteTargetTitle}」？消息会一起删除，此操作不可撤销。
+            若只是想让它从列表里消失，请改用归档。
           </p>
           <button
             type="button"
             onClick={() => void handleDeleteConversation()}
             className="rounded-xl bg-red-600 px-4 py-3 text-sm font-medium text-white active:bg-red-500"
           >
-            删除
+            永久删除
           </button>
           <button
             type="button"

@@ -13,6 +13,8 @@ vi.mock('@/lib/tauri', () => ({
   agentLoadPlansByConversation: vi.fn(),
   agentGetConversation: vi.fn(),
   agentTruncateConversation: vi.fn(),
+  agentArchiveConversation: vi.fn().mockResolvedValue(undefined),
+  agentUnarchiveConversation: vi.fn().mockResolvedValue(undefined),
 }));
 
 import {
@@ -124,7 +126,12 @@ describe('ConversationHistoryManager', () => {
     // 快进 300ms
     await vi.advanceTimersByTimeAsync(300);
 
-    expect(tauri.agentSearchConversations).toHaveBeenCalledWith('test query');
+    // 第三个参数是 includeArchived：默认视图不搜归档项
+    expect(tauri.agentSearchConversations).toHaveBeenCalledWith(
+      'test query',
+      undefined,
+      false,
+    );
     const state = useConversationHistoryStore.getState();
     expect(state.searchResults).toHaveLength(1);
     expect(state.searchResults[0].conversationId).toBe('c1');
@@ -353,5 +360,79 @@ describe('ConversationHistoryManager', () => {
 
     expect(formatMatchCountLabel(5)).toBe('共 5 条匹配');
     expect(formatMatchCountLabel(250)).toBe('共 200+ 条匹配');
+  });
+
+  it('archives a conversation: list and search drop it, selection clears', async () => {
+    const convA = {
+      id: 'c1',
+      connectionId: 'conn-1',
+      title: 'Conv 1',
+      createdAt: '',
+      updatedAt: '',
+    };
+    const convB = { ...convA, id: 'c2', title: 'Conv 2' };
+    useConversationHistoryStore.setState({
+      conversationsByConn: { 'conn-1': [convA, convB] },
+      searchResults: [
+        {
+          conversationId: 'c1',
+          connectionId: 'conn-1',
+          title: 'Conv 1',
+          matchedSnippet: 'hit',
+          matchCount: 1,
+          matchedMessageIds: ['m1'],
+          updatedAt: '',
+        },
+      ],
+      selectedConvId: 'c1',
+      selectedConv: convA,
+    });
+    useConversationStore.setState({
+      conversations: { c1: convA },
+      messages: { c1: [] },
+    });
+
+    await useConversationHistoryStore.getState().archiveConversation('c1');
+
+    expect(tauri.agentArchiveConversation).toHaveBeenCalledWith('c1');
+    const state = useConversationHistoryStore.getState();
+    expect(state.conversationsByConn['conn-1'].map((c) => c.id)).toEqual(['c2']);
+    expect(state.searchResults).toEqual([]);
+    expect(state.selectedConvId).toBeNull();
+    expect(useConversationStore.getState().conversations['c1']).toBeUndefined();
+  });
+
+  it('unarchives: reloads that connection list so the row comes back', async () => {
+    (tauri.agentGetConversation as any).mockResolvedValue({
+      id: 'c1',
+      connectionId: 'conn-1',
+      title: 'Conv 1',
+      createdAt: '',
+      updatedAt: '',
+    });
+    (tauri.agentListConversationsByConnection as any).mockResolvedValue([
+      { id: 'c1', connectionId: 'conn-1', title: 'Conv 1', createdAt: '', updatedAt: '' },
+    ]);
+
+    await useConversationHistoryStore
+      .getState()
+      .unarchiveConversation('c1', 'conn-1');
+
+    expect(tauri.agentUnarchiveConversation).toHaveBeenCalledWith('c1');
+    expect(
+      useConversationHistoryStore.getState().conversationsByConn['conn-1'],
+    ).toHaveLength(1);
+  });
+
+  it('showArchived flips the search scope (third arg) and resets with reset()', async () => {
+    (tauri.agentSearchConversations as any).mockResolvedValue([]);
+
+    useConversationHistoryStore.getState().setShowArchived(true);
+    expect(useConversationHistoryStore.getState().showArchived).toBe(true);
+    await useConversationHistoryStore.getState().performSearch('q');
+    expect(tauri.agentSearchConversations).toHaveBeenCalledWith('q', undefined, true);
+
+    useConversationHistoryStore.getState().reset();
+    expect(useConversationHistoryStore.getState().showArchived).toBe(false);
   });
 });

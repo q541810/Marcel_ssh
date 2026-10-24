@@ -386,6 +386,7 @@ impl ConversationDb {
                 pinned: false,
                 usage: ConversationUsage::default(),
                 context_window: None,
+                archived_at: None,
             },
             id_map,
             last_message: (last_new_id, last.created_at),

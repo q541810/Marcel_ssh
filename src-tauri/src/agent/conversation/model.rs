@@ -59,6 +59,14 @@ pub struct Conversation {
     /// 对话的日期分组顺序搅乱（见 `set_conversation_pinned`）。
     #[serde(default)]
     pub pinned: bool,
+    /// 归档时间：None = 未归档；Some = 已归档（默认列表/搜索/回忆都不再出现，
+    /// 但仍可恢复）。存时间而不是 bool 是为了两件事：界面显示「归档于 X」，
+    /// 以及设置项里的「保留 N 天后自动清理」按时间裁剪。
+    ///
+    /// 与 pinned 一样属于**列表视图元数据**，归档/恢复都不动 updated_at ——
+    /// 恢复后回到原来的日期分组，不打乱时间序。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<chrono::DateTime<Utc>>,
     /// token 用量（落库在 `conversations.usage_json`，见 [`ConversationUsage`]）。
     ///
     /// 与 `reasoning_effort` 不同，这个字段**是**持久化数据（不是读时 overlay）；

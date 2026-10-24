@@ -95,6 +95,9 @@ impl ConversationDb {
              INNER JOIN conversations c ON c.id = m.conversation_id
              WHERE c.connection_id IN ({conn_placeholders})
                AND c.parent_conversation_id IS NULL
+               -- 归档会话退出长期回忆：agent 不该把「用户已经收起来的东西」
+               -- 重新翻出来当成最近上下文。
+               AND c.archived_at IS NULL
                AND c.id != ?
                AND m.role IN ('user', 'assistant')
                AND m.content NOT LIKE ? ESCAPE '\\'
@@ -169,7 +172,8 @@ impl ConversationDb {
         binds.push(limit.to_string());
         let sql = format!(
             "SELECT id, connection_id, title, updated_at FROM conversations
-             WHERE parent_conversation_id IS NULL AND updated_at >= ? {conn_filter}
+             WHERE parent_conversation_id IS NULL AND archived_at IS NULL
+               AND updated_at >= ? {conn_filter}
              ORDER BY updated_at DESC LIMIT ?"
         );
         let mut stmt = conn.prepare(&sql)?;
