@@ -6,11 +6,11 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Loader2, Maximize, Minus, Plus, RotateCw, X } from 'lucide-react';
+import { Maximize, Minus, Plus, RotateCw, X } from 'lucide-react';
 import { formatSize } from '@/lib/sftp-helpers';
 import type { ImagePreviewProps } from '@/lib/imagePreview';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
-import { useImagePreviewSource } from '@/hooks/useImagePreviewSource';
+import { useImagePreviewSource, REMOTE_IMAGE_HINT } from '@/hooks/useImagePreviewSource';
 import { usePreviewDialogFocus } from '@/hooks/usePreviewDialogFocus';
 import MobileFullscreenPage from './ui/MobileFullscreenPage';
 import {
@@ -43,7 +43,7 @@ export default function MobileImageViewer({
   fileSize,
   onClose,
 }: ImagePreviewProps) {
-  const { imageSrc, loading, progress, error, onImageError } =
+  const { imageSrc, loading, progress, error, status, unavailableKind, onImageError } =
     useImagePreviewSource({
       open,
       source,
@@ -506,15 +506,14 @@ export default function MobileImageViewer({
           {imageLoading && (
             <div
               role="status"
-              className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black"
+              className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black"
             >
-              <div className="flex items-center gap-2 text-sm text-white/70">
-                <Loader2
-                  aria-hidden="true"
-                  className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                />
-                正在加载图片…
-              </div>
+              {/* 与桌面同一套克制的骨架：一块低对比占位 + 一行小字。 */}
+              <div
+                aria-hidden
+                className="h-28 w-40 rounded-lg bg-white/5 motion-safe:animate-pulse"
+              />
+              <div className="text-xs text-white/60">正在加载图片…</div>
               {progress && progress.total > 0 && (
                 <div className="flex w-56 flex-col gap-1">
                   <div className="h-1.5 overflow-hidden rounded-full bg-white/20">
@@ -535,13 +534,15 @@ export default function MobileImageViewer({
             </div>
           )}
 
-          {error && !loading && (
+          {status === 'unavailable' && (
             <div
-              role="alert"
+              role={unavailableKind === 'remote' ? 'status' : 'alert'}
               className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6"
             >
-              <p className="break-words text-center text-sm text-white">
-                {error}
+              <p
+                className={`break-words text-center text-sm ${unavailableKind === 'remote' ? 'text-white/70' : 'text-white'}`}
+              >
+                {unavailableKind === 'remote' ? `${REMOTE_IMAGE_HINT}（${error}）` : error}
               </p>
               <button
                 type="button"

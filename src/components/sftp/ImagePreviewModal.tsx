@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
 import { formatSize } from '@/lib/sftp-helpers';
 import type { ImagePreviewProps } from '@/lib/imagePreview';
 import { useAnimatedClose } from '@/hooks/useAnimatedPresence';
-import { useImagePreviewSource } from '@/hooks/useImagePreviewSource';
+import { useImagePreviewSource, REMOTE_IMAGE_HINT } from '@/hooks/useImagePreviewSource';
 import { usePreviewDialogFocus } from '@/hooks/usePreviewDialogFocus';
 
 // 缩放范围
@@ -48,7 +48,7 @@ export default function ImagePreviewModal({
   fileSize,
   onClose,
 }: ImagePreviewProps) {
-  const { loading, progress, error, imageSrc, onImageError } =
+  const { loading, progress, error, imageSrc, status, unavailableKind, onImageError } =
     useImagePreviewSource({ open, source, fileSize });
   const [imgNaturalSize, setImgNaturalSize] = useState<{
     w: number;
@@ -451,7 +451,7 @@ export default function ImagePreviewModal({
           </span>
         </div>
 
-        {error && (
+        {error && unavailableKind !== 'remote' && (
           <div
             role="alert"
             className="flex items-center justify-between px-3 py-2 bg-red-500/10 border-b border-red-500/20 text-xs text-red-300 flex-shrink-0"
@@ -480,36 +480,19 @@ export default function ImagePreviewModal({
           {imageLoading && (
             <div
               role="status"
-              className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-zinc-900 z-10"
+              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-zinc-900"
             >
-              <div className="flex items-center gap-2 text-sm text-zinc-400">
-                <svg
-                  aria-hidden="true"
-                  className="w-4 h-4 animate-spin motion-reduce:animate-none"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  />
-                </svg>
-                正在加载图片...
-              </div>
+              {/* 克制的骨架：一块低对比占位 + 一行小字，不拿转圈动画占满整屏。 */}
+              <div
+                aria-hidden
+                className="h-32 w-48 rounded-lg border border-edge-subtle bg-state-soft motion-safe:animate-pulse"
+              />
+              <div className="text-xs text-zinc-500">正在加载图片…</div>
               {progress && progress.total > 0 && (
                 <div className="w-64 flex flex-col gap-1">
-                  <div className="h-1.5 rounded-full bg-zinc-700 overflow-hidden">
+                  <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200"
+                      className="h-full bg-indigo-500 transition-all duration-200 motion-reduce:transition-none"
                       style={{ width: `${progressPct}%` }}
                     />
                   </div>
@@ -542,6 +525,16 @@ export default function ImagePreviewModal({
                 transition: 'none',
               }}
             />
+          )}
+
+          {status === 'unavailable' && (
+            <div className="max-w-md px-6 text-center">
+              <p
+                className={`text-sm leading-relaxed ${unavailableKind === 'remote' ? 'text-zinc-400' : 'text-red-300'}`}
+              >
+                {unavailableKind === 'remote' ? `${REMOTE_IMAGE_HINT}（${error}）` : error}
+              </p>
+            </div>
           )}
 
           {!loading && !imageSrc && !error && (
