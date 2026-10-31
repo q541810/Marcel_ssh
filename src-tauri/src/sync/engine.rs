@@ -1,57 +1,58 @@
-//! 同步引擎：把账本（`ledger`）、六个同步源（`sources`）和存储后端（`backends`）编排成「一轮同步」。
+//! 同步引擎：把账本（`ledger`）、各条流（`streams`）和存储后端（`backends`）编排成「一轮同步」。
 //!
 //! 引擎本身**不是并发的**：它被 `manager.rs` 的 actor 独占（同一时刻只有一个任务在动它），所以
-//! 里面用 `&mut self`，没有任何锁。一轮同步（[`SyncEngine::run_round`]）的步骤——
+//! 里面用 `&mut self`，没有任何锁。一台设备的远端目录分成几条互相独立的**流**：
 //!
-//! 1. **捕获**：对每个同步源，当前文档与基线 `diff`，本机 op 先并入镜像、进待上传队列；
-//! 2. **大量删除闸**：扣下的删除不进镜像、不上传，状态变 `needsConfirm`；
-//! 3. **上传**：待上传队列写成一个增量段；
-//! 4. **拉取**：读其它设备目录里比游标新的快照 / 增量段，并入镜像；
-//! 5. **落地**：对镜像有新内容的源，在该配置的**写者锁内**先再捕获一次本机改动（防抖窗口里的修改
-//!    不能被吞），再把文档对齐到镜像，提交；
-//! 6. **压缩**：本机增量段攒到 50 个就写一个快照、清理旧文件。
+//! - 配置流（一期）：`devices/<id>/seg-…`，驱动是 [`ConfigStreamDriver`]，恒为开；
+//! - 对话与记忆流（二期）：`devices/<id>/conv/…`，驱动由 T2 注册；
+//! - 机密流（三期）：`devices/<id>/sec/…`，驱动由 T6 注册。
 //!
-//! 「先捕获、再落地」这个顺序是正确性的根：落地用 `affected_vs_doc`（文档现状 vs 镜像）把文档对齐到
-//! 镜像，没有被捕获进镜像的本机修改会被当成「文档偏离镜像」而被旧值盖回去。
+//! 一轮同步（[`SyncEngine::run_round`]）= 对每条**开着的**流依次：
+//!
+//! 1. **捕获**本机改动；2. **上传**；3. **拉取**对端的段 / 快照；4. **落地**到本机；
+//! 5. 落地时锁内再捕获一次，可能产生新 op，**再上传**；6. **压缩**（本机段攒够就写快照）。
+//!
+//! 一条流出错不影响别的流：错误记进该流的 `lastError`（`SyncStatus.streams`），循环继续；
+//! 整轮最后仍返回错误，让调度器退避重试。**关着的流在捕获阶段就整条跳过**——关着时绝不产生
+//! 任何远端写入，也不拉取。
+//!
+//! 「先捕获、再落地」这个顺序是配置流正确性的根：落地用 `affected_vs_doc`（文档现状 vs 镜像）
+//! 把文档对齐到镜像，没有被捕获进镜像的本机修改会被当成「文档偏离镜像」而被旧值盖回去。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
-use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::backends::{Backend, BackendFactory};
 use super::core::crypto::{self, DataKey, FileKind, RecoveryKey};
 use super::core::format::{
-    self, decode_segment, decode_snapshot, decode_sync_code, encode_segment, encode_snapshot,
-    encode_sync_code, file_path, is_valid_device_id, new_device_id, parse_file_name,
-    SyncCodePayload, SyncMeta, DEVICES_DIR, META_FILE,
+    self, decode_sync_code, encode_snapshot, encode_sync_code, file_path, is_valid_device_id,
+    new_device_id, parse_device_rel_path, RemoteFileKind, SyncCodePayload, SyncMeta, DEVICES_DIR,
+    META_FILE,
 };
-use super::core::path::{split_platform_prefix, PrefixKind};
-use super::core::{
-    affected_vs_doc, apply_to_doc, export_all, export_all_at, flatten_scoped, DeviceInfo, DiffCtx,
-    FormatError, Hlc, Op, OpKind, Path, Platform, Seg,
-};
-use super::docedit;
-use super::history::{change_records, source_label, ChangeCtx, HistoryRecord, HistoryStore};
-use super::join::{reconcile_connections, remap_connection_refs, HostKeyBundle, SftpBundle};
+use super::core::{DeviceInfo, Platform};
+use super::history::HistoryStore;
+use super::join::{HostKeyBundle, SftpBundle};
 use super::ledger::Ledger;
 use super::secrets::SyncSecretStore;
-use super::sources::{AdapterUpdate, GuardWarning, SourceAdapter};
+use super::sources::SourceAdapter;
 use super::storage::{StorageConfig, StorageError};
-use super::store::{Cursor, LedgerFiles};
-use super::types::{SyncCreateResult, SyncDevice, SyncState, SyncStatus};
+use super::store::{Cursor, LedgerFiles, StreamName};
+use super::streams::{
+    seal_stream_file, BackendStreamRemote, ConfigStreamDriver, StreamApplied, StreamDriver,
+    StreamDriverFactory, StreamFileKind, StreamProgress, StreamSnapshotLayout,
+};
+use super::types::{StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus};
 use crate::config::connections::ConnectionStore;
 use crate::config::keychain::SecretSlot;
 use crate::config::settings::AppSettings;
-use crate::data::{DataSourceId, JsonStore};
+use crate::data::{DataSourceId, JsonStore, SyncTier};
 use crate::error::AppError;
 use crate::ssh::known_hosts::KnownHostsStore;
 
-/// 一个增量段最多装多少条 op（超过的拆成多个段，免得单个文件大到传不动）。
-const MAX_OPS_PER_SEGMENT: usize = 4000;
 /// 本机增量段攒到这么多就压缩成快照。
 pub const COMPACT_AFTER_SEGS: u32 = 50;
 
@@ -59,6 +60,10 @@ pub const COMPACT_AFTER_SEGS: u32 = 50;
 pub trait SyncEvents: Send + Sync {
     fn status(&self, status: &SyncStatus);
     fn data_applied(&self, source: &str);
+    /// 带「哪些会话变了」的落地事件（对话流用）。
+    fn data_applied_ids(&self, source: &str, _ids: &[String]) {
+        self.data_applied(source);
+    }
 }
 
 /// 引擎的外部依赖。
@@ -80,6 +85,8 @@ pub struct SyncDeps {
     pub default_device_name: String,
     /// 启动加载时碰到损坏、被迫改用默认值的配置（需要从镜像恢复）。
     pub load_failures: Vec<DataSourceId>,
+    /// 二、三期的流驱动构造器（T2 / T6 注册）。T0 为空：没有驱动的流整条跳过。
+    pub stream_drivers: Vec<Arc<dyn StreamDriverFactory>>,
 }
 
 /// 命令层 / 界面读得到的共享视图（不用等引擎空闲）。
@@ -111,7 +118,7 @@ pub enum RoundKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ApplyMode {
+pub enum ApplyMode {
     /// 常规落地：锁内先捕获本机改动。
     Normal,
     /// 配置损坏恢复：不捕获（捕获到的只是「全变成默认值」），直接用镜像整份恢复。
@@ -129,19 +136,11 @@ pub enum JoinSpec {
     },
 }
 
+/// 一次拉取的结果。
 #[derive(Default)]
-struct PullReport {
-    needs_upgrade: bool,
-    soft_errors: Vec<String>,
-}
-
-enum PullError {
-    /// 网络 / 认证 / 权限：整轮失败，退避重试。
-    Hard(AppError),
-    /// 这台设备有本版本读不懂的新格式数据。
-    TooNew,
-    /// 这台设备的某个文件坏了（解不开 / 结构不对）：记下来，不耽误其它设备。
-    Soft(String),
+pub struct PullReport {
+    pub needs_upgrade: bool,
+    pub soft_errors: Vec<String>,
 }
 
 /// 给人看的错误文案（不带 `Config error:` 之类的英文前缀）。
@@ -156,8 +155,35 @@ pub fn plain_error(e: &AppError) -> String {
     }
 }
 
-fn storage_err(e: StorageError) -> AppError {
+pub(crate) fn storage_err(e: StorageError) -> AppError {
     AppError::from(e)
+}
+
+/// 一条流的中文名（错误文案 / 日志用）。
+pub fn stream_label(name: StreamName) -> &'static str {
+    match name {
+        StreamName::Config => "普通配置",
+        StreamName::Conv => "对话与记忆",
+        StreamName::Sec => "机密",
+    }
+}
+
+/// 一条流的中文名（`tier` 字段的字符串，同时是 `sync_set_tier` 的参数）。
+pub fn tier_key(tier: SyncTier) -> &'static str {
+    match tier {
+        SyncTier::Config => "config",
+        SyncTier::Conversation => "conversation",
+        SyncTier::Secret => "secret",
+        SyncTier::Local => "local",
+    }
+}
+
+fn remote_stream_of(name: StreamName) -> format::RemoteStream {
+    match name {
+        StreamName::Config => format::RemoteStream::Config,
+        StreamName::Conv => format::RemoteStream::Conv,
+        StreamName::Sec => format::RemoteStream::Sec,
+    }
 }
 
 pub struct SyncEngine {
@@ -174,6 +200,14 @@ pub struct SyncEngine {
     last_published: Option<SyncStatus>,
     /// 加入同步时连接去重产生的 id 改写表（本机 id → 云端 id）。
     join_remap: BTreeMap<String, String>,
+    /// 本轮各条流的错误（`SyncStatus.streams[].lastError`）。
+    stream_errors: BTreeMap<StreamName, String>,
+    /// 各条流的进度（首次加入时「已同步 N / 共 M 段对话」）。
+    stream_progress: BTreeMap<StreamName, StreamProgress>,
+    /// conv / sec 的驱动（每轮开始时按账本状态构造，结束时状态写回账本）。
+    drivers: BTreeMap<StreamName, Box<dyn StreamDriver>>,
+    /// 本轮捕获出来、还没上传的明文段（conv / sec 用；配置流走账本里的 outbox）。
+    pending_segments: BTreeMap<StreamName, Vec<Vec<u8>>>,
 }
 
 impl SyncEngine {
@@ -213,6 +247,10 @@ impl SyncEngine {
             syncing: false,
             last_published: None,
             join_remap: BTreeMap::new(),
+            stream_errors: BTreeMap::new(),
+            stream_progress: BTreeMap::new(),
+            drivers: BTreeMap::new(),
+            pending_segments: BTreeMap::new(),
         };
         engine.refresh_view();
         engine
@@ -260,17 +298,41 @@ impl SyncEngine {
         } else {
             SyncState::Idle
         };
+        let streams = StreamName::ALL
+            .iter()
+            .copied()
+            .map(|name| StreamStatus {
+                key: name.as_str().to_string(),
+                tier: tier_key(name.tier()).to_string(),
+                pending: self.stream_pending(name),
+                last_error: self.stream_errors.get(&name).cloned(),
+                progress: self.stream_progress.get(&name).cloned(),
+            })
+            .collect();
         SyncStatus {
             enabled: true,
             state,
             last_sync_at: l.st.last_sync_at.clone(),
             last_error: self.last_error.clone(),
-            pending_count: l.outbox.len() + held.iter().map(|h| h.count).sum::<usize>(),
+            // 配置流按 op 数、conv / sec 按待上传段数；再加扣下的删除条数。
+            pending_count: l.outbox.len()
+                + self.pending_segments.values().map(Vec::len).sum::<usize>()
+                + held.iter().map(|h| h.count).sum::<usize>(),
             device_id: Some(l.st.device_id.clone()),
             device_name: Some(l.st.device_name.clone()),
             storage: l.st.storage.clone(),
             held: if held.is_empty() { None } else { Some(held) },
+            tiers: l.st.tiers,
+            streams,
         }
+    }
+
+    /// 某条流有多少待上传内容（状态展示用）。
+    fn stream_pending(&self, name: StreamName) -> usize {
+        if name == StreamName::Config {
+            return self.ledger.outbox.len();
+        }
+        self.pending_segments.get(&name).map(Vec::len).unwrap_or(0)
     }
 
     /// 把状态 / 设备 / 存储配置同步给共享视图并（有变化时）通知前端。
@@ -305,6 +367,7 @@ impl SyncEngine {
                 .clone()
                 .unwrap_or_else(|| self.now_rfc3339()),
             is_self: true,
+            tiers: l.st.tiers,
         }];
         for (id, rec) in &l.st.devices {
             if *id == l.st.device_id {
@@ -321,6 +384,7 @@ impl SyncEngine {
                 app_version: rec.app_version.clone(),
                 last_seen_at: rec.last_seen_at.clone().unwrap_or_default(),
                 is_self: false,
+                tiers: rec.tiers,
             });
         }
         out
@@ -388,6 +452,11 @@ impl SyncEngine {
         Ok(dk)
     }
 
+    /// 转发到账本的连接 id 别名换算（唯一实现在 `PersistedState::resolve_connection_id`）。
+    pub fn resolve_connection_id(&self, id: &str) -> String {
+        self.ledger.st.resolve_connection_id(id)
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // 一轮同步
     // ═══════════════════════════════════════════════════════════════════
@@ -418,12 +487,37 @@ impl SyncEngine {
     }
 
     async fn round_inner(&mut self, kind: RoundKind) -> Result<(), AppError> {
-        // 1. 捕获本机改动
-        self.capture_all().await?;
-        self.flush()?;
-        self.publish();
+        // 每一轮重新算每条流的错误：上一轮的错误不该跟着下一轮。
+        self.stream_errors.clear();
+        self.pending_segments.clear();
+        self.build_drivers();
 
-        if kind == RoundKind::Local && self.ledger.outbox.is_empty() {
+        let enabled: Vec<StreamName> = StreamName::ALL
+            .iter()
+            .copied()
+            .filter(|n| self.ledger.st.stream_enabled(*n))
+            .collect();
+        // 这一轮里已经失败的流：后面的阶段直接跳过它（网络断了没必要再试三次），
+        // 但别的流照常走——「一条流失败不影响别的流」。
+        let mut failed: BTreeSet<StreamName> = BTreeSet::new();
+        let mut soft_errors: Vec<String> = Vec::new();
+        let mut needs_upgrade = false;
+
+        // 1. 捕获：每条开着的流各自捕获本机改动。
+        //    配置流恒为开；conv / sec 关着时**整条流跳过**——关着的流绝不能产生任何上传。
+        for name in &enabled {
+            if let Err(e) = self.capture_stream(*name).await {
+                self.note_stream_error(*name, &e);
+                failed.insert(*name);
+            }
+        }
+        self.ledger.flush(&self.files)?;
+        self.publish();
+        if !failed.is_empty() && kind == RoundKind::Local {
+            return Err(self.round_error(&enabled, &failed, &soft_errors));
+        }
+
+        if kind == RoundKind::Local && !self.has_pending_work() {
             return Ok(()); // 本机改动被扣下了 / 根本没有：不碰网络
         }
 
@@ -431,96 +525,322 @@ impl SyncEngine {
         let dk = self.data_key()?;
         self.set_syncing(true);
 
-        // 2. 上传
-        self.upload_outbox(&backend, &dk).await?;
+        // 2. 上传：每条开着的流把自己的待上传队列写成段。
+        for name in &enabled {
+            if failed.contains(name) {
+                continue;
+            }
+            if let Err(e) = self.upload_stream(*name, &backend, &dk).await {
+                self.note_stream_error(*name, &e);
+                failed.insert(*name);
+            }
+        }
         if kind == RoundKind::Local {
-            return Ok(());
+            return if failed.is_empty() {
+                Ok(())
+            } else {
+                Err(self.round_error(&enabled, &failed, &[]))
+            };
         }
 
-        // 3. 拉取
-        let report = self.pull(&backend, &dk).await?;
-        self.needs_upgrade = report.needs_upgrade;
+        // 3. 拉取：每条开着的流各自读对端文件、吸收进自己的镜像。
+        for name in &enabled {
+            if failed.contains(name) {
+                continue;
+            }
+            match self.pull_stream(*name, &backend, &dk).await {
+                Ok(report) => {
+                    needs_upgrade |= report.needs_upgrade;
+                    if !report.soft_errors.is_empty() {
+                        // 软错误（某个对端文件坏了 / 读不懂）只影响那台设备，不拖累别的流；
+                        // 但要记进这条流的 lastError，界面上才看得见。
+                        self.stream_errors
+                            .insert(*name, report.soft_errors.join("；"));
+                    }
+                    soft_errors.extend(
+                        report
+                            .soft_errors
+                            .into_iter()
+                            .map(|m| format!("{}：{}", stream_label(*name), m)),
+                    );
+                }
+                Err(e) => {
+                    self.note_stream_error(*name, &e);
+                    failed.insert(*name);
+                }
+            }
+        }
+        self.needs_upgrade = needs_upgrade;
 
-        // 4. 落地
-        let apply_errors = self.apply_pending().await;
-
-        // 5. 落地时锁内的再次捕获可能产生了新 op
-        self.upload_outbox(&backend, &dk).await?;
-
-        // 6. 压缩（失败不影响这一轮的结论）
-        if let Err(e) = self.maybe_compact(&backend, &dk).await {
-            log::warn!(
-                "同步：压缩本机增量段失败（下一轮再试）: {}",
-                plain_error(&e)
-            );
+        // 4. 落地：把已吸收的远端改动写进本机（配置流在自己的写者锁内先捕获再对齐）。
+        //
+        // 配置流的「某个源落地失败」是**软错误**：与一期一致，这一轮照样把锁内捕获到的新 op
+        // 传上去、照样压缩（否则失败的那个源会拖住其它源的新改动）。只有网络 / 存储层那样
+        // 连拉都拉不下来的错误才算这条流这一轮失败。
+        for name in &enabled {
+            if failed.contains(name) {
+                continue;
+            }
+            match self.land_stream(*name).await {
+                Ok(apply_errors) => {
+                    if !apply_errors.is_empty() {
+                        self.stream_errors.insert(*name, apply_errors.join("；"));
+                        soft_errors.extend(
+                            apply_errors
+                                .into_iter()
+                                .map(|m| format!("{}：{}", stream_label(*name), m)),
+                        );
+                    }
+                }
+                Err(e) => {
+                    self.note_stream_error(*name, &e);
+                    failed.insert(*name);
+                }
+            }
         }
 
-        let mut errors = report.soft_errors;
-        errors.extend(apply_errors);
-        if errors.is_empty() {
+        // 5. 落地时锁内的再次捕获可能产生了新 op：配置流在 `apply_pending` 的写者锁里已经
+        //    捕获进 outbox（直接上传即可）；conv / sec 的驱动没有「写者锁内捕获」这一步，
+        //    所以再捕获一次再上传。
+        for name in &enabled {
+            if failed.contains(name) || *name == StreamName::Config {
+                continue;
+            }
+            if let Err(e) = self.capture_stream(*name).await {
+                self.note_stream_error(*name, &e);
+                failed.insert(*name);
+                continue;
+            }
+            if let Err(e) = self.upload_stream(*name, &backend, &dk).await {
+                self.note_stream_error(*name, &e);
+                failed.insert(*name);
+            }
+        }
+        for name in &enabled {
+            if failed.contains(name) || *name != StreamName::Config {
+                continue;
+            }
+            if let Err(e) = self.upload_stream(*name, &backend, &dk).await {
+                self.note_stream_error(*name, &e);
+                failed.insert(*name);
+            }
+        }
+
+        // 6. 压缩（失败不影响这一轮的结论）。
+        for name in &enabled {
+            if failed.contains(name) {
+                continue;
+            }
+            if let Err(e) = self.compact_stream(*name, &backend, &dk).await {
+                log::warn!(
+                    "同步：压缩{}失败（下一轮再试）: {}",
+                    stream_label(*name),
+                    plain_error(&e)
+                );
+            }
+        }
+
+        if failed.is_empty() && soft_errors.is_empty() {
             Ok(())
         } else {
-            Err(AppError::Other(errors.join("；")))
+            Err(self.round_error(&enabled, &failed, &soft_errors))
         }
     }
 
-    /// 对每个源捕获一次本机改动。
-    async fn capture_all(&mut self) -> Result<(), AppError> {
-        let wall = self.now_ms();
-        let platform = self.deps.platform;
-        let adapters = self.deps.adapters.clone();
-        for adapter in &adapters {
-            let key = adapter.key();
-            if self.ledger.is_restoring(key) {
-                continue; // 等恢复落地，不能把「全变成默认值」推出去
+    /// 记一条流这一轮的错误（`SyncStatus.streams[].lastError` 与整轮错误都用它）。
+    fn note_stream_error(&mut self, name: StreamName, e: &AppError) {
+        self.stream_errors.insert(name, plain_error(e));
+    }
+
+    /// 整轮的错误文案。
+    ///
+    /// 只开着一条流时（= 一期的「只开配置档」）**原样返回那条流的错误**，不带「上传普通配置：」
+    /// 之类的前缀：一期的错误文案与测试都按这个形状钉着，别让多流的包装改变它。
+    fn round_error(
+        &self,
+        enabled: &[StreamName],
+        failed: &BTreeSet<StreamName>,
+        soft_errors: &[String],
+    ) -> AppError {
+        if enabled.len() == 1 && failed.len() <= 1 && soft_errors.is_empty() {
+            if let Some(text) = self.stream_errors.get(&enabled[0]) {
+                return AppError::Other(text.clone());
             }
-            let doc = adapter.read_json().await?;
-            self.ledger
-                .capture_into(key, adapter.rules(), platform, wall, &doc)?;
         }
-        // 每个源都至少捕获过一次（恢复中的源会被镜像整份覆盖，不需要再抑制）：升级抑制到此为止
-        self.ledger.suppress_pending.clear();
-        if self.ledger.st.last_app_version != self.deps.app_version {
-            self.ledger.st.last_app_version = self.deps.app_version.clone();
-            self.ledger.dirty.state = true;
+        let mut parts: Vec<String> = failed
+            .iter()
+            .filter_map(|n| {
+                self.stream_errors
+                    .get(n)
+                    .map(|t| format!("{}：{t}", stream_label(*n)))
+            })
+            .collect();
+        parts.extend(soft_errors.iter().cloned());
+        parts.sort();
+        AppError::Other(parts.join("；"))
+    }
+
+    /// 有没有待上传的东西（`RoundKind::Local` 据此决定要不要碰网络）。
+    fn has_pending_work(&self) -> bool {
+        !self.ledger.outbox.is_empty()
+            || self
+                .pending_segments
+                .values()
+                .any(|segments| !segments.is_empty())
+    }
+
+    /// 每轮开始时按账本里的 `StreamState` 构造 conv / sec 的驱动（没有工厂的流不构造）。
+    ///
+    /// 构造失败只记该流的错误、跳过它：一条流的驱动坏了不该让配置流也同步不了。
+    fn build_drivers(&mut self) {
+        self.drivers.clear();
+        for factory in self.deps.stream_drivers.clone() {
+            let name = factory.name();
+            if name == StreamName::Config {
+                continue; // 配置流用内建驱动，不接受外部替换
+            }
+            if !self.ledger.st.stream_enabled(name) {
+                continue; // 关着的流不构造驱动：连初始化错误都不该出现在状态里
+            }
+            let state = self.ledger.st.stream(name);
+            match factory.create(state) {
+                Ok(driver) => {
+                    self.drivers.insert(name, driver);
+                }
+                Err(e) => {
+                    self.stream_errors.insert(
+                        name,
+                        format!("初始化{}：{}", stream_label(name), plain_error(&e)),
+                    );
+                }
+            }
         }
+    }
+
+    // ── 每条流的阶段 ─────────────────────────────────────────────────────
+
+    fn config_driver(&mut self, dk: Option<DataKey>) -> ConfigStreamDriver<'_> {
+        ConfigStreamDriver::new(
+            &mut self.ledger,
+            &self.deps,
+            &self.view,
+            &mut self.join_remap,
+            self.files.clone(),
+            dk,
+        )
+    }
+
+    async fn capture_stream(&mut self, name: StreamName) -> Result<(), AppError> {
+        if name == StreamName::Config {
+            // 捕获不需要数据密钥：密钥链一时不可用也要先把本机改动记进账本。
+            let mut driver = self.config_driver(None);
+            driver.phase_capture().await?;
+            return Ok(());
+        }
+        let Some(driver) = self.drivers.get_mut(&name) else {
+            return Ok(()); // 还没有驱动（T2 / T6 之前）：不产生任何远端写入
+        };
+        let segments = driver.capture().await?;
+        self.pending_segments.insert(name, segments);
         Ok(())
     }
 
-    async fn upload_outbox(
+    /// 上传一条流的待上传内容。
+    ///
+    /// 配置流的队列在账本里（一期的 outbox）；conv / sec 的段是驱动在 `capture` 里给的明文，
+    /// 由引擎分配序号、封装、上传，最后 `ack_capture`。
+    async fn upload_stream(
         &mut self,
+        name: StreamName,
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
     ) -> Result<(), AppError> {
-        while !self.ledger.outbox.is_empty() {
-            let n = self.ledger.outbox.len().min(MAX_OPS_PER_SEGMENT);
-            let batch: Vec<Op> = self.ledger.outbox[..n].to_vec();
-            // 序号先预留并落盘：put 成功但随后记账失败时，重传用的是新序号，
-            // 读的一方不会因为「这个序号我读过了」漏掉重传里多出来的 op。序号允许有空洞。
-            self.ledger.st.seq += 1;
-            let seq = self.ledger.st.seq;
-            self.ledger.dirty.state = true;
-            self.flush()?;
-            let bytes = encode_segment(dk, &self.device_info(), seq, &batch)?;
-            let path = file_path(&self.ledger.st.device_id, FileKind::Segment, seq);
-            backend.put(&path, &bytes).await.map_err(storage_err)?;
-            self.ledger.outbox.drain(..n);
-            self.ledger.dirty.outbox = true;
-            self.ledger.st.segs_since_snapshot += 1;
-            self.ledger.dirty.state = true;
-            self.flush()?;
+        if name == StreamName::Config {
+            let mut driver = self.config_driver(Some(dk.clone()));
+            return driver.upload_outbox(backend).await;
         }
-        Ok(())
+        let segments = self.pending_segments.remove(&name).unwrap_or_default();
+        if segments.is_empty() {
+            return Ok(());
+        }
+        // 先把驱动从表里取出来，避免「持着 `&mut self.drivers` 又去调 `&mut self`」的借用冲突；
+        // 无论成败都放回去（它的状态还要写回账本）。
+        let Some(mut driver) = self.drivers.remove(&name) else {
+            return Ok(());
+        };
+        let outcome = self
+            .upload_segments_with(name, &mut driver, &segments, backend, dk)
+            .await;
+        self.drivers.insert(name, driver);
+        outcome
     }
 
-    // ── 拉取 ─────────────────────────────────────────────────────────────
-
-    async fn pull(
+    async fn upload_segments_with(
         &mut self,
+        name: StreamName,
+        driver: &mut Box<dyn StreamDriver>,
+        segments: &[Vec<u8>],
+        backend: &Arc<dyn Backend>,
+        dk: &DataKey,
+    ) -> Result<(), AppError> {
+        for plain in segments {
+            // **序号由引擎分配**（契约第 5 节）：账本是权威，驱动只负责把序号写进明文 JSON。
+            let mut st = self.ledger.st.stream(name);
+            st.seq += 1;
+            let seq = st.seq;
+            st.segs_since_snapshot += 1;
+            self.ledger.st.set_stream(name, st.clone());
+            driver.set_state(st);
+            // 序号先落盘再 put：put 成功但随后记账失败时，重传用新序号，读的一方不会漏掉内容。
+            self.ledger.dirty.state = true;
+            self.ledger.flush(&self.files)?;
+            let bytes = seal_stream_file(
+                dk,
+                name,
+                StreamFileKind::Segment,
+                &self.ledger.st.device_id,
+                seq,
+                None,
+                plain,
+            )?;
+            let path =
+                format::stream_segment_path(&self.ledger.st.device_id, remote_stream_of(name), seq);
+            backend.put(&path, &bytes).await.map_err(storage_err)?;
+        }
+        driver.ack_capture().await?;
+        self.ledger.flush(&self.files)
+    }
+
+    async fn pull_stream(
+        &mut self,
+        name: StreamName,
+        backend: &Arc<dyn Backend>,
+        dk: &DataKey,
+    ) -> Result<PullReport, AppError> {
+        if name == StreamName::Config {
+            let mut driver = self.config_driver(Some(dk.clone()));
+            let report = driver.pull(backend).await?;
+            return Ok(PullReport {
+                needs_upgrade: report.needs_upgrade,
+                soft_errors: report.soft_errors,
+            });
+        }
+        self.pull_generic_stream(name, backend, dk).await
+    }
+
+    /// conv / sec 的通用拉取：列 `devices/` → 每台对端设备 → 该流的目录 → 段按游标、
+    /// 快照（目录或单文件）按「比游标新」优先。驱动只接受明文，AAD / 解密封装由
+    /// [`BackendStreamRemote`] 做。
+    async fn pull_generic_stream(
+        &mut self,
+        name: StreamName,
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
     ) -> Result<PullReport, AppError> {
         let mut report = PullReport::default();
+        if !self.drivers.contains_key(&name) {
+            return Ok(report);
+        }
         let entries = backend.list(DEVICES_DIR).await.map_err(storage_err)?;
         let mut devices: Vec<String> = entries
             .into_iter()
@@ -530,413 +850,247 @@ impl SyncEngine {
             .map(|e| e.name)
             .collect();
         devices.sort();
+
         for device in devices {
-            match self.pull_device(backend, dk, &device).await {
-                Ok(()) => {}
-                Err(PullError::Hard(e)) => {
-                    // 已读到的部分先落盘（镜像先于游标），下一轮接着来
-                    let _ = self.flush();
-                    return Err(e);
+            let dir = name.remote_dir(&device);
+            let files = backend.list(&dir).await.map_err(storage_err)?;
+            let mut segs: Vec<u64> = Vec::new();
+            let mut snaps: Vec<u64> = Vec::new();
+            for f in files.iter().filter(|f| !f.is_dir) {
+                match parse_device_rel_path(&format!("{dir}/{}", f.name)) {
+                    Some(p) if p.kind == RemoteFileKind::Segment => segs.push(p.seq),
+                    Some(p) if p.kind == RemoteFileKind::Snapshot => snaps.push(p.seq),
+                    _ => {}
                 }
-                Err(PullError::TooNew) => report.needs_upgrade = true,
-                Err(PullError::Soft(msg)) => report.soft_errors.push(msg),
             }
+            // 分包快照是目录：`snap-<seq>/` 下放 index + part。
+            for f in files.iter().filter(|f| f.is_dir) {
+                if let Some(num) = f.name.strip_prefix("snap-") {
+                    if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
+                        if let Ok(seq) = num.parse::<u64>() {
+                            snaps.push(seq);
+                        }
+                    }
+                }
+            }
+            segs.sort_unstable();
+            snaps.sort_unstable();
+
+            let mut cursor = self
+                .ledger
+                .st
+                .stream(name)
+                .cursors
+                .get(&device)
+                .cloned()
+                .unwrap_or_default();
+
+            // 快照优先：比游标新的最新快照整份吸收，再把游标抬到它。
+            if let Some(&latest) = snaps.last() {
+                if latest > cursor.seg {
+                    let remote =
+                        BackendStreamRemote::new(backend.clone(), dk.clone(), device.clone(), name);
+                    let outcome = self
+                        .drivers
+                        .get_mut(&name)
+                        .expect("上面查过")
+                        .apply_snapshot(&remote, latest)
+                        .await;
+                    match outcome {
+                        Ok(applied) => {
+                            self.record_stream_applied(name, &applied);
+                            cursor = Cursor {
+                                snap: latest,
+                                seg: latest,
+                            };
+                            self.set_stream_cursor(name, &device, cursor.clone());
+                        }
+                        Err(e) => {
+                            let text = plain_error(&e);
+                            if text.contains("升级") {
+                                report.needs_upgrade = true;
+                            } else {
+                                report
+                                    .soft_errors
+                                    .push(format!("读取「{device}」的快照失败：{text}"));
+                            }
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            for seq in segs {
+                if seq <= cursor.seg {
+                    continue;
+                }
+                let path = format::stream_segment_path(&device, remote_stream_of(name), seq);
+                let Some(bytes) = backend.get(&path).await.map_err(storage_err)? else {
+                    break; // 列出来又读不到（对方正在写）：下一轮重新列
+                };
+                let remote =
+                    BackendStreamRemote::new(backend.clone(), dk.clone(), device.clone(), name);
+                let plain = match super::streams::StreamRemote::open(
+                    &remote,
+                    StreamFileKind::Segment,
+                    seq,
+                    None,
+                    &bytes,
+                ) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        if e.is_too_new() {
+                            report.needs_upgrade = true;
+                        } else {
+                            report
+                                .soft_errors
+                                .push(format!("读取「{device}」的同步数据失败：{e}"));
+                        }
+                        break;
+                    }
+                };
+                // 二、三期的段结构由各自的驱动解析，但「格式过新要提示升级」是统一的：
+                // 先看 format 再交给驱动，别让新版本的文件被当成损坏数据反复重读。
+                if let Err(e) = format::check_format(&plain) {
+                    if e.is_too_new() {
+                        report.needs_upgrade = true;
+                    } else {
+                        report
+                            .soft_errors
+                            .push(format!("读取「{device}」的同步数据失败：{e}"));
+                    }
+                    break;
+                }
+                let outcome = self
+                    .drivers
+                    .get_mut(&name)
+                    .expect("上面查过")
+                    .apply_segment(&plain)
+                    .await;
+                if let Err(e) = outcome {
+                    report.soft_errors.push(format!(
+                        "读取「{device}」的同步数据失败：{}",
+                        plain_error(&e)
+                    ));
+                    break;
+                }
+                cursor.seg = seq;
+                self.set_stream_cursor(name, &device, cursor.clone());
+            }
+            self.ledger.flush(&self.files)?;
         }
-        self.flush()?;
         Ok(report)
     }
 
-    fn classify(&self, device: &str, e: FormatError) -> PullError {
-        if e.is_too_new() {
-            return PullError::TooNew;
+    /// 把已吸收的远端改动落地。返回「软错误」清单（配置流里某个源落地失败但其它源照常）。
+    async fn land_stream(&mut self, name: StreamName) -> Result<Vec<String>, AppError> {
+        if name == StreamName::Config {
+            let dk = self.data_key()?;
+            let mut driver = self.config_driver(Some(dk));
+            return Ok(driver.apply_pending().await);
         }
-        let name = self
-            .ledger
-            .st
-            .devices
-            .get(device)
-            .map(|d| d.name.clone())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| "另一台设备".to_string());
-        PullError::Soft(format!("读取「{name}」的同步数据失败：{e}"))
-    }
-
-    async fn pull_device(
-        &mut self,
-        backend: &Arc<dyn Backend>,
-        dk: &DataKey,
-        device: &str,
-    ) -> Result<(), PullError> {
-        let files = backend
-            .list(&format::device_dir(device))
-            .await
-            .map_err(|e| PullError::Hard(storage_err(e)))?;
-        let mut snaps: Vec<u64> = Vec::new();
-        let mut segs: Vec<u64> = Vec::new();
-        for f in files.iter().filter(|f| !f.is_dir) {
-            match parse_file_name(&f.name) {
-                Some((FileKind::Snapshot, seq)) => snaps.push(seq),
-                Some((FileKind::Segment, seq)) => segs.push(seq),
-                None => {}
-            }
-        }
-        snaps.sort_unstable();
-        segs.sort_unstable();
-
-        let mut cursor = self.ledger.cursor(device);
-        let wall = self.now_ms();
-
-        // 有比游标新的快照：先读最新那个（整份镜像合并），再读其后的增量段
-        if let Some(&latest) = snaps.last() {
-            if latest > cursor.seg {
-                let path = file_path(device, FileKind::Snapshot, latest);
-                let Some(bytes) = backend
-                    .get(&path)
-                    .await
-                    .map_err(|e| PullError::Hard(storage_err(e)))?
-                else {
-                    return Ok(()); // 列出来又读不到（对方正在压缩）：下一轮重新列
-                };
-                let snap = decode_snapshot(dk, device, latest, &bytes)
-                    .map_err(|e| self.classify(device, e))?;
-                self.ledger.ingest_snapshot(&snap, wall, rfc3339_from_ms);
-                cursor = Cursor {
-                    snap: latest,
-                    seg: latest,
-                };
-                self.ledger.set_cursor(device, cursor.clone());
-            }
-        }
-
-        for seq in segs {
-            if seq <= cursor.seg {
-                continue;
-            }
-            let path = file_path(device, FileKind::Segment, seq);
-            let Some(bytes) = backend
-                .get(&path)
-                .await
-                .map_err(|e| PullError::Hard(storage_err(e)))?
-            else {
-                return Ok(());
-            };
-            let seg =
-                decode_segment(dk, device, seq, &bytes).map_err(|e| self.classify(device, e))?;
-            self.ledger.ingest_segment(&seg, wall, rfc3339_from_ms);
-            cursor.seg = seq;
-            self.ledger.set_cursor(device, cursor.clone());
-        }
-        Ok(())
-    }
-
-    // ── 落地 ─────────────────────────────────────────────────────────────
-
-    /// 对所有需要落地的源落地。返回各源的错误文案（落地失败不影响别的源）。
-    async fn apply_pending(&mut self) -> Vec<String> {
-        let mut errors = Vec::new();
-        let adapters = self.deps.adapters.clone();
-        for adapter in adapters {
-            let key = adapter.key();
-            if !self.ledger.needs_apply(key) {
-                continue;
-            }
-            let mode = if self.ledger.is_restoring(key) {
-                ApplyMode::Restore
-            } else {
-                ApplyMode::Normal
-            };
-            if let Err(e) = self.merge_into_doc(&adapter, mode).await {
-                log::warn!(
-                    "同步：{} 落地失败（下一轮重试）: {}",
-                    source_label(key),
-                    plain_error(&e)
-                );
-                errors.push(format!("{}：{}", source_label(key), plain_error(&e)));
-            }
-        }
-        errors
-    }
-
-    /// 在一个源的写者锁内：（常规模式）先捕获本机改动 → 把文档对齐到镜像 → 提交 → 基线 = 提交后的序列化。
-    async fn merge_into_doc(
-        &mut self,
-        adapter: &Arc<dyn SourceAdapter>,
-        mode: ApplyMode,
-    ) -> Result<bool, AppError> {
-        let key = adapter.key();
-        let rules = adapter.rules();
-        let platform = self.deps.platform;
-        let wall = self.now_ms();
-        let zero = Hlc::zero_for(self.ledger.device_id().to_string());
-        let remap = if mode == ApplyMode::Join {
-            self.join_remap.clone()
-        } else {
-            BTreeMap::new()
+        let Some(driver) = self.drivers.get_mut(&name) else {
+            return Ok(Vec::new());
         };
-
-        #[derive(Default)]
-        struct Scratch {
-            dedupe: Vec<(String, String)>,
-            warnings: Vec<GuardWarning>,
-            /// 加入同步时本机引用改写的落点（sync 路径 → 改写后的值）。落地之后要再确认一次。
-            ref_fixes: Vec<(Path, Value)>,
-        }
-        let mut scratch = Scratch::default();
-
-        let update: AdapterUpdate = {
-            let ledger = &mut self.ledger;
-            let scratch = &mut scratch;
-            let adapter_ref = adapter.clone();
-            adapter
-                .update(Box::new(move |current: &Value| {
-                    let mut doc = current.clone();
-                    match mode {
-                        ApplyMode::Normal => {
-                            // 防抖窗口里的本机改动：落地之前先捕获，否则会被镜像里的旧值盖回去
-                            ledger.capture_into(key, rules, platform, wall, current)?;
-                        }
-                        ApplyMode::Restore => {}
-                        ApplyMode::Join => {
-                            if key == "connections" {
-                                let visible = ledger
-                                    .mirrors
-                                    .get(key)
-                                    .map(|m| m.visible())
-                                    .unwrap_or_default();
-                                scratch.dedupe = reconcile_connections(&mut doc, &visible);
-                            }
-                            if !remap.is_empty() {
-                                remap_connection_refs(key, &mut doc, &remap);
-                                // 记下改写后的值：下面 ZERO 导出的本机数据在对上云端的同名字段时会输给
-                                // 云端（云端赢），落地后要把这些引用改回来，否则留下指向已删连接的悬空引用
-                                scratch.ref_fixes = ref_targets(key, &doc, rules, platform, ledger);
-                            }
-                            // 本机已有数据以 ZERO 并入镜像：云端在任何冲突上都赢，本机独有的保留，
-                            // 并且要上传（别的设备也该有这些）
-                            let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
-                            let ops = export_all_at(key, &doc, rules, platform, idmaps, &zero);
-                            if !ops.is_empty() {
-                                let mirror = ledger.mirrors.entry(key.to_string()).or_default();
-                                for op in &ops {
-                                    mirror.merge(op);
-                                }
-                                ledger.dirty.mirrors.insert(key.to_string());
-                                ledger.outbox.extend(ops);
-                                ledger.dirty.outbox = true;
-                            }
-                        }
-                    }
-
-                    let mirror = ledger.mirrors.get(key).cloned().unwrap_or_default();
-                    let mut affected = {
-                        let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
-                        affected_vs_doc(&doc, &mirror, rules, platform, idmaps)
-                    };
-                    ledger.dirty.state = true;
-
-                    // 扣下的大量删除：这些元素在镜像里还活着，但本机已经删了，别把它们写回来
-                    let held = ledger.held_paths(key);
-                    if !held.is_empty() {
-                        affected.retain(|p| !held.iter().any(|h| p.starts_with(h)));
-                    }
-                    // 来源特有的安全过滤（known_hosts 的指纹冲突）
-                    scratch.warnings =
-                        adapter_ref.guard_affected(&doc, &mirror.visible(), &mut affected);
-
-                    let mut new_doc = if affected.is_empty() {
-                        doc.clone()
-                    } else {
-                        apply_to_doc(&doc, &mirror, &affected, rules, platform)
-                    };
-                    // 加入同步：让改写过的引用在落地之后仍然成立。上面按 ZERO 导出的本机数据遇到
-                    // 「云端也有这个字段」会输给云端（云端赢），一条指向已被去重掉的连接的引用就被
-                    // 云端的旧值盖回去了（典型：云端的多机清单是空的）。悬空引用是错的，所以这里把
-                    // 它按当前时钟写回来——这是本机的修正，不是要让云端旧值赢。
-                    if mode == ApplyMode::Join && !scratch.ref_fixes.is_empty() {
-                        let mut ops = Vec::new();
-                        for (path, value) in &scratch.ref_fixes {
-                            let dpath = match split_platform_prefix(path, platform) {
-                                (PrefixKind::Other, _) => continue,
-                                (_, rest) => rest.to_vec(),
-                            };
-                            if docedit::get_leaf(&new_doc, &dpath) == Some(value) {
-                                continue;
-                            }
-                            docedit::set_leaf(&mut new_doc, &dpath, value.clone());
-                            let hlc = ledger.clock.now(wall);
-                            ops.push(Op {
-                                source: key.to_string(),
-                                path: path.clone(),
-                                kind: OpKind::Set(value.clone()),
-                                hlc,
-                            });
-                        }
-                        if !ops.is_empty() {
-                            let mirror = ledger.mirrors.entry(key.to_string()).or_default();
-                            for op in &ops {
-                                mirror.merge(op);
-                            }
-                            ledger.dirty.mirrors.insert(key.to_string());
-                            ledger.outbox.extend(ops);
-                            ledger.dirty.outbox = true;
-                        }
-                    }
-                    if new_doc == *current {
-                        Ok(None)
-                    } else {
-                        Ok(Some(new_doc))
-                    }
-                }))
-                .await?
-        };
-
-        let AdapterUpdate {
-            committed,
-            json,
-            before,
-        } = update;
-
-        // 提交成功（或确认无需改动）才推进基线与落地标记
-        self.ledger.set_baseline(key, json.clone());
-        self.ledger.set_applied(key, true);
-        self.ledger.set_needs_restore(key, false);
-        self.ledger.dirty.mirrors.insert(key.to_string());
-
-        let mut records: Vec<HistoryRecord> = Vec::new();
-        let at = self.now_rfc3339();
-        if committed {
-            let idmaps = self.ledger.st.idmaps.get(key).cloned().unwrap_or_default();
-            let mirror = self.ledger.mirrors.get(key).cloned().unwrap_or_default();
-            let ctx = ChangeCtx {
-                source: key,
-                rules,
-                platform,
-                idmaps: &idmaps,
-                mirror: &mirror,
-                devices: self.ledger.device_records(),
-                self_device_id: self.ledger.device_id(),
-                at: &at,
-            };
-            let changes = change_records(&ctx, &before, &json);
-            if mode == ApplyMode::Join {
-                if !changes.is_empty() {
-                    records.push(HistoryRecord::summary(
-                        key,
-                        &at,
-                        "云端",
-                        &format!(
-                            "加入同步：把云端的 {} 处{}合并到了本机",
-                            changes.len(),
-                            source_label(key)
-                        ),
-                    ));
-                }
-            } else {
-                records.extend(changes);
-            }
-        }
-        for w in &scratch.warnings {
-            records.push(HistoryRecord::warning(
-                key,
-                &at,
-                "云端",
-                &w.path,
-                &w.text,
-                &w.dedupe_key,
-            ));
-        }
-        if !records.is_empty() {
-            self.view.history.lock().push_many(records);
-        }
-
-        // 加入同步的连接去重：被丢掉的本机连接的密码 / 口令搬到云端那条名下。
-        // **必须在 `after_apply` 之前**：`ConnectionsPostApply` 会把从文档里消失的连接
-        // 在密钥链里的凭据一并删掉（同 `config_delete_connection`），搬晚了就什么都搬不着了。
-        if !scratch.dedupe.is_empty() {
-            for (local_id, cloud_id) in &scratch.dedupe {
-                self.migrate_connection_secrets(local_id, cloud_id);
-                self.join_remap.insert(local_id.clone(), cloud_id.clone());
-            }
-        }
-
-        if committed {
-            adapter.after_apply(&before, &json).await;
-            self.deps.events.data_applied(key);
-        }
-        Ok(committed)
+        let applied: StreamApplied = driver.land().await?;
+        let mut st = self.ledger.st.stream(name);
+        st.applied = true;
+        self.ledger.st.set_stream(name, st.clone());
+        driver.set_state(st);
+        self.ledger.dirty.state = true;
+        self.record_stream_applied(name, &applied);
+        Ok(Vec::new())
     }
 
-    /// 把本机连接 `from` 的密码 / 私钥口令 / 跳板机凭据搬到 `to` 名下（`to` 已经有的不覆盖），再清掉 `from`。
-    fn migrate_connection_secrets(&self, from: &str, to: &str) {
-        let secrets = &self.deps.secrets;
-        for (old, new) in SecretSlot::for_connection(from)
-            .into_iter()
-            .zip(SecretSlot::for_connection(to))
-        {
-            let moved = (|| -> Result<(), AppError> {
-                if let Some(value) = secrets.get(&old)?.map(Zeroizing::new) {
-                    if secrets.get(&new)?.is_none() {
-                        secrets.set(&new, &value)?;
-                    }
-                    secrets.delete(&old)?;
-                }
-                Ok(())
-            })();
-            if let Err(e) = moved {
-                log::warn!("同步：迁移重复连接的{}失败: {}", old.describe(), e);
-            }
-        }
-    }
-
-    // ── 压缩 ─────────────────────────────────────────────────────────────
-
-    async fn maybe_compact(
+    async fn compact_stream(
         &mut self,
+        name: StreamName,
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
     ) -> Result<(), AppError> {
-        if self.ledger.st.segs_since_snapshot < COMPACT_AFTER_SEGS || !self.ledger.outbox.is_empty()
-        {
+        if name == StreamName::Config {
+            let mut driver = self.config_driver(Some(dk.clone()));
+            return driver.maybe_compact(backend).await;
+        }
+        let Some(driver) = self.drivers.get_mut(&name) else {
+            return Ok(());
+        };
+        let st = self.ledger.st.stream(name);
+        if st.segs_since_snapshot < COMPACT_AFTER_SEGS {
             return Ok(());
         }
-        let seq = self.ledger.st.seq;
+        let Some(snapshot) = driver.make_snapshot().await? else {
+            return Ok(());
+        };
+        let seq = st.seq;
         let device = self.ledger.st.device_id.clone();
-        let (mirrors, idmaps) = self.ledger.snapshot_parts();
-        let bytes = encode_snapshot(dk, &self.device_info(), seq, &mirrors, &idmaps)?;
-        backend
-            .put(&file_path(&device, FileKind::Snapshot, seq), &bytes)
-            .await
-            .map_err(storage_err)?;
-        self.ledger.st.segs_since_snapshot = 0;
-        self.ledger.dirty.state = true;
-        self.flush()?;
-
-        // 清理：本机 ≤ seq 的增量段，以及更早的快照（只留最新两个）。别人的文件永远不动。
-        let own = backend
-            .list(&format::device_dir(&device))
-            .await
-            .map_err(storage_err)?;
-        let mut snaps: Vec<u64> = Vec::new();
-        let mut stale: Vec<String> = Vec::new();
-        for f in own.iter().filter(|f| !f.is_dir) {
-            match parse_file_name(&f.name) {
-                Some((FileKind::Segment, s)) if s <= seq => {
-                    stale.push(file_path(&device, FileKind::Segment, s))
+        match driver.snapshot_layout() {
+            StreamSnapshotLayout::SingleFile => {
+                for (name_in_dir, plain) in &snapshot.files {
+                    let path = format!("{}/{}", name.remote_dir(&device), name_in_dir);
+                    let bytes = seal_stream_file(
+                        dk,
+                        name,
+                        StreamFileKind::Snapshot,
+                        &device,
+                        seq,
+                        None,
+                        plain,
+                    )?;
+                    backend.put(&path, &bytes).await.map_err(storage_err)?;
                 }
-                Some((FileKind::Snapshot, s)) => snaps.push(s),
-                _ => {}
+            }
+            StreamSnapshotLayout::Directory => {
+                for (name_in_dir, plain) in &snapshot.files {
+                    let (kind, part) = if name_in_dir == "index.msync" {
+                        (StreamFileKind::SnapshotIndex, None)
+                    } else {
+                        let p = name_in_dir
+                            .trim_start_matches("part-")
+                            .trim_end_matches(".msync")
+                            .parse::<u32>()
+                            .unwrap_or(0);
+                        (StreamFileKind::SnapshotPart, Some(p))
+                    };
+                    let path = format!(
+                        "{}/snap-{:012}/{}",
+                        name.remote_dir(&device),
+                        seq,
+                        name_in_dir
+                    );
+                    let bytes = seal_stream_file(dk, name, kind, &device, seq, part, plain)?;
+                    backend.put(&path, &bytes).await.map_err(storage_err)?;
+                }
             }
         }
-        snaps.sort_unstable();
-        if snaps.len() > 2 {
-            for s in &snaps[..snaps.len() - 2] {
-                stale.push(file_path(&device, FileKind::Snapshot, *s));
-            }
+        let mut st = self.ledger.st.stream(name);
+        st.segs_since_snapshot = 0;
+        self.ledger.st.set_stream(name, st.clone());
+        driver.set_state(st);
+        self.ledger.dirty.state = true;
+        self.ledger.flush(&self.files)
+    }
+
+    /// 记录一次落地结果：进度进 `sync_status`，变化的会话 id 发给前端。
+    fn record_stream_applied(&mut self, name: StreamName, applied: &StreamApplied) {
+        if !applied.conversation_ids.is_empty() {
+            self.deps
+                .events
+                .data_applied_ids("conversations", &applied.conversation_ids);
         }
-        for path in stale {
-            backend.delete(&path).await.map_err(storage_err)?;
+        if let Some(p) = &applied.progress {
+            self.stream_progress.insert(name, p.clone());
+        } else if applied.changed {
+            // 这一轮落地完成且没有新进度：清掉「正在同步」的旧进度，别让界面停在 N/M。
+            self.stream_progress.remove(&name);
         }
-        Ok(())
+    }
+
+    fn set_stream_cursor(&mut self, name: StreamName, device: &str, cursor: Cursor) {
+        let mut st = self.ledger.st.stream(name);
+        st.cursors.insert(device.to_string(), cursor);
+        self.ledger.st.set_stream(name, st);
+        self.ledger.dirty.state = true;
     }
 
     /// 测试专用：跳过「捕获」，直接拉取并落地——模拟「防抖窗口里本机刚改了东西、还没被捕获，
@@ -945,11 +1099,89 @@ impl SyncEngine {
     pub(crate) async fn test_pull_and_apply_without_capture(&mut self) -> Vec<String> {
         let backend = self.ensure_backend().expect("backend");
         let dk = self.data_key().expect("dk");
-        self.pull(&backend, &dk).await.expect("pull");
-        let errors = self.apply_pending().await;
+        let report = {
+            let mut driver = self.config_driver(Some(dk.clone()));
+            driver.pull(&backend).await.expect("pull")
+        };
+        let errors = {
+            let mut driver = self.config_driver(Some(dk));
+            driver.apply_pending().await
+        };
+        self.needs_upgrade = report.needs_upgrade;
         self.flush().expect("flush");
         self.publish();
         errors
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 三档开关
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// 打开 / 关闭某一档。
+    ///
+    /// 打开：先把本机已有数据整份导出并上传（相当于「加入这条流」），再跑一轮完整同步追上别人的进度。
+    /// 关闭：**不删**远端文件、不删本机数据，只是之后不再上传 / 拉取（关着的流在捕获阶段就跳过）。
+    pub async fn enable_tier(&mut self, tier: &str, enabled: bool) -> Result<(), AppError> {
+        if !self.ledger.enabled() {
+            return Err(AppError::Other("还没有开启同步。".into()));
+        }
+        let tier = match tier {
+            "conversation" => SyncTier::Conversation,
+            "secret" => SyncTier::Secret,
+            // 配置档恒为开：一期行为，不允许关掉它（否则这套同步就没有任何意义）
+            "config" => {
+                return Err(AppError::Other(
+                    "「普通配置」这一档是同步的基础，不能关闭。".into(),
+                ))
+            }
+            other => return Err(AppError::Other(format!("未知的同步档位：{other}"))),
+        };
+        let was_on = self.ledger.st.tier_enabled(tier);
+        match tier {
+            SyncTier::Conversation => self.ledger.st.tiers.conversation = enabled,
+            SyncTier::Secret => self.ledger.st.tiers.secret = enabled,
+            _ => {}
+        }
+        self.ledger.dirty.state = true;
+        self.flush()?;
+        if !enabled || was_on == enabled {
+            // 关闭 / 本来就开着：不用补数据，下一轮自然只处理开着的流。
+            self.publish();
+            return Ok(());
+        }
+
+        // 第一次打开这一档：先把本机现有数据整份导出并上传（「加入该流」）。
+        let name = match tier {
+            SyncTier::Conversation => StreamName::Conv,
+            SyncTier::Secret => StreamName::Sec,
+            _ => unreachable!(),
+        };
+        // 这条流还没落地过别人的数据：拉到之后要整份落地。
+        let mut st = self.ledger.st.stream(name);
+        st.applied = false;
+        self.ledger.st.set_stream(name, st);
+        self.ledger.dirty.state = true;
+        self.flush()?;
+
+        self.build_drivers();
+        let backend = self.ensure_backend()?;
+        let dk = self.data_key()?;
+        // 本机已有数据整份导出并上传（相当于「加入这条流」）。没有驱动（T2 / T6 之前）
+        // 时什么都不做：开关照样记下来，等驱动接上后下一轮开始走这条流。
+        if let Some(driver) = self.drivers.get_mut(&name) {
+            let segments = driver.export_full().await?;
+            self.pending_segments.insert(name, segments);
+            self.upload_stream(name, &backend, &dk).await?;
+        }
+        self.flush()?;
+        self.publish();
+        // 再跑一轮完整同步：拉取别人的数据并落地。
+        self.run_round(RoundKind::Full).await
+    }
+
+    /// 某一档是否开着（命令层 / 界面用）。
+    pub fn tier_enabled(&self, tier: SyncTier) -> bool {
+        self.ledger.st.tier_enabled(tier)
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1066,7 +1298,7 @@ impl SyncEngine {
             let ledger = &mut self.ledger;
             let idmaps = ledger.st.idmaps.entry(key.to_string()).or_default();
             let ops = {
-                let mut ctx = DiffCtx {
+                let mut ctx = super::core::DiffCtx {
                     rules: adapter.rules(),
                     platform,
                     idmaps,
@@ -1074,7 +1306,7 @@ impl SyncEngine {
                     wall_ms: wall,
                     suppress_removes: false,
                 };
-                export_all(key, &doc, &mut ctx)
+                super::core::export_all(key, &doc, &mut ctx)
             };
             let mirror = ledger.mirrors.entry(key.to_string()).or_default();
             for op in &ops {
@@ -1089,7 +1321,14 @@ impl SyncEngine {
         self.view.history.lock().clear();
         self.ledger.st.seq = 1;
         let (mirrors, idmaps) = self.ledger.snapshot_parts();
-        let snap = encode_snapshot(dk, &self.device_info(), 1, &mirrors, &idmaps)?;
+        let snap = encode_snapshot(
+            dk,
+            &self.device_info(),
+            1,
+            &mirrors,
+            &idmaps,
+            self.ledger.st.tiers,
+        )?;
         let device = self.ledger.st.device_id.clone();
         backend
             .put(&file_path(&device, FileKind::Snapshot, 1), &snap)
@@ -1275,7 +1514,10 @@ impl SyncEngine {
         backend: &Arc<dyn Backend>,
         dk: &DataKey,
     ) -> Result<(), AppError> {
-        let report = self.pull(backend, dk).await?;
+        let report = {
+            let mut driver = self.config_driver(Some(dk.clone()));
+            driver.pull(backend).await?
+        };
         if report.needs_upgrade {
             return Err(AppError::Other(
                 "云端的数据来自更新版本的应用，请先把本机升级到最新版本再加入。".into(),
@@ -1291,8 +1533,19 @@ impl SyncEngine {
         ordered.extend(adapters.iter().filter(|a| a.key() == "connections"));
         ordered.extend(adapters.iter().filter(|a| a.key() != "connections"));
         for adapter in ordered {
-            self.merge_into_doc(adapter, ApplyMode::Join).await?;
+            let adapter = adapter.clone();
+            let mut driver = self.config_driver(Some(dk.clone()));
+            driver.merge_into_doc(&adapter, ApplyMode::Join).await?;
         }
+        // 加入同步时连接去重产生的别名要**落盘**：以后任何一次上传（对话、记忆、凭据）
+        // 和在其它设备上落地时都要按它换算。
+        let pairs: Vec<(String, String)> = self
+            .join_remap
+            .iter()
+            .map(|(a, b)| (a.clone(), b.clone()))
+            .collect();
+        super::join::record_connection_aliases(&mut self.ledger.st, &pairs);
+        self.ledger.dirty.state = true;
         Ok(())
     }
 
@@ -1415,6 +1668,10 @@ impl SyncEngine {
         self.last_error = None;
         self.syncing = false;
         self.join_remap.clear();
+        self.drivers.clear();
+        self.pending_segments.clear();
+        self.stream_errors.clear();
+        self.stream_progress.clear();
         self.view.history.lock().clear();
         self.publish();
         Ok(())
@@ -1460,33 +1717,6 @@ impl SyncEngine {
         // 放行 → 上传；撤销 → 把被删的元素从镜像写回本机。两种都跑一轮完整同步。
         self.run_round(RoundKind::Full).await
     }
-}
-
-/// 加入同步时记下「本机文档里指向连接 id 的引用」当前的值（sync 路径 → 值）。
-///
-/// 只取受 `remap_connection_refs` 影响的那几处（快捷指令的 `sessionKey`、设置里的多机清单），
-/// 用同一个扁平化把路径算出来，落地之后照这份清单把值写回去。
-fn ref_targets(
-    key: &str,
-    doc: &Value,
-    rules: &super::core::ScopeRules,
-    platform: Platform,
-    ledger: &Ledger,
-) -> Vec<(Path, Value)> {
-    let mut reg = ledger.st.idmaps.get(key).cloned().unwrap_or_default();
-    let flat = flatten_scoped(doc, rules, platform, &mut reg);
-    flat.into_iter()
-        .filter(|(path, _)| match key {
-            "quickCommands" => {
-                matches!(path.as_slice(), [Seg::Key(list), Seg::Id { .. }, Seg::Key(f)]
-                    if list == "commands" && f == "sessionKey")
-            }
-            "settings" => path
-                .last()
-                .is_some_and(|s| matches!(s, Seg::Key(k) if k == "multiHostConnectionIds")),
-            _ => false,
-        })
-        .collect()
 }
 
 #[derive(Default)]
@@ -1621,5 +1851,13 @@ mod tests {
 
         let jump = check_bundle_supported(&bundle("Password", true)).unwrap_err();
         assert!(plain_error(&jump).contains("跳板机"));
+    }
+
+    #[test]
+    fn tier_keys_match_the_frontend_contract() {
+        assert_eq!(tier_key(SyncTier::Config), "config");
+        assert_eq!(tier_key(SyncTier::Conversation), "conversation");
+        assert_eq!(tier_key(SyncTier::Secret), "secret");
+        assert_eq!(stream_label(StreamName::Conv), "对话与记忆");
     }
 }

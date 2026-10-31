@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::core::{Path, Seg};
+use super::store::PersistedState;
 use crate::config::connections::SavedConnection;
 use crate::ssh::known_hosts::KnownHostEntry;
 
@@ -180,6 +181,27 @@ pub fn remap_connection_refs(
     changed
 }
 
+/// 把一次加入产生的「本机 id → 云端 id」记进账本，供以后的上传 / 落地换算。
+///
+/// 链式合并：如果云端 id 自己也在表里（A→B、B→C），新加的 A→B 不用展平——`resolve_connection_id`
+/// 会跟到底。这里只负责去重（同一条别名不重复写）与置脏。
+pub fn record_connection_aliases(state: &mut PersistedState, pairs: &[(String, String)]) -> usize {
+    let mut changed = 0;
+    for (local, cloud) in pairs {
+        if local == cloud {
+            continue;
+        }
+        if state.connection_aliases.get(local) == Some(cloud) {
+            continue;
+        }
+        state
+            .connection_aliases
+            .insert(local.clone(), cloud.clone());
+        changed += 1;
+    }
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +224,37 @@ mod tests {
 
     fn doc(conns: Value) -> Value {
         json!({"connections": conns})
+    }
+
+    #[test]
+    fn aliases_are_recorded_and_survive_as_a_chain() {
+        let mut st = PersistedState::default();
+        assert_eq!(
+            record_connection_aliases(&mut st, &[("local-1".into(), "cloud-1".into())]),
+            1
+        );
+        assert_eq!(st.connection_aliases["local-1"], "cloud-1");
+        // 重复写入不算改动
+        assert_eq!(
+            record_connection_aliases(&mut st, &[("local-1".into(), "cloud-1".into())]),
+            0
+        );
+        // 同一个本机 id 改指别的云端 id（极少见）：以新的为准
+        assert_eq!(
+            record_connection_aliases(&mut st, &[("local-1".into(), "cloud-2".into())]),
+            1
+        );
+        assert_eq!(st.connection_aliases["local-1"], "cloud-2");
+        // 链：A→B、B→C ⇒ A→C
+        record_connection_aliases(&mut st, &[("A".into(), "B".into())]);
+        record_connection_aliases(&mut st, &[("B".into(), "C".into())]);
+        assert_eq!(st.resolve_connection_id("A"), "C");
+        // 自指不记
+        assert_eq!(
+            record_connection_aliases(&mut st, &[("x".into(), "x".into())]),
+            0
+        );
+        assert!(!st.connection_aliases.contains_key("x"));
     }
 
     #[test]

@@ -40,11 +40,13 @@ pub enum SyncTier {
     Local,
 }
 
-/// 登记项是单个文件还是一个目录。
+/// 登记项是单个文件、一个目录，还是「不落盘的虚拟源」。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SourceKind {
     File,
     Dir,
+    /// 不落盘：只是「哪份数据变了」的广播身份（例如密钥链）。**不能 `path()`**。
+    Virtual,
 }
 
 /// 登记项的相对路径以哪个基准目录为根。
@@ -125,6 +127,8 @@ data_sources! {
     UpdateCache,
     /// `sync/`：跨设备同步的本机状态（设备 id、游标、镜像、基线、待上传队列、同步记录）。
     SyncState,
+    /// 密钥链里的机密（**不落盘**）：只是「哪些 Key 变了」的广播身份，给机密同步用。
+    Secrets,
 }
 
 impl DataSourceId {
@@ -264,6 +268,15 @@ impl DataSourceId {
                 kind: Dir,
                 describe: "跨设备同步的本机状态（设备标识、读取进度、镜像、待上传队列、同步记录）",
             },
+            // 不落盘：密钥链里的每一份 Key / 密码。它没有磁盘位置，登记在这里只是为了让
+            // 「密钥链变了」这条广播有一个稳定的身份（机密流据此捕获改动）。
+            DataSourceId::Secrets => SourceSpec {
+                tier: Secret,
+                base: BaseDir::Config,
+                rel_path: "secrets",
+                kind: Virtual,
+                describe: "密钥链里的机密（不落盘，只是密钥链变更的广播身份）",
+            },
         }
     }
 
@@ -315,7 +328,20 @@ impl DataSourceId {
             | DataSourceId::Previews
             | DataSourceId::SysopenTemp
             | DataSourceId::UpdateCache
-            | DataSourceId::SyncState => None,
+            | DataSourceId::SyncState
+            | DataSourceId::Secrets => None,
+        }
+    }
+
+    /// 「这份数据变了」要不要触发一轮同步。
+    ///
+    /// 默认就是「它有同步源 key」（配置档）；机密不落盘、没有源 key，但密钥链的变化同样要
+    /// 触发同步，所以单独为真。
+    pub const fn sync_trigger(self) -> bool {
+        match self {
+            // 密钥链变了：机密流（三期）要捕获。它不是经由 JSON 写入口广播的，所以不靠 sync_key。
+            DataSourceId::Secrets => true,
+            other => other.sync_key().is_some(),
         }
     }
 
@@ -326,6 +352,12 @@ impl DataSourceId {
     /// `UpdateCache` 传 `app_cache_dir`。登记项也可以相对另一份登记项取（例如
     /// `local_command/` 里面再放一份 `JobLedger`，传 `LocalCommand` 的路径即可）。
     pub fn path(self, base_dir: &Path) -> PathBuf {
+        // Virtual 源没有磁盘位置：谁调了 `path()` 就是逻辑错误（调试版直接崩，发布版也别用返回值）。
+        debug_assert!(
+            self.kind() != SourceKind::Virtual,
+            "{:?} 是不落盘的虚拟数据源，没有磁盘路径",
+            self
+        );
         base_dir.join(self.rel_path())
     }
 }

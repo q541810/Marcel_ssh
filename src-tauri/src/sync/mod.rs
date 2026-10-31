@@ -33,6 +33,7 @@ pub mod secrets;
 pub mod sources;
 pub mod storage;
 pub mod store;
+pub mod streams;
 pub mod types;
 
 #[cfg(test)]
@@ -41,4 +42,8 @@ mod scope_guard;
 mod tests;
 
 pub use manager::{SyncManager, SyncWiring};
-pub use types::{SyncCreateResult, SyncDevice, SyncHistoryEntry, SyncState, SyncStatus};
+pub use streams::StreamProgress;
+pub use types::{
+    SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice, SyncHistoryEntry,
+    SyncState, SyncStatus, TierEstimate,
+};

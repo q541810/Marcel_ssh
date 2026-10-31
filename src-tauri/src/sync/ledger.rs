@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use super::core::format::{SegmentFile, SnapshotFile};
+use super::core::format::{SegmentFile, SnapshotFile, TierSwitches};
 use super::core::{
     diff, export_all, flatten_scoped, DiffCtx, Hlc, HlcClock, IdMapRegistry, Mirror, Op, OpKind,
     Path, Platform, ScopeRules, Seg,
@@ -339,6 +339,7 @@ impl Ledger {
         &mut self,
         device_id: &str,
         info: &super::core::DeviceInfo,
+        tiers: Option<TierSwitches>,
         newest_ms: Option<u64>,
         now_rfc3339: impl Fn(u64) -> String,
     ) {
@@ -346,6 +347,11 @@ impl Ledger {
         rec.name = info.name.clone();
         rec.platform = info.platform.clone();
         rec.app_version = info.app_version.clone();
+        // 文件头没写 tiers = 老版本，只有配置档。**不要**因为一个老文件就把已知的新信息抹掉：
+        // 只在新文件明确带了 tiers 时才覆盖（同一台设备升级后会补上）。
+        if let Some(t) = tiers {
+            rec.tiers = t;
+        }
         if let Some(ms) = newest_ms.filter(|ms| *ms > 0) {
             rec.last_seen_at = Some(now_rfc3339(ms));
         }
@@ -365,7 +371,7 @@ impl Ledger {
             .filter(|o| o.hlc.device == file.device.id)
             .map(|o| o.hlc.ms)
             .max();
-        self.touch_device(&file.device.id, &file.device, newest, rfc3339);
+        self.touch_device(&file.device.id, &file.device, file.tiers, newest, rfc3339);
 
         let mut changed = BTreeSet::new();
         for op in &file.ops {
@@ -402,7 +408,7 @@ impl Ledger {
             .filter(|h| h.device == file.device.id)
             .map(|h| h.ms)
             .max();
-        self.touch_device(&file.device.id, &file.device, newest, rfc3339);
+        self.touch_device(&file.device.id, &file.device, file.tiers, newest, rfc3339);
 
         let mut changed = BTreeSet::new();
         for (source, remote) in &file.mirrors {

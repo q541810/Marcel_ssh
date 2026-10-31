@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::storage::StorageConfig;
+use super::store::TierSwitches;
+use super::streams::StreamProgress;
 
 /// 同步状态机的对外形态。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +26,22 @@ pub struct HeldSummary {
     pub count: usize,
 }
 
+/// 一条流的状态（`sync_status` 的 `streams`）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamStatus {
+    /// `"config"` / `"conv"` / `"sec"`。
+    pub key: String,
+    /// 它属于哪一档：`"config"` / `"conversation"` / `"secret"`。
+    pub tier: String,
+    /// 待上传的段数（配置流按 op 数）。
+    pub pending: usize,
+    /// 这一轮这条流失败的原因（成功时清空）。
+    pub last_error: Option<String>,
+    /// 首次开启时的进度（「正在同步对话 N / M」）。
+    pub progress: Option<StreamProgress>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStatus {
@@ -36,6 +54,11 @@ pub struct SyncStatus {
     pub device_name: Option<String>,
     pub storage: Option<StorageConfig>,
     pub held: Option<Vec<HeldSummary>>,
+    /// 本机三档开关。老前端不认识这个字段也不影响（`#[serde(default)]`）。
+    #[serde(default)]
+    pub tiers: TierSwitches,
+    #[serde(default)]
+    pub streams: Vec<StreamStatus>,
 }
 
 impl SyncStatus {
@@ -51,6 +74,8 @@ impl SyncStatus {
             device_name: None,
             storage: None,
             held: None,
+            tiers: TierSwitches::default(),
+            streams: Vec::new(),
         }
     }
 }
@@ -65,6 +90,9 @@ pub struct SyncDevice {
     pub app_version: String,
     pub last_seen_at: String,
     pub is_self: bool,
+    /// 对方开了哪几档（从它的文件头读；文件头没有 = 只有配置档）。
+    #[serde(default)]
+    pub tiers: TierSwitches,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,9 +143,38 @@ impl Drop for SyncCreateResult {
 }
 
 /// `sync-data-applied` 事件载荷。
+///
+/// `source` 一期取值 `settings` / `connections` / `quickCommands` / `skills` / `mcpServers` /
+/// `knownHosts`，二期新增 `conversations` / `memory`，三期新增 `secrets`。
 #[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncDataApplied {
     pub source: String,
+    /// 对话流落地后变化了的会话 id（其它 source 为空）。前端据此刷新「当前打开的对话」。
+    #[serde(default)]
+    pub conversation_ids: Vec<String>,
+}
+
+/// 某一档的规模估算（`sync_tier_estimate`）。**只有数量与名称，绝无值。**
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TierEstimate {
+    pub tier: String,
+    /// 对话与记忆：会话数、图片数、大致字节数。
+    pub conversations: usize,
+    pub images: usize,
+    pub total_bytes: u64,
+    /// 机密：按类别汇总。
+    pub secret_groups: Vec<SecretGroupEstimate>,
+}
+
+/// 一类机密的规模（例如「模型渠道」「服务器密码」）。只给名称与数量。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretGroupEstimate {
+    pub label: String,
+    pub count: usize,
+    pub names: Vec<String>,
 }
 
 #[cfg(test)]
@@ -143,6 +200,8 @@ mod tests {
                 source: "connections".into(),
                 count: 6,
             }]),
+            tiers: TierSwitches::default(),
+            streams: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&status).unwrap(),
@@ -156,6 +215,8 @@ mod tests {
                 "deviceName": "我的电脑",
                 "storage": {"kind": "sftp", "connectionId": "c1", "root": "marcel-sync"},
                 "held": [{"source": "connections", "count": 6}],
+                "tiers": {"config": true, "conversation": false, "secret": false},
+                "streams": [],
             })
         );
         for (state, text) in [
@@ -197,6 +258,7 @@ mod tests {
             app_version: "1.12.0".into(),
             last_seen_at: "t".into(),
             is_self: true,
+            tiers: TierSwitches::default(),
         };
         let v = serde_json::to_value(&dev).unwrap();
         assert_eq!(v["isSelf"], json!(true));

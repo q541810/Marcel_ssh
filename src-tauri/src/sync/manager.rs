@@ -35,7 +35,10 @@ use super::secrets::{KeychainSecrets, SyncSecretStore};
 use super::sources::{build_adapters, SourceStores};
 use super::storage::StorageConfig;
 use super::store::LedgerFiles;
-use super::types::{SyncCreateResult, SyncDataApplied, SyncDevice, SyncHistoryEntry, SyncStatus};
+use super::types::{
+    SecretGroupEstimate, SyncCreateResult, SyncDataApplied, SyncDevice, SyncHistoryEntry,
+    SyncStatus, TierEstimate,
+};
 use crate::config::keychain::SecretSlot;
 use crate::data::{DataChange, DataChangeBus, DataSourceId};
 use crate::error::AppError;
@@ -216,6 +219,11 @@ enum Cmd {
         accept: bool,
         reply: Reply<()>,
     },
+    SetTier {
+        tier: String,
+        enabled: bool,
+        reply: Reply<()>,
+    },
     Disable {
         wipe_remote: bool,
         reply: Reply<()>,
@@ -248,12 +256,17 @@ impl SyncEvents for TauriEvents {
     }
 
     fn data_applied(&self, source: &str) {
+        self.data_applied_ids(source, &[]);
+    }
+
+    fn data_applied_ids(&self, source: &str, ids: &[String]) {
         use tauri::Emitter;
         if let Some(app) = self.app.read().as_ref() {
             let _ = app.emit(
                 "sync-data-applied",
                 SyncDataApplied {
                     source: source.to_string(),
+                    conversation_ids: ids.to_vec(),
                 },
             );
         }
@@ -312,6 +325,7 @@ impl SyncManager {
             platform: Platform::current(),
             default_device_name: default_device_name(),
             load_failures: wiring.load_failures,
+            stream_drivers: Vec::new(),
         });
         Self::with_deps(deps, wiring.data_changes, Some(events))
     }
@@ -522,6 +536,42 @@ impl SyncManager {
             .await
     }
 
+    /// 打开 / 关闭某一档（`"conversation"` / `"secret"`）。
+    pub async fn set_tier(&self, tier: String, enabled: bool) -> Result<(), AppError> {
+        self.request(|reply| Cmd::SetTier {
+            tier,
+            enabled,
+            reply,
+        })
+        .await
+    }
+
+    /// 某一档的规模估算。**只有数量与名称，绝无值。**
+    ///
+    /// T0 只给出结构（对话数与图片数先按 0、机密分组为空）：真正的统计要等 T2 / T6
+    /// 把对话库与密钥链枚举接进来。前端在此之前显示「暂不可用」而不是瞎猜一个数字。
+    pub fn tier_estimate(&self, tier: String) -> Result<TierEstimate, AppError> {
+        if !self.status().enabled {
+            return Err(AppError::Other("还没有开启同步。".into()));
+        }
+        if tier == "config" {
+            return Ok(TierEstimate {
+                tier,
+                ..Default::default()
+            });
+        }
+        if tier != "conversation" && tier != "secret" {
+            return Err(AppError::Other(format!("未知的同步档位：{tier}")));
+        }
+        Ok(TierEstimate {
+            tier,
+            conversations: 0,
+            images: 0,
+            total_bytes: 0,
+            secret_groups: Vec::<SecretGroupEstimate>::new(),
+        })
+    }
+
     pub async fn disable(&self, wipe_remote: bool) -> Result<(), AppError> {
         self.request(|reply| Cmd::Disable { wipe_remote, reply })
             .await
@@ -675,7 +725,7 @@ async fn actor_loop(
             change = changes.recv(), if changes_open => {
                 match change {
                     Ok(c) => {
-                        if c.source.sync_key().is_some() && engine.enabled() {
+                        if c.source.sync_trigger() && engine.enabled() {
                             sched.on_local_change(Instant::now());
                         }
                     }
@@ -746,6 +796,19 @@ async fn handle_cmd(engine: &mut SyncEngine, sched: &mut Scheduler, cmd: Cmd) {
         Cmd::ConfirmHeld { accept, reply } => {
             let result = engine.confirm_held(accept).await;
             sched.after_round(RoundKind::Full, result.is_ok(), Instant::now());
+            let _ = reply.send(result);
+        }
+        Cmd::SetTier {
+            tier,
+            enabled,
+            reply,
+        } => {
+            let result = engine.enable_tier(&tier, enabled).await;
+            // 打开某一档会顺带跑一轮完整同步：按「刚跑完一轮」记时（成功重排周期、失败退避）。
+            // 关闭不跑同步，不必动调度器。
+            if enabled {
+                sched.after_round(RoundKind::Full, result.is_ok(), Instant::now());
+            }
             let _ = reply.send(result);
         }
         Cmd::Disable { wipe_remote, reply } => {

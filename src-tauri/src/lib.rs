@@ -1283,6 +1283,8 @@ pub fn run() {
             commands::sync::sync_list_history,
             commands::sync::sync_undo,
             commands::sync::sync_confirm_held,
+            commands::sync::sync_set_tier,
+            commands::sync::sync_tier_estimate,
             commands::sync::sync_disable,
         ])
         .build(tauri::generate_context!())

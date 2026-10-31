@@ -159,6 +159,7 @@ impl Dev {
             platform: self.platform,
             default_device_name: format!("设备{}", self.name),
             load_failures: failures,
+            stream_drivers: Vec::new(),
         })
     }
 
@@ -308,6 +309,7 @@ fn placeholder_engine() -> SyncEngine {
         platform: Platform::Desktop,
         default_device_name: "x".into(),
         load_failures: Vec::new(),
+        stream_drivers: Vec::new(),
     });
     let view = Arc::new(SharedView::new(HistoryStore::empty(
         dir.path().join("h.json"),
@@ -936,7 +938,7 @@ fn write_foreign_segment(
     });
     let bytes = crypto::seal(
         &dk,
-        FileKind::Segment,
+        FileKind::Segment.as_str(),
         device,
         seq,
         &serde_json::to_vec(&plain).unwrap(),
@@ -1596,5 +1598,218 @@ fn every_adapter_covers_a_distinct_registered_source() {
     let _ = (
         <AppSettings as JsonPersistable>::SOURCE,
         DataSourceId::Settings,
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 二期 / 三期公共底座（T0）
+// ═══════════════════════════════════════════════════════════════════════
+
+/// 老版本客户端列到 `devices/<id>/` 下多了 `conv/`、`sec/`、`blob/` 子目录时：
+/// 它们只是目录项，`parse_file_name` 对目录名返回 `None`，`pull_device` 只处理 `!is_dir`，
+/// **不报错、不推进游标、也不影响配置流的同步**。
+#[tokio::test(flavor = "multi_thread")]
+async fn old_clients_quietly_skip_stream_subdirectories() {
+    let (mut a, mut b, cloud) = paired_and_synced().await;
+    let device_a = a.status().device_id.clone().unwrap();
+    // 假装 A 还写过 conv / sec / blob 的文件（子目录于是「存在」）
+    cloud.insert(
+        &format::stream_segment_path(&device_a, format::RemoteStream::Conv, 1),
+        b"not an envelope",
+    );
+    cloud.insert(
+        &format::stream_segment_path(&device_a, format::RemoteStream::Sec, 1),
+        b"not an envelope",
+    );
+    cloud.insert(&format::blob_path(&device_a, &"ab".repeat(32)), b"blob");
+
+    // 子目录名本身不是文件名
+    for dir in ["conv", "sec", "blob"] {
+        assert_eq!(format::parse_file_name(dir), None, "{dir}");
+    }
+    // 设备目录里能列出这三个目录项
+    let entries = cloud.list(&format::device_dir(&device_a)).await.unwrap();
+    let dirs: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.is_dir)
+        .map(|e| e.name.as_str())
+        .collect();
+    for d in ["conv", "sec", "blob"] {
+        assert!(dirs.contains(&d), "列不出子目录 {d}: {dirs:?}");
+    }
+
+    // 老客户端（= 只开配置档的新版本）拉取不报错，配置照常同步
+    b.sync().await;
+    assert_eq!(b.status().state, SyncState::Idle, "子目录不该让同步失败");
+    a.edit_conn("c1", |c| c.name = "子目录后改的".into()).await;
+    a.sync().await;
+    b.sync().await;
+    assert_eq!(b.conn("c1").await.unwrap().name, "子目录后改的");
+    // 只开了配置档：本机从来不会去写 conv / sec / blob 的文件
+    let own_b = b.status().device_id.clone().unwrap();
+    let b_prefix = format!("{}/", format::device_dir(&own_b));
+    let b_files: Vec<String> = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.starts_with(&b_prefix))
+        .collect();
+    for p in b_files {
+        assert!(
+            !p.contains("/conv/") && !p.contains("/sec/") && !p.contains("/blob/"),
+            "只开配置档时不该写子目录: {p}"
+        );
+    }
+}
+
+/// 只开配置档的两台设备：远端只出现 `devices/<id>/seg-*` / `snap-*`，没有 conv / sec / blob。
+#[tokio::test(flavor = "multi_thread")]
+async fn config_only_devices_write_only_phase_one_files() {
+    let (mut a, mut b, cloud) = paired_and_synced().await;
+    a.edit_conn("c1", |c| c.name = "改一下".into()).await;
+    a.sync().await;
+    b.sync().await;
+    b.edit_conn("c2", |c| c.name = "B 也改".into()).await;
+    b.sync().await;
+    a.sync().await;
+
+    let mut saw_seg = false;
+    for p in cloud.paths() {
+        assert!(
+            p == META_FILE || p.starts_with(&format!("{DEVICES_DIR}/")),
+            "{p}"
+        );
+        if p == META_FILE {
+            continue;
+        }
+        let rel = p.strip_prefix(&format!("{DEVICES_DIR}/")).unwrap();
+        let (_device, rest) = rel.split_once('/').unwrap();
+        assert!(
+            rest.starts_with("seg-") || rest.starts_with("snap-"),
+            "只开配置档时远端只能有配置流文件: {p}"
+        );
+        saw_seg |= rest.starts_with("seg-");
+    }
+    assert!(saw_seg, "至少写过增量段");
+    assert_eq!(
+        a.status().tiers,
+        crate::sync::store::TierSwitches::default()
+    );
+    let statuses = a.events.statuses.lock().clone();
+    let last = statuses.last().expect("至少发过状态");
+    assert!(!last.tiers.conversation);
+    assert!(!last.tiers.secret);
+    assert!(
+        last.streams.iter().any(|s| s.key == "config"),
+        "状态里要带每条流: {:?}",
+        last.streams
+    );
+}
+
+/// 设备列表显示对方开了哪几档（从文件头读）。
+#[tokio::test(flavor = "multi_thread")]
+async fn device_list_reports_the_tiers_written_in_the_file_headers() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    a.sync().await;
+    b.sync().await;
+    let devices_b = b.view.devices.read().clone();
+    let other = devices_b.iter().find(|d| !d.is_self).expect("对方设备");
+    assert_eq!(other.tiers, crate::sync::store::TierSwitches::default());
+
+    // A 打开对话档之后，它写的段里就带上了 tiers；B 读到后设备列表跟上
+    a.engine.enable_tier("conversation", true).await.unwrap();
+    a.edit_conn("c1", |c| c.name = "开了对话档之后".into())
+        .await;
+    a.sync().await;
+    b.sync().await;
+    let devices_b = b.view.devices.read().clone();
+    let other = devices_b.iter().find(|d| !d.is_self).expect("对方设备");
+    assert!(other.tiers.conversation, "对方开了对话档: {other:?}");
+    assert!(!other.tiers.secret);
+    // 自己那份反映本机开关
+    assert!(a.status().tiers.conversation);
+}
+
+/// 打开 / 关闭某一档：关着时绝不写远端；关闭不删远端、不删本机数据。
+#[tokio::test(flavor = "multi_thread")]
+async fn tiers_can_be_switched_and_a_closed_tier_never_touches_the_network() {
+    let (mut a, _b, cloud) = pair().await;
+    a.add_conn("c1", "生产服务器", "1.1.1.1", "root").await;
+    a.create().await;
+    a.sync().await;
+
+    // 未知档位 / 关配置档都拒绝
+    assert!(a.engine.enable_tier("nope", true).await.is_err());
+    assert!(a.engine.enable_tier("config", false).await.is_err());
+
+    // 对话档：开 —— 没有驱动（T2 之前）时什么都不写，但开关状态与 applied 标记要对
+    a.engine.enable_tier("conversation", true).await.unwrap();
+    assert!(a.status().tiers.conversation);
+    assert!(a.engine.tier_enabled(crate::data::SyncTier::Conversation));
+    let before = cloud.paths();
+    a.engine.run_round(RoundKind::Full).await.unwrap();
+    assert_eq!(cloud.paths(), before, "没有驱动时不该产生任何远端写入");
+
+    // 关 —— 不删远端、不删本机数据
+    a.engine.enable_tier("conversation", false).await.unwrap();
+    assert!(!a.status().tiers.conversation);
+    assert_eq!(cloud.paths(), before);
+    assert_eq!(a.conn_ids().await.len(), 1);
+
+    // 关着的时候本机改动照常走配置流
+    a.edit_conn("c1", |c| c.name = "关着对话档也能同步配置".into())
+        .await;
+    a.sync().await;
+    assert!(cloud.paths().iter().any(|p| p.contains("/seg-")));
+}
+
+/// 某一档的规模估算只有结构（T0 阶段数量按 0、机密分组为空），但形状必须与前端契约一致。
+#[tokio::test(flavor = "multi_thread")]
+async fn tier_estimates_have_the_contract_shape() {
+    let (mut a, _b, _cloud) = pair().await;
+    let mgr = manager_over(&mut a);
+    assert!(
+        mgr.tier_estimate("conversation".into()).is_err(),
+        "没开同步"
+    );
+
+    a.create().await;
+    let mgr = manager_over(&mut a);
+    for tier in ["conversation", "secret"] {
+        let e = mgr.tier_estimate(tier.into()).unwrap();
+        assert_eq!(e.tier, tier);
+        assert_eq!(e.conversations, 0);
+        assert_eq!(e.images, 0);
+        assert_eq!(e.total_bytes, 0);
+        assert!(e.secret_groups.is_empty());
+        let v = serde_json::to_value(&e).unwrap();
+        assert!(v.get("secretGroups").is_some() && v.get("totalBytes").is_some());
+    }
+    assert!(mgr.tier_estimate("nope".into()).is_err());
+}
+
+/// 连接别名换算：加入同步时被去重掉的本机连接，其 id 在账本里能换算到云端 id，
+/// 并且落盘（重启后还在）。
+#[tokio::test(flavor = "multi_thread")]
+async fn connection_aliases_are_persisted_and_resolvable() {
+    let (mut b, _a, _cloud) = pair().await;
+    // 手工把一条别名写进账本（加入流程产生的别名由 join 单元测试覆盖）
+    let mut st = b.engine.ledger.st.clone();
+    st.connection_aliases
+        .insert("local-1".into(), "cloud-1".into());
+    st.connection_aliases
+        .insert("cloud-1".into(), "cloud-2".into());
+    b.engine.ledger.st = st;
+    b.engine.ledger.dirty.state = true;
+    b.engine
+        .ledger
+        .flush(&LedgerFiles::new(b.dir.path()))
+        .unwrap();
+
+    assert_eq!(b.engine.resolve_connection_id("local-1"), "cloud-2");
+    b.rebuild_engine("1.12.0", Vec::new());
+    assert_eq!(
+        b.engine.resolve_connection_id("local-1"),
+        "cloud-2",
+        "别名要落盘"
     );
 }

@@ -28,9 +28,25 @@ fn registry_entries_are_unique_and_described() {
 }
 
 /// 私钥密文用本机主密钥加密，换设备解不开——绝不能被当成可同步配置。
+/// （三期 T7 会把它改成 Secret 档，同步的是「用 SK 重新封装的私钥」，不是这份本机密文。）
 #[test]
 fn key_store_is_local_only() {
     assert_eq!(DataSourceId::KeyStore.tier(), SyncTier::Local);
+}
+
+/// 虚拟源没有磁盘位置，也不会被当成配置档的同步源。
+#[test]
+fn virtual_sources_have_no_path_and_no_sync_key() {
+    assert_eq!(DataSourceId::Secrets.kind(), SourceKind::Virtual);
+    assert_eq!(DataSourceId::Secrets.tier(), SyncTier::Secret);
+    assert_eq!(DataSourceId::Secrets.sync_key(), None);
+    assert!(DataSourceId::Secrets.sync_trigger(), "密钥链变了要触发同步");
+    assert!(!DataSourceId::SyncState.sync_trigger());
+    for id in DataSourceId::ALL {
+        if id.kind() == SourceKind::Virtual {
+            assert!(id.sync_key().is_none(), "{id:?} 虚拟源不该有同步源 key");
+        }
+    }
 }
 
 /// 把每一项的相对路径与分档钉成快照。
@@ -41,8 +57,8 @@ fn key_store_is_local_only() {
 #[test]
 fn registry_snapshot_pins_paths_and_tiers() {
     use DataSourceId::*;
-    use SourceKind::{Dir, File};
-    use SyncTier::{Config, Conversation, Local};
+    use SourceKind::{Dir, File, Virtual};
+    use SyncTier::{Config, Conversation, Local, Secret};
     let table: &[(DataSourceId, &str, SourceKind, SyncTier, BaseDir)] = &[
         (Settings, "settings.json", File, Config, BaseDir::Config),
         (
@@ -92,6 +108,7 @@ fn registry_snapshot_pins_paths_and_tiers() {
         (SysopenTemp, "marcel-sysopen", Dir, Local, BaseDir::AppData),
         (UpdateCache, "update", Dir, Local, BaseDir::AppCache),
         (SyncState, "sync", Dir, Local, BaseDir::Config),
+        (Secrets, "secrets", Virtual, Secret, BaseDir::Config),
     ];
     assert_eq!(
         table.len(),

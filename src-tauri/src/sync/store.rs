@@ -22,11 +22,80 @@ use serde_json::Value;
 use super::core::{Hlc, IdMapRegistry, Mirror, Op};
 use super::storage::StorageConfig;
 use crate::config::persist::atomic_write;
-use crate::data::DataSourceId;
+use crate::data::{DataSourceId, SyncTier};
 use crate::error::AppError;
+
+/// 三档开关（每台设备自己的）。定义在 `core/format`（远端文件头要写它），这里再导出一次，
+/// 让 `sync::store::TierSwitches` 这个契约里的名字照样可用。
+pub use super::core::format::TierSwitches;
 
 /// 本机账本格式版本（`state.json` 的 `format`）。
 pub const STATE_FORMAT: u32 = 1;
+
+/// 同步的流：配置（一期）、对话与记忆（二期）、机密（三期）。
+///
+/// 放在 `store` 而不是 `streams`，是因为**账本按流存状态**（`StreamState` / 游标），
+/// `store` 必须认识它；`streams`（驱动）反过来依赖 `store`，方向才是干净的。
+/// `sync::streams` 会把它再导出一次，契约里写的 `sync::streams::StreamName` 依然可用。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StreamName {
+    Config,
+    Conv,
+    Sec,
+}
+
+impl StreamName {
+    /// 全部流（固定顺序：配置 → 对话 → 机密）。
+    pub const ALL: &'static [StreamName] = &[StreamName::Config, StreamName::Conv, StreamName::Sec];
+
+    /// 写进 `state.json` / 状态事件的短名，**跨版本稳定**。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StreamName::Config => "config",
+            StreamName::Conv => "conv",
+            StreamName::Sec => "sec",
+        }
+    }
+
+    /// 它属于哪个「档」（档是用户开关的单位）。
+    pub fn tier(self) -> SyncTier {
+        match self {
+            StreamName::Config => SyncTier::Config,
+            StreamName::Conv => SyncTier::Conversation,
+            StreamName::Sec => SyncTier::Secret,
+        }
+    }
+
+    /// 远端目录名的那一层（配置流没有子目录）。
+    pub fn dir_suffix(self) -> Option<&'static str> {
+        match self {
+            StreamName::Config => None,
+            StreamName::Conv => Some("conv"),
+            StreamName::Sec => Some("sec"),
+        }
+    }
+
+    /// `devices/<device>` 或 `devices/<device>/conv` / `…/sec`。
+    pub fn remote_dir(self, device: &str) -> String {
+        match self.dir_suffix() {
+            Some(suffix) => format!("{}/{}", super::core::format::device_dir(device), suffix),
+            None => super::core::format::device_dir(device),
+        }
+    }
+}
+
+/// 一条流自己的进度。配置流沿用 [`PersistedState`] 顶层的 `seq` / `cursors` /
+/// `segs_since_snapshot`（一期不动）；conv / sec 存在 `streams` 里。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StreamState {
+    pub seq: u64,
+    pub cursors: BTreeMap<String, Cursor>,
+    pub segs_since_snapshot: u32,
+    /// 这条流的镜像是否已经落地过（首次开启该档时为 false，落地一次后置 true）。
+    pub applied: bool,
+}
 
 /// 同步源 key 能不能安全拼进文件名：1–64 个 `[A-Za-z0-9_-]`。
 pub fn valid_source_key(key: &str) -> bool {
@@ -57,6 +126,8 @@ pub struct DeviceRecord {
     pub app_version: String,
     /// 该设备最近一次被我们读到的改动的时间（RFC3339）。
     pub last_seen_at: Option<String>,
+    /// 对方文件头里写的「开了哪几档」。老版本的文件没有这个字段 = 只有配置档。
+    pub tiers: TierSwitches,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -85,6 +156,12 @@ pub struct PersistedState {
     pub segs_since_snapshot: u32,
     /// 我们为同步目录加进「受保护路径」的绝对路径（SFTP 存储）。
     pub protected_path: Option<String>,
+    /// 三档开关。配置档恒为开（一期行为），读的时候忽略 `config: false`。
+    pub tiers: TierSwitches,
+    /// conv / sec 两条流自己的进度。配置流不在这里（见 `StreamState` 的文档）。
+    pub streams: BTreeMap<String, StreamState>,
+    /// 一期加入同步时连接去重的「旧 id → 云端 id」，二期三期上传前 / 落地后都要过一遍。
+    pub connection_aliases: BTreeMap<String, String>,
 }
 
 impl Default for PersistedState {
@@ -106,8 +183,88 @@ impl Default for PersistedState {
             last_sync_at: None,
             segs_since_snapshot: 0,
             protected_path: None,
+            tiers: TierSwitches::default(),
+            streams: BTreeMap::new(),
+            connection_aliases: BTreeMap::new(),
         }
     }
+}
+
+impl PersistedState {
+    /// 取一条流的进度。配置流是顶层字段的**等值视图**（一期账本照旧存在顶层）。
+    pub fn stream(&self, name: StreamName) -> StreamState {
+        match name {
+            StreamName::Config => StreamState {
+                seq: self.seq,
+                cursors: self.cursors.clone(),
+                segs_since_snapshot: self.segs_since_snapshot,
+                applied: true,
+            },
+            StreamName::Conv | StreamName::Sec => {
+                self.streams.get(name.as_str()).cloned().unwrap_or_default()
+            }
+        }
+    }
+
+    /// 写回一条流的进度。配置流写回顶层字段。
+    pub fn set_stream(&mut self, name: StreamName, s: StreamState) {
+        match name {
+            StreamName::Config => {
+                self.seq = s.seq;
+                self.cursors = s.cursors;
+                self.segs_since_snapshot = s.segs_since_snapshot;
+            }
+            StreamName::Conv | StreamName::Sec => {
+                self.streams.insert(name.as_str().to_string(), s);
+            }
+        }
+    }
+
+    /// 这一档开着没有。**配置档恒为开**（一期行为）：老账本里没有 `tiers` 字段时也一样。
+    pub fn tier_enabled(&self, tier: SyncTier) -> bool {
+        match tier {
+            SyncTier::Config => true,
+            SyncTier::Conversation => self.tiers.conversation,
+            SyncTier::Secret => self.tiers.secret,
+            // Local 档不是「同步档」，永远不同步
+            SyncTier::Local => false,
+        }
+    }
+
+    /// 某条流开着没有（= 它所属的档开着）。
+    pub fn stream_enabled(&self, name: StreamName) -> bool {
+        self.tier_enabled(name.tier())
+    }
+
+    /// 连接 id 别名换算：一期加入同步时被去重掉的本机 id → 云端那条的 id。
+    ///
+    /// 别名可能链式（A→B、B→C）：跟到底，最多 [`ALIAS_MAX_HOPS`] 跳（防环）。
+    /// 不在表里 = 它自己。
+    pub fn resolve_connection_id(&self, id: &str) -> String {
+        resolve_alias(&self.connection_aliases, id)
+    }
+
+    /// 记忆的 `scope_key` 换算（契约第 4 节）。只有主机作用域的 key 是连接 id；
+    /// 全局作用域是空串、分组作用域是分组名——它们不在别名表里，所以原样返回。
+    /// 万一某个分组名恰好等于一个旧连接 id（几乎不可能），会按别名换算：这是刻意接受的
+    /// 保守偏置——宁可把一条记忆挂到改名后的同一台机器上，也不要留下指向已删连接的悬空 key。
+    pub fn resolve_scope_key(&self, key: &str) -> String {
+        self.resolve_connection_id(key)
+    }
+}
+
+/// 别名最多跟多少跳（防 A→B→A 这类环把调用方卡死）。
+pub const ALIAS_MAX_HOPS: usize = 8;
+
+fn resolve_alias(aliases: &BTreeMap<String, String>, id: &str) -> String {
+    let mut cur = id.to_string();
+    for _ in 0..ALIAS_MAX_HOPS {
+        match aliases.get(&cur) {
+            Some(next) if next != &cur => cur = next.clone(),
+            _ => break,
+        }
+    }
+    cur
 }
 
 /// 磁盘上整套账本读出来的样子。
@@ -267,6 +424,7 @@ pub struct Dirty {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::SyncTier;
     use crate::sync::core::{Op, OpKind, Seg};
     use serde_json::json;
 
@@ -371,5 +529,163 @@ mod tests {
         assert_eq!(s.format, STATE_FORMAT);
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("deviceId").is_some() && v.get("appliedMirror").is_some());
+    }
+
+    /// 老 state.json（一期写的，没有 tiers / streams / connectionAliases）能读；
+    /// 读出来再写回，一期字段逐字保留，新字段以默认值出现。
+    #[test]
+    fn phase_one_state_json_reads_and_writes_back_without_losing_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = LedgerFiles::new(tmp.path());
+        let old = r#"{
+            "format":1,
+            "deviceId":"dev-a",
+            "deviceName":"旧电脑",
+            "enabled":true,
+            "storage":{"kind":"webDav","url":"https://dav.example.com/dav/","username":"u","root":"marcel-sync"},
+            "seq":17,
+            "hlc":{"ms":1760000000000,"counter":3,"device":"dev-a"},
+            "cursors":{"dev-b":{"snap":5,"seg":9}},
+            "lastAppVersion":"1.12.0",
+            "idmaps":{"connections":[]},
+            "appliedMirror":{"settings":true},
+            "needsRestore":{},
+            "devices":{"dev-b":{"name":"手机","platform":"android","appVersion":"1.12.0","lastSeenAt":"2026-10-01T00:00:00Z"}},
+            "lastSyncAt":"2026-10-01T00:00:00Z",
+            "segsSinceSnapshot":4,
+            "protectedPath":null
+        }"#;
+        std::fs::create_dir_all(files.dir()).unwrap();
+        std::fs::write(files.dir().join("state.json"), old).unwrap();
+
+        let back = files.load();
+        let st = &back.state;
+        assert_eq!(st.device_id, "dev-a");
+        assert_eq!(st.seq, 17);
+        assert_eq!(st.cursors["dev-b"], Cursor { snap: 5, seg: 9 });
+        assert_eq!(st.last_sync_at.as_deref(), Some("2026-10-01T00:00:00Z"));
+        assert_eq!(st.segs_since_snapshot, 4);
+        assert_eq!(
+            st.devices["dev-b"].tiers,
+            TierSwitches::default(),
+            "老文件头 = 只有配置档"
+        );
+        // 新字段以默认值出现
+        assert_eq!(st.tiers, TierSwitches::default());
+        assert!(st.tiers.config);
+        assert!(st.streams.is_empty());
+        assert!(st.connection_aliases.is_empty());
+        assert!(st.tier_enabled(SyncTier::Config));
+        assert!(!st.tier_enabled(SyncTier::Conversation));
+        assert!(!st.tier_enabled(SyncTier::Secret));
+        // 就算老账本里写着 config: false，也按「配置档恒为开」处理
+        let mut forced = st.clone();
+        forced.tiers.config = false;
+        assert!(forced.tier_enabled(SyncTier::Config));
+
+        // 写回：一期字段一个不少（逐项比对值），新字段也在
+        files.save_state(st).unwrap();
+        let round: Value =
+            serde_json::from_str(&std::fs::read_to_string(files.dir().join("state.json")).unwrap())
+                .unwrap();
+        for key in [
+            "format",
+            "deviceId",
+            "deviceName",
+            "enabled",
+            "storage",
+            "seq",
+            "hlc",
+            "cursors",
+            "lastAppVersion",
+            "idmaps",
+            "appliedMirror",
+            "needsRestore",
+            "devices",
+            "lastSyncAt",
+            "segsSinceSnapshot",
+            "protectedPath",
+        ] {
+            assert!(round.get(key).is_some(), "写回后丢了 {key}");
+        }
+        assert_eq!(round["seq"], json!(17));
+        assert_eq!(round["cursors"]["dev-b"]["snap"], json!(5));
+        assert_eq!(
+            round["tiers"],
+            json!({"config": true, "conversation": false, "secret": false})
+        );
+        assert_eq!(round["streams"], json!({}));
+        assert_eq!(round["connectionAliases"], json!({}));
+    }
+
+    #[test]
+    fn stream_view_equals_the_top_level_fields_for_config() {
+        let mut st = PersistedState {
+            seq: 9,
+            segs_since_snapshot: 3,
+            ..Default::default()
+        };
+        st.cursors.insert("d".into(), Cursor { snap: 1, seg: 2 });
+        let view = st.stream(StreamName::Config);
+        assert_eq!(view.seq, 9);
+        assert_eq!(view.segs_since_snapshot, 3);
+        assert_eq!(view.cursors["d"], Cursor { snap: 1, seg: 2 });
+        assert!(view.applied);
+
+        // 写回顶层
+        let mut st2 = PersistedState::default();
+        st2.set_stream(StreamName::Config, view);
+        assert_eq!(st2.seq, 9);
+        assert_eq!(st2.segs_since_snapshot, 3);
+
+        // conv / sec 存在 streams 里
+        let mut st3 = PersistedState::default();
+        st3.set_stream(
+            StreamName::Conv,
+            StreamState {
+                seq: 4,
+                segs_since_snapshot: 2,
+                applied: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(st3.streams["conv"].seq, 4);
+        assert_eq!(st3.stream(StreamName::Conv).seq, 4);
+        assert_eq!(st3.stream(StreamName::Sec), StreamState::default());
+        assert_eq!(st3.seq, 0, "配置流的顶层字段不受影响");
+        // 序列化键名
+        let v = serde_json::to_value(&st3).unwrap();
+        assert_eq!(v["streams"]["conv"]["segsSinceSnapshot"], json!(2));
+        assert_eq!(v["streams"]["conv"]["applied"], json!(true));
+    }
+
+    #[test]
+    fn connection_aliases_resolve_chains_without_looping() {
+        let mut st = PersistedState::default();
+        assert_eq!(st.resolve_connection_id("a"), "a", "不在表里 = 它自己");
+        st.connection_aliases.insert("a".into(), "b".into());
+        st.connection_aliases.insert("b".into(), "c".into());
+        assert_eq!(st.resolve_connection_id("a"), "c", "链式跟到底");
+        assert_eq!(st.resolve_connection_id("b"), "c");
+        assert_eq!(st.resolve_connection_id("c"), "c");
+        // 自环与两节点环都不能卡死（最多 8 跳）
+        st.connection_aliases.insert("x".into(), "x".into());
+        assert_eq!(st.resolve_connection_id("x"), "x");
+        st.connection_aliases.insert("p".into(), "q".into());
+        st.connection_aliases.insert("q".into(), "p".into());
+        let got = st.resolve_connection_id("p");
+        assert!(got == "p" || got == "q", "环里停下即可，不能死循环: {got}");
+
+        // 超过 8 跳的长链只跟 8 跳（防环的代价，正常数据不会有这么长的链）
+        for i in 0..12 {
+            st.connection_aliases
+                .insert(format!("n{i}"), format!("n{}", i + 1));
+        }
+        assert_eq!(st.resolve_connection_id("n0"), "n8");
+
+        // 记忆 scope_key：命中别名就换算，不命中就是它自己
+        assert_eq!(st.resolve_scope_key("a"), "c");
+        assert_eq!(st.resolve_scope_key("group-prod"), "group-prod");
+        assert_eq!(st.resolve_scope_key(""), "");
     }
 }

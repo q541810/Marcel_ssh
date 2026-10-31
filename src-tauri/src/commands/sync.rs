@@ -9,6 +9,7 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::sync::storage::StorageConfig;
+use crate::sync::types::TierEstimate;
 use crate::sync::{SyncCreateResult, SyncDevice, SyncHistoryEntry, SyncStatus};
 use crate::AppState;
 
@@ -102,6 +103,29 @@ pub async fn sync_undo(state: State<'_, AppState>, entry_id: String) -> Result<(
 #[tauri::command]
 pub async fn sync_confirm_held(state: State<'_, AppState>, accept: bool) -> Result<(), AppError> {
     state.sync.confirm_held(accept).await
+}
+
+/// 打开 / 关闭某一档（`"conversation"` / `"secret"`）。配置档恒为开，不能关。
+///
+/// 打开时先把本机已有数据整份导出并上传（「加入这条流」），再追上别人的进度；
+/// 关闭时**不删**远端文件、不删本机数据，只是之后不再上传 / 拉取。
+#[tauri::command]
+pub async fn sync_set_tier(
+    state: State<'_, AppState>,
+    tier: String,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.sync.set_tier(tier, enabled).await
+}
+
+/// 某一档的规模估算（给「打开前先告诉用户大约要传多少」用）。
+/// **只有数量与名称，绝不返回值本身。**
+#[tauri::command]
+pub async fn sync_tier_estimate(
+    state: State<'_, AppState>,
+    tier: String,
+) -> Result<TierEstimate, AppError> {
+    state.sync.tier_estimate(tier)
 }
 
 /// 停止同步。本机配置数据不动；`wipe_remote` 同时删掉云端本应用的同步文件。
