@@ -332,7 +332,18 @@ impl SyncEngine {
         if name == StreamName::Config {
             return self.ledger.outbox.len();
         }
-        self.pending_segments.get(&name).map(Vec::len).unwrap_or(0)
+        // 本轮已经捕获出来、还没上传的段优先；没有的话问驱动要磁盘上的待上传量
+        // （conv / sec 的真实队列在库的 changelog 与基线里，不在内存里）。
+        let in_memory = self.pending_segments.get(&name).map(Vec::len).unwrap_or(0);
+        if in_memory > 0 {
+            return in_memory;
+        }
+        self.deps
+            .stream_drivers
+            .iter()
+            .find(|f| f.name() == name)
+            .map(|f| f.pending())
+            .unwrap_or(0)
     }
 
     /// 把状态 / 设备 / 存储配置同步给共享视图并（有变化时）通知前端。
@@ -703,7 +714,9 @@ impl SyncEngine {
                 continue; // 关着的流不构造驱动：连初始化错误都不该出现在状态里
             }
             let state = self.ledger.st.stream(name);
-            match factory.create(state) {
+            // 捕获阶段拿不到 DK（密钥链可能一时不可用），落地 / 压缩阶段才需要它。
+            // 驱动的原则是「没有 DK 也能捕获」，所以这里先给 `None`，需要时再 `with_data_key`。
+            match factory.create(state, self.dk.clone()) {
                 Ok(driver) => {
                     self.drivers.insert(name, driver);
                 }

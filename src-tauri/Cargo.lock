@@ -3566,6 +3566,7 @@ dependencies = [
  "futures",
  "handlebars",
  "hkdf 0.12.4",
+ "hmac 0.12.1",
  "html2md",
  "jni 0.21.1",
  "keyring",

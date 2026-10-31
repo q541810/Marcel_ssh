@@ -132,6 +132,20 @@ impl Dev {
     }
 
     fn deps(&self, version: &str, failures: Vec<DataSourceId>) -> Arc<SyncDeps> {
+        self.deps_with(version, failures, false)
+    }
+
+    /// 带机密流驱动的依赖（三期集成测试用）。
+    fn deps_with_secrets(&self, version: &str, failures: Vec<DataSourceId>) -> Arc<SyncDeps> {
+        self.deps_with(version, failures, true)
+    }
+
+    fn deps_with(
+        &self,
+        version: &str,
+        failures: Vec<DataSourceId>,
+        with_secrets_driver: bool,
+    ) -> Arc<SyncDeps> {
         let stores = SourceStores {
             settings: self.settings.clone(),
             connections: self.connections.clone(),
@@ -159,8 +173,57 @@ impl Dev {
             platform: self.platform,
             default_device_name: format!("设备{}", self.name),
             load_failures: failures,
-            stream_drivers: Vec::new(),
+            stream_drivers: if with_secrets_driver {
+                vec![self.secret_factory()]
+            } else {
+                Vec::new()
+            },
         })
+    }
+
+    /// 机密流工厂：catalog 从本机 store 现取，设备 id 用测试设备的 id。
+    fn secret_factory(&self) -> Arc<dyn crate::sync::streams::StreamDriverFactory> {
+        let connections = self.connections.clone();
+        let settings = self.settings.clone();
+        let mcp = self.mcp.clone();
+        let device = self.engine.ledger.st.device_id.clone();
+        Arc::new(crate::sync::streams::sec::SecretStreamFactory::new(
+            crate::sync::streams::sec::SecretFactoryDeps {
+                config_dir: self.dir.path().to_path_buf(),
+                secrets: self.secrets.clone(),
+                catalog: Arc::new(move || crate::config::keychain::SecretSlotCatalog {
+                    connection_ids: futures::executor::block_on(async {
+                        connections
+                            .read()
+                            .await
+                            .connections
+                            .iter()
+                            .map(|c| c.id.clone())
+                            .collect()
+                    }),
+                    channel_ids: futures::executor::block_on(async {
+                        settings
+                            .read()
+                            .await
+                            .llm_registry
+                            .channels
+                            .iter()
+                            .map(|c| c.id.clone())
+                            .collect()
+                    }),
+                    mcp_ids: futures::executor::block_on(async {
+                        mcp.read()
+                            .await
+                            .servers
+                            .iter()
+                            .map(|s| s.id.clone())
+                            .collect()
+                    }),
+                }),
+                device: Arc::new(move || device.clone()),
+                pending: Arc::new(|| 0),
+            },
+        ))
     }
 
     /// 「重启应用」：同一个配置目录上重新构造引擎（账本从磁盘读回来）。
@@ -1811,5 +1874,135 @@ async fn connection_aliases_are_persisted_and_resolvable() {
         b.engine.resolve_connection_id("local-1"),
         "cloud-2",
         "别名要落盘"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 三期：机密流
+// ═══════════════════════════════════════════════════════════════════════
+
+/// 把同步引擎换成「带机密流驱动」的那套（测试里用来打开机密档）。
+fn rebuild_with_secrets(dev: &mut Dev) {
+    let files = LedgerFiles::new(dev.dir.path());
+    dev.view = Arc::new(SharedView::new(HistoryStore::load(files.history_file())));
+    dev.engine = SyncEngine::new(
+        dev.deps_with_secrets("1.12.0", Vec::new()),
+        dev.view.clone(),
+    );
+}
+
+const A_SECRET: &str = "sk-very-secret-value-123";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secrets_sync_between_two_devices_and_land_in_the_keychain() {
+    let (mut a, mut b, _cloud) = pair().await;
+    rebuild_with_secrets(&mut a);
+    rebuild_with_secrets(&mut b);
+    // 两边各有一条连接（槽位目录里要有它，否则 `from_account` 反查不到）
+    a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
+    let (_rk, code) = a.create().await;
+    b.join_code(&code).await.unwrap();
+    a.sync().await;
+
+    // 用固定槽位（两台设备都「认识」它）。带参数的槽位（渠道 / 连接）要先在对方的
+    // 配置里存在才认——那是 `from_account` 的 catalog 决定的，单测里另有覆盖。
+    // A 打开机密档并写一个 Key
+    a.engine.enable_tier("secret", true).await.unwrap();
+    a.secrets
+        .set(&SecretSlot::WebSearchApiKey, A_SECRET)
+        .unwrap();
+    a.sync().await;
+
+    // B 打开机密档并同步
+    b.engine.enable_tier("secret", true).await.unwrap();
+    b.sync().await;
+    assert_eq!(
+        b.secrets
+            .get(&SecretSlot::WebSearchApiKey)
+            .unwrap()
+            .as_deref(),
+        Some(A_SECRET),
+        "B 应该拿到 A 的 Key"
+    );
+
+    // A 删掉 → B 跟着删
+    a.secrets.delete(&SecretSlot::WebSearchApiKey).unwrap();
+    a.sync().await;
+    b.sync().await;
+    assert!(
+        b.secrets
+            .get(&SecretSlot::WebSearchApiKey)
+            .unwrap()
+            .is_none(),
+        "B 应该跟着删"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secrets_never_land_in_plaintext_on_disk() {
+    let (mut a, _b, _cloud) = pair().await;
+    rebuild_with_secrets(&mut a);
+    a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
+    a.create().await;
+    a.engine.enable_tier("secret", true).await.unwrap();
+    a.secrets
+        .set(&SecretSlot::WebSearchApiKey, A_SECRET)
+        .unwrap();
+    a.sync().await;
+
+    // 扫描整个配置目录（含 sync/ 下的账本、镜像、基线）
+    fn scan(dir: &std::path::Path, needle: &[u8]) -> Vec<String> {
+        let mut hits = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                if bytes.windows(needle.len()).any(|w| w == needle) {
+                    hits.push(path.display().to_string());
+                }
+            }
+        }
+        hits
+    }
+    let hits = scan(a.dir.path(), A_SECRET.as_bytes());
+    assert!(
+        hits.is_empty(),
+        "磁盘上出现了明文机密：{hits:?}（镜像必须用 DK 封装、基线只存 HMAC）"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn closing_the_secret_tier_stops_uploading() {
+    let (mut a, _b, cloud) = pair().await;
+    rebuild_with_secrets(&mut a);
+    a.create().await;
+    a.engine.enable_tier("secret", true).await.unwrap();
+    a.secrets.set(&SecretSlot::WebSearchApiKey, "k1").unwrap();
+    a.sync().await;
+
+    let sec_dir = format!("devices/{}/sec", a.engine.ledger.st.device_id);
+    let before = cloud.list(&sec_dir).await.unwrap().len();
+    assert!(before > 0, "打开机密档并改 Key 之后应该已经传上去过");
+
+    // 关掉机密档后再改 Key：不应该再产生 sec 段（段数必须保持不变）
+    a.engine.enable_tier("secret", false).await.unwrap();
+    a.secrets.set(&SecretSlot::WebSearchApiKey, "k2").unwrap();
+    a.sync().await;
+    a.sync().await;
+
+    let after = cloud.list(&sec_dir).await.unwrap().len();
+    assert_eq!(
+        after, before,
+        "关掉机密档后不该再上传新段（before={before}, after={after}）"
     );
 }

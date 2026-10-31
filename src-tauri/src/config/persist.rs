@@ -74,6 +74,11 @@ fn tmp_path_for(path: &Path) -> PathBuf {
 /// parent directory. If anything fails the tmp file is cleaned up and the error
 /// is returned (调用方依赖这个失败语义，例如作业台账只管记一条 warn)。
 pub fn atomic_write(path: &Path, content: &str) -> Result<(), std::io::Error> {
+    atomic_write_bytes(path, content.as_bytes())
+}
+
+/// [`atomic_write`] 的字节版：密文（同步镜像）不能先转成 `String` 再写。
+pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     use std::io::Write;
 
     if let Some(parent) = path.parent() {
@@ -88,7 +93,7 @@ pub fn atomic_write(path: &Path, content: &str) -> Result<(), std::io::Error> {
             .create(true)
             .truncate(true)
             .open(&tmp)?;
-        f.write_all(content.as_bytes())?;
+        f.write_all(bytes)?;
         f.sync_all()?;
         Ok(())
     })();

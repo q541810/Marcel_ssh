@@ -228,6 +228,9 @@ impl AppState {
 
         // 数据变更广播：先建好，各 store 与 known_hosts 写盘后都往这里发。
         let data_changes = DataChangeBus::new();
+        // 密钥链没有变更通知：把总线上报口装上，机密流才知道「本机 Key 变了」。
+        // 只发「机密变了」、不带槽位也不带值——订阅方自己做全量比对。
+        crate::config::keychain::install_change_bus(data_changes.clone());
 
         // Pre-compute file paths so each `spawn_blocking` closure can own its
         // own copy without borrowing `config_dir`.
@@ -682,6 +685,51 @@ impl AppState {
             ssh_manager: ssh_manager.clone(),
             data_changes: data_changes.clone(),
             load_failures,
+            // 机密流算「本机有哪些槽位」用：连接 / 渠道 / MCP 服务器都在这里。
+            // 用一个可刷新的快照缓存，而不是每次 `read().await`——驱动工厂的 `create` 是同步的。
+            secret_catalog: Some({
+                let connections = connection_store_arc.clone();
+                let settings = settings_arc.clone();
+                let mcp_servers = mcp_store_arc.clone();
+                let cache: std::sync::Arc<
+                    parking_lot::Mutex<crate::config::keychain::SecretSlotCatalog>,
+                > = std::sync::Arc::new(parking_lot::Mutex::new(Default::default()));
+                // 后台定期刷新（并第一次立刻刷），读侧永远拿缓存：30 秒的滞后对「有哪些槽位」
+                // 完全够用，而它在 `create_driver` 的同步上下文里必须立刻返回。
+                {
+                    let cache = cache.clone();
+                    tauri::async_runtime::spawn(async move {
+                        loop {
+                            let mut catalog = crate::config::keychain::SecretSlotCatalog::default();
+                            catalog.connection_ids = connections
+                                .read()
+                                .await
+                                .connections
+                                .iter()
+                                .map(|c| c.id.clone())
+                                .collect();
+                            catalog.channel_ids = settings
+                                .read()
+                                .await
+                                .llm_registry
+                                .channels
+                                .iter()
+                                .map(|c| c.id.clone())
+                                .collect();
+                            catalog.mcp_ids = mcp_servers
+                                .read()
+                                .await
+                                .servers
+                                .iter()
+                                .map(|s| s.id.clone())
+                                .collect();
+                            *cache.lock() = catalog;
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        }
+                    });
+                }
+                std::sync::Arc::new(move || cache.lock().clone())
+            }),
         });
 
         let state = Self {

@@ -30,6 +30,7 @@ pub mod ledger;
 pub mod manager;
 pub mod rows;
 pub mod scopes;
+pub mod secret_baseline;
 pub mod secrets;
 pub mod sources;
 pub mod storage;

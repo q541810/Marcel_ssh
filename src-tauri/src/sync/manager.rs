@@ -285,6 +285,13 @@ pub struct SyncWiring {
     pub data_changes: DataChangeBus,
     /// 启动加载时碰到损坏、被迫改用默认值的配置。
     pub load_failures: Vec<DataSourceId>,
+    /// 本机有哪些连接 / 渠道 / MCP 服务器（机密流算「可枚举槽位」用）。
+    ///
+    /// 不用 `stores` 里的句柄现取：`JsonStore::read()` 是 async，而驱动工厂的
+    /// `create` 是同步的；这里给一个已经装好的同步取数口（`AppState` 侧用
+    /// `blocking_read` 的快照缓存，或由调用方每次刷新）。
+    pub secret_catalog:
+        Option<Arc<dyn Fn() -> crate::config::keychain::SecretSlotCatalog + Send + Sync>>,
 }
 
 struct Inner {
@@ -308,6 +315,8 @@ impl SyncManager {
         let secrets: Arc<dyn SyncSecretStore> = Arc::new(KeychainSecrets);
         let adapters = build_adapters(&wiring.stores, secrets.clone());
         let events = Arc::new(TauriEvents::default());
+        // 先算好驱动工厂：它要借 `wiring`，而下面构造 `SyncDeps` 会把 `wiring` 的字段移走。
+        let stream_drivers = secret_factories(&wiring, &secrets);
         let deps = Arc::new(SyncDeps {
             config_dir: wiring.config_dir,
             adapters,
@@ -325,7 +334,7 @@ impl SyncManager {
             platform: Platform::current(),
             default_device_name: default_device_name(),
             load_failures: wiring.load_failures,
-            stream_drivers: Vec::new(),
+            stream_drivers,
         });
         Self::with_deps(deps, wiring.data_changes, Some(events))
     }
@@ -664,6 +673,29 @@ pub(crate) fn cleanup_legacy_sync(config_dir: &std::path::Path, secrets: &dyn Sy
             log::warn!("清理旧版同步遗留的{}失败: {}", slot.describe(), e);
         }
     }
+}
+
+/// 二三期的流驱动工厂（目前只有机密流）。
+fn secret_factories(
+    wiring: &SyncWiring,
+    secrets: &Arc<dyn SyncSecretStore>,
+) -> Vec<Arc<dyn crate::sync::streams::StreamDriverFactory>> {
+    let Some(catalog) = wiring.secret_catalog.clone() else {
+        return Vec::new(); // 测试 / 无头模式没注入：机密流整条跳过
+    };
+    let factory: Arc<dyn crate::sync::streams::StreamDriverFactory> =
+        Arc::new(crate::sync::streams::sec::SecretStreamFactory::new(
+            crate::sync::streams::sec::SecretFactoryDeps {
+                config_dir: wiring.config_dir.clone(),
+                secrets: secrets.clone(),
+                catalog,
+                // 设备 id 写在账本 `state.json` 里，由引擎经 `StreamState` 交给驱动；
+                // 工厂这一层拿不到，也不需要——驱动把它用在 op 的 HLC 上，构造时再问。
+                device: Arc::new(String::new),
+                pending: Arc::new(|| 0),
+            },
+        ));
+    vec![factory]
 }
 
 /// 默认的设备名：主机名 / 机型。取不到就给一个通用名——用户可以随时改。

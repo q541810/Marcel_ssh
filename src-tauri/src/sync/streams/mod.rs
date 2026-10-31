@@ -31,6 +31,7 @@ use super::storage::{RemoteEntry, StorageError};
 use crate::error::AppError;
 
 pub mod config;
+pub mod sec;
 
 pub use super::store::{StreamName, TierSwitches};
 pub use config::ConfigStreamDriver;
@@ -173,7 +174,17 @@ pub trait StreamDriver: Send + Sync {
 /// T0 只有配置流的驱动（引擎内部直接构造），这个列表为空。
 pub trait StreamDriverFactory: Send + Sync {
     fn name(&self) -> StreamName;
-    fn create(&self, state: super::store::StreamState) -> Result<Box<dyn StreamDriver>, AppError>;
+    /// `dk` 只有引擎在「需要封包 / 解本机镜像」的阶段才给得出（捕获阶段可能是 `None`）。
+    fn create(
+        &self,
+        state: super::store::StreamState,
+        dk: Option<DataKey>,
+    ) -> Result<Box<dyn StreamDriver>, AppError>;
+
+    /// 这条流的待上传条数（`sync_status.streams[].pending`）。0 = 不显示。
+    fn pending(&self) -> usize {
+        0
+    }
 }
 
 /// 一条流的 AAD tag（契约第 2 节）。引擎用它封包 / 解释远端文件名。

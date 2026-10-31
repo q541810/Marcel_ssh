@@ -361,6 +361,7 @@ fn isolated_state_with(
         ssh_manager: ssh_manager.clone(),
         data_changes: data_changes.clone(),
         load_failures: Vec::new(),
+        secret_catalog: None,
     });
     AppState {
         ssh_manager,

@@ -299,6 +299,11 @@ pub mod aad_tag {
     pub const SEC_SNAP: &str = "sec-snap";
     /// 按内容寻址的大块（图片 / 私钥正文）。
     pub const BLOB: &str = "blob";
+    /// 机密流的**本机镜像**（`sync/mirror/secrets.msync`，用 DK 封装的本地文件，不上传）。
+    ///
+    /// 它不经过网络，但同样要防「配置目录被整份端走」：和远端文件一样用 DK 加密，
+    /// 而不是只靠文件权限。tag 单独一个，免得它被当成某个远端文件塞回去。
+    pub const SEC_MIRROR: &str = "sec-mirror";
 }
 
 /// 远端文件的种类（进 AAD 与文件名）。**只用于配置流**；二、三期的流有各自的 tag 常量。
