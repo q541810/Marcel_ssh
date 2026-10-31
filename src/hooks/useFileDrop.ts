@@ -58,9 +58,19 @@ function handleDrop(paths: string[] | undefined, position?: DropPosition) {
 
 // ─── Hook ───
 
-export function useFileDrop(handler: DropHandler, enabled: boolean) {
+/**
+ * @param onHover 拖拽途中指针位置（CSS 像素）；拖拽结束/离开时给 null。
+ *   只有当前活跃（栈顶）的消费者收到，用来在落点上做高亮（如目录树的目录行）。
+ */
+export function useFileDrop(
+  handler: DropHandler,
+  enabled: boolean,
+  onHover?: (position: DropPosition | null) => void,
+) {
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
+  const hoverRef = useRef(onHover);
+  hoverRef.current = onHover;
 
   const [isDragging, setIsDraggingLocal] = useState(false);
 
@@ -72,6 +82,10 @@ export function useFileDrop(handler: DropHandler, enabled: boolean) {
       handlerRef.current(paths, position);
     };
     handlerStack.push(wrapper);
+    const emitHover = (position: DropPosition | null) => {
+      if (activeHandler() !== wrapper) return;
+      hoverRef.current?.(position ? (toCssPosition(position) ?? null) : null);
+    };
 
     // 用事件订阅原语而非裸 listen：旧实现把 `listenersAttached = true` 写在
     // `await listen` **之前**且不接错误，任何一次注册失败都会留下未捕获 rejection，
@@ -83,11 +97,16 @@ export function useFileDrop(handler: DropHandler, enabled: boolean) {
         'tauri://drag-drop',
         (payload) => handleDrop(payload.paths, payload.position),
       ),
-      subscribeTauriEvent('tauri://drag-enter', () => {
+      subscribeTauriEvent<{ position?: DropPosition }>('tauri://drag-enter', (payload) => {
         if (activeHandler()) setIsDragging(true);
+        emitHover(payload?.position ?? null);
+      }),
+      subscribeTauriEvent<{ position?: DropPosition }>('tauri://drag-over', (payload) => {
+        emitHover(payload?.position ?? null);
       }),
       subscribeTauriEvent('tauri://drag-leave', () => {
         setIsDragging(false);
+        emitHover(null);
       }),
     ];
 

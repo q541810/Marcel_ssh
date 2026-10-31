@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface ContextMenuItem {
@@ -24,13 +24,34 @@ interface ContextMenuProps {
 }
 
 export default function ContextMenu({ x, y, anchor = 'below', items, onClose }: ContextMenuProps) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // 菜单项多时（目录树右键有十来项）靠近窗口下/右缘会被裁掉：量实际尺寸后往回收。
+  useLayoutEffect(() => {
+    const node = menuRef.current;
+    if (!node || anchor === 'above') return;
+    const rect = node.getBoundingClientRect();
+    const overflowY = rect.bottom - window.innerHeight;
+    const overflowX = rect.right - window.innerWidth;
+    if (overflowY > 0) node.style.top = `${Math.max(4, y - overflowY - 4)}px`;
+    if (overflowX > 0) node.style.left = `${Math.max(4, x - overflowX - 4)}px`;
+  }, [x, y, anchor]);
+
   useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     window.addEventListener('click', onClose);
-    return () => window.removeEventListener('click', onClose);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('click', onClose);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [onClose]);
 
   return createPortal(
     <div
+      ref={menuRef}
       role="menu"
       // overflow-hidden 且容器不留上下内边距：悬停高亮是铺满整行的方块，留着内边距它既碰不到
       // 菜单边缘（上下各空一截），方角又会戳出圆角轮廓；改成由菜单自己裁切，高亮就铺到边、

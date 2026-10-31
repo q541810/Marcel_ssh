@@ -24,7 +24,7 @@ import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { panelVisibilityClass } from './sessionUi';
-import { DEFAULT_MOBILE_TAB, type MobileTabId } from './tabs';
+import { DEFAULT_MOBILE_TAB, MOBILE_SWITCH_TAB_EVENT, isMobileTab, type MobileTabId } from './tabs';
 import type { MobileSettingsCategoryId } from './mobileSettingsModel';
 import { isMobileSettingsCategoryId } from './mobileSettingsModel';
 
@@ -123,6 +123,16 @@ export default function MobileApp() {
     if (activeTab === DEFAULT_MOBILE_TAB) return;
     return registerBackHandler(() => setActiveTab(DEFAULT_MOBILE_TAB));
   }, [activeTab]);
+
+  // 文件页等处请求切到终端 / Agent
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: string }>).detail?.tab;
+      if (tab && isMobileTab(tab)) setActiveTab(tab);
+    };
+    window.addEventListener(MOBILE_SWITCH_TAB_EVENT, handler as EventListener);
+    return () => window.removeEventListener(MOBILE_SWITCH_TAB_EVENT, handler as EventListener);
+  }, []);
 
   // 连接列表的后台保活卡片 → 跳转到设置/通知与后台
   useEffect(() => {

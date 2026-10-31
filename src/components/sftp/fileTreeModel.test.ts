@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ancestorPaths,
+  buildVisibleRows,
+  navigateTreeKey,
   cacheKeysUnder,
   canExpandPath,
   canWalkChildren,
@@ -154,5 +156,54 @@ describe('fileTreeModel', () => {
     expect(chainChildToward('/var', '/usr/home/u')).toBeNull();
     expect(chainChildToward('/usr/ho', '/usr/home/u')).toBeNull();
     expect(chainChildToward('/', '/')).toBeNull();
+  });
+});
+
+describe('buildVisibleRows / navigateTreeKey', () => {
+  const cache: TreeCache = {
+    '/': {
+      status: 'loaded',
+      dirs: [
+        { name: 'a', path: '/a', isSymlink: false },
+        { name: 'b', path: '/b', isSymlink: false },
+      ],
+    },
+    '/a': { status: 'loaded', dirs: [{ name: 'x', path: '/a/x', isSymlink: false }] },
+  };
+  const expandable = () => true;
+  const hasKids = () => true;
+
+  it('只展开已展开且已加载的节点；主目录快捷项置顶', () => {
+    const rows = buildVisibleRows(cache, new Set(['/', '/a']), '/home/u');
+    expect(rows.map((r) => r.key)).toEqual(['home:/home/u', '/', '/a', '/a/x', '/b']);
+    expect(buildVisibleRows(cache, new Set(['/'])).map((r) => r.path)).toEqual(['/', '/a', '/b']);
+    expect(buildVisibleRows(cache, new Set(['/']), '/').map((r) => r.key)).toEqual(['/', '/a', '/b']);
+  });
+
+  it('方向键：上下边界夹取，Home/End', () => {
+    const rows = buildVisibleRows(cache, new Set(['/']));
+    const open = new Set(['/']);
+    expect(navigateTreeKey(rows, 0, 'ArrowUp', open, expandable, hasKids).index).toBe(0);
+    expect(navigateTreeKey(rows, 2, 'ArrowDown', open, expandable, hasKids).index).toBe(2);
+    expect(navigateTreeKey(rows, 1, 'End', open, expandable, hasKids).index).toBe(2);
+    expect(navigateTreeKey(rows, 2, 'Home', open, expandable, hasKids).index).toBe(0);
+  });
+
+  it('右键/左键的展开、进子、回父语义', () => {
+    const open = new Set(['/', '/a']);
+    const rows = buildVisibleRows(cache, open);
+    // /b 未展开 → 展开
+    expect(navigateTreeKey(rows, 3, 'ArrowRight', open, expandable, hasKids)).toEqual({
+      index: 3,
+      toggle: '/b',
+    });
+    // /a 已展开 → 进第一个子节点
+    expect(navigateTreeKey(rows, 1, 'ArrowRight', open, expandable, hasKids).index).toBe(2);
+    // /a/x 是叶子，左 → 父 /a
+    expect(navigateTreeKey(rows, 2, 'ArrowLeft', open, expandable, () => false).index).toBe(1);
+    // /a 已展开，左 → 收起
+    expect(navigateTreeKey(rows, 1, 'ArrowLeft', open, expandable, hasKids).toggle).toBe('/a');
+    // 没有子目录的节点按右不动
+    expect(navigateTreeKey(rows, 3, 'ArrowRight', open, expandable, () => false)).toEqual({ index: 3 });
   });
 });

@@ -1,18 +1,8 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { open } from '@tauri-apps/plugin-dialog';
 import { stat } from '@tauri-apps/plugin-fs';
 import { useSettingsStore } from '@/stores/settingsStore';
-import {
-  sftpListDir,
-  sftpMkdir,
-  sftpRemove,
-  sftpRemoveViaShell,
-  sftpRename,
-  sftpWriteFile,
-  sftpExtractArchive,
-  sftpOpenWithSystem,
-} from '@/lib/tauri';
+import { sftpListDir, sftpOpenWithSystem, sftpHomeDir } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
 import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage, getFileExtension } from '@/lib/sftp-helpers';
@@ -23,6 +13,7 @@ import PathBreadcrumb from './PathBreadcrumb';
 import FileTreeSidebar from './FileTreeSidebar';
 import {
   clampTreeWidth,
+  normalizeRemotePath,
   FILE_TREE_ANIM_MS,
   FILE_TREE_DEFAULT_WIDTH,
   FILE_TREE_MAX_WIDTH,
@@ -42,13 +33,19 @@ import FileEditorModal from './FileEditorModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import CompressModal from './CompressModal';
 import { useFileClipboardStore } from '@/stores/fileClipboardStore';
+import { clipboardLabel, pasteBlockedReason } from '@/lib/filePaste';
+import ContextMenu, { type ContextMenuItem } from '@/components/ui/ContextMenu';
+import { terminalInstanceManager } from '@/components/terminal/TerminalInstanceManager';
+import { sendCdToTerminal } from '@/lib/fileShellActions';
 import {
-  clipboardLabel,
-  pasteBlockedReason,
-  pasteClipboard,
-  pasteProgressText,
-  renamedNotice,
-} from '@/lib/filePaste';
+  parentDir,
+  targetFromEntry,
+  targetFromTreePath,
+  terminalDirOf,
+  type FileTarget,
+} from './fileActionModel';
+import { useFileActions } from './useFileActions';
+import { resolveTreeDropTarget, type TreeDropTarget } from './fileTreeDrop';
 
 interface FileManagerPanelProps {
   sessionId: string;
@@ -83,21 +80,34 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   );
   const [menuEntry, setMenuEntry] = useState<SftpFileEntry | null>(null);
   const [menuTargets, setMenuTargets] = useState<SftpFileEntry[]>([]);
+  /** 目录树右键菜单：锚点 + 被指的目录。 */
+  const [treeMenu, setTreeMenu] = useState<{ x: number; y: number; target: FileTarget } | null>(null);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [deleteConfirm, setDeleteConfirm] = useState<SftpFileEntry[]>([]);
+  const [deleteConfirm, setDeleteConfirm] = useState<FileTarget[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [renameEntry, setRenameEntry] = useState<SftpFileEntry | null>(null);
+  const [renameTarget, setRenameTarget] = useState<FileTarget | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
+  /** 新建文件夹要建在哪个目录下：工具栏 = 当前目录，目录树右键 = 被点的节点。 */
+  const [newFolderDir, setNewFolderDir] = useState('/');
   const [newFileName, setNewFileName] = useState('');
   const [showNewFile, setShowNewFile] = useState(false);
   const [editorFile, setEditorFile] = useState<{ path: string; name: string; size: number } | null>(null);
   const [previewFile, setPreviewFile] = useState<{ path: string; name: string; size: number } | null>(null);
-  const [pendingDropFiles, setPendingDropFiles] = useState<string[] | null>(null);
-  const [pendingFolderUpload, setPendingFolderUpload] = useState<{ localPath: string; folderName: string } | null>(null);
-  const [extractConfirm, setExtractConfirm] = useState<SftpFileEntry | null>(null);
-  const [compressEntry, setCompressEntry] = useState<SftpFileEntry | null>(null);
+  const [pendingDropFiles, setPendingDropFiles] = useState<{ paths: string[]; destDir: string } | null>(null);
+  const [pendingFolderUpload, setPendingFolderUpload] = useState<{
+    localPath: string;
+    folderName: string;
+    destDir: string;
+  } | null>(null);
+  const [extractConfirm, setExtractConfirm] = useState<FileTarget | null>(null);
+  const [compressEntry, setCompressEntry] = useState<FileTarget | null>(null);
+  /** 远端主目录（目录树顶部的快捷项）；取不到就不显示。 */
+  const [homePath, setHomePath] = useState<string | null>(null);
+  /** 本机文件拖拽时悬停的目录树节点。 */
+  const [treeDropHover, setTreeDropHover] = useState<TreeDropTarget>({ kind: 'outside' });
+  const dropHoverPath = treeDropHover.kind === 'row' ? treeDropHover.path : null;
   const clipboard = useFileClipboardStore((s) => s.clipboard);
   const [pasteStatus, setPasteStatus] = useState<string | null>(null);
   const [pasteNotice, setPasteNotice] = useState<string | null>(null);
@@ -149,6 +159,9 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     toggleExpand: toggleTreeExpand,
     loadNode: loadTreeNode,
     seedFromListing: seedTreeFromListing,
+    expandPath: expandTreePath,
+    reloadNode: reloadTreeNode,
+    invalidate: invalidateTree,
   } = useFileTree({
     sessionId,
     showHidden,
@@ -163,6 +176,20 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   // 起始目录（默认 `/` 或上次记住的）读不了时改去家目录，每个会话只兜一次。
   const initialPathRef = useRef(currentPath);
   const homeTriedRef = useRef<string | null>(null);
+
+  // 主目录快捷项：首次列目录成功后才去问一次（起始目录读不了时兜底已经问过，直接复用）。
+  const homeRequestedRef = useRef(false);
+  const ensureHomePath = useCallback(() => {
+    if (homeRequestedRef.current) return;
+    homeRequestedRef.current = true;
+    try {
+      void sftpHomeDir(sessionId)
+        .then((home) => setHomePath(home || null))
+        .catch(() => {});
+    } catch {
+      // 取不到就不显示快捷项
+    }
+  }, [sessionId]);
 
   const loadDirectory = useCallback(async (path: string) => {
     // 迟到的请求不许套在新目录上：传输完成回调捕获的是**发起上传时**的 currentPath，
@@ -180,6 +207,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       setEntries(items);
       // Seed tree: expand of this path needs no second listDir.
       seedTreeFromListing(path, items);
+      ensureHomePath();
     } catch (err) {
       if (seq !== loadSeqRef.current || currentPathRef.current !== path) return;
       if (path === initialPathRef.current && homeTriedRef.current !== sessionId) {
@@ -189,6 +217,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         if (home) {
           // 替换而不是新增历史：「后退」不该退回那个读不了的起点。
           initialPathRef.current = home;
+          homeRequestedRef.current = true;
+          setHomePath(home);
           setHistory([home]);
           setHistoryIndex(0);
           setCurrentPath(home);
@@ -201,7 +231,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         setLoading(false);
       }
     }
-  }, [sessionId, seedTreeFromListing]);
+  }, [sessionId, seedTreeFromListing, ensureHomePath]);
 
   useEffect(() => {
     loadDirectory(currentPath);
@@ -402,38 +432,59 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  const handleUpload = async () => {
-    setMenuEntry(null);
-    setMenuTargets([]);
-    try {
-      const filePaths = await open({
-        multiple: false,
-        title: '选择文件',
-      });
-      if (!filePaths) return;
-
-      const localPath = Array.isArray(filePaths) ? filePaths[0] : filePaths;
-      const fileName = localPath.split(/[/\\]/).pop() || 'upload';
-      const targetPath = joinRemotePath(currentPath, fileName);
-
-      uploadFile(localPath, fileName, targetPath, () => {
-        void loadDirectory(currentPath);
-      });
-    } catch (err) {
-      setError(`上传失败：${getErrorMessage(err)}`);
-    }
-  };
-
   const { uploadFile, pickFolder, uploadFolder: doUploadFolder } = useSftpUpload(sessionId, currentPath);
   const { startDownload } = useSftpDownload(sessionId);
 
-  const handleUploadFolder = async () => {
+  const treeCacheRef = useRef(treeCache);
+  treeCacheRef.current = treeCache;
+
+  /**
+   * 刷新某个目录：是当前目录就重载右侧列表（loadDirectory 会顺带把结果灌进树），
+   * 否则树里已有该节点就重载那个节点。列表与目录树共用的动作都经这一个出口收尾。
+   */
+  const refreshDir = useCallback(async (dir: string) => {
+    const target = normalizeRemotePath(dir);
+    if (target === normalizeRemotePath(currentPathRef.current)) {
+      await loadDirectory(currentPathRef.current);
+    } else if (treeCacheRef.current[target]) {
+      reloadTreeNode(target);
+    }
+  }, [loadDirectory, reloadTreeNode]);
+
+  const actions = useFileActions({
+    sessionId,
+    getCurrentPath: () => currentPathRef.current,
+    refreshDir,
+    forgetDir: invalidateTree,
+    onCurrentRelocated: (_from, to) => navigateTo(to),
+    setError,
+    setLoading,
+    setPasteNotice,
+    setPasteStatus,
+    isPasting: () => pasteStatus != null,
+    uploadFile,
+    uploadFolder: doUploadFolder,
+  });
+
+  const closeMenu = () => {
     setMenuEntry(null);
     setMenuTargets([]);
+  };
+
+  const entriesToTargets = (list: SftpFileEntry[]) =>
+    list.map((e) => targetFromEntry(currentPath, e));
+
+  const handleUpload = async () => {
+    closeMenu();
+    await actions.pickAndUpload(currentPath);
+  };
+
+  const handleUploadFolder = async () => {
+    closeMenu();
     try {
       const picked = await pickFolder();
       if (!picked) return;
-      setPendingFolderUpload(picked);
+      setPendingFolderUpload({ ...picked, destDir: currentPath });
     } catch (err) {
       setError(`选择文件夹失败：${getErrorMessage(err)}`);
     }
@@ -443,252 +494,159 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     const picked = pendingFolderUpload;
     if (!picked) return;
     setPendingFolderUpload(null);
-    doUploadFolder(picked.localPath, picked.folderName, mode, () => {
-      void loadDirectory(currentPath);
-    });
+    actions.uploadFolderTo(picked.localPath, picked.folderName, mode, picked.destDir);
   };
 
-  const handleDropUpload = useCallback((paths: string[]) => {
-    for (const localPath of paths) {
-      const fileName = localPath.split(/[/\\]/).pop() || 'upload';
-      const targetPath = joinRemotePath(currentPath, fileName);
-      uploadFile(localPath, fileName, targetPath, () => {
-        void loadDirectory(currentPath);
-      });
-    }
-  }, [currentPath, uploadFile, loadDirectory]);
-
-  const handleDropUploadAsZip = useCallback(async (paths: string[]) => {
-    const { sftpPrepareDragUpload, sftpCleanupTempDir } = await import('@/lib/tauri');
-    const { enqueueTransfer, createTransferId } = await import('@/stores/transferScheduler');
-
-    setDropWarning(null);
-    let tempDir: string;
-    let failures: string[];
-    try {
-      // 1. 后端创建临时目录并复制文件；复制失败的条目在 failures 里（`路径: 原因`）
-      ({ tempDir, failures } = await sftpPrepareDragUpload(paths));
-    } catch (err) {
-      setError(`打包上传失败：${getErrorMessage(err)}`);
-      return;
-    }
-
-    /** failures 可能很长，横幅里最多列 3 条，其余用计数收口。 */
-    const brief = (list: string[]) =>
-      `${list.slice(0, 3).join('；')}${list.length > 3 ? ` 等 ${list.length} 项` : ''}`;
-
-    if (failures.length >= paths.length) {
-      // 一条都没复制进去：没有可上传的内容，中止并说清原因（顺手清掉空临时目录）
-      void sftpCleanupTempDir(tempDir).catch(() => {});
-      setError(`打包上传失败：${paths.length} 项全部复制失败（${brief(failures)}）`);
-      return;
-    }
-
-    if (failures.length > 0) {
-      // 部分失败仍继续上传，但必须显眼告知缺了哪些条目 —— 否则界面只显示
-      // 「上传完成」，用户会以为全传上去了。用常驻（需手动关闭）的提示承载。
-      setDropWarning(
-        `以下 ${failures.length}/${paths.length} 项复制失败，未包含在本次上传中：${brief(failures)}`,
-      );
-    }
-
-    // 2. 入队打包上传（解压到当前目录），完成后清理临时目录并刷新
-    const preparedDir = tempDir;
-    enqueueTransfer(
-      {
-        id: createTransferId(),
-        kind: 'folder-upload',
-        sessionId,
-        fileName: `拖拽上传 (${paths.length - failures.length} 项)`,
-        localPath: preparedDir,
-        remotePath: currentPath,
-        flat: true,
-        written: 0,
-        total: 0,
-        statusText: '排队中',
-        createdAt: Date.now(),
-      },
-      () => {
-        void sftpCleanupTempDir(preparedDir).catch(() => {});
-        // 用户可能已切到别的目录：loadDirectory 只刷新仍是当前目录的请求
-        void loadDirectory(currentPath);
-      },
-    );
-  }, [sessionId, currentPath, loadDirectory]);
-
-  // 拖拽上传：使用 useFileDrop hook；树区域不接 drop
+  // 拖拽上传：使用 useFileDrop hook。落点：目录树的目录行 → 上传到该目录；
+  // 目录树空白处 → 忽略；其余 → 当前目录。
   const handleFileDrop = useCallback(async (paths: string[], position?: DropPosition) => {
-    if (position && treeRegionRef.current && showTree) {
-      const rect = treeRegionRef.current.getBoundingClientRect();
-      if (
-        position.x >= rect.left &&
-        position.x <= rect.right &&
-        position.y >= rect.top &&
-        position.y <= rect.bottom
-      ) {
-        return;
-      }
-    }
+    const treeRect = treeRegionRef.current?.getBoundingClientRect() ?? null;
+    const dropTarget = resolveTreeDropTarget(position, treeRect, showTree);
+    setTreeDropHover({ kind: 'outside' });
+    if (dropTarget.kind === 'blank') return;
+    const destDir = dropTarget.kind === 'row' ? dropTarget.path : currentPathRef.current;
     if (paths.length === 1) {
       try {
         const info = await stat(paths[0]);
         if (info.isDirectory) {
           const folderName = paths[0].split(/[/\\]/).pop() || 'upload';
-          setPendingFolderUpload({ localPath: paths[0], folderName });
+          setPendingFolderUpload({ localPath: paths[0], folderName, destDir });
           return;
         }
       } catch {
         // stat 失败，降级为普通上传
       }
-      handleDropUpload(paths);
+      actions.uploadPaths(paths, destDir);
     } else {
-      setPendingDropFiles(paths);
+      setPendingDropFiles({ paths, destDir });
     }
-  }, [handleDropUpload, showTree]);
+  }, [actions, showTree]);
 
-  const { isDragging } = useFileDrop(handleFileDrop, true);
+  const handleDragHover = useCallback((position: DropPosition | null) => {
+    const next: TreeDropTarget = position
+      ? resolveTreeDropTarget(
+          position,
+          treeRegionRef.current?.getBoundingClientRect() ?? null,
+          showTree,
+        )
+      : { kind: 'outside' };
+    setTreeDropHover((prev) =>
+      prev.kind === next.kind && (prev.kind !== 'row' || prev.path === (next as { path: string }).path)
+        ? prev
+        : next,
+    );
+  }, [showTree]);
 
-  /**
-   * 删除入口的公共实现（原 handleDelete / handleQuickDelete 互为拷贝）：
-   * 普通删除走 SFTP 逐个 remove，快速删除打包成 shell rm（sftpRemoveViaShell）；
-   * 状态清理、逐条错误聚合与文案前缀只有「删除 / 快速删除」一个词的差异。
-   */
-  const runDelete = async (targets: SftpFileEntry[], quick: boolean) => {
+  const { isDragging } = useFileDrop(handleFileDrop, true, handleDragHover);
+
+  const handleDelete = (targets: FileTarget[]) => {
     setDeleteConfirm([]);
-    setMenuEntry(null);
-    setMenuTargets([]);
+    closeMenu();
     setSelected(new Set());
-    try {
-      setLoading(true);
-      const errors: string[] = [];
-      for (const entry of targets) {
-        try {
-          const entryPath = joinRemotePath(currentPath, entry.name);
-          if (quick) {
-            await sftpRemoveViaShell(sessionId, entryPath, entry.is_dir);
-          } else {
-            await sftpRemove(sessionId, entryPath, entry.is_dir);
-          }
-        } catch (err) {
-          errors.push(`${entry.name}: ${getErrorMessage(err)}`);
-        }
-      }
-      if (errors.length > 0) {
-        setError(`部分${quick ? '快速删除' : '删除'}失败：${errors.join('；')}`);
-      }
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`${quick ? '快速删除' : '删除'}失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    return actions.remove(targets, false);
   };
 
-  const handleDelete = (targets: SftpFileEntry[]) => runDelete(targets, false);
-
-  const handleQuickDelete = (targets: SftpFileEntry[]) =>
-    runDelete(targets, true);
+  const handleQuickDelete = (targets: FileTarget[]) => {
+    setDeleteConfirm([]);
+    closeMenu();
+    setSelected(new Set());
+    return actions.remove(targets, true);
+  };
 
   const handleRename = async () => {
-    if (!renameEntry || !renameValue.trim()) return;
-    setRenameEntry(null);
-    setMenuEntry(null);
-    setMenuTargets([]);
-    try {
-      setLoading(true);
-      const oldPath = joinRemotePath(currentPath, renameEntry.name);
-      const newPath = joinRemotePath(currentPath, renameValue);
-      await sftpRename(sessionId, oldPath, newPath);
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`重命名失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    if (!renameTarget || !renameValue.trim()) return;
+    const target = renameTarget;
+    setRenameTarget(null);
+    closeMenu();
+    await actions.rename(target, renameValue);
   };
 
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     setShowNewFolder(false);
-    try {
-      setLoading(true);
-      const folderPath = joinRemotePath(currentPath, newFolderName);
-      await sftpMkdir(sessionId, folderPath);
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`创建文件夹失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    const dir = newFolderDir;
+    await actions.mkdir(dir, newFolderName);
+    // 目录树上新建：让父节点展开，新文件夹立刻可见
+    if (normalizeRemotePath(dir) !== normalizeRemotePath(currentPathRef.current)) expandTreePath(dir);
+  };
+
+  const openNewFolder = (dir: string) => {
+    setNewFolderName('');
+    setNewFolderDir(dir);
+    setShowNewFolder(true);
   };
 
   const handleCreateFile = async () => {
     if (!newFileName.trim()) return;
     setShowNewFile(false);
-    try {
-      setLoading(true);
-      const filePath = joinRemotePath(currentPath, newFileName);
-      await sftpWriteFile(sessionId, filePath, '');
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`创建文件失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    await actions.createFile(currentPath, newFileName);
   };
 
-  const handleCopyPath = async (entries: SftpFileEntry[]) => {
-    setMenuEntry(null);
-    setMenuTargets([]);
-    try {
-      const paths = entries.map((e) => joinRemotePath(currentPath, e.name));
-      const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
-      await writeText(paths.join('\n'));
-    } catch {
-      // ignore
-    }
+  const handleCopyPath = async (list: SftpFileEntry[]) => {
+    closeMenu();
+    await actions.copyPaths(entriesToTargets(list));
   };
 
   /** 复制 / 剪切：只记进剪贴板，不动远端。 */
-  const handleClip = (targets: SftpFileEntry[], cut: boolean) => {
-    setMenuEntry(null);
-    setMenuTargets([]);
-    if (targets.length === 0) return;
-    setPasteNotice(null);
-    useFileClipboardStore.getState().set({
-      sessionId,
-      dir: currentPath,
-      items: targets.map((e) => ({ name: e.name, isDir: e.is_dir })),
-      cut,
-    });
+  const handleClip = (list: SftpFileEntry[], cut: boolean) => {
+    closeMenu();
+    actions.clip(entriesToTargets(list), cut);
   };
 
   /** 粘贴进 destDir（默认当前目录；右键文件夹可粘贴到该文件夹里）。 */
   const handlePaste = async (destDir: string = currentPath) => {
-    const clip = useFileClipboardStore.getState().clipboard;
-    setMenuEntry(null);
-    setMenuTargets([]);
-    if (!clip || pasteBlockedReason(clip, sessionId) || pasteStatus) return;
-    setPasteNotice(null);
-    try {
-      const result = await pasteClipboard(clip, destDir, (i, n) =>
-        setPasteStatus(pasteProgressText(i, n, clip.cut)),
-      );
-      // 剪切成功的项已经搬走，剪贴板作废；失败的项留着，方便换个目录重试。
-      if (clip.cut) {
-        const failed = new Set(result.failed);
-        const left = clip.items.filter((it) => failed.has(it.name));
-        if (left.length === 0) useFileClipboardStore.getState().clear();
-        else useFileClipboardStore.getState().set({ ...clip, items: left });
-      }
-      if (result.errors.length > 0) {
-        setError(`部分${clip.cut ? '移动' : '复制'}失败：${result.errors.join('；')}`);
-      }
-      setPasteNotice(renamedNotice(result));
-      if (currentPathRef.current === currentPath) await loadDirectory(currentPath);
-    } finally {
-      setPasteStatus(null);
+    closeMenu();
+    await actions.paste(destDir);
+  };
+
+  /** 在终端中打开：目录 cd 进去，文件 cd 到它所在目录。 */
+  const handleOpenInTerminal = async (target: FileTarget) => {
+    closeMenu();
+    const terminal = terminalInstanceManager.get(sessionId)?.terminal;
+    if (terminal?.buffer.active.type === 'alternate') {
+      setError('终端正在运行全屏程序（vim、less、tmux 等），暂不能切换目录，请先退出再试');
+      return;
     }
+    try {
+      await sendCdToTerminal(sessionId, terminalDirOf(target));
+      terminalInstanceManager.get(sessionId)?.terminal?.focus();
+    } catch (err) {
+      setError(`在终端中打开失败：${getErrorMessage(err)}`);
+    }
+  };
+
+  const treeMenuItems = (target: FileTarget): ContextMenuItem[] => {
+    const isRoot = target.path === '/';
+    const isHomeShortcut = homePath != null && target.path === normalizeRemotePath(homePath);
+    const items: ContextMenuItem[] = [
+      { label: '复制路径', onClick: () => void actions.copyPaths([target]) },
+      { label: '在终端中打开', onClick: () => void handleOpenInTerminal(target) },
+      { label: '新建文件夹', onClick: () => openNewFolder(target.path) },
+    ];
+    if (clipboard) {
+      items.push({
+        label: '粘贴到此文件夹',
+        description: pasteBlocked ?? undefined,
+        onClick: () => {
+          if (pasteBlocked) setError(pasteBlocked);
+          else void actions.paste(target.path);
+        },
+      });
+    }
+    if (!isRoot && !isHomeShortcut) {
+      items.push(
+        { label: '', divider: true, onClick: () => {} },
+        {
+          label: '重命名',
+          onClick: () => {
+            setRenameTarget(target);
+            setRenameValue(target.name);
+          },
+        },
+        { label: '删除', variant: 'danger', onClick: () => setDeleteConfirm([target]) },
+      );
+    }
+    return items;
   };
 
   /** 面板内快捷键：Ctrl/⌘ + C / X / V。输入框里放行，免得抢走文字编辑。 */
@@ -730,19 +688,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   };
 
   const handleExtract = async (targetDir: string) => {
-    const entry = extractConfirm;
-    if (!entry) return;
+    const archive = extractConfirm;
+    if (!archive) return;
     setExtractConfirm(null);
-    const archivePath = joinRemotePath(currentPath, entry.name);
-    try {
-      setLoading(true);
-      await sftpExtractArchive(sessionId, archivePath, targetDir);
-      await loadDirectory(currentPath);
-    } catch (err) {
-      setError(`解压失败：${getErrorMessage(err)}`);
-    } finally {
-      setLoading(false);
-    }
+    await actions.extract(archive, targetDir);
   };
 
   return (
@@ -780,7 +729,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <PathBreadcrumb currentPath={currentPath} onNavigate={navigateTo} />
         <button
           type="button"
-          onClick={() => setShowNewFolder(true)}
+          onClick={() => openNewFolder(currentPath)}
           className="flex items-center gap-1.5 rounded-md bg-zinc-800 px-2 py-1 text-xs text-zinc-200 hover:bg-state-mid whitespace-nowrap"
           title="新建文件夹"
         >
@@ -886,6 +835,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {showNewFolder && (
         <div className="flex items-center gap-2 border-b border-edge-subtle px-3 py-2 bg-zinc-800/50">
+          {normalizeRemotePath(newFolderDir) !== normalizeRemotePath(currentPath) && (
+            <span className="max-w-[40%] flex-shrink-0 truncate text-xs text-zinc-500" title={newFolderDir}>
+              在 {newFolderDir} 下
+            </span>
+          )}
           <input
             type="text"
             value={newFolderName}
@@ -1014,9 +968,21 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 cache={treeCache}
                 expanded={treeExpanded}
                 selectedPath={treeSelectedPath}
+                homePath={homePath}
+                contextPath={treeMenu?.target.path ?? null}
+                dropHoverPath={dropHoverPath}
                 onToggleExpand={toggleTreeExpand}
                 onNavigate={navigateTo}
                 onRetry={(path) => void loadTreeNode(path, true)}
+                onContextMenu={(path, x, y) =>
+                  setTreeMenu({ x, y, target: targetFromTreePath(path) })
+                }
+                onRename={(path) => {
+                  const target = targetFromTreePath(path);
+                  setRenameTarget(target);
+                  setRenameValue(target.name);
+                }}
+                onDelete={(path) => setDeleteConfirm([targetFromTreePath(path)])}
               />
             </div>
             <div
@@ -1034,7 +1000,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         </div>
 
         <div className="flex-1 min-w-0 overflow-auto relative">
-          {isDragging && (
+          {isDragging && treeDropHover.kind === 'outside' && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
               <div className="text-center">
                 <svg className="w-10 h-10 mx-auto text-indigo-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1196,7 +1162,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 type="button"
                 onClick={() => {
                   const targets = filteredEntries.filter((e) => selected.has(e.name));
-                  setDeleteConfirm(targets);
+                  setDeleteConfirm(entriesToTargets(targets));
                 }}
                 className="rounded-md bg-red-900/60 px-2.5 py-1 text-xs text-red-300 hover:bg-red-900/80 transition-colors"
               >
@@ -1235,7 +1201,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   <button
                     type="button"
                     onClick={() => {
-                      setCompressEntry(menuEntry);
+                      setCompressEntry(targetFromEntry(currentPath, menuEntry));
                       setMenuEntry(null); setMenuTargets([]);
                     }}
                     className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
@@ -1304,7 +1270,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                     <button
                       type="button"
                       onClick={() => {
-                        setExtractConfirm(menuEntry);
+                        setExtractConfirm(targetFromEntry(currentPath, menuEntry));
                         setMenuEntry(null); setMenuTargets([]);
                       }}
                       className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
@@ -1317,7 +1283,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => {
-                  setRenameEntry(menuEntry);
+                  setRenameTarget(targetFromEntry(currentPath, menuEntry));
                   setRenameValue(menuEntry.name);
                   setMenuEntry(null); setMenuTargets([]);
                 }}
@@ -1363,11 +1329,20 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           >
             复制路径
           </button>
+          {menuTargets.length === 1 && (
+            <button
+              type="button"
+              onClick={() => void handleOpenInTerminal(targetFromEntry(currentPath, menuEntry))}
+              className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
+            >
+              {menuEntry.is_dir ? '在终端中打开' : '在终端中打开所在目录'}
+            </button>
+          )}
           <hr className="border-edge my-1" />
           <button
             type="button"
             onClick={() => {
-              setDeleteConfirm(menuTargets);
+              setDeleteConfirm(entriesToTargets(menuTargets));
               setMenuEntry(null); setMenuTargets([]);
             }}
             className="w-full rounded px-2 py-1.5 text-left text-xs text-red-400 hover:bg-red-950/60"
@@ -1378,7 +1353,16 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         document.body,
       )}
 
-      {renameEntry && createPortal(
+      {treeMenu && (
+        <ContextMenu
+          x={treeMenu.x}
+          y={treeMenu.y}
+          items={treeMenuItems(treeMenu.target)}
+          onClose={() => setTreeMenu(null)}
+        />
+      )}
+
+      {renameTarget && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
           <div className="modal-panel-enter w-80 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-3">重命名</h3>
@@ -1388,7 +1372,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleRename();
-                if (e.key === 'Escape') setRenameEntry(null);
+                if (e.key === 'Escape') setRenameTarget(null);
               }}
               className="w-full rounded-md bg-zinc-900 border border-edge px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-indigo-500 mb-3"
               autoFocus
@@ -1396,7 +1380,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setRenameEntry(null)}
+                onClick={() => setRenameTarget(null)}
                 className="px-3 py-1.5 rounded-lg text-xs text-zinc-300 bg-zinc-700 hover:bg-state-strong"
               >
                 取消
@@ -1423,7 +1407,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             {deleteConfirm.length === 1 ? (
               <>
                 <p className="text-xs text-zinc-400 mb-1">
-                  类型: <span className="text-zinc-200">{deleteConfirm[0].is_dir ? '目录' : '文件'}</span>
+                  类型: <span className="text-zinc-200">{deleteConfirm[0].isDir ? '目录' : '文件'}</span>
                 </p>
                 <p className="text-xs text-zinc-400 mb-4">
                   名称: <span className="text-zinc-200">{deleteConfirm[0].name}</span>
@@ -1432,7 +1416,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
             ) : (
               <div className="text-xs text-zinc-400 mb-4 max-h-40 overflow-auto">
                 {deleteConfirm.slice(0, 10).map((e) => (
-                  <p key={e.name} className="text-zinc-200">{e.name}</p>
+                  <p key={e.path} className="text-zinc-200">{e.name}</p>
                 ))}
                 {deleteConfirm.length > 10 && <p className="text-zinc-500">等 {deleteConfirm.length} 个文件…</p>}
               </div>
@@ -1452,7 +1436,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               >
                 确认删除
               </button>
-              {deleteConfirm.length === 1 && deleteConfirm[0].is_dir && (
+              {deleteConfirm.length === 1 && deleteConfirm[0].isDir && (
                 <button
                   type="button"
                   onClick={() => handleQuickDelete(deleteConfirm)}
@@ -1497,11 +1481,13 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
         <CompressModal
           open={!!compressEntry}
           sessionId={sessionId}
-          remoteDir={joinRemotePath(currentPath, compressEntry.name)}
+          remoteDir={compressEntry.path}
           onClose={() => setCompressEntry(null)}
           onCompressed={() => {
+            const dir = parentDir(compressEntry.path);
             setCompressEntry(null);
-            loadDirectory(currentPath);
+            void refreshDir(dir);
+            void refreshDir(compressEntry.path);
           }}
         />
       )}
@@ -1512,32 +1498,32 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传多个文件</h3>
             <p className="text-xs text-zinc-400 mb-4">
-              检测到 {pendingDropFiles.length} 个文件，选择上传方式：
+              检测到 {pendingDropFiles.paths.length} 个文件，上传到 <span className="text-zinc-300">{pendingDropFiles.destDir}</span>，选择上传方式：
             </p>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={async () => {
-                  const paths = pendingDropFiles;
+                  const { paths, destDir } = pendingDropFiles;
                   setPendingDropFiles(null);
-                  await handleDropUpload(paths);
+                  actions.uploadPaths(paths, destDir);
                 }}
                 className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
               >
                 <span className="font-medium text-zinc-100">逐个上传</span>
-                <span className="block text-zinc-500 mt-0.5">每个文件单独上传到当前目录</span>
+                <span className="block text-zinc-500 mt-0.5">每个文件单独上传到目标目录</span>
               </button>
               <button
                 type="button"
                 onClick={async () => {
-                  const paths = pendingDropFiles;
+                  const { paths, destDir } = pendingDropFiles;
                   setPendingDropFiles(null);
-                  await handleDropUploadAsZip(paths);
+                  await actions.uploadAsZip(paths, destDir, setDropWarning);
                 }}
                 className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
               >
                 <span className="font-medium text-zinc-100">打包上传</span>
-                <span className="block text-zinc-500 mt-0.5">压缩为 zip 后上传并解压到当前目录</span>
+                <span className="block text-zinc-500 mt-0.5">压缩为 zip 后上传并解压到目标目录</span>
               </button>
             </div>
             <div className="flex justify-end mt-3">
@@ -1560,7 +1546,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">上传文件夹</h3>
             <p className="text-xs text-zinc-400 mb-4">
-              将「{pendingFolderUpload.folderName}」上传到 <span className="text-zinc-300">{currentPath}</span>，选择上传方式：
+              将「{pendingFolderUpload.folderName}」上传到 <span className="text-zinc-300">{pendingFolderUpload.destDir}</span>，选择上传方式：
             </p>
             <div className="flex flex-col gap-2">
               <button
@@ -1599,14 +1585,14 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           <div className="modal-panel-enter w-96 rounded-xl bg-zinc-800 border border-edge shadow-2xl p-4">
             <h3 className="text-sm font-semibold text-zinc-200 mb-2">解压文件</h3>
             <p className="text-xs text-zinc-400 mb-4">
-              将「{extractConfirm.name}」解压到 <span className="text-zinc-300">{currentPath}</span>，选择解压位置：
+              将「{extractConfirm.name}」解压到 <span className="text-zinc-300">{parentDir(extractConfirm.path)}</span>，选择解压位置：
             </p>
             <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={() => {
                   const stem = archiveStem(extractConfirm.name);
-                  const target = joinRemotePath(currentPath, stem);
+                  const target = joinRemotePath(parentDir(extractConfirm.path), stem);
                   handleExtract(target);
                 }}
                 className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
@@ -1616,7 +1602,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               </button>
               <button
                 type="button"
-                onClick={() => handleExtract(currentPath)}
+                onClick={() => handleExtract(parentDir(extractConfirm.path))}
                 className="w-full px-3 py-2 rounded-lg text-xs text-left text-zinc-300 bg-zinc-700 hover:bg-state-strong transition-colors"
               >
                 <span className="font-medium text-zinc-100">解压到当前目录</span>

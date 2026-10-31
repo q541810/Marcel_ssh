@@ -51,13 +51,20 @@ export function useSftpUpload(sessionId: string, remotePath: string) {
   }, [keepAliveEnabled]);
 
   const uploadFolder = useCallback(
-    (localPath: string, folderName: string, mode: FolderUploadMode, onFinished?: () => void) => {
+    (
+      localPath: string,
+      folderName: string,
+      mode: FolderUploadMode,
+      onFinished?: () => void,
+      /** 目标目录；缺省 = hook 创建时的 remotePath（目录树上传到别的目录时传入）。 */
+      destDir: string = remotePath,
+    ) => {
       const flat = mode === 'flat';
       const targetPath = flat
-        ? remotePath
-        : remotePath === '/'
+        ? destDir
+        : destDir === '/'
           ? `/${folderName}`
-          : `${remotePath}/${folderName}`;
+          : `${destDir}/${folderName}`;
 
       enqueueTransfer(
         {

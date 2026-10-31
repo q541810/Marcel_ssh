@@ -154,3 +154,112 @@ export function canWalkChildren(entry: TreeCacheEntry | undefined): boolean {
   if (entry.dirs.length > 0) return true;
   return entry.status === 'loaded';
 }
+
+/** 目录树里一行的扁平描述（渲染与键盘导航共用）。 */
+export interface FlatRow {
+  /** 行的唯一 key：主目录快捷项与树里同路径的节点不能撞 key。 */
+  key: string;
+  path: string;
+  name: string;
+  depth: number;
+  isSymlink: boolean;
+  isRoot: boolean;
+  /** 置顶的「主目录」快捷项：只导航，不展开。 */
+  shortcut?: boolean;
+}
+
+/**
+ * 把缓存 + 展开集展开成可见行。`homePath` 给出时在最上面放一条主目录快捷项
+ * （主目录就是根目录时不放，免得重复）。
+ */
+export function buildVisibleRows(
+  cache: TreeCache,
+  expanded: Set<string>,
+  homePath?: string | null,
+): FlatRow[] {
+  const rows: FlatRow[] = [];
+  const home = homePath ? normalizeRemotePath(homePath) : null;
+  if (home && home !== '/') {
+    rows.push({
+      key: `home:${home}`,
+      path: home,
+      name: '主目录',
+      depth: 0,
+      isSymlink: false,
+      isRoot: false,
+      shortcut: true,
+    });
+  }
+  rows.push({ key: '/', path: '/', name: '/', depth: 0, isSymlink: false, isRoot: true });
+
+  const walk = (parentPath: string, depth: number) => {
+    if (!expanded.has(parentPath)) return;
+    const entry = cache[parentPath];
+    if (!canWalkChildren(entry)) return;
+    for (const child of entry!.dirs) {
+      rows.push({
+        key: child.path,
+        path: child.path,
+        name: child.name,
+        depth: depth + 1,
+        isSymlink: child.isSymlink,
+        isRoot: false,
+      });
+      walk(child.path, depth + 1);
+    }
+  };
+
+  walk('/', 0);
+  return rows;
+}
+
+export type TreeNavKey = 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End';
+
+export interface TreeNavResult {
+  /** 焦点应移到的行下标（不动则等于当前）。 */
+  index: number;
+  /** 需要切换展开状态的路径。 */
+  toggle?: string;
+}
+
+/**
+ * 目录树方向键语义（WAI-ARIA tree）：
+ * 右：未展开 → 展开；已展开 → 到第一个子节点。左：已展开 → 收起；否则到父节点。
+ * 快捷项（主目录）不参与展开/父子关系。
+ */
+export function navigateTreeKey(
+  rows: FlatRow[],
+  index: number,
+  key: TreeNavKey,
+  expanded: Set<string>,
+  isExpandable: (row: FlatRow) => boolean,
+  hasChildren: (row: FlatRow) => boolean,
+): TreeNavResult {
+  const row = rows[index];
+  if (!row) return { index: Math.max(0, Math.min(index, rows.length - 1)) };
+  switch (key) {
+    case 'ArrowDown':
+      return { index: Math.min(rows.length - 1, index + 1) };
+    case 'ArrowUp':
+      return { index: Math.max(0, index - 1) };
+    case 'Home':
+      return { index: 0 };
+    case 'End':
+      return { index: rows.length - 1 };
+    case 'ArrowRight': {
+      if (row.shortcut || !isExpandable(row) || !hasChildren(row)) return { index };
+      if (!expanded.has(row.path)) return { index, toggle: row.path };
+      const next = rows[index + 1];
+      return next && next.depth === row.depth + 1 && !next.shortcut ? { index: index + 1 } : { index };
+    }
+    case 'ArrowLeft': {
+      if (row.shortcut) return { index };
+      if (expanded.has(row.path) && hasChildren(row) && !row.isRoot) return { index, toggle: row.path };
+      if (row.isRoot) return expanded.has(row.path) ? { index, toggle: row.path } : { index };
+      for (let i = index - 1; i >= 0; i--) {
+        if (!rows[i].shortcut && rows[i].depth === row.depth - 1) return { index: i };
+      }
+      return { index };
+    }
+  }
+}

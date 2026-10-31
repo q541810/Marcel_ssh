@@ -51,6 +51,8 @@ import { useConnectionStore } from '@/stores/connectionStore';
 import { isDebugSession } from '@/lib/debugServer';
 import { loadRememberedPath, rememberPath } from '@/lib/fileManagerPathMemory';
 import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
+import { sendCdToTerminal } from '@/lib/fileShellActions';
+import { requestMobileTab } from './tabs';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { withForegroundKeepAlive } from './mobileBridge';
@@ -458,6 +460,22 @@ export default function MobileFilesHost({
       }
     },
     [currentPath],
+  );
+
+  // 在终端中打开：目录 cd 进去，文件 cd 到所在目录（与桌面 terminalDirOf 同口径），然后切到终端页
+  const handleOpenInTerminal = useCallback(
+    async (entry: SftpFileEntry) => {
+      if (!sessionId) return;
+      const fullPath = joinRemotePath(currentPath, entry.name);
+      const dir = entry.is_dir ? fullPath : currentPath;
+      try {
+        await sendCdToTerminal(sessionId, dir);
+        requestMobileTab('terminal');
+      } catch (err) {
+        setError(`在终端中打开失败：${getErrorMessage(err)}`);
+      }
+    },
+    [sessionId, currentPath],
   );
 
   const handleRename = useCallback(async () => {
@@ -1215,6 +1233,14 @@ export default function MobileFilesHost({
               }}
             >
               复制路径
+            </SheetAction>
+            <SheetAction
+              onClick={() => {
+                setActionOpen(false);
+                void handleOpenInTerminal(actionEntry);
+              }}
+            >
+              {actionEntry.is_dir ? '在终端中打开' : '在终端中打开所在目录'}
             </SheetAction>
             <SheetAction
               danger
