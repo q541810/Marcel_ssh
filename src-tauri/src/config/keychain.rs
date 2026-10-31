@@ -140,6 +140,11 @@ pub enum SecretSlot {
     TavilyFetchApiKey,
     /// TypeSafe（Jev）命令审批引擎的 Key（账号 `jev_api_key`）。全局一份，不分渠道。
     JevApiKey,
+    /// 某个 MCP 服务器配置里的鉴权头（账号 `mcp_headers:{服务器 id}`），值是 headers 的 JSON。
+    ///
+    /// 以前 headers 明文躺在 `mcp_servers.json` 里（可能含 Bearer 令牌）。三期改成存密钥链：
+    /// 这样它既不会跟着普通配置明文上云，又能经机密流按设备同步。
+    McpHeaders(String),
     /// 某个 SSH 连接的登录密码（账号 = 连接 id 本身，没有前缀）。
     SshPassword(String),
     /// 某个 SSH 连接的私钥口令（账号 `pk:{连接 id}`）。
@@ -188,6 +193,7 @@ impl SecretSlot {
             SecretSlot::CustomFetchApiKey => Cow::Borrowed("custom_fetch_api_key"),
             SecretSlot::TavilyFetchApiKey => Cow::Borrowed("tavily_fetch_api_key"),
             SecretSlot::JevApiKey => Cow::Borrowed("jev_api_key"),
+            SecretSlot::McpHeaders(id) => Cow::Owned(format!("mcp_headers:{}", id)),
             SecretSlot::SshPassword(id) => Cow::Owned(id.clone()),
             SecretSlot::SshKeyPassphrase(id) => Cow::Owned(format!("pk:{}", id)),
             SecretSlot::JumpPassword(id) => Cow::Owned(format!("jump:{}", id)),
@@ -215,6 +221,7 @@ impl SecretSlot {
             | SecretSlot::CustomFetchApiKey
             | SecretSlot::TavilyFetchApiKey
             | SecretSlot::JevApiKey
+            | SecretSlot::McpHeaders(_)
             | SecretSlot::SshPassword(_)
             | SecretSlot::SshKeyPassphrase(_)
             | SecretSlot::JumpPassword(_)
@@ -243,6 +250,7 @@ impl SecretSlot {
             SecretSlot::CustomFetchApiKey => "自定义抓取 API Key",
             SecretSlot::TavilyFetchApiKey => "Tavily 抓取 API Key",
             SecretSlot::JevApiKey => "TypeSafe API Key",
+            SecretSlot::McpHeaders(_) => "MCP 鉴权头",
             SecretSlot::SshPassword(_) => "连接密码",
             SecretSlot::SshKeyPassphrase(_) => "私钥口令",
             SecretSlot::JumpPassword(_) => "跳板机密码",
@@ -269,6 +277,11 @@ impl SecretSlot {
             SecretSlot::JumpPassword(connection_id.to_string()),
             SecretSlot::JumpKeyPassphrase(connection_id.to_string()),
         ]
+    }
+
+    /// 一个 MCP 服务器名下要清理的槽位（删服务器时调用）。
+    pub fn for_mcp_server(server_id: &str) -> [SecretSlot; 1] {
+        [SecretSlot::McpHeaders(server_id.to_string())]
     }
 
     /// 全部**不带参数**的槽位（枚举用：同步引擎按档导出、守护测试查重）。
@@ -352,6 +365,13 @@ impl SecretSlot {
                 .any(|c| c == id)
                 .then(|| SecretSlot::SshKeyPassphrase(id.to_string()));
         }
+        if let Some(id) = account.strip_prefix("mcp_headers:") {
+            return catalog
+                .mcp_ids
+                .iter()
+                .any(|m| m == id)
+                .then(|| SecretSlot::McpHeaders(id.to_string()));
+        }
         if let Some(id) = account.strip_prefix("llm_channel_") {
             return catalog
                 .channel_ids
@@ -368,8 +388,8 @@ impl SecretSlot {
 
     /// 本机**可枚举**的全部槽位（机密流全量比对 / 规模估算用）。
     ///
-    /// = 固定槽位 ∪ 每条连接的四个槽位 ∪ 每个渠道的 Key。MCP headers（T8）加进来时
-    /// 在这里补一行即可。**顺序稳定**（连接按传入顺序、渠道按传入顺序），便于测试与展示。
+    /// = 固定槽位 ∪ 每条连接的四个槽位 ∪ 每个渠道的 Key ∪ 每个 MCP 服务器的鉴权头。
+    /// **顺序稳定**（连接 / 渠道 / 服务器都按传入顺序），便于测试与展示。
     pub fn enumerable_slots(catalog: &SecretSlotCatalog) -> Vec<SecretSlot> {
         let mut out = Self::fixed_slots();
         for id in &catalog.connection_ids {
@@ -377,6 +397,9 @@ impl SecretSlot {
         }
         for id in &catalog.channel_ids {
             out.push(SecretSlot::LlmChannel(id.clone()));
+        }
+        for id in &catalog.mcp_ids {
+            out.push(SecretSlot::McpHeaders(id.clone()));
         }
         out
     }
@@ -390,7 +413,7 @@ impl SecretSlot {
 pub struct SecretSlotCatalog {
     pub connection_ids: Vec<String>,
     pub channel_ids: Vec<String>,
-    /// MCP 服务器 id（T8 的 `SecretSlot::McpHeaders` 用；现在留好位置，免得以后改调用方）。
+    /// MCP 服务器 id（`SecretSlot::McpHeaders` 用）。
     pub mcp_ids: Vec<String>,
 }
 
@@ -582,6 +605,7 @@ mod tests {
         v.push(SecretSlot::SshKeyPassphrase("c1".into()));
         v.push(SecretSlot::JumpPassword("c1".into()));
         v.push(SecretSlot::JumpKeyPassphrase("c1".into()));
+        v.push(SecretSlot::McpHeaders("s1".into()));
         v
     }
 
@@ -599,6 +623,7 @@ mod tests {
             (SecretSlot::CustomFetchApiKey, "custom_fetch_api_key"),
             (SecretSlot::TavilyFetchApiKey, "tavily_fetch_api_key"),
             (SecretSlot::JevApiKey, "jev_api_key"),
+            (SecretSlot::McpHeaders("s1".into()), "mcp_headers:s1"),
             // SSH 连接密码：账号就是连接 id 本身，没有前缀
             (SecretSlot::SshPassword("c1".into()), "c1"),
             (SecretSlot::SshKeyPassphrase("c1".into()), "pk:c1"),
@@ -762,6 +787,7 @@ mod tests {
                 | SecretSlot::LegacySyncDeviceId
                 | SecretSlot::LegacySyncServerUrl => true,
                 SecretSlot::LlmChannel(_)
+                | SecretSlot::McpHeaders(_)
                 | SecretSlot::SshPassword(_)
                 | SecretSlot::SshKeyPassphrase(_)
                 | SecretSlot::JumpPassword(_)
@@ -782,7 +808,7 @@ mod tests {
         let catalog = SecretSlotCatalog {
             connection_ids: vec!["c1".into()],
             channel_ids: vec!["c1".into()],
-            mcp_ids: vec![],
+            mcp_ids: vec!["s1".into()],
         };
         for slot in all_samples() {
             let account = slot.account().into_owned();
@@ -809,7 +835,7 @@ mod tests {
             "jump:does-not-exist",
             "jump:pk:does-not-exist",
             "llm_channel_does-not-exist",
-            "llm_channel_",  // 空 id
+            "llm_channel_",   // 空 id
             "mcp_headers_s1", // T8 才认识
         ] {
             assert_eq!(

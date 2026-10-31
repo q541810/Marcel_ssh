@@ -438,11 +438,6 @@ fn the_known_machine_local_fields_are_marked_local() {
         ),
         (
             &scopes::MCP_SERVERS_RULES,
-            &[Seg::key("servers"), Seg::id("s1"), Seg::key("headers")],
-            "servers/*/headers",
-        ),
-        (
-            &scopes::MCP_SERVERS_RULES,
             &[Seg::key("servers"), Seg::id("s1"), Seg::key("trusted")],
             "servers/*/trusted",
         ),

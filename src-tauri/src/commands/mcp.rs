@@ -4,7 +4,7 @@ use tauri::State;
 use crate::error::AppError;
 use crate::mcp::manager::McpServerRuntimeStatus;
 use crate::mcp::protocol::McpToolInfo;
-use crate::mcp::store::{McpServerConfig, McpServerInput};
+use crate::mcp::store::{McpServerConfig, McpServerInput, McpServerStore};
 use crate::AppState;
 
 #[derive(Debug, Clone, Serialize)]
@@ -18,7 +18,12 @@ pub struct McpServerListResponse {
 pub async fn mcp_list_servers(
     state: State<'_, AppState>,
 ) -> Result<McpServerListResponse, AppError> {
-    let servers = state.mcp_store.read().await.list().to_vec();
+    let mut servers = state.mcp_store.read().await.list().to_vec();
+    // headers 存在密钥链里；列表要能编辑，所以这里把它们填回返回值（**唯一**允许把
+    // 鉴权头交给前端的路径，其余地方一律经 `effective_headers` 在 Rust 侧用）。
+    for server in &mut servers {
+        server.headers = McpServerStore::effective_headers(server);
+    }
     let statuses = state.mcp_manager.statuses(&servers).await;
     Ok(McpServerListResponse { servers, statuses })
 }
@@ -28,7 +33,10 @@ pub async fn mcp_add_server(
     state: State<'_, AppState>,
     input: McpServerInput,
 ) -> Result<McpServerConfig, AppError> {
-    let server = McpServerConfig::new(input)?;
+    let mut server = McpServerConfig::new(input)?;
+    // 鉴权头只进密钥链：JSON 里留空，免得「可能含令牌的字段」明文落在配置目录里
+    let headers = std::mem::take(&mut server.headers);
+    McpServerStore::save_headers_to_keychain(&server.id, &headers)?;
     let cloned = server.clone();
     state
         .mcp_store
@@ -47,6 +55,9 @@ pub async fn mcp_update_server(
     id: String,
     input: McpServerInput,
 ) -> Result<(), AppError> {
+    let mut input = input;
+    let headers = std::mem::take(&mut input.headers);
+    McpServerStore::save_headers_to_keychain(&id, &headers)?;
     state
         .mcp_store
         .mutate(|store| store.update(&id, input))
@@ -60,6 +71,7 @@ pub async fn mcp_update_server(
 #[tauri::command]
 pub async fn mcp_delete_server(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
     state.mcp_store.mutate(|store| store.delete(&id)).await?;
+    McpServerStore::clear_headers_from_keychain(&id);
     state.mcp_manager.clear_cache(&id).await;
 
     Ok(())

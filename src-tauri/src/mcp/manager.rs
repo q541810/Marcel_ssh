@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use crate::error::AppError;
 use crate::mcp::client::{McpClient, McpClientLike};
 use crate::mcp::protocol::McpToolInfo;
-use crate::mcp::store::McpServerConfig;
+use crate::mcp::store::{McpServerConfig, McpServerStore};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,14 +116,16 @@ impl McpManager {
         server: &McpServerConfig,
         epoch: u64,
     ) -> Result<Vec<McpToolInfo>, AppError> {
+        // 鉴权头在密钥链里（三期起不再明文躺在配置里）：一次发现只读一次。
+        let headers = McpServerStore::effective_headers(server);
         if !self.initialized.read().await.contains(&server.id) {
-            self.client.initialize(&server.url, &server.headers).await?;
+            self.client.initialize(&server.url, &headers).await?;
             let mut initialized = self.initialized.write().await;
             if self.epoch_of(&server.id) == epoch {
                 initialized.insert(server.id.clone());
             }
         }
-        self.client.list_tools(&server.url, &server.headers).await
+        self.client.list_tools(&server.url, &headers).await
     }
 
     /// 发起（或加入）一次后台发现。同一服务器、同一版本配置同时只跑一次：任务
@@ -207,12 +209,13 @@ impl McpManager {
         tool_name: &str,
         arguments: serde_json::Value,
     ) -> Result<String, AppError> {
+        let headers = McpServerStore::effective_headers(server);
         if !self.initialized.read().await.contains(&server.id) {
-            self.client.initialize(&server.url, &server.headers).await?;
+            self.client.initialize(&server.url, &headers).await?;
             self.initialized.write().await.insert(server.id.clone());
         }
         self.client
-            .call_tool(&server.url, &server.headers, tool_name, arguments)
+            .call_tool(&server.url, &headers, tool_name, arguments)
             .await
     }
 

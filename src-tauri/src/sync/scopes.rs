@@ -115,13 +115,13 @@ pub static SKILLS_RULES: ScopeRules = ScopeRules {
 
 /// `mcp_servers.json`。
 ///
-/// Local：`headers`（鉴权头，常含令牌——机密同步是三期的事，一期绝不能连同普通配置明文上云）、
-/// `trusted`（「信任这个服务」是每台设备自己的安全决定）。其余（名称、地址、启用状态）Shared。
+/// Local：`trusted`（「信任这个服务」是每台设备自己的安全决定）。其余（名称、地址、启用状态、以及
+/// 三期起恒为空的 `headers`）Shared。
+///
+/// **`headers` 不在表里了**：三期起鉴权头存在密钥链（`SecretSlot::McpHeaders`），由机密流同步，
+/// 配置文件里只留一个空 map。留着这条 Local 只会误导——真正的鉴权头早就不在这份 JSON 里了。
 pub static MCP_SERVERS_RULES: ScopeRules = ScopeRules {
-    patterns: &[
-        ("servers/*/headers", Scope::Local),
-        ("servers/*/trusted", Scope::Local),
-    ],
+    patterns: &[("servers/*/trusted", Scope::Local)],
     item_filters: &[],
 };
 

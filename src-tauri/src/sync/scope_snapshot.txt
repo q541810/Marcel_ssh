@@ -31,7 +31,7 @@ knownHosts	version	local
 mcpServers	servers / (顺序)	shared
 mcpServers	servers / * / createdAt	shared
 mcpServers	servers / * / enabled	shared
-mcpServers	servers / * / headers / *	local
+mcpServers	servers / * / headers / *	shared
 mcpServers	servers / * / id	shared
 mcpServers	servers / * / name	shared
 mcpServers	servers / * / trusted	local

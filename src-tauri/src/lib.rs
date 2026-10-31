@@ -609,6 +609,26 @@ impl AppState {
             }
         }
 
+        // MCP 鉴权头从明文配置挪进密钥链（三期）。幂等；某个服务器失败就保留它的明文，
+        // 由 `effective_headers` 的回落兜住，绝不因为一次写失败就把令牌弄丢。
+        {
+            let migrated = mcp_store_arc
+                .mutate(|store| {
+                    let ids = crate::mcp::store::McpServerStore::migrate_plain_headers(
+                        &mut store.servers,
+                    );
+                    Ok(ids)
+                })
+                .await;
+            match migrated {
+                Ok(ids) if !ids.is_empty() => {
+                    log::info!("已把 {} 个 MCP 服务器的鉴权头迁进密钥链", ids.len());
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("MCP 鉴权头迁移失败（保留明文）: {e}"),
+            }
+        }
+
         let mcp_manager = std::sync::Arc::new(McpManager::new());
         let memory = std::sync::Arc::new(crate::memory::MemoryManager::open(&config_dir));
 
