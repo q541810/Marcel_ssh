@@ -26,6 +26,8 @@ pub const RK_ALPHABET: &[u8; 31] = b"23456789abcdefghjkmnpqrstuvwxyz";
 
 const KEK_INFO: &[u8] = b"marcel-sync-kek-v1";
 const META_AAD: &[u8] = b"marcel-sync-meta-v1";
+/// 机密流子密钥的 HKDF info（定稿，改一个字 = 所有已同步的机密解不开）。
+pub const SECRET_KEY_INFO: &[u8] = b"marcel-sync-secrets-v1";
 /// 盐长度（字节）。
 pub const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -178,6 +180,18 @@ impl DataKey {
         // 长度恒为 32，不会失败
         Aes256Gcm::new_from_slice(&self.0[..]).expect("32 字节密钥")
     }
+
+    /// 机密流的子密钥 `SK = HKDF-SHA256(DK, salt=空, info="marcel-sync-secrets-v1")`。
+    ///
+    /// 为什么要派生而不是直接用 DK：域分离。机密流单独一把钥匙，将来给机密加「额外口令」
+    /// 只需换 SK 的派生输入，不用动远端文件格式，也不影响配置流的 DK。
+    pub fn derive_secret_key(&self) -> Result<DataKey, CryptoError> {
+        let hk = Hkdf::<Sha256>::new(None, &self.0[..]);
+        let mut out = Zeroizing::new([0u8; 32]);
+        hk.expand(SECRET_KEY_INFO, &mut out[..])
+            .map_err(|_| CryptoError::InvalidKey)?;
+        Ok(DataKey(out))
+    }
 }
 
 /// 写进 `marcel-sync.json` 的密钥包裹信息（均为 base64）。
@@ -264,7 +278,30 @@ pub fn unwrap_data_key(
 // 密文信封
 // ---------------------------------------------------------------------------
 
-/// 远端文件的种类（进 AAD 与文件名）。
+/// 各条流的 AAD tag（**定稿**，见 `scratch/sync/PHASE2-3-CONTRACT.md` 第 2 节）。
+///
+/// 配置流沿用 [`FileKind::as_str`]，值永远是 `seg` / `snap`；二、三期新增的流各用各的 tag，
+/// 这样一条流的文件被挪进另一条流会解不开（AAD 不匹配）。
+pub mod aad_tag {
+    /// 配置流 · 增量段（一期）。
+    pub const CONFIG_SEG: &str = "seg";
+    /// 配置流 · 快照（一期）。
+    pub const CONFIG_SNAP: &str = "snap";
+    /// 对话与记忆流 · 增量段。
+    pub const CONV_SEG: &str = "conv-seg";
+    /// 对话与记忆流 · 分包快照索引。
+    pub const CONV_SNAP_INDEX: &str = "conv-snap-index";
+    /// 对话与记忆流 · 分包快照的一个包。
+    pub const CONV_SNAP_PART: &str = "conv-snap-part";
+    /// 机密流 · 增量段。
+    pub const SEC_SEG: &str = "sec-seg";
+    /// 机密流 · 快照。
+    pub const SEC_SNAP: &str = "sec-snap";
+    /// 按内容寻址的大块（图片 / 私钥正文）。
+    pub const BLOB: &str = "blob";
+}
+
+/// 远端文件的种类（进 AAD 与文件名）。**只用于配置流**；二、三期的流有各自的 tag 常量。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FileKind {
     /// 增量段：一批 op。
@@ -274,6 +311,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
+    /// 进 AAD 的 tag，也是文件名的前缀。配置流的历史值，**一个字都不能改**。
     pub fn as_str(self) -> &'static str {
         match self {
             FileKind::Segment => "seg",
@@ -282,18 +320,37 @@ impl FileKind {
     }
 }
 
-fn aad(kind: FileKind, device_id: &str, seq: u64) -> Vec<u8> {
-    format!("marcel-sync|{}|{}|{}", kind.as_str(), device_id, seq).into_bytes()
+/// AAD 前缀的下半部分（tag 由各流自己定，见下）。格式定稿：`marcel-sync|<tag>|<device>|<seq>`。
+///
+/// tag 是**流 + 文件种类**的组合（`seg` / `snap` / `conv-seg` / `conv-snap-index` / …），
+/// 这样把一条流的文件挪到另一条流、或把它改名成别的种类，都会在解密时露馅。
+pub fn aad(aad_tag: &str, device_id: &str, seq: u64) -> Vec<u8> {
+    format!("marcel-sync|{aad_tag}|{device_id}|{seq}").into_bytes()
 }
 
-/// 把明文（通常是 JSON 字节）压缩 + 加密成信封。
+/// 分包快照的 AAD：`marcel-sync|conv-snap-part|<device>|<seq>|<part>`（多一段分包号）。
+pub fn aad_with_part(aad_tag: &str, device_id: &str, seq: u64, part: u32) -> Vec<u8> {
+    format!("marcel-sync|{aad_tag}|{device_id}|{seq}|{part}").into_bytes()
+}
+
+/// 按内容寻址的大块（blob）的 AAD：`marcel-sync|blob|<device>|<name>`（用名字代替序号）。
+pub fn aad_named(aad_tag: &str, device_id: &str, name: &str) -> Vec<u8> {
+    format!("marcel-sync|{aad_tag}|{device_id}|{name}").into_bytes()
+}
+
+/// 把明文（通常是 JSON 字节）压缩 + 加密成信封。`aad_tag` 由调用方按流指定。
 pub fn seal(
     dk: &DataKey,
-    kind: FileKind,
+    aad_tag: &str,
     device_id: &str,
     seq: u64,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
+    seal_with_aad(dk, &aad(aad_tag, device_id, seq), plaintext)
+}
+
+/// 同 [`seal`]，但 AAD 由调用方整段给出（分包快照、blob 用）。
+pub fn seal_with_aad(dk: &DataKey, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     use flate2::write::DeflateEncoder;
     use flate2::Compression;
     use std::io::Write;
@@ -311,7 +368,7 @@ pub fn seal(
             Nonce::from_slice(&nonce),
             Payload {
                 msg: &compressed,
-                aad: &aad(kind, device_id, seq),
+                aad,
             },
         )
         .map_err(|_| CryptoError::Decrypt)?;
@@ -330,11 +387,16 @@ pub fn seal(
 /// 不存在攻击者构造的压缩炸弹。
 pub fn open(
     dk: &DataKey,
-    kind: FileKind,
+    aad_tag: &str,
     device_id: &str,
     seq: u64,
     envelope: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
+    open_with_aad(dk, &aad(aad_tag, device_id, seq), envelope)
+}
+
+/// 同 [`open`]，但 AAD 由调用方整段给出（分包快照、blob 用）。
+pub fn open_with_aad(dk: &DataKey, aad: &[u8], envelope: &[u8]) -> Result<Vec<u8>, CryptoError> {
     use flate2::read::DeflateDecoder;
     use std::io::Read;
 
@@ -354,13 +416,7 @@ pub fn open(
     let (nonce, ct) = envelope[header..].split_at(NONCE_LEN);
     let compressed = dk
         .cipher()
-        .decrypt(
-            Nonce::from_slice(nonce),
-            Payload {
-                msg: ct,
-                aad: &aad(kind, device_id, seq),
-            },
-        )
+        .decrypt(Nonce::from_slice(nonce), Payload { msg: ct, aad })
         .map_err(|_| CryptoError::Decrypt)?;
     let mut out = Vec::new();
     DeflateDecoder::new(&compressed[..])
@@ -573,6 +629,129 @@ mod tests {
         );
     }
 
+    /// 机密流的子密钥：钉死一个独立实现的已知向量，防止有人顺手改 info。
+    ///
+    /// 算法：RFC 5869 HKDF-SHA256，salt 缺省 = 32 字节 0，IKM = 字节 00..1f，info 见常量。
+    /// 用 Python 独立算的（不经过本模块的任何代码）：
+    /// ```text
+    /// prk = HMAC-SHA256(b"\x00"*32, bytes(range(32)))
+    /// t   = HMAC-SHA256(prk, info + b"\x01")
+    /// okm = HMAC-SHA256(prk, t + info + b"\x02")
+    /// ```
+    #[test]
+    fn secret_key_derivation_is_pinned_to_a_known_vector() {
+        let dk = DataKey::from_bytes(&(0u8..32).collect::<Vec<u8>>()).unwrap();
+        let sk = dk.derive_secret_key().unwrap();
+        let hex: String = sk.0.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex, "0710431c33e85eb4f43ae171af568d36ff7bcc6434b2ced40573b60dd943c2d1",
+            "SK 派生结果变了：这会让所有已同步的机密解不开"
+        );
+        // 确定性 + 与 DK 不同（域分离）
+        assert_eq!(dk.derive_secret_key().unwrap(), sk);
+        assert_ne!(sk, dk);
+        assert_eq!(
+            DataKey::from_bytes(&[0xab; 32])
+                .unwrap()
+                .derive_secret_key()
+                .unwrap()
+                .0
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>(),
+            "0157635288d758c5b15331750e4f2979436f3a097cd8a0a46cc13917bb7c22b4"
+        );
+    }
+
+    /// 配置流的 AAD 是**历史字面量**：改了就等于所有老设备读不懂新文件、新设备读不懂老文件。
+    #[test]
+    fn config_aad_is_byte_identical_to_phase_one() {
+        assert_eq!(aad("seg", "d1", 7), b"marcel-sync|seg|d1|7");
+        assert_eq!(aad("snap", "d1", 7), b"marcel-sync|snap|d1|7");
+        assert_eq!(
+            aad(FileKind::Segment.as_str(), "abc", 12),
+            b"marcel-sync|seg|abc|12"
+        );
+        assert_eq!(
+            aad(FileKind::Snapshot.as_str(), "abc", 40),
+            b"marcel-sync|snap|abc|40"
+        );
+        // 契约里新增的 tag
+        assert_eq!(aad("conv-seg", "d", 3), b"marcel-sync|conv-seg|d|3");
+        assert_eq!(
+            aad("conv-snap-index", "d", 3),
+            b"marcel-sync|conv-snap-index|d|3"
+        );
+        assert_eq!(
+            aad_with_part("conv-snap-part", "d", 3, 0),
+            b"marcel-sync|conv-snap-part|d|3|0"
+        );
+        assert_eq!(aad("sec-seg", "d", 3), b"marcel-sync|sec-seg|d|3");
+        assert_eq!(aad("sec-snap", "d", 3), b"marcel-sync|sec-snap|d|3");
+        assert_eq!(aad_named("blob", "d", "00ff"), b"marcel-sync|blob|d|00ff");
+    }
+
+    /// 跨流的 AAD 串流：把一条流的文件当另一条流读必须解不开。
+    #[test]
+    fn cross_stream_aad_does_not_decrypt() {
+        let dk = key();
+        let env = seal(&dk, aad_tag::CONV_SEG, "d", 1, b"{\"x\":1}").unwrap();
+        assert_eq!(
+            open(&dk, aad_tag::SEC_SEG, "d", 1, &env),
+            Err(CryptoError::Decrypt)
+        );
+        assert_eq!(
+            open(&dk, aad_tag::CONFIG_SEG, "d", 1, &env),
+            Err(CryptoError::Decrypt)
+        );
+        assert_eq!(
+            open(&dk, aad_tag::CONV_SEG, "d", 2, &env),
+            Err(CryptoError::Decrypt)
+        );
+        assert_eq!(
+            open(&dk, aad_tag::CONV_SEG, "d", 1, &env).unwrap(),
+            b"{\"x\":1}"
+        );
+        // 分包：分包号也在 AAD 里，换一个包号解不开
+        let part = seal_with_aad(
+            &dk,
+            &aad_with_part(aad_tag::CONV_SNAP_PART, "d", 9, 1),
+            b"part",
+        )
+        .unwrap();
+        assert!(open_with_aad(
+            &dk,
+            &aad_with_part(aad_tag::CONV_SNAP_PART, "d", 9, 2),
+            &part
+        )
+        .is_err());
+        assert_eq!(
+            open_with_aad(
+                &dk,
+                &aad_with_part(aad_tag::CONV_SNAP_PART, "d", 9, 1),
+                &part
+            )
+            .unwrap(),
+            b"part"
+        );
+    }
+
+    /// 机密流用 SK、配置流用 DK：拿错钥匙解不开。
+    #[test]
+    fn secret_stream_key_is_not_the_data_key() {
+        let dk = key();
+        let sk = dk.derive_secret_key().unwrap();
+        let env = seal(&sk, aad_tag::SEC_SEG, "d", 1, b"secret").unwrap();
+        assert_eq!(
+            open(&dk, aad_tag::SEC_SEG, "d", 1, &env),
+            Err(CryptoError::Decrypt)
+        );
+        assert_eq!(
+            open(&sk, aad_tag::SEC_SEG, "d", 1, &env).unwrap(),
+            b"secret"
+        );
+    }
+
     // ---------------- 信封 ----------------
 
     fn key() -> DataKey {
@@ -583,10 +762,13 @@ mod tests {
     fn envelope_round_trip() {
         let dk = key();
         let msg = br#"{"format":1,"ops":[{"a":"b"}]}"#;
-        let env = seal(&dk, FileKind::Segment, "dev1", 12, msg).unwrap();
+        let env = seal(&dk, FileKind::Segment.as_str(), "dev1", 12, msg).unwrap();
         assert_eq!(&env[..5], b"MSYNC");
         assert_eq!(env[5], 1);
-        assert_eq!(open(&dk, FileKind::Segment, "dev1", 12, &env).unwrap(), msg);
+        assert_eq!(
+            open(&dk, FileKind::Segment.as_str(), "dev1", 12, &env).unwrap(),
+            msg
+        );
     }
 
     #[test]
@@ -598,8 +780,11 @@ mod tests {
             vec![b'x'; 3_000_000],
             (0..200_000u32).flat_map(|i| i.to_le_bytes()).collect(),
         ] {
-            let env = seal(&dk, FileKind::Snapshot, "d", 1, &msg).unwrap();
-            assert_eq!(open(&dk, FileKind::Snapshot, "d", 1, &env).unwrap(), msg);
+            let env = seal(&dk, FileKind::Snapshot.as_str(), "d", 1, &msg).unwrap();
+            assert_eq!(
+                open(&dk, FileKind::Snapshot.as_str(), "d", 1, &env).unwrap(),
+                msg
+            );
         }
     }
 
@@ -607,42 +792,42 @@ mod tests {
     fn envelope_compresses_repetitive_json() {
         let dk = key();
         let msg = "{\"k\":\"vvvvvvvvvvvvvvvv\"},".repeat(10_000);
-        let env = seal(&dk, FileKind::Segment, "d", 1, msg.as_bytes()).unwrap();
+        let env = seal(&dk, FileKind::Segment.as_str(), "d", 1, msg.as_bytes()).unwrap();
         assert!(env.len() < msg.len() / 10, "{} vs {}", env.len(), msg.len());
     }
 
     #[test]
     fn same_plaintext_seals_differently_each_time() {
         let dk = key();
-        let a = seal(&dk, FileKind::Segment, "d", 1, b"hello").unwrap();
-        let b = seal(&dk, FileKind::Segment, "d", 1, b"hello").unwrap();
+        let a = seal(&dk, FileKind::Segment.as_str(), "d", 1, b"hello").unwrap();
+        let b = seal(&dk, FileKind::Segment.as_str(), "d", 1, b"hello").unwrap();
         assert_ne!(a, b, "nonce 必须每次随机");
     }
 
     #[test]
     fn aad_mismatch_fails_to_decrypt() {
         let dk = key();
-        let env = seal(&dk, FileKind::Segment, "dev1", 12, b"secret").unwrap();
+        let env = seal(&dk, FileKind::Segment.as_str(), "dev1", 12, b"secret").unwrap();
         // 文件被挪到别的设备目录 / 别的序号 / 换了类型：都解不开
         assert_eq!(
-            open(&dk, FileKind::Segment, "dev2", 12, &env),
+            open(&dk, FileKind::Segment.as_str(), "dev2", 12, &env),
             Err(CryptoError::Decrypt)
         );
         assert_eq!(
-            open(&dk, FileKind::Segment, "dev1", 13, &env),
+            open(&dk, FileKind::Segment.as_str(), "dev1", 13, &env),
             Err(CryptoError::Decrypt)
         );
         assert_eq!(
-            open(&dk, FileKind::Snapshot, "dev1", 12, &env),
+            open(&dk, FileKind::Snapshot.as_str(), "dev1", 12, &env),
             Err(CryptoError::Decrypt)
         );
     }
 
     #[test]
     fn wrong_data_key_fails_to_decrypt() {
-        let env = seal(&key(), FileKind::Segment, "d", 1, b"x").unwrap();
+        let env = seal(&key(), FileKind::Segment.as_str(), "d", 1, b"x").unwrap();
         assert_eq!(
-            open(&key(), FileKind::Segment, "d", 1, &env),
+            open(&key(), FileKind::Segment.as_str(), "d", 1, &env),
             Err(CryptoError::Decrypt)
         );
     }
@@ -650,12 +835,12 @@ mod tests {
     #[test]
     fn any_single_byte_tamper_is_rejected() {
         let dk = key();
-        let env = seal(&dk, FileKind::Segment, "d", 1, b"important config").unwrap();
+        let env = seal(&dk, FileKind::Segment.as_str(), "d", 1, b"important config").unwrap();
         for i in 0..env.len() {
             let mut bad = env.clone();
             bad[i] ^= 0x01;
             assert!(
-                open(&dk, FileKind::Segment, "d", 1, &bad).is_err(),
+                open(&dk, FileKind::Segment.as_str(), "d", 1, &bad).is_err(),
                 "篡改第 {i} 字节没有被发现"
             );
         }
@@ -664,16 +849,23 @@ mod tests {
     #[test]
     fn truncated_or_foreign_files_are_rejected() {
         let dk = key();
-        let env = seal(&dk, FileKind::Segment, "d", 1, b"x").unwrap();
-        assert!(open(&dk, FileKind::Segment, "d", 1, &env[..env.len() - 1]).is_err());
+        let env = seal(&dk, FileKind::Segment.as_str(), "d", 1, b"x").unwrap();
+        assert!(open(
+            &dk,
+            FileKind::Segment.as_str(),
+            "d",
+            1,
+            &env[..env.len() - 1]
+        )
+        .is_err());
         assert_eq!(
-            open(&dk, FileKind::Segment, "d", 1, &env[..10]),
+            open(&dk, FileKind::Segment.as_str(), "d", 1, &env[..10]),
             Err(CryptoError::BadEnvelope)
         );
         assert_eq!(
             open(
                 &dk,
-                FileKind::Segment,
+                FileKind::Segment.as_str(),
                 "d",
                 1,
                 b"{\"json\": true, \"but\": \"not an envelope at all\"}"
@@ -681,7 +873,7 @@ mod tests {
             Err(CryptoError::BadEnvelope)
         );
         assert_eq!(
-            open(&dk, FileKind::Segment, "d", 1, b""),
+            open(&dk, FileKind::Segment.as_str(), "d", 1, b""),
             Err(CryptoError::BadEnvelope)
         );
     }
@@ -689,15 +881,15 @@ mod tests {
     #[test]
     fn newer_envelope_version_is_reported_as_too_new() {
         let dk = key();
-        let mut env = seal(&dk, FileKind::Segment, "d", 1, b"x").unwrap();
+        let mut env = seal(&dk, FileKind::Segment.as_str(), "d", 1, b"x").unwrap();
         env[5] = ENVELOPE_VERSION + 1;
         assert_eq!(
-            open(&dk, FileKind::Segment, "d", 1, &env),
+            open(&dk, FileKind::Segment.as_str(), "d", 1, &env),
             Err(CryptoError::EnvelopeTooNew(ENVELOPE_VERSION + 1))
         );
         env[5] = 0;
         assert_eq!(
-            open(&dk, FileKind::Segment, "d", 1, &env),
+            open(&dk, FileKind::Segment.as_str(), "d", 1, &env),
             Err(CryptoError::BadEnvelope)
         );
     }
