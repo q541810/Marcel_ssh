@@ -1,6 +1,7 @@
 use std::borrow::Cow;
+use std::sync::{Mutex, OnceLock};
 
-use crate::data::SyncTier;
+use crate::data::{DataChangeBus, DataSourceId, SyncTier};
 use crate::error::AppError;
 
 /// Service name used in the system keychain. All entries for this app are scoped
@@ -313,6 +314,177 @@ impl SecretSlot {
             SecretSlot::LegacySyncServerUrl,
         ]
     }
+
+    /// 按账号名反查槽位：机密流落地远端 op 时只有 `account()` 字符串，必须能还原成槽位
+    /// 才知道要不要写本机密钥链。
+    ///
+    /// 带参数的变体需要知道本机有哪些连接 / 渠道（它们的 id 在配置文件里，不在密钥链里），
+    /// 所以由调用方现取一份 [`SecretSlotCatalog`] 传进来。**认不出来就返回 `None`**：
+    /// 那可能是更新版本加的槽位，也可能属于本机已经删掉的连接 / 渠道——两种都只能
+    /// 存进加密镜像等以后认识，绝不能凭字符串硬造一个槽位往密钥链里写。
+    pub fn from_account(account: &str, catalog: &SecretSlotCatalog) -> Option<SecretSlot> {
+        // 固定槽位（账号名本身没有前缀，必须最先精确匹配）
+        if let Some(slot) = Self::fixed_slots()
+            .into_iter()
+            .find(|s| s.account() == account)
+        {
+            return Some(slot);
+        }
+        // 带前缀的长前缀在前：`jump:pk:` ⊃ `pk:`，`jump:` 又要排在 `pk:` 之前判断不到的错误
+        if let Some(id) = account.strip_prefix("jump:pk:") {
+            return catalog
+                .connection_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::JumpKeyPassphrase(id.to_string()));
+        }
+        if let Some(id) = account.strip_prefix("jump:") {
+            return catalog
+                .connection_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::JumpPassword(id.to_string()));
+        }
+        if let Some(id) = account.strip_prefix("pk:") {
+            return catalog
+                .connection_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::SshKeyPassphrase(id.to_string()));
+        }
+        if let Some(id) = account.strip_prefix("llm_channel_") {
+            return catalog
+                .channel_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::LlmChannel(id.to_string()));
+        }
+        // 连接密码的账号名就是连接 id 本身（没有前缀），只能靠「本机确实有这条连接」认
+        if catalog.connection_ids.iter().any(|c| c == account) {
+            return Some(SecretSlot::SshPassword(account.to_string()));
+        }
+        None
+    }
+
+    /// 本机**可枚举**的全部槽位（机密流全量比对 / 规模估算用）。
+    ///
+    /// = 固定槽位 ∪ 每条连接的四个槽位 ∪ 每个渠道的 Key。MCP headers（T8）加进来时
+    /// 在这里补一行即可。**顺序稳定**（连接按传入顺序、渠道按传入顺序），便于测试与展示。
+    pub fn enumerable_slots(catalog: &SecretSlotCatalog) -> Vec<SecretSlot> {
+        let mut out = Self::fixed_slots();
+        for id in &catalog.connection_ids {
+            out.extend(Self::for_connection(id));
+        }
+        for id in &catalog.channel_ids {
+            out.push(SecretSlot::LlmChannel(id.clone()));
+        }
+        out
+    }
+}
+
+/// 反查槽位需要的「本机有哪些带参数的槽位」。
+///
+/// 全部来自本机配置（`connections.json` / `settings.json` 的渠道列表 / `mcp_servers.json`），
+/// 由调用方现取。**不含任何机密**：连接 / 渠道 / 服务器的 id 本来就明文躺在配置文件里。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SecretSlotCatalog {
+    pub connection_ids: Vec<String>,
+    pub channel_ids: Vec<String>,
+    /// MCP 服务器 id（T8 的 `SecretSlot::McpHeaders` 用；现在留好位置，免得以后改调用方）。
+    pub mcp_ids: Vec<String>,
+}
+
+impl SecretSlotCatalog {
+    pub fn is_empty(&self) -> bool {
+        self.connection_ids.is_empty() && self.channel_ids.is_empty() && self.mcp_ids.is_empty()
+    }
+}
+
+// ── 变更广播与落地抑制 ───────────────────────────────────────────────────────
+//
+// 密钥链本身没有变更通知。机密流要捕获「用户改了哪个 Key」，只能靠我们在**写入口**广播；
+// 同时落地远端机密时又会走同一个 `set/delete`，那一次绝不能再被捕获成一条新 op 发出去
+// （两台设备会互相把对方的删除又发回去，形成 ping-pong）。所以：
+//
+// - 广播：`set/delete` 成功后，若槽位是 `SyncTier::Secret` 且当前不在抑制深度里，发一条
+//   `DataSourceId::Secrets`。只带「机密变了」，不带是哪个槽位、更不带值——订阅方自己
+//   做全量比对（捕获的主要机制，广播只是让捕获更及时）。
+// - 抑制：`CaptureSuppression` 是 RAII 的深度计数（落地期间可能嵌套调用），计数 > 0 时
+//   照常写密钥链但**不广播**。
+// - 进程级总线用 `OnceLock` 注册一次：[`install_change_bus`]。理应由 `lib.rs` 在构造
+//   `DataChangeBus` 之后立刻调用；测试里各设备用各自的临时总线，所以注册口允许被覆盖
+//   （`#[cfg(test)]` 下用线程局部的替换，见 `tests`）。
+
+static CHANGE_BUS: OnceLock<Mutex<Option<DataChangeBus>>> = OnceLock::new();
+
+fn bus_cell() -> &'static Mutex<Option<DataChangeBus>> {
+    CHANGE_BUS.get_or_init(|| Mutex::new(None))
+}
+
+/// 注册进程级变更总线（`lib.rs` 构造 `DataChangeBus` 之后调用一次）。
+///
+/// 重复调用会替换成新的总线：应用里只调一次，但测试要按设备换总线，重复注册比
+/// 「第一次赢、后面静默失效」更容易排错。
+pub fn install_change_bus(bus: DataChangeBus) {
+    *bus_cell().lock().unwrap() = Some(bus);
+}
+
+fn publish_secret_change() {
+    let bus = bus_cell().lock().unwrap().clone();
+    if let Some(bus) = bus {
+        bus.publish(DataSourceId::Secrets);
+    }
+}
+
+/// 抑制深度（嵌套安全的 RAII）。
+///
+/// 用 `Mutex<usize>` 而不是 bool：落地流程里可能存在「写一个 Key 顺手触发一次迁移」
+/// 这种嵌套，内层先 Drop 不能把外层的抑制提前解除。
+static SUPPRESS_DEPTH: Mutex<usize> = Mutex::new(0);
+
+/// 落地期间的捕获抑制。Drop 时把深度减一。
+///
+/// **只影响广播**，不影响真正的写入：抑制期间 `set/delete` 照常落密钥链，只是不回
+/// `DataChangeBus`。测试里用 [`suppress_depth`] 观察深度（不碰真实密钥链）。
+pub struct CaptureSuppression(());
+
+impl CaptureSuppression {
+    pub fn new() -> Self {
+        *SUPPRESS_DEPTH.lock().unwrap() += 1;
+        Self(())
+    }
+}
+
+impl Default for CaptureSuppression {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for CaptureSuppression {
+    fn drop(&mut self) {
+        let mut depth = SUPPRESS_DEPTH.lock().unwrap();
+        *depth = depth.saturating_sub(1);
+    }
+}
+
+/// 当前抑制深度（测试 / 断言用）。
+pub fn suppress_depth() -> usize {
+    *SUPPRESS_DEPTH.lock().unwrap()
+}
+
+/// 写成功之后决定要不要广播：抑制中或非 Secret 档都不发。
+///
+/// 拆成纯函数（只读全局深度）是为了能直接单测「抑制 / 分档」两个条件，而不必碰真实密钥链
+/// ——以前出过单元测试误删本机真实条目的事故，这里的测试永远不调 `set/delete`。
+fn should_broadcast(slot: &SecretSlot, suppress_depth: usize) -> bool {
+    suppress_depth == 0 && slot.tier() == SyncTier::Secret
+}
+
+fn notify_if_secret(slot: &SecretSlot) {
+    if should_broadcast(slot, suppress_depth()) {
+        publish_secret_change();
+    }
 }
 
 // ── 读写 ─────────────────────────────────────────────────────────────────────
@@ -327,6 +499,8 @@ pub fn set(slot: &SecretSlot, secret: &str) -> Result<(), AppError> {
     entry
         .set_password(secret)
         .map_err(|e| AppError::Config(format!("保存{}到密钥链失败：{}", slot.describe(), e)))?;
+    // 写成功之后才广播：写失败时密钥链没变，订阅方不该被叫醒。
+    notify_if_secret(slot);
     Ok(())
 }
 
@@ -343,7 +517,11 @@ pub fn delete(slot: &SecretSlot) -> Result<(), AppError> {
     let entry = store_impl::entry(SERVICE, &slot.account())
         .map_err(|e| AppError::Config(format!("密钥链初始化失败：{}", e)))?;
     store_impl::delete_if_exists(&entry)
-        .map_err(|e| AppError::Config(format!("删除{}失败：{}", slot.describe(), e)))
+        .map_err(|e| AppError::Config(format!("删除{}失败：{}", slot.describe(), e)))?;
+    // 本来就没有时也广播一次：多发一条「机密变了」只会换来一次空的全量比对（无副作用），
+    // 而漏发会让一次真实删除等下一轮才被发现——两边代价不对称，选保守的这边。
+    notify_if_secret(slot);
+    Ok(())
 }
 
 /// 槽位里有没有机密（只回答有无，不把值交给调用方）。
@@ -596,5 +774,131 @@ mod tests {
                 slot
             );
         }
+    }
+
+    /// 每个样本槽位的账号名都能反查回自己（机密流落地时只有账号名）。
+    #[test]
+    fn every_sample_account_round_trips_through_from_account() {
+        let catalog = SecretSlotCatalog {
+            connection_ids: vec!["c1".into()],
+            channel_ids: vec!["c1".into()],
+            mcp_ids: vec![],
+        };
+        for slot in all_samples() {
+            let account = slot.account().into_owned();
+            assert_eq!(
+                SecretSlot::from_account(&account, &catalog),
+                Some(slot.clone()),
+                "账号 {account} 反查不回 {slot:?}"
+            );
+        }
+    }
+
+    /// 反查的边界：认不出来的一律 `None`（只进加密镜像，绝不硬造槽位写密钥链）。
+    #[test]
+    fn from_account_rejects_unknown_or_dangling_accounts() {
+        let catalog = SecretSlotCatalog {
+            connection_ids: vec!["c1".into()],
+            channel_ids: vec!["ch1".into()],
+            mcp_ids: vec![],
+        };
+        for account in [
+            "",
+            "nope",
+            "pk:does-not-exist",
+            "jump:does-not-exist",
+            "jump:pk:does-not-exist",
+            "llm_channel_does-not-exist",
+            "llm_channel_",  // 空 id
+            "mcp_headers_s1", // T8 才认识
+        ] {
+            assert_eq!(
+                SecretSlot::from_account(account, &catalog),
+                None,
+                "{account:?} 不该被认出来"
+            );
+        }
+        // 长前缀不能被子串误伤：`jump:pk:c1` 是跳板机口令，不是 `pk:` 或 `jump:` 的变体
+        assert_eq!(
+            SecretSlot::from_account("jump:pk:c1", &catalog),
+            Some(SecretSlot::JumpKeyPassphrase("c1".into()))
+        );
+        assert_eq!(
+            SecretSlot::from_account("pk:c1", &catalog),
+            Some(SecretSlot::SshKeyPassphrase("c1".into()))
+        );
+        assert_eq!(
+            SecretSlot::from_account("jump:c1", &catalog),
+            Some(SecretSlot::JumpPassword("c1".into()))
+        );
+        // 连接密码：账号名就是连接 id，必须本机确实有这条连接才认
+        assert_eq!(
+            SecretSlot::from_account("c1", &catalog),
+            Some(SecretSlot::SshPassword("c1".into()))
+        );
+        // 固定槽位不依赖 catalog
+        assert_eq!(
+            SecretSlot::from_account("web_search_api_key", &SecretSlotCatalog::default()),
+            Some(SecretSlot::WebSearchApiKey)
+        );
+    }
+
+    /// 可枚举槽位 = 固定 ∪ 每条连接四个 ∪ 每个渠道一个，且不重复。
+    #[test]
+    fn enumerable_slots_cover_fixed_and_parameterized_slots() {
+        let catalog = SecretSlotCatalog {
+            connection_ids: vec!["c1".into(), "c2".into()],
+            channel_ids: vec!["ch1".into()],
+            mcp_ids: vec![],
+        };
+        let slots = SecretSlot::enumerable_slots(&catalog);
+        assert_eq!(slots.len(), SecretSlot::fixed_slots().len() + 2 * 4 + 1);
+        let accounts: std::collections::HashSet<String> =
+            slots.iter().map(|s| s.account().into_owned()).collect();
+        assert_eq!(accounts.len(), slots.len(), "枚举里有重复槽位");
+        assert!(slots.contains(&SecretSlot::SshPassword("c2".into())));
+        assert!(slots.contains(&SecretSlot::JumpKeyPassphrase("c2".into())));
+        assert!(slots.contains(&SecretSlot::LlmChannel("ch1".into())));
+        // 空 catalog 时只剩固定槽位
+        assert_eq!(
+            SecretSlot::enumerable_slots(&SecretSlotCatalog::default()).len(),
+            SecretSlot::fixed_slots().len()
+        );
+    }
+
+    /// 广播过滤：只有 Secret 档且不在抑制里才发。
+    #[test]
+    fn only_secret_tier_slots_broadcast_and_suppression_wins() {
+        let secret = SecretSlot::LlmChannel("c1".into());
+        let local = SecretSlot::SyncDataKey;
+        assert!(should_broadcast(&secret, 0));
+        assert!(!should_broadcast(&secret, 1), "抑制期间不广播");
+        assert!(!should_broadcast(&local, 0), "Local 档不参与机密同步");
+        assert!(!should_broadcast(&SecretSlot::KeyStoreMaster, 0));
+        assert!(!should_broadcast(&SecretSlot::SyncRecoveryKey, 0));
+        assert!(!should_broadcast(&SecretSlot::SyncStoragePassword, 0));
+        assert!(!should_broadcast(&SecretSlot::LegacySyncKey, 0));
+    }
+
+    /// 抑制深度是嵌套安全的 RAII：内层先 Drop 不能解除外层的抑制。
+    ///
+    /// 测试串行执行（Rust 默认），但全局深度是进程级的，前后都要归零。
+    #[test]
+    fn capture_suppression_nests_and_unwinds_to_zero() {
+        assert_eq!(suppress_depth(), 0);
+        {
+            let _outer = CaptureSuppression::new();
+            assert_eq!(suppress_depth(), 1);
+            {
+                let _inner = CaptureSuppression::new();
+                assert_eq!(suppress_depth(), 2);
+            }
+            assert_eq!(suppress_depth(), 1, "内层 Drop 后外层仍抑制");
+            assert!(!should_broadcast(&SecretSlot::JevApiKey, suppress_depth()));
+        }
+        assert_eq!(suppress_depth(), 0, "全部 Drop 后恢复广播");
+        assert!(should_broadcast(&SecretSlot::JevApiKey, suppress_depth()));
+        // 多减一次不能变成负数（saturating_sub 的守卫）
+        assert_eq!(suppress_depth(), 0);
     }
 }
