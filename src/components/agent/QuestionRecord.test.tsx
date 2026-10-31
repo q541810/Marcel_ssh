@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@/lib/types';
 import { useMessageJumpStore } from '@/stores/messageJumpStore';
 import { useInteractionStore } from '@/stores/interactionStore';
+import { useConversationStore } from '@/stores/conversationStore';
 import { useVisibleTranscriptStore } from '@/stores/visibleTranscriptStore';
 import { getToolView } from './toolViews';
 import { MessageJumpContext } from './messageJumpContext';
@@ -70,6 +71,15 @@ describe('ask_user 已回答记录', () => {
     expect(useMessageJumpStore.getState().request).toMatchObject({
       conversationId: 'c1', toolCallId: 'q1', anchor: '风险',
     });
+  });
+
+  it('转述子 agent 提问（source_subagent 是子对话 id）：已回答记录保留来源行，标题取子对话标题', () => {
+    useConversationStore.setState({
+      conversations: { 'sub-1': { id: 'sub-1', connectionId: 'c', title: '查日志（子agent）', createdAt: ts, updatedAt: ts } },
+    });
+    mount(record({}, '1. [方案] 走 A', { source_subagent: 'sub-1' }), [text, record()]);
+    expect(container.textContent).toContain('已回答：走 A');
+    expect(container.querySelector('[data-testid="question-source"]')?.textContent).toContain('来自子 Agent「查日志」的问题');
   });
 
   it('没有 anchor：整条记录一个「查看上文」', () => {

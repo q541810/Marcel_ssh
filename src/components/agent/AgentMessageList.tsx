@@ -22,6 +22,8 @@ import { useIsomorphicLayoutEffect } from '@/hooks/useStickyFollow';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
 import AgentMessageItem from './AgentMessage';
 import ToolCallCard from './ToolCallCard';
+import SubagentThreadCard from './SubagentThreadCard';
+import { deriveSubagentMessages } from '@/lib/subagentThread';
 import TurnActions from './TurnActions';
 import { getToolView, isRetainedToolView } from './toolViews';
 import ExplorationGroup from './ExplorationGroup';
@@ -105,6 +107,7 @@ function MessageBody({ message, grouped, ...props }: {
 } & Pick<Props, 'onRollback' | 'onCopy' | 'rollbackDisabled' | 'alwaysShowActions' | 'searchKeyword'>) {
   const [expanded, setExpanded] = useMessageViewState('tool-width-expanded', false);
   const onExpand = useCallback((_id: string, open: boolean) => setExpanded(open), [setExpanded]);
+  if (message.subagentThread) return <SubagentThreadCard message={message} thread={message.subagentThread} grouped={grouped} />;
   const ToolView = message.toolResult && getToolView(message.toolResult.toolName);
   if (ToolView) return <ToolView message={message} grouped={grouped} />;
   if (message.toolResult || (message.role === 'assistant' && message.toolCall)) {
@@ -132,11 +135,18 @@ function DedicatedViewRetention({
 }
 
 function MessageList({
-  messages, conversationId = '', rollbackDisabled = false, onRollback, onCopy, onCopyText, onFork, messagesEndRef,
+  messages: sourceMessages, conversationId = '', rollbackDisabled = false, onRollback, onCopy, onCopyText, onFork, messagesEndRef,
   highlightMessageId = null, matchedMessageIds, searchKeyword, alwaysShowActions = false,
   foldTurns: foldTurnsProp, enableStickyFollow = true, listRef, onManualLayout, maxRetainedViews,
 }: Props) {
   const visible = useContext(MarkdownVisibility);
+  const tailActive = useTaskStore((s) => Object.values(s.tasks).some(
+    (t) => t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
+  ));
+  // 同一个子 agent 的来回并成一张时间线卡（续派卡吸收进第一张）；子对话里未回答的 ask_parent
+  // 补占位。派生只在渲染期，store 里的消息一字未动。
+  const derived = useMemo(() => deriveSubagentMessages(sourceMessages, { tailActive }), [sourceMessages, tailActive]);
+  const messages = derived.messages;
   const [visibleCount, setVisibleCount] = useState(() => {
     const target = highlightMessageId ? messages.findIndex((m) => m.id === highlightMessageId) : -1;
     return target < 0 ? PAGE_SIZE : Math.max(PAGE_SIZE, messages.length - target);
@@ -160,9 +170,6 @@ function MessageList({
   const settingsFold = useSettingsStore((s) => s.settings.foldCompletedTurns ?? true);
   const hideThinkingDisplay = useSettingsStore((s) => s.settings.hideThinkingDisplay ?? false);
   const expandedTurns = useTurnFoldStore((s) => s.expanded[conversationId] ?? EMPTY_EXPANDED);
-  const tailActive = useTaskStore((s) => Object.values(s.tasks).some(
-    (t) => t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
-  ));
   // 已结束的任务在「模型说的最后一段话」下面挂收尾条（复制 + 用时）。只依赖消息与
   // 运行态，不依赖折叠状态：折叠/展开过程不改变哪条消息是最后一段话。
   const canCopyText = !!onCopyText;
@@ -224,7 +231,7 @@ function MessageList({
   const snapshot = useRef<{ top: number; height: number } | null>(null);
   const hasArchive = useConversationStore((s) =>
     // Read-only history owns its own data; never load an unrelated active conversation.
-    s.messages[conversationId] === messages && (s.hasEarlierMessages[conversationId] ?? false),
+    s.messages[conversationId] === sourceMessages && (s.hasEarlierMessages[conversationId] ?? false),
   );
   const canLoad = start > 0 || hasArchive;
   const loading = useRef(false);
@@ -279,7 +286,8 @@ function MessageList({
   }, [slots.length, userScrolling, cancelFoldAnchor]);
   const startJump = useMessageJump({ root, scrollRef, virtualizer, slots });
   const jumpToMessage = useCallback((id: string, anchor?: string) => {
-    const index = messages.findIndex((m) => messageMatchesId(m, id));
+    // 被时间线卡吸收的续派行：落到卡片自己
+    const index = messages.findIndex((m) => messageMatchesId(m, derived.absorbed.get(id) ?? id));
     if (index < 0) return false;
     const target = messages[index];
     // 目标在窗口之外 / 折叠的已完成回合里：先让它进入渲染，执行器再等它出现
@@ -295,7 +303,7 @@ function MessageList({
     onManualLayout?.();
     startJump(target.id, anchor);
     return true;
-  }, [messages, start, tailActive, conversationId, cancelFoldAnchor, userScrolling, onManualLayout, startJump]);
+  }, [messages, derived, start, tailActive, conversationId, cancelFoldAnchor, userScrolling, onManualLayout, startJump]);
   useImperativeHandle(listRef, () => ({ scrollToBottom, followBottom, jumpToMessage }), [scrollToBottom, followBottom, jumpToMessage]);
 
   useIsomorphicLayoutEffect(() => {

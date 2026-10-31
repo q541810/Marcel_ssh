@@ -1,7 +1,8 @@
 import { Check } from 'lucide-react';
-import type { QuestionItem, QuestionAnswer } from '@/lib/types';
+import type { QuestionItem, QuestionAnswer, SubagentQuestionSource } from '@/lib/types';
 import { useQuestionForm } from '@/components/agent/useQuestionForm';
 import { QuestionJumpButton } from '@/components/agent/QuestionJumpButton';
+import { QuestionSourceLine } from '@/components/agent/QuestionSourceLine';
 
 interface MobileQuestionSheetProps {
   questionId: string;
@@ -10,6 +11,8 @@ interface MobileQuestionSheetProps {
   queueLength?: number;
   /** 有可跳的上文才传：参数是当前这题的 anchor（缺省 = 正文开头）。 */
   onJump?: (anchor?: string) => void;
+  /** 主 agent 转述子 agent 的提问时带上来源。 */
+  source?: SubagentQuestionSource;
 }
 
 /**
@@ -24,6 +27,7 @@ export default function MobileQuestionSheet({
   onSubmit,
   queueLength = 1,
   onJump,
+  source,
 }: MobileQuestionSheetProps) {
   const form = useQuestionForm({ questionId, questions, onSubmit, focusOnQuestionChange: false });
   const { current, currentAnswer, index, total, isFirst, isLast } = form;
@@ -63,6 +67,7 @@ export default function MobileQuestionSheet({
           跳过
         </button>
       </div>
+      {source && <QuestionSourceLine mobile source={source} className="px-4 pb-1" />}
       {onJump && (
         <div className="px-4 pb-1">
           <QuestionJumpButton mobile anchor={current.anchor} onJump={() => onJump(current.anchor)} />

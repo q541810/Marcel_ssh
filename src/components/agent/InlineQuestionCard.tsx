@@ -1,8 +1,9 @@
 import { HelpCircle } from 'lucide-react';
-import type { QuestionAnswer, QuestionItem } from '@/lib/types';
+import type { QuestionAnswer, QuestionItem, SubagentQuestionSource } from '@/lib/types';
 import { useQuestionForm } from './useQuestionForm';
 import { QuestionFormBody, QuestionFormFooter } from './QuestionFormParts';
 import { QuestionJumpButton } from './QuestionJumpButton';
+import { QuestionSourceLine } from './QuestionSourceLine';
 
 interface Props {
   questionId: string;
@@ -11,6 +12,8 @@ interface Props {
   queueLength?: number;
   /** 有可跳的上文才传：参数是当前这题的 anchor（缺省 = 正文开头）。 */
   onJump?: (anchor?: string) => void;
+  /** 主 agent 转述子 agent 的提问时带上来源。 */
+  source?: SubagentQuestionSource;
 }
 
 /**
@@ -19,7 +22,7 @@ interface Props {
  * 首次出现不抢焦点——焦点会把视口拽向卡片，而我们要把结论的开头留在视野里。
  */
 export default function InlineQuestionCard({
-  questionId, questions, onSubmit, queueLength = 1, onJump,
+  questionId, questions, onSubmit, queueLength = 1, onJump, source,
 }: Props) {
   const form = useQuestionForm({ questionId, questions, onSubmit, focusOnQuestionChange: false });
   const { current, index, total } = form;
@@ -55,6 +58,7 @@ export default function InlineQuestionCard({
           </button>
         </div>
       </div>
+      {source && <QuestionSourceLine source={source} className="border-b border-edge-subtle px-4 py-2" />}
       <div className="space-y-3 px-4 py-3">
         <QuestionFormBody form={form} />
       </div>

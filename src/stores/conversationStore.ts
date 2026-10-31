@@ -135,6 +135,9 @@ export interface ConversationState {
     subTaskId: string,
     prompt: string,
     parentConversationId: string,
+    /** 续派是在**回答**子 agent 的 ask_parent：回答成为那次调用的结果，不是一条新的 user 消息，
+     *  所以只追加骨架、不追加「追问」。 */
+    answersAsk?: boolean,
   ) => string | null;
   clearAllAssistantFlags: (conversationId?: string) => void;
   clearRetryingFlags: (conversationId?: string) => void;
@@ -1588,7 +1591,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     return tauri.agentCancelCompaction(conversationId);
   },
 
-  registerSubConversation: (conversationId, connectionId, title, subTaskId, prompt, parentConversationId) => {
+  registerSubConversation: (conversationId, connectionId, title, subTaskId, prompt, parentConversationId, answersAsk) => {
     const now = new Date().toISOString();
     const loadingId = `sub-loading-${subTaskId}`;
     let result: string | null = loadingId;
@@ -1613,7 +1616,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
             ...state.messages,
             [conversationId]: [
               ...existing,
-              { id: `sub-user-${subTaskId}`, role: 'user', content: prompt, timestamp: now },
+              ...(answersAsk ? [] : [{ id: `sub-user-${subTaskId}`, role: 'user' as const, content: prompt, timestamp: now }]),
               { id: loadingId, role: 'assistant', content: '', timestamp: now, isLoading: true },
             ],
           },

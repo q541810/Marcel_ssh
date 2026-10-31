@@ -113,6 +113,7 @@ export default function MobileGlobalInteractionOverlay() {
         sessionName={formatInteractionSessionLabel(current.sessionTarget, privacyMode)}
         questionCount={current.question.questions.length}
         queueLength={current.queueLength}
+        source={current.question.sourceSubagent}
         onOpen={() => handleNavigate()}
       />
     );

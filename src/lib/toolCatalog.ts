@@ -81,6 +81,8 @@ export interface ToolPresentation {
   readonly web?: boolean;
   /** 派发子 agent：卡片据此提供「查看调研过程」入口、标注读写模式。 */
   readonly subagent?: boolean;
+  /** 子 agent 向主 agent 提问（`ask_parent`）：停在这次调用上等回答，任务中心据此标「提问中」。 */
+  readonly askParent?: boolean;
   readonly payload?: ToolPayload;
   /**
    * 审批面板的参数区呈现方式。缺省 = 原始 JSON。
@@ -257,6 +259,9 @@ export const DEFAULT_ICON_PATHS = [
   'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
 ];
 
+/** 子 agent 向主 agent 提问的工具名（占位消息要用到名字本身，其余一律走 `isAskParentTool`）。 */
+export const ASK_PARENT_TOOL = 'ask_parent';
+
 /** 读文件类工具（含写）标题行都显示路径。 */
 const pathPreview = (args: Record<string, unknown>): string => asArgString(args.path) ?? '';
 
@@ -390,6 +395,15 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
       const count = questions.length > 1 ? ` +${questions.length - 1} 题` : '';
       return `? ${head}${count}`;
     },
+  },
+  {
+    // 子 agent 向主 agent 提问（子 agent 自己没有 ask_user）。消息流里由专属 view 画成
+    // 一问一答的对话气泡；这里只管图标与显示名。
+    name: ASK_PARENT_TOOL,
+    askParent: true,
+    label: '问主 Agent',
+    iconPaths: ICON_QUESTION,
+    preview: (args) => clip(asArgString(args.question) || ''),
   },
   {
     name: 'subagent',
@@ -609,6 +623,11 @@ export function isExplorationTool(toolName: string): boolean {
 /** 派发子 agent 的工具（现名 subagent；兼容旧历史消息的 task）。 */
 export function isSubagentTool(toolName: string): boolean {
   return toolSpec(toolName)?.subagent === true;
+}
+
+/** 子 agent 向主 agent 提问的工具（`ask_parent`）。 */
+export function isAskParentTool(toolName: string): boolean {
+  return toolSpec(toolName)?.askParent === true;
 }
 
 /** 产出用户直接消费的交付物（如可视化图表）——回合过程折叠时豁免。 */

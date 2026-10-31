@@ -1,4 +1,6 @@
 import { HelpCircle } from 'lucide-react';
+import type { SubagentQuestionSource } from '@/lib/types';
+import { subagentDisplayTitle } from '@/lib/subagentNav';
 
 interface Props {
   conversationTitle?: string;
@@ -6,6 +8,8 @@ interface Props {
   questionCount: number;
   queueLength?: number;
   onOpen: () => void;
+  /** 提问来自子 agent：提醒条上多一行来源。 */
+  source?: SubagentQuestionSource;
 }
 
 /**
@@ -17,7 +21,7 @@ interface Props {
  * （返回键照旧由页面栈处理）。
  */
 export default function MobileQuestionBar({
-  conversationTitle, sessionName, questionCount, queueLength = 1, onOpen,
+  conversationTitle, sessionName, questionCount, queueLength = 1, onOpen, source,
 }: Props) {
   const where = [sessionName, conversationTitle].filter(Boolean).join(' · ');
   return (
@@ -39,6 +43,11 @@ export default function MobileQuestionBar({
             智能助手在等你回答{questionCount > 1 ? `（${questionCount} 项）` : ''}
             {queueLength > 1 ? ` · 1/${queueLength}` : ''}
           </span>
+          {source && (
+            <span className="block truncate text-[11px] text-sky-400" data-testid="question-source">
+              来自子 Agent「{subagentDisplayTitle(source.title)}」的问题
+            </span>
+          )}
           {where && <span className="block truncate text-[11px] text-zinc-400">{where}</span>}
         </span>
         <span className="flex-shrink-0 rounded-lg border border-indigo-500/40 bg-indigo-600/30 px-2.5 py-1 text-xs font-medium text-indigo-200">

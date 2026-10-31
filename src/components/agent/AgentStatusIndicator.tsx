@@ -1,6 +1,12 @@
 import React from 'react';
 
-export type AgentVisualStatus = 'running' | 'waiting_approval' | 'unread_completed' | 'idle';
+export type AgentVisualStatus =
+  | 'running'
+  | 'waiting_approval'
+  /** 子 agent 在向主 agent 提问、等回答（只用于单个任务的卡片，不参与对话 / 会话级聚合）。 */
+  | 'asking_parent'
+  | 'unread_completed'
+  | 'idle';
 
 interface AgentStatusIndicatorProps {
   status: AgentVisualStatus;
@@ -38,6 +44,7 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
   const tooltipText = {
     running: 'Agent 运行中',
     waiting_approval: '等待审批',
+    asking_parent: '向主 Agent 提问中',
     unread_completed: '任务已完成',
     idle: '',
   }[status];
@@ -94,6 +101,13 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
           <span className="absolute inset-0 rounded-full bg-amber-500/30 blur-[1.5px]" />
           {/* Core amber dot */}
           <span className={`relative rounded-full bg-amber-400 shadow-sm shadow-amber-500/50 ${sizeClasses.dot}`} />
+        </span>
+      )}
+
+      {status === 'asking_parent' && (
+        <span className={`relative inline-flex items-center justify-center ${sizeClasses.ring}`}>
+          <span className="absolute inset-0 rounded-full bg-sky-500/30 blur-[1.5px]" />
+          <span className={`relative rounded-full bg-sky-400 shadow-sm shadow-sky-500/50 ${sizeClasses.dot}`} />
         </span>
       )}
 

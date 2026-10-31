@@ -188,6 +188,54 @@ describe('subagent wiring', () => {
     expect(msgs[2].isLoading).toBe(true);
   });
 
+  it('subTaskStart answersAsk：回答成为 ask_parent 的结果（不追加追问 user 消息），旧的「提问中」任务被收掉', () => {
+    const handler = createDefaultStreamHandler();
+    seedParentTask();
+    const base = {
+      type: 'subTaskStart' as const,
+      toolCallId: 'call-1',
+      subConversationId: 'sub-conv-1',
+      description: 'explore nginx',
+      parentConversationId: 'main-conv',
+    };
+    handleSubTaskStart(handler, 'parent-1', { ...base, subTaskId: 'sub-1', prompt: 'look at /etc/nginx' });
+    // 子 agent 停在提问上：骨架被清掉，ask_parent 卡片在等回答，任务记 awaiting_parent
+    useConversationStore.setState((s) => ({
+      messages: {
+        ...s.messages,
+        'sub-conv-1': [
+          ...s.messages['sub-conv-1'].filter((m) => !m.isLoading),
+          {
+            id: 'ask-msg', role: 'tool' as const, content: '', timestamp: '', isExecuting: true,
+            toolResult: { toolName: 'ask_parent', summary: '', result: '', success: true, blocked: false, toolCallId: 'ask-1', arguments: { question: 'Q' } },
+          },
+        ],
+      },
+    }));
+    useTaskStore.getState().updateTaskStatus('sub-1', 'awaiting_parent');
+
+    handleSubTaskStart(handler, 'parent-1', {
+      ...base,
+      toolCallId: 'call-2',
+      subTaskId: 'sub-2',
+      prompt: '用 /var/log',
+      resumed: true,
+      answersAsk: 'ask-1',
+    });
+
+    const msgs = useConversationStore.getState().messages['sub-conv-1'];
+    // 没有「追问」user 消息：原 user + ask_parent(已回答) + 新骨架
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'tool', 'assistant']);
+    const ask = msgs[1];
+    expect(ask.isExecuting).toBe(false);
+    expect(ask.toolResult?.result).toBe('用 /var/log');
+    expect(ask.toolResult?.metadata).toEqual({ kind: 'parentAnswer' });
+    expect(msgs[2].isLoading).toBe(true);
+    const tasks = useTaskStore.getState().tasks;
+    expect(tasks['sub-1'].status).toBe('completed');
+    expect(tasks['sub-2']).toMatchObject({ conversationId: 'sub-conv-1', status: 'planning' });
+  });
+
   it('subTaskStart attaches sub-conversation link to the running task tool card', () => {
     const handler = createDefaultStreamHandler();
     seedParentTask();

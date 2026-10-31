@@ -1,5 +1,6 @@
 import type { AgentMessage } from './types';
 import { isDeliverableTool } from './toolCatalog';
+import { threadSummaryLabel } from './subagentThread';
 
 export interface ToolCallCount {
   toolName: string;
@@ -21,7 +22,8 @@ export function summarizeToolCalls(messages: readonly AgentMessage[]): ToolCallC
   for (const message of messages) {
     if (message.role !== 'tool' || message.isExecuting || !message.toolResult
       || isDeliveredToolResult(message)) continue;
-    const name = message.toolResult.toolName;
+    // 问过主 Agent 的子 agent 时间线卡：折叠摘要里写「子 Agent · 标题（问过 N 次）」，一张卡一项
+    const name = threadSummaryLabel(message.subagentThread) ?? message.toolResult.toolName;
     if (typeof name !== 'string' || !name.trim()) continue;
     counts.set(name, (counts.get(name) ?? 0) + 1);
   }

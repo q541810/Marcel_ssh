@@ -14,6 +14,7 @@ import {
   getJobSessionLabel,
   getSessionLabel,
   type TaskCenterCatalog,
+  taskStatusBadge,
 } from '@/lib/taskCenterLabels';
 import { ChevronRight } from 'lucide-react';
 
@@ -170,9 +171,12 @@ export default function MobileActiveAgentsSheet({
 
                     <div className="flex items-center gap-1.5 flex-shrink-0">
                       <AgentStatusIndicator status={visualStatus} size="sm" />
-                      {task.status === 'waiting_approval' && (
-                        <span className="text-[10px] text-amber-400 font-medium">待审批</span>
-                      )}
+                      {(() => {
+                          const badge = taskStatusBadge(task);
+                          return badge && (
+                            <span className={`text-[10px] font-medium ${badge.tone === 'sky' ? 'text-sky-400' : 'text-amber-400'}`}>{badge.text}</span>
+                          );
+                        })()}
                     </div>
                   </div>
 

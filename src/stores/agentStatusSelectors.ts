@@ -1,7 +1,7 @@
 import type { AgentTask, JobInfo } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
 import { useConversationStore } from '@/stores/conversationStore';
-import { isTaskActive, isTaskBusy } from '@/lib/agentStatus';
+import { isTaskActive, isTaskAlive } from '@/lib/agentStatus';
 import type { ReadInterruptedJobs } from '@/lib/jobReadState';
 
 /**
@@ -10,6 +10,7 @@ import type { ReadInterruptedJobs } from '@/lib/jobReadState';
 export function getTaskVisualStatus(task?: AgentTask | null): AgentVisualStatus {
   if (!task) return 'idle';
   if (task.status === 'waiting_approval') return 'waiting_approval';
+  if (task.status === 'awaiting_parent') return 'asking_parent';
   if (isTaskActive(task.status)) return 'running';
   return 'idle';
 }
@@ -152,7 +153,7 @@ export function getSessionAgentStatus(
  * 它会进抽屉；抽屉那边按 `isLocalSessionId` 显示「本机」、跳转时不切终端标签。
  */
 export function getActiveRunningTasks(tasks: Record<string, AgentTask>): AgentTask[] {
-  return Object.values(tasks).filter((t) => !!t.sessionId && isTaskBusy(t.status));
+  return Object.values(tasks).filter((t) => !!t.sessionId && isTaskAlive(t.status));
 }
 
 /**

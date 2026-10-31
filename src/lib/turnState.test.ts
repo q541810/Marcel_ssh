@@ -23,9 +23,20 @@ function parseRustTurnState(src: string): { header: string; variants: string[] }
   const end = src.indexOf('\n}', start);
   const body = src.slice(start, end);
   const variants: string[] = [];
+  // 变体上方可以挂 `#[serde(rename = "xxx")]`（如 awaiting_parent：小写化会丢掉下划线）：
+  // 有就以 rename 为线名，没有就是变体名小写。
+  let rename: string | null = null;
   for (const line of body.split('\n')) {
+    const attr = line.match(/^\s{4}#\[serde\(rename = "([^"]+)"\)\]\s*$/);
+    if (attr) {
+      rename = attr[1];
+      continue;
+    }
     const variant = line.match(/^\s{4}([A-Z][A-Za-z0-9]*),\s*$/);
-    if (variant) variants.push(variant[1]);
+    if (variant) {
+      variants.push(rename ?? variant[1].toLowerCase());
+      rename = null;
+    }
   }
   // 变体上面挂的 serde 属性（决定落库/线上字符串怎么写）
   const header = src.slice(Math.max(0, start - 200), start);
@@ -41,9 +52,9 @@ describe('TurnState 与后端的对齐', () => {
   });
 
   it('变体名小写后与前端清单逐一对应', () => {
-    // 变体名小写 = 落库字符串（rename_all = "lowercase" + as_str()），
+    // 变体名小写（或显式 rename）= 落库字符串（rename_all = "lowercase" + as_str()），
     // 前端按同一套字符串匹配，任何一边加/改变体这里都会红。
-    expect(variants.map((v) => v.toLowerCase())).toEqual([...TURN_STATES]);
+    expect(variants).toEqual([...TURN_STATES]);
   });
 
   it('后端确实按小写序列化（前端清单是小写的依据）', () => {

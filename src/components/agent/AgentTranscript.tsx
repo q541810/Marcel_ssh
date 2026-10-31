@@ -10,8 +10,9 @@ import { MarkdownVisibility } from './markdownVisibility';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
 import { JUMP_TTL_MS, useMessageJumpStore } from '@/stores/messageJumpStore';
 import { useRegisterVisibleTranscript } from '@/stores/visibleTranscriptStore';
-import { resolveQuestionJump } from '@/lib/questionJump';
+import { resolveJumpRequest } from '@/lib/jumpResolve';
 import InlineQuestion from './InlineQuestion';
+import SubagentAwaitingNotice from './SubagentAwaitingNotice';
 import { MessageJumpContext, type MessageJumpScope } from './messageJumpContext';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
@@ -64,13 +65,13 @@ export default memo(function AgentTranscript({
     if (jumpRequest.conversationId !== conversationId) return;
     const settle = () => useMessageJumpStore.getState().settle(jumpRequest.seq);
     if (Date.now() - jumpRequest.requestedAt > JUMP_TTL_MS) { settle(); return; }
-    const target = resolveQuestionJump(messages, jumpRequest.toolCallId, jumpRequest.anchor);
+    const target = resolveJumpRequest(messages, jumpRequest);
     if (!target) {
       // 消息可能还在载入：到期前不放弃
       const timer = setTimeout(settle, Math.max(0, JUMP_TTL_MS - (Date.now() - jumpRequest.requestedAt)));
       return () => clearTimeout(timer);
     }
-    if (listRef.current?.jumpToMessage(target.message.id, target.anchor)) settle();
+    if (listRef.current?.jumpToMessage(target.id, target.anchor)) settle();
   }, [jumpRequest, visible, canInteract, conversationId, messages]);
 
   const messagesRef = useRef<readonly AgentMessage[]>(messages);
@@ -172,6 +173,9 @@ export default memo(function AgentTranscript({
             </MarkdownVisibility.Provider>
           )}
           {canInteract && loopRunning && conversationId && <AgentRunStatus conversationId={conversationId} />}
+          {canInteract && conversationId && (
+            <SubagentAwaitingNotice conversationId={conversationId} messages={messages} mobile={mobile} />
+          )}
           {canInteract && visible && conversationId && (
             <InlineQuestion conversationId={conversationId} mobile={mobile} />
           )}

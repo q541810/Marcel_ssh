@@ -44,6 +44,7 @@ export function isTaskActive(status: AgentStatus): boolean {
     case 'executing':
       return true;
     case 'waiting_approval':
+    case 'awaiting_parent':
     case 'completed':
     case 'failed':
     case 'cancelled':
@@ -62,9 +63,22 @@ export function isTaskBusy(status: AgentStatus): boolean {
     case 'executing':
     case 'waiting_approval':
       return true;
+    // 子 agent 停在 ask_parent 上：它不在消耗算力，也不占席位（对话可以被看、被切走），
+    // 所以**不是 busy** —— 队列、退出确认、输入框锁定都不该因为它而卡住。
+    case 'awaiting_parent':
     case 'completed':
     case 'failed':
     case 'cancelled':
       return false;
   }
+}
+
+/**
+ * 任务还「活着」：busy，或者停在 ask_parent 上等主 agent 回答。
+ *
+ * 只给**任务中心的列表**用 —— 用户要能看到「有个子 agent 在等主 agent 回话」，
+ * 而不是它一暂停就从列表里消失。别拿它做忙闲判定（忙闲看 `isTaskBusy`）。
+ */
+export function isTaskAlive(status: AgentStatus): boolean {
+  return isTaskBusy(status) || status === 'awaiting_parent';
 }

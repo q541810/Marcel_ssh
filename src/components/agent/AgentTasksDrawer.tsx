@@ -14,6 +14,7 @@ import {
   getJobSessionLabel,
   getSessionLabel,
   type TaskCenterCatalog,
+  taskStatusBadge,
 } from '@/lib/taskCenterLabels';
 
 interface AgentTasksDrawerProps {
@@ -195,9 +196,12 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                       </div>
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <AgentStatusIndicator status={visualStatus} size="sm" showTooltip />
-                        {task.status === 'waiting_approval' && (
-                          <span className="text-[10px] text-amber-400 font-medium">待审批</span>
-                        )}
+                        {(() => {
+                          const badge = taskStatusBadge(task);
+                          return badge && (
+                            <span className={`text-[10px] font-medium ${badge.tone === 'sky' ? 'text-sky-400' : 'text-amber-400'}`}>{badge.text}</span>
+                          );
+                        })()}
                       </div>
                     </div>
                     <div className="text-xs font-semibold text-zinc-100 truncate mb-1">

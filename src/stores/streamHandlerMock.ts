@@ -53,6 +53,7 @@ export function mockHandler(messages: Record<string, AgentMessage[]> = {}): Mock
         status: task.status,
       };
     },
+    retireAwaitingParent() {},
     registerSubConversation(args) {
       conversations[args.conversationId] = {
         id: args.conversationId,

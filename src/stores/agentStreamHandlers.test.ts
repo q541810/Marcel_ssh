@@ -8,6 +8,7 @@ import {
   handleThinkingDelta,
   handleDone,
   handleCancelled,
+  handleAwaitingParent,
   handleError,
   handleRetrying,
   markRoundEnded,
@@ -1328,6 +1329,49 @@ describe('agentStreamHandlers', () => {
    * 「在飞卡片 / 回合收尾状态 / 任务状态」三处落到同一份真实状态上，假 handler
    * 会把它们分别记在私有 map 里，测不到真实装配。
    */
+  describe('handleAwaitingParent', () => {
+    function seed() {
+      useConversationStore.setState({
+        messages: {
+          [convId]: [
+            { id: 'u1', role: 'user', content: '查日志', timestamp: '' },
+            { id: 'a1', role: 'assistant', content: '我先看看。', timestamp: '' },
+            {
+              id: 'ask', role: 'tool', content: '', timestamp: '', isExecuting: true, isComposing: true,
+              toolResult: { toolName: 'ask_parent', summary: '', result: '', success: true, blocked: false, toolCallId: 'ask-1', arguments: { question: 'Q' } },
+            },
+            { id: 'skel', role: 'assistant', content: '', timestamp: '', isLoading: true },
+          ],
+        },
+        activeConversationId: convId,
+      });
+      useTaskStore.setState({
+        tasks: {
+          [taskId]: { id: taskId, sessionId: 's1', conversationId: convId, prompt: 'p', mode: 'plan', status: 'executing', createdAt: '' },
+        },
+      });
+    }
+    const msgs = () => useConversationStore.getState().messages[convId];
+
+    it('保留在等回答的 ask_parent 卡片（不当成没跑完的调用删掉），撰写态收掉让气泡登场', () => {
+      seed();
+      handleAwaitingParent(createDefaultStreamHandler(), taskId, convId, 'skel');
+      const ask = msgs().find((m) => m.id === 'ask')!;
+      expect(ask).toBeDefined();
+      expect(ask.isExecuting).toBe(true);
+      expect(ask.isComposing).toBe(false);
+      expect(msgs().some((m) => m.isLoading)).toBe(false);
+    });
+
+    it('任务记 awaiting_parent（不占席位）；回合写 awaiting_parent，不折叠、不是 completed', () => {
+      seed();
+      handleAwaitingParent(createDefaultStreamHandler(), taskId, convId, 'skel');
+      expect(useTaskStore.getState().tasks[taskId].status).toBe('awaiting_parent');
+      expect(msgs()[0].turnState).toBe('awaiting_parent');
+      expect(segmentTurns(msgs(), { tailActive: false })[0].foldable).toBe(false);
+    });
+  });
+
   describe('handleCancelled', () => {
     /** 停止瞬间的真实形态：过场正文与工具卡交替，最后一张在飞。 */
     function stoppedTurnMessages(): AgentMessage[] {

@@ -40,6 +40,11 @@ export interface StreamHandler {
     status: string;
     parentTaskId: string;
   }): void;
+  /**
+   * 子对话被续派接上后，把它此前停在 `awaiting_parent` 的旧任务收掉（记完成）。
+   * 续派是一个新任务（新 subTaskId），旧任务不收就会在任务中心里永远挂着「提问中」。
+   */
+  retireAwaitingParent(conversationId: string, exceptTaskId: string): void;
   /** 注册一个子对话条目（流开始时显示骨架）。参数顺序对齐 `conversationStore.registerSubConversation`。 */
   registerSubConversation(args: {
     conversationId: string;
@@ -48,6 +53,8 @@ export interface StreamHandler {
     subTaskId: string;
     prompt: string;
     parentConversationId: string;
+    /** 续派是在回答子 agent 的 ask_parent（不追加「追问」user 消息）。 */
+    answersAsk?: boolean;
   }): string | null;
   /**
    * 记一轮的用量读数（`contextUsage` 事件）：按**事件所属会话**分桶，
@@ -833,6 +840,41 @@ export function handleCancelled(
   });
 
   // 不在此处清空 activeTaskId（同 handleDone 的理由）。
+}
+
+/**
+ * 子 agent 停在 `ask_parent` 上（`awaitingParent` 事件）：这一轮**干净地停下来等主 agent 回答**。
+ *
+ * 与 `handleDone` 的差别（后端把它和 `Done` 分开发正是为此）：
+ * 1. 执行中的 `ask_parent` 卡片**保留**——它是「在等回答」唯一可见的痕迹（`handleDone` 会把
+ *    没有结果的卡片当「没跑完的调用」删掉）；撰写态收掉，让问句气泡立刻登场；
+ * 2. 任务记 `awaiting_parent`（任务中心标「提问中」；不是 busy，不占席位），回合收尾状态写
+ *    `awaiting_parent`（不折叠）；
+ * 3. 不点未读完成绿点——这一轮没有完成。
+ * 骨架 / 空 assistant / retrying 指示的清理与取消路径一致（纯展示残留）。
+ */
+export function handleAwaitingParent(
+  handler: StreamHandler,
+  taskId: string,
+  conversationId: string,
+  loadingAssistantId: string,
+) {
+  flushPendingDeltas(handler, taskId, conversationId, loadingAssistantId);
+  settleComposing(handler, conversationId);
+
+  handler.updateTaskStatus(taskId, 'awaiting_parent');
+  useConversationStore.getState().markTailTurnState(conversationId, 'awaiting_parent');
+
+  handler.updateMessages(conversationId, (convMsgs) =>
+    convMsgs
+      .filter((m) => {
+        if (m.role === 'assistant' && m.isLoading) return false;
+        if (m.role === 'assistant' && m.content === '' && !m.toolCall && !m.toolCalls?.length && !m.reasoningContent) return false;
+        if (m.role === 'system' && m.isRetrying) return false;
+        return true;
+      })
+      .map((m) => (m.role === 'assistant' && m.isThinking ? { ...m, isThinking: false } : m)),
+  );
 }
 
 export function handleError(

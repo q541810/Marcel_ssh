@@ -94,6 +94,24 @@ describe('InlineQuestion（内联提问卡片）', () => {
     expect(container.querySelector('[data-region="mobile-question"]')).not.toBeNull();
   });
 
+  it('提问带 sourceSubagent：桌面卡片 / 手机卡片都显示来源行，点「查看它的上下文」不影响作答', () => {
+    const src = { conversationId: 'sub-1', title: '查日志（子agent）', askToolCallId: 'ask-1' };
+    const withSource = (qid: string) => ({ questionId: qid, questions: QUESTIONS, sourceSubagent: src });
+    for (const mobile of [false, true]) {
+      act(() => root.render(<div />));
+      seed += 1;
+      const qid = `q-${seed}`;
+      mount(mobile, 'c1', { question: withSource(qid) });
+      expect(container.querySelector('[data-testid="question-source"]')?.textContent).toContain('来自子 Agent「查日志」的问题');
+      expect(container.textContent).toContain('查看它的上下文');
+    }
+  });
+
+  it('普通提问没有来源行', () => {
+    mount(false);
+    expect(container.querySelector('[data-testid="question-source"]')).toBeNull();
+  });
+
   it('不渲染审批', () => {
     mount(false, 'c1', { kind: 'approval', question: undefined });
     expect(container.textContent).toBe('');

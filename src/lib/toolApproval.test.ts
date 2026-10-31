@@ -135,6 +135,7 @@ describe('toolApproval', () => {
         'job_kill',
         'job_list',
         'ask_user',
+        'ask_parent',
         'write_file',
         'edit_file',
         'create_plan',

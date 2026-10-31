@@ -65,6 +65,7 @@ function ActiveInlineQuestion({ conversationId, mobile }: { conversationId: stri
           onSubmit={onSubmit}
           queueLength={current.queueLength}
           onJump={onJump}
+          source={question.sourceSubagent}
         />
       ) : (
         <InlineQuestionCard
@@ -73,6 +74,7 @@ function ActiveInlineQuestion({ conversationId, mobile }: { conversationId: stri
           onSubmit={onSubmit}
           queueLength={current.queueLength}
           onJump={onJump}
+          source={question.sourceSubagent}
         />
       )}
     </div>

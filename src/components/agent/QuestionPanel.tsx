@@ -1,6 +1,7 @@
-import type { QuestionItem, QuestionAnswer } from '@/lib/types';
+import type { QuestionItem, QuestionAnswer, SubagentQuestionSource } from '@/lib/types';
 import { useQuestionForm } from './useQuestionForm';
 import { QuestionFormBody, QuestionFormFooter } from './QuestionFormParts';
+import { QuestionSourceLine } from './QuestionSourceLine';
 
 interface Props {
   questionId: string;
@@ -13,6 +14,8 @@ interface Props {
   onNavigateToContext?: (e?: React.MouseEvent) => void;
   queueLength?: number;
   onMinimize?: (e?: React.MouseEvent) => void;
+  /** 主 agent 转述子 agent 的提问时带上来源。 */
+  source?: SubagentQuestionSource;
 }
 
 export default function QuestionPanel({
@@ -26,6 +29,7 @@ export default function QuestionPanel({
   onNavigateToContext,
   queueLength = 1,
   onMinimize,
+  source,
 }: Props) {
   const form = useQuestionForm({ questionId, questions, onSubmit });
   const { current, index, total } = form;
@@ -99,6 +103,8 @@ export default function QuestionPanel({
             </button>
           </div>
         </div>
+
+        {source && <QuestionSourceLine source={source} className="mx-4 mt-3" />}
 
         {/* 上下文横条提示 (Context Banner) */}
         {(sessionName || conversationTitle) && (

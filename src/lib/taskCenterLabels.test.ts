@@ -4,6 +4,7 @@ import {
   getJobSessionLabel,
   getSessionLabel,
   type TaskCenterCatalog,
+  taskStatusBadge,
 } from '@/lib/taskCenterLabels';
 import { LOCAL_SESSION_SENTINEL } from '@/lib/toolCatalog';
 import type { AgentConversation, AgentTask, SavedConnection, Session } from '@/lib/types';
@@ -187,5 +188,15 @@ describe('taskCenterLabels · canJumpToSession（点击卡片的跳转守卫）'
     const sessions = { 'session-1': session() };
     expect(canJumpToSession(sessions, agentTask(), 'session-1')).toBe(false);
     expect(canJumpToSession(sessions, agentTask({ sessionId: '' }), 'session-1')).toBe(false);
+  });
+});
+
+describe('taskStatusBadge', () => {
+  it('待审批（琥珀）与提问中（天蓝）是两种不同的徽标，其余状态没有', () => {
+    expect(taskStatusBadge({ status: 'waiting_approval' })).toEqual({ text: '待审批', tone: 'amber' });
+    expect(taskStatusBadge({ status: 'awaiting_parent' })).toEqual({ text: '提问中', tone: 'sky' });
+    for (const status of ['planning', 'executing', 'completed', 'failed', 'cancelled'] as const) {
+      expect(taskStatusBadge({ status }), status).toBeNull();
+    }
   });
 });

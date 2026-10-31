@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isTaskActive, isTaskBusy } from '@/lib/agentStatus';
+import { isTaskActive, isTaskAlive, isTaskBusy } from '@/lib/agentStatus';
 import type { AgentStatus } from '@/lib/types';
 
 /**
@@ -29,5 +29,13 @@ describe('agentStatus 分类', () => {
   it('等待审批不算「在跑」但算「忙」——这个区分是界面的依据', () => {
     expect(isTaskActive('waiting_approval')).toBe(false);
     expect(isTaskBusy('waiting_approval')).toBe(true);
+  });
+
+  it('awaiting_parent（子 agent 停在提问上）：不在跑、不占席位，但任务中心仍列出', () => {
+    expect(isTaskActive('awaiting_parent')).toBe(false);
+    expect(isTaskBusy('awaiting_parent')).toBe(false);
+    expect(isTaskAlive('awaiting_parent')).toBe(true);
+    for (const s of [...ACTIVE, ...BUSY_ONLY]) expect(isTaskAlive(s), s).toBe(true);
+    for (const s of TERMINAL) expect(isTaskAlive(s), s).toBe(false);
   });
 });

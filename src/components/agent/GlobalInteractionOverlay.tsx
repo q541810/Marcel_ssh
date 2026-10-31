@@ -217,6 +217,7 @@ export default function GlobalInteractionOverlay() {
             key={current.interactionId}
             questionId={current.question.questionId}
             questions={current.question.questions}
+            source={current.question.sourceSubagent}
             onSubmit={(_qid, answers) => {
               if (current.question) {
                 void answerQuestion(current.taskId, current.question.questionId, answers);

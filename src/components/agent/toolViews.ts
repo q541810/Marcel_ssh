@@ -5,6 +5,7 @@ import HtmlVisualization from "./HtmlVisualization";
 import MobileHtmlVisualization from "./MobileHtmlVisualization";
 import MemoryToolView from "./MemoryToolView";
 import QuestionRecord from "./QuestionRecord";
+import AskParentExchange from "./AskParentExchange";
 import PresentFileView from "./PresentFileCard";
 
 export interface ToolViewProps {
@@ -54,6 +55,10 @@ const TOOL_VIEWS: Record<string, ToolViewEntry> = {
   // 提问记录：内联卡片作答后原地收成一行「已回答：…」，带跳回上文的按钮。
   ask_user: {
     desktop: QuestionRecord,
+  },
+  // 子对话里的 ask_parent：一问一答两个气泡（不是工具卡）。
+  ask_parent: {
+    desktop: AskParentExchange,
   },
 };
 

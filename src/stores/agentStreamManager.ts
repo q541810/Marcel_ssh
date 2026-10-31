@@ -17,6 +17,7 @@ import {
   handleThinkingDelta,
   handleDone,
   handleCancelled,
+  handleAwaitingParent,
   handleError,
   handleRetrying,
   handleToolOutput,
@@ -37,6 +38,7 @@ import {
 import { createDefaultStreamHandler } from './storeStreamAdapter';
 import { storedMessageToAgentMessage, clearIntermediateReasoning } from './messageConversion';
 import { onTurnFinished } from './jobWake';
+import { isAskParentTool } from '@/lib/toolCatalog';
 import * as tauri from '@/lib/tauri';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ export function registerSubTaskContext(
   explicitConnectionId?: string,
   subSessionId?: string,
   subMode?: AgentTask['mode'],
+  answersAsk = false,
 ): string | null {
   if (handler.getTask(subTaskId)) return null;
 
@@ -106,6 +109,7 @@ export function registerSubTaskContext(
     subTaskId,
     prompt,
     parentConversationId,
+    answersAsk,
   });
 
   // 把子任务登记进 taskStore —— 子任务是流编排创建的（不走 `taskStore.startTask`
@@ -123,6 +127,31 @@ export function registerSubTaskContext(
   return loadingId;
 }
 
+/**
+ * 续派是在回答 ask_parent：子对话里那次还停着的调用立刻落成「已回答」（答案就是这次续派的
+ * `prompt`），不必等子 agent 的 toolResult 回来 —— 气泡和底部的「正在等待」条当场收起。
+ * 旧任务（停在 awaiting_parent 的那个）同时收掉，任务中心里不会留两条。
+ * 之后到达的权威 toolResult（如果有）会按调用 id 覆盖这条，无冲突。
+ */
+function settleAnsweredAsk(handler: StreamHandler, ev: SubTaskStartPayload) {
+  const askId = ev.answersAsk;
+  if (!askId) return;
+  handler.updateMessages(ev.subConversationId, (msgs) =>
+    msgs.map((m) =>
+      m.role === 'tool' && m.isExecuting && !!m.toolResult && isAskParentTool(m.toolResult.toolName) && m.toolResult.toolCallId === askId
+        ? {
+            ...m,
+            isExecuting: false,
+            isComposing: false,
+            toolResult: { ...m.toolResult, result: ev.prompt, success: true, metadata: { kind: 'parentAnswer' } },
+          }
+        : m,
+    ),
+  );
+  // 续派是一个新任务：旧的、停在提问上的任务到此为止
+  handler.retireAwaitingParent(ev.subConversationId, ev.subTaskId);
+}
+
 /** subTaskStart 事件：注册子对话并挂载子agent实时流 listener。 */
 export function handleSubTaskStart(handler: StreamHandler, parentTaskId: string, ev: SubTaskStartPayload) {
   const loadingId = registerSubTaskContext(
@@ -137,7 +166,9 @@ export function handleSubTaskStart(handler: StreamHandler, parentTaskId: string,
     ev.connectionId,
     ev.sessionId,
     ev.mode,
+    !!ev.answersAsk,
   );
+  if (ev.answersAsk) settleAnsweredAsk(handler, ev);
   if (loadingId) {
     // 子agent仍在运行：挂 listener 消费实时流事件。
     void attachStreamListener(ev.subTaskId, ev.subConversationId, loadingId);
@@ -299,6 +330,14 @@ export async function attachStreamListener(taskId: string, conversationId: strin
       if (hasEventType(ev, 'subTaskStart')) {
         settleComposing(handler, conversationId);
         handleSubTaskStart(handler, taskId, ev as unknown as SubTaskStartPayload);
+        return;
+      }
+
+      if (hasEventType(ev, 'awaitingParent')) {
+        // 子 agent 停在 ask_parent 上等主 agent 回答：这一轮到此为止（流已结束），但不是完成。
+        handleAwaitingParent(handler, taskId, conversationId, loadingAssistantId);
+        cleanupTaskListeners(taskId);
+        onTurnFinished(conversationId, taskId);
         return;
       }
 

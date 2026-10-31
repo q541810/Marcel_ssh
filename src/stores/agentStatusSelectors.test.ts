@@ -35,6 +35,10 @@ describe('agentStatusSelectors', () => {
       expect(getTaskVisualStatus(mockTask({ status: 'executing' }))).toBe('running');
     });
 
+    it('awaiting_parent → asking_parent（独立于 running / waiting_approval）', () => {
+      expect(getTaskVisualStatus(mockTask({ status: 'awaiting_parent' }))).toBe('asking_parent');
+    });
+
     it('returns waiting_approval for waiting_approval status', () => {
       expect(getTaskVisualStatus(mockTask({ status: 'waiting_approval' }))).toBe('waiting_approval');
     });
@@ -144,6 +148,15 @@ describe('agentStatusSelectors', () => {
       };
       const active = getActiveRunningTasks(tasks);
       expect(active.map((t) => t.id)).toEqual(['t1', 't2']);
+    });
+
+    it('停在 ask_parent 上的子任务仍列出（标「提问中」），但不让对话 / 会话变忙', () => {
+      const tasks: Record<string, AgentTask> = {
+        t1: mockTask({ id: 't1', status: 'awaiting_parent', parentTaskId: 'p', conversationId: 'sub' }),
+      };
+      expect(getActiveRunningTasks(tasks).map((t) => t.id)).toEqual(['t1']);
+      expect(getSessionAgentStatus('session-1', tasks)).toBe('idle');
+      expect(getConversationAgentStatus('sub', tasks)).toBe('idle');
     });
   });
 

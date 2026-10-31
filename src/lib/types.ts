@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
+import type { SubagentThread } from './subagentThread';
 
 // View Registry types
 
@@ -443,6 +444,9 @@ export type AgentStatus =
   | 'planning'
   | 'executing'
   | 'waiting_approval'
+  /** 子 agent 用 `ask_parent` 向主 agent 提问、暂停等回答。**不占席位**（不是 busy / active），
+   *  但仍是一个活着的任务：任务中心照常列出，标「提问中」。 */
+  | 'awaiting_parent'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -464,6 +468,8 @@ export const TURN_STATES = [
   'cancelled',
   'failed',
   'interrupted',
+  /** 子 agent 对话：停在 `ask_parent` 上等主 agent 回答。不是正常结束，不折叠。 */
+  'awaiting_parent',
 ] as const;
 
 export type TurnState = (typeof TURN_STATES)[number];
@@ -598,6 +604,11 @@ export interface AgentMessage {
    * `toolCalls` 反查，不依赖此字段。本轮没写正文 = 缺省。
    */
   callerMessageId?: string;
+  /**
+   * **仅渲染期派生**（`lib/subagentThread`，从不落库、不进 store）：这条 subagent / local_subagent
+   * 工具消息是同一个子对话的「时间线卡」锚点，后续的续派调用已并入它。
+   */
+  subagentThread?: SubagentThread;
   /** 持久化消息的 DB row id（`messages.id`，统一 id 域）：load 时填充，
    *  压缩事件据此按 id 定位卡片插入点（取代位置数数与指纹验证）。 */
   dbId?: string;
@@ -1144,6 +1155,8 @@ export type LlmStreamEvent =
   // 与 'done' 分开是语义要求——'done' = 模型自然结束，前端据此删掉在飞的工具
   // 卡片、把回合收尾状态写成 completed（进而折叠）；取消时这两件事都是错的。
   | { type: 'cancelled' }
+  /** 子 agent 停在 `ask_parent` 上等主 agent 回答（与 done / cancelled 并列的第三种停法）。 */
+  | { type: 'awaitingParent'; toolCallId: string; question: string; context?: string | null }
   | { type: 'error'; message: string }
   | { type: 'retrying'; attempt: number; maxAttempts: number; delaySecs: number; lastError: string; discardPartial?: boolean }
   // Context compaction visibility — LLM summarization of old history is in
@@ -1219,6 +1232,8 @@ export interface SubTaskStartPayload {
    * `conversationStore.registerSubConversation` 会把追问与新骨架追加进原对话。
    */
   resumed?: boolean;
+  /** 续派是在**回答**子 agent 的提问时：被回答的那次 `ask_parent` 调用 id；其余为 null / 缺省。 */
+  answersAsk?: string | null;
 }
 
 /**
@@ -1295,7 +1310,16 @@ export interface ActiveInteractionPayload {
   question?: {
     questionId: string;
     questions: QuestionItem[];
+    /** 这次提问是主 agent 转述某个子 agent 的问题（`ask_user` 的 `source_subagent`）。 */
+    sourceSubagent?: SubagentQuestionSource;
   };
+}
+
+/** 提问来自哪个子 agent、哪一次 `ask_parent` 调用（用于「查看它的上下文」）。 */
+export interface SubagentQuestionSource {
+  conversationId: string;
+  title: string;
+  askToolCallId: string;
 }
 
 export interface QuestionAnswer {

@@ -56,6 +56,14 @@ export function createDefaultStreamHandler(): StreamHandler {
           : s.taskOutputByConversation,
       }));
     },
+    retireAwaitingParent(conversationId, exceptTaskId) {
+      const { tasks, updateTaskStatus } = useTaskStore.getState();
+      for (const t of Object.values(tasks)) {
+        if (t.conversationId === conversationId && t.id !== exceptTaskId && t.status === 'awaiting_parent') {
+          updateTaskStatus(t.id, 'completed');
+        }
+      }
+    },
     registerSubConversation(args) {
       return useConversationStore.getState().registerSubConversation(
         args.conversationId,
@@ -64,6 +72,7 @@ export function createDefaultStreamHandler(): StreamHandler {
         args.subTaskId,
         args.prompt,
         args.parentConversationId,
+        args.answersAsk,
       );
     },
     recordContextUsage(conversationId, ev) {

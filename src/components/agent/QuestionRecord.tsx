@@ -8,7 +8,10 @@ import { requestQuestionTextJump } from '@/stores/messageJumpStore';
 import { normalizeHeadingText, resolveQuestionTextMessage } from '@/lib/questionJump';
 import { shouldShowQuestionInline } from '@/lib/questionPlacement';
 import { summarizeAnswers } from '@/lib/questionAnswerSummary';
+import { completeQuestionSource, readSourceSubagentId } from '@/lib/subagentNav';
+import { useConversationStore } from '@/stores/conversationStore';
 import { MessageJumpContext } from './messageJumpContext';
+import { QuestionSourceLine } from './QuestionSourceLine';
 import { QuestionJumpButton } from './QuestionJumpButton';
 import type { ToolViewProps } from './toolViews';
 
@@ -40,6 +43,10 @@ function QuestionRecord({ message, grouped }: ToolViewProps) {
     const c = s.currentInteraction;
     return c?.kind === 'question' && c.question?.questionId === toolCallId ? c : null;
   });
+  const sourceId = readSourceSubagentId(tr?.arguments);
+  const sourceTitle = useConversationStore((s) => (sourceId ? s.conversations[sourceId]?.title : undefined));
+  const sourceMessages = useConversationStore((s) => (sourceId ? s.messages[sourceId] : undefined));
+  const source = sourceId ? completeQuestionSource(sourceId, sourceTitle, sourceMessages) : null;
   const inline = shouldShowQuestionInline(pending, visibleIds);
   const waiting = !!message.isExecuting;
   // 参数还在撰写（提问尚未发出）也不占位：那段时间由「正在撰写」状态条代表
@@ -67,15 +74,15 @@ function QuestionRecord({ message, grouped }: ToolViewProps) {
 
   return (
     <div className={`flex min-w-0 justify-start ${grouped ? 'pl-3' : ''}`}>
-      <div
-        data-testid="question-record"
-        className="flex min-h-7 min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 px-1 py-1 text-[13px] leading-5 text-zinc-400"
-      >
-        <span className="flex-shrink-0">{icon}</span>
-        <span className="min-w-0 max-w-full truncate" title={label}>{label}</span>
-        {canJump && (anchors.length > 0
-          ? anchors.map((a) => <QuestionJumpButton key={a} mobile={mobile} anchor={a} onJump={() => jump(a)} />)
-          : <QuestionJumpButton mobile={mobile} onJump={() => jump()} />)}
+      <div data-testid="question-record" className="min-w-0 max-w-full px-1 py-1 text-[13px] leading-5 text-zinc-400">
+        <div className="flex min-h-7 min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="flex-shrink-0">{icon}</span>
+          <span className="min-w-0 max-w-full truncate" title={label}>{label}</span>
+          {canJump && (anchors.length > 0
+            ? anchors.map((a) => <QuestionJumpButton key={a} mobile={mobile} anchor={a} onJump={() => jump(a)} />)
+            : <QuestionJumpButton mobile={mobile} onJump={() => jump()} />)}
+        </div>
+        {source && <QuestionSourceLine source={source} mobile={mobile} className="pl-[22px]" />}
       </div>
     </div>
   );

@@ -69,6 +69,7 @@ export const TOOL_INFO: readonly ToolInfo[] = [
   { name: 'job_kill', label: '终止后台作业', group: 'server' },
   { name: 'subagent', label: '派发子 agent', group: 'agent', alsoLocal: true },
   { name: 'ask_user', label: '向你提问', group: 'agent' },
+  { name: 'ask_parent', label: '子 agent 问主 agent', group: 'agent' },
   { name: 'create_plan', label: '创建计划', group: 'agent' },
   { name: 'update_plan_item', label: '更新计划步骤', group: 'agent' },
   { name: 'edit_plan', label: '编辑计划', group: 'agent' },
