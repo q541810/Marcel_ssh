@@ -1944,6 +1944,7 @@ mod tests {
                 "list_directory",
                 "search_files",
                 "system_info",
+                "present_file",
                 "connection_info",
                 // 本机 ↔ 远端搬运
                 "upload_file",
@@ -1966,6 +1967,7 @@ mod tests {
                 "local_bash",
                 "local_read_file",
                 "local_list_directory",
+                "local_present_file",
                 // 作业出口：读的就是 ctx.command_exec（本机 ctx 上即本机管理器），
                 // `local_bash` 后台作业的唯一出口
                 "job_output",

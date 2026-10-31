@@ -7,8 +7,8 @@
 //! | 角色 | `templates/agent/角色.hbs` | 无条件 | system prompt |
 //! | 子 agent 角色约束 | `templates/agent/子agent_只读.hbs`、`子agent_执行.hbs` | 仅子 agent | system prompt（经 `prompt_extra`） |
 //! | 本机子 agent 环境 | `templates/agent/本机子agent.hbs` | 仅本机子 agent（`AgentRole::LocalSub`） | system prompt（经 `prompt_extra`） |
-//! | 多机操控 | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
-//! | 先理清需求 / 沟通 / 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
+//! | 多机操控（含跨机文件链接 `remote://机器名/路径`） | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
+//! | 先理清需求 / 沟通（含文件路径链接约定 `remote:` / `local:`）/ 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
 //! | 联网搜索 | `templates/agent/联网搜索.hbs` | 注册了声明 `WebSearch` 段的工具（当前是 `web_search`） | system prompt |
 //! | 网页访问 | `templates/agent/网页访问.hbs` | 注册了声明 `HttpFetch` 段的工具（当前是 `http_get`） | system prompt |
 //! | 会话 | `templates/agent/会话.hbs` | 无条件 | system prompt |
@@ -47,7 +47,7 @@
 //!
 //! # 改 X 要动哪里
 //!
-//! - 运行模式 / 需求澄清 / 沟通风格 / 结论放哪 / 风险分级 / 上下文管理 / 收尾
+//! - 运行模式 / 需求澄清 / 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析）/ 风险分级 / 上下文管理 / 收尾
 //!   → `templates/agent/沟通.hbs`（仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
 //! - 人设、规则优先级、语言与风格、主动性、做事方式、命令规范、文档同步、临时文件清理、
 //!   后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`（各段用无编号标题，
