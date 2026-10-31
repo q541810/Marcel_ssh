@@ -3129,3 +3129,185 @@ fn hanging_mcp_server_does_not_delay_task_start() {
     drop(app);
     dir.close().expect("remove the isolated scenario directory");
 }
+
+/// 子 agent 的 `ask_parent`：暂停并交回 → 带回答续派。全程真实（AgentManager /
+/// agent loop / dispatcher / SQLite），只有模型是脚本。
+///
+/// 钉住：① 提问那一轮干净收场（task 终态 Completed、loop 返回 None、回合锚点写
+/// `awaiting_parent`、提问调用没有工具结果）；② 会话库能认出这一问
+/// （`pending_parent_ask`）；③ 回答落成该调用的工具结果后，续派请求里是合法的
+/// 「assistant(tool_calls) → tool」序列、没有多出 user 消息；④ 续派是同一回合的
+/// 继续：锚点由 `awaiting_parent` 回到 `running` 再收成 `completed`，没有新建 user 行。
+#[test]
+fn scripted_production_loop_subagent_ask_parent_pause_and_resume() {
+    const ASK_PROMPT: &str = "排查服务并报告";
+    const QUESTION: &str = "要重启 nginx 吗？";
+    const ANSWER: &str = "可以重启，但先备份配置";
+    const ASK_FINAL: &str = "已备份配置并重启 nginx。";
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(vec![
+            ModelStep {
+                label: "subagent asks the parent",
+                check: Box::new(|request| {
+                    let messages = request_messages(request)?;
+                    require(
+                        messages
+                            .last()
+                            .is_some_and(|m| m["role"] == "user" && m["content"] == ASK_PROMPT),
+                        "missing subagent prompt",
+                    )?;
+                    let tools = request["tools"].as_array().ok_or("missing tools")?;
+                    require(
+                        tools.iter().any(|t| t["function"]["name"] == "ask_parent"),
+                        "子 agent 必须拿到 ask_parent",
+                    )?;
+                    require(
+                        !tools.iter().any(|t| t["function"]["name"] == "ask_user"),
+                        "子 agent 不该有 ask_user",
+                    )
+                }),
+                frames: tool_call_frames(
+                    "ask-1",
+                    "ask_parent",
+                    &json!({"question": QUESTION, "context": "配置里有 3 处改动"}),
+                ),
+                error_status: None,
+                abort_stream: false,
+            },
+            ModelStep {
+                label: "subagent resumes with the answer as the tool result",
+                check: Box::new(|request| {
+                    let messages = request_messages(request)?;
+                    let roles = messages
+                        .iter()
+                        .map(|m| m["role"].as_str().unwrap_or_default())
+                        .collect::<Vec<_>>();
+                    require(
+                        roles == vec!["system", "user", "assistant", "tool"],
+                        "续派请求必须是 调用 → 回答 的合法序列，且不追加 user 消息",
+                    )?;
+                    require(
+                        messages[2]["tool_calls"][0]["function"]["name"] == "ask_parent"
+                            && messages[2]["tool_calls"][0]["id"] == "ask-1",
+                        "assistant 必须仍带着那次 ask_parent 调用",
+                    )?;
+                    require(
+                        messages[3]["tool_call_id"] == "ask-1" && messages[3]["content"] == ANSWER,
+                        "主 agent 的回答必须是那次调用的工具结果",
+                    )
+                }),
+                frames: text_frames(ASK_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+        ])
+        .await;
+        let exec = Arc::new(ScriptedExec::default());
+        let state = isolated_state(dir.path(), &model.base_url, exec.clone());
+        app.manage(state.clone());
+        let manager = AgentManager::new(state.clone());
+        let (events, event_listener) = capture_events(&app);
+
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "ask-parent-main")
+            .unwrap();
+        let child = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "ask-parent-sub", &parent.id)
+            .unwrap();
+
+        // ── 第一段：提问 → 暂停 ──
+        let handle = manager
+            .spawn(
+                app.handle(),
+                local_spec("ask-sub-1", &child.id, ASK_PROMPT, AgentMode::Auto),
+            )
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("pause round completed");
+        assert_eq!(first, None, "暂停时 loop 没有最终报告");
+        assert_eq!(
+            state.agent_tasks.read()["ask-sub-1"].status,
+            AgentStatus::Completed,
+            "停在提问上不是失败"
+        );
+        assert!(events_contain(
+            &events.lock(),
+            "agent://stream/ask-sub-1",
+            "awaitingParent"
+        ));
+        let rows = state.conversation_db.load_messages(&child.id).unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(),
+            vec!["user", "assistant"],
+            "提问那次调用不落工具结果"
+        );
+        assert_eq!(rows[0].turn_state.as_deref(), Some("awaiting_parent"));
+        let ask = state
+            .conversation_db
+            .pending_parent_ask(&child.id)
+            .unwrap()
+            .expect("待回答的提问");
+        assert_eq!(ask.tool_call_id, "ask-1");
+        assert_eq!(ask.question, QUESTION);
+        assert_eq!(ask.context.as_deref(), Some("配置里有 3 处改动"));
+
+        // ── 第二段：带回答续派（同 subagent 工具的 continue 路径所做的事）──
+        let applied = state
+            .conversation_db
+            .answer_parent_ask(&child.id, &ask, ANSWER)
+            .unwrap();
+        assert!(
+            state
+                .conversation_db
+                .pending_parent_ask(&child.id)
+                .unwrap()
+                .is_none(),
+            "回答之后不再是待回答"
+        );
+        let history = state
+            .conversation_db
+            .load_llm_history_for_resume(&child.id)
+            .unwrap();
+        let mut spec = local_spec("ask-sub-2", &child.id, ANSWER, AgentMode::Auto);
+        spec.history = history;
+        spec.prompt_origin = PromptOrigin::ParentAnswer;
+        let handle = manager.spawn(app.handle(), spec).await.unwrap();
+        let second = tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("resume round completed");
+        model.assert_no_errors();
+        assert_eq!(second.as_deref(), Some(ASK_FINAL));
+        let rows = state.conversation_db.load_messages(&child.id).unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(),
+            vec!["user", "assistant", "tool", "assistant"],
+            "续派不新建 user 行"
+        );
+        assert_eq!(rows[2].id, applied.id);
+        assert_eq!(
+            rows[0].turn_state.as_deref(),
+            Some("completed"),
+            "同一回合：暂停 → 重开 running → 收尾 completed"
+        );
+        assert!(
+            rows.iter().skip(1).all(|m| m.turn_state.is_none()),
+            "状态只写在锚点行上"
+        );
+
+        model.assert_consumed();
+        app.unlisten(event_listener);
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}

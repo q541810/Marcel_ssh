@@ -73,6 +73,10 @@ pub(crate) struct SubTaskStartEvent {
     /// 原对话里追加这条追问并重新挂上流 listener。首次派发不写这个键（事件形状不变）。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub resumed: bool,
+    /// `Some(id)` = 这次续派带着主 agent 对子 agent 提问的**回答**：`id` 是那次
+    /// `ask_parent` 调用的 id，回答（即 `prompt`）已落成它的工具结果。前端据此把回答
+    /// 补到那张 `ask_parent` 卡片上，而不是当作一条新的追问。普通派发 / 普通续派恒为 `null`。
+    pub answers_ask: Option<String>,
 }
 
 fn default_sub_mode() -> String {
@@ -283,7 +287,7 @@ pub(crate) fn unknown_model_note(label: &str) -> String {
 pub(super) fn continue_id_schema() -> serde_json::Value {
     json!({
         "type": "string",
-        "description": "Optional. Continue an EARLIER subagent (finished, failed or cancelled) instead of starting a fresh one: pass the `continue_id` shown at the end of that subagent's result. The subagent resumes in its existing conversation with its full context (everything it already read and did), and `prompt` becomes your follow-up message to it — so keep `prompt` short and don't repeat the original task. Use it to ask a follow-up question without making it re-read everything, or to resume a subagent that died from a transient error instead of starting over. Its mode and machine stay as originally dispatched (`mode` / `host` are ignored). Only one run per subagent at a time."
+        "description": "Optional. Continue an EARLIER subagent (finished, failed or cancelled) instead of starting a fresh one: pass the `continue_id` shown at the end of that subagent's result. The subagent resumes in its existing conversation with its full context (everything it already read and did), and `prompt` becomes your follow-up message to it — so keep `prompt` short and don't repeat the original task. Use it to ask a follow-up question without making it re-read everything, or to resume a subagent that died from a transient error instead of starting over. Its mode and machine stay as originally dispatched (`mode` / `host` are ignored). Only one run per subagent at a time. If the subagent PAUSED to ask you a question (its result says so), `prompt` is your ANSWER to that question instead — it resumes right where it stopped."
     })
 }
 
@@ -292,6 +296,80 @@ pub(super) fn continue_hint(sub_conversation_id: &str) -> String {
     format!(
         "\n\n如需追问，或让它接着做（含失败/被取消后继续），用 continue_id=\"{sub_conversation_id}\" 再派发：它保留全部上下文，prompt 只需写追加的指令。"
     )
+}
+
+/// 续派时，子 agent 若正停在 `ask_parent` 上：把 `answer` 落成那次调用的工具结果。
+///
+/// 返回 `Ok(None)` = 没有待回答的提问（普通续派，行为不变）。落库发生在载入历史
+/// **之前**，所以随后的 `load_llm_history_for_resume` 自然得到合法的「调用 → 结果」序列。
+pub(super) fn apply_parent_answer(
+    state: &AppState,
+    sub_conversation_id: &str,
+    answer: &str,
+) -> Result<Option<AppliedAnswer>, String> {
+    let ask = match state
+        .conversation_db
+        .pending_parent_ask(sub_conversation_id)
+    {
+        Ok(Some(ask)) => ask,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(format!("读取子agent的待回答提问失败: {e}")),
+    };
+    match state
+        .conversation_db
+        .answer_parent_ask(sub_conversation_id, &ask, answer)
+    {
+        Ok(row) => Ok(Some(AppliedAnswer {
+            ask_tool_call_id: ask.tool_call_id,
+            answer_row_id: row.id,
+        })),
+        Err(e) => Err(format!("记录对子agent提问的回答失败: {e}")),
+    }
+}
+
+/// [`apply_parent_answer`] 落下的回答。
+pub(super) struct AppliedAnswer {
+    pub ask_tool_call_id: String,
+    pub answer_row_id: String,
+}
+
+impl AppliedAnswer {
+    /// 续派没能启动：撤回刚落的回答，子 agent 保持待回答，主 agent 可以重试。
+    pub(super) fn rollback(&self, state: &AppState) {
+        if let Err(e) = state.conversation_db.discard_message(&self.answer_row_id) {
+            log::warn!("撤回子agent提问的回答失败: {e}");
+        }
+    }
+}
+
+/// 子 agent 停在 `ask_parent` 上、被外层工具提前交回时，给主 agent 的文本与结构化 metadata。
+///
+/// `tool_name` 是外层工具（`subagent` / `local_subagent`），回答方式里要点名它。
+/// metadata 的 `kind = "subagentAsk"` 是前端契约（驼峰；`context` 缺省为 `null`）。
+pub(super) fn ask_handback(
+    tool_name: &str,
+    sub_conversation_id: &str,
+    ask: &crate::agent::tools::ask_parent::PendingParentAsk,
+) -> (String, serde_json::Value) {
+    let mut text = format!("子 agent 暂停并向你提问（任务尚未完成）：{}", ask.question);
+    if let Some(context) = &ask.context {
+        text.push_str(&format!(
+            "
+背景：{context}"
+        ));
+    }
+    text.push_str(&format!(
+        "
+回答方式：用 {tool_name} 传 continue_id=\"{sub_conversation_id}\"，把回答写进 prompt；         它会带着原有进度接着干。你自己拿不准时，可以先用 ask_user 问用户（传 source_subagent=\"{sub_conversation_id}\"），         再把答案转给它。不回答它就保持暂停，之后随时可以接上。"
+    ));
+    let metadata = json!({
+        "kind": "subagentAsk",
+        "subConversationId": sub_conversation_id,
+        "askToolCallId": ask.tool_call_id,
+        "question": ask.question,
+        "context": ask.context,
+    });
+    (text, metadata)
 }
 
 /// 工具入参里的 `continue_id`（trim 后非空才算传了）。
@@ -557,7 +635,9 @@ const BASE_DESCRIPTION: &str =
          conversation with its full context — it does not re-read what it already \
          read. Use it for follow-up questions, and to pick up a subagent that failed \
          or was cancelled (e.g. a transient LLM error) instead of starting over. Its \
-         mode and machine stay as originally dispatched.";
+         mode and machine stay as originally dispatched.
+\n         
+\n         A subagent may PAUSE to ask you a question (the result says so and shows the \n         question): it is not finished. Answer through the same `continue_id`, with the \n         answer as `prompt`.";
 
 #[async_trait]
 impl AgentTool for SubagentTool {
@@ -830,6 +910,7 @@ impl AgentTool for SubagentTool {
                 "SSH 会话不存在，无法派发子agent。",
             ));
         };
+        let mut applied_answer: Option<AppliedAnswer> = None;
         let (sub_conversation_id, history) = match &cont {
             Some(target) => {
                 // 续派必须还在原来那台机器上：对话归属 = 首次派发时的机器，换了机器的
@@ -840,12 +921,21 @@ impl AgentTool for SubagentTool {
                         "这个子agent原来运行的机器与当前会话/host 解析到的机器不一致，不能续派。去掉 continue_id 重新派发。",
                     ));
                 }
+                // 子 agent 正停在 ask_parent 上：prompt 是对它的回答，先落成那次调用的
+                // 工具结果，再载入历史（这样历史里的调用/结果天然成对）。
+                match apply_parent_answer(&state, &target.conversation_id, &prompt) {
+                    Ok(applied) => applied_answer = applied,
+                    Err(message) => return Ok(ToolOutput::fail("subagent: 无法续派", message)),
+                }
                 match state
                     .conversation_db
                     .load_llm_history_for_resume(&target.conversation_id)
                 {
                     Ok(h) => (target.conversation_id.clone(), h),
                     Err(e) => {
+                        if let Some(applied) = &applied_answer {
+                            applied.rollback(&state);
+                        }
                         return Ok(ToolOutput::fail(
                             "subagent: 读取子agent历史失败",
                             format!("读取子agent历史失败: {}", e),
@@ -915,6 +1005,7 @@ impl AgentTool for SubagentTool {
                     // 远端派发：不写 side（与既有事件形状一致）。
                     side: None,
                     resumed: cont.is_some(),
+                    answers_ask: applied_answer.as_ref().map(|a| a.ask_tool_call_id.clone()),
                 },
             );
         }
@@ -959,13 +1050,20 @@ impl AgentTool for SubagentTool {
             prompt_extra: vec![sub_instruction],
             // 子 agent 的 prompt 是父 agent 写的派发任务，但它在自己的子会话里
             // 就是「这一轮用户说的话」——按用户输入落库（子会话没有唤醒轮）。
-            prompt_origin: PromptOrigin::User,
+            prompt_origin: if applied_answer.is_some() {
+                PromptOrigin::ParentAnswer
+            } else {
+                PromptOrigin::User
+            },
             user_input: None,
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {
             Ok(h) => h,
             Err(e) => {
+                if let Some(applied) = &applied_answer {
+                    applied.rollback(&state);
+                }
                 return Ok(ToolOutput::fail(
                     "subagent: 子agent启动失败",
                     format!("子agent启动失败: {}", e),
@@ -1011,6 +1109,28 @@ impl AgentTool for SubagentTool {
             );
             base
         };
+
+        // 子 agent 停在 ask_parent 上：不是报告也不是失败，把问题交回主 agent。
+        // 事实来源是会话库（loop 干净停下时 `finalize_task` 才会写 `awaiting_parent`）。
+        if result.is_none() && !status.is_cancelled() {
+            if let Ok(Some(ask)) = state
+                .conversation_db
+                .pending_parent_ask(&sub_conversation_id)
+            {
+                log::info!(
+                    "Subtask {} paused with a question for the parent",
+                    sub_task_id
+                );
+                let (output, meta) = ask_handback("subagent", &sub_conversation_id, &ask);
+                let mut meta = result_meta(meta);
+                meta["subTaskId"] = json!(sub_task_id);
+                return Ok(ToolOutput::ok(
+                    format!("子agent提问：{}{}", description, model_note),
+                    output,
+                )
+                .with_metadata(meta));
+            }
+        }
 
         match classify_subagent_result(result, &status) {
             SubagentOutcome::Report(text) => {
@@ -1195,6 +1315,7 @@ mod tests {
             mode: "plan".into(),
             side: None,
             resumed: false,
+            answers_ask: None,
         };
         let json = serde_json::to_value(ev).unwrap();
         assert_eq!(json["type"], "subTaskStart");
@@ -1208,6 +1329,68 @@ mod tests {
         // 远端派发不写 `side`：新增字段不能改动既有事件形状（前端按
         // `sessionId` 哨兵判定，`side` 只在本机派发时出现）。
         assert!(json.get("side").is_none());
+        // 普通派发 / 普通续派：answersAsk 恒在且为 null（前端契约）。
+        assert!(json["answersAsk"].is_null());
+        assert!(json.as_object().unwrap().contains_key("answersAsk"));
+    }
+
+    /// 带着回答续派：事件带上那次 ask_parent 调用的 id，前端据此补卡片结果。
+    #[test]
+    fn sub_task_start_event_carries_the_answered_ask() {
+        let ev = SubTaskStartEvent {
+            event_type: "subTaskStart".into(),
+            tool_call_id: "call-1".into(),
+            sub_task_id: "task-2".into(),
+            sub_conversation_id: "conv-2".into(),
+            description: "d".into(),
+            prompt: "answer".into(),
+            parent_conversation_id: "conv-1".into(),
+            connection_id: "conn-b".into(),
+            session_id: "sess-b".into(),
+            mode: "plan".into(),
+            side: None,
+            resumed: true,
+            answers_ask: Some("ask-1".into()),
+        };
+        let json = serde_json::to_value(ev).unwrap();
+        assert_eq!(json["resumed"], true);
+        assert_eq!(json["answersAsk"], "ask-1");
+    }
+
+    /// 交回主 agent 的提问：文本点名外层工具与 continue_id，metadata 形状是前端契约。
+    #[test]
+    fn ask_handback_text_and_metadata_shape() {
+        use crate::agent::tools::ask_parent::PendingParentAsk;
+        let ask = PendingParentAsk {
+            tool_call_id: "ask-1".into(),
+            question: "要重启吗？".into(),
+            context: Some("配置有 3 处改动".into()),
+            arguments: json!({}),
+        };
+        let (text, meta) = ask_handback("subagent", "sub-9", &ask);
+        assert!(text.starts_with("子 agent 暂停并向你提问（任务尚未完成）：要重启吗？"));
+        assert!(text.contains("背景：配置有 3 处改动"));
+        assert!(text.contains("用 subagent 传 continue_id=\"sub-9\""));
+        assert!(text.contains("source_subagent=\"sub-9\""));
+        assert_eq!(
+            meta,
+            json!({
+                "kind": "subagentAsk",
+                "subConversationId": "sub-9",
+                "askToolCallId": "ask-1",
+                "question": "要重启吗？",
+                "context": "配置有 3 处改动",
+            })
+        );
+
+        let no_context = PendingParentAsk {
+            context: None,
+            ..ask
+        };
+        let (text, meta) = ask_handback("local_subagent", "sub-9", &no_context);
+        assert!(!text.contains("背景："));
+        assert!(text.contains("用 local_subagent 传 continue_id"));
+        assert!(meta["context"].is_null());
     }
 
     // ── 子agent 候选模型 ─────────────────────────────────────────────

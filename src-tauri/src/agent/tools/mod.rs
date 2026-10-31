@@ -24,6 +24,7 @@ use crate::config::settings::ExperimentalSettings;
 use crate::error::AppError;
 use crate::ssh::connection::SshManager;
 
+pub mod ask_parent;
 #[cfg(test)]
 pub mod base64;
 pub mod bash;
@@ -738,7 +739,7 @@ pub enum ToolAudience {
 ///    只经本机子 agent 暴露给模型。
 /// 2. **本机子 agent 不拿远端语义的工具**：这条不在 `roles` 里强制，因为它没法
 ///    在这里表达 —— `Both` 的工具里既有远端语义的（`bash` / `read_file`），也有
-///    本机子 agent 确实需要的（`read_history` / `ask_user` / `job_output` 等；
+///    本机子 agent 确实需要的（`read_history` / `ask_parent` / `job_output` 等；
 ///    `job_*` 读的是 `ctx.command_exec`，本机 ctx 上挂的就是本机管理器，是
 ///    `local_bash` 后台模式的唯一出口）。所以本机子 agent 的 registry 由组装处
 ///    收敛（按名字 `remove` 掉远端语义工具，清单见 [`LOCAL_SUB_EXCLUDED_TOOLS`]），
@@ -751,6 +752,9 @@ pub enum ToolRoles {
     MainOnly,
     /// 只有**本机子 agent**能拿到（`local_bash` 与本机文件工具）。
     LocalSubOnly,
+    /// 只有子 agent（远端子 agent 与本机子 agent）能拿到：`ask_parent`。
+    /// 主 agent 没有上级可问。
+    SubsOnly,
 }
 
 impl ToolRoles {
@@ -759,6 +763,7 @@ impl ToolRoles {
             Self::Both => true,
             Self::MainOnly => matches!(audience, ToolAudience::Main),
             Self::LocalSubOnly => matches!(audience, ToolAudience::LocalSub),
+            Self::SubsOnly => matches!(audience, ToolAudience::Sub | ToolAudience::LocalSub),
         }
     }
 }
@@ -766,7 +771,7 @@ impl ToolRoles {
 /// 本机子 agent（`ToolAudience::LocalSub`）的工具集必须**剔除**的工具。
 ///
 /// 为什么这一维不在 [`ToolRoles`] 里表达：见上面的说明 —— `Both` 里既有远端语义的
-/// （`bash` / `read_file`），也有本机子 agent 确实要用的（`read_history` / `ask_user`
+/// （`bash` / `read_file`），也有本机子 agent 确实要用的（`read_history` / `ask_parent`
 /// / `job_*`），`roles` 表达不了这个差集。收窄由组装处按这份清单 `remove`
 /// （`AgentManager` 的 `build_role_registry`），清单是**唯一来源**：
 /// `local_sub_exclusions_cover_every_machine_facing_tool` 会拦下「新增了面向机器的
@@ -776,7 +781,7 @@ impl ToolRoles {
 /// **必须保留**的（不在清单里）：5 个 `local_*`（本机能力本体）、
 /// `job_output` / `job_kill` / `job_list`（读的正是 `ctx.command_exec`，本机 ctx 上
 /// 挂的就是本机管理器 —— 它们是 `local_bash` 后台作业的唯一出口）、`read_history`
-/// （回读父会话派发它时的上下文）、`ask_user` 与 `web_search` / `http_get` /
+/// （回读父会话派发它时的上下文）、`ask_parent` 与 `web_search` / `http_get` /
 /// `render_html` / `open_cloud_page`（本机侧 / 应用内，与目标机器无关）。
 pub(crate) const LOCAL_SUB_EXCLUDED_TOOLS: &[&str] = &[
     // ── 远端命令 / 文件 / 系统信息 ──
@@ -1165,7 +1170,7 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         name: "ask_user",
         side: ToolSide::App,
         modes: ToolModes::PLAN,
-        roles: ToolRoles::Both,
+        roles: ToolRoles::MainOnly,
         switch: None,
         semantics: ToolSemantics::NONE,
         prompt_section: None,
@@ -1175,11 +1180,23 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         name: "ask_user",
         side: ToolSide::App,
         modes: ToolModes::EXECUTE,
-        roles: ToolRoles::Both,
+        roles: ToolRoles::MainOnly,
         switch: None,
         semantics: ToolSemantics::NONE,
         prompt_section: None,
         build: || Arc::new(question::QuestionTool::new(false)),
+    },
+    // ── 子 agent 向主 agent 提问：暂停并交回（机制见 `ask_parent.rs`）──
+    // 子 agent 没有 `ask_user`（它的提问要经主 agent 转手，不直接打断用户）。
+    BuiltinToolSpec {
+        name: "ask_parent",
+        side: ToolSide::App,
+        modes: ToolModes::ALL,
+        roles: ToolRoles::SubsOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(ask_parent::AskParentTool::new()),
     },
     // ── 写工具：Plan 模式不提供 ──
     BuiltinToolSpec {
@@ -1962,6 +1979,37 @@ mod tests {
             exec_sub.get("read_history").is_some(),
             "Execute/Sub 应保留 read_history（只读，与 Main 一致）"
         );
+    }
+
+    /// 子 agent 没有 `ask_user`、改用 `ask_parent`；主 agent 反过来。
+    /// 子 agent 的提问要经主 agent 转手（暂停并交回，见 `ask_parent.rs`），不直接
+    /// 打断用户；主 agent 没有上级可问。四种「模式 × 角色」组合都钉住。
+    #[test]
+    fn ask_tools_are_split_between_main_and_subagents() {
+        let on = all_switches_on();
+        for mode in [RegistryMode::Plan, RegistryMode::Execute] {
+            for audience in [
+                ToolAudience::Main,
+                ToolAudience::Sub,
+                ToolAudience::LocalSub,
+            ] {
+                let registry = match mode {
+                    RegistryMode::Plan => ToolRegistry::build_for_plan_mode(audience, &[], &on),
+                    RegistryMode::Execute => ToolRegistry::build_mut_for_mode(audience, &[], &on),
+                };
+                let is_main = audience == ToolAudience::Main;
+                assert_eq!(
+                    registry.get("ask_user").is_some(),
+                    is_main,
+                    "{mode:?}/{audience:?}: ask_user 只给主 agent"
+                );
+                assert_eq!(
+                    registry.get("ask_parent").is_some(),
+                    !is_main,
+                    "{mode:?}/{audience:?}: ask_parent 只给子 agent"
+                );
+            }
+        }
     }
 
     /// 实验性开关必须逐项独立生效：关掉谁就只少谁。

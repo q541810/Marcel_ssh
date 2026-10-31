@@ -14,6 +14,7 @@ use crate::agent::plan_handler::emit_final_plan_normalized;
 use crate::agent::task::AgentMode;
 use crate::agent::thinking_filter::strip_thinking_tags;
 use crate::agent::tool_dispatcher::ToolDispatcher;
+use crate::agent::tools::ask_parent::{mark_paused, parse_ask_arguments, ASK_PARENT_TOOL};
 use crate::agent::tools::ToolRegistry;
 use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
@@ -396,7 +397,10 @@ pub(crate) async fn run_agent_loop(
     // 回合锚点已落库：把库内 id 广播出去，前端把刚发的那条 user/notice 消息
     // （live 临时 id）对上库内身份。此刻前端早已 append 该消息并挂好监听
     // （startTask 的顺序保证），事件不会落空。
-    if let Some(anchor_id) = &turn_anchor_id {
+    if let Some(anchor_id) = turn_anchor_id
+        .as_ref()
+        .filter(|_| prompt_origin != PromptOrigin::ParentAnswer)
+    {
         emit_message_saved(
             &app,
             &event_name,
@@ -554,6 +558,27 @@ pub(crate) async fn run_agent_loop(
         //    `futures::future::join_all`. Sequential tools are run one by one to preserve
         //    causal order, security policies (read-before-edit), and approval flows.
         //    （分批 + 逐批执行 + 结果回填，原样搬出）
+        //
+        //    子 agent 的 `ask_parent` 不走这里：它不是一次「执行」，而是「暂停并交回」
+        //    （机制见 `tools/ask_parent.rs`）——同批里第一个有效的提问被摘出来、不执行也
+        //    不落工具结果；同批其它调用照常执行并落结果（保证协议里每个调用都有结果，
+        //    唯独提问那个留到主 agent 回答时补上）。
+        let ask_call = if is_subtask {
+            tool_calls.iter().enumerate().find_map(|(index, call)| {
+                (call.name == ASK_PARENT_TOOL)
+                    .then(|| parse_ask_arguments(&call.arguments))
+                    .flatten()
+                    .map(|(question, context)| (index, question, context))
+            })
+        } else {
+            None
+        };
+        let run_calls: Vec<crate::llm::provider::ToolCall> = tool_calls
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| Some(*index) != ask_call.as_ref().map(|ask| ask.0))
+            .map(|(_, call)| call.clone())
+            .collect();
         let task_was_cancelled = execute_tool_batches(
             &state,
             &app,
@@ -569,7 +594,7 @@ pub(crate) async fn run_agent_loop(
             &persister,
             local_side,
             &agent_settings_snapshot,
-            &tool_calls,
+            &run_calls,
         )
         .await;
 
@@ -580,6 +605,29 @@ pub(crate) async fn run_agent_loop(
             );
             emit_final_plan_normalized(&app, &state, &task_id);
             emit_event(&app, &event_name, StreamEvent::Cancelled);
+            return None;
+        }
+
+        // 子 agent 停在 ask_parent 上：干净收场（不是失败）。标记交给 `finalize_task`
+        // 把回合写成 `awaiting_parent`；外层 subagent / local_subagent 工具据会话库里
+        // 的待回答提问把问题交回主 agent。
+        if let Some((index, question, context)) = ask_call {
+            log::info!(
+                "Agent {} 子agent 暂停并向主 agent 提问（调用 {}）",
+                task_id,
+                tool_calls[index].id
+            );
+            mark_paused(&task_id);
+            emit_final_plan_normalized(&app, &state, &task_id);
+            emit_event(
+                &app,
+                &event_name,
+                StreamEvent::AwaitingParent {
+                    tool_call_id: tool_calls[index].id.clone(),
+                    question,
+                    context,
+                },
+            );
             return None;
         }
     }

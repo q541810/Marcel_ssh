@@ -180,7 +180,22 @@ pub(super) fn prepare_turn(
     // 回合锚点：落库 user 消息并把这一行标成 running（崩溃时它就是「没收尾」
     // 的持久证据）。行 id 记到任务上——收尾在 `manager::finalize_task` 里，
     // 那里只能从任务记录拿锚点。写失败/无 user 行 → None，本回合不记录状态。
-    let turn_anchor_id = persister.begin_turn(messages);
+    //
+    // 带着主 agent 的回答续派（`ParentAnswer`）是**同一回合的继续**：回答已经是历史里
+    // 的一条工具结果，没有新的 user 消息可锚定，也绝不能把历史里最后一条旧 user
+    // 消息当「本轮 prompt」再存一遍——改为把停在 `awaiting_parent` 的原锚点重开成
+    // `running`，收尾时仍写在那一行上。
+    let turn_anchor_id = if prompt_origin == PromptOrigin::ParentAnswer {
+        match persister.conv_db.reopen_awaiting_turn(conversation_id) {
+            Ok(anchor) => anchor,
+            Err(e) => {
+                log::warn!("重开暂停的回合失败（{}）: {}", conversation_id, e);
+                None
+            }
+        }
+    } else {
+        persister.begin_turn(messages)
+    };
     for m in &mut *messages {
         if m.db_id.is_some() {
             m.db_id_known = true;

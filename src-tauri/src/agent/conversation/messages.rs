@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::ConversationDb;
 use crate::agent::conversation_persister::COMPACTION_CARD_PREFIX;
 use crate::agent::task::TurnState;
+use crate::agent::tools::ask_parent::{parse_ask_arguments, PendingParentAsk, ASK_PARENT_TOOL};
 
 /// `messages` 表的**全部列**，顺序 = `map_stored_message` 里 `row.get(N)` 的顺序。
 ///
@@ -582,6 +583,154 @@ impl ConversationDb {
             (state.as_str(), message_id),
         )?;
         Ok(rows > 0)
+    }
+
+    /// 子对话里挂起等主 agent 回答的那一问（机制见 `tools/ask_parent.rs`）。
+    ///
+    /// 三个条件**同时**成立才算「待回答」：
+    /// 1. 会话里有回合锚点停在 `awaiting_parent`（loop 干净地停在提问上才会写；
+    ///    崩溃留下的是 `running`，那种情形里没人收到过这个问题，不能把续派的话
+    ///    当成它的答案）；
+    /// 2. 最后一条带工具调用的 assistant 里有 `ask_parent` 调用；
+    /// 3. 它后面只有工具结果行（同批其它调用的结果），且没有一条属于这次提问
+    ///    ——出现 user / notice / assistant 行说明会话早已往后走，提问作废。
+    pub(crate) fn pending_parent_ask(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Option<PendingParentAsk>> {
+        let conn = self.conn.lock().unwrap();
+        let awaiting: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id = ?1 AND turn_state = ?2)",
+            (conversation_id, TurnState::AwaitingParent.as_str()),
+            |row| row.get(0),
+        )?;
+        if !awaiting {
+            return Ok(None);
+        }
+        let last_calls: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT rowid, tool_calls_json FROM messages
+                 WHERE conversation_id = ?1 AND role = 'assistant' AND tool_calls_json IS NOT NULL
+                 ORDER BY rowid DESC LIMIT 1",
+                [conversation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((rowid, calls_json)) = last_calls else {
+            return Ok(None);
+        };
+        let calls: Vec<serde_json::Value> =
+            match serde_json::from_str::<serde_json::Value>(&calls_json) {
+                Ok(serde_json::Value::Array(calls)) => calls,
+                Ok(other) => vec![other],
+                Err(_) => return Ok(None),
+            };
+        let Some((ask_id, arguments, question, context)) = calls.iter().find_map(|call| {
+            if call.get("name").and_then(|v| v.as_str()) != Some(ASK_PARENT_TOOL) {
+                return None;
+            }
+            let id = call.get("id").and_then(|v| v.as_str())?.to_string();
+            let arguments = call.get("arguments").cloned().unwrap_or_default();
+            let (question, context) = parse_ask_arguments(&arguments)?;
+            Some((id, arguments, question, context))
+        }) else {
+            return Ok(None);
+        };
+        let mut stmt = conn.prepare(
+            "SELECT role, tool_calls_json FROM messages
+             WHERE conversation_id = ?1 AND rowid > ?2 ORDER BY rowid ASC",
+        )?;
+        let later = stmt.query_map((conversation_id, rowid), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        for row in later {
+            let (role, json) = row?;
+            match role.as_str() {
+                "tool" => {
+                    let answered = json
+                        .as_deref()
+                        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                        .is_some_and(|v| {
+                            v.get("id").and_then(|i| i.as_str()) == Some(ask_id.as_str())
+                        });
+                    if answered {
+                        return Ok(None);
+                    }
+                }
+                "assistant" | "user" | "notice" => return Ok(None),
+                _ => {}
+            }
+        }
+        Ok(Some(PendingParentAsk {
+            tool_call_id: ask_id,
+            question,
+            context,
+            arguments,
+        }))
+    }
+
+    /// 把主 agent 的回答落成那次 `ask_parent` 调用的工具结果行
+    /// （metadata `{"kind":"parentAnswer"}`）。落库之后历史投影（`load_llm_history_for_resume`）
+    /// 自然给出合法的「调用 → 结果」序列，重启 / 分叉 / 同步都不需要特判。
+    pub(crate) fn answer_parent_ask(
+        &self,
+        conversation_id: &str,
+        ask: &PendingParentAsk,
+        answer: &str,
+    ) -> RusqliteResult<StoredMessage> {
+        let persisted = crate::agent::agent_loop::PersistedToolResult {
+            id: ask.tool_call_id.clone(),
+            name: ASK_PARENT_TOOL.to_string(),
+            arguments: ask.arguments.clone(),
+            disposition: crate::agent::risk::Disposition::Allow,
+            summary: "主 agent 已回答".to_string(),
+            success: true,
+            blocked: false,
+            was_timeout: false,
+            was_aborted: false,
+            metadata: Some(serde_json::json!({ "kind": "parentAnswer" })),
+        };
+        let json = serde_json::to_string(&persisted).unwrap_or_default();
+        self.save_message(
+            conversation_id,
+            "tool",
+            answer,
+            &Utc::now().to_rfc3339(),
+            Some(&json),
+            None,
+        )
+    }
+
+    /// 删除刚落的一条消息行（只给「续派启动失败，撤回刚落的回答」用，让子 agent 仍停在
+    /// 待回答状态、主 agent 可以重试）。
+    pub(crate) fn discard_message(&self, message_id: &str) -> RusqliteResult<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute("DELETE FROM messages WHERE id = ?1", [message_id])? > 0)
+    }
+
+    /// 带着回答续派：把停在 `awaiting_parent` 的回合锚点重新标回 `running`，让这次
+    /// 续派是**同一个回合的继续**（收尾时写在同一行上），而不是另起一个没有锚点的回合。
+    /// 返回锚点行 id。
+    pub(crate) fn reopen_awaiting_turn(
+        &self,
+        conversation_id: &str,
+    ) -> RusqliteResult<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let anchor: Option<String> = conn
+            .query_row(
+                "SELECT id FROM messages WHERE conversation_id = ?1 AND turn_state = ?2
+                 ORDER BY rowid DESC LIMIT 1",
+                (conversation_id, TurnState::AwaitingParent.as_str()),
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = &anchor {
+            conn.execute(
+                "UPDATE messages SET turn_state = ?1 WHERE id = ?2",
+                (TurnState::Running.as_str(), id),
+            )?;
+        }
+        Ok(anchor)
     }
 
     pub fn delete_messages_from_timestamp(
@@ -1626,5 +1775,163 @@ mod tests {
             !haystack.contains(&squeeze(&insert_needle)),
             "源码里出现了手写的 INSERT 列清单（应由 messages_insert_clause() 生成）"
         );
+    }
+
+    // ── 子 agent 的 ask_parent：暂停 / 待回答识别 / 回答落库 ──
+
+    /// 种一个停在提问上的子对话：user 锚点 + assistant（读文件 + 提问两个并行调用）+
+    /// 读文件的结果；锚点按 loop 干净停下的样子标成 `awaiting_parent`。
+    fn seed_paused_sub(db: &ConversationDb) -> (String, String) {
+        let main = db.create_conversation("conn_1", "主").unwrap();
+        let sub = db
+            .create_sub_conversation("conn_1", "查配置", &main.id)
+            .unwrap();
+        let anchor = db
+            .save_message(
+                &sub.id,
+                "user",
+                "查一下配置",
+                "2026-01-01T00:00:00Z",
+                None,
+                None,
+            )
+            .unwrap();
+        db.save_message(
+            &sub.id,
+            "assistant",
+            "",
+            "2026-01-01T00:00:01Z",
+            Some(
+                r#"[{"id":"read-1","name":"read_file","arguments":{"path":"/etc/a"}},{"id":"ask-1","name":"ask_parent","arguments":{"question":"要改端口吗？","context":"现在是 80"}}]"#,
+            ),
+            None,
+        )
+        .unwrap();
+        db.save_message(
+            &sub.id,
+            "tool",
+            "listen 80;",
+            "2026-01-01T00:00:02Z",
+            Some(
+                r#"{"id":"read-1","name":"read_file","arguments":{"path":"/etc/a"},"disposition":"Allow","summary":"读取","success":true,"blocked":false}"#,
+            ),
+            None,
+        )
+        .unwrap();
+        db.begin_turn_state(&sub.id, &anchor.id).unwrap();
+        db.set_message_turn_state(&anchor.id, TurnState::AwaitingParent)
+            .unwrap();
+        (sub.id, anchor.id)
+    }
+
+    #[test]
+    fn pending_parent_ask_is_recognised() {
+        let db = create_test_db();
+        let (sub, _) = seed_paused_sub(&db);
+        let ask = db.pending_parent_ask(&sub).unwrap().expect("待回答");
+        assert_eq!(ask.tool_call_id, "ask-1");
+        assert_eq!(ask.question, "要改端口吗？");
+        assert_eq!(ask.context.as_deref(), Some("现在是 80"));
+        // 没有 awaiting 锚点的会话不是待回答
+        let plain = db.create_conversation("conn_1", "普通").unwrap();
+        assert!(db.pending_parent_ask(&plain.id).unwrap().is_none());
+    }
+
+    /// 崩溃留下的是 `running`（没人收到过这个问题）：续派的话不能被当成它的答案。
+    #[test]
+    fn a_crashed_turn_is_not_a_pending_ask() {
+        let db = create_test_db();
+        let (sub, anchor) = seed_paused_sub(&db);
+        db.set_message_turn_state(&anchor, TurnState::Running)
+            .unwrap();
+        assert!(db.pending_parent_ask(&sub).unwrap().is_none());
+    }
+
+    /// 暂停的回合不能被「收敛 running → interrupted」改写：同会话再开新回合时，
+    /// 只有 `running` 会被收敛。
+    #[test]
+    fn awaiting_parent_is_not_converged_to_interrupted() {
+        let db = create_test_db();
+        let (sub, anchor) = seed_paused_sub(&db);
+        let newer = db
+            .save_message(
+                &sub,
+                "user",
+                "另一个回合",
+                "2026-01-01T00:05:00Z",
+                None,
+                None,
+            )
+            .unwrap();
+        db.begin_turn_state(&sub, &newer.id).unwrap();
+        let rows = db.load_messages(&sub).unwrap();
+        let state_of = |id: &str| rows.iter().find(|m| m.id == id).unwrap().turn_state.clone();
+        assert_eq!(state_of(&anchor).as_deref(), Some("awaiting_parent"));
+        assert_eq!(state_of(&newer.id).as_deref(), Some("running"));
+    }
+
+    /// 回答落成那次调用的工具结果后：不再待回答，续派历史是合法的
+    /// 「assistant(调用×2) → tool(读文件) → tool(回答)」，没有多出 user 消息；
+    /// 重开回合把锚点标回 running。
+    #[test]
+    fn answer_becomes_the_tool_result_and_history_projects_validly() {
+        use crate::llm::provider::LlmRole;
+        let db = create_test_db();
+        let (sub, anchor) = seed_paused_sub(&db);
+        // 回答之前投影：提问调用没有结果，被闭合步骤裁掉（崩溃路径的老行为）
+        let before = db.load_llm_history_for_resume(&sub).unwrap();
+        assert!(before.iter().all(|m| m
+            .tool_calls
+            .iter()
+            .flatten()
+            .all(|c| c.name != "ask_parent")));
+
+        let ask = db.pending_parent_ask(&sub).unwrap().unwrap();
+        let row = db.answer_parent_ask(&sub, &ask, "改成 8080").unwrap();
+        assert_eq!(row.role, "tool");
+        assert!(db.pending_parent_ask(&sub).unwrap().is_none());
+
+        let history = db.load_llm_history_for_resume(&sub).unwrap();
+        let roles: Vec<_> = history.iter().map(|m| m.role.clone()).collect();
+        assert_eq!(
+            roles,
+            vec![
+                LlmRole::User,
+                LlmRole::Assistant,
+                LlmRole::Tool,
+                LlmRole::Tool
+            ]
+        );
+        let calls = history[1].tool_calls.as_ref().unwrap();
+        assert_eq!(
+            calls.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec!["read-1", "ask-1"]
+        );
+        assert_eq!(history[3].tool_call_id.as_deref(), Some("ask-1"));
+        assert_eq!(history[3].content, "改成 8080");
+        // 落库的结果行带 parentAnswer 标记
+        let meta: serde_json::Value =
+            serde_json::from_str(row.tool_calls_json.as_deref().unwrap()).unwrap();
+        assert_eq!(meta["metadata"]["kind"], "parentAnswer");
+        assert_eq!(meta["id"], "ask-1");
+
+        // 重开回合：锚点 awaiting_parent → running，返回的就是原锚点
+        assert_eq!(
+            db.reopen_awaiting_turn(&sub).unwrap().as_deref(),
+            Some(anchor.as_str())
+        );
+        let rows = db.load_messages(&sub).unwrap();
+        assert_eq!(rows[0].turn_state.as_deref(), Some("running"));
+        assert!(db.reopen_awaiting_turn(&sub).unwrap().is_none());
+    }
+
+    /// 之后会话往前走了（出现新的 user 行）：旧提问作废，不再待回答。
+    #[test]
+    fn a_later_turn_makes_the_old_ask_stale() {
+        let db = create_test_db();
+        let (sub, _) = seed_paused_sub(&db);
+        db.save_message(&sub, "user", "算了", "2026-01-01T00:09:00Z", None, None)
+            .unwrap();
+        assert!(db.pending_parent_ask(&sub).unwrap().is_none());
     }
 }

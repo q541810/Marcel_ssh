@@ -58,6 +58,23 @@ pub struct ApprovalDetail {
 pub struct QuestionDetail {
     pub question_id: String,
     pub questions: Vec<QuestionItem>,
+    /// 这次提问是在替某个子 agent 向用户转问（子 agent 经 `ask_parent` 暂停，主 agent
+    /// 拿不准、用 `ask_user(source_subagent=…)` 转问用户）。前端据此标明「这是子 agent
+    /// 的问题」并给出跳转。普通提问不写这个键。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_subagent: Option<SourceSubagent>,
+}
+
+/// 转问的来源子 agent（见 [`QuestionDetail::source_subagent`]）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSubagent {
+    /// 子对话 id（即 `continue_id`）。
+    pub conversation_id: String,
+    /// 子对话标题（界面上子 agent 卡片 / 会话列表里显示的那个名字）。
+    pub title: String,
+    /// 子 agent 那次 `ask_parent` 调用的 id。
+    pub ask_tool_call_id: String,
 }
 
 /// 交互所在 SSH 会话的目标机器。
@@ -345,6 +362,7 @@ impl AgentInteractionManager {
     }
 
     /// 请求提问并等待用户回答
+    #[allow(clippy::too_many_arguments)]
     pub async fn request_question(
         &self,
         app: &AppHandle,
@@ -353,6 +371,7 @@ impl AgentInteractionManager {
         conversation_id: String,
         question_id: String,
         questions: Vec<QuestionItem>,
+        source_subagent: Option<SourceSubagent>,
     ) -> Option<Vec<serde_json::Value>> {
         let interaction_id = format!("question:{}:{}", task_id, question_id);
         let (session_target, conversation_title) =
@@ -362,6 +381,7 @@ impl AgentInteractionManager {
         let question_detail = QuestionDetail {
             question_id: question_id.clone(),
             questions: questions.clone(),
+            source_subagent,
         };
 
         let is_head = {

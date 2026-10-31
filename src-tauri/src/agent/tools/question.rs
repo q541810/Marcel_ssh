@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::Manager;
 
+use crate::agent::interaction::SourceSubagent;
 use crate::agent::risk::Disposition;
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::error::AppError;
@@ -141,6 +142,36 @@ fn resolve_anchors(questions: &mut [QuestionItem], headings: &[String]) -> Resul
     Ok(())
 }
 
+/// 校验 `source_subagent`：必须是**当前对话**派发的子对话、且正停在 `ask_parent` 上。
+/// 失败返回给模型的中文说明（纯函数便于单测）。
+fn resolve_source_subagent(
+    sub_id: &str,
+    conversation: Option<&crate::agent::conversation::Conversation>,
+    parent_conversation_id: &str,
+    pending: Option<crate::agent::tools::ask_parent::PendingParentAsk>,
+) -> Result<SourceSubagent, String> {
+    let Some(conv) = conversation else {
+        return Err(format!(
+            "source_subagent=\"{sub_id}\" 找不到对应的子agent对话。它应是子agent提问时给你的 continue_id；没有要转问的子agent提问就别传这个参数。"
+        ));
+    };
+    if conv.parent_conversation_id.as_deref() != Some(parent_conversation_id) {
+        return Err(format!(
+            "source_subagent=\"{sub_id}\" 不是当前对话派发的子agent。只能转问你自己派发的子agent的提问。"
+        ));
+    }
+    let Some(ask) = pending else {
+        return Err(format!(
+            "source_subagent=\"{sub_id}\" 的子agent当前没有等你回答的提问（可能已回答过、已结束或没有提过问）。去掉 source_subagent，或换成正在等你回答的那个子agent的 continue_id。"
+        ));
+    };
+    Ok(SourceSubagent {
+        conversation_id: conv.id.clone(),
+        title: conv.title.clone(),
+        ask_tool_call_id: ask.tool_call_id,
+    })
+}
+
 const MODE_SWITCH_OVERRIDE_PARAM: &str = "is_mode_switch_request";
 const MODE_SWITCH_KEYWORDS: [&str; 3] = ["auto", "agent", "模式"];
 
@@ -253,6 +284,10 @@ impl AgentTool for QuestionTool {
                         },
                         "required": ["question", "header"]
                     }
+                },
+                "source_subagent": {
+                    "type": "string",
+                    "description": "可选。你在替一个暂停的子agent向用户转问时，填它的 continue_id（子agent提问的结果里给出）。界面会标明这是子agent的问题；之后再用同一个 continue_id 把答案转给它。"
                 }
             },
             "required": ["questions"]
@@ -325,6 +360,33 @@ impl AgentTool for QuestionTool {
             .map(|t| t.conversation_id.clone())
             .unwrap_or_default();
 
+        let source_subagent = match params
+            .get("source_subagent")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            None => None,
+            Some(sub_id) => {
+                let conv = state
+                    .conversation_db
+                    .get_conversation(sub_id)
+                    .ok()
+                    .flatten();
+                let pending = state
+                    .conversation_db
+                    .pending_parent_ask(sub_id)
+                    .ok()
+                    .flatten();
+                match resolve_source_subagent(sub_id, conv.as_ref(), &conversation_id, pending) {
+                    Ok(source) => Some(source),
+                    Err(detail) => {
+                        return Ok(ToolOutput::fail("ask_user: source_subagent 无效", detail));
+                    }
+                }
+            }
+        };
+
         let answers = state
             .agent_interaction
             .request_question(
@@ -334,6 +396,7 @@ impl AgentTool for QuestionTool {
                 conversation_id,
                 question_id,
                 questions.clone(),
+                source_subagent,
             )
             .await;
 
@@ -565,5 +628,72 @@ mod tests {
         assert!(!questions_contain_mode_switch_keyword(&[question(
             "你希望使用哪种部署策略？"
         )]));
+    }
+
+    // ── source_subagent 校验 ──
+
+    fn sub_conv(parent: Option<&str>) -> crate::agent::conversation::Conversation {
+        let db = crate::agent::conversation::ConversationDb::in_memory().unwrap();
+        let mut c = db.create_conversation("conn", "查磁盘（子agent）").unwrap();
+        c.id = "sub-1".into();
+        c.parent_conversation_id = parent.map(String::from);
+        c
+    }
+
+    fn pending() -> crate::agent::tools::ask_parent::PendingParentAsk {
+        crate::agent::tools::ask_parent::PendingParentAsk {
+            tool_call_id: "ask-1".into(),
+            question: "q".into(),
+            context: None,
+            arguments: json!({}),
+        }
+    }
+
+    #[test]
+    fn source_subagent_accepts_own_waiting_subagent() {
+        let source = resolve_source_subagent(
+            "sub-1",
+            Some(&sub_conv(Some("main"))),
+            "main",
+            Some(pending()),
+        )
+        .unwrap();
+        assert_eq!(source.conversation_id, "sub-1");
+        assert_eq!(source.title, "查磁盘（子agent）");
+        assert_eq!(source.ask_tool_call_id, "ask-1");
+        // 前端契约：驼峰键
+        let json = serde_json::to_value(&source).unwrap();
+        assert_eq!(json["conversationId"], "sub-1");
+        assert_eq!(json["askToolCallId"], "ask-1");
+    }
+
+    #[test]
+    fn source_subagent_rejects_missing_foreign_and_not_waiting() {
+        assert!(resolve_source_subagent("x", None, "main", Some(pending())).is_err());
+        let foreign = resolve_source_subagent(
+            "sub-1",
+            Some(&sub_conv(Some("other"))),
+            "main",
+            Some(pending()),
+        );
+        assert!(foreign.unwrap_err().contains("不是当前对话派发"));
+        let main_conv =
+            resolve_source_subagent("sub-1", Some(&sub_conv(None)), "main", Some(pending()));
+        assert!(main_conv.is_err());
+        let idle = resolve_source_subagent("sub-1", Some(&sub_conv(Some("main"))), "main", None);
+        assert!(idle.unwrap_err().contains("没有等你回答的提问"));
+    }
+
+    #[test]
+    fn question_detail_omits_source_subagent_when_absent() {
+        let detail = crate::agent::interaction::QuestionDetail {
+            question_id: "q".into(),
+            questions: vec![],
+            source_subagent: None,
+        };
+        assert!(serde_json::to_value(&detail)
+            .unwrap()
+            .get("sourceSubagent")
+            .is_none());
     }
 }

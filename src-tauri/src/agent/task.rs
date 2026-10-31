@@ -115,6 +115,13 @@ pub enum TurnState {
     Failed,
     /// 上次运行期间进程消失（崩溃 / 强杀），没有任何收尾写入。
     Interrupted,
+    /// 子 agent 调用 `ask_parent` 暂停，等主 agent 回答：回合**没结束**，只是
+    /// 停在半路（最后一条 assistant 带着一个还没有结果的 `ask_parent` 调用）。
+    /// 用 `continue_id` 续派并带上回答时，这一行被重新标回 `running` 继续同一回合。
+    /// 与 `Running` 不同：它是一次**干净**的停止，开新回合时不会被收敛成
+    /// `Interrupted`（`begin_turn_state` 只收敛 `running`）。
+    #[serde(rename = "awaiting_parent")]
+    AwaitingParent,
 }
 
 impl TurnState {
@@ -127,6 +134,7 @@ impl TurnState {
             Self::Cancelled => "cancelled",
             Self::Failed => "failed",
             Self::Interrupted => "interrupted",
+            Self::AwaitingParent => "awaiting_parent",
         }
     }
 
@@ -142,6 +150,7 @@ impl TurnState {
             "cancelled" => Some(Self::Cancelled),
             "failed" => Some(Self::Failed),
             "interrupted" => Some(Self::Interrupted),
+            "awaiting_parent" => Some(Self::AwaitingParent),
             _ => None,
         }
     }
@@ -443,6 +452,7 @@ mod tests {
             (TurnState::Cancelled, "cancelled"),
             (TurnState::Failed, "failed"),
             (TurnState::Interrupted, "interrupted"),
+            (TurnState::AwaitingParent, "awaiting_parent"),
         ];
         for (state, expected) in cases {
             assert_eq!(state.as_str(), expected);

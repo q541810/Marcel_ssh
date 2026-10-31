@@ -11,7 +11,7 @@
 //!   （ctx 组装在 `agent_loop::execute_single_tool` 的本机分支）；
 //! - 工具集收窄：远端语义工具（`bash` / `read_file` / …）一律剔除，只留本机族
 //!   （`local_*`）、作业出口（`job_*` 读的正是本机管理器）、`read_history` /
-//!   `ask_user` 与应用内工具（见 `tools/mod.rs` 的 `LOCAL_SUB_EXCLUDED_TOOLS`）。
+//!   `ask_parent` 与应用内工具（见 `tools/mod.rs` 的 `LOCAL_SUB_EXCLUDED_TOOLS`）。
 //!
 //! # 审批语义（本工具是**派发闸门**，为什么不能只靠 dispatcher 的通用判定）
 //!
@@ -48,11 +48,11 @@ use crate::agent::risk::Disposition;
 use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::subagent::{
-    classify_subagent_result, continue_hint, continue_id_schema, conversation_has_running_task,
-    lookup_model_choice, model_param_schema, optional_continue_id, render_model_selection_section,
-    resolved_sub_model_label, truncate_chars, unknown_model_note, validate_continue_target,
-    ContinueClaim, ContinueTarget, ModelChoiceLookup, SubTaskStartEvent, SubagentModelCandidate,
-    SubagentOutcome,
+    apply_parent_answer, ask_handback, classify_subagent_result, continue_hint, continue_id_schema,
+    conversation_has_running_task, lookup_model_choice, model_param_schema, optional_continue_id,
+    render_model_selection_section, resolved_sub_model_label, truncate_chars, unknown_model_note,
+    validate_continue_target, AppliedAnswer, ContinueClaim, ContinueTarget, ModelChoiceLookup,
+    SubTaskStartEvent, SubagentModelCandidate, SubagentOutcome,
 };
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::AgentModeSettings;
@@ -230,7 +230,9 @@ const BASE_DESCRIPTION: &str =
          conversation with its full context — it does not re-read what it already \
          read. Use it for follow-up questions, and to pick up a subagent that failed \
          or was cancelled (e.g. a transient LLM error) instead of starting over. Its \
-         mode stays as originally dispatched; the approval gate above still applies.";
+         mode stays as originally dispatched; the approval gate above still applies.
+\n         
+\n         A subagent may PAUSE to ask you a question (the result says so and shows the \n         question): it is not finished. Answer through the same `continue_id`, with the \n         answer as `prompt`.";
 
 #[async_trait]
 impl AgentTool for LocalSubagentTool {
@@ -530,19 +532,33 @@ impl AgentTool for LocalSubagentTool {
                 "找不到父任务所属的连接（SSH 会话与对话记录都不可用），无法创建本机子agent会话。",
             ));
         }
+        let mut applied_answer: Option<AppliedAnswer> = None;
         let (sub_conversation_id, history) = match &cont {
-            Some(target) => match state
-                .conversation_db
-                .load_llm_history_for_resume(&target.conversation_id)
-            {
-                Ok(h) => (target.conversation_id.clone(), h),
-                Err(e) => {
-                    return Ok(ToolOutput::fail(
-                        "local_subagent: 读取本机子agent历史失败",
-                        format!("读取本机子agent历史失败: {}", e),
-                    ));
+            Some(target) => {
+                // 子 agent 正停在 ask_parent 上：prompt 是对它的回答，先落成那次调用的
+                // 工具结果，再载入历史（调用/结果天然成对）。
+                match apply_parent_answer(&state, &target.conversation_id, &prompt) {
+                    Ok(applied) => applied_answer = applied,
+                    Err(message) => {
+                        return Ok(ToolOutput::fail("local_subagent: 无法续派", message))
+                    }
                 }
-            },
+                match state
+                    .conversation_db
+                    .load_llm_history_for_resume(&target.conversation_id)
+                {
+                    Ok(h) => (target.conversation_id.clone(), h),
+                    Err(e) => {
+                        if let Some(applied) = &applied_answer {
+                            applied.rollback(&state);
+                        }
+                        return Ok(ToolOutput::fail(
+                            "local_subagent: 读取本机子agent历史失败",
+                            format!("读取本机子agent历史失败: {}", e),
+                        ));
+                    }
+                }
+            }
             None => {
                 let sub_title = format!("{}（本机子agent）", description);
                 let sub_conv = match state.conversation_db.create_sub_conversation(
@@ -605,6 +621,7 @@ impl AgentTool for LocalSubagentTool {
                     },
                     side: Some(LOCAL_SESSION_SENTINEL.to_string()),
                     resumed: cont.is_some(),
+                    answers_ask: applied_answer.as_ref().map(|a| a.ask_tool_call_id.clone()),
                 },
             );
         }
@@ -671,13 +688,20 @@ impl AgentTool for LocalSubagentTool {
             // 默认继承父任务模型；候选清单配置后可被 model 参数覆盖（见上）。
             model_override,
             prompt_extra: vec![sub_instruction, local_instruction],
-            prompt_origin: PromptOrigin::User,
+            prompt_origin: if applied_answer.is_some() {
+                PromptOrigin::ParentAnswer
+            } else {
+                PromptOrigin::User
+            },
             user_input: None,
         };
         let manager = AgentManager::new(state.clone());
         let handle = match manager.spawn(&ctx.app_handle, spec).await {
             Ok(h) => h,
             Err(e) => {
+                if let Some(applied) = &applied_answer {
+                    applied.rollback(&state);
+                }
                 return Ok(ToolOutput::fail(
                     "local_subagent: 本机子agent启动失败",
                     format!("本机子agent启动失败: {}", e),
@@ -716,6 +740,28 @@ impl AgentTool for LocalSubagentTool {
             );
             base
         };
+
+        // 子 agent 停在 ask_parent 上：不是报告也不是失败，把问题交回主 agent
+        // （与 `subagent` 同一套，事实来源是会话库）。
+        if result.is_none() && !status.is_cancelled() {
+            if let Ok(Some(ask)) = state
+                .conversation_db
+                .pending_parent_ask(&sub_conversation_id)
+            {
+                log::info!(
+                    "Local subtask {} paused with a question for the parent",
+                    sub_task_id
+                );
+                let (output, meta) = ask_handback("local_subagent", &sub_conversation_id, &ask);
+                let mut meta = result_meta(meta);
+                meta["subTaskId"] = json!(sub_task_id);
+                return Ok(ToolOutput::ok(
+                    format!("本机子agent提问：{}{}", description, model_note),
+                    output,
+                )
+                .with_metadata(meta));
+            }
+        }
 
         match classify_subagent_result(result, &status) {
             SubagentOutcome::Report(text) => {
@@ -947,6 +993,7 @@ mod tests {
             mode: "plan".into(),
             side: Some("local".into()),
             resumed: false,
+            answers_ask: None,
         };
         let json = serde_json::to_value(ev).unwrap();
         assert_eq!(json["sessionId"], "local");

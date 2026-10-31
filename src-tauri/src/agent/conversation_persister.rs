@@ -29,6 +29,11 @@ pub enum PromptOrigin {
     User,
     /// 后台作业的结算告知：系统写的，不是用户输入。
     JobNotice,
+    /// 主 agent 对子 agent `ask_parent` 的回答：已经在续派前落库成那次调用的**工具
+    /// 结果**（见 `ConversationDb::answer_parent_ask`），不是一条新的 user 消息。
+    /// 这一轮没有新的回合锚点——它是被暂停回合的继续（`prepare_turn` 重开原锚点）。
+    /// 只由 `continue_id` 续派路径内部使用，**不能**从 IPC 解析出来。
+    ParentAnswer,
 }
 
 impl PromptOrigin {
@@ -37,6 +42,8 @@ impl PromptOrigin {
         match self {
             Self::User => "user",
             Self::JobNotice => ROLE_NOTICE,
+            // 不会真的落这个 role（这一轮不新建锚点行）；回答行的 role 是 tool。
+            Self::ParentAnswer => "tool",
         }
     }
 
@@ -45,6 +52,8 @@ impl PromptOrigin {
         match self {
             Self::User => true,
             Self::JobNotice => false,
+            // 暂停回合的继续：回合本就是用户发起的，不是系统告知轮。
+            Self::ParentAnswer => true,
         }
     }
 

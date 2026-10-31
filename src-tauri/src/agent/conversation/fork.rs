@@ -781,4 +781,73 @@ mod tests {
         assert!(meta.forked_from_id.is_none());
         assert_eq!(db.load_messages(&out.conversation.id).unwrap().len(), 6);
     }
+
+    /// 分叉深拷贝一个正停在 `ask_parent` 上的子对话：副本里这一问仍然待回答
+    /// （回合锚点状态、提问调用都按原样带过去），分叉里的主 agent 可以接着答。
+    #[test]
+    fn a_paused_sub_conversation_stays_answerable_after_fork() {
+        let db = create_test_db();
+        let conv = db.create_conversation("conn_1", "主").unwrap();
+        let sub = db
+            .create_sub_conversation("conn_1", "调研", &conv.id)
+            .unwrap();
+        let anchor = db
+            .save_message(
+                &sub.id,
+                "user",
+                "查配置",
+                "2026-01-01T00:00:00Z",
+                None,
+                None,
+            )
+            .unwrap();
+        db.save_message(
+            &sub.id,
+            "assistant",
+            "",
+            "2026-01-01T00:00:01Z",
+            Some(r#"[{"id":"ask-1","name":"ask_parent","arguments":{"question":"改端口吗？"}}]"#),
+            None,
+        )
+        .unwrap();
+        db.begin_turn_state(&sub.id, &anchor.id).unwrap();
+        db.set_message_turn_state(&anchor.id, TurnState::AwaitingParent)
+            .unwrap();
+        db.save_message(
+            &conv.id,
+            "user",
+            "去调研",
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .unwrap();
+        db.save_message(
+            &conv.id,
+            "assistant",
+            "派发了",
+            "2026-01-01T00:01:00Z",
+            Some(&format!(
+                r#"[{{"metadata":{{"kind":"subagentAsk","subConversationId":"{}"}}}}]"#,
+                sub.id
+            )),
+            None,
+        )
+        .unwrap();
+
+        let out = db.fork_conversation(&conv.id, None, "t", false).unwrap();
+        let new_sub_id = db
+            .list_conversations("conn_1")
+            .unwrap()
+            .into_iter()
+            .find(|c| c.parent_conversation_id.as_deref() == Some(out.conversation.id.as_str()))
+            .expect("子对话已复制")
+            .id;
+        let ask = db
+            .pending_parent_ask(&new_sub_id)
+            .unwrap()
+            .expect("副本里的提问仍待回答");
+        assert_eq!(ask.tool_call_id, "ask-1");
+        assert_eq!(ask.question, "改端口吗？");
+    }
 }

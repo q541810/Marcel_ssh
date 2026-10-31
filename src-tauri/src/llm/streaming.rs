@@ -31,6 +31,19 @@ pub enum StreamEvent {
     /// 为它落了「已中断」的 tool 行），`completed` 还会让回合折叠成立即把过程收成
     /// 一行控制条（过程卡片从界面上消失，而模型侧其实仍看得到）。
     Cancelled,
+    /// 子 agent 调用了 `ask_parent`：这一轮**干净地停在提问上**，等主 agent 回答
+    /// （不是自然结束、不是取消、不是失败）。
+    ///
+    /// 与 `Done` 分开：`Done` 会让前端把没有结果的工具卡片当「没跑完的调用」删掉，并把
+    /// 回合写成 `completed`；这里恰恰相反——`ask_parent` 那张卡片要留着（它是「在等回答」
+    /// 的唯一可见痕迹），回合状态是 `awaiting_parent`（不折叠）。
+    /// 回答到达时（`continue_id` 续派），前端从 `subTaskStart.answersAsk` 得知并补上结果。
+    AwaitingParent {
+        tool_call_id: String,
+        question: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<String>,
+    },
     /// Stream terminated with an error.
     Error { message: String },
     /// 一条消息已落库 —— 把 DB row id 广播给前端，回填 live 消息的 `dbId`。

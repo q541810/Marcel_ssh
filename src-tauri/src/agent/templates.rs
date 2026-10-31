@@ -6,6 +6,7 @@
 //! |---|---|---|---|
 //! | 角色 | `templates/agent/角色.hbs` | 无条件 | system prompt |
 //! | 子 agent 角色约束 | `templates/agent/子agent_只读.hbs`、`子agent_执行.hbs` | 仅子 agent | system prompt（经 `prompt_extra`） |
+//! | 子 agent 向主 agent 提问（`ask_parent` 的用法规则；子 agent 没有 `ask_user`） | `templates/agent/子agent_提问.hbs`（partial，由上面两份引用，本机子 agent 同） | 仅子 agent | 随上一行送达 |
 //! | 本机子 agent 环境 | `templates/agent/本机子agent.hbs` | 仅本机子 agent（`AgentRole::LocalSub`） | system prompt（经 `prompt_extra`） |
 //! | 多机操控（含跨机文件链接 `remote://机器名/路径`） | `templates/agent/多机.hbs`（`render_multi_host`） | 主 agent 且有多机上下文 | system prompt |
 //! | 先理清需求 / 沟通（含文件路径链接约定 `remote:` / `local:`）/ 上下文管理 / 收尾 | `templates/agent/沟通.hbs` | **仅主 agent**（`audience`） | system prompt |
@@ -56,6 +57,10 @@
 //!   `description()`，权威在那里；提示词里只允许说"以工具说明为准"，不得复述
 //!   工具清单（`tools::ToolSide` 必填 + `acting_tools_state_their_side` 测试：
 //!   新增工具不声明 `side` 编译不过，声明了但描述没写测试会红）
+//! - 子 agent 什么时候该问主 agent、先自己查什么（`ask_parent` 用法规则的唯一来源）
+//!   → `templates/agent/子agent_提问.hbs`；`ask_parent` 工具描述只说它做什么（暂停、
+//!   回答作为调用结果回来）；主 agent 侧「怎么接子 agent 的提问」→ `沟通.hbs` 的
+//!   ask_user 段 + `subagent` / `local_subagent` 工具描述的 CONTINUING 段
 //! - 子 agent 行为约束 → `templates/agent/子agent_只读.hbs` / `子agent_执行.hbs`
 //!   （桌面/移动的工具清单差异走 `can_transfer` 分支，不要再写 cfg 副本）
 //! - 本机子 agent 的环境交代（目标机器 / PowerShell 5.1 的 shell 事实 / 残余进程
@@ -187,6 +192,13 @@ impl TemplateManager {
         let _ = reg.register_template_string(
             "子agent_执行",
             include_str!("../../templates/agent/子agent_执行.hbs"),
+        );
+        // 子 agent 向主 agent 提问的行为规则（什么时候问、先自己查什么）：partial，
+        // 由 `子agent_只读` / `子agent_执行` 引用（本机子 agent 也走这两份）——规则只在这个
+        // 文件里写一遍，`ask_parent` 的工具描述只说它做什么。
+        let _ = reg.register_template_string(
+            "子agent_提问",
+            include_str!("../../templates/agent/子agent_提问.hbs"),
         );
         // 本机子 agent 的环境交代（目标机器 / shell 事实 / 残余进程收尾），与子
         // agent 约束段同路：`AgentSpec.prompt_extra` 注入，不走工具提示词段。
@@ -1139,5 +1151,33 @@ mod tests {
                 format!("{SPECIAL}|{SPECIAL}")
             );
         }
+    }
+
+    /// 子 agent 没有 `ask_user`、用 `ask_parent`：两份约束段的工具清单与提问规则都要对上，
+    /// 规则（先自己查、问主 agent）只来自 `子agent_提问` 这一个 partial。
+    #[test]
+    fn subagent_fragments_use_ask_parent_not_ask_user() {
+        let read_only = TemplateManager.render_fragment("子agent_只读", &json!({}));
+        let execute =
+            TemplateManager.render_fragment("子agent_执行", &json!({ "can_transfer": true }));
+        for (name, text) in [("只读", read_only), ("执行", execute)] {
+            assert!(text.contains("ask_parent"), "{name}: 要点名 ask_parent");
+            assert!(!text.contains("ask_user"), "{name}: 子 agent 没有 ask_user");
+            assert!(
+                text.contains("你不能直接问用户"),
+                "{name}: 提问规则 partial 要渲染进来"
+            );
+            assert!(!text.contains("{{"), "{name}: partial 没渲染出来：{text}");
+        }
+        let rule = TemplateManager.render_fragment("子agent_提问", &json!({}));
+        assert!(rule.contains("先自己查"));
+    }
+
+    /// 主 agent 的沟通段要教它怎么接子 agent 的提问（含 source_subagent 转问用户）。
+    #[test]
+    fn main_prompt_teaches_relaying_subagent_questions() {
+        let text = TemplateManager.render_fragment("沟通", &json!({}));
+        assert!(text.contains("source_subagent"));
+        assert!(text.contains("continue_id"));
     }
 }

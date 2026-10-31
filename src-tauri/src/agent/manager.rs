@@ -27,6 +27,7 @@ use crate::agent::conversation_persister::{ConversationPersister, PromptOrigin};
 use crate::agent::system_prompt::build_system_prompt;
 use crate::agent::task::{AgentMode, AgentStatus, AgentTask, AgentTaskPlan, TurnState};
 use crate::agent::templates::TemplateManager;
+use crate::agent::tools::ask_parent::take_paused;
 use crate::agent::tools::subagent::{resolve_subagent_candidates, SubagentModelCandidate};
 use crate::agent::tools::{
     mcp::register_mcp_tools, plugin_tool::register_plugin_tools, subagent, ToolRegistry,
@@ -715,7 +716,8 @@ impl AgentManager {
             &spec.session_id,
             &tools,
             &spec.history,
-            &spec.prompt,
+            // 带回答续派：回答已是历史里的工具结果，不再追加 user 消息。
+            (spec.prompt_origin != PromptOrigin::ParentAnswer).then_some(spec.prompt.as_str()),
             &agent_settings.system_prompt,
             &plugin_sections,
             matches!(spec.mode, AgentMode::Plan),
@@ -1308,7 +1310,7 @@ fn build_agent_messages(
     session_id: &str,
     tools: &[ToolDefinition],
     history: &[LlmMessage],
-    prompt: &str,
+    prompt: Option<&str>,
     agent_system_prompt: &str,
     plugin_sections: &[String],
     plan_mode: bool,
@@ -1351,11 +1353,13 @@ fn build_agent_messages(
         }
         messages.push(msg.clone());
     }
-    if !messages
-        .last()
-        .map_or(false, |m| m.role == LlmRole::User && m.content == prompt)
-    {
-        messages.push(LlmMessage::user(prompt.to_string()));
+    if let Some(prompt) = prompt {
+        if !messages
+            .last()
+            .map_or(false, |m| m.role == LlmRole::User && m.content == prompt)
+        {
+            messages.push(LlmMessage::user(prompt.to_string()));
+        }
     }
     Ok(messages)
 }
@@ -1380,15 +1384,22 @@ fn finalize_task(state: &AppState, task_id: &str, result: &Option<String>) -> Op
         match tasks.get_mut(task_id) {
             Some(task) => {
                 // 吸收规则在 `AgentTask::transition_to` 里（Cancelled 不接受后续写入）。
-                task.transition_to(if result.is_some() {
+                // 子 agent 停在 `ask_parent` 上：不是失败（loop 返回 None 只是因为它
+                // 没有最终报告），任务算正常终态，回合写 `awaiting_parent`。
+                let paused = result.is_none() && take_paused(task_id);
+                task.transition_to(if result.is_some() || paused {
                     AgentStatus::Completed
                 } else {
                     AgentStatus::Failed
                 });
                 // 写入之后**按真实状态**定档：停止命令先置 Cancelled，上面那次
                 // 写入可能被吸收掉，问返回值会把「用户停止」误判成完成/失败。
+                let turn = match TurnState::from_status(&task.status) {
+                    TurnState::Completed if paused => TurnState::AwaitingParent,
+                    other => other,
+                };
                 Some((
-                    TurnState::from_status(&task.status),
+                    turn,
                     task.conversation_id.clone(),
                     task.turn_anchor_id.clone(),
                 ))
@@ -1973,9 +1984,9 @@ mod tests {
                 "job_output",
                 "job_kill",
                 "job_list",
-                // 回读父会话派发它时的上下文 / 向用户提问
+                // 回读父会话派发它时的上下文 / 向主 agent 提问
                 "read_history",
-                "ask_user",
+                "ask_parent",
             ] {
                 assert!(
                     registry.get(present).is_some(),
