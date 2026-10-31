@@ -5,6 +5,8 @@ interface ToggleProps {
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   label?: string;
+  /** 屏幕阅读器用的名字；界面上已有可见标题、不想再排一遍文字时用它。 */
+  ariaLabel?: string;
   size?: ToggleSize;
 }
 
@@ -23,7 +25,7 @@ const sizeStyles: Record<ToggleSize, { track: string; knob: string; checkedLeft:
   },
 };
 
-export default function Toggle({ checked, onChange, disabled = false, label, size = 'md' }: ToggleProps) {
+export default function Toggle({ checked, onChange, disabled = false, label, ariaLabel, size = 'md' }: ToggleProps) {
   const s = sizeStyles[size];
   const isMd = size === 'md';
   return (
@@ -32,6 +34,7 @@ export default function Toggle({ checked, onChange, disabled = false, label, siz
         type="button"
         role="switch"
         aria-checked={checked}
+        aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
         onKeyDown={(e) => {

@@ -86,6 +86,32 @@ export function DeviceNameEditor({ variant, name }: { variant: SyncVariant; name
   );
 }
 
+/**
+ * 一台设备开了哪几档。用小圆点 + 名字，不用三种颜色：颜色在这里不承载额外信息，
+ * 堆起来反而像状态告警。没开的档不显示——「只显示开着的那几档」比列一排灰字更好扫。
+ */
+function TierChips({ tiers }: { tiers: SyncDevice['tiers'] }) {
+  const enabled = [
+    tiers.config ? '配置' : null,
+    tiers.conversation ? '对话' : null,
+    tiers.secret ? '机密' : null,
+  ].filter((label): label is string => label !== null);
+  if (enabled.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1" aria-label={`开启了${enabled.join('、')}`}>
+      {enabled.map((label) => (
+        <span
+          key={label}
+          className="inline-flex items-center gap-1 rounded bg-state-mid px-1.5 py-0.5 text-[10px] leading-none text-zinc-400"
+        >
+          <span aria-hidden className="h-1 w-1 rounded-full bg-emerald-500" />
+          {label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 /** 已加入同步的设备。新设备要等它第一次同步过之后才会出现——列表里没有不代表没加入成功。 */
 export function DevicesList({ devices, loading, error }: { devices: SyncDevice[]; loading: boolean; error: string | null }) {
   if (error && devices.length === 0) {
@@ -110,13 +136,14 @@ export function DevicesList({ devices, loading, error }: { devices: SyncDevice[]
           <li key={device.id} className="flex items-center gap-3 py-2.5 first:pt-0 last:pb-0">
             <Icon className="h-4 w-4 flex-shrink-0 text-zinc-500" aria-hidden />
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-sm text-zinc-200">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-zinc-200">
                 <span className="truncate">{device.name}</span>
                 {device.isSelf && (
                   <span className="flex-shrink-0 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] text-indigo-300">
                     本机
                   </span>
                 )}
+                <TierChips tiers={device.tiers} />
               </div>
               <div className="text-xs text-zinc-500">
                 {PLATFORM_LABEL[device.platform]} · v{device.appVersion}

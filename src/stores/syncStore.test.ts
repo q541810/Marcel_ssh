@@ -25,6 +25,8 @@ vi.mock('@/lib/tauri', () => ({
   syncUndo: vi.fn(),
   syncConfirmHeld: vi.fn(),
   syncDisable: vi.fn(),
+  syncSetTier: vi.fn(),
+  syncTierEstimate: vi.fn(),
 }));
 
 const handleApplied = vi.hoisted(() => vi.fn());
@@ -257,11 +259,13 @@ describe('syncStore', () => {
       detach();
     });
 
-    it('sync-data-applied 事件交给刷新表处理', async () => {
+    it('sync-data-applied 事件交给刷新表处理（并把对话的会话 id 一起带上）', async () => {
       const detach = initSync();
       await vi.waitFor(() => expect(bus.handlers.get('sync-data-applied')?.length).toBe(1));
       emit('sync-data-applied', { source: 'connections' });
-      expect(handleApplied).toHaveBeenCalledWith('connections');
+      expect(handleApplied).toHaveBeenCalledWith('connections', []);
+      emit('sync-data-applied', { source: 'conversations', conversationIds: ['c1', 'c2'] });
+      expect(handleApplied).toHaveBeenCalledWith('conversations', ['c1', 'c2']);
       detach();
     });
 

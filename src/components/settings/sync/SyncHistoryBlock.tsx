@@ -31,6 +31,8 @@ function HistoryItem({
   // 警告条的正文：后端把它整句放在 `label` 里（「已信任主机 X 的指纹（另一台设备记录的是 Y…）」）。
   // 老记录没有 `label`，那时 `newValue` 里放的是同一句话。
   const warningText = entry.label?.trim() || entry.newValue || entry.oldValue;
+  // 机密记录只写「哪个 Key 变了」，不画旧值 → 新值：值不该出现在界面上（截图 / 录屏就会漏）。
+  const isSecret = view.hideValues;
 
   return (
     <li
@@ -53,6 +55,10 @@ function HistoryItem({
             <p className="mt-0.5 text-xs leading-relaxed text-amber-200/90">
               {warningText || '这条改动没有应用到本机，请留意。'}
             </p>
+          ) : isSecret ? (
+            <p className="mt-0.5 text-xs leading-relaxed text-zinc-400">
+              {entry.oldValue || entry.newValue ? '已更新（内容不在这里显示）' : '已更新'}
+            </p>
           ) : (
             <p className="mt-0.5 text-xs leading-relaxed">
               <ValueText value={view.oldValue} empty="（无）" />
@@ -65,7 +71,7 @@ function HistoryItem({
             {entry.undone ? ' · 已撤销' : ''}
           </p>
         </div>
-        {!isWarning && !entry.undone && (
+        {!isWarning && !isSecret && !entry.undone && (
           <SyncButton
             variant={variant}
             kind="ghost"

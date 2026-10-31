@@ -6,7 +6,7 @@ import * as tauri from '@/lib/tauri';
 import { useSyncStore } from '@/stores/syncStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { SearchRegistryProvider } from '@/components/settings/helpers';
-import type { SyncDevice, SyncHistoryEntry, SyncStatus } from '@/lib/types';
+import type { SyncDevice, SyncHistoryEntry, SyncStatus, TierEstimate } from '@/lib/types';
 import { SyncPanel } from './SyncPanel';
 import type { SyncVariant } from './syncUi';
 
@@ -36,6 +36,8 @@ vi.mock('@/lib/tauri', () => ({
   syncUndo: vi.fn(),
   syncConfirmHeld: vi.fn(),
   syncDisable: vi.fn(),
+  syncSetTier: vi.fn(),
+  syncTierEstimate: vi.fn(),
   getConnections: vi.fn(),
 }));
 
@@ -65,9 +67,30 @@ function status(partial: Partial<SyncStatus> = {}): SyncStatus {
 const OFF = status({ enabled: false, state: 'off', lastSyncAt: null, storage: null, deviceId: null, deviceName: null });
 
 const DEVICES: SyncDevice[] = [
-  { id: 'dev-self', name: '书房电脑', platform: 'desktop', appVersion: '1.12.0', lastSeenAt: new Date().toISOString(), isSelf: true, tiers: { config: true, conversation: false, secret: false } },
-  { id: 'dev-phone', name: '我的手机', platform: 'android', appVersion: '1.12.0', lastSeenAt: new Date(Date.now() - 3600_000).toISOString(), isSelf: false, tiers: { config: true, conversation: false, secret: false } },
+  { id: 'dev-self', name: '书房电脑', platform: 'desktop', appVersion: '1.12.0', lastSeenAt: new Date().toISOString(), isSelf: true, tiers: { config: true, conversation: true, secret: false } },
+  { id: 'dev-phone', name: '我的手机', platform: 'android', appVersion: '1.12.0', lastSeenAt: new Date(Date.now() - 3600_000).toISOString(), isSelf: false, tiers: { config: true, conversation: false, secret: true } },
 ];
+
+/** `sync_tier_estimate` 的默认返回：对话档给数量，机密档给分组（**只有名字与数量**）。 */
+const CONVERSATION_ESTIMATE: TierEstimate = {
+  tier: 'conversation',
+  conversations: 42,
+  images: 7,
+  totalBytes: 12 * 1024 * 1024,
+  secretGroups: [],
+};
+
+const SECRET_ESTIMATE: TierEstimate = {
+  tier: 'secret',
+  conversations: 0,
+  images: 0,
+  totalBytes: 0,
+  secretGroups: [
+    { label: '模型渠道 API Key', count: 3, names: ['DeepSeek', 'Kimi', '智谱'] },
+    { label: '服务器密码', count: 5, names: ['生产服务器', '家里的 NAS'] },
+    { label: '私钥口令', count: 2, names: ['work-key', 'backup-key'] },
+  ],
+};
 
 const HISTORY: SyncHistoryEntry[] = [
   {
@@ -90,6 +113,19 @@ const HISTORY: SyncHistoryEntry[] = [
     oldValue: null,
     newValue: '另一台设备记录的 example.com 主机指纹与本机不同，没有应用',
     kind: 'warning',
+    undone: false,
+  },
+  {
+    id: 'h3',
+    at: new Date(Date.now() - 1_800_000).toISOString(),
+    deviceName: '我的手机',
+    source: 'secrets',
+    path: 'llm_channel_c1',
+    label: "模型渠道『DeepSeek』的 API Key 已从另一台设备更新",
+    // 后端即使给了值，界面也不该画出来
+    oldValue: 'sk-old-should-never-render',
+    newValue: 'sk-new-should-never-render',
+    kind: 'change',
     undone: false,
   },
 ];
@@ -172,9 +208,11 @@ beforeEach(() => {
     tauri.syncUndo,
     tauri.syncConfirmHeld,
     tauri.syncDisable,
+    tauri.syncSetTier,
   ]) {
     vi.mocked(fn).mockReset().mockResolvedValue(undefined);
   }
+  vi.mocked(tauri.syncTierEstimate).mockReset().mockResolvedValue(CONVERSATION_ESTIMATE);
   vi.mocked(tauri.syncGetSyncCode).mockReset().mockResolvedValue('MSYNC1-' + 'Zm9v'.repeat(30));
   vi.mocked(tauri.syncGetRecoveryKey).mockReset().mockResolvedValue(KEY);
   vi.mocked(tauri.syncCreate).mockReset();
@@ -390,7 +428,7 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       await flush();
     }
 
-    it('状态行、存放位置、同步范围（后两项灰显标「后续版本支持」）', async () => {
+    it('状态行、存放位置、同步范围（三档都能点了，不再有「后续版本支持」）', async () => {
       await mountEnabled();
       const text = bodyText();
       expect(text).toContain('已同步 · 5 分钟前');
@@ -398,12 +436,123 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
       expect(text).toContain('普通配置');
       expect(text).toContain('对话与记忆');
       expect(text).toContain('机密');
-      expect((text.match(/后续版本支持/g) ?? []).length).toBe(2);
-      // 普通配置开着且不可关
+      // 三期做完后这条字符串应该彻底消失（防止有人加回来）
+      expect(text.match(/后续版本支持/g) ?? []).toHaveLength(0);
+      // 普通配置恒开且不可关；另外两档按 status.tiers 显示、可点
       const switches = Array.from(document.body.querySelectorAll('[role="switch"]')) as HTMLButtonElement[];
       expect(switches).toHaveLength(3);
       expect(switches[0].getAttribute('aria-checked')).toBe('true');
-      expect(switches.every((s) => s.disabled)).toBe(true);
+      expect(switches[0].disabled).toBe(true);
+      expect(switches[1].disabled).toBe(false);
+      expect(switches[2].disabled).toBe(false);
+      expect(switches[1].getAttribute('aria-checked')).toBe('false');
+      expect(switches[2].getAttribute('aria-checked')).toBe('false');
+    });
+
+    it('档位开关的初始态来自 status.tiers', async () => {
+      await mountEnabled(status({ tiers: { config: true, conversation: true, secret: true } }));
+      const switches = Array.from(document.body.querySelectorAll('[role="switch"]')) as HTMLButtonElement[];
+      expect(switches.map((s) => s.getAttribute('aria-checked'))).toEqual(['true', 'true', 'true']);
+      // 只有普通配置不可点
+      expect(switches.map((s) => s.disabled)).toEqual([true, false, false]);
+    });
+
+    it('打开「对话与记忆」：先弹说明 + 估算，确认后才 setTier', async () => {
+      await mountEnabled();
+      const conversationSwitch = () =>
+        document.body.querySelector('[data-tier="conversation"] [role="switch"]') as HTMLButtonElement;
+
+      await click(conversationSwitch());
+      // 弹的是说明而不是直接开关
+      expect(tauri.syncSetTier).not.toHaveBeenCalled();
+      expect(tauri.syncTierEstimate).toHaveBeenCalledWith('conversation');
+      expect(bodyText()).toContain('打开「对话与记忆」同步');
+      expect(bodyText()).toContain('服务器的输出和命令结果');
+      expect(bodyText()).toContain('端到端加密');
+      await vi.waitFor(() => expect(bodyText()).toContain('42'));
+      expect(bodyText()).toContain('7');
+      expect(bodyText()).toContain('MB');
+
+      await click(findButton('打开同步'));
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', true);
+    });
+
+    it('对话档估算失败：只说明并给重试，仍然放行', async () => {
+      vi.mocked(tauri.syncTierEstimate).mockRejectedValue({ kind: 'Other', message: '库正在被占用' });
+      await mountEnabled();
+      await click(document.body.querySelector('[data-tier="conversation"] [role="switch"]')!);
+      await vi.waitFor(() => expect(bodyText()).toContain('库正在被占用'));
+      expect(bodyText()).toContain('重试');
+      expect(findButton('打开同步').disabled).toBe(false);
+    });
+
+    it('打开「机密」：说明里列出类别与数量，页面上不出现任何像密钥的值', async () => {
+      vi.mocked(tauri.syncTierEstimate).mockResolvedValue(SECRET_ESTIMATE);
+      await mountEnabled();
+      await click(document.body.querySelector('[data-tier="secret"] [role="switch"]')!);
+      expect(tauri.syncTierEstimate).toHaveBeenCalledWith('secret');
+      await vi.waitFor(() => expect(bodyText()).toContain('模型渠道 API Key'));
+      expect(bodyText()).toContain('3');
+      expect(bodyText()).toContain('服务器密码');
+      expect(bodyText()).toContain('私钥口令');
+      expect(bodyText()).toContain('DeepSeek');
+      expect(bodyText()).toContain('恢复密钥或同步码');
+      // 只有名称与数量，绝不该出现像值的东西
+      expect(bodyText()).not.toMatch(/sk-[A-Za-z0-9]{8,}/);
+      expect(bodyText()).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY/);
+
+      await click(findButton('打开同步'));
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', true);
+    });
+
+    it('关闭「机密」：先提示「已经同步出去的不会被收回」，确认后才 setTier(false)', async () => {
+      await mountEnabled(status({ tiers: { config: true, conversation: false, secret: true } }));
+      await click(document.body.querySelector('[data-tier="secret"] [role="switch"]')!);
+      expect(tauri.syncSetTier).not.toHaveBeenCalled();
+      expect(bodyText()).toContain('已经同步到其它设备的机密不会被收回');
+      await click(findButton('仍然关闭'));
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('secret', false);
+    });
+
+    it('关闭「对话与记忆」：不弹确认，直接关并给一句「别处的不会被删」', async () => {
+      await mountEnabled(status({ tiers: { config: true, conversation: true, secret: false } }));
+      await click(document.body.querySelector('[data-tier="conversation"] [role="switch"]')!);
+      expect(tauri.syncSetTier).toHaveBeenCalledWith('conversation', false);
+      await vi.waitFor(() => expect(bodyText()).toContain('已经同步到其它设备的对话不会被删除'));
+    });
+
+    it('打开失败：错误留在对应档位那行', async () => {
+      vi.mocked(tauri.syncSetTier).mockRejectedValue({ kind: 'Other', message: '同步正在运行，请稍后再试' });
+      await mountEnabled();
+      await click(document.body.querySelector('[data-tier="secret"] [role="switch"]')!);
+      await click(findButton('打开同步'));
+      await vi.waitFor(() => expect(bodyText()).toContain('同步正在运行，请稍后再试'));
+      expect(document.body.querySelector('[data-tier="secret"] [role="alert"]')).not.toBeNull();
+    });
+
+    it('对话档正在同步时显示「正在同步对话 N / M」，做完就消失', async () => {
+      await mountEnabled(
+        status({
+          tiers: { config: true, conversation: true, secret: false },
+          streams: [
+            {
+              key: 'conv',
+              tier: 'conversation',
+              pending: 0,
+              lastError: null,
+              progress: { done: 3, total: 8, label: '正在同步对话' },
+            },
+          ],
+        }),
+      );
+      expect(bodyText()).toContain('正在同步对话 3 / 8');
+      expect(bodyText()).toContain('38%');
+    });
+
+    it('设备列表显示每台设备开了哪几档', async () => {
+      await mountEnabled();
+      expect(document.body.querySelector('[aria-label="开启了配置、对话"]')).not.toBeNull();
+      expect(document.body.querySelector('[aria-label="开启了配置、机密"]')).not.toBeNull();
     });
 
     it('立即同步', async () => {
@@ -499,6 +648,19 @@ describe.each<SyncVariant>(['desktop', 'mobile'])('SyncPanel（%s）', (variant)
 
       await click(findButton('撤销'));
       expect(tauri.syncUndo).toHaveBeenCalledWith('h1');
+    });
+
+    it('同步记录里的机密条目：只写「哪个 Key」，绝不显示值，也不给撤销', async () => {
+      await mountEnabled();
+      const text = bodyText();
+      expect(text).toContain("模型渠道『DeepSeek』的 API Key 已从另一台设备更新");
+      expect(text).not.toContain('sk-old-should-never-render');
+      expect(text).not.toContain('sk-new-should-never-render');
+      // 机密记录的撤销会再写一遍密钥链，界面不提供（后端也没有对应记录）
+      const secretItem = Array.from(document.body.querySelectorAll('li')).find((li) =>
+        li.textContent?.includes('DeepSeek'),
+      );
+      expect(secretItem?.querySelector('button')).toBeNull();
     });
 
     it('撤销失败：就地提示原因', async () => {

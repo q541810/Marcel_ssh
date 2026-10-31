@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import Toggle from '@/components/ui/Toggle';
 import { useSyncStore } from '@/stores/syncStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { describeStorage, describeSyncStatus, type WizardMode } from '@/lib/syncModel';
@@ -11,6 +10,7 @@ import { SyncStopDialog } from './SyncStopDialog';
 import { AddDeviceBlock, RecoveryKeyBlock } from './SyncSecretBlocks';
 import { DeviceNameEditor, DevicesList } from './SyncDevicesBlock';
 import { HistoryList } from './SyncHistoryBlock';
+import { ScopeList } from './SyncScopeList';
 import { Callout, StatusDot, SyncBlock, SyncButton, SyncRow, type SyncVariant } from './syncUi';
 
 /** 相对时间（"3 分钟前"）每隔多久重算一次。 */
@@ -25,36 +25,6 @@ function useNow(intervalMs: number): Date {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
-}
-
-/** 同步范围：一期只有"普通配置"，其余两项先摆出来说明去向，别让人以为漏了。 */
-function ScopeList() {
-  const items = [
-    {
-      key: 'config',
-      title: '普通配置',
-      desc: '连接、设置、快捷命令、技能、MCP 服务、已知主机指纹',
-      checked: true,
-      note: '始终开启',
-    },
-    { key: 'memory', title: '对话与记忆', desc: 'Agent 对话记录与长期记忆', checked: false, note: '后续版本支持' },
-    { key: 'secrets', title: '机密', desc: '密码、私钥、API Key', checked: false, note: '后续版本支持' },
-  ];
-  return (
-    <ul className="space-y-3">
-      {items.map((item) => (
-        <li key={item.key} className={`flex items-center justify-between gap-3 ${item.checked ? '' : 'opacity-60'}`}>
-          <div className="min-w-0">
-            <div className="text-sm text-zinc-200">{item.title}</div>
-            <div className="text-xs leading-relaxed text-zinc-500">
-              {item.desc} · {item.note}
-            </div>
-          </div>
-          <Toggle checked={item.checked} onChange={() => {}} disabled size="sm" />
-        </li>
-      ))}
-    </ul>
-  );
 }
 
 function StatusBlock({ variant, status, now }: { variant: SyncVariant; status: SyncStatus; now: Date }) {
@@ -198,7 +168,7 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
             <ul className="space-y-1.5 text-xs leading-relaxed text-zinc-400">
               <li>端到端加密：数据在你的设备上加密之后才上传，存储方只看得到一堆看不懂的密文。</li>
               <li>数据放在你自己选的地方（WebDAV 网盘，或你自己的服务器），没有我们的服务器。</li>
-              <li>密码、私钥、API Key 这类机密目前不会同步。</li>
+              <li>开启后可以按需同步对话与记忆、以及密码 / 私钥 / API Key 这类机密，机密档默认关闭。</li>
             </ul>
             <div className="flex flex-wrap gap-2">
               <SyncButton variant={variant} kind="primary" onClick={() => openWizard('create')}>
@@ -236,10 +206,10 @@ export function SyncPanel({ variant }: { variant: SyncVariant }) {
           variant={variant}
           id="sync-scope"
           label="同步范围"
-          description="目前只同步普通配置。"
+          description="普通配置始终同步；对话与记忆、机密按需开启。"
           keywords={['同步范围', '对话', '记忆', '机密']}
         >
-          <ScopeList />
+          <ScopeList variant={variant} status={status} />
         </SyncRow>
 
         <SyncRow

@@ -411,6 +411,8 @@ describe("useImagePreviewSource SFTP lifecycle", () => {
       imageSrc: null,
       loading: false,
       error: "远程图片已移走",
+      status: "unavailable",
+      unavailableKind: "other",
     });
     expect(subscriberCount(PROGRESS_EVENT)).toBe(0);
     expect(native.cleanup).not.toHaveBeenCalled();
@@ -420,7 +422,30 @@ describe("useImagePreviewSource SFTP lifecycle", () => {
       imageSrc: "asset:///tmp/preview.png",
       loading: false,
       error: null,
+      status: "ready",
+      unavailableKind: null,
     });
+  });
+
+  it.each([
+    "图片在另一台设备上，暂时取不到",
+    "image is on another device, try again later",
+    "另一台设备没有响应",
+  ])("后端说「在别的设备上」时归到 remote（%s）", async (message) => {
+    native.preview.mockRejectedValueOnce({ kind: "Agent", message });
+    await render(remoteA);
+    expect(latest).toMatchObject({ status: "unavailable", unavailableKind: "remote" });
+    expect(latest.error).toBe(message);
+  });
+
+  it("读取过程中是 loading，拿到图才是 ready", async () => {
+    const download = deferred<{ localPath: string }>();
+    native.preview.mockReturnValue(download.promise);
+    await render(remoteA);
+    expect(latest.status).toBe("loading");
+    expect(latest.loading).toBe(true);
+    await act(async () => download.resolve({ localPath: "/tmp/a.png" }));
+    expect(latest.status).toBe("ready");
   });
 
   it("旧请求失败不会覆盖新图或清理新图文件", async () => {

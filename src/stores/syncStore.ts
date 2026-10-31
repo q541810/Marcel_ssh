@@ -231,7 +231,8 @@ export function initSync(): () => void {
     useSyncStore.setState({ status, statusError: null });
   });
   const unsubApplied = subscribeTauriEvent<SyncDataAppliedPayload>('sync-data-applied', (payload) => {
-    void handleSyncDataApplied(payload.source);
+    // 对话流会带上这一批落地改到的会话 id：当前打开的那段据此决定要不要重读。
+    void handleSyncDataApplied(payload.source, payload.conversationIds ?? []);
   });
 
   const onForeground = () => {

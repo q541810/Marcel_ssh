@@ -103,6 +103,9 @@ export const SYNC_SOURCE_LABELS: Record<string, string> = {
   skills: '技能',
   mcpServers: 'MCP 服务',
   knownHosts: '已知主机',
+  conversations: '对话',
+  memory: '记忆',
+  secrets: '机密',
 };
 
 export function syncSourceLabel(source: string): string {
@@ -117,6 +120,9 @@ const HELD_UNITS: Record<string, string> = {
   skills: '个技能',
   mcpServers: '个 MCP 服务',
   knownHosts: '条已知主机记录',
+  conversations: '段对话',
+  memory: '条记忆',
+  secrets: '项机密',
 };
 
 /** 「本机一次删除了 3 个连接、5 条快捷命令」。没有等待确认的内容返回 null。 */
@@ -195,6 +201,13 @@ export interface HistoryEntryView {
   scope: string | null;
   oldValue: string | null;
   newValue: string | null;
+  /**
+   * 只显示「哪个 Key 变了」，不显示任何值。
+   *
+   * 机密（`source === 'secrets'`）的记录里后端本来就只有槽位名；前端即使拿到
+   * `oldValue` / `newValue` 也不该画出来——值一旦出现在界面上，截图 / 录屏就会漏。
+   */
+  hideValues: boolean;
 }
 
 /** 路径拆出来的兜底说法：后端没给 `label` 时才用（老记录 / 老版本写入的历史）。 */
@@ -219,6 +232,7 @@ function describePath(entry: SyncHistoryEntry): HistoryEntryView {
     scope,
     oldValue: entry.oldValue,
     newValue: entry.newValue,
+    hideValues: entry.source === 'secrets',
   };
 }
 

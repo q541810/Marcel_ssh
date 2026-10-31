@@ -39,6 +39,14 @@ interface MemoryState {
   setPendingFocus: (focus: ScopeRef | null | undefined) => void;
 
   init: () => void;
+  /**
+   * 别的设备改过记忆库之后（跨设备同步落地）从后端重读一遍。
+   *
+   * 与 `memory-changed` 事件的区别：那是**本机**改动，事件里还带着改的是哪个会话；
+   * 同步落地不知道（也不该猜）本机界面上哪些地方要跟着变，所以统一走这条「全部重读」。
+   * 没打开过记忆管理页（`overviewWanted` 为假）就不去付那份查询的钱。
+   */
+  refreshFromBackend: () => Promise<void>;
   loadOverview: () => Promise<void>;
   loadNotes: (conversationId: string) => Promise<void>;
   loadBatch: (batchId: string) => Promise<void>;
@@ -92,6 +100,19 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       // 复盘花掉的 token 已记进会话用量：把新读数交给用量面板（后端口径，前端不累加）。
       if (ev.usage) useTaskStore.getState().applySideUsage(ev.conversationId, ev.usage);
     });
+  },
+
+  refreshFromBackend: async () => {
+    // revision +1：对话头部的「记忆 N」、注入记忆清单都靠它重取（与 memory-changed 同一口径）。
+    set((s) => ({ revision: s.revision + 1 }));
+    const state = get();
+    const pending: Promise<void>[] = [];
+    // 管理页没打开过就不去付这份查询的钱（`overviewWanted` 由首次 loadOverview 置位）。
+    if (overviewWanted) pending.push(state.loadOverview());
+    // 只重拉已经加载过的会话提示行，不替没打开过的会话预取。
+    for (const id of Object.keys(state.notes)) pending.push(state.loadNotes(id));
+    for (const batchId of Object.keys(state.batches)) pending.push(state.loadBatch(batchId));
+    await Promise.all(pending);
   },
 
   loadOverview: async () => {

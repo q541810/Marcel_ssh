@@ -169,6 +169,39 @@ describe('describeHistoryEntry', () => {
     expect(view.sourceLabel).toBe('连接');
     expect(view.fieldLabel).toBe('items › #3f2a1b › host');
   });
+
+  it('机密记录用中性文案、不显示值', () => {
+    const view = describeHistoryEntry(
+      entry({
+        source: 'secrets',
+        path: 'llm_channel_c1',
+        label: "模型渠道『DeepSeek』的 API Key 已从另一台设备更新",
+        oldValue: 'sk-old-should-not-render',
+        newValue: 'sk-new-should-not-render',
+      }),
+    );
+    expect(view.sourceLabel).toBe('机密');
+    expect(view.fieldLabel).toBe("模型渠道『DeepSeek』的 API Key 已从另一台设备更新");
+    expect(view.hideValues).toBe(true);
+  });
+
+  it('机密记录的旧值 / 新值都为空时正常走 label', () => {
+    const view = describeHistoryEntry(
+      entry({
+        source: 'secrets',
+        path: 'server_password_c1',
+        oldValue: null,
+        newValue: null,
+        label: '服务器密码已更新',
+      }),
+    );
+    expect(view).toMatchObject({ fieldLabel: '服务器密码已更新', hideValues: true });
+  });
+
+  it('二期新增的同步源也有中文名', () => {
+    expect(describeHistoryEntry(entry({ source: 'conversations', path: 'conv/abc' })).sourceLabel).toBe('对话');
+    expect(describeHistoryEntry(entry({ source: 'memory', path: 'mem/1' })).sourceLabel).toBe('记忆');
+  });
 });
 
 describe('恢复密钥', () => {
