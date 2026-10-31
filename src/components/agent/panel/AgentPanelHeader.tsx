@@ -99,7 +99,7 @@ export function AgentPanelHeader({
             onClick={() => {
               onOpenTaskCenter(taskCenter.initialTab);
             }}
-            className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
+            className={`flex min-w-0 items-center gap-1.5 whitespace-nowrap px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
               taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
                 ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
                 : taskCenter.runningJobs.length > 0
@@ -129,14 +129,14 @@ export function AgentPanelHeader({
             ) : (
               <AgentStatusIndicator status="running" size="xs" />
             )}
-            <span>
+            <span className="min-w-0 truncate">
               {taskCenter.runningTasks.length > 0 && `${taskCenter.runningTasks.length} 个任务`}
               {taskCenter.runningTasks.length > 0 && taskCenter.runningJobs.length > 0 && ' · '}
               {taskCenter.runningJobs.length > 0 && `${taskCenter.runningJobs.length} 个后台作业`}
               {taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0 &&
                 `${taskCenter.attentionJobs.length} 个作业已中断`}
             </span>
-            <svg className="w-2.5 h-2.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-2.5 h-2.5 flex-shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
