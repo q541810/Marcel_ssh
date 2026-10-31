@@ -219,6 +219,12 @@ enum Cmd {
         accept: bool,
         reply: Reply<()>,
     },
+    /// 按需拉一块同步来的图片（懒加载）：本机没有时才调。
+    FetchBlob {
+        device: String,
+        name: String,
+        reply: Reply<Option<Vec<u8>>>,
+    },
     SetTier {
         tier: String,
         enabled: bool,
@@ -530,6 +536,20 @@ impl SyncManager {
 
     /// 立即同步一次（前端窗口获得焦点 / 手机回到前台 / 用户点按钮都走这里）。
     /// 没开同步时什么都不做；**第一次调用**同时解除启动后的「等前端」闸门。
+    /// 按需拉一块同步来的图片（懒加载）。没开同步 / 不在对话档时返回 `None`。
+    pub async fn fetch_blob(
+        &self,
+        device: String,
+        name: String,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        self.request(|reply| Cmd::FetchBlob {
+            device,
+            name,
+            reply,
+        })
+        .await
+    }
+
     pub async fn sync_now(&self) -> Result<(), AppError> {
         self.request(Cmd::SyncNow).await
     }
@@ -834,6 +854,13 @@ async fn sleep_until_opt(t: Option<Instant>) {
 
 async fn handle_cmd(engine: &mut SyncEngine, sched: &mut Scheduler, cmd: Cmd) {
     match cmd {
+        Cmd::FetchBlob {
+            device,
+            name,
+            reply,
+        } => {
+            let _ = reply.send(engine.fetch_blob(&device, &name).await);
+        }
         Cmd::SyncNow(reply) => {
             sched.mark_ready();
             let result = if engine.enabled() {

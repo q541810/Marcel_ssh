@@ -21,6 +21,7 @@
 //! 数据流与「为什么先捕获再落地」见 [`engine`] 的模块文档。
 
 pub mod backends;
+pub mod blob;
 pub mod core;
 pub mod docedit;
 pub mod engine;

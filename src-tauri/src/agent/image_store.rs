@@ -100,6 +100,23 @@ pub fn save_image_base64(
 }
 
 /// Read image file and return `data:image/webp;base64,...` (or sniff mime).
+/// 把从别的设备拉回来的图片字节写进本机桶（路径沿用消息里的 `rel`）。
+///
+/// 目录不存在会建；已存在就覆盖（内容寻址的 blob 保证同名同内容，覆盖是幂等的）。
+pub fn save_bytes_from_sync(rel: &str, bytes: &[u8]) -> Result<(), String> {
+    let path = resolve_relative(rel)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create image dir: {e}"))?;
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("write image: {e}"))
+}
+
+/// 读图片原始字节（上传到同步 blob 用）。
+pub fn read_image_bytes(rel: &str) -> Result<Vec<u8>, String> {
+    let path = resolve_relative(rel)?;
+    std::fs::read(&path).map_err(|e| format!("read image: {}", e))
+}
+
 pub fn read_image_data_url(rel: &str) -> Result<String, String> {
     let path = resolve_relative(rel)?;
     let bytes = std::fs::read(&path).map_err(|e| format!("read image: {}", e))?;

@@ -829,10 +829,36 @@ pub async fn agent_resolve_image_path(relative_path: String) -> Result<String, A
 }
 
 /// Read a persisted message image as a data URL (for restore-to-input after rollback).
+///
+/// 本机没有这张图时，如果是**同步来的**（消息里记着 `blob` + 来源设备），会按需去拉：
+/// 拉到了就存进本地桶再返回；对端也已经删了则给一句人话，不抛底层错误。
 #[tauri::command]
-pub async fn agent_read_message_image(relative_path: String) -> Result<String, AppError> {
+pub async fn agent_read_message_image(
+    state: State<'_, AppState>,
+    relative_path: String,
+) -> Result<String, AppError> {
+    if let Ok(url) = crate::agent::image_store::read_image_data_url(&relative_path) {
+        return Ok(url);
+    }
+    // 本机没有：查这条图片是不是同步来的。
+    let Some((device, blob)) = state
+        .conversation_db
+        .sync_blob_ref_for(&relative_path)
+        .map_err(|e| AppError::Agent(format!("查询图片同步信息失败: {e}")))?
+    else {
+        return Err(AppError::Agent(
+            "这张图片在本地找不到了（可能已被删除）。".into(),
+        ));
+    };
+    let Some(bytes) = state.sync.fetch_blob(device, blob).await? else {
+        return Err(AppError::Agent(
+            "图片在另一台设备上，暂时取不到（那台设备可能已关闭同步或删掉了它）。".into(),
+        ));
+    };
+    crate::agent::image_store::save_bytes_from_sync(&relative_path, &bytes)
+        .map_err(|e| AppError::Agent(format!("保存同步来的图片失败: {e}")))?;
     crate::agent::image_store::read_image_data_url(&relative_path)
-        .map_err(|e| AppError::Agent(format!("读取图片失败: {}", e)))
+        .map_err(|e| AppError::Agent(format!("读取图片失败: {e}")))
 }
 
 /// Delete a single persisted message image by relative path (idempotent).

@@ -167,6 +167,14 @@ impl DataKey {
     }
 
     /// 存密钥链用的文本形式（base64）。
+    /// 原始字节（HMAC 这类「需要把 DK 当密钥用」的地方用）。
+    ///
+    /// 只给 crate 内、且只给**不泄露**的用途（HMAC 输入、派生）。外面想拿字节一律走
+    /// `to_b64` 或派生函数。
+    pub fn secret_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
     pub fn to_b64(&self) -> Zeroizing<String> {
         Zeroizing::new(B64.encode(&self.0[..]))
     }

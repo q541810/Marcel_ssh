@@ -1070,6 +1070,12 @@ export interface AppSettings {
   mobileNotificationSettings: MobileNotificationSettings;
   /** 移动端后台保活设置（设备本地）。 */
   mobileBackgroundSettings: MobileBackgroundSettings;
+  /**
+   * 对话图片的同步取用方式：`onDemand`（默认，随用随取）/ `prefetchAll`（全部预先下载）。
+   * 跨设备一致：用户在任意一台设备上选了「预先下载」，其它设备也照办（它们各自的磁盘/网络
+   * 条件不同，但这是有意的——否则用户每换一台设备都要重设一次）。
+   */
+  conversationImagesMode: 'onDemand' | 'prefetchAll';
   workspaceLayout: WorkspaceLayoutSettings;
   /** 应用主题（分区颜色映射，双端共用；定义与应用见 lib/uiTheme.ts）。 */
   uiTheme: UiThemeSettings;

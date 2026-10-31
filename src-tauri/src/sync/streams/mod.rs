@@ -190,6 +190,11 @@ pub trait StreamDriverFactory: Send + Sync {
         let _ = ctx;
     }
 
+    /// 引擎在拿到存储后端之后注入（上传图片 / 私钥 blob 用）。不起作用就保持默认。
+    fn set_backend(&self, backend: Arc<dyn super::backends::Backend>) {
+        let _ = backend;
+    }
+
     /// `dk` 只有引擎在「需要封包 / 解本机镜像」的阶段才给得出（捕获阶段可能是 `None`）。
     fn create(
         &self,

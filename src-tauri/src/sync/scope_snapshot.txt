@@ -54,6 +54,7 @@ settings	archiveRetentionDays	shared
 settings	authorizedCapabilities	local
 settings	autoUpdate	local
 settings	commandTimeoutSecs	shared
+settings	conversationImagesMode	shared
 settings	customProtectedPaths	shared
 settings	customRiskRules / (顺序)	shared
 settings	customRiskRules / * / argContains	shared

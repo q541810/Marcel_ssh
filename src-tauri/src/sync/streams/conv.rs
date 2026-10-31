@@ -306,6 +306,18 @@ pub trait ConvDbHandle: Send + Sync {
     fn export_all(&self, device: &str, aliases: &AliasMap) -> Result<Vec<Vec<u8>>, AppError>;
     fn pending_count(&self) -> Result<usize, AppError>;
 
+    /// 还没登记图片 blob 的消息：`(message_id, [本地相对路径])`。
+    ///
+    /// 只有带 `messages` 表的库有意义；记忆库默认空。
+    fn pending_synced_images(&self) -> Result<Vec<(String, Vec<String>)>, AppError> {
+        Ok(Vec::new())
+    }
+
+    /// 把一条消息的图片 blob 引用写进 `synced_images_json`。
+    fn set_synced_images(&self, _message_id: &str, _json: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+
     /// 一轮落地结束后由驱动调用（各库做自己的善后）。
     ///
     /// 记忆库用它 bump `scope_versions`：那个表不同步（本机派生），但别的设备改了记忆之后
@@ -405,6 +417,14 @@ impl ConvDbHandle for ConversationHandle {
         self.db.sync_ack_rows(rows)
     }
 
+    fn pending_synced_images(&self) -> Result<Vec<(String, Vec<String>)>, AppError> {
+        self.db.sync_pending_images()
+    }
+
+    fn set_synced_images(&self, message_id: &str, json: &str) -> Result<(), AppError> {
+        self.db.sync_set_images(message_id, json)
+    }
+
     fn purge_conversation(&self, conversation_id: &str) -> Result<(), AppError> {
         self.db.sync_purge_conversation(conversation_id)
     }
@@ -429,6 +449,8 @@ struct ConvUiState {
 pub struct ConvStreamFactory {
     databases: Vec<ConvDatabase>,
     config_dir: PathBuf,
+    /// 存储后端（上传图片 blob 用）。引擎第一轮之后才有；没有就先跳过 blob。
+    backend: RwLock<Option<Arc<dyn crate::sync::backends::Backend>>>,
     context: RwLock<Option<StreamDriverContext>>,
     ui: Arc<RwLock<ConvUiState>>,
 }
@@ -443,6 +465,7 @@ impl ConvStreamFactory {
         Self {
             databases,
             config_dir,
+            backend: RwLock::new(None),
             context: RwLock::new(None),
             ui: Arc::new(RwLock::new(ConvUiState::default())),
         }
@@ -464,21 +487,28 @@ impl StreamDriverFactory for ConvStreamFactory {
         *self.context.write() = Some(ctx.clone());
     }
 
+    fn set_backend(&self, backend: Arc<dyn crate::sync::backends::Backend>) {
+        *self.backend.write() = Some(backend);
+    }
+
     fn create(
         &self,
         state: StreamState,
-        _dk: Option<DataKey>,
+        dk: Option<DataKey>,
     ) -> Result<Box<dyn StreamDriver>, AppError> {
         let ctx = self.context.read().clone().ok_or_else(|| {
             AppError::Other("同步：对话流缺少本机上下文（引擎还没初始化）".into())
         })?;
-        Ok(Box::new(ConvStreamDriver::new(
-            self.databases.clone(),
-            state,
-            ctx,
-            self.pending_path(),
-            self.ui.clone(),
-        )))
+        Ok(Box::new(
+            ConvStreamDriver::new(
+                self.databases.clone(),
+                state,
+                ctx,
+                self.pending_path(),
+                self.ui.clone(),
+            )
+            .with_blobs(dk.clone(), self.backend.read().clone()),
+        ))
     }
 
     /// 待上传条数：各库 changelog 里不同的行数之和（界面 `streams[].pending`）。
@@ -650,6 +680,12 @@ pub struct ConvStreamDriver {
     snapshot_finished: bool,
     /// 最近一次快照落地的进度（测试与排查用）。
     progress: Option<StreamProgress>,
+    /// 配置目录（blob 登记表落在 `sync/` 下）。
+    config_dir: PathBuf,
+    /// 数据密钥（上传图片 blob 用；捕获阶段可能还没有，那时跳过 blob 上传，下一轮补）。
+    dk: Option<DataKey>,
+    /// 存储后端（上传 blob 用）。
+    backend: Option<Arc<dyn crate::sync::backends::Backend>>,
     /// 长操作中途报告进度的出口（引擎经 `StreamDriverContext::progress` 注入）。
     /// 一轮同步可能跑几分钟，界面上的「正在同步对话 N / M」靠它中途刷新。
     progress_reporter: Option<Arc<dyn Fn(StreamName, StreamProgress) + Send + Sync>>,
@@ -665,6 +701,7 @@ impl ConvStreamDriver {
         ui: Arc<RwLock<ConvUiState>>,
     ) -> Self {
         let persisted = load_pending(&path);
+        let config_dir = config_dir_for(&path);
         // 设备 id 变了（重新加入同步）就从零开始：沿用旧 id 的时间戳会让别的设备看到
         // 「这台设备」的时间线倒流。
         let clock = match &persisted.clock {
@@ -686,6 +723,9 @@ impl ConvStreamDriver {
             snapshot_finished: false,
             progress: None,
             progress_reporter: ctx.progress.clone(),
+            config_dir,
+            dk: None,
+            backend: None,
             ui,
         }
     }
@@ -1150,6 +1190,14 @@ impl StreamDriver for ConvStreamDriver {
     }
 
     async fn capture(&mut self) -> Result<Vec<Vec<u8>>, AppError> {
+        // 图片 blob：本机新消息引用的图片先传上去（懒加载的另一半在这里）。
+        // 失败只记日志：图片传不上去不该拦住消息本身同步（消息里有 `rel` 但没有 blob 时，
+        // 对端会显示「在另一台设备上，暂时取不到」，下一轮还会补传）。
+        if let (Some(dk), Some(backend)) = (self.dk.clone(), self.backend.clone()) {
+            if let Err(e) = self.upload_pending_images(&backend, &dk).await {
+                log::warn!("同步：上传对话图片失败（下一轮再试）: {e}");
+            }
+        }
         // 先重放挂起的 op：任务结束后要尽快让别人看到它的改动，而不是等下一轮。
         let replayed = self.replay_deferred()?;
         self.landing.merge(&replayed);
@@ -1318,7 +1366,75 @@ impl StreamDriver for ConvStreamDriver {
     }
 }
 
+/// 从「待落地队列」文件路径反推配置目录（`<config>/sync/conv_pending.json` → `<config>`）。
+fn config_dir_for(pending_path: &std::path::Path) -> PathBuf {
+    pending_path
+        .parent() // sync/
+        .and_then(|p| p.parent()) // <config>/
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default()
+}
+
 impl ConvStreamDriver {
+    /// 引擎在拿到 DK / 后端之后注入（图片 blob 上传要用）。
+    pub fn with_blobs(
+        mut self,
+        dk: Option<DataKey>,
+        backend: Option<Arc<dyn crate::sync::backends::Backend>>,
+    ) -> Self {
+        self.dk = dk;
+        self.backend = backend;
+        self
+    }
+
+    /// 把本机新消息引用的图片传成 blob，并把 `(rel, blob, device)` 记进 `synced_images_json`。
+    ///
+    /// 「新」的判据：`synced_images_json` 还是 NULL 且有 `image_paths_json` 的消息。
+    /// 已经登记过的跳过（同一条消息的图片只传一次）。
+    async fn upload_pending_images(
+        &mut self,
+        backend: &Arc<dyn crate::sync::backends::Backend>,
+        dk: &DataKey,
+    ) -> Result<(), AppError> {
+        use crate::agent::image_store;
+        use crate::sync::blob::{upload_blob, BlobLedger};
+
+        // 只有带消息表的那个库有图片。
+        let Some(db) = self
+            .databases
+            .iter()
+            .find(|d| d.tables.iter().any(|t| t.name == "messages"))
+        else {
+            return Ok(());
+        };
+        let rows = db.handle.pending_synced_images()?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let mut ledger = BlobLedger::load(&self.config_dir);
+        for (message_id, rels) in rows {
+            let mut entries: Vec<serde_json::Value> = Vec::new();
+            for rel in rels {
+                let bytes = match image_store::read_image_bytes(&rel) {
+                    Ok(b) => b,
+                    Err(_) => continue, // 本机也没这张图了（被删）：跳过
+                };
+                let (name, _) = upload_blob(backend, &mut ledger, dk, &self.device, &bytes).await?;
+                entries.push(serde_json::json!({
+                    "rel": rel,
+                    "blob": name,
+                    "device": self.device,
+                }));
+            }
+            if !entries.is_empty() {
+                let json = serde_json::to_string(&entries)
+                    .map_err(|e| AppError::Config(format!("序列化图片引用失败：{e}")))?;
+                db.handle.set_synced_images(&message_id, &json)?;
+            }
+        }
+        Ok(())
+    }
+
     /// 中途报告进度（没有注入回调时什么都不做：测试里不需要）。
     fn report_progress(&self, progress: StreamProgress) {
         if let Some(report) = &self.progress_reporter {

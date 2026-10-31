@@ -788,6 +788,16 @@ impl Default for UiThemeSettings {
     }
 }
 
+/// 对话图片从别的设备取用的策略。默认「随用随取」：大多数人只在偶尔回看时才会看到旧图，
+/// 预先全下会把几百 MB 的图片在加入同步的第一时间全拉下来。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConversationImagesMode {
+    #[default]
+    OnDemand,
+    PrefetchAll,
+}
+
 /// Application-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -856,6 +866,11 @@ pub struct AppSettings {
     /// 桌面端读写本字段无副作用，但 UI 不暴露；仅移动端设置页可改。
     #[serde(default)]
     pub mobile_notification_settings: MobileNotificationSettings,
+    /// 对话图片的同步取用方式（三期）：
+    /// - `onDemand`（默认）：随用随取，别处同步来的图片等到真的要显示时才下载；
+    /// - `prefetchAll`：全部预先下载，适合「经常离线看历史对话」的场景，代价是流量与磁盘。
+    #[serde(default)]
+    pub conversation_images_mode: ConversationImagesMode,
     /// 移动端后台保活设置（不参与云端同步）。
     #[serde(default)]
     pub mobile_background_settings: MobileBackgroundSettings,
@@ -958,6 +973,7 @@ fn default_llm_config() -> Option<LlmConfig> {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            conversation_images_mode: ConversationImagesMode::default(),
             terminal_colors: TerminalColors::default(),
             // 这几个字段一律调默认值函数，**不再内联抄一遍**：抄过的代价是
             // `font_family`（"monospace" vs 长字体栈）与 `max_tool_rounds`

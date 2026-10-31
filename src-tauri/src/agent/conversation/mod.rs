@@ -494,6 +494,83 @@ impl ConversationDb {
         )
     }
 
+    /// 还没登记图片 blob 的消息：`(message_id, [本机相对路径])`。
+    ///
+    /// 判据：`synced_images_json` 为 NULL 且有非空的 `image_paths_json`。
+    pub fn sync_pending_images(
+        &self,
+    ) -> Result<Vec<(String, Vec<String>)>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, image_paths_json FROM messages                  WHERE synced_images_json IS NULL                    AND image_paths_json IS NOT NULL                    AND image_paths_json != '[]'",
+            )
+            .map_err(|e| crate::error::AppError::Other(format!("读待同步图片失败：{e}")))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| crate::error::AppError::Other(format!("读待同步图片失败：{e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, json)| {
+                let rels: Vec<String> = serde_json::from_str(&json).ok()?;
+                (!rels.is_empty()).then_some((id, rels))
+            })
+            .collect())
+    }
+
+    /// 把一条消息的图片 blob 引用写进 `synced_images_json`。
+    pub fn sync_set_images(
+        &self,
+        message_id: &str,
+        json: &str,
+    ) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE messages SET synced_images_json = ?1 WHERE id = ?2",
+            (json, message_id),
+        )
+        .map_err(|e| crate::error::AppError::Other(format!("写图片引用失败：{e}")))?;
+        Ok(())
+    }
+
+    /// 找一张同步来的图片的 `(来源设备, blob 名)`。
+    ///
+    /// `synced_images_json` 的形状是 `[{"rel": "...", "blob": "<64hex>", "device": "..."}]`；
+    /// 按 `rel` 精确匹配（同一张图可以在多条消息里出现，取任意一条即可）。
+    pub fn sync_blob_ref_for(
+        &self,
+        rel: &str,
+    ) -> Result<Option<(String, String)>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT synced_images_json FROM messages                  WHERE synced_images_json IS NOT NULL",
+            )
+            .map_err(|e| crate::error::AppError::Other(format!("查图片同步信息失败：{e}")))?;
+        let rows: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| crate::error::AppError::Other(format!("查图片同步信息失败：{e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for json in rows {
+            let Ok(entries) = serde_json::from_str::<Vec<serde_json::Value>>(&json) else {
+                continue;
+            };
+            for e in entries {
+                if e.get("rel").and_then(|v| v.as_str()) == Some(rel) {
+                    let blob = e.get("blob").and_then(|v| v.as_str()).unwrap_or("");
+                    let device = e.get("device").and_then(|v| v.as_str()).unwrap_or("");
+                    if !blob.is_empty() && !device.is_empty() {
+                        return Ok(Some((device.to_string(), blob.to_string())));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// 待上传条数（按行去重）。
     pub fn sync_pending_count(&self) -> Result<usize, crate::error::AppError> {
         let conn = self.conn.lock().unwrap();

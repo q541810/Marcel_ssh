@@ -745,6 +745,10 @@ impl SyncEngine {
                 continue; // 关着的流不构造驱动：连初始化错误都不该出现在状态里
             }
             factory.set_context(&context);
+            // 有后端就顺便注入（图片 / 私钥 blob 上传要用）。捕获阶段不一定有。
+            if let Some((_, backend)) = &self.backend {
+                factory.set_backend(backend.clone());
+            }
             let state = self.ledger.st.stream(name);
             // 捕获阶段拿不到 DK（密钥链可能一时不可用），落地 / 压缩阶段才需要它。
             // 驱动的原则是「没有 DK 也能捕获」，所以这里先给 `None`，需要时再 `with_data_key`。
@@ -1164,6 +1168,26 @@ impl SyncEngine {
         st.cursors.insert(device.to_string(), cursor);
         self.ledger.st.set_stream(name, st);
         self.ledger.dirty.state = true;
+    }
+
+    /// 按需拉一块同步来的图片（懒加载）。
+    ///
+    /// 只在**对话档开着 + 已开启同步**时工作；本机没有该文件、或对端已经删了，都返回 `Ok(None)`
+    /// ——调用方据此给用户一句人话（「图片在另一台设备上，暂时取不到」），不要当成错误。
+    pub async fn fetch_blob(
+        &mut self,
+        device: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, AppError> {
+        if !self.ledger.enabled() || !self.ledger.st.tier_enabled(SyncTier::Conversation) {
+            return Ok(None);
+        }
+        if !is_valid_device_id(device) || device == self.ledger.st.device_id {
+            return Ok(None);
+        }
+        let backend = self.ensure_backend()?;
+        let dk = self.data_key()?;
+        crate::sync::blob::download_blob(&backend, &dk, device, name).await
     }
 
     /// 测试专用：跳过「捕获」，直接拉取并落地——模拟「防抖窗口里本机刚改了东西、还没被捕获，
