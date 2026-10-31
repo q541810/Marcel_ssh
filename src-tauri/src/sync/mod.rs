@@ -28,6 +28,7 @@ pub mod history;
 pub mod join;
 pub mod ledger;
 pub mod manager;
+pub mod rows;
 pub mod scopes;
 pub mod secrets;
 pub mod sources;
