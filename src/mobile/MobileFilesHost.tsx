@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { copyText } from '@/lib/copyText';
 import { Loader2, MoreVertical } from 'lucide-react';
 import FileEntryIcon from './FileEntryIcon';
 import MobileCompressSheet from './MobileCompressSheet';
@@ -20,12 +21,7 @@ import {
 import { useSftpUpload } from '@/hooks/useSftpUpload';
 import { useTransferStore, selectActiveOf } from '@/stores/transferStore';
 import { cancelTransfer } from '@/stores/transferScheduler';
-import {
-  MAX_EDITOR_FILE_SIZE,
-  MAX_PREVIEW_IMAGE_SIZE,
-  archiveStem,
-  isArchiveFile,
-} from '@/lib/constants';
+import { archiveStem, isArchiveFile } from '@/lib/constants';
 import {
   isContentUri,
   sftpExtractArchive,
@@ -42,16 +38,14 @@ import {
   getErrorMessage,
   isDialogCancelled,
 } from '@/lib/sftp-helpers';
-import {
-  binaryNotEditableMessage,
-  fileTooLargeMessage,
-  imageTooLargeMessage,
-} from '@/lib/sftpFileOpen';
+import { decideOpen, type OpenIntent } from '@/lib/sftpFileOpen';
+import { flashElement } from '@/lib/flashElement';
+import { cdInTerminal } from '@/lib/fileNav';
+import { useFileNavStore } from '@/stores/fileNavStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { isDebugSession } from '@/lib/debugServer';
 import { loadRememberedPath, rememberPath } from '@/lib/fileManagerPathMemory';
 import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
-import { sendCdToTerminal } from '@/lib/fileShellActions';
 import { requestMobileTab } from './tabs';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -141,6 +135,8 @@ export default function MobileFilesHost({
   const homeTriedRef = useRef(false);
   const [pathReady, setPathReady] = useState(false);
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
+  const [revealTarget, setRevealTarget] = useState<{ dir: string; name: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNewMenu, setShowNewMenu] = useState(false);
@@ -246,6 +242,7 @@ export default function MobileFilesHost({
         const items = await sftpListDir(sessionId, path);
         if (seq !== loadSeqRef.current || path !== currentPathRef.current) return;
         setEntries(items);
+        setLoadedPath(path);
       } catch (err) {
         if (seq !== loadSeqRef.current || path !== currentPathRef.current) return;
         if (path === initialPathRef.current && !homeTriedRef.current) {
@@ -383,6 +380,17 @@ export default function MobileFilesHost({
     setCurrentPath(path || '/');
   }, []);
 
+  /** 按统一决策打开一个文件（点按、面板「打开」、agent 链接共用）。 */
+  const openFileByPath = useCallback(
+    (fullPath: string, name: string, size: number, intent: OpenIntent = 'auto') => {
+      const decision = decideOpen(name, size, intent);
+      if (decision.kind === 'refuse') setError(decision.message);
+      else if (decision.kind === 'preview') setPreviewFile({ path: fullPath, name, size });
+      else setEditorFile({ path: fullPath, name, size });
+    },
+    [],
+  );
+
   const openFile = useCallback(
     (entry: SftpFileEntry) => {
       if (entry.is_dir) return;
@@ -391,29 +399,47 @@ export default function MobileFilesHost({
         setError(`「${entry.name}」不是普通文件，无法打开，请使用下载`);
         return;
       }
-      const fullPath = joinRemotePath(currentPath, entry.name);
-      const kind = openFileKind(entry.name);
-      if (kind === 'image') {
-        if (entry.size > MAX_PREVIEW_IMAGE_SIZE) {
-          setError(imageTooLargeMessage(entry.size));
-          return;
-        }
-        setPreviewFile({ path: fullPath, name: entry.name, size: entry.size });
-        return;
-      }
-      if (kind === 'binary') {
-        // 文案与桌面 handleNavigate 对齐（含扩展名），共享 @/lib/sftpFileOpen 的构造
-        setError(binaryNotEditableMessage(entry.name));
-        return;
-      }
-      if (entry.size > MAX_EDITOR_FILE_SIZE) {
-        setError(fileTooLargeMessage(entry.size));
-        return;
-      }
-      setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
+      openFileByPath(joinRemotePath(currentPath, entry.name), entry.name, entry.size);
     },
-    [currentPath],
+    [currentPath, openFileByPath],
   );
+
+  // 发布正在看的目录（agent 链接「复制相对路径」的基准之一）
+  useEffect(() => {
+    if (sessionId && pathReady) useFileNavStore.getState().setViewingDir(sessionId, currentPath);
+  }, [sessionId, pathReady, currentPath]);
+
+  // agent 链接 / 工具卡 / 交付卡片发来的「带我去那个文件」：路径恢复完成后领走，
+  // 导航到所在目录，再打开（编辑器 / 预览）或只是定位并闪一下。
+  const pendingNav = useFileNavStore((s) => (sessionId ? s.pending[sessionId] : undefined));
+  useEffect(() => {
+    if (!pendingNav || !sessionId || !pathReady) return;
+    const req = useFileNavStore.getState().take(sessionId);
+    if (!req) return;
+    const name = req.path.slice(req.path.lastIndexOf('/') + 1) || '/';
+    const parent = parentPath(req.path);
+    if (req.path !== '/') {
+      setRevealTarget({ dir: parent, name });
+      if (currentPathRef.current !== parent) navigateTo(parent);
+    }
+    if (!req.isDir && req.intent !== 'reveal') openFileByPath(req.path, name, req.size, req.intent);
+  }, [pendingNav, sessionId, pathReady, navigateTo, openFileByPath]);
+
+  useEffect(() => {
+    if (!revealTarget || loadedPath === null) return;
+    if (loadedPath !== revealTarget.dir || currentPath !== revealTarget.dir) return;
+    const hit = entries.some((e) => e.name === revealTarget.name);
+    setRevealTarget(null);
+    if (!hit) return;
+    requestAnimationFrame(() => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>('[data-file-name]')).find(
+        (el) => el.dataset.fileName === revealTarget.name,
+      );
+      if (!row) return;
+      row.scrollIntoView({ block: 'nearest' });
+      flashElement(row);
+    });
+  }, [revealTarget, loadedPath, entries, currentPath]);
 
   const handleEntryTap = useCallback(
     (entry: SftpFileEntry) => {
@@ -454,7 +480,7 @@ export default function MobileFilesHost({
       if (targets.length === 0) return;
       const paths = targets.map((e) => joinRemotePath(currentPath, e.name));
       try {
-        await writeText(paths.join('\n'));
+        await copyText(paths.join('\n'));
       } catch (err) {
         setError(`复制路径失败：${getErrorMessage(err)}`);
       }
@@ -468,12 +494,9 @@ export default function MobileFilesHost({
       if (!sessionId) return;
       const fullPath = joinRemotePath(currentPath, entry.name);
       const dir = entry.is_dir ? fullPath : currentPath;
-      try {
-        await sendCdToTerminal(sessionId, dir);
-        requestMobileTab('terminal');
-      } catch (err) {
-        setError(`在终端中打开失败：${getErrorMessage(err)}`);
-      }
+      const message = await cdInTerminal(sessionId, dir);
+      if (message) setError(message);
+      else requestMobileTab('terminal');
     },
     [sessionId, currentPath],
   );
@@ -855,6 +878,7 @@ export default function MobileFilesHost({
               return (
                 <li
                   key={`${entry.is_dir ? 'd' : 'f'}:${entry.name}`}
+                  data-file-name={entry.name}
                   className={`flex items-center pr-1 ${
                     selected ? 'bg-indigo-500/10' : ''
                   }`}

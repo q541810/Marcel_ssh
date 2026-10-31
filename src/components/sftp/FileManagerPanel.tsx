@@ -5,10 +5,13 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { sftpListDir, sftpOpenWithSystem, sftpHomeDir } from '@/lib/tauri';
 import type { SftpFileEntry } from '@/lib/types';
 import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
-import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage, getFileExtension } from '@/lib/sftp-helpers';
-import { binaryNotEditableMessage, fileTooLargeMessage, imageTooLargeMessage, joinRemotePath, sortFileEntries } from '@/lib/sftpFileOpen';
+import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage } from '@/lib/sftp-helpers';
+import { decideOpen, joinRemotePath, sortFileEntries, type OpenIntent } from '@/lib/sftpFileOpen';
+import { flashElement } from '@/lib/flashElement';
+import { cdInTerminal } from '@/lib/fileNav';
+import { useFileNavStore } from '@/stores/fileNavStore';
 import { loadRememberedPath, rememberPath } from '@/lib/fileManagerPathMemory';
-import { MAX_EDITOR_FILE_SIZE, MAX_PREVIEW_IMAGE_SIZE, BINARY_EXTENSIONS, isArchiveFile, archiveStem } from '@/lib/constants';
+import { isArchiveFile, archiveStem } from '@/lib/constants';
 import PathBreadcrumb from './PathBreadcrumb';
 import FileTreeSidebar from './FileTreeSidebar';
 import {
@@ -35,8 +38,6 @@ import CompressModal from './CompressModal';
 import { useFileClipboardStore } from '@/stores/fileClipboardStore';
 import { clipboardLabel, pasteBlockedReason } from '@/lib/filePaste';
 import ContextMenu, { type ContextMenuItem } from '@/components/ui/ContextMenu';
-import { terminalInstanceManager } from '@/components/terminal/TerminalInstanceManager';
-import { sendCdToTerminal } from '@/lib/fileShellActions';
 import {
   parentDir,
   targetFromEntry,
@@ -67,6 +68,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [history, setHistory] = useState<string[]>(['/']);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
+  /** entries 对应的目录（列目录成功时与 entries 同批更新）：定位文件要等「这个目录的列表」到了才行。 */
+  const [loadedPath, setLoadedPath] = useState<string | null>(null);
+  /** agent 链接 / 交付卡片请求定位的条目，列表到位后选中并闪一下。 */
+  const [revealTarget, setRevealTarget] = useState<{ dir: string; name: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -205,6 +210,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
       const items = await sftpListDir(sessionId, path);
       if (seq !== loadSeqRef.current || currentPathRef.current !== path) return;
       setEntries(items);
+      setLoadedPath(path);
       // Seed tree: expand of this path needs no second listDir.
       seedTreeFromListing(path, items);
       ensureHomePath();
@@ -273,6 +279,11 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   }, [menuEntry, menuTargets]);
 
+  // 把「正在看的目录」发布出去，agent 链接的「复制相对路径」据此给出相对文件管理目录的写法。
+  useEffect(() => {
+    useFileNavStore.getState().setViewingDir(sessionId, currentPath);
+  }, [sessionId, currentPath]);
+
   const filteredEntries = useMemo(
     () => sortFileEntries(entries, showHidden),
     [entries, showHidden],
@@ -304,31 +315,58 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   }, [history, historyIndex]);
 
+  /** 按统一决策打开一个文件（双击、右键菜单、agent 链接共用）：预览 / 编辑器 / 说明为什么打不开。 */
+  const openFileByPath = (fullPath: string, name: string, size: number, intent: OpenIntent = 'auto') => {
+    const decision = decideOpen(name, size, intent);
+    if (decision.kind === 'refuse') setError(decision.message);
+    else if (decision.kind === 'preview') setPreviewFile({ path: fullPath, name, size });
+    else setEditorFile({ path: fullPath, name, size });
+  };
+
   const handleNavigate = (entry: SftpFileEntry) => {
     if (entry.is_dir) {
       navigateTo(joinRemotePath(currentPath, entry.name));
     } else if (entry.is_file) {
-      const fullPath = joinRemotePath(currentPath, entry.name);
-      // 图片：走预览（先于 BINARY_EXTENSIONS 判断，因为图片扩展名也在 BINARY_EXTENSIONS 里）
-      if (isPreviewableImage(entry.name)) {
-        if (entry.size > MAX_PREVIEW_IMAGE_SIZE) {
-          setError(imageTooLargeMessage(entry.size));
-          return;
-        }
-        setPreviewFile({ path: fullPath, name: entry.name, size: entry.size });
-        return;
-      }
-      if (BINARY_EXTENSIONS.has(getFileExtension(entry.name))) {
-        setError(binaryNotEditableMessage(entry.name));
-        return;
-      }
-      if (entry.size > MAX_EDITOR_FILE_SIZE) {
-        setError(fileTooLargeMessage(entry.size));
-        return;
-      }
-      setEditorFile({ path: fullPath, name: entry.name, size: entry.size });
+      openFileByPath(joinRemotePath(currentPath, entry.name), entry.name, entry.size);
     }
   };
+
+  // agent 链接 / 工具卡 / 交付卡片发来的「带我去那个文件」：领走本会话的待办，
+  // 先导航到所在目录，再打开（编辑器 / 预览）或只是定位。
+  const pendingNav = useFileNavStore((s) => s.pending[sessionId]);
+  useEffect(() => {
+    if (!pendingNav) return;
+    const req = useFileNavStore.getState().take(sessionId);
+    if (!req) return;
+    const name = req.path.slice(req.path.lastIndexOf('/') + 1) || '/';
+    const parent = parentDir(req.path);
+    if (req.path !== '/') {
+      setRevealTarget({ dir: parent, name });
+      if (normalizeRemotePath(currentPathRef.current) !== normalizeRemotePath(parent)) navigateTo(parent);
+    }
+    if (!req.isDir && req.intent !== 'reveal') {
+      openFileByPath(req.path, name, req.size, req.intent);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNav, sessionId]);
+
+  useEffect(() => {
+    if (!revealTarget || loadedPath === null) return;
+    if (normalizeRemotePath(loadedPath) !== normalizeRemotePath(revealTarget.dir)) return;
+    if (normalizeRemotePath(currentPath) !== normalizeRemotePath(revealTarget.dir)) return;
+    const hit = entries.some((e) => e.name === revealTarget.name);
+    setRevealTarget(null);
+    if (!hit) return;
+    setSelected(new Set([revealTarget.name]));
+    requestAnimationFrame(() => {
+      const row = Array.from(
+        panelRef.current?.querySelectorAll<HTMLElement>('[data-file-name]') ?? [],
+      ).find((el) => el.dataset.fileName === revealTarget.name);
+      if (!row) return;
+      row.scrollIntoView({ block: 'nearest' });
+      flashElement(row);
+    });
+  }, [revealTarget, loadedPath, entries, currentPath]);
 
   const handleContextMenu = (e: React.MouseEvent, entry: SftpFileEntry) => {
     e.preventDefault();
@@ -602,17 +640,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   /** 在终端中打开：目录 cd 进去，文件 cd 到它所在目录。 */
   const handleOpenInTerminal = async (target: FileTarget) => {
     closeMenu();
-    const terminal = terminalInstanceManager.get(sessionId)?.terminal;
-    if (terminal?.buffer.active.type === 'alternate') {
-      setError('终端正在运行全屏程序（vim、less、tmux 等），暂不能切换目录，请先退出再试');
-      return;
-    }
-    try {
-      await sendCdToTerminal(sessionId, terminalDirOf(target));
-      terminalInstanceManager.get(sessionId)?.terminal?.focus();
-    } catch (err) {
-      setError(`在终端中打开失败：${getErrorMessage(err)}`);
-    }
+    const message = await cdInTerminal(sessionId, terminalDirOf(target));
+    if (message) setError(message);
   };
 
   const treeMenuItems = (target: FileTarget): ContextMenuItem[] => {
@@ -1060,6 +1089,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               return (
                 <tr
                   key={entryPath}
+                  data-file-name={entry.name}
                   className={`hover:bg-state-soft/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
                   onDoubleClick={() => handleNavigate(entry)}
                   onClick={(e) => {
@@ -1216,13 +1246,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                     <button
                       type="button"
                       onClick={() => {
-                        if (menuEntry.size > MAX_PREVIEW_IMAGE_SIZE) {
-                          setError(imageTooLargeMessage(menuEntry.size));
-                          setMenuEntry(null); setMenuTargets([]);
-                          return;
-                        }
-                        const fullPath = joinRemotePath(currentPath, menuEntry.name);
-                        setPreviewFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
+                        openFileByPath(joinRemotePath(currentPath, menuEntry.name), menuEntry.name, menuEntry.size, 'preview');
                         setMenuEntry(null); setMenuTargets([]);
                       }}
                       className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"
@@ -1233,18 +1257,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                     <button
                       type="button"
                       onClick={() => {
-                        if (BINARY_EXTENSIONS.has(getFileExtension(menuEntry.name))) {
-                          setError(binaryNotEditableMessage(menuEntry.name));
-                          setMenuEntry(null); setMenuTargets([]);
-                          return;
-                        }
-                        if (menuEntry.size > MAX_EDITOR_FILE_SIZE) {
-                          setError(fileTooLargeMessage(menuEntry.size));
-                          setMenuEntry(null); setMenuTargets([]);
-                          return;
-                        }
-                        const fullPath = joinRemotePath(currentPath, menuEntry.name);
-                        setEditorFile({ path: fullPath, name: menuEntry.name, size: menuEntry.size });
+                        openFileByPath(joinRemotePath(currentPath, menuEntry.name), menuEntry.name, menuEntry.size, 'editor');
                         setMenuEntry(null); setMenuTargets([]);
                       }}
                       className="w-full rounded px-2 py-1.5 text-left text-xs text-zinc-300 hover:bg-state-mid"

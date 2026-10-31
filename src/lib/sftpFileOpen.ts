@@ -139,3 +139,36 @@ export function defaultArchiveTargetPath(
     ? `/${basename}.${format}`
     : `${joinedParent}/${basename}.${format}`;
 }
+
+// ──────────── 「打开这个文件」的统一决策 ────────────
+
+/**
+ * 想怎么打开：`auto` = 主操作（双击 / 点按）的默认方式；`editor` / `preview` = 用户
+ * 明确选了「在编辑器中打开」「在预览中打开」。
+ */
+export type OpenIntent = 'auto' | 'editor' | 'preview';
+
+export type OpenDecision =
+  | { kind: 'preview' }
+  | { kind: 'editor' }
+  /** 打不开：`message` 是给用户看的原因（与双击 / 右键菜单 / 手机端完全同一句）。 */
+  | { kind: 'refuse'; message: string };
+
+/**
+ * 一个普通文件该用什么方式打开（桌面双击、右键菜单、手机点按、以及 agent 链接 / 交付卡片
+ * 的「打开」共用的**唯一**判定）：图片走预览（先于二进制判断，图片扩展名也在
+ * BINARY_EXTENSIONS 里），二进制拒绝，超大文件拒绝，其余进编辑器。
+ */
+export function decideOpen(name: string, size: number, intent: OpenIntent = 'auto'): OpenDecision {
+  const kind = openFileKind(name);
+  if (intent !== 'editor' && kind === 'image') {
+    if (size > MAX_PREVIEW_IMAGE_SIZE) return { kind: 'refuse', message: imageTooLargeMessage(size) };
+    return { kind: 'preview' };
+  }
+  if (intent === 'preview') {
+    return { kind: 'refuse', message: `「${name}」没有可用的预览，请在编辑器中打开或使用下载` };
+  }
+  if (kind !== 'text') return { kind: 'refuse', message: binaryNotEditableMessage(name) };
+  if (size > MAX_EDITOR_FILE_SIZE) return { kind: 'refuse', message: fileTooLargeMessage(size) };
+  return { kind: 'editor' };
+}

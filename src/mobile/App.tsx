@@ -8,6 +8,7 @@ import MobileFilesHost from './MobileFilesHost';
 import MobileOnboarding from './MobileOnboarding';
 import MobileSettings from './MobileSettings';
 import MobileUpdateToast from './MobileUpdateToast';
+import FileNavToast from '@/components/common/FileNavToast';
 import MobileStarPromptSheet from './MobileStarPromptSheet';
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
 import { initInteractionListener } from '@/stores/interactionStore';
@@ -239,6 +240,7 @@ export default function MobileApp() {
       </div>
 
       {!showOnboarding && <MobileUpdateToast />}
+      <FileNavToast mobile />
 
       {showOnboarding && (
         <MobileOnboarding onComplete={handleOnboardingComplete} />

@@ -1792,3 +1792,13 @@ export async function syncConfirmHeld(accept: boolean): Promise<void> {
 export async function syncDisable(wipeRemote: boolean): Promise<void> {
   return invoke("sync_disable", { wipeRemote });
 }
+
+/**
+ * 在系统文件管理器里定位本机的一个文件 / 目录（选中它）。
+ * 走 tauri-plugin-opener 的 reveal_item_in_dir（opener:default 已授权）。
+ * 刻意不提供「用默认应用打开」：agent 给的路径可能是可执行文件，一次点击就运行它
+ * 不是我们该替用户做的决定；定位到文件夹，要不要运行由用户自己决定。
+ */
+export async function revealLocalPath(path: string): Promise<void> {
+  return invoke("plugin:opener|reveal_item_in_dir", { paths: [path] });
+}

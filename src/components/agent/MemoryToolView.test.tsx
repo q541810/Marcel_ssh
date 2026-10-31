@@ -11,6 +11,8 @@ vi.mock('@/stores/memoryStore', () => {
 vi.mock('@/components/memory/MemoryEditDialog', () => ({ default: () => null }));
 
 import MemoryToolView from './MemoryToolView';
+// 路径芯片会带进会话 store → 终端管理器（xterm 需要浏览器环境），测试里不需要真的终端
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({ terminalInstanceManager: { get: () => undefined } }));
 
 const item = {
   id: 'm1', title: '重启前先停 nginx', content: '部署脚本会自己拉起，手动重启会冲突', version: 1,

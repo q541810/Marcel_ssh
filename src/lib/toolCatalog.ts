@@ -243,6 +243,11 @@ const ICON_BOOKMARK = ['M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z'];
 const ICON_RECALL = [
   'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
 ];
+/** 交付文件：文档 + 向上的箭头（「把成品递给你」），与读 / 写文件的图标区分开。 */
+const ICON_DELIVER = [
+  'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+  'M12 8v.01',
+];
 const ICON_SUBAGENT = [
   'M7 3v14a2 2 0 002 2h2m0 0a2 2 0 104 0m-4 0a2 2 0 104 0m5-11v2a3 3 0 01-3 3h-3m0 0V7a2 2 0 00-2-2H8m5 4H5a2 2 0 01-2-2V3h4',
 ];
@@ -396,6 +401,15 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
     preview: (args) => clip(asArgString(args.description) || asArgString(args.prompt) || ''),
   },
   {
+    // 把产出的文件交给用户：专属 view 画「交付文件」卡片（打开 / 在文件管理中显示）。
+    // 与 render_html 同理是交付物而不是过程；失败的调用走通用工具卡显示原因。
+    name: 'present_file',
+    label: '交付文件',
+    iconPaths: ICON_DELIVER,
+    deliverable: true,
+    preview: (args) => asArgString(args.title) || asArgString(args.path) || '',
+  },
+  {
     name: 'render_html',
     // 参数里是整页 HTML，等完整 JSON 太久 —— 流式期间就把正文先拿出来渲染。
     partialPreview: { primary: 'fragment', companions: ['title', 'mode'] },
@@ -522,6 +536,14 @@ export const TOOL_CATALOG: readonly ToolPresentation[] = [
     localExecution: true,
     // 与 `list_directory` 同一条回退规则（`||` 不是 `??`，空串也回退根目录）
     preview: (args) => asArgString(args.path) || '/',
+  },
+  {
+    name: 'local_present_file',
+    label: '交付文件',
+    iconPaths: ICON_DELIVER,
+    deliverable: true,
+    localExecution: true,
+    preview: (args) => asArgString(args.title) || asArgString(args.path) || '',
   },
   {
     name: 'local_subagent',

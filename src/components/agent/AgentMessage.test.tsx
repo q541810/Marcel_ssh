@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AgentMessage from '@/components/agent/AgentMessage';
 import type { AgentMessage as AgentMessageType } from '@/lib/types';
+// 路径芯片会带进会话 store → 终端管理器（xterm 需要浏览器环境），测试里不需要真的终端
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({ terminalInstanceManager: { get: () => undefined } }));
 
 vi.mock('@/stores/settingsStore', () => ({
   useSettingsStore: () => false,

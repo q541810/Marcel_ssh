@@ -541,6 +541,8 @@ describe('已登记的消费方不再自带工具名判定（白名单制，见�
    */
   const BACKEND_BUILTIN_TOOLS = [
     'connection_info',
+    'present_file',
+    'local_present_file',
     'bash',
     'read_history',
     'read_file',

@@ -9,6 +9,7 @@ import {
   sftpExtractArchive,
 } from '@/lib/tauri';
 import { getErrorMessage } from '@/lib/sftp-helpers';
+import { copyText } from '@/lib/copyText';
 import { joinRemotePath } from '@/lib/sftpFileOpen';
 import { useFileClipboardStore } from '@/stores/fileClipboardStore';
 import {
@@ -72,8 +73,7 @@ export function useFileActions(deps: FileActionsDeps) {
 
   const copyPaths = useCallback(async (targets: FileTarget[]) => {
     try {
-      const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
-      await writeText(targets.map((t) => t.path).join('\n'));
+      await copyText(targets.map((t) => t.path).join('\n'));
     } catch {
       // ignore
     }

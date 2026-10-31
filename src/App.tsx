@@ -15,6 +15,7 @@ import TabBar from '@/components/terminal/TabBar';
 import AppHeader from '@/components/layout/AppHeader';
 import HostKeyWarningToast from '@/components/layout/HostKeyWarningToast';
 import SettingsWarningToast from '@/components/layout/SettingsWarningToast';
+import FileNavToast from '@/components/common/FileNavToast';
 import QuitGuard from '@/components/layout/QuitGuard';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import StarPromptModal from '@/components/star/StarPromptModal';
@@ -945,6 +946,7 @@ export default function App() {
 
       <SettingsWarningToast />
       <HostKeyWarningToast />
+      <FileNavToast />
       <StarPromptModal />
       <GlobalInteractionOverlay />
       <QuitGuard />

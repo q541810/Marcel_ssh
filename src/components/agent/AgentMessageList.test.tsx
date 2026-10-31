@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import AgentMessageList, { alignedWindowStart } from '@/components/agent/AgentMessageList';
 import type { AgentMessage } from '@/lib/types';
+// 路径芯片会带进会话 store → 终端管理器（xterm 需要浏览器环境），测试里不需要真的终端
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({ terminalInstanceManager: { get: () => undefined } }));
 
 // 注意：不能写成 `selector?.(state) ?? state` —— 选择器取到 undefined 时会被
 // ?? 换成整个 state 对象，`hideThinkingDisplay` 于是变成真值，思考区整块不渲染

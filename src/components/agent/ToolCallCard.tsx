@@ -3,11 +3,13 @@ import type { AgentMessage } from '@/lib/types';
 import FileChangeView from './FileChangeView';
 import LiveOutputPanel from './LiveOutputPanel';
 import TransientReveal from './TransientReveal';
+import ToolFileChips from './ToolFileChips';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { readWebToolStatus, webToolChips, webToolDetails, webToolNotice } from '@/lib/webToolStatus';
 import {
   asArgString,
   fileChangeToolName,
+  isExplorationTool,
   isSubagentTool,
   toolDisplayName,
   toolPreview,
@@ -267,6 +269,10 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </>
         }
       >
+        {/* 文件类工具的路径芯片：读文件只在展开后给（探索分组里不让它们占行） */}
+        {!isExecuting && tr.success && !tr.blocked && (expanded || !isExplorationTool(tr.toolName)) && (
+          <ToolFileChips toolName={tr.toolName} args={tr.arguments as Record<string, unknown> | undefined} />
+        )}
         {/* 运行中的 subagent 卡片：提供"查看"入口跳转子对话（实时调研过程） */}
         {isSubagentTool(tr.toolName) && isExecuting && (
           (() => {

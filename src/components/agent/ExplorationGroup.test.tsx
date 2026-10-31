@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { AgentMessage } from '@/lib/types';
 import { isExplorationTool, isPlanToolMessage } from '@/components/agent/ExplorationGroup';
 import ExplorationGroup from '@/components/agent/ExplorationGroup';
+// 路径芯片会带进会话 store → 终端管理器（xterm 需要浏览器环境），测试里不需要真的终端
+vi.mock('@/components/terminal/TerminalInstanceManager', () => ({ terminalInstanceManager: { get: () => undefined } }));
 
 function makeToolMessage(toolName: string): AgentMessage {
   return {

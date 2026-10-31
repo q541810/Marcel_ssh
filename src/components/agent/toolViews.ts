@@ -5,6 +5,7 @@ import HtmlVisualization from "./HtmlVisualization";
 import MobileHtmlVisualization from "./MobileHtmlVisualization";
 import MemoryToolView from "./MemoryToolView";
 import QuestionRecord from "./QuestionRecord";
+import PresentFileView from "./PresentFileCard";
 
 export interface ToolViewProps {
   message: AgentMessage;
@@ -47,6 +48,9 @@ const TOOL_VIEWS: Record<string, ToolViewEntry> = {
   memory: {
     desktop: MemoryToolView,
   },
+  // 交付文件卡片：一张卡片，打开 / 在文件管理中显示；本机版同一个组件。
+  present_file: { desktop: PresentFileView },
+  local_present_file: { desktop: PresentFileView },
   // 提问记录：内联卡片作答后原地收成一行「已回答：…」，带跳回上文的按钮。
   ask_user: {
     desktop: QuestionRecord,

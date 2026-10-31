@@ -56,6 +56,7 @@ export const TOOL_INFO: readonly ToolInfo[] = [
   { name: 'search_files', label: '搜索文件', group: 'files' },
   { name: 'edit_file', label: '编辑文件', group: 'files', alsoLocal: true },
   { name: 'write_file', label: '写入文件', group: 'files', alsoLocal: true },
+  { name: 'present_file', label: '交付文件', group: 'files', alsoLocal: true },
   { name: 'upload_file', label: '上传文件', group: 'files' },
   { name: 'download_file', label: '下载文件', group: 'files' },
   { name: 'web_search', label: '联网搜索', group: 'web' },
