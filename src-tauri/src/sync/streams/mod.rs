@@ -34,6 +34,7 @@ use crate::error::AppError;
 
 pub mod config;
 pub mod conv;
+pub mod memory;
 pub mod sec;
 
 pub use super::store::{StreamName, TierSwitches};

@@ -261,7 +261,7 @@ pub struct HeldRow {
 }
 
 /// `apply` 的结果。
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct RowApplied {
     /// 是否有任何一行的**内容**真的变了（仅推进时钟、墓碑对不存在的行都不算）。
     pub changed: bool,

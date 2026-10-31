@@ -306,6 +306,15 @@ pub trait ConvDbHandle: Send + Sync {
     fn export_all(&self, device: &str, aliases: &AliasMap) -> Result<Vec<Vec<u8>>, AppError>;
     fn pending_count(&self) -> Result<usize, AppError>;
 
+    /// 一轮落地结束后由驱动调用（各库做自己的善后）。
+    ///
+    /// 记忆库用它 bump `scope_versions`：那个表不同步（本机派生），但别的设备改了记忆之后
+    /// 不 bump 的话，下一轮 Agent 还会用旧的注入快照——数据同步了却「用不上」。
+    /// 对话库不需要，默认空实现。
+    fn after_land(&self, _applied: &RowApplied) -> Result<(), AppError> {
+        Ok(())
+    }
+
     /// 本机某张表里这一行的 `conversation_id`。`None` = 行不存在 / 这张表与会话无关。
     /// 延迟落地要判断一条「只有墓碑、没有内容」的 op 属于哪段会话，只能问本机。
     fn row_conversation(&self, table: &str, row_id: &str) -> Option<String> {
@@ -425,6 +434,11 @@ pub struct ConvStreamFactory {
 }
 
 impl ConvStreamFactory {
+    /// 追加一个库（T4 加记忆库用：驱动代码不用改）。
+    pub fn push_database(&mut self, db: ConvDatabase) {
+        self.databases.push(db);
+    }
+
     pub fn new(databases: Vec<ConvDatabase>, config_dir: PathBuf) -> Self {
         Self {
             databases,
@@ -594,11 +608,14 @@ fn save_pending(path: &std::path::Path, state: &PersistedConvState) -> Result<()
 struct Landing {
     changed: bool,
     conversation_ids: Vec<String>,
+    /// 累积的原始结果（`changed_tables` 等），落地善后要用。
+    raw: RowApplied,
 }
 
 impl Landing {
     fn merge(&mut self, applied: &RowApplied) {
         self.changed |= applied.changed;
+        self.raw.merge(applied.clone());
         for id in &applied.conversation_ids {
             if !self.conversation_ids.contains(id) {
                 self.conversation_ids.push(id.clone());
@@ -863,6 +880,14 @@ impl ConvStreamDriver {
                 log::warn!("同步：清理已删除会话的残留失败（不影响其它数据）: {e}");
             }
             image_store::delete_conversation_images(&id);
+        }
+
+        // 各库自己的善后（记忆库 bump 作用域版本，见 `ConvDbHandle::after_land`）。
+        let pending_take = self.landing.raw.clone();
+        for db in &self.databases {
+            if let Err(e) = db.handle.after_land(&pending_take) {
+                log::warn!("同步：{} 落地善后失败（不影响数据）: {e}", db.name);
+            }
         }
 
         let mut out = self.landing.take();

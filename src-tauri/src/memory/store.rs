@@ -529,6 +529,9 @@ impl MemoryStore {
 
             CREATE TABLE IF NOT EXISTS memory_rejections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- 跨设备同步的稳定 id：自增 id 换台设备就不是同一行了。
+                -- 带默认值是因为这个表有几处 INSERT 还不写它（见下面的迁移说明）。
+                uid TEXT NOT NULL DEFAULT '',
                 scope TEXT NOT NULL,
                 scope_key TEXT NOT NULL,
                 title TEXT NOT NULL,
@@ -583,6 +586,27 @@ impl MemoryStore {
             "ALTER TABLE memory_snapshots ADD COLUMN touched_at TEXT",
             [],
         );
+        // `memory_rejections.uid`：跨设备同步的稳定主键（自增 id 跨设备没意义）。
+        // 老库补列 + 回填；**新库也要回填一次**（建表语句里的默认值是空串）。
+        let _ = conn.execute(
+            "ALTER TABLE memory_rejections ADD COLUMN uid TEXT NOT NULL DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE memory_rejections SET uid = lower(hex(randomblob(16)))              WHERE uid IS NULL OR uid = ''",
+            [],
+        );
+        let _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_rejections_uid              ON memory_rejections(uid) WHERE uid IS NOT NULL AND uid != ''",
+            [],
+        );
+        // 行同步：建 changelog / 时钟表 + 连接级触发器。失败只记日志，记忆库照常可用
+        // （同步坏了不该让长期记忆整个用不了）。
+        if let Err(e) =
+            crate::sync::rows::install(&conn, crate::sync::streams::memory::MEMORY_TABLES)
+        {
+            log::warn!("记忆库安装同步触发器失败（同步会缺失，功能照常）: {e}");
+        }
         // 记忆库建立时间：这之前的消息不做后台复盘（功能上线前的旧会话不自动补，
         // 想补的话用整理助手）。只在第一次建库时写。
         conn.execute(
@@ -1623,5 +1647,142 @@ mod tests {
             s.rejections(&[ScopeRef::user()]).unwrap().len(),
             REJECTIONS_PER_SCOPE
         );
+    }
+}
+
+// ── 跨设备同步（三期 T4）────────────────────────────────────────────────
+//
+// 同步读写必须走**同一条** `Mutex<Connection>`：只有调过 `rows::install` 的那条连接上的
+// 写入才会被触发器捕获（见 `sync/rows/install.rs` 的模块文档）。所以这里加一组薄转发，
+// 不另开连接。
+
+impl MemoryStore {
+    /// 捕获本机改动（段头 `db: "memory"`）。
+    pub fn sync_capture(
+        &self,
+        clock: &mut crate::sync::core::hlc::HlcClock,
+        device: &str,
+        wall_ms: u64,
+        aliases: &crate::sync::rows::AliasMap,
+        tables: &'static [crate::sync::rows::RowTable],
+        options: crate::sync::rows::CaptureOptions,
+    ) -> Result<crate::sync::rows::CapturedRows, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::capture_with(&conn, tables, clock, device, wall_ms, aliases, options)
+    }
+
+    /// 段上传成功、账本落盘之后删掉 changelog。
+    pub fn sync_ack(&self, watermark: i64) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::ack(&conn, watermark)
+            .map_err(|e| crate::error::AppError::Other(format!("记忆库同步操作失败：{e}")))
+    }
+
+    /// 落地一段行 op。
+    pub fn sync_apply(
+        &self,
+        ops_json: &[u8],
+        aliases: &crate::sync::rows::AliasMap,
+        tables: &'static [crate::sync::rows::RowTable],
+    ) -> Result<crate::sync::rows::RowApplied, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::apply(&conn, tables, ops_json, aliases)
+    }
+
+    /// 全量导出（首次开启对话档时用）。
+    pub fn sync_export_all(
+        &self,
+        device: &str,
+        aliases: &crate::sync::rows::AliasMap,
+        tables: &'static [crate::sync::rows::RowTable],
+        db: &'static str,
+    ) -> Result<Vec<Vec<u8>>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::export_all_with(
+            &conn,
+            tables,
+            device,
+            aliases,
+            crate::sync::rows::ExportOptions::new(
+                crate::sync::streams::conv::CONV_STREAM,
+                crate::sync::rows::DEFAULT_MAX_SEGMENT_BYTES,
+            )
+            .with_db(db),
+        )
+    }
+
+    /// 待上传条数（按行去重）。
+    pub fn sync_pending_count(
+        &self,
+        tables: &'static [crate::sync::rows::RowTable],
+    ) -> Result<usize, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::pending_count(&conn, tables)
+    }
+
+    /// 落地之后由同步层调用：把受影响的 `(scope, scope_key)` 的版本号 +1。
+    ///
+    /// 为什么必须 bump：`scope_versions` 不同步（本机派生），但记忆注入的「冻结快照」
+    /// 用它判断要不要重渲染。别的设备改了记忆、本机不 bump 的话，下一轮 Agent 还会
+    /// 用旧快照——数据是同步了，功能上却「用不上」。
+    pub fn bump_scope_versions_for(
+        &self,
+        scopes: &[(String, String)],
+    ) -> Result<usize, crate::error::AppError> {
+        use super::model::Scope;
+        let refs: BTreeSet<ScopeRef> = scopes
+            .iter()
+            .filter_map(|(scope, key)| {
+                Scope::parse(scope).map(|s| ScopeRef {
+                    scope: s,
+                    key: key.clone(),
+                })
+            })
+            .collect();
+        if refs.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn.lock().unwrap();
+        bump_scope_versions(&conn, &refs)
+            .map_err(|e| crate::error::AppError::Other(format!("刷新记忆作用域版本失败：{e}")))?;
+        Ok(refs.len())
+    }
+
+    /// 同步层用：库里所有记忆出现过的作用域（落地后 bump `scope_versions`）。
+    ///
+    /// 只读 `(scope, scope_key)` 两列，不碰正文。
+    pub fn list_all_scopes_for_sync(
+        &self,
+    ) -> Result<Vec<(String, String)>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT scope, scope_key FROM memories")
+            .map_err(|e| crate::error::AppError::Other(format!("读记忆作用域失败：{e}")))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| crate::error::AppError::Other(format!("读记忆作用域失败：{e}")))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    /// 同步层守护测试用：列出清单里这些表在**真实库**里的列名。
+    pub fn table_columns_for_sync(
+        &self,
+    ) -> Result<HashMap<String, Vec<String>>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut out = HashMap::new();
+        for table in crate::sync::streams::memory::MEMORY_TABLES {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({})", table.name))
+                .map_err(|e| crate::error::AppError::Other(format!("读表结构失败：{e}")))?;
+            let cols: Vec<String> = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(|e| crate::error::AppError::Other(format!("读表结构失败：{e}")))?
+                .filter_map(|r| r.ok())
+                .collect();
+            out.insert(table.name.to_string(), cols);
+        }
+        Ok(out)
     }
 }

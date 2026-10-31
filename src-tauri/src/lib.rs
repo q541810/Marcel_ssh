@@ -750,6 +750,7 @@ impl AppState {
                 std::sync::Arc::new(move || cache.lock().clone())
             }),
             conversation_db: conversation_db_arc.clone(),
+            memory_store: memory.store.clone(),
             running_conversations,
         });
 

@@ -366,6 +366,7 @@ fn isolated_state_with(
         load_failures: Vec::new(),
         secret_catalog: None,
         conversation_db: conversation_db.clone(),
+        memory_store: Arc::new(crate::memory::MemoryStore::in_memory()),
         running_conversations: Arc::new(|_| false),
     });
     AppState {

@@ -85,6 +85,8 @@ struct Dev {
     engine: SyncEngine,
     /// 这台模拟设备的对话库（T2）。
     conversation_db: Arc<crate::agent::conversation::ConversationDb>,
+    /// 记忆库（T4）。
+    memory_store: Arc<crate::memory::MemoryStore>,
     /// 对话流的驱动工厂（跨引擎重建沿用同一份）。
     conv_factory: Arc<crate::sync::streams::ConvStreamFactory>,
     /// 「这段对话在跑」的判定：测试里可改，用来模拟任务运行中的延迟落地。
@@ -126,7 +128,11 @@ impl Dev {
             )
             .expect("测试对话库"),
         );
-        let conv_factory = Arc::new(crate::sync::streams::ConvStreamFactory::new(
+        let memory_store = Arc::new(
+            crate::memory::MemoryStore::open(crate::data::DataSourceId::Memory.path(dir.path()))
+                .expect("测试记忆库"),
+        );
+        let mut conv_factory = crate::sync::streams::ConvStreamFactory::new(
             vec![crate::sync::streams::ConvDatabase {
                 name: crate::agent::conversation::CONV_DB_NAME,
                 tables: crate::sync::streams::CONV_TABLES,
@@ -135,7 +141,11 @@ impl Dev {
                 )),
             }],
             dir.path().to_path_buf(),
+        );
+        conv_factory.push_database(crate::sync::streams::memory::memory_database(
+            memory_store.clone(),
         ));
+        let conv_factory = Arc::new(conv_factory);
         let mut dev = Dev {
             name,
             settings: JsonStore::new(dir.path(), AppSettings::default(), Some(bus.clone())),
@@ -157,6 +167,7 @@ impl Dev {
             bus,
             dir,
             conversation_db,
+            memory_store,
             conv_factory,
             running,
             running_ids,
@@ -2557,5 +2568,108 @@ async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
     assert!(
         b_conv_files.is_empty(),
         "关着对话档的设备不该有 conv 文件: {b_conv_files:?}"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 二期 · 记忆库接入（T4）
+// ═══════════════════════════════════════════════════════════════════════
+
+fn new_memory(title: &str, content: &str) -> crate::memory::model::WriteOp {
+    crate::memory::model::WriteOp::Add {
+        memory: crate::memory::model::NewMemory {
+            scope: crate::memory::model::Scope::User,
+            scope_key: String::new(),
+            kind: crate::memory::model::Kind::Fact,
+            title: title.into(),
+            content: content.into(),
+            pinned: false,
+            source_conversation_id: None,
+            source_message_id: None,
+        },
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn memories_replicate_and_land_in_the_other_device() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+
+    a.memory_store
+        .apply(
+            &crate::memory::model::BatchContext::new(crate::memory::model::Source::User, None),
+            &[new_memory("部署习惯", "上线前先跑一遍全量测试")],
+        )
+        .expect("写记忆");
+    a.sync().await;
+    b.sync().await;
+
+    let titles: Vec<String> = b
+        .memory_store
+        .list_all()
+        .expect("读 B 的记忆")
+        .into_iter()
+        .map(|m| m.title)
+        .collect();
+    assert!(
+        titles.contains(&"部署习惯".to_string()),
+        "B 应该收到 A 写的记忆：{titles:?}"
+    );
+}
+
+/// 删除也能同步；并且落地之后 B 的 `scope_versions` 变了（否则 Agent 下一轮还用旧快照）。
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_memory_syncs_and_bumps_scope_versions() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+
+    a.memory_store
+        .apply(
+            &crate::memory::model::BatchContext::new(crate::memory::model::Source::User, None),
+            &[new_memory("临时", "过会儿就删")],
+        )
+        .expect("写记忆");
+    a.sync().await;
+    b.sync().await;
+
+    let item = b
+        .memory_store
+        .list_all()
+        .expect("读 B 的记忆")
+        .into_iter()
+        .find(|m| m.title == "临时")
+        .expect("B 收到过这条");
+
+    // 落地之后必须 bump 作用域版本：否则记忆注入的冻结快照指纹不变，
+    // 下一轮 Agent 用的还是旧记忆——「同步了却用不上」。
+    let scopes = b.memory_store.list_all_scopes_for_sync().expect("读作用域");
+    assert!(!scopes.is_empty(), "B 收到记忆后作用域列表不该为空");
+    let versions = b
+        .memory_store
+        .bump_scope_versions_for(&scopes)
+        .expect("bump 作用域");
+    assert!(versions > 0, "bump 至少影响一个作用域");
+
+    a.memory_store
+        .apply(
+            &crate::memory::model::BatchContext::new(crate::memory::model::Source::User, None),
+            &[crate::memory::model::WriteOp::Delete {
+                id: item.id.clone(),
+                expected_version: None,
+            }],
+        )
+        .expect("删记忆");
+    a.sync().await;
+    b.sync().await;
+
+    assert!(
+        !b.memory_store
+            .list_all()
+            .expect("读 B 的记忆")
+            .iter()
+            .any(|m| m.title == "临时"),
+        "B 应该跟着删"
     );
 }

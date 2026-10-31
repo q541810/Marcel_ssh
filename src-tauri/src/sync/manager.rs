@@ -294,6 +294,8 @@ pub struct SyncWiring {
         Option<Arc<dyn Fn() -> crate::config::keychain::SecretSlotCatalog + Send + Sync>>,
     /// 对话库（T2）：对话流的行同步必须走它自己的连接与锁。
     pub conversation_db: Arc<crate::agent::conversation::ConversationDb>,
+    /// 记忆库（T4）：与对话同一条流，按 `db` 字段分流。
+    pub memory_store: Arc<crate::memory::MemoryStore>,
     /// 「这段对话有任务在跑或在压缩吗」：对话流延迟落地用。由 `lib.rs` 捕获
     /// `AppState` 的两张表注入——`sync/` 不认识 `AppState`。
     pub running_conversations: Arc<dyn Fn(&str) -> bool + Send + Sync>,
@@ -322,16 +324,23 @@ impl SyncManager {
         let events = Arc::new(TauriEvents::default());
         // 先算好驱动工厂：它们要借 `wiring`，而下面构造 `SyncDeps` 会把 `wiring` 的字段移走。
         // 对话流（T2）：T4 加记忆库时在 `databases` 里再 push 一项，驱动代码不用改。
-        let conv_factory = Arc::new(crate::sync::streams::ConvStreamFactory::new(
-            vec![crate::sync::streams::ConvDatabase {
-                name: crate::agent::conversation::CONV_DB_NAME,
-                tables: crate::sync::streams::CONV_TABLES,
-                handle: Arc::new(crate::sync::streams::ConversationHandle::new(
-                    wiring.conversation_db.clone(),
-                )),
-            }],
-            wiring.config_dir.clone(),
-        ));
+        // T4：记忆库也走同一条「对话与记忆」流（驱动按 `db` 字段分流）。
+        let conv_factory = {
+            let mut f = crate::sync::streams::ConvStreamFactory::new(
+                vec![crate::sync::streams::ConvDatabase {
+                    name: crate::agent::conversation::CONV_DB_NAME,
+                    tables: crate::sync::streams::CONV_TABLES,
+                    handle: Arc::new(crate::sync::streams::ConversationHandle::new(
+                        wiring.conversation_db.clone(),
+                    )),
+                }],
+                wiring.config_dir.clone(),
+            );
+            f.push_database(crate::sync::streams::memory::memory_database(
+                wiring.memory_store.clone(),
+            ));
+            Arc::new(f)
+        };
         let mut stream_drivers: Vec<Arc<dyn crate::sync::streams::StreamDriverFactory>> =
             vec![conv_factory];
         stream_drivers.extend(secret_factories(&wiring, &secrets));
