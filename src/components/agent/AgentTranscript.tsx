@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { ArrowDown } from 'lucide-react';
 import { useConversationStore } from '@/stores/conversationStore';
 import { isNearBottom, shouldAutoScroll, shouldShowScrollToBottomFab } from '@/lib/agentScroll';
@@ -8,6 +8,11 @@ import AgentMessageList, { type AgentMessageListHandle } from './AgentMessageLis
 import AgentRunStatus, { useConversationLoopRunning } from './AgentRunStatus';
 import { MarkdownVisibility } from './markdownVisibility';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
+import { JUMP_TTL_MS, useMessageJumpStore } from '@/stores/messageJumpStore';
+import { useRegisterVisibleTranscript } from '@/stores/visibleTranscriptStore';
+import { resolveQuestionJump } from '@/lib/questionJump';
+import InlineQuestion from './InlineQuestion';
+import { MessageJumpContext, type MessageJumpScope } from './messageJumpContext';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
@@ -47,6 +52,33 @@ export default memo(function AgentTranscript({
   const [nearBottom, setNearBottom] = useState(true);
   const previousConversation = useRef(conversationId);
   const lastMessage = messages[messages.length - 1];
+
+  // 登记「我正显示这条对话」：提问放哪儿（内联 / 全局浮层）读这份登记。
+  useRegisterVisibleTranscript(conversationId, visible && canInteract);
+
+  // 跳转请求的执行方：请求属于本对话、本面板可见时，解析目标消息并交给列表句柄。
+  // 对话还没切过来 / 消息还没载入时请求留在 store 里，messages 变化时重试；过期丢弃。
+  const jumpRequest = useMessageJumpStore((s) => s.request);
+  useEffect(() => {
+    if (!jumpRequest || !visible || !canInteract) return;
+    if (jumpRequest.conversationId !== conversationId) return;
+    const settle = () => useMessageJumpStore.getState().settle(jumpRequest.seq);
+    if (Date.now() - jumpRequest.requestedAt > JUMP_TTL_MS) { settle(); return; }
+    const target = resolveQuestionJump(messages, jumpRequest.toolCallId, jumpRequest.anchor);
+    if (!target) {
+      // 消息可能还在载入：到期前不放弃
+      const timer = setTimeout(settle, Math.max(0, JUMP_TTL_MS - (Date.now() - jumpRequest.requestedAt)));
+      return () => clearTimeout(timer);
+    }
+    if (listRef.current?.jumpToMessage(target.message.id, target.anchor)) settle();
+  }, [jumpRequest, visible, canInteract, conversationId, messages]);
+
+  const messagesRef = useRef<readonly AgentMessage[]>(messages);
+  messagesRef.current = messages;
+  const jumpScope = useMemo<MessageJumpScope | null>(
+    () => (conversationId ? { conversationId, messagesRef } : null),
+    [conversationId],
+  );
   const onManualLayout = useCallback(() => {
     // A disclosure is a reading action. Its header owns the viewport until the next scroll.
     nearBottomRef.current = false;
@@ -121,6 +153,7 @@ export default memo(function AgentTranscript({
           {(!canInteract || messages.length === 0) && emptyState}
           {canInteract && (
             <MarkdownVisibility.Provider value={visible}>
+            <MessageJumpContext.Provider value={jumpScope}>
             <AgentMessageList
               listRef={listRef}
               messages={messages}
@@ -135,9 +168,13 @@ export default memo(function AgentTranscript({
               enableStickyFollow={false}
               onManualLayout={onManualLayout}
             />
+            </MessageJumpContext.Provider>
             </MarkdownVisibility.Provider>
           )}
           {canInteract && loopRunning && conversationId && <AgentRunStatus conversationId={conversationId} />}
+          {canInteract && visible && conversationId && (
+            <InlineQuestion conversationId={conversationId} mobile={mobile} />
+          )}
         </div>
       </div>
       {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (mobile ? (

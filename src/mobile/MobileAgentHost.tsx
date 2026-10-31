@@ -53,7 +53,6 @@ import {
 import { effectiveModel, modelLabel, modelReasoningEfforts } from "@/lib/llmRegistry";
 import { registerBackHandler } from "./backHandler";
 import MobileApprovalSheet from "./MobileApprovalSheet";
-import MobileQuestionSheet from "./MobileQuestionSheet";
 import MobileChatHistorySheet from "./MobileChatHistorySheet";
 import MobileMultiHostPicker from "./MobileMultiHostPicker";
 import MobileSheet from "./ui/MobileSheet";

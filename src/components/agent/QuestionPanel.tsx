@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
 import type { QuestionItem, QuestionAnswer } from '@/lib/types';
+import { useQuestionForm } from './useQuestionForm';
+import { QuestionFormBody, QuestionFormFooter } from './QuestionFormParts';
 
 interface Props {
   questionId: string;
@@ -26,109 +27,11 @@ export default function QuestionPanel({
   queueLength = 1,
   onMinimize,
 }: Props) {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
-    questions.map(() => ({ selected: [], custom: '' })),
-  );
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  // 交互切换（questionId 变化）时整份重置题号与答案。必须在渲染期重置而不是
-  // useEffect：effect 晚一帧，挡不住切换当帧的越界读取（2 题答到第 2 题 →
-  // 队列切到 1 题，questions[1] 已是 undefined）。正常路径靠 overlay 传 key
-  // 重挂载，这里是给复用本组件却忘了换 key 的调用方兜底（2026-10-06 线上爆炸）。
-  const [prevQuestionId, setPrevQuestionId] = useState(questionId);
-  if (prevQuestionId !== questionId) {
-    setPrevQuestionId(questionId);
-    setCurrentIndex(0);
-    setAnswers(questions.map(() => ({ selected: [], custom: '' })));
-  }
-
-  const total = questions.length;
-  // 下标钳制：题目数在帧内变少的极端情况下也不越界（渲染为空好过崩掉整棵树）
-  const index = Math.min(currentIndex, Math.max(total - 1, 0));
-  const current = questions[index];
-  const multiple = current?.multiple === true;
-  const isLast = total > 0 && index === total - 1;
-  const isFirst = index === 0;
-
-  // Focus input when switching questions
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [index]);
-
-  const goTo = useCallback(
-    (nextIndex: number) => {
-      if (nextIndex < 0 || nextIndex >= total) return;
-      setCurrentIndex(nextIndex);
-    },
-    [total],
-  );
-
-  const handleOptionClick = useCallback(
-    (label: string) => {
-      setAnswers((prev) => {
-        const next = [...prev];
-        const cur = { ...next[index] };
-        if (multiple) {
-          const idx = cur.selected.indexOf(label);
-          if (idx >= 0) {
-            cur.selected = cur.selected.filter((s) => s !== label);
-          } else {
-            cur.selected = [...cur.selected, label];
-          }
-        } else {
-          cur.custom = label;
-        }
-        next[index] = cur;
-        return next;
-      });
-    },
-    [index, multiple],
-  );
-
-  const handleCustomChange = useCallback(
-    (value: string) => {
-      setAnswers((prev) => {
-        const next = [...prev];
-        const cur = { ...next[index] };
-        cur.custom = value;
-        next[index] = cur;
-        return next;
-      });
-    },
-    [index],
-  );
-
-  const handleNext = useCallback(() => {
-    if (isLast) {
-      onSubmit(questionId, answers);
-    } else {
-      goTo(index + 1);
-    }
-  }, [isLast, questionId, answers, onSubmit, goTo, index]);
-
-  const handlePrev = useCallback(() => {
-    goTo(index - 1);
-  }, [goTo, index]);
-
-  const handleCancel = useCallback(() => {
-    const emptyAnswers = questions.map(() => ({ selected: [] as string[], custom: '' }));
-    onSubmit(questionId, emptyAnswers);
-  }, [questionId, questions, onSubmit]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleNext();
-      }
-    },
-    [handleNext],
-  );
+  const form = useQuestionForm({ questionId, questions, onSubmit });
+  const { current, index, total } = form;
 
   // 畸形载荷（0 题）：不渲染，也不崩（放在所有 hook 之后，hooks 顺序不能依赖载荷形状）
   if (!current) return null;
-  const currentAnswer = answers[index] ?? { selected: [], custom: '' };
 
   return (
     <div className="p-3">
@@ -181,7 +84,7 @@ export default function QuestionPanel({
               </button>
             )}
             <button
-              onClick={handleCancel}
+              onClick={form.skip}
               className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-state-mid transition-colors"
               title="取消"
             >
@@ -228,117 +131,10 @@ export default function QuestionPanel({
 
         {/* Body */}
         <div className="px-4 py-3 space-y-3 max-h-[40vh] overflow-y-auto">
-          {/* Question text */}
-          <p className="text-sm text-zinc-200 leading-relaxed">{current.question}</p>
-
-          {/* Options */}
-          {current.options && current.options.length > 0 && (
-            <div className="space-y-1.5">
-              {current.options.map((opt) => {
-                const isSelected = current.multiple
-                  ? currentAnswer.selected.includes(opt.label)
-                  : currentAnswer.custom === opt.label;
-                return (
-                  <button
-                    key={opt.label}
-                    onClick={() => handleOptionClick(opt.label)}
-                    className={`w-full text-left px-3 py-2 rounded-lg border transition-all ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-600/15 text-indigo-200'
-                        : 'border-edge bg-zinc-800/50 text-zinc-300 hover:border-edge-strong hover:bg-state-mid/50'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {current.multiple ? (
-                        <div
-                          className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-colors ${
-                            isSelected
-                              ? 'border-indigo-500 bg-indigo-600'
-                              : 'border-edge-strong'
-                          }`}
-                        >
-                          {isSelected && (
-                            <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-                      ) : (
-                        <div
-                          className={`w-4 h-4 rounded-full border flex-shrink-0 flex items-center justify-center transition-colors ${
-                            isSelected
-                              ? 'border-indigo-500 bg-indigo-600'
-                              : 'border-edge-strong'
-                          }`}
-                        >
-                          {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
-                        </div>
-                      )}
-                      <span className="text-sm font-medium">{opt.label}</span>
-                    </div>
-                    {opt.description && (
-                      <p className="text-xs text-zinc-500 mt-0.5 ml-6">{opt.description}</p>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Custom text input (always visible) */}
-          {(current.multiple || !current.options?.length ? true : false) && (
-            <textarea
-              ref={inputRef}
-              rows={2}
-              value={current.multiple ? currentAnswer.custom : currentAnswer.custom}
-              onChange={(e) => handleCustomChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={
-                current.multiple
-                  ? '补充说明（可选）...'
-                  : '输入你的回答...'
-              }
-              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-edge text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500 resize-none leading-relaxed"
-            />
-          )}
-
-          {/* For single-select with options, also show text input */}
-          {!current.multiple && current.options?.length && (
-            <textarea
-              ref={inputRef}
-              rows={2}
-              value={currentAnswer.custom}
-              onChange={(e) => handleCustomChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="或输入自定义回答..."
-              className="w-full px-3 py-2 rounded-lg bg-zinc-900 border border-edge text-sm text-zinc-200 placeholder:text-zinc-500 outline-none focus:border-indigo-500 resize-none leading-relaxed"
-            />
-          )}
+          <QuestionFormBody form={form} />
         </div>
 
-        {/* Footer navigation */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-edge">
-          <div className="text-xs text-zinc-500">
-            <kbd className="px-1 py-0.5 rounded bg-zinc-700 text-zinc-300">Enter</kbd>{' '}
-            {isLast ? '提交' : '下一题'}
-          </div>
-          <div className="flex items-center gap-2">
-            {!isFirst && (
-              <button
-                onClick={handlePrev}
-                className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-state-mid transition-colors"
-              >
-                ← 上一题
-              </button>
-            )}
-            <button
-              onClick={handleNext}
-              className="px-4 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
-            >
-              {isLast ? '提交答案' : '下一题 →'}
-            </button>
-          </div>
-        </div>
+        <QuestionFormFooter form={form} />
       </div>
     </div>
   );

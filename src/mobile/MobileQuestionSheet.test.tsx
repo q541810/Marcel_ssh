@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { QuestionItem } from '@/lib/types';
@@ -37,7 +37,7 @@ function renderSheet(questionId: string, questions: QuestionItem[]) {
         questionId={questionId}
         questions={questions}
         onSubmit={() => {}}
-        onCancel={() => {}}
+
       />,
     );
   });
@@ -90,5 +90,39 @@ describe('MobileQuestionSheet 同实例换题（调用方未换 key）时的状�
   it('空题目列表（畸形载荷）→ 渲染为空而不抛错', () => {
     renderSheet('q-0', []);
     expect(container.textContent).toBe('');
+  });
+});
+
+describe('MobileQuestionSheet 作为内联卡片', () => {
+  it('不注册返回键处理（它是聊天流的一部分，不是浮层）', async () => {
+    await import('./backHandler');
+    renderSheet('q-1', TWO_QUESTIONS);
+    expect(window.__marcelHandleBack?.()).toBe(false);
+  });
+
+  it('不抢焦点（程序化 focus 会弹软键盘）', () => {
+    renderSheet('q-1', TWO_QUESTIONS);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it('有上文才出跳转按钮：带 anchor 点名小标题，点了回传 anchor', () => {
+    const onJump = vi.fn();
+    act(() => {
+      root.render(
+        <MobileQuestionSheet
+          questionId="q-1"
+          questions={[{ ...TWO_QUESTIONS[0], anchor: '方案对比' }]}
+          onSubmit={() => {}}
+          onJump={onJump}
+        />,
+      );
+    });
+    click('查看「方案对比」');
+    expect(onJump).toHaveBeenCalledWith('方案对比');
+  });
+
+  it('没上文（不传 onJump）→ 没有跳转按钮', () => {
+    renderSheet('q-1', TWO_QUESTIONS);
+    expect(container.textContent).not.toContain('查看上文');
   });
 });

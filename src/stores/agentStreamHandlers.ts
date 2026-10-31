@@ -158,6 +158,12 @@ export function handleToolCallStart(
       }
     }
 
+    // 记下发出这次调用的那条 assistant 消息（同一轮 LLM 调用写下的正文）：
+    // 「跳转到提问前的结论」据此做结构定位，不靠往前找文本。本轮没写正文 = 没有。
+    const callerId = getStreamState(taskId).assistantMessageId;
+    if (callerId && newMsgs.some((m) => m.id === callerId && m.role === 'assistant')) {
+      toolMessage.callerMessageId = callerId;
+    }
     newMsgs.push(toolMessage);
 
     // Register the mapping so handleToolResult can find it later

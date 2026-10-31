@@ -592,6 +592,12 @@ export interface AgentMessage {
     shadowedTokens?: number;
     reason?: string;
   };
+  /**
+   * 仅 live 阶段的 tool 消息：发出这次调用的那条 assistant 消息 id（同一轮 LLM 调用
+   * 写下的正文）。「跳转到提问前的结论」据此结构定位；重载后由 assistant 消息自带的
+   * `toolCalls` 反查，不依赖此字段。本轮没写正文 = 缺省。
+   */
+  callerMessageId?: string;
   /** 持久化消息的 DB row id（`messages.id`，统一 id 域）：load 时填充，
    *  压缩事件据此按 id 定位卡片插入点（取代位置数数与指纹验证）。 */
   dbId?: string;
@@ -1256,6 +1262,11 @@ export interface QuestionItem {
   header: string;
   options?: QuestionOption[];
   multiple: boolean;
+  /**
+   * 这个问题对应提问前正文里哪个小标题（后端已校验并归一化过的原文）。缺省 = 跳到正文开头。
+   * 前端只拿它和渲染出的标题做归一化后相等比较，不做任何模糊搜索。
+   */
+  anchor?: string;
 }
 
 export type InteractionKind = 'approval' | 'question';

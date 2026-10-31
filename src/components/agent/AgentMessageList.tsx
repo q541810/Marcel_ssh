@@ -5,7 +5,8 @@ import {
 import { Virtualizer, type VirtualizerHandle } from 'virtua';
 import type { AgentMessage } from '@/lib/types';
 import { isNearBottom } from '@/lib/agentScroll';
-import { isTurnStart } from '@/lib/agentTurnFold';
+import { isTurnStart, segmentTurns } from '@/lib/agentTurnFold';
+import { messageMatchesId } from '@/lib/questionJump';
 import { isTaskBusy } from '@/lib/agentStatus';
 import { retainRecent } from '@/lib/retainedViews';
 import { turnFooters, type TurnFooter } from '@/lib/turnTranscript';
@@ -32,6 +33,7 @@ import ToolFoldRow from './ToolFoldRow';
 import { ToolGroupReveal } from './toolGroupReveal';
 import { virtualMessageSlots, type MessageSlot } from './virtualMessageSlots';
 import { useFoldScrollAnchor } from '@/hooks/useFoldScrollAnchor';
+import { useMessageJump } from './useMessageJump';
 import {
   MessageViewCacheContext, MessageViewIdContext, type MessageViewCache, useMessageViewState,
 } from './messageViewState';
@@ -39,6 +41,11 @@ import {
 export interface AgentMessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void;
   followBottom: () => void;
+  /**
+   * 滚到某条消息的正文并闪一下：id 按 `id`/`dbId` 任一匹配；`anchor` 是要对准的小标题
+   * （缺省/找不到 = 消息开头）。会展开目标所在的折叠回合、扩大窗口。找不到消息返回 false。
+   */
+  jumpToMessage: (id: string, anchor?: string) => boolean;
 }
 interface Props {
   messages: AgentMessage[];
@@ -270,7 +277,26 @@ function MessageList({
       });
     } else if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [slots.length, userScrolling, cancelFoldAnchor]);
-  useImperativeHandle(listRef, () => ({ scrollToBottom, followBottom }), [scrollToBottom, followBottom]);
+  const startJump = useMessageJump({ root, scrollRef, virtualizer, slots });
+  const jumpToMessage = useCallback((id: string, anchor?: string) => {
+    const index = messages.findIndex((m) => messageMatchesId(m, id));
+    if (index < 0) return false;
+    const target = messages[index];
+    // 目标在窗口之外 / 折叠的已完成回合里：先让它进入渲染，执行器再等它出现
+    if (index < start) setVisibleCount(messages.length - index);
+    for (const segment of segmentTurns(messages, { tailActive })) {
+      if (segment.foldMembers.includes(target)) {
+        useTurnFoldStore.getState().expandTurn(conversationId, segment.key);
+      }
+    }
+    cancelFoldAnchor();
+    pinned.current = false;
+    userScrolling.current = false;
+    onManualLayout?.();
+    startJump(target.id, anchor);
+    return true;
+  }, [messages, start, tailActive, conversationId, cancelFoldAnchor, userScrolling, onManualLayout, startJump]);
+  useImperativeHandle(listRef, () => ({ scrollToBottom, followBottom, jumpToMessage }), [scrollToBottom, followBottom, jumpToMessage]);
 
   useIsomorphicLayoutEffect(() => {
     const node = root.current?.closest<HTMLElement>('.overflow-y-auto') ?? root.current?.parentElement;

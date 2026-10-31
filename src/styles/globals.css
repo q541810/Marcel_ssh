@@ -1855,3 +1855,27 @@ body.marcel-resizing-x * {
     animation: supreme-reveal-fade 700ms ease-out both;
   }
 }
+
+/* ── 「跳转到消息正文」后的短暂闪烁（hooks/…/useMessageJump 的落点高亮）──
+   只用主题令牌（state-*），深浅色都自洽；「减少动态效果」下不渐变，静态高亮后由
+   定时器摘掉类名。 */
+@keyframes jump-flash {
+  from {
+    background-color: var(--color-state-strong);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.jump-flash {
+  border-radius: 0.375rem;
+  animation: jump-flash 1000ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jump-flash {
+    animation: none;
+    background-color: var(--color-state-mid);
+  }
+}

@@ -1,118 +1,39 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
 import type { QuestionItem, QuestionAnswer } from '@/lib/types';
-import { registerBackHandler } from './backHandler';
+import { useQuestionForm } from '@/components/agent/useQuestionForm';
+import { QuestionJumpButton } from '@/components/agent/QuestionJumpButton';
 
 interface MobileQuestionSheetProps {
   questionId: string;
   questions: QuestionItem[];
   onSubmit: (questionId: string, answers: QuestionAnswer[]) => void;
-  onCancel: () => void;
-  sessionName?: string;
-  conversationTitle?: string;
-  isCurrentContext?: boolean;
-  onNavigateToContext?: (e?: React.MouseEvent) => void;
   queueLength?: number;
-  onMinimize?: (e?: React.MouseEvent) => void;
+  /** 有可跳的上文才传：参数是当前这题的 anchor（缺省 = 正文开头）。 */
+  onJump?: (anchor?: string) => void;
 }
 
 /**
- * Touch-first inline question panel for the mobile shell. Replaces the chat
- * composer while an agent question is pending (same contract as desktop
- * QuestionPanel: cancel submits empty answers via onCancel).
+ * 手机内联提问卡片：用户正看着该对话时，提问长在聊天流末尾，不再是盖住结论的上拉面板。
+ * 它是滚动内容的一部分、不是浮层，所以**不注册返回键处理**（返回键照常退出聊天页）。
+ * 首次出现不抢焦点：程序化 focus 会唤起软键盘，键盘只在用户点输入框时弹起。
+ * 状态逻辑与桌面共用 `useQuestionForm`，这里只负责触屏外观。
  */
 export default function MobileQuestionSheet({
   questionId,
   questions,
   onSubmit,
-  onCancel,
-  sessionName,
-  conversationTitle,
-  isCurrentContext = true,
-  onNavigateToContext,
   queueLength = 1,
-  onMinimize,
+  onJump,
 }: MobileQuestionSheetProps) {
-  // 注册 Android 侧滑返回：按下返回键时最小化为浮动胶囊，防止误退会话或关闭应用
-  useEffect(() => {
-    return registerBackHandler(() => {
-      onMinimize?.();
-    });
-  }, [onMinimize]);
-
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState<QuestionAnswer[]>(() =>
-    questions.map(() => ({ selected: [], custom: '' })),
-  );
-
-  // 交互切换（questionId 变化）时整份重置题号与答案。必须在渲染期重置而不是
-  // useEffect：effect 晚一帧，挡不住切换当帧的越界读取。正常路径靠 overlay
-  // 传 key 重挂载，这里是给复用本组件却忘了换 key 的调用方兜底。
-  const [prevQuestionId, setPrevQuestionId] = useState(questionId);
-  if (prevQuestionId !== questionId) {
-    setPrevQuestionId(questionId);
-    setCurrentIndex(0);
-    setAnswers(questions.map(() => ({ selected: [], custom: '' })));
-  }
-
-  const total = questions.length;
-  // 下标钳制：题目数在帧内变少的极端情况下也不越界（渲染为空好过崩掉整棵树）
-  const index = Math.min(currentIndex, Math.max(total - 1, 0));
-  const current = questions[index];
-  const multiple = current?.multiple === true;
-  const isLast = total > 0 && index === total - 1;
-  const isFirst = index === 0;
-
-  const handleOptionTap = useCallback(
-    (label: string) => {
-      setAnswers((prev) => {
-        const next = [...prev];
-        const cur = { ...next[index] };
-        if (multiple) {
-          cur.selected = cur.selected.includes(label)
-            ? cur.selected.filter((s) => s !== label)
-            : [...cur.selected, label];
-        } else {
-          cur.custom = label;
-        }
-        next[index] = cur;
-        return next;
-      });
-    },
-    [index, multiple],
-  );
-
-  const handleCustomChange = useCallback(
-    (value: string) => {
-      setAnswers((prev) => {
-        const next = [...prev];
-        next[index] = { ...next[index], custom: value };
-        return next;
-      });
-    },
-    [index],
-  );
-
-  const handleNext = useCallback(() => {
-    if (isLast) {
-      onSubmit(questionId, answers);
-    } else {
-      setCurrentIndex((i) => Math.min(i + 1, total - 1));
-    }
-  }, [isLast, questionId, answers, onSubmit, total]);
-
-  // 畸形载荷（0 题）：不渲染，也不崩
+  const form = useQuestionForm({ questionId, questions, onSubmit, focusOnQuestionChange: false });
+  const { current, currentAnswer, index, total, isFirst, isLast } = form;
   if (!current) return null;
-  const currentAnswer = answers[index] ?? { selected: [], custom: '' };
 
   return (
-    <div
-      className="mobile-panel-enter flex-shrink-0 border-t border-indigo-700/40 bg-zinc-900"
+    <section
+      className="my-2 overflow-hidden rounded-2xl border border-indigo-700/40 bg-zinc-900 animate-fadeIn"
       data-region="mobile-question"
-      style={{
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-        marginBottom: 'var(--ime-bottom, 0px)',
-      }}
+      aria-label="智能助手的提问"
     >
       {/* Header */}
       <div className="flex items-center gap-2 px-4 pb-1 pt-3">
@@ -134,55 +55,22 @@ export default function MobileQuestionSheet({
             {index + 1}/{total}
           </span>
         )}
-        {onMinimize && (
-          <button
-            type="button"
-            onClick={onMinimize}
-            className="flex-shrink-0 rounded-lg p-1 text-zinc-400 active:bg-state-soft"
-            title="收起为浮动条"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-        )}
         <button
           type="button"
-          onClick={onCancel}
+          onClick={form.skip}
           className="-mr-2 flex-shrink-0 rounded-lg px-2 py-1 text-xs text-zinc-500 active:bg-state-soft"
         >
           跳过
         </button>
       </div>
-
-      {/* 上下文横条 (Context Banner) */}
-      {(sessionName || conversationTitle) && (
-        <div className="mx-4 mt-1.5 p-2 rounded-xl bg-zinc-950 border border-edge-subtle flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <svg className="w-3.5 h-3.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div className="text-xs text-zinc-300 truncate">
-              <span className="font-semibold text-zinc-200">{sessionName || 'SSH 会话'}</span>
-              {conversationTitle && (
-                <span className="text-zinc-400"> · {conversationTitle}</span>
-              )}
-            </div>
-          </div>
-          {onNavigateToContext && (
-            <button
-              type="button"
-              onClick={onNavigateToContext}
-              className="shrink-0 text-[11px] px-2 py-0.5 rounded-lg bg-indigo-600/30 active:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 font-medium"
-            >
-              跳转
-            </button>
-          )}
+      {onJump && (
+        <div className="px-4 pb-1">
+          <QuestionJumpButton mobile anchor={current.anchor} onJump={() => onJump(current.anchor)} />
         </div>
       )}
 
       {/* Body */}
-      <div className="max-h-[45dvh] space-y-2.5 overflow-y-auto overscroll-contain px-4 py-2">
+      <div className="space-y-2.5 px-4 py-2">
         <p className="text-sm leading-relaxed text-zinc-200">
           {current.question}
         </p>
@@ -197,7 +85,7 @@ export default function MobileQuestionSheet({
                 <button
                   key={opt.label}
                   type="button"
-                  onClick={() => handleOptionTap(opt.label)}
+                  onClick={() => form.toggleOption(opt.label)}
                   className={`w-full rounded-xl border px-3 py-3 text-left ${
                     isSelected
                       ? 'border-indigo-500 bg-indigo-600/15'
@@ -248,7 +136,7 @@ export default function MobileQuestionSheet({
               ? ''
               : currentAnswer.custom
           }
-          onChange={(e) => handleCustomChange(e.target.value)}
+          onChange={(e) => form.setCustom(e.target.value)}
           placeholder={
             current.options?.length
               ? current.multiple
@@ -265,7 +153,7 @@ export default function MobileQuestionSheet({
         {!isFirst && (
           <button
             type="button"
-            onClick={() => setCurrentIndex((i) => Math.max(i - 1, 0))}
+            onClick={form.prev}
             className="rounded-xl bg-zinc-800 px-4 py-3 text-sm text-zinc-300 active:bg-state-mid"
           >
             上一题
@@ -273,12 +161,12 @@ export default function MobileQuestionSheet({
         )}
         <button
           type="button"
-          onClick={handleNext}
+          onClick={form.next}
           className="flex-1 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-medium text-white active:bg-indigo-500"
         >
           {isLast ? '提交答案' : '下一题'}
         </button>
       </div>
-    </div>
+    </section>
   );
 }

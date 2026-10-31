@@ -66,6 +66,9 @@ vi.mock('@/stores/taskStore', () => ({
 }));
 
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
+import './backHandler';
+import { useVisibleTranscriptStore } from '@/stores/visibleTranscriptStore';
+import { useMessageJumpStore } from '@/stores/messageJumpStore';
 
 const TS = '2026-09-28T10:00:00.000Z';
 const SUB_CONV = 'conv-sub';
@@ -181,29 +184,22 @@ describe('隐私模式下的会话地址', () => {
   const ASK = [{ header: '方案', question: '走哪条', multiple: false, options: [] }] as QuestionItem[];
   const text = () => document.body.textContent ?? '';
 
-  it('关闭：提问面板与浮动条都显示真实地址', () => {
+  it('关闭：提问提醒条显示真实地址', () => {
     mocks.interaction = questionInteraction(ASK);
     render();
     expect(text()).toContain(`jinye@${REAL_HOST}:2222`);
-
-    minimize();
-    expect(text()).toContain(`jinye@${REAL_HOST}:2222`);
   });
 
-  it('开启：提问面板与浮动条都只剩脱敏地址，真实 IP / 端口不出现在 DOM 里', () => {
+  it('开启：提问提醒条只剩脱敏地址，真实 IP / 端口不出现在 DOM 里', () => {
     mocks.privacy = true;
     mocks.interaction = questionInteraction(ASK);
     render();
     expect(text()).toContain('jinye@***:****');
     expect(text()).not.toContain(REAL_HOST);
     expect(text()).not.toContain('2222');
-
-    minimize();
-    expect(text()).toContain('jinye@***:****');
-    expect(text()).not.toContain(REAL_HOST);
   });
 
-  it('面板开着时切换开关：已弹出的面板立即跟着变', () => {
+  it('提醒条显示时切换开关：立即跟着变', () => {
     mocks.interaction = questionInteraction(ASK);
     render();
     expect(text()).toContain(REAL_HOST);
@@ -321,55 +317,59 @@ function questionInteraction(
 }
 
 /**
- * 回归（2026-10-06 线上爆炸）：提问队列切换时不重挂载 MobileQuestionSheet 的
- * 话，上一条交互的题号与答案原样漏进下一条（2 题切 1 题还会越界崩溃）。
- * 与桌面 `GlobalInteractionOverlay.test.tsx` 同一组用例、同一口径。
+ * 提问不再是盖住聊天的上拉面板：它所属对话正显示在聊天页里 → 内联在聊天末尾（本组件什么
+ * 都不画）；否则只留一条提醒条，点它切到聊天页、打开对话并落到提问前的结论。
+ * 答题表单（含 2026-10-06 的换题崩溃回归）的用例在 MobileQuestionSheet.test.tsx。
  */
-describe('提问交互的队列切换（不重挂载就崩的回归）', () => {
-  const TWO_QUESTIONS: QuestionItem[] = [
-    { header: '3001实例', question: '3001 走哪条路', multiple: false, options: [{ label: 'A', description: '选项说明' }, { label: 'B', description: '选项说明' }] },
-    { header: '陈旧编排', question: '编排怎么处理', multiple: false, options: [{ label: 'C', description: '选项说明' }, { label: 'D', description: '选项说明' }] },
-  ];
-  const ONE_QUESTION: QuestionItem[] = [
-    { header: '方案选择', question: '存档改不改', multiple: false, options: [{ label: 'E', description: '选项说明' }, { label: 'F', description: '选项说明' }] },
-  ];
+describe('提问的内联 / 提醒条分流', () => {
+  const ASK: QuestionItem[] = [{ header: '方案', question: '走哪条', multiple: false, options: [] }];
+  const bar = () => document.body.querySelector('[data-region="mobile-question-bar"]');
 
-  function swapToNextAsk() {
-    mocks.interaction = questionInteraction(ONE_QUESTION, {
-      interactionId: 'int-q-next',
-      question: { questionId: 'q-2', questions: ONE_QUESTION },
-    });
-    render();
-  }
-
-  it('答到第 2/2 题后切到 1 题的下一个 ask → 不崩，显示新交互的第一题', () => {
-    mocks.interaction = questionInteraction(TWO_QUESTIONS);
-    render();
-    expect(document.body.textContent).toContain('3001实例');
-    clickButton('下一题');
-    expect(document.body.textContent).toContain('2/2');
-
-    swapToNextAsk();
-
-    expect(document.body.textContent).toContain('方案选择');
+  afterEach(() => {
+    useVisibleTranscriptStore.setState({ byInstance: {} });
+    useMessageJumpStore.setState({ request: null });
   });
 
-  it('切到下一个 ask 后答案不得串场（自定义回答不带入新面板）', () => {
-    mocks.interaction = questionInteraction(TWO_QUESTIONS);
+  it('对话不在聊天页可见 → 只出提醒条，没有答题表单也没有返回键占用', () => {
+    mocks.interaction = questionInteraction(ASK);
     render();
-    const ta = document.body.querySelector('textarea') as HTMLTextAreaElement;
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      'value',
-    )!.set!;
+    expect(bar()).not.toBeNull();
+    expect(document.body.querySelector('textarea')).toBeNull();
+    expect(window.__marcelHandleBack?.()).toBe(false);
+  });
+
+  it('对话正显示在聊天页里 → 本组件不画任何东西（提问已内联）', () => {
+    mocks.interaction = questionInteraction(ASK);
+    useVisibleTranscriptStore.getState().register('t1', 'conv-remote');
+    render();
+    expect(bar()).toBeNull();
+    expect(document.body.textContent).toBe('');
+  });
+
+  it('聊天页显示的是别的对话 → 仍是提醒条', () => {
+    mocks.interaction = questionInteraction(ASK);
+    useVisibleTranscriptStore.getState().register('t1', 'conv-other');
+    render();
+    expect(bar()).not.toBeNull();
+  });
+
+  it('点提醒条：切到聊天页 + 打开该对话 + 发出跳转到上文的请求', () => {
+    mocks.interaction = questionInteraction(ASK);
+    mocks.activeConversationId = MAIN_CONV;
+    mocks.activeSessionId = OTHER_SESSION;
+    const tabs: string[] = [];
+    const onTab = (e: Event) => tabs.push((e as CustomEvent<{ tab: string }>).detail.tab);
+    window.addEventListener('mobile:switch-tab', onTab);
+    render();
     act(() => {
-      setter.call(ta, '我自己的回答');
-      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      (bar()!.querySelector('button') as HTMLButtonElement).click();
     });
-    expect(ta.value).toBe('我自己的回答');
+    window.removeEventListener('mobile:switch-tab', onTab);
 
-    swapToNextAsk();
-
-    expect((document.body.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
+    expect(tabs).toEqual(['agent']);
+    expect(mocks.switchConversation).toHaveBeenCalledWith('conv-remote');
+    expect(mocks.setActiveSession).toHaveBeenCalledWith('session-remote');
+    const req = useMessageJumpStore.getState().request;
+    expect(req).toMatchObject({ conversationId: 'conv-remote', toolCallId: 'q-1' });
   });
 });

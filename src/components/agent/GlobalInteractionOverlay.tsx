@@ -13,6 +13,10 @@ import { flyToInteractionCapsule } from '@/stores/capsuleFlyAnimation';
 import { openRiskRule } from '@/lib/riskRuleNav';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
 import { formatInteractionSessionLabel } from '@/lib/privacy';
+import { useVisibleConversationIds } from '@/stores/visibleTranscriptStore';
+import { shouldShowQuestionInline } from '@/lib/questionPlacement';
+import { requestQuestionTextJump } from '@/stores/messageJumpStore';
+import { requestOpenAgentPanel } from '@/lib/agentPanelNav';
 
 /**
  * 「跳转查看」该跳到哪条 SSH 会话。
@@ -59,6 +63,11 @@ export default function GlobalInteractionOverlay() {
 
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
 
+  // 提问所属对话正显示在可见的对话面板里 → 它已内联在消息流末尾（InlineQuestion），
+  // 这里一个字都不画（浮层和胶囊都不出）。审批不受影响。
+  const visibleConversationIds = useVisibleConversationIds();
+  const questionInline = shouldShowQuestionInline(current, visibleConversationIds);
+
   // 用户是否主动最小化了当前交互
   const [minimized, setMinimized] = useState(false);
 
@@ -88,6 +97,11 @@ export default function GlobalInteractionOverlay() {
     if (current.conversationId && activeConversationId !== current.conversationId) {
       void sessionConversationBindingManager.openConversation(current.conversationId);
     }
+    if (current.kind === 'question' && current.question) {
+      // 落到提问前那段结论的开头（面板收起则先把它请出来；请求在对话显示出来后落地）
+      requestOpenAgentPanel();
+      requestQuestionTextJump(current.conversationId, current.question.questionId);
+    }
     // 触发飞入动画并自动最小化弹窗
     const origin = e ? { x: e.clientX, y: e.clientY } : undefined;
     flyToInteractionCapsule(origin);
@@ -107,7 +121,7 @@ export default function GlobalInteractionOverlay() {
     setMinimized(true);
   }, []);
 
-  if (!current) return null;
+  if (!current || questionInline) return null;
 
   // 最小化展示状态：渲染右下角半透明悬浮胶囊
   if (minimized) {
@@ -134,7 +148,9 @@ export default function GlobalInteractionOverlay() {
             : undefined
         }
         onNavigateToContext={handleNavigate}
-        isCurrentContext={isCurrentContext}
+        // 提问走到这里说明它没显示在任何可见面板里：就算对话是「当前」的（面板收起、
+        // 在别的视图），也要给跳转入口
+        isCurrentContext={current.kind === 'question' ? false : isCurrentContext}
       />
     );
   }

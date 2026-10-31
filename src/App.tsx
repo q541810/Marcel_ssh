@@ -19,6 +19,7 @@ import QuitGuard from '@/components/layout/QuitGuard';
 import OnboardingWizard from '@/components/onboarding/OnboardingWizard';
 import StarPromptModal from '@/components/star/StarPromptModal';
 import GlobalInteractionOverlay from '@/components/agent/GlobalInteractionOverlay';
+import { OPEN_AGENT_PANEL_EVENT } from '@/lib/agentPanelNav';
 import { initInteractionListener } from '@/stores/interactionStore';
 import { initJobWake } from '@/stores/jobWake';
 import { initAgentQueue } from '@/stores/agentQueueStore';
@@ -373,6 +374,15 @@ export default function App() {
   const handleToggleAgentPanel = () => {
     persistWorkspaceLayout({ agentOpen: !agentPanelOpen });
   };
+
+  // 提问浮层的「跳转查看」：面板被收起时把它请出来（独占视图下无处可开，忽略）
+  useEffect(() => {
+    const open = () => {
+      if (!agentPanelOpen && !isExclusive) persistWorkspaceLayout({ agentOpen: true });
+    };
+    window.addEventListener(OPEN_AGENT_PANEL_EVENT, open);
+    return () => window.removeEventListener(OPEN_AGENT_PANEL_EVENT, open);
+  }, [agentPanelOpen, isExclusive, persistWorkspaceLayout]);
 
   /** 把一次求解结果直接写到四块承载宽度的 DOM 上（不经过 React）。 */
   const applyDragWidths = useCallback((layout: ResolvedWorkspaceLayout) => {

@@ -4,6 +4,7 @@ import { collectPlatformHints, isMobilePlatform } from "@/platform";
 import HtmlVisualization from "./HtmlVisualization";
 import MobileHtmlVisualization from "./MobileHtmlVisualization";
 import MemoryToolView from "./MemoryToolView";
+import QuestionRecord from "./QuestionRecord";
 
 export interface ToolViewProps {
   message: AgentMessage;
@@ -45,6 +46,10 @@ const TOOL_VIEWS: Record<string, ToolViewEntry> = {
   // 工具卡同一副骨架：「已记住 · 标题 · 作用域」，展开后有 撤销 / 编辑；两端同一个组件。
   memory: {
     desktop: MemoryToolView,
+  },
+  // 提问记录：内联卡片作答后原地收成一行「已回答：…」，带跳回上文的按钮。
+  ask_user: {
+    desktop: QuestionRecord,
   },
 };
 
