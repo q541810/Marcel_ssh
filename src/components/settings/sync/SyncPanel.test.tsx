@@ -56,6 +56,8 @@ function status(partial: Partial<SyncStatus> = {}): SyncStatus {
     deviceName: '书房电脑',
     storage: { kind: 'webDav', url: 'https://dav.jianguoyun.com/dav/', username: 'me@x.com', root: 'marcel-sync' },
     held: null,
+    tiers: { config: true, conversation: false, secret: false },
+    streams: [],
     ...partial,
   };
 }
@@ -63,8 +65,8 @@ function status(partial: Partial<SyncStatus> = {}): SyncStatus {
 const OFF = status({ enabled: false, state: 'off', lastSyncAt: null, storage: null, deviceId: null, deviceName: null });
 
 const DEVICES: SyncDevice[] = [
-  { id: 'dev-self', name: '书房电脑', platform: 'desktop', appVersion: '1.12.0', lastSeenAt: new Date().toISOString(), isSelf: true },
-  { id: 'dev-phone', name: '我的手机', platform: 'android', appVersion: '1.12.0', lastSeenAt: new Date(Date.now() - 3600_000).toISOString(), isSelf: false },
+  { id: 'dev-self', name: '书房电脑', platform: 'desktop', appVersion: '1.12.0', lastSeenAt: new Date().toISOString(), isSelf: true, tiers: { config: true, conversation: false, secret: false } },
+  { id: 'dev-phone', name: '我的手机', platform: 'android', appVersion: '1.12.0', lastSeenAt: new Date(Date.now() - 3600_000).toISOString(), isSelf: false, tiers: { config: true, conversation: false, secret: false } },
 ];
 
 const HISTORY: SyncHistoryEntry[] = [

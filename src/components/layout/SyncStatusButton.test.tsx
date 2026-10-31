@@ -23,6 +23,8 @@ function status(state: SyncStatus['state'], enabled = true): SyncStatus {
     deviceName: 'n',
     storage: null,
     held: null,
+    tiers: { config: true, conversation: false, secret: false },
+    streams: [],
   };
 }
 

@@ -61,6 +61,8 @@ function status(partial: Partial<SyncStatus> = {}): SyncStatus {
     deviceName: '我的电脑',
     storage: null,
     held: null,
+    tiers: { config: true, conversation: false, secret: false },
+    streams: [],
     ...partial,
   };
 }
@@ -205,7 +207,7 @@ describe('syncStore', () => {
 
     it('disable 清空设备与记录再拉状态', async () => {
       useSyncStore.setState({
-        devices: [{ id: 'd', name: 'n', platform: 'desktop', appVersion: '1', lastSeenAt: 'x', isSelf: true }],
+        devices: [{ id: 'd', name: 'n', platform: 'desktop', appVersion: '1', lastSeenAt: 'x', isSelf: true, tiers: { config: true, conversation: false, secret: false } }],
         history: [
           {
             id: 'h',

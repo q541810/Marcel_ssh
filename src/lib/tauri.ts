@@ -75,6 +75,7 @@ import type {
   SyncHistoryEntry,
   SyncStatus,
   SyncStorageConfig,
+  TierEstimate,
 } from "./types";
 
 // SSH commands
@@ -1773,6 +1774,16 @@ export async function syncUndo(entryId: string): Promise<void> {
 }
 
 /** `accept=true` 放行大量删除；`false` 撤销本机删除（从云端镜像写回）。 */
+/** 打开 / 关闭某一档（`"conversation"` / `"secret"`）。配置档恒为开。 */
+export async function syncSetTier(tier: string, enabled: boolean): Promise<void> {
+  return invoke("sync_set_tier", { tier, enabled });
+}
+
+/** 某一档的规模估算（只有数量与名称）。 */
+export async function syncTierEstimate(tier: string): Promise<TierEstimate> {
+  return invoke("sync_tier_estimate", { tier });
+}
+
 export async function syncConfirmHeld(accept: boolean): Promise<void> {
   return invoke("sync_confirm_held", { accept });
 }

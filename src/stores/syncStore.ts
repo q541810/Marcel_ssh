@@ -10,6 +10,7 @@ import type {
   SyncHistoryEntry,
   SyncStatus,
   SyncStorageConfig,
+  TierEstimate,
 } from '@/lib/types';
 
 /**
@@ -70,6 +71,10 @@ interface SyncStoreState {
   getRecoveryKey: () => Promise<string>;
 
   setDeviceName: (name: string) => Promise<void>;
+  /** 打开 / 关闭某一档（`"conversation"` / `"secret"`）。成功后刷新状态。 */
+  setTier: (tier: string, enabled: boolean) => Promise<void>;
+  /** 某一档的规模估算（只有数量与名称）。 */
+  tierEstimate: (tier: string) => Promise<TierEstimate>;
   undo: (entryId: string) => Promise<void>;
   confirmHeld: (accept: boolean) => Promise<void>;
   disable: (wipeRemote: boolean) => Promise<void>;
@@ -174,6 +179,15 @@ export const useSyncStore = create<SyncStoreState>((set, get) => ({
     await tauri.syncSetDeviceName(name.trim());
     await Promise.all([get().refreshStatus(), get().loadDevices()]);
   },
+
+  setTier: async (tier, enabled) => {
+    await tauri.syncSetTier(tier, enabled);
+    // 打开某一档会先导出本机数据再追进度，状态（tiers / streams）以后端为准。
+    await get().refreshStatus();
+    void get().loadDevices();
+  },
+
+  tierEstimate: (tier) => tauri.syncTierEstimate(tier),
 
   undo: async (entryId) => {
     await tauri.syncUndo(entryId);

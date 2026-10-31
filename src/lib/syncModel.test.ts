@@ -34,6 +34,8 @@ function status(partial: Partial<SyncStatus>): SyncStatus {
     deviceName: '我的电脑',
     storage: null,
     held: null,
+    tiers: { config: true, conversation: false, secret: false },
+    streams: [],
     ...partial,
   };
 }

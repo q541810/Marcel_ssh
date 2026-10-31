@@ -1771,6 +1771,33 @@ export type SyncStorageConfig =
  */
 export type SyncState = 'off' | 'idle' | 'syncing' | 'error' | 'needsUpgrade' | 'needsConfirm';
 
+/** 三档开关：每台设备自己的。配置档恒为开（一期行为）。 */
+export interface TierSwitches {
+  config: boolean;
+  conversation: boolean;
+  secret: boolean;
+}
+
+/** 一条同步流的进度（首次开启时「正在同步对话 N / M」）。 */
+export interface StreamProgress {
+  done: number;
+  total: number;
+  label: string;
+}
+
+/** 一条同步流的状态（`sync_status` 的 `streams`）。 */
+export interface StreamStatus {
+  /** `"config"` / `"conv"` / `"sec"`。 */
+  key: string;
+  /** 它属于哪一档：`"config"` / `"conversation"` / `"secret"`。 */
+  tier: string;
+  /** 待上传的段数（配置流按 op 数）。 */
+  pending: number;
+  /** 这一轮这条流失败的原因（成功时清空）。 */
+  lastError: string | null;
+  progress: StreamProgress | null;
+}
+
 export interface SyncStatus {
   enabled: boolean;
   state: SyncState;
@@ -1782,6 +1809,10 @@ export interface SyncStatus {
   storage: SyncStorageConfig | null;
   /** 等待确认的大量删除：每个同步源删了多少条。 */
   held: { source: string; count: number }[] | null;
+  /** 本机三档开关。 */
+  tiers: TierSwitches;
+  /** 每条流的状态（配置 / 对话 / 机密）。 */
+  streams: StreamStatus[];
 }
 
 export interface SyncDevice {
@@ -1791,6 +1822,26 @@ export interface SyncDevice {
   appVersion: string;
   lastSeenAt: string;
   isSelf: boolean;
+  /** 对方开了哪几档（从它的文件头读；老版本写的文件头 = 只有配置档）。 */
+  tiers: TierSwitches;
+}
+
+/** 一类机密的规模（只有名称与数量，绝无值）。 */
+export interface SecretGroupEstimate {
+  label: string;
+  count: number;
+  names: string[];
+}
+
+/** 某一档的规模估算（`sync_tier_estimate`）。 */
+export interface TierEstimate {
+  tier: string;
+  /** 对话与记忆：会话数、图片数、大致字节数。 */
+  conversations: number;
+  images: number;
+  totalBytes: number;
+  /** 机密：按类别汇总。 */
+  secretGroups: SecretGroupEstimate[];
 }
 
 export interface SyncHistoryEntry {
@@ -1819,7 +1870,14 @@ export interface SyncCreateResult {
   syncCode: string;
 }
 
-/** `sync-data-applied` 事件：别的设备的改动落到了本机的哪个同步源。 */
+/**
+ * `sync-data-applied` 事件：别的设备的改动落到了本机的哪个同步源。
+ *
+ * `source` 一期取值 `settings` / `connections` / `quickCommands` / `skills` / `mcpServers` /
+ * `knownHosts`，二期新增 `conversations` / `memory`，三期新增 `secrets`。
+ */
 export interface SyncDataAppliedPayload {
   source: string;
+  /** 对话流落地后变化了的会话 id（其它 source 为空）。 */
+  conversationIds?: string[];
 }
