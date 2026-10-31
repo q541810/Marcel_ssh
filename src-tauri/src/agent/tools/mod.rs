@@ -192,6 +192,11 @@ pub struct ToolContext {
     /// `None` = 没注入（测试 / 未来的其它调用方），工具应回落到实时设置并在日志 /
     /// 注释里说清楚这一点。
     pub agent_mode_settings: Option<Arc<crate::config::settings::AgentModeSettings>>,
+    /// **发出本次工具调用的那条 assistant 消息的正文**（同一轮 LLM 回复里、工具
+    /// 调用之前写的文字；agent_loop 组装 ctx 时从刚入历史的 assistant 消息取）。
+    /// `ask_user` 用它校验问题的 `anchor` 是否真是正文里的小标题。该轮没有正文 /
+    /// 未注入（测试）为 `None`。
+    pub assistant_text: Option<String>,
 }
 
 impl ToolContext {
@@ -220,7 +225,14 @@ impl ToolContext {
             owner_conversation_id: None,
             local_side: false,
             agent_mode_settings: None,
+            assistant_text: None,
         }
+    }
+
+    /// 注入发出本次调用的 assistant 消息正文（见字段说明）。
+    pub fn with_assistant_text(mut self, text: Option<String>) -> Self {
+        self.assistant_text = text;
+        self
     }
 
     /// 声明这个上下文的目标是**用户自己这台电脑**（本机子 agent 组装 ctx 时调用）。

@@ -314,7 +314,16 @@ async fn execute_single_tool(
         .with_event_name(event_name)
         .with_config_dir(config_dir.to_path_buf())
         .with_local_handlers(registry.local_handlers_arc())
-        .with_agent_mode_settings(agent_settings.clone());
+        .with_agent_mode_settings(agent_settings.clone())
+        // 发出这批调用的 assistant 消息就是历史末尾那条（`persist_assistant_tool_calls`
+        // 刚推入，工具结果要等整批跑完才追加），`ask_user` 凭它校验 anchor。
+        .with_assistant_text(
+            messages
+                .last()
+                .filter(|m| m.role == LlmRole::Assistant)
+                .map(|m| m.content.clone())
+                .filter(|c| !c.trim().is_empty()),
+        );
         // 命令执行管理器按**任务的目标机器**分流：本机子 agent 挂本机管理器并置
         // `local_side`（`local_bash` 的最后一道闸门，见 `ToolContext::with_local_side`），
         // 其余任务一字不变地挂远端管理器。
