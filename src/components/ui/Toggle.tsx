@@ -45,7 +45,7 @@ export default function Toggle({ checked, onChange, disabled = false, label, siz
           transition-colors duration-300
           focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900
           disabled:opacity-50 disabled:cursor-not-allowed
-          active:scale-95
+          active:scale-[0.97]
           ${checked ? 'bg-indigo-600' : 'bg-zinc-700'}
         `}
         style={{ transitionTimingFunction: 'var(--spring-bounce)' }}

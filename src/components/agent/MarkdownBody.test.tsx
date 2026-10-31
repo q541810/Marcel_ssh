@@ -29,13 +29,32 @@ afterEach(async () => {
   host.remove();
   vi.unstubAllGlobals();
 });
-async function render(content: string) {
-  await act(async () => root.render(<MarkdownBody content={content} />));
+async function render(content: string, live = false) {
+  await act(async () => root.render(<MarkdownBody content={content} live={live} />));
 }
 async function deliver(text: string) {
   const calls = vi.mocked(markdownRenderManager.request).mock.calls;
   await act(async () => calls[calls.length - 1][2](tree(text), text));
 }
+it('does not wrap streamed text when the message is not live', async () => {
+  await render('first', false);
+  await deliver('first');
+  await render('first next', false);
+  await deliver('first next');
+  expect(host.querySelectorAll('.ink-a, .ink-b').length).toBe(0);
+});
+it('shows streamed text as soon as it arrives, no display pacing', async () => {
+  await render('a', true);
+  await deliver('a');
+  await render('ab', true);
+  // 显示限速已经删掉：内容一到就上屏，不用等节拍、也不用等攒够字数。
+  expect(host.textContent).toBe('ab');
+  const requested = vi.mocked(markdownRenderManager.request).mock.calls.map((c) => c[1]);
+  expect(requested).toContain('ab');
+  await deliver('ab');
+  const spans = [...host.querySelectorAll('.ink-a, .ink-b')];
+  expect(spans.map((s) => s.textContent)).toEqual(['b']);
+});
 it('shows text immediately, then keeps parsed content while the next prefix is processed', async () => {
   await render('first');
   expect(host.textContent).toBe('first');
@@ -43,7 +62,8 @@ it('shows text immediately, then keeps parsed content while the next prefix is p
   await deliver('first');
   expect(host.querySelector('p')?.textContent).toBe('first');
   await render('first next');
-  expect(host.querySelector('p')?.textContent).toBe('first');
+  expect(host.querySelector('p')?.textContent).toBe('first next');
+  expect(host.querySelector('strong')).toBeNull();
   await deliver('first next');
   expect(host.textContent).toBe('first next');
 });

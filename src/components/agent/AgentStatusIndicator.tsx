@@ -51,7 +51,7 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
       {status === 'running' && (
         <span className={`relative inline-flex items-center justify-center ${sizeClasses.spinner}`}>
           {/* Subtle glow background */}
-          <span className="absolute inset-0 rounded-full bg-indigo-500/20 blur-[2px] motion-reduce:hidden" />
+          <span className="absolute -inset-1 rounded-full bg-indigo-500/15 motion-reduce:hidden" />
           {/* OpenCode-styled dual-arc gradient spinner */}
           <svg
             className={`${sizeClasses.spinner} animate-spin text-indigo-400`}
@@ -91,7 +91,7 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
           {/* Pulsing outer aura ring */}
           <span className="absolute inset-0 rounded-full bg-amber-500/40 animate-ping opacity-75 motion-reduce:hidden" />
           {/* Soft amber glow */}
-          <span className="absolute inset-0 rounded-full bg-amber-500/30 blur-[1.5px]" />
+          <span className="absolute -inset-1 rounded-full bg-amber-500/20" />
           {/* Core amber dot */}
           <span className={`relative rounded-full bg-amber-400 shadow-sm shadow-amber-500/50 ${sizeClasses.dot}`} />
         </span>
@@ -100,7 +100,7 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
       {status === 'unread_completed' && (
         <span className={`relative inline-flex items-center justify-center ${sizeClasses.ring}`}>
           {/* Soft emerald glow */}
-          <span className="absolute inset-0 rounded-full bg-emerald-500/30 blur-[1px]" />
+          <span className="absolute -inset-1 rounded-full bg-emerald-500/20" />
           {/* Core emerald dot */}
           <span className={`relative rounded-full bg-emerald-400 shadow-sm shadow-emerald-500/50 ${sizeClasses.dot}`} />
         </span>

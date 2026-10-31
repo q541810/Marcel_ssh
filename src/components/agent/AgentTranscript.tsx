@@ -8,6 +8,7 @@ import AgentMessageList, { type AgentMessageListHandle } from './AgentMessageLis
 import AgentRunStatus, { useConversationLoopRunning } from './AgentRunStatus';
 import { MarkdownVisibility } from './markdownVisibility';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
+import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
@@ -46,7 +47,9 @@ export default memo(function AgentTranscript({
   const lastScroll = useRef({ top: 0, height: 0 });
   const [nearBottom, setNearBottom] = useState(true);
   const previousConversation = useRef(conversationId);
-  const lastMessage = messages[messages.length - 1];
+  // 只认「消息换了」这一个信号。若依赖整个 lastMessage 对象，流式每个 delta 都会重跑一次
+  // 贴底，和 ResizeObserver 抢同一个 scrollTop；内容增长交给 ResizeObserver 独占。
+  const lastMessageId = messages.length ? messages[messages.length - 1].id : null;
   const onManualLayout = useCallback(() => {
     // A disclosure is a reading action. Its header owns the viewport until the next scroll.
     nearBottomRef.current = false;
@@ -74,11 +77,11 @@ export default memo(function AgentTranscript({
       previousConversation.current = conversationId;
       nearBottomRef.current = true;
     }
-    if (!canInteract || !lastMessage) return;
+    if (!canInteract || !lastMessageId) return;
     if (!shouldAutoScroll(nearBottomRef.current, userJustSentRef.current)) return;
     scrollToBottom();
     userJustSentRef.current = false;
-  }, [visible, conversationId, canInteract, lastMessage, scrollToBottom, userJustSentRef]);
+  }, [visible, conversationId, canInteract, lastMessageId, scrollToBottom, userJustSentRef]);
 
   // Async Markdown, images, IME and composer growth all feed the same follow owner.
   useEffect(() => {
@@ -87,6 +90,7 @@ export default memo(function AgentTranscript({
     // 中间帧；若再套一层 rAF，每次内容变高/变矮（折叠动画、流式、拖宽）都会先画出一帧
     // 偏离底部的画面，下一帧再拉回，表现为上下抖动。
     const observer = new ResizeObserver(() => {
+      if (userScrolling.current && !nearBottomRef.current) return;
       if (nearBottomRef.current) scrollToBottom();
       else if (containerRef.current) {
         const node = containerRef.current;
@@ -96,7 +100,9 @@ export default memo(function AgentTranscript({
     if (containerRef.current) observer.observe(containerRef.current);
     if (contentRef.current) observer.observe(contentRef.current);
     return () => observer.disconnect();
-  }, [visible, scrollToBottom]);
+  }, [visible, scrollToBottom, userScrolling]);
+
+  const scrollFab = useAnimatedPresence(shouldShowScrollToBottomFab(nearBottom, messages.length > 0));
 
   return (
     <div className="relative flex-1 min-h-0 min-w-0">
@@ -140,13 +146,14 @@ export default memo(function AgentTranscript({
           {canInteract && loopRunning && conversationId && <AgentRunStatus conversationId={conversationId} />}
         </div>
       </div>
-      {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (mobile ? (
+      {scrollFab.mounted && (mobile ? (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
           title="回到底部"
           aria-label="回到底部"
-          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-edge-strong bg-zinc-800/95 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg backdrop-blur-sm active:bg-state-mid"
+          onAnimationEnd={scrollFab.onAnimationEnd}
+          className={`absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full border border-edge-strong bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-100 shadow-lg active:bg-state-mid ${scrollFab.phase === 'exit' ? 'scroll-fab-exit' : 'scroll-fab-enter'}`}
         >
           回到底部
         </button>
@@ -160,7 +167,8 @@ export default memo(function AgentTranscript({
               onClick={() => scrollToBottom('smooth')}
               title="回到底部"
               aria-label="回到底部"
-              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-state-mid"
+              onAnimationEnd={scrollFab.onAnimationEnd}
+              className={`pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-zinc-800 text-zinc-100 shadow-lg hover:bg-state-mid ${scrollFab.phase === 'exit' ? 'scroll-fab-exit' : 'scroll-fab-enter'}`}
             >
               <ArrowDown className="h-4 w-4" />
             </button>

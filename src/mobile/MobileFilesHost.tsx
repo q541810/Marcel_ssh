@@ -1590,8 +1590,8 @@ function TransferBar({
       {total > 0 && (
         <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-700">
           <div
-            className="h-full rounded-full bg-indigo-500 transition-all duration-200"
-            style={{ width: `${pct}%` }}
+            className="h-full origin-left rounded-full bg-indigo-500 transition-transform duration-200 ease-linear motion-reduce:transition-none"
+            style={{ width: '100%', transform: `scaleX(${pct / 100})` }}
           />
         </div>
       )}

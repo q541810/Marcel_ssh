@@ -20,9 +20,9 @@ const props = {
 async function render(visible = true, conversationId = 'a') {
   await act(async () => root.render(<AgentTranscript {...props} visible={visible} conversationId={conversationId} />));
 }
-function messages(id: string, text: string) {
+function messages(id: string, text: string, messageId = 'message') {
   useConversationStore.getState().updateConversationMessages(id, () => [
-    { id: 'message', role: 'assistant', content: text, timestamp: '' },
+    { id: messageId, role: 'assistant', content: text, timestamp: '' },
   ]);
 }
 beforeEach(() => {
@@ -74,6 +74,9 @@ describe('transcript follow ownership', () => {
     await render();
     const node = geometry();
     await act(async () => messages('a', 'grown'));
+    // 流式增长只认 ResizeObserver：lastMessage 依赖只看 id，内容变长不会重跑贴底。
+    expect(node.scrollTop).toBe(0);
+    await resizeContent();
     expect(node.scrollTop).toBe(1000);
     await userScroll(node, 20);
     await act(async () => messages('a', 'more'));
@@ -105,7 +108,8 @@ describe('transcript follow ownership', () => {
     const node = geometry();
     await userScroll(node, 20);
     justSent.current = true;
-    await act(async () => messages('a', 'sent'));
+    // 用户刚发出消息 = 多了一条新消息（id 也变了），这条路径必须立刻贴底。
+    await act(async () => messages('a', 'sent', 'message-2'));
     expect(node.scrollTop).toBe(1000);
     expect(justSent.current).toBe(false);
     await userScroll(node, 20);

@@ -1,3 +1,8 @@
 # 批处理脚本必须保持 CRLF：cmd.exe 遇到 LF 行尾会把 REM 注释和路径当成命令执行，
 # 不管 core.autocrlf 怎么设，checkout 出来都是 CRLF。
 *.cmd text eol=crlf
+
+# 作用域快照是测试逐字节生成的产物（render() 一律输出 LF）。core.autocrlf=true 的机器
+# （本机、GitHub 的 windows 运行器）会把检出改成 CRLF，守卫测试就会把「内容完全一致」
+# 误报成「有字段没声明作用域」，还因为差异集合为空而看不出原因。这里钉死 LF。
+src-tauri/src/sync/scope_snapshot.txt text eol=lf

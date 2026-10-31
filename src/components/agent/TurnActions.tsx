@@ -161,7 +161,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
   return (
     <div
       data-testid="turn-actions"
-      className={`mt-1 flex w-max max-w-full items-center gap-2 text-[11px] text-zinc-500 transition-all duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${visibility}`}
+      className={`mt-1 flex w-max max-w-full items-center gap-2 text-[11px] text-zinc-500 transition-[background-color,border-color,color,opacity,transform] duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${visibility}`}
     >
       <button
         type="button"
@@ -173,7 +173,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
       >
         <span className="relative block h-3.5 w-3.5">
           <svg
-            className={`absolute inset-0 h-3.5 w-3.5 transition-all duration-120 ${
+            className={`absolute inset-0 h-3.5 w-3.5 transition-[opacity,transform] duration-120 ${
               status === 'idle' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
             }`}
             fill="none"
@@ -188,7 +188,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
             />
           </svg>
           <svg
-            className={`absolute inset-0 h-3.5 w-3.5 text-green-400 transition-all duration-120 ${
+            className={`absolute inset-0 h-3.5 w-3.5 text-green-400 transition-[opacity,transform] duration-120 ${
               status === 'copied' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
             }`}
             fill="none"
@@ -198,7 +198,7 @@ function TurnActions({ footer, onCopyText, onFork, mobile = false }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
           <svg
-            className={`absolute inset-0 h-3.5 w-3.5 text-red-400 transition-all duration-120 ${
+            className={`absolute inset-0 h-3.5 w-3.5 text-red-400 transition-[opacity,transform] duration-120 ${
               status === 'failed' ? 'scale-100 opacity-100' : 'scale-50 opacity-0'
             }`}
             fill="none"

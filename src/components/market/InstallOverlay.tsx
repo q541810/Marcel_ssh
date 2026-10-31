@@ -122,8 +122,8 @@ export default function InstallOverlay({
             <div className="w-72 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
               {percent !== null ? (
                 <div
-                  className="h-full bg-indigo-500 transition-all duration-200"
-                  style={{ width: `${percent}%` }}
+                  className="h-full origin-left bg-indigo-500 transition-transform duration-200 ease-linear motion-reduce:transition-none"
+                  style={{ width: '100%', transform: `scaleX(${percent / 100})` }}
                 />
               ) : (
                 <div className="h-full w-1/3 bg-indigo-500 rounded-full indeterminate-bar" />

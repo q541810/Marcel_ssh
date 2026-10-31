@@ -380,7 +380,7 @@ export function FontFamilyPicker({
           aria-haspopup="listbox"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className={`flex w-full items-center gap-2 rounded-xl border bg-zinc-800 px-3.5 py-2 text-left transition-[border-color,transform] duration-100 active:scale-[0.99] focus:outline-none ${
+          className={`flex w-full items-center gap-2 rounded-xl border bg-zinc-800 px-3.5 py-2 text-left transition-[border-color,scale] duration-100 active:scale-[0.99] focus:outline-none ${
             open ? "border-indigo-500" : "border-edge hover:border-edge-strong focus-visible:border-indigo-500"
           }`}
         >

@@ -362,6 +362,14 @@ fn diff_summary(expected: &str, actual: &str) -> String {
     out
 }
 
+/// 快照是纯文本，但 git 在 Windows 上可能把检出内容写成 CRLF（本机 `core.autocrlf=true`，
+/// GitHub 的 windows 运行器默认也是 true）。`render()` 生成的一律是 LF，直接按字节比，
+/// 换行风格就会把「内容完全一致」误报成「有字段没声明作用域」，还因为差异集合为空而看不出原因。
+/// 所以两边都先归一化换行，再比较。
+fn normalize_eol(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
 // ---------------------------------------------------------------------------
 // 测试
 // ---------------------------------------------------------------------------
@@ -376,15 +384,14 @@ fn every_config_field_declares_its_sync_scope() {
     }
     // 快照是 LF 文本；Windows 上 core.autocrlf 签出时可能变成 CRLF，统一成 LF 再比，
     // 否则只有行尾不同也会整份判红（diff_summary 按行去重看不出差异）。
-    let actual = std::fs::read_to_string(&path)
-        .map(|s| s.replace("\r\n", "\n"))
-        .unwrap_or_else(|e| {
-            panic!(
-                "读不到作用域快照 {}: {e}\n\
+    let actual = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "读不到作用域快照 {}: {e}\n\
              第一次生成请运行：UPDATE_SYNC_SNAPSHOT=1 cargo test --lib sync::scope_guard",
-                path.display()
-            )
-        });
+            path.display()
+        )
+    });
+    let (expected, actual) = (normalize_eol(&expected), normalize_eol(&actual));
     assert!(
         expected == actual,
         "配置字段的作用域和快照对不上：\n{}\n\

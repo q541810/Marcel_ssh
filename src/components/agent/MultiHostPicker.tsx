@@ -165,7 +165,7 @@ export default function MultiHostPicker() {
         disabled={disabled}
         className={[
           'group flex h-7 max-w-[11rem] items-center gap-1.5 rounded-lg border px-2 text-xs font-medium',
-          'transition-all duration-150 active:scale-[0.97]',
+          'transition-[background-color,border-color,color,opacity,scale] duration-150 active:scale-[0.97]',
           disabled
             ? 'cursor-not-allowed border-edge-subtle text-zinc-600'
             : open
@@ -226,6 +226,7 @@ export default function MultiHostPicker() {
               left: pos.left,
               width: pos.width,
               maxHeight: pos.maxHeight,
+              ['--transform-origin' as string]: pos.top != null ? 'top left' : 'bottom left',
               ...(pos.top !== null && pos.top !== undefined
                 ? { top: pos.top }
                 : { bottom: pos.bottom ?? 0 }),

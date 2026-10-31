@@ -77,7 +77,7 @@ export default function MobileAuxKeyBar({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onKey(key.id)}
             aria-label={isCopy ? (copied ? '已复制' : '复制选中内容') : undefined}
-            className={`rounded-md border py-2 text-center text-xs font-medium transition-colors duration-100 active:scale-95 disabled:opacity-40 disabled:active:scale-100 ${
+            className={`rounded-md border py-2 text-center text-xs font-medium transition-colors duration-100 disabled:opacity-40 ${
               key.wide ? 'col-span-2' : 'col-span-1'
             } ${colorClass}`}
           >

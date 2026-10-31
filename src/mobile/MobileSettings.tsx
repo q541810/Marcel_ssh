@@ -106,6 +106,12 @@ export default function MobileSettings({
     wasRulesPage.current = showRulesPage;
   }, [showRulesPage]);
 
+  // 进入分类时回到顶部（滚动容器不再按 activeCategory 重新挂载，必须显式重置）。
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    mainScrollTop.current = 0;
+  }, [activeCategory]);
+
   // Android back gesture pops the sub-category page (mirrors the header's
   // "返回设置" button, including the preview cleanup).
   useEffect(() => {
@@ -219,12 +225,11 @@ export default function MobileSettings({
         )}
 
         <div
-          key={activeCategory ?? 'root'}
           ref={scrollRef}
           onScroll={(e) => {
             if (!showRulesPage) mainScrollTop.current = e.currentTarget.scrollTop;
           }}
-          className="mobile-panel-enter min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
           {!activeCategory && (
             <nav className="flex flex-col gap-1 p-3">

@@ -160,8 +160,8 @@ export default function PlanList() {
       <div className="pb-1.5">
         <div className="h-0.5 bg-zinc-800/60 rounded-full overflow-hidden">
           <div
-            className="h-full rounded-full bg-zinc-500 transition-[width] duration-300 ease-out motion-reduce:transition-none"
-            style={{ width: `${progressPercent}%` }}
+            className="h-full origin-left rounded-full bg-zinc-500 transition-transform duration-300 ease-linear motion-reduce:transition-none"
+            style={{ width: '100%', transform: `scaleX(${progressPercent / 100})` }}
           />
         </div>
       </div>

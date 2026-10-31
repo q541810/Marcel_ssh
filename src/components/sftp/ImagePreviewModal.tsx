@@ -509,8 +509,8 @@ export default function ImagePreviewModal({
                 <div className="w-64 flex flex-col gap-1">
                   <div className="h-1.5 rounded-full bg-zinc-700 overflow-hidden">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200"
-                      style={{ width: `${progressPct}%` }}
+                      className="h-full origin-left bg-indigo-500 transition-transform duration-200 ease-linear motion-reduce:transition-none"
+                      style={{ width: '100%', transform: `scaleX(${progressPct / 100})` }}
                     />
                   </div>
                   <div className="flex justify-between text-xs text-zinc-500">

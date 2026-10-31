@@ -519,8 +519,8 @@ export default function MobileImageViewer({
                 <div className="flex w-56 flex-col gap-1">
                   <div className="h-1.5 overflow-hidden rounded-full bg-white/20">
                     <div
-                      className="h-full bg-indigo-500 transition-all duration-200 motion-reduce:transition-none"
-                      style={{ width: `${progressPct}%` }}
+                      className="h-full origin-left bg-indigo-500 transition-transform duration-200 ease-linear motion-reduce:transition-none"
+                      style={{ width: '100%', transform: `scaleX(${progressPct / 100})` }}
                     />
                   </div>
                   <div className="flex justify-between text-xs text-white/70">

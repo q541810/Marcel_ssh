@@ -19,7 +19,7 @@ interface SegmentedControlProps<T extends string> {
 /**
  * 分段控件（互斥单选，2–4 项）。
  *
- * 与 Toggle 同一套观感：按下即反馈（`active:scale-95`）、`--spring-bounce`
+ * 与 Toggle 同一套观感：按下即反馈（`active:scale-[0.97]`）、`--spring-bounce`
  * 时间函数、indigo 选中态、`focus:ring` 键盘焦点环。
  *
  * 语义用 radiogroup/radio：读屏会播报「已选中/未选中」而不是「按钮」，
@@ -73,7 +73,7 @@ export default function SegmentedControl<T extends string>({
             }}
             className={`rounded-md px-3 py-1 text-xs font-medium whitespace-nowrap transition-colors duration-100
               focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 focus:ring-offset-zinc-900
-              active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
+              active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed
               ${
                 active
                   ? 'bg-indigo-600 text-white'

@@ -364,7 +364,7 @@ export default function MobileConnectionList({
                 >
                   <svg
                     className={`h-4 w-4 flex-shrink-0 text-zinc-500 transition-transform duration-[280ms] ${isCollapsed ? '' : 'rotate-90'}`}
-                    style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
+                    style={{ transitionTimingFunction: 'var(--ease-drawer)' }}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -406,18 +406,18 @@ export default function MobileConnectionList({
               </div>
 
               <div
-                className={`grid transition-all duration-[280ms] ${
+                className={`grid transition-[grid-template-rows] duration-[280ms] motion-reduce:transition-none ${
                   isCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
                 }`}
-                style={{ transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)' }}
+                style={{ transitionTimingFunction: 'var(--ease-drawer)' }}
               >
                 <div className="overflow-hidden">
                   <ul
-                    className={`flex flex-col gap-2 transition-all duration-[220ms] ${
+                    className={`flex flex-col gap-2 transition-[transform,opacity] duration-[220ms] motion-reduce:transition-none ${
                       isCollapsed ? '-translate-y-1 opacity-0' : 'translate-y-0 opacity-100'
                     }`}
                     style={{
-                      transitionTimingFunction: 'cubic-bezier(0.32, 0.72, 0, 1)',
+                      transitionTimingFunction: 'var(--ease-drawer)',
                       transitionDelay: isCollapsed ? '0ms' : '50ms'
                     }}
                   >

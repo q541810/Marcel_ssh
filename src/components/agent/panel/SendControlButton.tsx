@@ -39,7 +39,7 @@ export function SendControlButton({
       }
       disabled={disabled}
       className={`
-              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-all duration-150 active:scale-95
+              flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg transition-[background-color,scale] duration-150 active:scale-95
               ${
                 isRunning
                   ? "bg-red-600 hover:bg-red-500 text-white"
@@ -101,7 +101,7 @@ export function SendControlButton({
       <button
         type="button"
         onClick={onSend}
-        className="flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-all duration-150 active:scale-95"
+        className="flex-shrink-0 w-8 h-8 mr-0.5 flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-[background-color,scale] duration-150 active:scale-95"
         title="加入队列（当前任务完成后自动发送）"
         aria-label="加入队列"
       >

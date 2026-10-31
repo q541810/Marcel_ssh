@@ -151,6 +151,7 @@ export function ModelPicker({
               left: pos.left,
               width: pos.width,
               maxHeight: pos.maxHeight,
+              ['--transform-origin' as string]: 'bottom left',
             }}
             className={`fixed z-[100] rounded-xl border border-edge bg-zinc-800 shadow-2xl py-1 overflow-y-auto ${
               presence.phase === "exit"

@@ -123,8 +123,8 @@ function TransferRow({
       {showProgress && (
         <div className="w-full h-1 rounded-full bg-zinc-700 overflow-hidden">
           <div
-            className={`h-full rounded-full transition-all duration-200 ${item.kind === 'download' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
-            style={{ width: `${pct}%` }}
+            className={`h-full origin-left rounded-full transition-transform duration-200 ease-linear motion-reduce:transition-none ${item.kind === 'download' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+            style={{ width: '100%', transform: `scaleX(${pct / 100})` }}
           />
         </div>
       )}

@@ -95,7 +95,7 @@ export function alignedWindowStart(messages: readonly AgentMessage[], count: num
 
 function MessageBody({ message, grouped, ...props }: {
   message: AgentMessage; grouped?: boolean;
-} & Pick<Props, 'onRollback' | 'onCopy' | 'rollbackDisabled' | 'alwaysShowActions' | 'searchKeyword'>) {
+} & Pick<Props, 'onRollback' | 'onCopy' | 'rollbackDisabled' | 'alwaysShowActions' | 'searchKeyword'> & { live?: boolean }) {
   const [expanded, setExpanded] = useMessageViewState('tool-width-expanded', false);
   const onExpand = useCallback((_id: string, open: boolean) => setExpanded(open), [setExpanded]);
   const ToolView = message.toolResult && getToolView(message.toolResult.toolName);
@@ -156,6 +156,17 @@ function MessageList({
   const tailActive = useTaskStore((s) => Object.values(s.tasks).some(
     (t) => t.conversationId === conversationId && !!t.sessionId && isTaskBusy(t.status),
   ));
+  // 正在被写的那条消息：任务在跑时，最后一条 assistant 消息就是流式目标。
+  // 只给它开晕染；其余消息（含重挂载的历史）永远是静止的。
+  const liveMessageId = useMemo(() => {
+    if (!tailActive) return null;
+    for (let i = sliced.length - 1; i >= 0; i -= 1) {
+      const m = sliced[i];
+      if (m.role === 'assistant') return m.id;
+      if (m.role === 'user') return null;
+    }
+    return null;
+  }, [sliced, tailActive]);
   // 已结束的任务在「模型说的最后一段话」下面挂收尾条（复制 + 用时）。只依赖消息与
   // 运行态，不依赖折叠状态：折叠/展开过程不改变哪条消息是最后一段话。
   const canCopyText = !!onCopyText;
@@ -518,7 +529,8 @@ function MessageList({
         className={`relative min-w-0 rounded-lg ${footer ? 'group/turn' : ''} ${matched.has(message.id) ? 'border-l-2 border-indigo-400 pl-2' : ''}
           ${flash === message.id ? 'bg-indigo-500/20 ring-1 ring-indigo-400/30' : ''}`}>
         <MemoMessageBody message={message} grouped={row.grouped} rollbackDisabled={rollbackDisabled}
-          onRollback={onRollback} onCopy={onCopy} searchKeyword={searchKeyword} alwaysShowActions={alwaysShowActions} />
+          onRollback={onRollback} onCopy={onCopy} searchKeyword={searchKeyword} alwaysShowActions={alwaysShowActions}
+          live={liveMessageId === message.id} />
         {footer && onCopyText && <TurnActions footer={footer} onCopyText={onCopyText} onFork={onFork} mobile={alwaysShowActions} />}
         {notesView}
       </div>

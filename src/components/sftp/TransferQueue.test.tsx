@@ -87,6 +87,8 @@ describe('TransferCenterView', () => {
     const html = render([
       item({ status: 'active', written: 30, total: 100 }),
     ]);
-    expect(html).toContain('width:30%');
+    // 进度条改成 scaleX 之后（避免每帧改 width 触发重排），30% 应该体现在 transform 上。
+    expect(html).toContain('scaleX(0.3)');
+    expect(html).not.toContain('width:30%');
   });
 });

@@ -26,6 +26,8 @@ interface Props {
   searchKeyword?: string;
   /** 触屏端无 hover：时间/撤回/复制操作行常显 */
   alwaysShowActions?: boolean;
+  /** 这条消息正在被流式写入（列表只给尾部那条传）：开流式晕染。 */
+  live?: boolean;
 }
 
 function highlightPlainText(text: string, keyword?: string): ReactNode {
@@ -191,6 +193,7 @@ function AgentMessage({
   onCopy,
   searchKeyword,
   alwaysShowActions = false,
+  live = false,
 }: Props) {
   const hideThinkingDisplay = useSettingsStore(
     (s) => s.settings.hideThinkingDisplay,
@@ -282,12 +285,12 @@ function AgentMessage({
             </div>
           )}
           {displayContent ? (
-            <div className="max-w-full rounded-2xl rounded-tr-sm bg-zinc-700 px-4 py-2 text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap [overflow-wrap:anywhere]">
+            <div className="marcel-user-bubble max-w-full rounded-2xl rounded-tr-sm px-4 py-2 text-[15px] leading-relaxed text-zinc-100 whitespace-pre-wrap [overflow-wrap:anywhere]">
               {highlightPlainText(displayContent, searchKeyword)}
             </div>
           ) : null}
           <div
-            className={`mt-1 flex w-max max-w-full items-center justify-end gap-2 text-[11px] text-zinc-500 transition-all duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${
+            className={`mt-1 flex w-max max-w-full items-center justify-end gap-2 text-xs tabular-nums text-zinc-500 transition-[opacity,transform] duration-150 focus-within:opacity-100 focus-within:translate-y-0 ${
               alwaysShowActions
                 ? 'opacity-100 translate-y-0'
                 : 'opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0'
@@ -326,7 +329,7 @@ function AgentMessage({
               >
                 <span className="relative block w-3.5 h-3.5">
                   <svg
-                    className={`w-3.5 h-3.5 absolute inset-0 transition-all duration-120 ${
+                    className={`w-3.5 h-3.5 absolute inset-0 transition-[opacity,transform] duration-120 ${
                       copied ? 'opacity-0 scale-50' : 'opacity-100 scale-100'
                     }`}
                     fill="none"
@@ -341,7 +344,7 @@ function AgentMessage({
                     />
                   </svg>
                   <svg
-                    className={`w-3.5 h-3.5 text-green-400 absolute inset-0 transition-all duration-120 ${
+                    className={`w-3.5 h-3.5 text-green-400 absolute inset-0 transition-[opacity,transform] duration-120 ${
                       copied ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
                     }`}
                     fill="none"
@@ -468,7 +471,7 @@ function AgentMessage({
           )
         ) : (
           <div className={MARKDOWN_CLASS}>
-            <MarkdownBody key={message.id} content={message.content} />
+            <MarkdownBody key={message.id} content={message.content} live={live} />
           </div>
         )}
       </div>

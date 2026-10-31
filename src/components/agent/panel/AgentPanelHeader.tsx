@@ -99,7 +99,7 @@ export function AgentPanelHeader({
             onClick={() => {
               onOpenTaskCenter(taskCenter.initialTab);
             }}
-            className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-all animate-fadeIn ${
+            className={`flex items-center gap-1.5 px-2 py-0.5 active:scale-95 border rounded-full text-[11px] font-medium transition-[background-color,border-color,color,scale] animate-fadeIn ${
               taskCenter.runningTasks.length === 0 && taskCenter.runningJobs.length === 0
                 ? 'bg-amber-500/10 hover:bg-amber-500/20 border-amber-500/30 text-amber-300'
                 : taskCenter.runningJobs.length > 0
