@@ -114,9 +114,11 @@ impl ConversationDb {
         const MAX_SNAPSHOTS_PER_CONV: i64 = 200;
         let created_at = Utc::now().to_rfc3339();
         let conn = self.conn.lock().unwrap();
+        // `uid` 必须**在插入时**生成：跨设备同步拿它当主键，留 NULL 的话 SQLite 的
+        // UNIQUE 索引允许多条 NULL，这些行永远捕获不到（触发器记的 row_id 是 NULL）。
         conn.execute(
-            "INSERT INTO plan_snapshots (conversation_id, task_id, plan_json, created_at) \
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO plan_snapshots (uid, conversation_id, task_id, plan_json, created_at) \
+             VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4)",
             (conversation_id, task_id, plan_json, &created_at),
         )?;
         let count: i64 = conn.query_row(

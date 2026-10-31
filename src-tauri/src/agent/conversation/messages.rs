@@ -32,6 +32,9 @@ pub(super) const MESSAGES_COLUMNS: &[&str] = &[
     "image_paths_json",
     "turn_state",
     "user_input_json",
+    // 跨设备同步来的图片引用（blob 名 / 来源设备，T3 写入）。必须留在末尾：新列只能
+    // 往后加，插在中间会让 `map_stored_message` 的位置下标整体错位。
+    "synced_images_json",
 ];
 
 /// `SELECT <全部列> FROM messages` 用的列清单（拼一次复用，别每处各写一遍）。
@@ -513,6 +516,8 @@ impl ConversationDb {
                 // `begin_turn_state` / `set_message_turn_state` 事后 UPDATE。
                 None::<&str>,
                 user_input_json,
+                // 同步来的图片引用由 T3 落库；本机新建的消息没有。
+                None::<&str>,
             ),
         )?;
         Self::touch_at(&tx, conversation_id, &now_str)?;
@@ -696,6 +701,10 @@ impl ConversationDb {
                     m.user_input_json
                         .as_ref()
                         .or_else(|| existing_inputs.get(&m.id)),
+                    // synced_images_json：T3 写这一列。整体替换时传进来的快照里没有这个字段
+                    // （`StoredMessage` 未暴露），保留本机已有的值——与 user_input_json
+                    // 同口径：旧客户端的快照不能把新字段清空。
+                    Option::<String>::None,
                 ),
             )?;
         }

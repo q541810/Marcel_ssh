@@ -1,0 +1,45 @@
+# 对话库（conversations.db）跨设备同步：表 / 列作用域快照（自动生成，别手改）。
+#
+# 列：表 <TAB> 列 <TAB> 作用域（shared / local），末尾附主键与父表。
+#
+# 更新：UPDATE_SYNC_SNAPSHOT=1 cargo test --lib sync::conv_scope_guard
+# 更新之后看一眼 diff：那是新增 / 改动的列清单，逐条确认作用域是不是想要的。
+conversations	id	shared
+conversations	connection_id	shared
+conversations	title	shared
+conversations	created_at	shared
+conversations	updated_at	shared
+conversations	parent_conversation_id	shared
+conversations	model_id	shared
+conversations	efforts_json	shared
+conversations	pinned	shared
+conversations	usage_json	shared
+conversations	forked_from_id	shared
+conversations	archived_at	shared
+conversations	sub_dispatch_json	shared
+#	conversations	pk=id alias=ConnectionId mass_delete=20 parent=-
+messages	id	shared
+messages	conversation_id	shared
+messages	role	shared
+messages	content	shared
+messages	timestamp	shared
+messages	created_at	shared
+messages	tool_calls_json	shared
+messages	reasoning_content	shared
+messages	image_paths_json	local
+messages	turn_state	shared
+messages	user_input_json	shared
+messages	synced_images_json	shared
+#	messages	pk=id alias=None mass_delete=0 parent=conversation_id → conversations
+plans	task_id	shared
+plans	conversation_id	shared
+plans	plan_json	shared
+plans	updated_at	shared
+#	plans	pk=task_id alias=None mass_delete=0 parent=conversation_id → conversations
+plan_snapshots	id	local
+plan_snapshots	conversation_id	shared
+plan_snapshots	task_id	shared
+plan_snapshots	plan_json	shared
+plan_snapshots	created_at	shared
+plan_snapshots	uid	shared
+#	plan_snapshots	pk=uid alias=None mass_delete=0 parent=conversation_id → conversations

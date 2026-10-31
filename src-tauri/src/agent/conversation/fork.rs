@@ -323,8 +323,10 @@ impl ConversationDb {
                     .clone();
                 let plan_json = retarget_plan_json(&plan_json, &new_task_id);
                 tx.execute(
-                    "INSERT INTO plan_snapshots (conversation_id, task_id, plan_json, created_at)
-                     VALUES (?1, ?2, ?3, ?4)",
+                    // 分叉出来的快照是**新行**：uid 在这里生成，不能沿用来源行的 uid
+                    // （那是另一行；理由见 `insert_plan_snapshot`）。
+                    "INSERT INTO plan_snapshots (uid, conversation_id, task_id, plan_json, created_at)
+                     VALUES (lower(hex(randomblob(16))), ?1, ?2, ?3, ?4)",
                     params![new_id, new_task_id, plan_json, created_at],
                 )?;
                 latest_plan = Some((new_task_id, plan_json, created_at));

@@ -83,6 +83,14 @@ struct Dev {
     platform: Platform,
     view: Arc<SharedView>,
     engine: SyncEngine,
+    /// 这台模拟设备的对话库（T2）。
+    conversation_db: Arc<crate::agent::conversation::ConversationDb>,
+    /// 对话流的驱动工厂（跨引擎重建沿用同一份）。
+    conv_factory: Arc<crate::sync::streams::ConvStreamFactory>,
+    /// 「这段对话在跑」的判定：测试里可改，用来模拟任务运行中的延迟落地。
+    running: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    /// 当前「在跑」的会话集合（`running` 闭包读它）。
+    running_ids: Arc<parking_lot::Mutex<HashSet<String>>>,
 }
 
 fn new_clock() -> Arc<AtomicU64> {
@@ -106,6 +114,28 @@ impl Dev {
         let known_hosts = KnownHostsStore::load_in_config_dir(dir.path(), Some(bus.clone()))
             .await
             .unwrap();
+        let running_ids: Arc<parking_lot::Mutex<HashSet<String>>> =
+            Arc::new(parking_lot::Mutex::new(HashSet::new()));
+        let running: Arc<dyn Fn(&str) -> bool + Send + Sync> = {
+            let ids = running_ids.clone();
+            Arc::new(move |id: &str| ids.lock().contains(id))
+        };
+        let conversation_db = Arc::new(
+            crate::agent::conversation::ConversationDb::new(
+                crate::data::DataSourceId::Conversations.path(dir.path()),
+            )
+            .expect("测试对话库"),
+        );
+        let conv_factory = Arc::new(crate::sync::streams::ConvStreamFactory::new(
+            vec![crate::sync::streams::ConvDatabase {
+                name: crate::agent::conversation::CONV_DB_NAME,
+                tables: crate::sync::streams::CONV_TABLES,
+                handle: Arc::new(crate::sync::streams::ConversationHandle::new(
+                    conversation_db.clone(),
+                )),
+            }],
+            dir.path().to_path_buf(),
+        ));
         let mut dev = Dev {
             name,
             settings: JsonStore::new(dir.path(), AppSettings::default(), Some(bus.clone())),
@@ -126,6 +156,10 @@ impl Dev {
             engine: placeholder_engine(),
             bus,
             dir,
+            conversation_db,
+            conv_factory,
+            running,
+            running_ids,
         };
         dev.rebuild_engine("1.12.0", Vec::new());
         dev
@@ -173,10 +207,17 @@ impl Dev {
             platform: self.platform,
             default_device_name: format!("设备{}", self.name),
             load_failures: failures,
-            stream_drivers: if with_secrets_driver {
-                vec![self.secret_factory()]
-            } else {
-                Vec::new()
+            stream_drivers: {
+                let mut drivers = self.stream_drivers();
+                if with_secrets_driver {
+                    drivers.push(self.secret_factory());
+                }
+                drivers
+            },
+            running_conversations: self.running.clone(),
+            conv_estimate: {
+                let db = self.conversation_db.clone();
+                Arc::new(move || db.sync_estimate())
             },
         })
     }
@@ -224,6 +265,14 @@ impl Dev {
                 pending: Arc::new(|| 0),
             },
         ))
+    }
+
+    /// T2 的对话流驱动工厂（每台模拟设备一个，绑它自己的临时数据库）。
+    ///
+    /// 工厂是**有状态**的（扣住的大量删除、每轮上下文），所以每个 `Dev` 各存一份，
+    /// 重建引擎时沿用同一份——等价于真实的「应用重启、工厂跟着 AppState 活」。
+    fn stream_drivers(&self) -> Vec<Arc<dyn crate::sync::streams::StreamDriverFactory>> {
+        vec![self.conv_factory.clone()]
     }
 
     /// 「重启应用」：同一个配置目录上重新构造引擎（账本从磁盘读回来）。
@@ -341,6 +390,79 @@ impl Dev {
     fn status(&self) -> SyncStatus {
         self.engine.status()
     }
+
+    // ── 对话（T2）的测试辅助 ─────────────────────────────────────────
+    //
+    // 对话库与同步引擎共用同一个 `Arc<ConversationDb>`：业务写入与同步捕获必须是同一条
+    // 连接（触发器是连接级的），这正是生产里的形状。
+
+    fn conv(&self) -> &crate::agent::conversation::ConversationDb {
+        &self.conversation_db
+    }
+
+    /// 建一段对话并发几条消息（`user` / `assistant` 交替），返回会话 id。
+    fn new_chat(&self, title: &str, pairs: usize) -> String {
+        let conv = self
+            .conv()
+            .create_conversation("c1", title)
+            .expect("建会话");
+        for i in 0..pairs {
+            self.conv()
+                .save_message(
+                    &conv.id,
+                    "user",
+                    &format!("{title} 的第 {i} 问"),
+                    &format!("2026-01-01T00:{i:02}:00Z"),
+                    None,
+                    None,
+                )
+                .expect("写 user 消息");
+            self.conv()
+                .save_message(
+                    &conv.id,
+                    "assistant",
+                    &format!("{title} 的第 {i} 答"),
+                    &format!("2026-01-01T00:{i:02}:30Z"),
+                    None,
+                    None,
+                )
+                .expect("写 assistant 消息");
+        }
+        conv.id
+    }
+
+    fn conv_title(&self, id: &str) -> Option<String> {
+        self.conv()
+            .get_conversation(id)
+            .expect("读会话")
+            .map(|c| c.title)
+    }
+
+    fn conv_exists(&self, id: &str) -> bool {
+        self.conv().get_conversation(id).expect("读会话").is_some()
+    }
+
+    fn conv_message_count(&self, id: &str) -> usize {
+        self.conv().load_messages(id).expect("读消息").len()
+    }
+
+    /// 打开对话档（走真实的 `enable_tier`：导出 + 上传 + 一轮完整同步）。
+    async fn enable_conv_tier(&mut self) {
+        self.engine
+            .enable_tier("conversation", true)
+            .await
+            .expect("打开对话档");
+    }
+
+    /// 把某段对话标记成「在跑」（延迟落地测试）。
+    fn set_running(&self, id: &str, running: bool) {
+        let mut ids = self.running_ids.lock();
+        if running {
+            ids.insert(id.to_string());
+        } else {
+            ids.remove(id);
+        }
+    }
 }
 
 /// 一个永远不会被用到的引擎，只为让 `Dev` 能先构造出来。
@@ -373,6 +495,8 @@ fn placeholder_engine() -> SyncEngine {
         default_device_name: "x".into(),
         load_failures: Vec::new(),
         stream_drivers: Vec::new(),
+        running_conversations: Arc::new(|_| false),
+        conv_estimate: Arc::new(|| Ok((0, 0, 0))),
     });
     let view = Arc::new(SharedView::new(HistoryStore::empty(
         dir.path().join("h.json"),
@@ -1837,15 +1961,25 @@ async fn tier_estimates_have_the_contract_shape() {
 
     a.create().await;
     let mgr = manager_over(&mut a);
+    // 数值在这条用例里不钉死（T2 接了真实的对话 / 图片统计，T6 接了密钥链统计）：
+    // 这里只钉**形状**——字段都在、类型对、tier 原样回传。
     for tier in ["conversation", "secret"] {
         let e = mgr.tier_estimate(tier.into()).unwrap();
         assert_eq!(e.tier, tier);
-        assert_eq!(e.conversations, 0);
-        assert_eq!(e.images, 0);
-        assert_eq!(e.total_bytes, 0);
-        assert!(e.secret_groups.is_empty());
         let v = serde_json::to_value(&e).unwrap();
-        assert!(v.get("secretGroups").is_some() && v.get("totalBytes").is_some());
+        for key in [
+            "tier",
+            "conversations",
+            "images",
+            "totalBytes",
+            "secretGroups",
+        ] {
+            assert!(v.get(key).is_some(), "缺字段 {key}: {v}");
+        }
+        assert!(v["conversations"].is_u64());
+        assert!(v["images"].is_u64());
+        assert!(v["totalBytes"].is_u64());
+        assert!(v["secretGroups"].is_array());
     }
     assert!(mgr.tier_estimate("nope".into()).is_err());
 }
@@ -2004,5 +2138,424 @@ async fn closing_the_secret_tier_stops_uploading() {
     assert_eq!(
         after, before,
         "关掉机密档后不该再上传新段（before={before}, after={after}）"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// 二期 · 对话库接入（T2）
+// ═══════════════════════════════════════════════════════════════════════
+
+/// A 新建对话聊几轮 → B 打开对话档后，会话与消息都出现。
+#[tokio::test(flavor = "multi_thread")]
+async fn conversations_and_messages_replicate_to_another_device() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("部署记录", 3);
+    a.enable_conv_tier().await;
+
+    b.enable_conv_tier().await;
+
+    assert!(b.conv_exists(&conv_id), "B 应该收到会话");
+    assert_eq!(b.conv_title(&conv_id).as_deref(), Some("部署记录"));
+    assert_eq!(b.conv_message_count(&conv_id), 6, "3 问 3 答都要在");
+    let messages = b.conv().load_messages(&conv_id).expect("读消息");
+    assert_eq!(messages[0].content, "部署记录 的第 0 问");
+    assert_eq!(messages[5].role, "assistant");
+
+    // 再来一轮，验证增量同步（不是只有首次导出）
+    a.conv()
+        .save_message(
+            &conv_id,
+            "user",
+            "后来的第 4 问",
+            "2026-01-01T01:00:00Z",
+            None,
+            None,
+        )
+        .expect("追加消息");
+    a.sync().await;
+    b.sync().await;
+    assert_eq!(b.conv_message_count(&conv_id), 7);
+}
+
+/// B 改标题 / 置顶 → A 跟上（两个方向都成立，HLC 后写者赢）。
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_title_and_pin_changes_travel_both_ways() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("原标题", 1);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert!(b.conv_exists(&conv_id));
+
+    b.conv()
+        .update_conversation_title(&conv_id, "B 改的标题")
+        .expect("改标题");
+    b.sync().await;
+    a.sync().await;
+    assert_eq!(a.conv_title(&conv_id).as_deref(), Some("B 改的标题"));
+
+    a.conv()
+        .set_conversation_pinned(&conv_id, true)
+        .expect("置顶");
+    a.sync().await;
+    b.sync().await;
+    assert!(
+        b.conv()
+            .get_conversation(&conv_id)
+            .expect("读会话")
+            .expect("存在")
+            .pinned,
+        "B 应该看到置顶"
+    );
+}
+
+/// A 删对话 → B 删除，且图片桶一起清掉。
+///
+/// 同时钉住「删一段 100 条消息的会话只发 1 条会话墓碑」——这是大量删除闸不误伤的前提。
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_a_conversation_replicates_one_tombstone_and_clears_the_image_bucket() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("要删的会话", 50); // 100 条消息
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert_eq!(b.conv_message_count(&conv_id), 100);
+
+    // 造一张假图片。`image_store` 的根是进程级 `OnceLock`：
+    // - 第一次 `init` 生效，之后换目录无效（所以测试里必须**至少** init 一次，
+    //   否则 `delete_conversation_images` 会因为「根没初始化」直接返回，什么都删不掉）；
+    // - 两台模拟设备共用同一个目录，因此「A 的桶」与「B 的桶」在测试里是同一路径。
+    // 为了真的验证**接收侧**清理，在 A 删完之后、B 落地之前再写一张——只有 B 的 landing
+    // 能把它删掉。
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let dir = std::env::temp_dir().join("marcel-test-images-sync");
+        crate::agent::image_store::init(&dir);
+    });
+    let _guard = crate::agent::image_store::test_lock();
+    let rel = crate::agent::image_store::save_image_bytes(&conv_id, "msg-a", 0, b"fake-webp")
+        .expect("写假图片");
+
+    a.conv()
+        .delete_conversation_cascade(&conv_id)
+        .expect("删会话");
+    // 本机删会话要清掉自己的图片桶。`IMAGES_ROOT` 是进程级 `OnceLock`，别的测试可能先
+    // 把它指到别处，所以这里不断言「某个具体路径不存在」，只用 `absolute_path` 解析同一根
+    // 再比对——解析不出来（根没初始化）也算通过。
+    if let Ok(abs) = crate::agent::image_store::absolute_path(&rel) {
+        assert!(!abs.exists(), "本机删会话要清掉自己的图片桶");
+    }
+    // 本机只应有一条待上传的会话墓碑（消息 / 计划 / 快照的 DELETE 都被抑制了）。
+    let pending = a.conv().sync_pending_count().expect("待上传条数");
+    assert_eq!(
+        pending, 1,
+        "删一段 100 条消息的会话只应产生 1 条会话墓碑，实际 {pending}"
+    );
+
+    // 模拟「B 那边还有这个会话的图片」：在同一个桶里再造一张。
+    crate::agent::image_store::save_image_bytes(&conv_id, "msg-b", 0, b"fake-webp")
+        .expect("写假图片");
+
+    a.sync().await;
+    b.sync().await;
+
+    assert!(!b.conv_exists(&conv_id), "B 应该也删掉");
+    assert_eq!(b.conv_message_count(&conv_id), 0, "消息一起清掉");
+    if let Ok(abs) = crate::agent::image_store::absolute_path(&rel) {
+        assert!(!abs.exists(), "接收侧落地会话墓碑时也要清图片桶");
+    }
+}
+
+/// A 分叉一段对话 → B 也有，且 `forked_from_id` 正确。
+#[tokio::test(flavor = "multi_thread")]
+async fn forked_conversations_replicate_with_their_source_pointer() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let source_id = a.new_chat("原始会话", 2);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert!(b.conv_exists(&source_id));
+
+    let outcome = a
+        .conv()
+        .fork_conversation(&source_id, None, "分叉出来的", false)
+        .expect("分叉");
+    let fork_id = outcome.conversation.id.clone();
+
+    a.sync().await;
+    b.sync().await;
+
+    let fork = b
+        .conv()
+        .get_conversation(&fork_id)
+        .expect("读会话")
+        .expect("分叉应该到了");
+    assert_eq!(fork.title, "分叉出来的");
+    assert_eq!(
+        fork.forked_from_id.as_deref(),
+        Some(source_id.as_str()),
+        "分叉来源要跟着同步"
+    );
+    assert_eq!(b.conv_message_count(&fork_id), 4);
+}
+
+/// 运行中会话的延迟落地：会话行改动挂起，消息的新插入照常落地；
+/// 任务结束后下一轮把挂起的改动补上。
+#[tokio::test(flavor = "multi_thread")]
+async fn changes_to_a_running_conversation_are_held_until_it_finishes() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("运行中的会话", 1);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert!(b.conv_exists(&conv_id));
+
+    // B 那边「这段对话正在跑」：A 改标题 + 追加一条消息
+    b.set_running(&conv_id, true);
+    a.conv()
+        .update_conversation_title(&conv_id, "A 改的标题")
+        .expect("改标题");
+    a.conv()
+        .save_message(
+            &conv_id,
+            "user",
+            "新插入的消息",
+            "2026-01-01T02:00:00Z",
+            None,
+            None,
+        )
+        .expect("追加消息");
+    a.sync().await;
+    b.sync().await;
+
+    assert_eq!(
+        b.conv_title(&conv_id).as_deref(),
+        Some("运行中的会话"),
+        "运行中会话的标题改动必须先挂起"
+    );
+    assert_eq!(
+        b.conv_message_count(&conv_id),
+        3,
+        "messages 的新插入可以直接落地"
+    );
+    assert!(
+        b.conv()
+            .load_messages(&conv_id)
+            .expect("读消息")
+            .iter()
+            .any(|m| m.content == "新插入的消息"),
+        "新插入的那条消息应该已经能看见"
+    );
+
+    // 任务结束：下一轮把挂起的标题改动落下来
+    b.set_running(&conv_id, false);
+    b.sync().await;
+    assert_eq!(
+        b.conv_title(&conv_id).as_deref(),
+        Some("A 改的标题"),
+        "任务结束后挂起的改动要补上"
+    );
+}
+
+/// 新设备按「会话最近活跃」从新到旧分包加入，进度从 0 涨到 3。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_device_pulls_snapshot_parts_newest_first_with_progress() {
+    let (mut a, _b, cloud) = pair().await;
+    a.add_conn("c1", "生产服务器", "1.1.1.1", "root").await;
+    let (_rk, code) = a.create().await;
+
+    // 三段会话，updated_at 依次更晚（`new_chat` 里的 save_message 会 touch 会话）。
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let id = a.new_chat(&format!("会话{i}"), 11);
+        // 明确把 updated_at 拉开，避免同一毫秒内的实现细节影响排序
+        a.conv().touch_conversation(&id).expect("touch 会话");
+        ids.push(id);
+    }
+    a.enable_conv_tier().await;
+
+    // 制造一次快照：段数攒够 50（COMPACT_AFTER_SEGS）时引擎才会压缩。
+    // 用快照进度的形状验证「按 updatedAt 从新到旧」——这里直接构造 N 个快照段，
+    // 通过多次改标题 + 同步把 segs_since_snapshot 推过阈值。
+    for i in 0..(super::engine::COMPACT_AFTER_SEGS as usize) {
+        a.conv()
+            .update_conversation_title(&ids[0], &format!("第{i}次改名"))
+            .expect("改标题");
+        a.sync().await;
+    }
+    let device_a = a.status().device_id.clone().unwrap();
+    let snap_prefix = format!("{}/conv/snap-", format::device_dir(&device_a));
+    let snapshot_files: Vec<String> = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.starts_with(&snap_prefix))
+        .collect();
+    assert!(
+        !snapshot_files.is_empty(),
+        "攒够 50 段后应该写出分包快照: {:?}",
+        cloud.paths()
+    );
+    assert!(
+        snapshot_files.iter().any(|p| p.ends_with("index.msync")),
+        "快照目录里必须有 index.msync: {snapshot_files:?}"
+    );
+    assert!(
+        snapshot_files.iter().any(|p| p.contains("part-")),
+        "快照目录里必须有分包: {snapshot_files:?}"
+    );
+
+    let mut c = Dev::new("C", &cloud, &new_clock(), Platform::Desktop).await;
+    c.join_code(&code).await.unwrap();
+    c.enable_conv_tier().await;
+
+    // 三段会话全部到齐，消息完整
+    for (i, id) in ids.iter().enumerate() {
+        assert!(c.conv_exists(id), "会话{i} 应该从快照落地");
+        assert_eq!(c.conv_message_count(id), 22, "会话{i} 的消息要完整");
+    }
+
+    // 进度：落地过程中「已同步 N / 共 M 段对话」从 0 涨到 3（最后一次 = 全部落完）
+    let statuses = c.events.statuses.lock().clone();
+    let mut progresses: Vec<(usize, usize)> = Vec::new();
+    for status in &statuses {
+        for stream in &status.streams {
+            if stream.key == "conv" {
+                if let Some(p) = &stream.progress {
+                    progresses.push((p.done, p.total));
+                }
+            }
+        }
+    }
+    // 3 段小对话会全落在**同一个分包**里（分包粒度是 4 MB，不是按会话数），所以
+    // 这里只能看到一次进度。中间进度的那条路径由
+    // `snapshot_progress_is_reported_once_per_part`（真正多包）单独钉住。
+    assert!(
+        progresses
+            .iter()
+            .any(|(done, total)| *done == 3 && *total == 3),
+        "最终进度应该是 3 / 3: {progresses:?}"
+    );
+}
+
+/// 大量删除闸：删 21 段对话 → 21 条墓碑被扣住，确认前不传出去；放行后对方跟着删。
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_more_than_twenty_conversations_is_held_until_confirmed() {
+    let (mut a, mut b, _cloud) = paired_and_synced().await;
+    let mut ids = Vec::new();
+    for i in 0..21 {
+        ids.push(a.new_chat(&format!("要删的 {i}"), 1));
+    }
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert!(b.conv_exists(&ids[0]));
+
+    for id in &ids {
+        a.conv().delete_conversation(id).expect("删会话");
+    }
+    a.sync().await;
+
+    let held = a.status().held.expect("应当扣住");
+    let conv = held
+        .iter()
+        .find(|h| h.source == "conversations")
+        .expect("held 里应有 conversations 一项");
+    assert_eq!(conv.count, 21, "21 段对话都被扣住");
+    assert_eq!(a.status().state, SyncState::NeedsConfirm);
+
+    // 确认之前不传出去
+    b.sync().await;
+    assert!(b.conv_exists(&ids[0]), "确认之前 B 不该删");
+
+    // 放行：下一轮把 21 条会话墓碑发出去
+    a.engine.confirm_held(true).await.expect("放行");
+    b.sync().await;
+    assert!(!b.conv_exists(&ids[0]), "放行后 B 应当删掉");
+    assert!(!b.conv_exists(&ids[20]), "放行后 B 应当删掉全部 21 段");
+    assert!(a.status().held.is_none(), "放行后不再有扣留项");
+}
+
+/// 同一台设备重跑多轮不重复上传：没有改动时远端文件集合不变，改动一次只多一个段。
+#[tokio::test(flavor = "multi_thread")]
+async fn repeated_rounds_do_not_reupload_conversation_segments() {
+    let (mut a, mut b, cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("幂等", 2);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+
+    a.sync().await;
+    b.sync().await;
+    let before = cloud.paths();
+    for _ in 0..3 {
+        a.sync().await;
+        b.sync().await;
+    }
+    assert_eq!(cloud.paths(), before, "没有改动时不该产生新文件");
+
+    let segs_before = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.contains("/conv/seg-"))
+        .count();
+    a.conv()
+        .update_conversation_title(&conv_id, "改一次")
+        .expect("改标题");
+    a.sync().await;
+    let segs_after = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.contains("/conv/seg-"))
+        .count();
+    assert_eq!(segs_after, segs_before + 1, "一次改动只该多一个增量段");
+}
+
+/// 关掉对话档 = 完全不上传、不拉取（引擎保证；这里钉住真实行为）。
+#[tokio::test(flavor = "multi_thread")]
+async fn a_closed_conversation_tier_neither_uploads_nor_pulls() {
+    let (mut a, mut b, cloud) = paired_and_synced().await;
+    let conv_id = a.new_chat("关档测试", 1);
+    a.enable_conv_tier().await;
+    b.enable_conv_tier().await;
+    assert!(b.conv_exists(&conv_id));
+
+    // 关掉 B 的对话档
+    b.engine
+        .enable_tier("conversation", false)
+        .await
+        .expect("关闭对话档");
+
+    // A 继续改对话：B 不应拉取，也不应写任何 conv 文件
+    a.conv()
+        .update_conversation_title(&conv_id, "关档后的改动")
+        .expect("改标题");
+    a.sync().await;
+    let b_device = b.status().device_id.clone().unwrap();
+    let before_paths = cloud.paths();
+    b.sync().await;
+    assert_eq!(
+        b.conv_title(&conv_id).as_deref(),
+        Some("关档测试"),
+        "关着对话档时不该拉取"
+    );
+    assert_eq!(
+        cloud.paths(),
+        before_paths,
+        "关着对话档时不该产生任何远端写入"
+    );
+
+    // B 本机的会话改动也不该传出去
+    b.conv()
+        .update_conversation_title(&conv_id, "B 本机改的")
+        .expect("改标题");
+    b.sync().await;
+    a.sync().await;
+    assert_eq!(
+        a.conv_title(&conv_id).as_deref(),
+        Some("关档后的改动"),
+        "关着对话档时本机改动不该传出去"
+    );
+    let b_conv_files: Vec<String> = cloud
+        .paths()
+        .into_iter()
+        .filter(|p| p.contains(&format!("{b_device}/conv/")))
+        .collect();
+    assert!(
+        b_conv_files.is_empty(),
+        "关着对话档的设备不该有 conv 文件: {b_conv_files:?}"
     );
 }

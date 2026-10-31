@@ -209,6 +209,19 @@ impl ConversationDb {
                 .map_err(|e| ConversationError::SchemaError { source: e })?;
         }
 
+        // 跨设备同步（T3 图片懒加载）用的列：消息引用的图片在**对端**叫什么（blob 名 / 来源设备），
+        // 本机的 `image_paths_json` 是本地桶路径、只属于这台设备。本任务只建列、值恒 NULL，
+        // 真正写它的是 T3。必须加在 `MESSAGES_COLUMNS` 末尾，否则按位读会错位。
+        if !column_exists(&conn, "messages", "synced_images_json") {
+            log::info!("Migrating conversation database: adding synced_images_json column");
+            conn.execute(
+                "ALTER TABLE messages ADD COLUMN synced_images_json TEXT",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: synced_images_json column added");
+        }
+
         // Migration: add parent_conversation_id for subagent (subagent tool) conversations.
         // 旧库先 ALTER 加列，再无条件建索引（新库建表已带列，这里补索引）。
         if !column_exists(&conn, "conversations", "parent_conversation_id") {
@@ -322,7 +335,53 @@ impl ConversationDb {
         )
         .map_err(|e| ConversationError::SchemaError { source: e })?;
 
+        // Migration: plan_snapshots.uid —— 跨设备同步的稳定主键。
+        //
+        // 自增 `id` 不能跨设备用（两台设备各自的 1、2、3 指向不同的行，同步等于把 A 的第 3 条
+        // 覆盖成 B 的第 3 条）。给它一列 UUID：旧行在迁移时一次补全，新行由插入语句直接生成
+        // （见 `plans.rs` 的 `insert_plan_snapshot`）——**别只在迁移里补**，否则新行 uid 为 NULL，
+        // 而 SQLite 的 UNIQUE 允许任意多条 NULL，同步时这些行永远捕获不到。
+        if !column_exists(&conn, "plan_snapshots", "uid") {
+            log::info!("Migrating conversation database: adding plan_snapshots.uid column");
+            // **带默认值**：`plan_snapshots` 有几处 INSERT 不写 uid（分叉复制、老代码），
+            // 而同步触发器取 `NEW.uid` 作 row_id、`sync_changelog.row_id` 是 NOT NULL——
+            // 没有默认值时任何一次「不带 uid 的插入」都会让整条业务写事务失败。
+            // SQLite 只允许 ALTER 加常量默认值，所以用空串，再由下面的 UPDATE 补真 uuid。
+            conn.execute(
+                "ALTER TABLE plan_snapshots ADD COLUMN uid TEXT NOT NULL DEFAULT ''",
+                [],
+            )
+            .map_err(|e| ConversationError::SchemaError { source: e })?;
+            log::info!("Migration complete: plan_snapshots.uid column added");
+        }
+        // 无条件补 NULL：迁移中途崩溃（ALTER 成功、UPDATE 没跑完）的库下次启动能自愈；
+        // 正常情况下这条语句一行都匹配不到，代价可以忽略。
+        conn.execute(
+            "UPDATE plan_snapshots SET uid = lower(hex(randomblob(16))) WHERE uid IS NULL OR uid = ''",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
+        // 索引在迁移之后无条件建：新库建表语句不在这一块里带 uid（老库的 CREATE TABLE IF NOT
+        // EXISTS 什么也不做），漏建索引不会报错，只会让重复检查失效。
+        conn.execute(
+            // **部分索引**：只约束非空 uid。`ALTER ... ADD COLUMN` 只允许常量默认值，
+            // 所以列上留了 `DEFAULT ''`；如果对空串也做唯一约束，任何两行「还没补 uid」
+            // 的记录都会撞索引，直接让分叉 / 老代码的 INSERT 失败。
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_snapshots_uid ON plan_snapshots(uid) WHERE uid IS NOT NULL AND uid != ''",
+            [],
+        )
+        .map_err(|e| ConversationError::SchemaError { source: e })?;
+
         log::info!("Conversation database initialized at: {}", path_str);
+
+        // 行同步的表清单（T1 的 `rows::install`）：建 changelog / 时钟表 + 连接级触发器。
+        //
+        // **失败只记日志**：同步本身不是应用启动的前提，但触发器装不上意味着这台设备的
+        // 对话改动永远无法同步出去——必须留一条显眼的日志，让「同步没反应」有据可查。
+        // 每次打开连接都要装：触发器是 TEMP 的（要引用 temp.sync_applying），随连接消失。
+        if let Err(e) = crate::sync::rows::install(&conn, crate::sync::streams::CONV_TABLES) {
+            log::error!("对话库安装同步触发器失败（本机的对话改动将无法同步出去）: {e}");
+        }
 
         Ok(Self {
             conn: Mutex::new(conn),
@@ -333,6 +392,255 @@ impl ConversationDb {
     /// Create an in-memory database for testing or as a fallback.
     pub fn in_memory() -> Result<Self, ConversationError> {
         Self::new(":memory:")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 跨设备同步（T2）的入口
+// ---------------------------------------------------------------------------
+//
+// 全部方法都走 `self.conn.lock()`——**绝不另开连接**：行同步的触发器是连接级的
+// （`CREATE TEMP TRIGGER`，要引用 `temp.sync_applying`），只有调过 `install` 的那条连接上
+// 的写入才会被捕获（见 `sync/rows` 模块文档）。业务写入本来就都在这把锁下，所以同步捕获
+// 与业务写入天然共用一条连接。
+//
+// 这一层只做三件事：拿锁、把参数原样交给 `rows::*`、转换错误。任何「同步策略」（延迟落地、
+// 分包、大量删除闸）都在 `sync/streams/conv.rs` —— 这样 T4 的记忆库只要照着实现同样的几个
+// 方法，就自动获得同一套策略。
+
+/// 本机对话库在段头 `db` 字段里的名字（T4 的记忆库是 `"memory"`）。
+pub const CONV_DB_NAME: &str = "conversations";
+
+impl ConversationDb {
+    /// 捕获本机改动（段头带 `db: "conversations"`）。
+    pub fn sync_capture(
+        &self,
+        clock: &mut crate::sync::core::hlc::HlcClock,
+        device: &str,
+        wall_ms: u64,
+        aliases: &crate::sync::rows::AliasMap,
+        release_held: bool,
+    ) -> Result<crate::sync::rows::CapturedRows, crate::error::AppError> {
+        self.sync_capture_with_options(
+            clock,
+            device,
+            wall_ms,
+            aliases,
+            crate::sync::rows::CaptureOptions {
+                stream: crate::sync::streams::conv::CONV_STREAM,
+                db: Some(CONV_DB_NAME),
+                max_segment_bytes: crate::sync::rows::DEFAULT_MAX_SEGMENT_BYTES,
+                release_held,
+            },
+        )
+    }
+
+    /// 同 [`Self::sync_capture`]，段参数由调用方给（驱动按自己这条流的口径传）。
+    pub fn sync_capture_with_options(
+        &self,
+        clock: &mut crate::sync::core::hlc::HlcClock,
+        device: &str,
+        wall_ms: u64,
+        aliases: &crate::sync::rows::AliasMap,
+        options: crate::sync::rows::CaptureOptions,
+    ) -> Result<crate::sync::rows::CapturedRows, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::capture_with(
+            &conn,
+            crate::sync::streams::CONV_TABLES,
+            clock,
+            device,
+            wall_ms,
+            aliases,
+            options,
+        )
+    }
+
+    /// 段上传成功、账本落盘之后删掉 changelog。
+    pub fn sync_ack(&self, watermark: i64) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::ack(&conn, watermark)
+            .map_err(|e| crate::error::AppError::Other(format!("对话库同步操作失败：{e}")))
+    }
+
+    /// 落地一段行 op（事务内直写业务表）。
+    pub fn sync_apply(
+        &self,
+        ops_json: &[u8],
+        aliases: &crate::sync::rows::AliasMap,
+    ) -> Result<crate::sync::rows::RowApplied, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::apply(&conn, crate::sync::streams::CONV_TABLES, ops_json, aliases)
+    }
+
+    /// 全量导出（首次开启对话档 / 启动时补齐）。
+    pub fn sync_export_all(
+        &self,
+        device: &str,
+        aliases: &crate::sync::rows::AliasMap,
+        batch_bytes: usize,
+    ) -> Result<Vec<Vec<u8>>, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::export_all_with(
+            &conn,
+            crate::sync::streams::CONV_TABLES,
+            device,
+            aliases,
+            crate::sync::rows::ExportOptions::new(
+                crate::sync::streams::conv::CONV_STREAM,
+                batch_bytes,
+            )
+            .with_db(CONV_DB_NAME),
+        )
+    }
+
+    /// 待上传条数（按行去重）。
+    pub fn sync_pending_count(&self) -> Result<usize, crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::pending_count(&conn, crate::sync::streams::CONV_TABLES)
+    }
+
+    /// 本机某张表里这一行的 `conversation_id`（延迟落地判断墓碑属于哪段会话）。
+    pub fn sync_row_conversation(&self, table: &str, row_id: &str) -> Option<String> {
+        let field = match table {
+            "conversations" => return Some(row_id.to_string()),
+            "messages" | "plans" | "plan_snapshots" => "conversation_id",
+            _ => return None,
+        };
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!(
+                "SELECT {field} FROM {table} WHERE {} = ?1",
+                sync_pk_of(table)
+            ),
+            [row_id],
+            |r| r.get::<_, String>(0),
+        )
+        .ok()
+    }
+
+    /// 本机是否有这一行（判断消息 op 是不是「新插入」）。
+    pub fn sync_row_exists(&self, table: &str, row_id: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT 1 FROM {table} WHERE {} = ?1", sync_pk_of(table)),
+            [row_id],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    /// 把这几行的待上传记录从 changelog 里摘掉（用户拒绝大量删除时用）。
+    pub fn sync_ack_rows(&self, rows: &[(String, String)]) -> Result<(), crate::error::AppError> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        for (table, row_id) in rows {
+            conn.execute(
+                "DELETE FROM sync_changelog WHERE tbl = ?1 AND row_id = ?2",
+                (table, row_id),
+            )
+            .map_err(|e| crate::error::AppError::Other(format!("清理对话同步记录失败：{e}")))?;
+        }
+        Ok(())
+    }
+
+    /// 兜底清理：会话墓碑落地后，把子表里残留的行删掉。
+    ///
+    /// `rows::apply` 已经按 `RowTable::parent` 级联删过；这条路覆盖的是它不处理的两种
+    /// 残留：墓碑因为时钟更旧被判掉，以及上次崩溃留下的孤儿行。整个清理在**捕获抑制**
+    /// 里做：否则会为每条消息各生成一个墓碑（任务书第一节第 5 条）。
+    pub fn sync_purge_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<(), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        crate::sync::rows::with_capture_suppressed(&conn, || {
+            for table in ["messages", "plan_snapshots", "plans"] {
+                conn.execute(
+                    &format!("DELETE FROM {table} WHERE conversation_id = ?1"),
+                    [conversation_id],
+                )
+                .map_err(|e| {
+                    crate::error::AppError::Other(format!("清理已删会话的残留失败：{e}"))
+                })?;
+            }
+            Ok(())
+        })
+    }
+
+    /// 对话档的规模估算（`sync_tier_estimate`）：会话数、图片数、库文件的大致字节数。
+    ///
+    /// 图片数按消息里记录的本机图片路径**条目数**算（不复用 `image_store` 的目录遍历：
+    /// 那是全局单例、要初始化，而这里只是给用户一个量级）。字节数用 SQLite 的
+    /// `page_count * page_size`：不需要知道库文件路径，也不受 WAL 未检查点影响太大。
+    pub fn sync_estimate(&self) -> Result<(usize, usize, u64), crate::error::AppError> {
+        let conn = self.conn.lock().unwrap();
+        let conversations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversations", [], |r| r.get(0))
+            .map_err(|e| crate::error::AppError::Other(format!("统计会话数失败：{e}")))?;
+        let mut images = 0usize;
+        {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT image_paths_json FROM messages
+                     WHERE image_paths_json IS NOT NULL AND image_paths_json <> '[]'",
+                )
+                .map_err(|e| crate::error::AppError::Other(format!("统计图片数失败：{e}")))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| crate::error::AppError::Other(format!("统计图片数失败：{e}")))?;
+            for row in rows.flatten() {
+                if let Ok(paths) = serde_json::from_str::<Vec<String>>(&row) {
+                    images += paths.len();
+                }
+            }
+        }
+        let pages: i64 = conn
+            .query_row("PRAGMA page_count", [], |r| r.get(0))
+            .unwrap_or(0);
+        let page_size: i64 = conn
+            .query_row("PRAGMA page_size", [], |r| r.get(0))
+            .unwrap_or(0);
+        Ok((
+            conversations.max(0) as usize,
+            images,
+            (pages.max(0) as u64).saturating_mul(page_size.max(0) as u64),
+        ))
+    }
+}
+
+/// 同步用的主键列（与 `CONV_TABLES` 一致；`plan_snapshots` 是 `uid`）。
+fn sync_pk_of(table: &str) -> &'static str {
+    match table {
+        "conversations" | "messages" => "id",
+        "plans" => "task_id",
+        "plan_snapshots" => "uid",
+        _ => "id",
+    }
+}
+
+#[cfg(test)]
+impl ConversationDb {
+    /// 真实 schema 的列清单（`sync::conv_scope_guard` 用它比对 `CONV_TABLES`）。
+    pub(crate) fn live_columns_for_sync_test(
+        &self,
+    ) -> std::collections::BTreeMap<String, Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut out = std::collections::BTreeMap::new();
+        for table in ["conversations", "messages", "plans", "plan_snapshots"] {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .expect("prepare table_info");
+            let columns: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("query table_info")
+                .filter_map(|r| r.ok())
+                .collect();
+            out.insert(table.to_string(), columns);
+        }
+        out
     }
 }
 

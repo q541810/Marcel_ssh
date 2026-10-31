@@ -27,14 +27,21 @@ use std::sync::Arc;
 use super::backends::Backend;
 use super::core::crypto::DataKey;
 use super::core::format::{self, FormatError};
+use super::rows::AliasMap;
 use super::storage::{RemoteEntry, StorageError};
+use super::types::HeldSummary;
 use crate::error::AppError;
 
 pub mod config;
+pub mod conv;
 pub mod sec;
 
 pub use super::store::{StreamName, TierSwitches};
 pub use config::ConfigStreamDriver;
+pub use conv::{
+    ConvDatabase, ConvDbHandle, ConvStreamDriver, ConvStreamFactory, ConversationHandle,
+    CONV_TABLES,
+};
 
 /// 一个远端文件的种类（相对它所在的流）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +181,14 @@ pub trait StreamDriver: Send + Sync {
 /// T0 只有配置流的驱动（引擎内部直接构造），这个列表为空。
 pub trait StreamDriverFactory: Send + Sync {
     fn name(&self) -> StreamName;
+
+    /// 每轮构造驱动之前，引擎把「这一轮本机是谁」告诉工厂（设备 id、连接别名、在跑判定、
+    /// 墙钟）。为什么不让 `create` 多传参数：`create` 的签名是 T0 定死的，而工厂是跨轮存活的
+    /// 单例——放一个 `set_context` 比改签名对其它任务的冲击小。
+    fn set_context(&self, ctx: &StreamDriverContext) {
+        let _ = ctx;
+    }
+
     /// `dk` 只有引擎在「需要封包 / 解本机镜像」的阶段才给得出（捕获阶段可能是 `None`）。
     fn create(
         &self,
@@ -181,9 +196,63 @@ pub trait StreamDriverFactory: Send + Sync {
         dk: Option<DataKey>,
     ) -> Result<Box<dyn StreamDriver>, AppError>;
 
-    /// 这条流的待上传条数（`sync_status.streams[].pending`）。0 = 不显示。
+    /// 这条流有多少待上传内容（`sync_status.streams[].pending`）。
+    ///
+    /// 二三期的段在驱动手里（磁盘上的 changelog / 基线差），引擎数不到；默认 0 = 界面
+    /// 不显示这条流的待上传量。
     fn pending(&self) -> usize {
         0
+    }
+
+    /// 这条流扣住等用户确认的大量删除（`SyncStatus.held`）。
+    fn held(&self) -> Vec<HeldSummary> {
+        Vec::new()
+    }
+
+    /// 用户在同步面板点了「放行（accept）/ 撤销」。只有二三期的流需要。
+    fn confirm_held(&self, accept: bool) {
+        let _ = accept;
+    }
+}
+
+/// 引擎交给工厂的「这一轮的本机上下文」。
+///
+/// 用 `Arc<dyn Fn>` 而不是具体类型：`streams` 是纯逻辑层，不该认识 `AppState`（那是
+/// `lib.rs` 的接线问题）。测试里注入一个永远 false 的闭包就够。
+#[derive(Clone)]
+pub struct StreamDriverContext {
+    /// 本机设备 id（段头的 `device` 字段、HLC 的兜底）。
+    pub device: String,
+    /// 连接 id 别名（上传前换算成云端 id，落地后再换算回来）。
+    pub aliases: AliasMap,
+    /// 「这段对话有任务在跑或在压缩」。conv 流据此把对它的远端改动挂起。
+    pub running: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    /// 当前墙钟（毫秒）。测试注入可控时钟。
+    pub now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+    /// 长操作（分包快照）中途报告进度。引擎给的是一个直接更新共享视图 + 发事件的闭包
+    /// ——否则一轮同步跑几分钟，界面上的「正在同步对话 N / M」永远停在 0。
+    pub progress: Option<Arc<dyn Fn(StreamName, StreamProgress) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for StreamDriverContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamDriverContext")
+            .field("device", &self.device)
+            .field("aliases", &self.aliases)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StreamDriverContext {
+    /// 测试 / 无别名场景的简洁构造。
+    pub fn new(device: impl Into<String>, now_ms: Arc<dyn Fn() -> u64 + Send + Sync>) -> Self {
+        Self {
+            device: device.into(),
+            aliases: AliasMap::default(),
+            running: Arc::new(|_| false),
+            now_ms,
+            progress: None,
+        }
     }
 }
 

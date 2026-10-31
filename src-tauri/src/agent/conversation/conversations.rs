@@ -383,33 +383,40 @@ impl ConversationDb {
 
     /// 在**调用方事务**里删掉一组会话的全部库内行（消息 / plan 快照 / plan /
     /// 会话行 / 分叉引用置空）。图片目录在库外，由调用方处理。
+    ///
+    /// **子表的 DELETE 必须在捕获抑制里做**：同步只发一个会话墓碑，不为每条消息各发一个。
+    /// 最后一条 `DELETE FROM conversations` 落在抑制范围之外，才是唯一被捕获的那一行
+    /// （任务书第一节第 5 条）。抑制装不上（同步触发器没装 / 旧库）时照常删除——同步
+    /// 不该成为删除会话的前提，代价只是那一轮多发几个子行墓碑。
     fn delete_conversation_rows(
         tx: &rusqlite::Transaction<'_>,
         ids: &[String],
     ) -> RusqliteResult<()> {
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-        let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let pl = rusqlite::params_from_iter(params);
-        tx.execute(
-            &format!("DELETE FROM messages WHERE conversation_id IN ({placeholders})"),
-            pl,
-        )?;
-        let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        tx.execute(
-            &format!("DELETE FROM plan_snapshots WHERE conversation_id IN ({placeholders})"),
-            rusqlite::params_from_iter(params),
-        )?;
-        let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        tx.execute(
-            &format!("DELETE FROM plans WHERE conversation_id IN ({placeholders})"),
-            rusqlite::params_from_iter(params),
-        )?;
+        {
+            let guard = match crate::sync::rows::suppress_capture(tx) {
+                Ok(g) => Some(g),
+                Err(e) => {
+                    log::warn!("同步：删除会话时无法打开捕获抑制（只影响同步量）: {e}");
+                    None
+                }
+            };
+            for table in ["messages", "plan_snapshots", "plans"] {
+                let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE conversation_id IN ({placeholders})"),
+                    rusqlite::params_from_iter(params),
+                )?;
+            }
+            drop(guard);
+        }
         let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         tx.execute(
             &format!("DELETE FROM conversations WHERE id IN ({placeholders})"),
             rusqlite::params_from_iter(params),
         )?;
         // 分叉是独立会话：来源没了，分叉照旧可用，只是不再有「返回原会话」可指。
+        // 这条 UPDATE 在抑制范围之外：`forked_from_id` 的变化是一处真实改动，该同步出去。
         let params: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         tx.execute(
             &format!("UPDATE conversations SET forked_from_id = NULL WHERE forked_from_id IN ({placeholders})"),

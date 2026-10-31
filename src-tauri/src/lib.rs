@@ -671,6 +671,25 @@ impl AppState {
             );
 
         // 跨设备同步 manager：只构造、不起任务（`setup` 里 `start`）。
+        //
+        // 「这段对话有任务在跑 / 在压缩吗」交给同步的对话流做延迟落地。两张表都可以
+        // 克隆，所以先建出来：AppState 与同步闭包各持一份、指向同一份数据。判据与
+        // `memory::reflect::conversation_has_running_task` 同口径（任务表 + 手动压缩占位），
+        // 只是这里拿不到 `AppState`（它还没构造完），所以就地写一份。
+        let agent_tasks: std::sync::Arc<PlRwLock<HashMap<String, AgentTask>>> =
+            std::sync::Arc::new(PlRwLock::new(HashMap::new()));
+        let compactions = crate::cancel::CancellationRegistry::new();
+        let running_conversations: std::sync::Arc<dyn Fn(&str) -> bool + Send + Sync> = {
+            let agent_tasks = agent_tasks.clone();
+            let compactions = compactions.clone();
+            std::sync::Arc::new(move |id: &str| {
+                compactions.is_registered(id)
+                    || agent_tasks
+                        .read()
+                        .values()
+                        .any(|t| t.conversation_id == id && !t.status.is_terminal())
+            })
+        };
         let sync = crate::sync::SyncManager::new(crate::sync::SyncWiring {
             config_dir: config_dir.clone(),
             stores: crate::sync::sources::SourceStores {
@@ -730,11 +749,13 @@ impl AppState {
                 }
                 std::sync::Arc::new(move || cache.lock().clone())
             }),
+            conversation_db: conversation_db_arc.clone(),
+            running_conversations,
         });
 
         let state = Self {
             ssh_manager,
-            agent_tasks: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
+            agent_tasks,
             plans: std::sync::Arc::new(PlRwLock::new(HashMap::new())),
             session_models,
             session_efforts,
@@ -753,7 +774,7 @@ impl AppState {
             download_cancel: crate::cancel::CancellationRegistry::new(),
             plugin_install_cancel: crate::cancel::CancellationRegistry::new(),
             skill_import_cancel: crate::cancel::CancellationRegistry::new(),
-            compactions: crate::cancel::CancellationRegistry::new(),
+            compactions,
             command_exec,
             local_command_exec,
             sysopen_watchers: std::sync::Arc::new(PlRwLock::new(HashMap::new())),

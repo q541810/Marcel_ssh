@@ -346,6 +346,9 @@ fn isolated_state_with(
     let mcp_store = JsonStore::new(dir, crate::mcp::store::McpServerStore::new(), None);
     let mcp_manager = Arc::new(crate::mcp::manager::McpManager::new());
     let data_changes = DataChangeBus::new();
+    let conversation_db = Arc::new(
+        ConversationDb::new(DataSourceId::Conversations.path(dir)).expect("temporary SQLite"),
+    );
     // 跨设备同步 manager：测试里从不 `start`，只是 AppState 的必填字段。
     let sync = crate::sync::SyncManager::new(crate::sync::SyncWiring {
         config_dir: dir.to_path_buf(),
@@ -362,6 +365,8 @@ fn isolated_state_with(
         data_changes: data_changes.clone(),
         load_failures: Vec::new(),
         secret_catalog: None,
+        conversation_db: conversation_db.clone(),
+        running_conversations: Arc::new(|_| false),
     });
     AppState {
         ssh_manager,
@@ -372,9 +377,7 @@ fn isolated_state_with(
         connection_store,
         settings: settings_store,
         quick_command_store,
-        conversation_db: Arc::new(
-            ConversationDb::new(DataSourceId::Conversations.path(dir)).expect("temporary SQLite"),
-        ),
+        conversation_db,
         skill_store,
         mcp_store,
         data_changes,

@@ -111,6 +111,8 @@ impl ConversationDb {
                 None::<&str>,
                 None::<&str>,
                 None::<&str>,
+                // synced_images_json：压缩卡不带图片
+                None::<&str>,
             ),
         )?;
         // 插卡与顶会话同事务（见 `touch_at`）。

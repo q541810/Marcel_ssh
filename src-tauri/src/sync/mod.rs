@@ -39,6 +39,8 @@ pub mod streams;
 pub mod types;
 
 #[cfg(test)]
+mod conv_scope_guard;
+#[cfg(test)]
 mod scope_guard;
 #[cfg(test)]
 mod tests;

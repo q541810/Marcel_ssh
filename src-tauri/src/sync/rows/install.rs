@@ -129,10 +129,18 @@ fn trigger_sql(table: &RowTable, suffix: &str, event: &str) -> String {
         "UPDATE" => (format!("NEW.{}", quote_ident(table.pk)), "u"),
         _ => (format!("OLD.{}", quote_ident(table.pk)), "d"),
     };
+    // 稳定主键可能还是空串（`plan_snapshots.uid` 的 ALTER 只允许常量默认值）：这种行
+    // 同步身份还没定下来，**整行跳过**——`sync_changelog.row_id` 是 NOT NULL，
+    // 记成空串又会让 `sync_row_clock` 把一堆不同的行当成同一行。
+    let skip_when_empty = format!(
+        " AND length({row_id}) > 0 AND {row_id} IS NOT NULL",
+        row_id = row_id
+    );
+
     format!(
         "
         CREATE TEMP TRIGGER {name} AFTER {event} ON {table}
-        WHEN NOT EXISTS (SELECT 1 FROM temp.{applying})
+        WHEN NOT EXISTS (SELECT 1 FROM temp.{applying}){skip_when_empty}
         BEGIN
             INSERT INTO sync_changelog(tbl, row_id, op)
             VALUES ({table_lit}, {row_id}, '{op}');
@@ -145,6 +153,7 @@ fn trigger_sql(table: &RowTable, suffix: &str, event: &str) -> String {
         event = event,
         table = quote_ident(table.name),
         applying = quote_ident(APPLYING_TABLE),
+        skip_when_empty = skip_when_empty,
         table_lit = quote_literal(table.name),
         row_id = row_id,
         op = op,

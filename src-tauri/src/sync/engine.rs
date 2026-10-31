@@ -37,15 +37,18 @@ use super::core::{DeviceInfo, Platform};
 use super::history::HistoryStore;
 use super::join::{HostKeyBundle, SftpBundle};
 use super::ledger::Ledger;
+use super::rows::AliasMap;
 use super::secrets::SyncSecretStore;
 use super::sources::SourceAdapter;
 use super::storage::{StorageConfig, StorageError};
 use super::store::{Cursor, LedgerFiles, StreamName};
 use super::streams::{
     seal_stream_file, BackendStreamRemote, ConfigStreamDriver, StreamApplied, StreamDriver,
-    StreamDriverFactory, StreamFileKind, StreamProgress, StreamSnapshotLayout,
+    StreamDriverContext, StreamDriverFactory, StreamFileKind, StreamProgress, StreamSnapshotLayout,
 };
-use super::types::{StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus};
+use super::types::{
+    HeldSummary, StreamStatus, SyncCreateResult, SyncDevice, SyncState, SyncStatus,
+};
 use crate::config::connections::ConnectionStore;
 use crate::config::keychain::SecretSlot;
 use crate::config::settings::AppSettings;
@@ -87,6 +90,15 @@ pub struct SyncDeps {
     pub load_failures: Vec<DataSourceId>,
     /// 二、三期的流驱动构造器（T2 / T6 注册）。T0 为空：没有驱动的流整条跳过。
     pub stream_drivers: Vec<Arc<dyn StreamDriverFactory>>,
+    /// 「这段对话有任务在跑或在压缩吗」（T2 的延迟落地用）。
+    ///
+    /// 为什么放在 `SyncDeps` 而不是让驱动自己看 `AppState`：`sync/` 是纯逻辑层，不该认识
+    /// `AppState`；`lib.rs` 注入一个捕获 `AppState.client` 的闭包，测试注入 `|_| false`。
+    /// 这是对 T0 接口的一处扩展（T4 的记忆流不需要它）。
+    pub running_conversations: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    /// 对话档的规模估算（会话数 / 图片数 / 大致字节数），`sync_tier_estimate` 用。
+    /// 同样由 `lib.rs` 注入（包住对话库的那把锁），`sync/` 不直接认识 `ConversationDb`。
+    pub conv_estimate: Arc<dyn Fn() -> Result<(usize, usize, u64), AppError> + Send + Sync>,
 }
 
 /// 命令层 / 界面读得到的共享视图（不用等引擎空闲）。
@@ -286,7 +298,7 @@ impl SyncEngine {
         if !l.enabled() {
             return SyncStatus::off();
         }
-        let held = l.held_summary();
+        let held = self.held_summary();
         let state = if self.syncing {
             SyncState::Syncing
         } else if !held.is_empty() {
@@ -309,14 +321,20 @@ impl SyncEngine {
                 progress: self.stream_progress.get(&name).cloned(),
             })
             .collect();
+        // 配置流按 op 数；二、三期的流问各自的工厂（关着的流不数——它本来就不上传）。
+        let tier_pending: usize = StreamName::ALL
+            .iter()
+            .copied()
+            .filter(|n| *n != StreamName::Config && self.ledger.st.stream_enabled(*n))
+            .map(|n| self.stream_pending(n))
+            .sum();
         SyncStatus {
             enabled: true,
             state,
             last_sync_at: l.st.last_sync_at.clone(),
             last_error: self.last_error.clone(),
-            // 配置流按 op 数、conv / sec 按待上传段数；再加扣下的删除条数。
             pending_count: l.outbox.len()
-                + self.pending_segments.values().map(Vec::len).sum::<usize>()
+                + tier_pending
                 + held.iter().map(|h| h.count).sum::<usize>(),
             device_id: Some(l.st.device_id.clone()),
             device_name: Some(l.st.device_name.clone()),
@@ -332,18 +350,24 @@ impl SyncEngine {
         if name == StreamName::Config {
             return self.ledger.outbox.len();
         }
-        // 本轮已经捕获出来、还没上传的段优先；没有的话问驱动要磁盘上的待上传量
-        // （conv / sec 的真实队列在库的 changelog 与基线里，不在内存里）。
-        let in_memory = self.pending_segments.get(&name).map(Vec::len).unwrap_or(0);
-        if in_memory > 0 {
-            return in_memory;
+        // 二、三期的待上传量在驱动自己的磁盘状态里（changelog / 基线差），引擎数不到：
+        // 优先问工厂。工厂说 0（没实现 `pending`）时退回本轮的段数。
+        if let Some(factory) = self.deps.stream_drivers.iter().find(|f| f.name() == name) {
+            let n = factory.pending();
+            if n > 0 {
+                return n;
+            }
         }
-        self.deps
-            .stream_drivers
-            .iter()
-            .find(|f| f.name() == name)
-            .map(|f| f.pending())
-            .unwrap_or(0)
+        self.pending_segments.get(&name).map(Vec::len).unwrap_or(0)
+    }
+
+    /// 各条流扣住等确认的大量删除。配置流在账本里，二、三期的流在各自工厂里。
+    fn held_summary(&self) -> Vec<HeldSummary> {
+        let mut out = self.ledger.held_summary();
+        for factory in &self.deps.stream_drivers {
+            out.extend(factory.held());
+        }
+        out
     }
 
     /// 把状态 / 设备 / 存储配置同步给共享视图并（有变化时）通知前端。
@@ -705,6 +729,13 @@ impl SyncEngine {
     /// 构造失败只记该流的错误、跳过它：一条流的驱动坏了不该让配置流也同步不了。
     fn build_drivers(&mut self) {
         self.drivers.clear();
+        let context = StreamDriverContext {
+            device: self.ledger.st.device_id.clone(),
+            aliases: AliasMap::new(self.ledger.st.connection_aliases.clone()),
+            running: self.deps.running_conversations.clone(),
+            now_ms: self.deps.now_ms.clone(),
+            progress: Some(self.progress_reporter()),
+        };
         for factory in self.deps.stream_drivers.clone() {
             let name = factory.name();
             if name == StreamName::Config {
@@ -713,6 +744,7 @@ impl SyncEngine {
             if !self.ledger.st.stream_enabled(name) {
                 continue; // 关着的流不构造驱动：连初始化错误都不该出现在状态里
             }
+            factory.set_context(&context);
             let state = self.ledger.st.stream(name);
             // 捕获阶段拿不到 DK（密钥链可能一时不可用），落地 / 压缩阶段才需要它。
             // 驱动的原则是「没有 DK 也能捕获」，所以这里先给 `None`，需要时再 `with_data_key`。
@@ -731,6 +763,34 @@ impl SyncEngine {
     }
 
     // ── 每条流的阶段 ─────────────────────────────────────────────────────
+
+    /// 长操作（分包快照）中途报告进度的出口：直接写共享视图并发状态事件。
+    ///
+    /// 为什么不走 `self.stream_progress`：一轮同步可能跑几分钟，等轮末 `publish()` 才更新的话
+    /// 界面上的「正在同步对话 N / M」会一直停在 0，直到全部落完才跳到 N/N。
+    fn progress_reporter(&self) -> Arc<dyn Fn(StreamName, StreamProgress) + Send + Sync> {
+        let view = self.view.clone();
+        let events = self.deps.events.clone();
+        Arc::new(move |name: StreamName, p: StreamProgress| {
+            let status = {
+                let mut status = view.status.write();
+                match status.streams.iter_mut().find(|s| s.key == name.as_str()) {
+                    Some(stream) => stream.progress = Some(p),
+                    // 首轮同步时 `status.streams` 还可能是空的（还没 publish 过）：
+                    // 补一条最小条目，别让中途进度被吞掉。
+                    None => status.streams.push(crate::sync::types::StreamStatus {
+                        key: name.as_str().to_string(),
+                        tier: crate::sync::engine::tier_key(name.tier()).to_string(),
+                        pending: 0,
+                        last_error: None,
+                        progress: Some(p),
+                    }),
+                }
+                status.clone()
+            };
+            events.status(&status);
+        })
+    }
 
     fn config_driver(&mut self, dk: Option<DataKey>) -> ConfigStreamDriver<'_> {
         ConfigStreamDriver::new(
@@ -1717,15 +1777,26 @@ impl SyncEngine {
         if !self.ledger.enabled() {
             return Err(AppError::Other("还没有开启同步。".into()));
         }
-        if self.ledger.held.is_empty() {
+        // 配置流的扣留项在账本里；对话流的在驱动工厂里（它跨轮存活）。
+        let mut acted = false;
+        if !self.ledger.held.is_empty() {
+            if accept {
+                self.ledger.release_held();
+            } else {
+                self.ledger.discard_held();
+            }
+            self.flush()?;
+            acted = true;
+        }
+        for factory in self.deps.stream_drivers.clone() {
+            if !factory.held().is_empty() {
+                factory.confirm_held(accept);
+                acted = true;
+            }
+        }
+        if !acted {
             return Ok(());
         }
-        if accept {
-            self.ledger.release_held();
-        } else {
-            self.ledger.discard_held();
-        }
-        self.flush()?;
         self.publish();
         // 放行 → 上传；撤销 → 把被删的元素从镜像写回本机。两种都跑一轮完整同步。
         self.run_round(RoundKind::Full).await

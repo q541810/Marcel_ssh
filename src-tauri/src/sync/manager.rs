@@ -292,6 +292,11 @@ pub struct SyncWiring {
     /// `blocking_read` 的快照缓存，或由调用方每次刷新）。
     pub secret_catalog:
         Option<Arc<dyn Fn() -> crate::config::keychain::SecretSlotCatalog + Send + Sync>>,
+    /// 对话库（T2）：对话流的行同步必须走它自己的连接与锁。
+    pub conversation_db: Arc<crate::agent::conversation::ConversationDb>,
+    /// 「这段对话有任务在跑或在压缩吗」：对话流延迟落地用。由 `lib.rs` 捕获
+    /// `AppState` 的两张表注入——`sync/` 不认识 `AppState`。
+    pub running_conversations: Arc<dyn Fn(&str) -> bool + Send + Sync>,
 }
 
 struct Inner {
@@ -315,8 +320,21 @@ impl SyncManager {
         let secrets: Arc<dyn SyncSecretStore> = Arc::new(KeychainSecrets);
         let adapters = build_adapters(&wiring.stores, secrets.clone());
         let events = Arc::new(TauriEvents::default());
-        // 先算好驱动工厂：它要借 `wiring`，而下面构造 `SyncDeps` 会把 `wiring` 的字段移走。
-        let stream_drivers = secret_factories(&wiring, &secrets);
+        // 先算好驱动工厂：它们要借 `wiring`，而下面构造 `SyncDeps` 会把 `wiring` 的字段移走。
+        // 对话流（T2）：T4 加记忆库时在 `databases` 里再 push 一项，驱动代码不用改。
+        let conv_factory = Arc::new(crate::sync::streams::ConvStreamFactory::new(
+            vec![crate::sync::streams::ConvDatabase {
+                name: crate::agent::conversation::CONV_DB_NAME,
+                tables: crate::sync::streams::CONV_TABLES,
+                handle: Arc::new(crate::sync::streams::ConversationHandle::new(
+                    wiring.conversation_db.clone(),
+                )),
+            }],
+            wiring.config_dir.clone(),
+        ));
+        let mut stream_drivers: Vec<Arc<dyn crate::sync::streams::StreamDriverFactory>> =
+            vec![conv_factory];
+        stream_drivers.extend(secret_factories(&wiring, &secrets));
         let deps = Arc::new(SyncDeps {
             config_dir: wiring.config_dir,
             adapters,
@@ -335,6 +353,11 @@ impl SyncManager {
             default_device_name: default_device_name(),
             load_failures: wiring.load_failures,
             stream_drivers,
+            running_conversations: wiring.running_conversations,
+            conv_estimate: {
+                let db = wiring.conversation_db.clone();
+                Arc::new(move || db.sync_estimate())
+            },
         });
         Self::with_deps(deps, wiring.data_changes, Some(events))
     }
@@ -557,8 +580,8 @@ impl SyncManager {
 
     /// 某一档的规模估算。**只有数量与名称，绝无值。**
     ///
-    /// T0 只给出结构（对话数与图片数先按 0、机密分组为空）：真正的统计要等 T2 / T6
-    /// 把对话库与密钥链枚举接进来。前端在此之前显示「暂不可用」而不是瞎猜一个数字。
+    /// 对话档的数字来自对话库（会话数 / 消息里的图片条目数 / 库文件字节数）；机密档要等
+    /// T6 把密钥链枚举接进来，现在返回空分组。
     pub fn tier_estimate(&self, tier: String) -> Result<TierEstimate, AppError> {
         if !self.status().enabled {
             return Err(AppError::Other("还没有开启同步。".into()));
@@ -571,6 +594,16 @@ impl SyncManager {
         }
         if tier != "conversation" && tier != "secret" {
             return Err(AppError::Other(format!("未知的同步档位：{tier}")));
+        }
+        if tier == "conversation" {
+            let (conversations, images, total_bytes) = (self.inner.deps.conv_estimate)()?;
+            return Ok(TierEstimate {
+                tier,
+                conversations,
+                images,
+                total_bytes,
+                secret_groups: Vec::new(),
+            });
         }
         Ok(TierEstimate {
             tier,
