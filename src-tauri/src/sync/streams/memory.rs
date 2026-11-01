@@ -18,13 +18,11 @@
 //! `scope_versions` 不同步，但**落地后要重算**：它决定记忆注入的快照要不要重渲染。
 //! 别的设备改了记忆、本机不 bump 的话，下一次 Agent 请求还会用旧快照——这是「同步了但用不上」。
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use super::super::core::HlcClock;
 use super::super::rows::{
-    apply, capture, export_all, pending_count, AliasMap, CaptureOptions, CapturedRows, ColumnScope,
-    RowApplied, RowColumn, RowMerge, RowTable,
+    AliasMap, CaptureOptions, CapturedRows, ColumnScope, RowApplied, RowColumn, RowMerge, RowTable,
 };
 use super::conv::{ConvDatabase, ConvDbHandle};
 use crate::error::AppError;
@@ -220,6 +218,8 @@ pub fn touched_scopes_after_apply(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     /// 表清单的守护：列有增减或作用域改动就变红（照 T1 的 `scope_guard` 思路）。

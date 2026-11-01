@@ -122,6 +122,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   agentModeSettings: DEFAULT_AGENT_MODE_SETTINGS,
   experimentalSettings: DEFAULT_EXPERIMENTAL_SETTINGS,
   memorySettings: DEFAULT_MEMORY_SETTINGS,
+  conversationImagesMode: 'onDemand',
   updateMode: 'auto',
   autoUpdate: true,
   fileManagerShowHidden: false,

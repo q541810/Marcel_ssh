@@ -25,17 +25,17 @@ use super::super::core::format;
 use super::super::core::{Hlc, HlcClock};
 use super::super::store::{StreamName, StreamState};
 use super::super::{secret_baseline::SecretBaseline, secrets::SyncSecretStore};
-use super::{
-    StreamApplied, StreamDriver, StreamFileKind, StreamProgress, StreamSnapshot,
-    StreamSnapshotLayout,
-};
-use crate::config::keychain::{self, CaptureSuppression, SecretSlot, SecretSlotCatalog};
+use super::{StreamApplied, StreamDriver, StreamProgress, StreamSnapshot, StreamSnapshotLayout};
+use crate::config::keychain::{CaptureSuppression, SecretSlot, SecretSlotCatalog};
 use crate::error::AppError;
 
 /// 段 JSON 的 `kind`。读到别的值说明这条流的数据被投错了地方。
 const SEGMENT_KIND: &str = "secret-ops";
 /// 段 JSON 的 `stream`。
 const STREAM_KEY: &str = "sec";
+
+/// `capture_keys` 的产物：要发的 op + 待确认的基线改动（`Some(pem)` 写入 / `None` 删除）。
+type CapturedKeys = (Vec<SecretOp>, Vec<(String, Option<String>)>);
 /// 本流 HLC 的落盘文件（`<config>/sync/sec_clock.json`，属 `DataSourceId::SyncState`）。
 const CLOCK_FILE: &str = "sec_clock.json";
 /// 单段上限（与行同步同口径）。
@@ -496,9 +496,7 @@ impl SecretStreamDriver {
     ///
     /// 私钥正文走 blob（单独文件、按内容寻址），段里只带 `meta` 与 blob 名字——
     /// 一把私钥几 KB，塞进段会让每轮同步都重传一遍。
-    async fn capture_keys(
-        &mut self,
-    ) -> Result<(Vec<SecretOp>, Vec<(String, Option<String>)>), AppError> {
+    async fn capture_keys(&mut self) -> Result<CapturedKeys, AppError> {
         let (Some(dk), Some(backend)) = (self.dk.clone(), self.backend.clone()) else {
             // 还没拿到 DK / 后端：这一轮不上传私钥。**不能**顺手发删除——
             // 那样会把「只是暂时读不到」误发成墓碑。
@@ -1100,7 +1098,7 @@ mod tests {
     fn unknown_slot_stays_in_mirror_and_is_not_written_to_keychain() {
         let tmp = tempfile::tempdir().unwrap();
         let secrets = Arc::new(MemorySecrets::new());
-        let mut d = driver(tmp.path(), secrets.clone());
+        let d = driver(tmp.path(), secrets.clone());
         // 造一条镜像里才有的、本机 catalog 不认识的槽位
         let mut mirror = SecretMirror::load(tmp.path(), None);
         mirror.merge(&SecretOp::Set {
@@ -1124,7 +1122,7 @@ mod tests {
     fn known_slot_lands_and_updates_the_baseline() {
         let tmp = tempfile::tempdir().unwrap();
         let secrets = Arc::new(MemorySecrets::new());
-        let mut d = driver(tmp.path(), secrets.clone());
+        let d = driver(tmp.path(), secrets.clone());
         let mut mirror = SecretMirror::load(tmp.path(), None);
         mirror.merge(&SecretOp::Set {
             account: "llm_channel_ch1".into(),

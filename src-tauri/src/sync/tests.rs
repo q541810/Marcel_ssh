@@ -2799,3 +2799,171 @@ async fn deleting_a_memory_syncs_and_bumps_scope_versions() {
         "B 应该跟着删"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// T10 · 三档全开的三设备收敛
+// ═══════════════════════════════════════════════════════════════════════
+
+/// 三台设备、三档全开：配置 / 对话 / 记忆 / 私钥混在一起改，拉取顺序打乱，
+/// 最后三台必须**完全一致**。
+///
+/// 这是二、三期的总验收用例：任何一条流的「捕获漏了 / 落地丢了 / 回弹了」都会在这里露出来。
+/// 刻意不按「改一轮、同步一轮」的整齐节奏来——真实用法就是各改各的、谁先上线谁先同步。
+#[tokio::test(flavor = "multi_thread")]
+async fn three_devices_with_all_tiers_converge_under_out_of_order_sync() {
+    let cloud = MemoryStorage::new();
+    let clock = new_clock();
+    let mut a = Dev::new("A", &cloud, &clock, Platform::Desktop).await;
+    let mut b = Dev::new("B", &cloud, &clock, Platform::Desktop).await;
+    let mut c = Dev::new("C", &cloud, &clock, Platform::Android).await;
+    a.rebuild_engine_with_secrets();
+    b.rebuild_engine_with_secrets();
+    c.rebuild_engine_with_secrets();
+
+    // A 建同步，B / C 用同步码加入，然后三台都打开对话档与机密档
+    a.add_conn("c1", "生产服务器", "1.1.1.1", "root").await;
+    let (_rk, code) = a.create().await;
+    b.join_code(&code).await.unwrap();
+    c.join_code(&code).await.unwrap();
+    for dev in [&mut a, &mut b, &mut c] {
+        dev.engine.enable_tier("conversation", true).await.unwrap();
+        dev.engine.enable_tier("secret", true).await.unwrap();
+    }
+    a.sync().await;
+    b.sync().await;
+    c.sync().await;
+
+    // ── 各设备乱序地改不同东西 ─────────────────────────────────────
+
+    // A：一条连接改名 + 一段对话 + 一条记忆 + 一个 Key
+    a.edit_conn("c1", |c| c.name = "A 改的名字".into()).await;
+    let conv_a = a.new_chat("A 的对话", 2);
+    a.memory_store
+        .apply(
+            &crate::memory::model::BatchContext::new(crate::memory::model::Source::User, None),
+            &[new_memory("A 的偏好", "喜欢深色主题")],
+        )
+        .expect("A 写记忆");
+    a.secrets
+        .set(&SecretSlot::WebSearchApiKey, "key-from-A")
+        .unwrap();
+
+    // B：自己的连接 + 自己的对话 + 自己的记忆 + 一把私钥
+    b.add_conn("b1", "B 的机器", "3.3.3.3", "ubuntu").await;
+    let conv_b = b.new_chat("B 的对话", 1);
+    b.memory_store
+        .apply(
+            &crate::memory::model::BatchContext::new(crate::memory::model::Source::User, None),
+            &[new_memory("B 的偏好", "习惯用 vim")],
+        )
+        .expect("B 写记忆");
+    let pem = crate::ssh::key_store::tests_support::sample_key(None);
+    let key_meta = b
+        .dir_key_store
+        .import_text(&pem, "B 的私钥", None)
+        .expect("B 导入私钥");
+
+    // C：只改自己的对话，别的先不动
+    let conv_c = c.new_chat("C 的对话", 1);
+
+    // ── 乱序同步：B 先、C 再、A 最后，中间穿插重跑 ──────────────────
+    b.sync().await;
+    c.sync().await;
+    a.sync().await;
+    // 让每台设备都至少各跑两轮（第二轮才看得到另外两台刚传上去的东西）
+    b.sync().await;
+    c.sync().await;
+    a.sync().await;
+    a.sync().await;
+    b.sync().await;
+    c.sync().await;
+
+    // ── 三台必须完全一致 ──────────────────────────────────────────
+
+    // 1) 连接：三台都有 c1 与 b1，且名字一致
+    let expected_conns = {
+        let mut v: Vec<(String, String)> = a
+            .connections
+            .read()
+            .await
+            .connections
+            .iter()
+            .map(|c| (c.id.clone(), c.name.clone()))
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(expected_conns.len(), 2, "A 上应该只有两条连接");
+    for dev in [&b, &c] {
+        let mut got: Vec<(String, String)> = dev
+            .connections
+            .read()
+            .await
+            .connections
+            .iter()
+            .map(|c| (c.id.clone(), c.name.clone()))
+            .collect();
+        got.sort();
+        assert_eq!(got, expected_conns, "{} 的连接应与 A 一致", dev.name);
+    }
+    assert_eq!(
+        a.conn("c1").await.unwrap().name,
+        "A 改的名字",
+        "改名要传出去"
+    );
+
+    // 2) 对话：三台都有三段，消息条数一致
+    for dev in [&a, &b, &c] {
+        for (id, want) in [(&conv_a, 4), (&conv_b, 2), (&conv_c, 2)] {
+            assert!(dev.conv_exists(id), "{} 缺会话 {id}", dev.name);
+            assert_eq!(
+                dev.conv_message_count(id),
+                want,
+                "{} 的会话 {id} 消息数不对",
+                dev.name
+            );
+        }
+    }
+
+    // 3) 记忆：三台都有两条，内容一致
+    for dev in [&a, &b, &c] {
+        let titles: Vec<String> = dev
+            .memory_store
+            .list_all()
+            .expect("读记忆")
+            .into_iter()
+            .map(|m| m.title)
+            .collect();
+        assert!(titles.contains(&"A 的偏好".to_string()), "{}: {titles:?}", dev.name);
+        assert!(titles.contains(&"B 的偏好".to_string()), "{}: {titles:?}", dev.name);
+    }
+
+    // 4) 机密：三台都拿到同一个 Key；私钥三台都有且正文一致
+    for dev in [&a, &b, &c] {
+        assert_eq!(
+            dev.secrets
+                .get(&SecretSlot::WebSearchApiKey)
+                .unwrap()
+                .as_deref(),
+            Some("key-from-A"),
+            "{} 的 Key 应与 A 写入的一致",
+            dev.name
+        );
+        let got = dev
+            .dir_key_store
+            .export_for_sync(&key_meta.id)
+            .unwrap_or_else(|| panic!("{} 应该拿到 B 的私钥", dev.name));
+        assert_eq!(got.1.as_str(), pem, "{} 的私钥正文应与 B 的一致", dev.name);
+    }
+
+    // 5) 收敛后不再产生新的上传（没有回弹 / 没有来回弹）
+    let before = cloud.paths().len();
+    for dev in [&mut a, &mut b, &mut c] {
+        dev.sync().await;
+    }
+    assert_eq!(
+        cloud.paths().len(),
+        before,
+        "三台都已收敛，再同步不该产生新文件（有回弹才会涨）"
+    );
+}
