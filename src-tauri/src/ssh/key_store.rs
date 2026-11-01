@@ -469,6 +469,75 @@ impl KeyStore {
         }))
     }
 
+    /// 同步用：把一把私钥的**元数据 + 明文**交给同步层（上传 blob 用）。
+    ///
+    /// 返回 `None` = 本机没有这条、或主密钥解不开它（从备份恢复的设备），这两种情况
+    /// 都**不上传**——解不开的东西传出去也没人能落地。
+    fn export_for_sync(&self, id: &str) -> Option<(StoredKeyMeta, Zeroizing<String>)> {
+        let meta = self.load_index().keys.into_iter().find(|k| k.id == id)?;
+        let pem = self.load_pem(id).ok()?;
+        Some((meta, pem))
+    }
+
+    /// 同步用：把别的设备同步来的私钥写进本机库（用**本机主密钥**重新加密）。
+    ///
+    /// 返回 `Ok(true)` = 写入了；`Ok(false)` = 本机已有同 id 的条目（不覆盖：那可能是本机
+    /// 用户自己换过的一把，宁可留着也不悄悄替换）。
+    fn import_from_sync(
+        &self,
+        id: &str,
+        meta: &StoredKeyMeta,
+        pem: &str,
+    ) -> Result<bool, AppError> {
+        if pem.len() > key_material::MAX_KEY_BYTES {
+            return Err(key_error(
+                KeyAuthCode::UnsupportedKey,
+                "同步来的私钥太大，不像是私钥",
+            ));
+        }
+        let mut index = self.load_index();
+        if index.keys.iter().any(|k| k.id == id) {
+            return Ok(false);
+        }
+        // 先确认它真是把私钥（写进去也连不上的东西不留条目）。能解出公开部分就顺便
+        // 按实际内容校正元数据——指纹是用户核对"这是哪把钥匙"的依据，不能与内容对不上。
+        // 加密的 PKCS#8 公开部分也是密的，那种只能信同步来的元数据（通道本身是封装的）。
+        let mut meta = match rebuild_meta(id, pem) {
+            Some(actual) => {
+                let mut merged = meta.clone();
+                merged.algorithm = actual.algorithm;
+                merged.fingerprint = actual.fingerprint;
+                merged.encrypted = actual.encrypted;
+                merged
+            }
+            None if key_material::is_encrypted(pem) => meta.clone(),
+            None => {
+                return Err(key_error(
+                    KeyAuthCode::UnsupportedKey,
+                    "同步来的私钥格式无法识别（本机版本可能不认识这种格式）",
+                ))
+            }
+        };
+        meta.id = id.to_string();
+        // 来源路径是本机的概念：同步来的条目没有来源文件。
+        meta.origin_path = None;
+
+        if let Err(e) = std::fs::create_dir_all(&self.root) {
+            return Err(AppError::Config(format!("创建密钥库目录失败：{}", e)));
+        }
+        let master = master_key()?;
+        let envelope = seal_envelope(&master, id, pem)?;
+        write_private(&self.key_file_path(id), &envelope)?;
+        index.keys.push(meta);
+        self.save_index(&index)?;
+        Ok(true)
+    }
+
+    /// 同步用：删掉一条（别的设备删了它）。`KeyStore::delete` 本身幂等。
+    fn delete_from_sync(&self, id: &str) -> Result<(), AppError> {
+        self.delete(id)
+    }
+
     fn replace_from_origin(
         &self,
         id: &str,
@@ -498,6 +567,116 @@ impl KeyStore {
         let meta = meta.clone();
         self.save_index(&index)?;
         Ok(Some(meta))
+    }
+}
+
+/// 同步用：把一把私钥的**元数据 + 明文**交给同步层（上传 blob 用）。
+///
+/// 只给 crate 内调用，值一律 `Zeroizing`。返回 `None` = 本机没有这条、或主密钥解不开它
+/// （从备份恢复的设备），这两种情况都**不上传**——解不开的东西传出去也没人能落地。
+pub fn export_for_sync(id: &str) -> Option<(StoredKeyMeta, Zeroizing<String>)> {
+    store().export_for_sync(id)
+}
+
+/// 同步用：把别的设备同步来的私钥写进本机库（用**本机主密钥**重新加密）。
+///
+/// 返回 `Ok(true)` = 写入了；`Ok(false)` = 本机已有同 id 的条目（不覆盖：那可能是本机
+/// 用户自己换过的一把，宁可留着也不悄悄替换）。
+pub fn import_from_sync(id: &str, meta: &StoredKeyMeta, pem: &str) -> Result<bool, AppError> {
+    store().import_from_sync(id, meta, pem)
+}
+
+/// 同步用：删掉一条（别的设备删了它）。幂等。
+pub fn delete_from_sync(id: &str) -> Result<(), AppError> {
+    store().delete_from_sync(id)
+}
+
+/// 同步层碰到的「本机私钥库」存取口。
+///
+/// 抽成 trait 的理由与 [`crate::sync::secrets::SyncSecretStore`] 相同：模块级函数经
+/// `store()` 读进程级 `KEYS_ROOT`，而集成测试要给每台模拟设备一个独立目录。
+/// 生产实现是 [`SystemKeyStore`]（就是这些模块函数）；测试用 [`DirKeyStore`]。
+pub trait KeyStoreAccess: Send + Sync {
+    fn list(&self) -> Vec<StoredKeyMeta>;
+    fn has(&self, id: &str) -> bool;
+    fn export_for_sync(&self, id: &str) -> Option<(StoredKeyMeta, Zeroizing<String>)>;
+    fn import_from_sync(&self, id: &str, meta: &StoredKeyMeta, pem: &str)
+        -> Result<bool, AppError>;
+    fn delete_from_sync(&self, id: &str) -> Result<(), AppError>;
+}
+
+/// 生产实现：应用配置目录下的密钥库（`DataSourceId::KeyStore`）。
+pub struct SystemKeyStore;
+
+impl KeyStoreAccess for SystemKeyStore {
+    fn list(&self) -> Vec<StoredKeyMeta> {
+        list()
+    }
+    fn has(&self, id: &str) -> bool {
+        get(id).is_some()
+    }
+    fn export_for_sync(&self, id: &str) -> Option<(StoredKeyMeta, Zeroizing<String>)> {
+        export_for_sync(id)
+    }
+    fn import_from_sync(
+        &self,
+        id: &str,
+        meta: &StoredKeyMeta,
+        pem: &str,
+    ) -> Result<bool, AppError> {
+        import_from_sync(id, meta, pem)
+    }
+    fn delete_from_sync(&self, id: &str) -> Result<(), AppError> {
+        delete_from_sync(id)
+    }
+}
+
+/// 绑定到某个目录的密钥库（测试 / 注入用；主密钥仍走 `master_key()`）。
+pub struct DirKeyStore(KeyStore);
+
+impl DirKeyStore {
+    pub fn at(root: std::path::PathBuf) -> Self {
+        let _ = std::fs::create_dir_all(&root);
+        Self(KeyStore::new(root))
+    }
+
+    /// 导入一把私钥（集成测试用：模拟用户在这台设备的私钥库里导入）。
+    pub fn import_text(
+        &self,
+        text: &str,
+        name: &str,
+        passphrase: Option<&str>,
+    ) -> Result<StoredKeyMeta, AppError> {
+        self.0.import_text(text, name, None, passphrase)
+    }
+}
+
+/// 测试用：注入固定主密钥（否则会去读写真实的系统密钥链）。
+#[cfg(test)]
+pub(crate) fn use_test_master_key() {
+    let _ = TEST_MASTER_KEY.set([7u8; 32]);
+}
+
+impl KeyStoreAccess for DirKeyStore {
+    fn list(&self) -> Vec<StoredKeyMeta> {
+        self.0.load_index().keys
+    }
+    fn has(&self, id: &str) -> bool {
+        self.0.load_index().keys.iter().any(|k| k.id == id)
+    }
+    fn export_for_sync(&self, id: &str) -> Option<(StoredKeyMeta, Zeroizing<String>)> {
+        self.0.export_for_sync(id)
+    }
+    fn import_from_sync(
+        &self,
+        id: &str,
+        meta: &StoredKeyMeta,
+        pem: &str,
+    ) -> Result<bool, AppError> {
+        self.0.import_from_sync(id, meta, pem)
+    }
+    fn delete_from_sync(&self, id: &str) -> Result<(), AppError> {
+        self.0.delete_from_sync(id)
     }
 }
 
@@ -655,16 +834,29 @@ fn write_private(path: &Path, content: &str) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_support {
+    //! 两个测试模块（单元 + 同步）共用的夹具。
+    pub use super::tests::{fixture, sample_key};
+    use super::DirKeyStore;
+
+    /// 集成测试用：在临时目录里造一个可注入的私钥库，并保证主密钥走测试注入口。
+    pub fn dir_key_store(root: std::path::PathBuf) -> DirKeyStore {
+        super::use_test_master_key();
+        DirKeyStore::at(root)
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
     use super::*;
     use crate::ssh::key_material::tests::key_text;
 
-    fn sample_key(passphrase: Option<&str>) -> String {
+    pub fn sample_key(passphrase: Option<&str>) -> String {
         key_text(7, passphrase)
     }
 
     /// 每个用例一个独立目录，并注入固定主密钥——单测不碰真实系统密钥链。
-    fn fixture() -> (tempfile::TempDir, KeyStore) {
+    pub fn fixture() -> (tempfile::TempDir, KeyStore) {
         let _ = TEST_MASTER_KEY.set([7u8; 32]);
         let dir = tempfile::tempdir().expect("tempdir");
         let store = KeyStore::new(dir.path().to_path_buf());
@@ -1072,5 +1264,163 @@ mod tests {
             AppError::KeyAuth { code, .. } => assert_eq!(code, KeyAuthCode::KeyNotFound),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+}
+
+// ── 同步（T7）──────────────────────────────────────────────────────────
+//
+// 这里全走 `KeyStore` 上的方法：模块级 `export_for_sync` / `import_from_sync` /
+// `delete_from_sync` 只是 `store()` 的一行转发，而 `store()` 读的是进程级
+// `KEYS_ROOT`（测试里没法按用例注入临时目录）。逻辑在方法里，测方法即可。
+
+#[cfg(test)]
+mod sync_tests {
+    use super::tests_support::*;
+    use super::*;
+
+    #[test]
+    fn export_for_sync_returns_meta_and_plaintext() {
+        let (_dir, store) = fixture();
+        let pem = sample_key(None);
+        let meta = store
+            .import_text(&pem, "公司跳板机", None, None)
+            .expect("import");
+
+        let (m, text) = store.export_for_sync(&meta.id).expect("导出");
+        assert_eq!(m.id, meta.id);
+        assert_eq!(m.name, "公司跳板机");
+        assert_eq!(
+            text.as_str(),
+            pem,
+            "导出的是私钥原文（同步层自己用 SK 封装）"
+        );
+    }
+
+    #[test]
+    fn export_for_sync_is_none_for_missing_keys() {
+        let (_dir, store) = fixture();
+        assert!(store.export_for_sync("does-not-exist").is_none());
+    }
+
+    /// 同步来的私钥要用**本机主密钥**重新加密后写入：磁盘上仍然只有密文。
+    #[test]
+    fn import_from_sync_reencrypts_and_never_leaves_plaintext() {
+        let (dir, store) = fixture();
+        let pem = sample_key(None);
+        let meta = store
+            .import_text(&pem, "来源设备上的名字", None, None)
+            .expect("import");
+
+        // 模拟别的设备发来的数据（同一个 id、同样的明文）
+        let other_meta = meta.clone();
+        // 本机先删掉它，模拟「只在这台设备上见过」
+        store.delete(&meta.id).expect("清掉");
+
+        let wrote = store
+            .import_from_sync(&meta.id, &other_meta, &pem)
+            .expect("同步导入");
+        assert!(wrote, "应当写入");
+        assert_eq!(store.load_pem(&meta.id).expect("load").as_str(), pem);
+
+        // 磁盘上不能有明文（私钥正文）
+        let mut hits = Vec::new();
+        for entry in std::fs::read_dir(dir.path()).unwrap().flatten() {
+            let bytes = std::fs::read(entry.path()).unwrap_or_default();
+            let needle = b"PRIVATE KEY";
+            if bytes.windows(needle.len()).any(|w| w == needle) {
+                hits.push(entry.path().display().to_string());
+            }
+        }
+        assert!(hits.is_empty(), "私钥库磁盘上出现了明文：{hits:?}");
+    }
+
+    #[test]
+    fn import_from_sync_does_not_overwrite_an_existing_key() {
+        let (_dir, store) = fixture();
+        let pem = sample_key(None);
+        let meta = store
+            .import_text(&pem, "本机那把", None, None)
+            .expect("import");
+
+        let wrote = store
+            .import_from_sync(&meta.id, &meta, "some other key")
+            .expect("同步导入");
+        assert!(!wrote, "本机已有同 id 的条目时不覆盖");
+        assert_eq!(
+            store.load_pem(&meta.id).expect("load").as_str(),
+            pem,
+            "本机那把必须原样保留"
+        );
+    }
+
+    /// 带口令的私钥也必须能同步过来：同步层拿不到 passphrase，不能因此把它当坏格式。
+    #[test]
+    fn import_from_sync_accepts_a_passphrase_protected_key() {
+        let (_dir, store) = fixture();
+        let pem = sample_key(Some("pw"));
+
+        let wrote = store
+            .import_from_sync("k-enc", &meta_for("k-enc", "加密的"), &pem)
+            .expect("加密私钥也要能同步");
+        assert!(wrote);
+        assert!(
+            store.load_index().keys[0].encrypted,
+            "encrypted 标记要按真实内容校正，界面据此决定连接前问不问密码"
+        );
+        assert_eq!(store.load_pem("k-enc").unwrap().as_str(), pem);
+    }
+
+    /// 指纹是用户核对"这是哪把钥匙"的依据，必须以真内容为准，不能照抄对端。
+    #[test]
+    fn import_from_sync_takes_identity_from_the_key_itself() {
+        let (_dir, store) = fixture();
+        let pem = sample_key(None);
+        let mut wrong = meta_for("k2", "对端名字");
+        wrong.fingerprint = "SHA256:made-up".into();
+        wrong.algorithm = "ssh-rsa".into();
+
+        let wrote = store
+            .import_from_sync("k2", &wrong, &pem)
+            .expect("同步导入");
+        assert!(wrote);
+        let stored = &store.load_index().keys[0];
+        assert_eq!(stored.name, "对端名字", "用户起的名字要保留");
+        assert_eq!(stored.algorithm, "ssh-ed25519", "算法按真实内容校正");
+        assert_ne!(stored.fingerprint, "SHA256:made-up", "指纹按真实内容校正");
+        assert!(stored.fingerprint.starts_with("SHA256:"));
+    }
+
+    fn meta_for(id: &str, name: &str) -> StoredKeyMeta {
+        StoredKeyMeta {
+            id: id.into(),
+            name: name.into(),
+            algorithm: "ssh-ed25519".into(),
+            fingerprint: "SHA256:x".into(),
+            encrypted: false,
+            origin_path: None,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn import_from_sync_rejects_garbage() {
+        let (_dir, store) = fixture();
+        let meta = meta_for("k1", "坏密钥");
+        assert!(
+            store
+                .import_from_sync("k1", &meta, "this is not a key")
+                .is_err(),
+            "解析不了的私钥要拒绝，别留一条坏条目"
+        );
+    }
+
+    #[test]
+    fn delete_from_sync_is_idempotent() {
+        let (_dir, store) = fixture();
+        let pem = sample_key(None);
+        let meta = store.import_text(&pem, "k", None, None).expect("import");
+        store.delete_from_sync(&meta.id).expect("删");
+        store.delete_from_sync(&meta.id).expect("再删一次也不报错");
+        assert!(store.load_index().keys.is_empty());
     }
 }

@@ -39,6 +39,7 @@ use crate::data::{DataChangeBus, DataSourceId, JsonStore};
 use crate::mcp::manager::McpManager;
 use crate::mcp::store::McpServerStore;
 use crate::skills::store::{Skill, SkillStore};
+use crate::ssh::key_store::KeyStoreAccess;
 use crate::ssh::known_hosts::{KnownHostEntry, KnownHostsStore};
 
 const PASSWORD: &str = "pw-very-secret-123";
@@ -87,6 +88,10 @@ struct Dev {
     conversation_db: Arc<crate::agent::conversation::ConversationDb>,
     /// 记忆库（T4）。
     memory_store: Arc<crate::memory::MemoryStore>,
+    /// 本机私钥库（T7）：每台模拟设备一个临时目录。
+    key_store: Arc<dyn crate::ssh::key_store::KeyStoreAccess>,
+    /// 同一份库的具体句柄（集成测试里模拟「用户在这台设备导入私钥」）。
+    dir_key_store: Arc<crate::ssh::key_store::DirKeyStore>,
     /// 对话流的驱动工厂（跨引擎重建沿用同一份）。
     conv_factory: Arc<crate::sync::streams::ConvStreamFactory>,
     /// 「这段对话在跑」的判定：测试里可改，用来模拟任务运行中的延迟落地。
@@ -146,6 +151,11 @@ impl Dev {
             memory_store.clone(),
         ));
         let conv_factory = Arc::new(conv_factory);
+        let dir_key_store =
+            std::sync::Arc::new(crate::ssh::key_store::tests_support::dir_key_store(
+                crate::data::DataSourceId::KeyStore.path(dir.path()),
+            ));
+        let key_store: Arc<dyn crate::ssh::key_store::KeyStoreAccess> = dir_key_store.clone();
         let mut dev = Dev {
             name,
             settings: JsonStore::new(dir.path(), AppSettings::default(), Some(bus.clone())),
@@ -168,6 +178,8 @@ impl Dev {
             dir,
             conversation_db,
             memory_store,
+            key_store,
+            dir_key_store,
             conv_factory,
             running,
             running_ids,
@@ -243,6 +255,7 @@ impl Dev {
             crate::sync::streams::sec::SecretFactoryDeps {
                 config_dir: self.dir.path().to_path_buf(),
                 secrets: self.secrets.clone(),
+                key_store: self.key_store.clone(),
                 catalog: Arc::new(move || crate::config::keychain::SecretSlotCatalog {
                     connection_ids: futures::executor::block_on(async {
                         connections
@@ -291,6 +304,16 @@ impl Dev {
         let files = LedgerFiles::new(self.dir.path());
         self.view = Arc::new(SharedView::new(HistoryStore::load(files.history_file())));
         self.engine = SyncEngine::new(self.deps(version, failures), self.view.clone());
+    }
+
+    /// 「重启应用」，且保留**带机密流驱动**的那套依赖（三期用例用）。
+    fn rebuild_engine_with_secrets(&mut self) {
+        let files = LedgerFiles::new(self.dir.path());
+        self.view = Arc::new(SharedView::new(HistoryStore::load(files.history_file())));
+        self.engine = SyncEngine::new(
+            self.deps_with_secrets("1.12.0", Vec::new()),
+            self.view.clone(),
+        );
     }
 
     async fn create(&mut self) -> (String, String) {
@@ -2026,23 +2049,13 @@ async fn connection_aliases_are_persisted_and_resolvable() {
 // 三期：机密流
 // ═══════════════════════════════════════════════════════════════════════
 
-/// 把同步引擎换成「带机密流驱动」的那套（测试里用来打开机密档）。
-fn rebuild_with_secrets(dev: &mut Dev) {
-    let files = LedgerFiles::new(dev.dir.path());
-    dev.view = Arc::new(SharedView::new(HistoryStore::load(files.history_file())));
-    dev.engine = SyncEngine::new(
-        dev.deps_with_secrets("1.12.0", Vec::new()),
-        dev.view.clone(),
-    );
-}
-
 const A_SECRET: &str = "sk-very-secret-value-123";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn secrets_sync_between_two_devices_and_land_in_the_keychain() {
     let (mut a, mut b, _cloud) = pair().await;
-    rebuild_with_secrets(&mut a);
-    rebuild_with_secrets(&mut b);
+    a.rebuild_engine_with_secrets();
+    b.rebuild_engine_with_secrets();
     // 两边各有一条连接（槽位目录里要有它，否则 `from_account` 反查不到）
     a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
     let (_rk, code) = a.create().await;
@@ -2086,7 +2099,7 @@ async fn secrets_sync_between_two_devices_and_land_in_the_keychain() {
 #[tokio::test(flavor = "multi_thread")]
 async fn secrets_never_land_in_plaintext_on_disk() {
     let (mut a, _b, _cloud) = pair().await;
-    rebuild_with_secrets(&mut a);
+    a.rebuild_engine_with_secrets();
     a.add_conn("c1", "服务器", "1.1.1.1", "root").await;
     a.create().await;
     a.engine.enable_tier("secret", true).await.unwrap();
@@ -2129,7 +2142,7 @@ async fn secrets_never_land_in_plaintext_on_disk() {
 #[tokio::test(flavor = "multi_thread")]
 async fn closing_the_secret_tier_stops_uploading() {
     let (mut a, _b, cloud) = pair().await;
-    rebuild_with_secrets(&mut a);
+    a.rebuild_engine_with_secrets();
     a.create().await;
     a.engine.enable_tier("secret", true).await.unwrap();
     a.secrets.set(&SecretSlot::WebSearchApiKey, "k1").unwrap();
@@ -2150,6 +2163,119 @@ async fn closing_the_secret_tier_stops_uploading() {
         after, before,
         "关掉机密档后不该再上传新段（before={before}, after={after}）"
     );
+}
+
+/// T7：A 导入一把私钥 → B 拿到同一把（能用它读出同样的私钥正文），A 删除 → B 跟着删。
+#[tokio::test(flavor = "multi_thread")]
+async fn private_keys_sync_and_survive_a_restart() {
+    let (mut a, mut b, _cloud) = pair().await;
+    a.rebuild_engine_with_secrets();
+    b.rebuild_engine_with_secrets();
+    let (_rk, code) = a.create().await;
+    b.join_code(&code).await.unwrap();
+    a.engine.enable_tier("secret", true).await.unwrap();
+    b.engine.enable_tier("secret", true).await.unwrap();
+    a.sync().await;
+    b.sync().await;
+
+    // A 上导入一把私钥
+    let pem = crate::ssh::key_store::tests_support::sample_key(None);
+    let meta = a
+        .dir_key_store
+        .import_text(&pem, "公司跳板机", None)
+        .expect("导入私钥");
+    a.sync().await;
+    b.sync().await;
+
+    // B 拿到了同一把（id 相同、正文相同、名字照抄）
+    let got = b
+        .dir_key_store
+        .export_for_sync(&meta.id)
+        .expect("B 应该有这把私钥");
+    assert_eq!(got.0.name, "公司跳板机", "名字要照抄");
+    assert_eq!(got.0.fingerprint, meta.fingerprint, "指纹要照抄");
+    assert_eq!(got.1.as_str(), pem, "正文要一模一样");
+    assert!(
+        got.0.origin_path.is_none(),
+        "来源路径是本机的概念，不能跨设备带过去"
+    );
+
+    // B 重启（引擎重建、账本从磁盘读回）后私钥还在，且不会重复发
+    b.rebuild_engine_with_secrets();
+    assert!(b.dir_key_store.export_for_sync(&meta.id).is_some());
+
+    // A 删除 → B 跟着删
+    a.dir_key_store
+        .delete_from_sync(&meta.id)
+        .expect("A 删除私钥");
+    a.sync().await;
+    b.sync().await;
+    assert!(
+        b.dir_key_store.export_for_sync(&meta.id).is_none(),
+        "A 删了以后 B 也要删"
+    );
+}
+
+/// T7：私钥正文（含它的明文片段）不能以明文出现在磁盘上——本机库里要重新封装。
+#[tokio::test(flavor = "multi_thread")]
+async fn synced_private_keys_never_land_in_plaintext_on_disk() {
+    let (mut a, mut b, _cloud) = pair().await;
+    a.rebuild_engine_with_secrets();
+    b.rebuild_engine_with_secrets();
+    let (_rk, code) = a.create().await;
+    b.join_code(&code).await.unwrap();
+    a.engine.enable_tier("secret", true).await.unwrap();
+    b.engine.enable_tier("secret", true).await.unwrap();
+    a.sync().await;
+
+    let pem = crate::ssh::key_store::tests_support::sample_key(None);
+    let meta = a
+        .dir_key_store
+        .import_text(&pem, "要同步的私钥", None)
+        .expect("导入私钥");
+    a.sync().await;
+    b.sync().await;
+    assert!(b.dir_key_store.export_for_sync(&meta.id).is_some());
+
+    // 私钥正文的一段特有内容（不含通用头尾，免得被公钥/注释干扰）
+    let needle = pem
+        .lines()
+        .nth(1)
+        .expect("OpenSSH 私钥第二行是正文")
+        .trim()
+        .as_bytes()
+        .to_vec();
+    assert!(needle.len() > 16, "正文片段要够长才有判别力");
+
+    fn scan(dir: &std::path::Path, needle: &[u8]) -> Vec<String> {
+        let mut hits = Vec::new();
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&d) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if bytes.windows(needle.len()).any(|w| w == needle) {
+                        hits.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        hits
+    }
+    for (who, dev) in [("A", &a), ("B", &b)] {
+        let hits = scan(dev.dir.path(), &needle);
+        assert!(
+            hits.is_empty(),
+            "{who} 的磁盘上出现了明文私钥：{hits:?}（私钥库必须用本机主密钥封装、blob 必须用 DK 封装）"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

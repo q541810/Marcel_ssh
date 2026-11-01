@@ -45,6 +45,11 @@ struct BaselineFile {
     salt: String,
     /// `account` → HMAC-SHA256 hex。
     entries: BTreeMap<String, String>,
+    /// 私钥 id → 私钥正文的 HMAC-SHA256 hex（T7）。
+    ///
+    /// 私钥库没有变更通知，也只能靠比对：不比就把**别的设备落地进来的**私钥
+    /// 当成本机新导入的，每轮再传回去（两边来回弹、段数无限涨）。
+    keys: BTreeMap<String, String>,
 }
 
 /// 机密基线（内存形态）。
@@ -54,6 +59,7 @@ pub struct SecretBaseline {
     /// 成本为零，就别留。
     salt: Zeroizing<String>,
     entries: BTreeMap<String, String>,
+    keys: BTreeMap<String, String>,
 }
 
 impl SecretBaseline {
@@ -74,6 +80,7 @@ impl SecretBaseline {
             path,
             salt,
             entries: file.entries,
+            keys: file.keys,
         })
     }
 
@@ -119,14 +126,42 @@ impl SecretBaseline {
         self.entries.keys().cloned().collect()
     }
 
+    // ── 私钥（T7）────────────────────────────────────────────────
+
+    /// 本机上次同步出去的这把这些私钥正文是什么样。
+    pub fn key_matches(&self, key_id: &str, pem: &str) -> bool {
+        let Some(recorded) = self.keys.get(key_id) else {
+            return false;
+        };
+        constant_time_eq(recorded.as_bytes(), self.digest_inner(pem).as_bytes())
+    }
+
+    pub fn key_knows(&self, key_id: &str) -> bool {
+        self.keys.contains_key(key_id)
+    }
+
+    pub fn key_upsert(&mut self, key_id: &str, pem: &str) {
+        self.keys.insert(key_id.to_string(), self.digest_inner(pem));
+    }
+
+    pub fn key_remove(&mut self, key_id: &str) {
+        self.keys.remove(key_id);
+    }
+
+    /// 基线里记着的私钥 id（「这台设备以前同步过哪些私钥」）。
+    pub fn key_ids(&self) -> Vec<String> {
+        self.keys.keys().cloned().collect()
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.keys.is_empty()
     }
 
     pub fn save(&self) -> Result<(), AppError> {
         let file = BaselineFile {
             salt: self.salt.as_str().to_string(),
             entries: self.entries.clone(),
+            keys: self.keys.clone(),
         };
         let text = serde_json::to_string_pretty(&file)
             .map_err(|e| AppError::Config(format!("序列化机密基线失败：{e}")))?;

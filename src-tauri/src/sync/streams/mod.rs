@@ -164,6 +164,17 @@ pub trait StreamDriver: Send + Sync {
         StreamSnapshotLayout::Directory
     }
 
+    /// 引擎拿到 DK 之后补进**已经构造好的**驱动。
+    ///
+    /// 每轮开头引擎先构造驱动（那时还没取 DK），再去取后端与 DK。不补这一步的话，
+    /// 需要 DK 的活（私钥落地、图片下载）在「重启后的第一轮」会被整轮跳过——
+    /// 表现为「刚启动时同步总要跑两轮才补齐」。默认什么都不做。
+    fn set_data_key(&mut self, _dk: &DataKey) {}
+
+    /// 引擎拿到存储后端之后补进已经构造好的驱动（图片 / 私钥 blob 上传下载用）。
+    /// 与 `set_data_key` 同理：构造驱动时后端可能还没建好。默认什么都不做。
+    fn set_backend(&mut self, _backend: Arc<dyn super::backends::Backend>) {}
+
     /// 拉取并落地远端快照。driver 自己决定要不要分包、按什么顺序拉。
     /// `remote` 只读；`index_seq` 是该快照的序号。
     async fn apply_snapshot(

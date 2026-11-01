@@ -750,6 +750,7 @@ fn secret_factories(
             crate::sync::streams::sec::SecretFactoryDeps {
                 config_dir: wiring.config_dir.clone(),
                 secrets: secrets.clone(),
+                key_store: Arc::new(crate::ssh::key_store::SystemKeyStore),
                 catalog,
                 // 设备 id 写在账本 `state.json` 里，由引擎经 `StreamState` 交给驱动；
                 // 工厂这一层拿不到，也不需要——驱动把它用在 op 的 HLC 上，构造时再问。

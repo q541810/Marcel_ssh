@@ -27,11 +27,12 @@ fn registry_entries_are_unique_and_described() {
     }
 }
 
-/// 私钥密文用本机主密钥加密，换设备解不开——绝不能被当成可同步配置。
-/// （三期 T7 会把它改成 Secret 档，同步的是「用 SK 重新封装的私钥」，不是这份本机密文。）
+/// 私钥密文用本机主密钥加密，换设备解不开——所以三期起走**机密**流：
+/// 同步的是「用 SK 重新封装的私钥正文」，落地时用对方自己的主密钥再加密一遍。
+/// 主密钥本身（`SecretSlot::KeyStoreMaster`）仍是 Local，永不外传。
 #[test]
-fn key_store_is_local_only() {
-    assert_eq!(DataSourceId::KeyStore.tier(), SyncTier::Local);
+fn key_store_is_secret_tier_not_config() {
+    assert_eq!(DataSourceId::KeyStore.tier(), SyncTier::Secret);
 }
 
 /// 虚拟源没有磁盘位置，也不会被当成配置档的同步源。
@@ -90,7 +91,7 @@ fn registry_snapshot_pins_paths_and_tiers() {
             Config,
             BaseDir::Config,
         ),
-        (KeyStore, "keys", Dir, Local, BaseDir::Config),
+        (KeyStore, "keys", Dir, Secret, BaseDir::Config),
         (
             Conversations,
             "conversations.db",

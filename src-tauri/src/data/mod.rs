@@ -180,13 +180,16 @@ impl DataSourceId {
                 describe: "SSH 主机密钥指纹（首次信任后的校验依据）",
             },
             // 私钥密文用**本机**主密钥（系统密钥链里的 keys:master）加密，换设备解不开，
-            // 所以不能当普通配置同步；以后机密同步另走密钥链导出。
+            // 所以不走普通配置同步。三期起由机密流同步：上传时用数据密钥 SK 重新封装的
+            // **私钥原文**（走 blob），落地时用对方自己的主密钥再加密一遍。
+            // 主密钥本身仍然是设备绑定（`SecretSlot::KeyStoreMaster` 是 Local），永不外传。
             DataSourceId::KeyStore => SourceSpec {
-                tier: Local,
+                tier: Secret,
                 base: BaseDir::Config,
                 rel_path: "keys",
                 kind: Dir,
-                describe: "导入的 SSH 私钥库（本机主密钥加密的密文）",
+                describe:
+                    "SSH 私钥库（本机主密钥加密；三期起私钥正文经机密流同步，主密钥仍设备绑定）",
             },
             DataSourceId::Conversations => SourceSpec {
                 tier: Conversation,

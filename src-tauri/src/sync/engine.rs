@@ -558,6 +558,12 @@ impl SyncEngine {
 
         let backend = self.ensure_backend()?;
         let dk = self.data_key()?;
+        // 驱动是在拿到 DK / 后端之前构造的（`build_drivers`），这里补齐：不然需要 DK 的活
+        // （私钥落地、图片下载）在重启后的第一轮会被静默跳过。
+        for driver in self.drivers.values_mut() {
+            driver.set_data_key(&dk);
+            driver.set_backend(backend.clone());
+        }
         self.set_syncing(true);
 
         // 2. 上传：每条开着的流把自己的待上传队列写成段。

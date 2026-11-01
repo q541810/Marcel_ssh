@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 
 use super::super::core::crypto::{aad_tag, DataKey};
 use super::super::core::format;
-use super::super::core::Hlc;
+use super::super::core::{Hlc, HlcClock};
 use super::super::store::{StreamName, StreamState};
 use super::super::{secret_baseline::SecretBaseline, secrets::SyncSecretStore};
 use super::{
@@ -36,6 +36,8 @@ use crate::error::AppError;
 const SEGMENT_KIND: &str = "secret-ops";
 /// 段 JSON 的 `stream`。
 const STREAM_KEY: &str = "sec";
+/// 本流 HLC 的落盘文件（`<config>/sync/sec_clock.json`，属 `DataSourceId::SyncState`）。
+const CLOCK_FILE: &str = "sec_clock.json";
 /// 单段上限（与行同步同口径）。
 const MAX_SEGMENT_BYTES: usize = 900_000;
 
@@ -190,6 +192,39 @@ struct SegmentIn {
     #[serde(default)]
     kind: Option<String>,
     ops: Vec<SecretOp>,
+}
+
+/// 读本流时钟。文件缺失 / 损坏 / 设备 id 变了 → 从零开始（沿用一个不属于本机的
+/// 设备 id 会让别处看到「这台设备的时间线倒流」）。
+fn load_clock(config_dir: &std::path::Path, device: &str) -> HlcClock {
+    let path = crate::data::DataSourceId::SyncState
+        .path(config_dir)
+        .join(CLOCK_FILE);
+    #[derive(Deserialize)]
+    struct Saved {
+        last: Hlc,
+    }
+    match std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Saved>(&t).ok())
+    {
+        Some(saved) if saved.last.device == device => HlcClock::from_last(saved.last),
+        _ => HlcClock::new(device),
+    }
+}
+
+fn save_clock(config_dir: &std::path::Path, last: &Hlc) -> Result<(), AppError> {
+    #[derive(Serialize)]
+    struct Saved<'a> {
+        last: &'a Hlc,
+    }
+    let path = crate::data::DataSourceId::SyncState
+        .path(config_dir)
+        .join(CLOCK_FILE);
+    let text = serde_json::to_string(&Saved { last })
+        .map_err(|e| AppError::Config(format!("序列化机密流时钟失败：{e}")))?;
+    crate::config::persist::atomic_write(&path, &text)
+        .map_err(|e| AppError::Config(format!("写入机密流时钟失败：{e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -369,10 +404,22 @@ pub struct SecretStreamDriver {
     state: StreamState,
     /// 数据密钥：只有引擎在「需要封包 / 解镜像」的阶段才给得出，构造时为 `None`。
     dk: Option<DataKey>,
+    /// 存储后端（私钥 blob 上传 / 下载用）。
+    backend: Option<Arc<dyn crate::sync::backends::Backend>>,
+    /// 本机私钥库（T7）。默认是应用配置目录下那一份；测试可换成临时目录。
+    key_store: Arc<dyn crate::ssh::key_store::KeyStoreAccess>,
     /// 本机当前的可枚举槽位目录（每次比对前现算）。
     catalog: SecretSlotCatalog,
+    /// 本流的时间戳：**必须单调**。同一毫秒内发两条 op（用户导入后立刻删除）时，
+    /// 只有 counter 能分出先后——恒定 `counter: 0` 会让后一条被镜像当成「不更新」丢掉。
+    /// 持久化在 `sync/sec_clock.json`，重启 / 墙钟回拨后仍严格递增。
+    clock: HlcClock,
     /// 待上传的段（`capture` 产出、引擎上传成功后 `ack_capture` 才更新基线）。
     pending_baseline: Vec<(String, Option<String>)>,
+    /// 私钥基线的待确认改动：`Some(pem)` = 上传成功后记成「已同步」，`None` = 删掉这条记录。
+    ///
+    /// 与槽位同理：**上传成功才能改基线**，否则段没传出去、下轮又以为已经同步过了。
+    pending_key_baseline: Vec<(String, Option<String>)>,
 }
 
 impl SecretStreamDriver {
@@ -383,37 +430,133 @@ impl SecretStreamDriver {
         state: StreamState,
         catalog: SecretSlotCatalog,
     ) -> Self {
+        let clock = load_clock(&config_dir, &device);
         Self {
             config_dir,
             secrets,
             device,
             state,
             dk: None,
+            backend: None,
+            key_store: Arc::new(crate::ssh::key_store::SystemKeyStore),
             catalog,
+            clock,
             pending_baseline: Vec::new(),
+            pending_key_baseline: Vec::new(),
         }
     }
 
-    /// 引擎在拿到 DK 之后调一次（捕获阶段不需要）。
+    /// 引擎在拿到 DK / 后端之后调一次（捕获阶段不需要）。
     pub fn with_data_key(mut self, dk: DataKey) -> Self {
         self.dk = Some(dk);
         self
     }
 
-    fn now_hlc(&self) -> Hlc {
-        // 机密流没有自己的时钟：用远端已观察到的最大 HLC 与本机墙钟取大，再补 counter。
-        // 引擎每轮会把远端 HLC 通过 `observe` 推到共享时钟上（`capture` 前的账本里有），
-        // 这里用 `wall_clock_ms` + 设备 id 生成一个足够用的时间戳。
-        Hlc {
-            ms: super::super::core::wall_clock_ms(),
-            counter: 0,
-            device: self.device.clone(),
+    /// 注入存储后端（私钥 blob 用）。
+    pub fn with_backend(mut self, backend: Arc<dyn crate::sync::backends::Backend>) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    /// 注入私钥库（测试用；生产默认系统密钥库）。
+    pub fn with_key_store(
+        mut self,
+        key_store: Arc<dyn crate::ssh::key_store::KeyStoreAccess>,
+    ) -> Self {
+        self.key_store = key_store;
+        self
+    }
+
+    /// 下一个本机时间戳。严格大于此前发出的任何一个（同一毫秒靠 counter 递进），
+    /// 发完立刻落盘——崩溃后重启不能退回去，否则删除墓碑会被旧值盖掉。
+    fn now_hlc(&mut self) -> Hlc {
+        let hlc = self.clock.now(super::super::core::wall_clock_ms());
+        if let Err(e) = save_clock(&self.config_dir, &hlc) {
+            log::warn!("同步：机密流时钟落盘失败（不影响本轮）: {e}");
         }
+        hlc
+    }
+
+    /// 看到远端的时间戳：把本机时钟推到它之后，保证「看到删除后再做的修改」排在删除之后。
+    fn observe_remote(&mut self, ops: &[SecretOp]) {
+        let wall = super::super::core::wall_clock_ms();
+        let before = self.clock.last().clone();
+        for op in ops {
+            self.clock.observe(op.hlc(), wall);
+        }
+        if self.clock.last() != &before {
+            let last = self.clock.last().clone();
+            if let Err(e) = save_clock(&self.config_dir, &last) {
+                log::warn!("同步：机密流时钟落盘失败（不影响本轮）: {e}");
+            }
+        }
+    }
+
+    /// 捕获私钥库的改动（T7）：本机能解开的条目才上传，解不开的（备份恢复的设备）跳过。
+    ///
+    /// 私钥正文走 blob（单独文件、按内容寻址），段里只带 `meta` 与 blob 名字——
+    /// 一把私钥几 KB，塞进段会让每轮同步都重传一遍。
+    async fn capture_keys(
+        &mut self,
+    ) -> Result<(Vec<SecretOp>, Vec<(String, Option<String>)>), AppError> {
+        let (Some(dk), Some(backend)) = (self.dk.clone(), self.backend.clone()) else {
+            // 还没拿到 DK / 后端：这一轮不上传私钥。**不能**顺手发删除——
+            // 那样会把「只是暂时读不到」误发成墓碑。
+            return Ok((Vec::new(), Vec::new()));
+        };
+        let baseline = SecretBaseline::load(&self.config_dir)?;
+        let mut ledger = crate::sync::blob::BlobLedger::load(&self.config_dir);
+        let mut ops = Vec::new();
+        let mut updates = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for meta in self.key_store.list() {
+            let Some((m, pem)) = self.key_store.export_for_sync(&meta.id) else {
+                continue; // 主密钥解不开：不上传（传过去也没人能落地）
+            };
+            if baseline.key_matches(&meta.id, pem.as_str()) {
+                // 已经同步过（包括「别的设备落地进本机」的那一把）：别再发，否则两边来回弹。
+                seen.insert(meta.id);
+                continue;
+            }
+            let (blob, _) = crate::sync::blob::upload_blob(
+                &backend,
+                &mut ledger,
+                &dk,
+                &self.device,
+                pem.as_bytes(),
+            )
+            .await?;
+            let meta_json = serde_json::to_value(&m)
+                .map_err(|e| AppError::Config(format!("序列化私钥元数据失败：{e}")))?;
+            ops.push(SecretOp::SetKey {
+                key_id: meta.id.clone(),
+                hlc: self.now_hlc(),
+                meta: meta_json,
+                blob,
+            });
+            updates.push((meta.id.clone(), Some(pem.as_str().to_string())));
+            seen.insert(meta.id);
+        }
+        // 基线里记着、本机库里已经没有的私钥 → 发删除。
+        //
+        // **必须用基线而不是镜像**：捕获阶段 `self.dk` 是 `None`（引擎刻意不给），
+        // 而镜像用 DK 封装，读出来永远是空的——那样删除墓碑一条都发不出去。
+        // 基线只存 HMAC、不需要 DK，正好用来回答「这台设备以前同步过这把私钥吗」。
+        for key_id in baseline.key_ids() {
+            if !seen.contains(&key_id) && !self.key_store.has(&key_id) {
+                ops.push(SecretOp::DelKey {
+                    key_id: key_id.clone(),
+                    hlc: self.now_hlc(),
+                });
+                updates.push((key_id, None));
+            }
+        }
+        Ok((ops, updates))
     }
 
     /// 全量比对：把本机所有可枚举槽位与基线比一遍。返回要发的 op（不含 HLC）。
     fn diff_against_baseline(
-        &self,
+        &mut self,
     ) -> Result<(Vec<SecretOp>, Vec<(String, Option<String>)>), AppError> {
         let baseline = SecretBaseline::load(&self.config_dir)?;
         let mut ops = Vec::new();
@@ -496,6 +639,54 @@ impl SecretStreamDriver {
         .map_err(|e| AppError::Config(format!("序列化机密段失败：{e}")))
     }
 
+    /// 把镜像里的私钥落地到本机私钥库（用本机主密钥重新加密）。
+    async fn land_keys(&self, mirror: &SecretMirror) -> Result<Vec<String>, AppError> {
+        let (Some(dk), Some(backend)) = (self.dk.clone(), self.backend.clone()) else {
+            return Ok(Vec::new());
+        };
+        // 落地期间不捕获：这里写进去的私钥不是「本机改动」。
+        let _suppress = CaptureSuppression::new();
+        let mut baseline = SecretBaseline::load(&self.config_dir)?;
+        let mut landed = Vec::new();
+        for (key_id, entry) in mirror.keys() {
+            match (&entry.meta, &entry.blob) {
+                (Some(meta), Some(blob)) => {
+                    if self.key_store.has(key_id) {
+                        continue; // 本机已有：不覆盖（可能是用户自己换过的一把）
+                    }
+                    let Some(bytes) =
+                        crate::sync::blob::download_blob(&backend, &dk, &self.device, blob).await?
+                    else {
+                        log::warn!("同步：私钥 {key_id} 的正文在对端已经没有了，跳过");
+                        continue;
+                    };
+                    let pem = String::from_utf8(bytes)
+                        .map_err(|_| AppError::Other("同步来的私钥不是文本格式".into()))?;
+                    let meta: crate::ssh::key_store::StoredKeyMeta =
+                        serde_json::from_value(meta.clone()).map_err(|e| {
+                            AppError::Other(format!("同步来的私钥元数据无法识别：{e}"))
+                        })?;
+                    if self.key_store.import_from_sync(key_id, &meta, &pem)? {
+                        // 记进基线：否则下一轮捕获会把「别的设备刚落地进来的」当本机新增
+                        // 又发出去（两台设备来回弹，段数无限涨）。
+                        baseline.key_upsert(key_id, &pem);
+                        landed.push(format!("key:{key_id}"));
+                    }
+                }
+                _ => {
+                    // 墓碑：对端删了这把私钥。
+                    self.key_store.delete_from_sync(key_id)?;
+                    baseline.key_remove(key_id);
+                    landed.push(format!("key:{key_id}"));
+                }
+            }
+        }
+        if !landed.is_empty() {
+            baseline.save()?;
+        }
+        Ok(landed)
+    }
+
     /// 把镜像里「本机认识、且与基线不同」的项落地到密钥链（含本机升级后才认识的槽位）。
     ///
     /// 全程在 [`CaptureSuppression`] 里：这里写进去的值不是「本机改动」，不能再发出去。
@@ -548,12 +739,24 @@ impl StreamDriver for SecretStreamDriver {
         self.state = state;
     }
 
+    fn set_data_key(&mut self, dk: &DataKey) {
+        self.dk = Some(dk.clone());
+    }
+
+    fn set_backend(&mut self, backend: Arc<dyn crate::sync::backends::Backend>) {
+        self.backend = Some(backend);
+    }
+
     async fn capture(&mut self) -> Result<Vec<Vec<u8>>, AppError> {
-        let (ops, new_baseline) = self.diff_against_baseline()?;
+        let (mut ops, new_baseline) = self.diff_against_baseline()?;
+        // 私钥（T7）：与槽位一起进同一条流。
+        let (key_ops, key_baseline) = self.capture_keys().await?;
+        ops.extend(key_ops);
         if ops.is_empty() {
             return Ok(Vec::new());
         }
         self.pending_baseline = new_baseline;
+        self.pending_key_baseline = key_baseline;
         // 本机 op 先合并进镜像：否则同一条流里的旧值会在落地时被写回来。
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         for op in &ops {
@@ -564,7 +767,7 @@ impl StreamDriver for SecretStreamDriver {
     }
 
     async fn ack_capture(&mut self) -> Result<(), AppError> {
-        if self.pending_baseline.is_empty() {
+        if self.pending_baseline.is_empty() && self.pending_key_baseline.is_empty() {
             return Ok(());
         }
         let mut baseline = SecretBaseline::load(&self.config_dir)?;
@@ -572,6 +775,12 @@ impl StreamDriver for SecretStreamDriver {
             match value {
                 Some(v) => baseline.upsert(&account, &v),
                 None => baseline.remove(&account),
+            }
+        }
+        for (key_id, value) in std::mem::take(&mut self.pending_key_baseline) {
+            match value {
+                Some(pem) => baseline.key_upsert(&key_id, &pem),
+                None => baseline.key_remove(&key_id),
             }
         }
         baseline.save()
@@ -597,9 +806,13 @@ impl StreamDriver for SecretStreamDriver {
             });
             new_baseline.push((account, Some(value)));
         }
+        // 私钥也一起全导（首次打开机密档时）。
+        let (key_ops, key_baseline) = self.capture_keys().await?;
+        ops.extend(key_ops);
         if ops.is_empty() {
             return Ok(Vec::new());
         }
+        self.pending_key_baseline = key_baseline;
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         for op in &ops {
             mirror.merge(op);
@@ -620,6 +833,9 @@ impl StreamDriver for SecretStreamDriver {
                 )));
             }
         }
+        // 看到远端的时间戳要推进本机时钟：否则「本机改一下」与「远端刚删」可能撞在同一毫秒，
+        // 本机那条会排在删除之前、被镜像丢掉。
+        self.observe_remote(&seg.ops);
         let mut mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
         let mut changed = false;
         for op in &seg.ops {
@@ -634,7 +850,9 @@ impl StreamDriver for SecretStreamDriver {
 
     async fn land(&mut self) -> Result<StreamApplied, AppError> {
         let mirror = SecretMirror::load(&self.config_dir, self.dk.as_ref());
-        let landed = self.land_mirror(&mirror)?;
+        let mut landed = self.land_mirror(&mirror)?;
+        // 私钥：从 blob 拉正文，用本机主密钥重新加密后写进本机库。
+        landed.extend(self.land_keys(&mirror).await?);
         Ok(StreamApplied {
             changed: !landed.is_empty(),
             ..Default::default()
@@ -790,6 +1008,67 @@ mod tests {
         }
     }
 
+    /// 同一毫秒内连发两条 op 必须分得出先后（导入后立刻删除）。
+    ///
+    /// 曾经用 `wall_clock_ms()` + 恒定 `counter: 0`，两条 op 的时间戳**相等**，
+    /// 而镜像合并是 `existing.hlc >= new` 就丢——删除墓碑被静默吞掉，
+    /// 对面那台设备把私钥又落了回来。
+    #[test]
+    fn consecutive_ops_in_the_same_millisecond_still_advance() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::new());
+        let mut d = driver(tmp.path(), secrets);
+        let a = d.now_hlc();
+        let b = d.now_hlc();
+        assert!(b > a, "同一毫秒里第二条 op 也必须更大：{a:?} vs {b:?}");
+
+        // 删除墓碑能盖掉刚才的写入（镜像层面）
+        let mut doc = MirrorDoc::default();
+        assert!(merge_key(
+            &mut doc.keys,
+            "k",
+            &a,
+            Some(serde_json::json!({})),
+            Some("x".into())
+        ));
+        assert!(
+            merge_key(&mut doc.keys, "k", &b, None, None),
+            "删除必须生效"
+        );
+        assert!(doc.keys["k"].meta.is_none());
+    }
+
+    /// 时钟落盘：重启后不能退回去（否则墓碑会被旧值盖掉）。
+    #[test]
+    fn the_clock_is_persisted_across_restarts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::new());
+        let mut d = driver(tmp.path(), secrets.clone());
+        let first = d.now_hlc();
+        drop(d);
+
+        let mut again = driver(tmp.path(), secrets);
+        let next = again.now_hlc();
+        assert!(
+            next > first,
+            "重启后必须严格大于重启前：{first:?} vs {next:?}"
+        );
+    }
+
+    /// 落地写进来的私钥不能下一轮再被当成「本机新增」传回去（两台设备来回弹）。
+    #[test]
+    fn a_key_that_was_just_synced_in_is_not_uploaded_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut baseline = SecretBaseline::load(tmp.path()).unwrap();
+        baseline.key_upsert("k1", "PEM");
+        baseline.save().unwrap();
+
+        let again = SecretBaseline::load(tmp.path()).unwrap();
+        assert!(again.key_matches("k1", "PEM"), "基线要认得出自己落地的那把");
+        assert!(!again.key_matches("k1", "OTHER"));
+        assert_eq!(again.key_ids(), vec!["k1".to_string()]);
+    }
+
     #[test]
     fn mirror_merge_is_last_writer_wins() {
         let mut doc = MirrorDoc::default();
@@ -821,7 +1100,7 @@ mod tests {
     fn unknown_slot_stays_in_mirror_and_is_not_written_to_keychain() {
         let tmp = tempfile::tempdir().unwrap();
         let secrets = Arc::new(MemorySecrets::new());
-        let d = driver(tmp.path(), secrets.clone());
+        let mut d = driver(tmp.path(), secrets.clone());
         // 造一条镜像里才有的、本机 catalog 不认识的槽位
         let mut mirror = SecretMirror::load(tmp.path(), None);
         mirror.merge(&SecretOp::Set {
@@ -845,7 +1124,7 @@ mod tests {
     fn known_slot_lands_and_updates_the_baseline() {
         let tmp = tempfile::tempdir().unwrap();
         let secrets = Arc::new(MemorySecrets::new());
-        let d = driver(tmp.path(), secrets.clone());
+        let mut d = driver(tmp.path(), secrets.clone());
         let mut mirror = SecretMirror::load(tmp.path(), None);
         mirror.merge(&SecretOp::Set {
             account: "llm_channel_ch1".into(),
@@ -874,7 +1153,7 @@ mod tests {
     fn capture_only_reports_real_changes() {
         let tmp = tempfile::tempdir().unwrap();
         let secrets = Arc::new(MemorySecrets::new());
-        let d = driver(tmp.path(), secrets.clone());
+        let mut d = driver(tmp.path(), secrets.clone());
         // 第一次：密钥链里有一个 Key、基线不知道 → 应报一条 set
         secrets
             .set(&SecretSlot::LlmChannel("ch1".into()), "v1")
@@ -909,6 +1188,8 @@ mod tests {
 pub struct SecretFactoryDeps {
     pub config_dir: std::path::PathBuf,
     pub secrets: Arc<dyn SyncSecretStore>,
+    /// 本机私钥库（T7）。生产用 `SystemKeyStore`，集成测试换成每台设备自己的临时目录。
+    pub key_store: Arc<dyn crate::ssh::key_store::KeyStoreAccess>,
     /// 本机有哪些连接 / 渠道 / MCP 服务器（可枚举槽位）。
     ///
     /// 每次构造驱动时现取：用户随时可能加一台服务器、删一个渠道。
@@ -922,11 +1203,15 @@ pub struct SecretFactoryDeps {
 /// 机密流的驱动工厂（引擎构造驱动用）。
 pub struct SecretStreamFactory {
     deps: SecretFactoryDeps,
+    backend: parking_lot::RwLock<Option<Arc<dyn crate::sync::backends::Backend>>>,
 }
 
 impl SecretStreamFactory {
     pub fn new(deps: SecretFactoryDeps) -> Self {
-        Self { deps }
+        Self {
+            deps,
+            backend: parking_lot::RwLock::new(None),
+        }
     }
 }
 
@@ -950,10 +1235,18 @@ impl super::StreamDriverFactory for SecretStreamFactory {
         if let Some(dk) = dk {
             driver = driver.with_data_key(dk);
         }
+        driver = driver.with_key_store(self.deps.key_store.clone());
+        if let Some(backend) = self.backend.read().clone() {
+            driver = driver.with_backend(backend);
+        }
         Ok(Box::new(driver))
     }
 
     fn pending(&self) -> usize {
         (self.deps.pending)()
+    }
+
+    fn set_backend(&self, backend: Arc<dyn crate::sync::backends::Backend>) {
+        *self.backend.write() = Some(backend);
     }
 }

@@ -1185,6 +1185,14 @@ impl StreamDriver for ConvStreamDriver {
         self.state = state;
     }
 
+    fn set_data_key(&mut self, dk: &DataKey) {
+        self.dk = Some(dk.clone());
+    }
+
+    fn set_backend(&mut self, backend: Arc<dyn crate::sync::backends::Backend>) {
+        self.backend = Some(backend);
+    }
+
     fn snapshot_layout(&self) -> StreamSnapshotLayout {
         StreamSnapshotLayout::Directory
     }
