@@ -10,6 +10,7 @@ import { ValidatedInput } from './ValidatedInput';
 import { useSettingsActions } from './SettingsActionsContext';
 import { contextWindowHint } from '@/lib/contextWindowHints';
 import ChannelEditModal from './ChannelEditModal';
+import YegouApiBanner from './YegouApiBanner';
 import { validateRetryHttpStatuses } from '@/lib/llmParams';
 import {
   modelsOfChannel,
@@ -405,6 +406,8 @@ export function ModelServiceSection() {
             })}
           </ul>
         )}
+
+        <YegouApiBanner className="mt-3" />
       </div>
 
       <ChannelEditModal
