@@ -382,6 +382,33 @@ impl LlmRegistry {
                 }
             }
         };
+        // 自定义请求头：读密钥链（account = llm_channel_headers_{id}）。
+        // 读失败不阻断请求——头是可选的增强，缺了照常能聊；解析失败也只是记一条
+        // warn 后按「没有自定义头」走，不能让一段坏 JSON 把整个渠道锁死。
+        let extra_headers = match keychain::get(&keychain::SecretSlot::LlmChannelHeaders(
+            channel.id.clone(),
+        )) {
+            Ok(Some(json)) => match serde_json::from_str(&json) {
+                Ok(map) => map,
+                Err(e) => {
+                    log::warn!(
+                        "渠道 \"{}\" 的自定义请求头无法解析，按无自定义头处理: {}",
+                        channel.name,
+                        e
+                    );
+                    Default::default()
+                }
+            },
+            Ok(None) => Default::default(),
+            Err(e) => {
+                log::warn!(
+                    "读取渠道 \"{}\" 的自定义请求头失败，按无自定义头处理: {}",
+                    channel.name,
+                    e
+                );
+                Default::default()
+            }
+        };
         let config = LlmConfig {
             provider_type: ProviderType::OpenAI,
             api_key,
@@ -397,6 +424,7 @@ impl LlmRegistry {
             vision: model.vision,
             extra_body: model.extra_body.clone(),
             demote_non_leading_system: model.demote_non_leading_system,
+            extra_headers,
         };
         Ok(ResolvedModel {
             config,

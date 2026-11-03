@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { AgentModeSettings, ChannelConfig, LlmRegistry, ModelEntry, ModelInfo, NetPolicy, SubagentModelChoice } from '@/lib/types';
-import { llmListModels } from '@/lib/tauri';
+import { llmListModels, getLlmChannelHeaders, saveLlmChannelHeaders } from '@/lib/tauri';
+import HeaderPairEditor from '@/components/settings/HeaderPairEditor';
+import { type HeaderPair, headersToPairs, pairsToHeaders } from '@/lib/channelHeaders';
 import { getErrorMessage } from '@/lib/errors';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
@@ -411,6 +413,8 @@ function MobileChannelEditorSheet({
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 自定义请求头草稿（存密钥链，不在 registry 里，挂载时异步读一次）
+  const [headerPairs, setHeaderPairs] = useState<HeaderPair[]>([]);
 
   const [modelEditor, setModelEditor] = useState<{ open: boolean; initial?: ModelEntry; preset?: string }>({
     open: false,
@@ -420,6 +424,22 @@ function MobileChannelEditorSheet({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetchedModels, setFetchedModels] = useState<ModelInfo[]>([]);
   const [fetchFilter, setFetchFilter] = useState('');
+
+  // 自定义请求头存在密钥链里，不在 registry 里，挂载时异步读一次。
+  useEffect(() => {
+    if (!channel) return;
+    let alive = true;
+    getLlmChannelHeaders(channel.id)
+      .then((headers) => {
+        if (alive) setHeaderPairs(headersToPairs(headers ?? {}));
+      })
+      .catch((err) => {
+        console.warn('读取渠道自定义请求头失败:', getErrorMessage(err));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [channel]);
 
   const models = localModels;
 
@@ -450,6 +470,10 @@ function MobileChannelEditorSheet({
       enabled,
     };
     if (apiKeyInput.trim()) next.apiKey = apiKeyInput.trim();
+    // 自定义请求头存密钥链（不进 registry）；失败只记日志，不阻断渠道保存。
+    saveLlmChannelHeaders(next.id, pairsToHeaders(headerPairs)).catch((err) => {
+      console.error('保存自定义请求头失败:', getErrorMessage(err));
+    });
     onSaveChannel(next, localModels);
     onClose();
   };
@@ -538,6 +562,8 @@ function MobileChannelEditorSheet({
           </div>
           <Toggle checked={enabled} onChange={setEnabled} />
         </div>
+
+        <HeaderPairEditor pairs={headerPairs} onChange={setHeaderPairs} />
 
         {/* 模型列表 */}
         <div className="rounded-xl border border-edge-subtle bg-zinc-900/40 px-3 py-3">

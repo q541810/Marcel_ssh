@@ -4,6 +4,10 @@ import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import ModelListModal from './ModelListModal';
 import ModelEditModal, { type ModelDraft } from './ModelEditModal';
+import HeaderPairEditor from './HeaderPairEditor';
+import { type HeaderPair, headersToPairs, pairsToHeaders } from '@/lib/channelHeaders';
+import { getLlmChannelHeaders, saveLlmChannelHeaders } from '@/lib/tauri';
+import { getErrorMessage } from '@/lib/errors';
 import type { ChannelConfig, LlmRegistry, ModelEntry } from '@/lib/types';
 import {
   modelsOfChannel,
@@ -58,6 +62,8 @@ export default function ChannelEditModal({
   const [showKey, setShowKey] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // 自定义请求头草稿（存密钥链，不在 registry 里，所以要单独读一次）
+  const [headerPairs, setHeaderPairs] = useState<HeaderPair[]>([]);
 
   // 模型编辑状态
   const [modelEditor, setModelEditor] = useState<{ open: boolean; initial?: ModelEntry; preset?: string }>({
@@ -88,6 +94,22 @@ export default function ChannelEditModal({
       setLocalError(null);
       setConfirmDelete(false);
       setModelEditor({ open: false });
+      setHeaderPairs([]);
+      // 编辑已有渠道：异步读一次密钥链里的自定义请求头（新建渠道没有）。
+      if (channel) {
+        let alive = true;
+        getLlmChannelHeaders(channel.id)
+          .then((headers) => {
+            if (alive) setHeaderPairs(headersToPairs(headers ?? {}));
+          })
+          .catch((err) => {
+            // 读不到不影响编辑渠道本身——按「没有自定义头」展示，不弹错。
+            console.warn('读取渠道自定义请求头失败:', getErrorMessage(err));
+          });
+        return () => {
+          alive = false;
+        };
+      }
     }
   }, [open, channel, registry]);
 
@@ -125,6 +147,11 @@ export default function ChannelEditModal({
     if (apiKeyInput.trim()) {
       next.apiKey = apiKeyInput.trim();
     }
+    // 自定义请求头存密钥链（不进 registry / settings.json）。
+    // 失败也只记录不阻断渠道保存——头是可选的，不能因此让用户改不了渠道。
+    saveLlmChannelHeaders(next.id, pairsToHeaders(headerPairs)).catch((err) => {
+      console.error('保存自定义请求头失败:', getErrorMessage(err));
+    });
     onSave(next, localModels);
     onClose();
   };
@@ -254,6 +281,8 @@ export default function ChannelEditModal({
               label=""
             />
           </div>
+
+          <HeaderPairEditor pairs={headerPairs} onChange={setHeaderPairs} />
         </div>
 
         {/* ── 模型列表 ── */}

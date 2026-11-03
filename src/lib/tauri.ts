@@ -1033,6 +1033,21 @@ export async function deleteLlmChannelApiKey(channelId: string): Promise<void> {
   return invoke("config_delete_llm_channel_api_key", { channelId });
 }
 
+/** 读某渠道的自定义请求头（键 → 值）。没有任何自定义头时返回空对象。 */
+export async function getLlmChannelHeaders(
+  channelId: string,
+): Promise<Record<string, string>> {
+  return invoke("config_get_llm_channel_headers", { channelId });
+}
+
+/** 保存某渠道的自定义请求头。传空对象等于清空。 */
+export async function saveLlmChannelHeaders(
+  channelId: string,
+  headers: Record<string, string>,
+): Promise<void> {
+  return invoke("config_save_llm_channel_headers", { channelId, headers });
+}
+
 export async function saveWebSearchApiKey(apiKey: string): Promise<void> {
   return invoke("config_save_web_search_api_key", { apiKey });
 }

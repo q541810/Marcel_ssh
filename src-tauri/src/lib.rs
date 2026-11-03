@@ -1263,6 +1263,8 @@ pub fn run() {
             commands::quick_command::quick_command_delete,
             commands::keychain::config_save_llm_channel_api_key,
             commands::keychain::config_delete_llm_channel_api_key,
+            commands::keychain::config_get_llm_channel_headers,
+            commands::keychain::config_save_llm_channel_headers,
             commands::keychain::config_save_web_search_api_key,
             commands::keychain::config_delete_web_search_api_key,
             commands::keychain::config_save_custom_search_api_key,

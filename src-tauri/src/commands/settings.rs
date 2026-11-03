@@ -208,6 +208,8 @@ pub async fn config_save_settings(
                 .any(|c| c.id == old.id)
             {
                 let _ = keychain::delete(&SecretSlot::LlmChannel(old.id.clone()));
+                // 自定义请求头是独立槽位，不跟着 API Key 一起删就会留下孤儿条目
+                let _ = keychain::delete(&SecretSlot::LlmChannelHeaders(old.id.clone()));
             }
         }
     }
@@ -349,6 +351,7 @@ pub async fn llm_list_models(
         vision: false,
         extra_body: None,
         demote_non_leading_system: false,
+        extra_headers: Default::default(),
     };
 
     let llm_manager = LlmManager::new(config)?;

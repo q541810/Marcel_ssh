@@ -107,6 +107,42 @@ pub async fn config_delete_llm_channel_api_key(channel_id: String) -> Result<(),
     Ok(())
 }
 
+/// 读取某渠道的自定义请求头（键 → 值）。没有任何自定义头时返回空 map。
+///
+/// **返回映射而不是原文**，前端按 key 逐行渲染。值不做掩码：用户需要能改
+/// `x-opencode-session` 这类非机密指纹头。真正机密的东西（API Key）不走这里。
+#[tauri::command]
+pub async fn config_get_llm_channel_headers(
+    channel_id: String,
+) -> Result<std::collections::BTreeMap<String, String>, AppError> {
+    let Some(json) = keychain::get(&SecretSlot::LlmChannelHeaders(channel_id.clone()))? else {
+        return Ok(Default::default());
+    };
+    match serde_json::from_str(&json) {
+        Ok(map) => Ok(map),
+        Err(e) => {
+            // 坏数据不该让设置页打不开：记一条 warn，当成「没有自定义头」。
+            log::warn!("渠道 {} 的自定义请求头无法解析，按空处理: {}", channel_id, e);
+            Ok(Default::default())
+        }
+    }
+}
+
+/// 保存某渠道的自定义请求头。传空 map 等于清空（删掉密钥链条目）。
+#[tauri::command]
+pub async fn config_save_llm_channel_headers(
+    channel_id: String,
+    headers: std::collections::BTreeMap<String, String>,
+) -> Result<(), AppError> {
+    if headers.is_empty() {
+        keychain::delete(&SecretSlot::LlmChannelHeaders(channel_id))?;
+        return Ok(());
+    }
+    let json = serde_json::to_string(&headers)
+        .map_err(|e| AppError::Config(format!("序列化自定义请求头失败：{}", e)))?;
+    keychain::set(&SecretSlot::LlmChannelHeaders(channel_id), &json)
+}
+
 /// Save the web search API key to the system keychain.
 #[tauri::command]
 pub async fn config_save_web_search_api_key(api_key: String) -> Result<(), AppError> {

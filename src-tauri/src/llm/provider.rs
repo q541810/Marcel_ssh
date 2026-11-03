@@ -264,6 +264,14 @@ pub struct LlmConfig {
     /// 只改发出去的形状；内存消息、落库、前端展示均不受影响。默认关。
     #[serde(default)]
     pub demote_non_leading_system: bool,
+    /// 渠道自定义请求头（键值对）。用于 OpenCode Go 这类要求客户端指纹头的服务
+    /// （如 `user-agent`、`x-opencode-session`），以及用户自建网关的自定义鉴权。
+    ///
+    /// **来源是密钥链**（account = `llm_channel_headers_{渠道 id}`），不落普通配置、
+    /// 不进 WebView 明文回显——和 MCP 的 `SecretSlot::McpHeaders` 同一套理由：
+    /// 这些头里经常带令牌。解析配置时由 `build_resolved` 读出来塞进来。
+    #[serde(default)]
+    pub extra_headers: std::collections::BTreeMap<String, String>,
 }
 
 fn default_provider() -> ProviderType {
@@ -314,6 +322,7 @@ impl Default for LlmConfig {
             vision: false,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         }
     }
 }
@@ -393,6 +402,7 @@ mod tests {
             vision: false,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         };
 
         // Serialize to JSON
@@ -531,6 +541,7 @@ mod tests {
             vision: false,
             extra_body: Some(serde_json::json!({ "thinking": { "type": "enabled" } })),
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         };
         let json = serde_json::to_value(&config).expect("serialize");
         let extra = json
@@ -563,6 +574,7 @@ mod tests {
             vision: false,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         };
         let json = serde_json::to_value(&config).expect("serialize");
         assert_eq!(

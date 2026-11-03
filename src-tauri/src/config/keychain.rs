@@ -118,6 +118,12 @@ pub enum SecretSlot {
     LegacyLlmApiKey,
     /// 某个模型渠道的 API Key（账号 `llm_channel_{渠道 id}`）。多渠道下每个渠道独立存放。
     LlmChannel(String),
+    /// 某个模型渠道的自定义请求头（账号 `llm_channel_headers_{渠道 id}`），值是 JSON 对象。
+    ///
+    /// 与 `LlmChannel` 分槽：清空 API Key 不该顺手把头也删了。放在密钥链而非普通配置的
+    /// 理由和 `McpHeaders` 一样——这些头里经常就是令牌（`x-opencode-session` 之类），
+    /// 不能明文躺在 `settings.json` 里跟着同步上云。
+    LlmChannelHeaders(String),
     /// Brave / Tavily 网页搜索共用的 Key（账号 `web_search_api_key`）。
     ///
     /// 由用户当前选的搜索提供商轮流占用，所以**不能**借给 DeepSeek / 自定义地址 / Tavily 抓取。
@@ -187,6 +193,9 @@ impl SecretSlot {
         match self {
             SecretSlot::LegacyLlmApiKey => Cow::Borrowed("llm_api_key"),
             SecretSlot::LlmChannel(id) => Cow::Owned(format!("llm_channel_{}", id)),
+            SecretSlot::LlmChannelHeaders(id) => {
+                Cow::Owned(format!("llm_channel_headers_{}", id))
+            }
             SecretSlot::WebSearchApiKey => Cow::Borrowed("web_search_api_key"),
             SecretSlot::DeepseekToolsApiKey => Cow::Borrowed("deepseek_tools_api_key"),
             SecretSlot::CustomSearchApiKey => Cow::Borrowed("custom_search_api_key"),
@@ -215,6 +224,7 @@ impl SecretSlot {
         match self {
             SecretSlot::LegacyLlmApiKey
             | SecretSlot::LlmChannel(_)
+            | SecretSlot::LlmChannelHeaders(_)
             | SecretSlot::WebSearchApiKey
             | SecretSlot::DeepseekToolsApiKey
             | SecretSlot::CustomSearchApiKey
@@ -244,6 +254,7 @@ impl SecretSlot {
         match self {
             SecretSlot::LegacyLlmApiKey => "旧版 LLM API Key",
             SecretSlot::LlmChannel(_) => "渠道 API Key",
+            SecretSlot::LlmChannelHeaders(_) => "渠道自定义请求头",
             SecretSlot::WebSearchApiKey => "搜索 API Key",
             SecretSlot::DeepseekToolsApiKey => "DeepSeek API Key",
             SecretSlot::CustomSearchApiKey => "自定义搜索 API Key",
@@ -372,6 +383,14 @@ impl SecretSlot {
                 .any(|m| m == id)
                 .then(|| SecretSlot::McpHeaders(id.to_string()));
         }
+        // 长前缀在前：`llm_channel_headers_{id}` ⊃ `llm_channel_{id}`
+        if let Some(id) = account.strip_prefix("llm_channel_headers_") {
+            return catalog
+                .channel_ids
+                .iter()
+                .any(|c| c == id)
+                .then(|| SecretSlot::LlmChannelHeaders(id.to_string()));
+        }
         if let Some(id) = account.strip_prefix("llm_channel_") {
             return catalog
                 .channel_ids
@@ -397,6 +416,7 @@ impl SecretSlot {
         }
         for id in &catalog.channel_ids {
             out.push(SecretSlot::LlmChannel(id.clone()));
+            out.push(SecretSlot::LlmChannelHeaders(id.clone()));
         }
         for id in &catalog.mcp_ids {
             out.push(SecretSlot::McpHeaders(id.clone()));
@@ -601,6 +621,7 @@ mod tests {
     fn all_samples() -> Vec<SecretSlot> {
         let mut v = SecretSlot::fixed_slots();
         v.push(SecretSlot::LlmChannel("c1".into()));
+        v.push(SecretSlot::LlmChannelHeaders("c1".into()));
         v.push(SecretSlot::SshPassword("c1".into()));
         v.push(SecretSlot::SshKeyPassphrase("c1".into()));
         v.push(SecretSlot::JumpPassword("c1".into()));
@@ -617,6 +638,10 @@ mod tests {
         let snapshot: Vec<(SecretSlot, &str)> = vec![
             (SecretSlot::LegacyLlmApiKey, "llm_api_key"),
             (SecretSlot::LlmChannel("c1".into()), "llm_channel_c1"),
+            (
+                SecretSlot::LlmChannelHeaders("c1".into()),
+                "llm_channel_headers_c1",
+            ),
             (SecretSlot::WebSearchApiKey, "web_search_api_key"),
             (SecretSlot::DeepseekToolsApiKey, "deepseek_tools_api_key"),
             (SecretSlot::CustomSearchApiKey, "custom_search_api_key"),
@@ -787,6 +812,7 @@ mod tests {
                 | SecretSlot::LegacySyncDeviceId
                 | SecretSlot::LegacySyncServerUrl => true,
                 SecretSlot::LlmChannel(_)
+                | SecretSlot::LlmChannelHeaders(_)
                 | SecretSlot::McpHeaders(_)
                 | SecretSlot::SshPassword(_)
                 | SecretSlot::SshKeyPassphrase(_)
@@ -878,13 +904,15 @@ mod tests {
             mcp_ids: vec![],
         };
         let slots = SecretSlot::enumerable_slots(&catalog);
-        assert_eq!(slots.len(), SecretSlot::fixed_slots().len() + 2 * 4 + 1);
+        // 每条连接 4 个槽位；每个渠道 2 个（API Key + 自定义请求头）
+        assert_eq!(slots.len(), SecretSlot::fixed_slots().len() + 2 * 4 + 2);
         let accounts: std::collections::HashSet<String> =
             slots.iter().map(|s| s.account().into_owned()).collect();
         assert_eq!(accounts.len(), slots.len(), "枚举里有重复槽位");
         assert!(slots.contains(&SecretSlot::SshPassword("c2".into())));
         assert!(slots.contains(&SecretSlot::JumpKeyPassphrase("c2".into())));
         assert!(slots.contains(&SecretSlot::LlmChannel("ch1".into())));
+        assert!(slots.contains(&SecretSlot::LlmChannelHeaders("ch1".into())));
         // 空 catalog 时只剩固定槽位
         assert_eq!(
             SecretSlot::enumerable_slots(&SecretSlotCatalog::default()).len(),

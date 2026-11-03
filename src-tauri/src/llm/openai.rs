@@ -58,6 +58,7 @@ impl OpenAiProvider {
         let auth_header = HeaderValue::from_str(&auth)
             .map_err(|e| LlmError::Config(format!("API key 含非法字符: {}", e)))?;
         headers.insert(AUTHORIZATION, auth_header);
+        apply_extra_headers(&mut headers, &self.config.extra_headers);
         Ok(headers)
     }
 
@@ -326,6 +327,43 @@ impl OpenAiProvider {
 
         log::info!("LLM 列出模型: 获取到 {} 个模型", models.len());
         Ok(models)
+    }
+}
+
+fn apply_extra_headers(headers: &mut HeaderMap, extra: &std::collections::BTreeMap<String, String>) {
+    use reqwest::header::HeaderName;
+
+    /// 不允许用户自定义覆盖的头（小写，HeaderName 已规范化）。
+    const RESERVED: &[&str] = &["content-type", "content-length", "authorization"];
+
+    for (raw_name, raw_value) in extra {
+        let name = raw_name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let name = match HeaderName::from_bytes(name.to_ascii_lowercase().as_bytes()) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("自定义请求头名非法，已跳过: {:?} ({})", raw_name, e);
+                continue;
+            }
+        };
+        if RESERVED.contains(&name.as_str()) {
+            log::warn!(
+                "自定义请求头 {:?} 会破坏请求协议，已跳过（该头由程序管理）",
+                raw_name
+            );
+            continue;
+        }
+        match HeaderValue::from_str(raw_value) {
+            Ok(value) => {
+                // insert：同名覆盖上一次的值，不会多出一条。
+                headers.insert(name, value);
+            }
+            Err(e) => {
+                log::warn!("自定义请求头 {:?} 的值非法，已跳过: {}", raw_name, e);
+            }
+        }
     }
 }
 
@@ -1100,6 +1138,7 @@ mod build_request_body_tests {
             vision: false,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         }
     }
 
@@ -1416,6 +1455,7 @@ mod vision_request_tests {
             vision,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         }
     }
 
@@ -1721,6 +1761,105 @@ mod partial_tool_call_tests {
 }
 
 #[cfg(test)]
+mod extra_headers_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn base() -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        h.insert(AUTHORIZATION, HeaderValue::from_static("Bearer k"));
+        h
+    }
+
+    #[test]
+    fn adds_custom_headers() {
+        let mut h = base();
+        apply_extra_headers(&mut h, &map(&[("user-agent", "Marcel/1.0"), ("x-opencode-session", "abc")]));
+        assert_eq!(h.get("user-agent").unwrap(), "Marcel/1.0");
+        assert_eq!(h.get("x-opencode-session").unwrap(), "abc");
+        // 头名大小写不敏感
+        assert_eq!(h.get("User-Agent").unwrap(), "Marcel/1.0");
+    }
+
+    /// **回归护栏**：千万不能用 append。同一个头出现两次会让严格解析的服务端
+    /// （DeepSeek 官方）回 415 —— 这正是 v1.11.0 里 Content-Type 踩过的坑。
+    #[test]
+    fn never_duplicates_a_header_name() {
+        let mut h = base();
+        apply_extra_headers(&mut h, &map(&[("x-a", "1")]));
+        apply_extra_headers(&mut h, &map(&[("x-a", "2")]));
+        let all: Vec<_> = h.get_all("x-a").iter().collect();
+        assert_eq!(all.len(), 1, "同名头必须只有一个值: {all:?}");
+        assert_eq!(all[0], "2", "后写的覆盖先写的");
+    }
+
+    /// 受保护的协议头与鉴权头一律不许用户覆盖，程序自己管。
+    #[test]
+    fn skips_reserved_headers() {
+        let mut h = base();
+        apply_extra_headers(
+            &mut h,
+            &map(&[
+                ("content-type", "text/plain"),
+                ("content-length", "999"),
+                ("authorization", "Bearer stolen"),
+                ("x-keep", "yes"),
+            ]),
+        );
+        assert_eq!(
+            h.get(CONTENT_TYPE).unwrap(),
+            "application/json",
+            "content-type 不许被改"
+        );
+        assert!(h.get("content-length").is_none(), "content-length 不许被设");
+        assert_eq!(
+            h.get(AUTHORIZATION).unwrap(),
+            "Bearer k",
+            "authorization 不许被改"
+        );
+        assert_eq!(h.get("x-keep").unwrap(), "yes", "普通头照常生效");
+    }
+
+    /// 值里带换行等控制字符 → 跳过该头，但不能炸掉整个请求。
+    #[test]
+    fn skips_invalid_values_without_failing() {
+        let mut h = base();
+        apply_extra_headers(
+            &mut h,
+            &map(&[("x-bad", "a\r\nInjected: 1"), ("x-good", "ok")]),
+        );
+        assert!(h.get("x-bad").is_none(), "非法值必须被跳过");
+        assert_eq!(h.get("x-good").unwrap(), "ok", "其余头不受影响");
+    }
+
+    /// 空名字跳过；名字两端空白被裁掉。
+    #[test]
+    fn handles_blank_and_padded_names() {
+        let mut h = base();
+        apply_extra_headers(&mut h, &map(&[("", "v"), ("  x-pad  ", "ok")]));
+        assert_eq!(h.get("x-pad").unwrap(), "ok");
+        assert_eq!(h.len(), 3, "只有 content-type/authorization/x-pad: {h:?}");
+    }
+
+    /// 没有自定义头时，发出的头与修复前逐字节相同（不许凭空多出东西）。
+    #[test]
+    fn empty_extra_headers_changes_nothing() {
+        let mut h = base();
+        let before = h.clone();
+        apply_extra_headers(&mut h, &Default::default());
+        assert_eq!(h, before);
+    }
+}
+
+#[cfg(test)]
 mod wire_bytes_tests {
     use super::*;
     use crate::llm::provider::{LlmConfig, LlmMessage, ProviderType, ToolDefinition};
@@ -1742,6 +1881,7 @@ mod wire_bytes_tests {
             vision: false,
             extra_body,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         }
     }
 
@@ -1873,6 +2013,103 @@ mod wire_bytes_tests {
             "线上请求体必须与构建产物逐字节一致"
         );
     }
+
+    #[tokio::test]
+    async fn custom_headers_reach_the_wire_exactly_once() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("测试端点绑定失败");
+        let addr = listener.local_addr().expect("读取测试端口失败");
+        let captured: Arc<Mutex<Option<Vec<u8>>>> = Arc::default();
+        let sink = captured.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut buf: Vec<u8> = Vec::new();
+                let mut chunk = [0u8; 8192];
+                let mut declared: Option<usize> = None;
+                loop {
+                    match stream.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            buf.extend_from_slice(&chunk[..n]);
+                            if declared.is_none() {
+                                let boundary = b"\r\n\r\n";
+                                let Some(pos) = buf.windows(4).position(|w| w == boundary) else {
+                                    continue;
+                                };
+                                let head = String::from_utf8_lossy(&buf[..pos]).to_lowercase();
+                                declared = Some(
+                                    head.lines()
+                                        .find_map(|l| {
+                                            l.strip_prefix("content-length:")
+                                                .and_then(|v| v.trim().parse().ok())
+                                        })
+                                        .unwrap_or(0)
+                                        + pos
+                                        + 4,
+                                );
+                            }
+                            if buf.len() >= declared.unwrap_or(usize::MAX) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                *sink.lock().unwrap() = Some(buf);
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\n\r\n{}",
+                    )
+                    .await;
+            }
+        });
+
+        let mut cfg = config_with(format!("http://{addr}/v1"), None);
+        cfg.extra_headers = [
+            ("user-agent".to_string(), "Marcel-Test/9.9".to_string()),
+            ("x-opencode-session".to_string(), "uuid-abc".to_string()),
+            // 受保护的头：不该上网（仍然只有程序自己那一份）
+            ("content-type".to_string(), "text/plain".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let provider = OpenAiProvider::new(cfg).expect("构造");
+        let (event_tx, _rx) = mpsc::unbounded_channel();
+        let _ = provider
+            .execute_stream(&[LlmMessage::user("hi")], &[], &event_tx, None, None)
+            .await;
+
+        let raw = captured.lock().unwrap().take().expect("服务端应收到请求");
+        let header_end = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("请求头边界");
+        let head = String::from_utf8_lossy(&raw[..header_end]).to_lowercase();
+
+        let lines = |name: &str| -> Vec<String> {
+            head.lines()
+                .filter(|l| l.starts_with(&format!("{name}:")))
+                .map(|l| l.to_string())
+                .collect()
+        };
+
+        let ua = lines("user-agent");
+        assert_eq!(ua.len(), 1, "user-agent 必须只有一条: {head}");
+        assert!(ua[0].contains("marcel-test/9.9"), "user-agent 值不对: {ua:?}");
+
+        let sess = lines("x-opencode-session");
+        assert_eq!(sess.len(), 1, "x-opencode-session 必须只有一条: {head}");
+        assert!(sess[0].contains("uuid-abc"));
+
+        // 用户试图改 content-type 不生效：仍然是程序设置的那一个值。
+        let ct = lines("content-type");
+        assert_eq!(ct.len(), 1, "content-type 必须恰好一条: {head}");
+        assert!(
+            ct[0].contains("application/json"),
+            "content-type 不许被用户覆盖: {ct:?}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1897,6 +2134,7 @@ mod header_wait_timeout_tests {
             vision: false,
             extra_body: None,
             demote_non_leading_system: false,
+            extra_headers: Default::default(),
         }
     }
 
