@@ -227,8 +227,11 @@ impl OpenAiProvider {
         messages_len: usize,
         first_byte_timeout: Duration,
     ) -> Result<reqwest::Response, LlmError> {
-        // Content-Type 与旧 `.json()` 行为一致（`application/json`），请求体字节
-        // 由调用方一次序列化给出——有 wire 字节测试钉住两条构建路径产物一致。
+        // Content-Type 只由 build_headers() 放一次。**不要**在这里再 .header() 一次：
+        // reqwest 的 .header() 是 append 语义，叠加后会真的发出两条
+        // `content-type: application/json`。宽松的服务端（OpenAI 官方）忍了，
+        // 严格解析的（DeepSeek 官方）直接回 415
+        // `Expected request with Content-Type: application/json`。
         log::info!(
             "LLM 请求: {} model={} messages={}",
             url,
@@ -243,7 +246,6 @@ impl OpenAiProvider {
             self.client
                 .post(url)
                 .headers(self.build_headers()?)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(body_bytes)
                 .send(),
         )
@@ -1847,10 +1849,23 @@ mod wire_bytes_tests {
             head.starts_with("post /v1/chat/completions"),
             "请求行不符: {head}"
         );
+        // **必须恰好一条**。reqwest 的 `.header()` 是 append 语义，重复写会真的发出
+        // 两条 `content-type`；宽松的服务端（OpenAI）照单全收，严格解析的
+        // （DeepSeek 官方）回 415 `Expected request with Content-Type: application/json`。
+        // 只断言「含 application/json」挡不住这个回归——两条也满足。
+        let ct_lines: Vec<&str> = head
+            .lines()
+            .filter(|l| l.starts_with("content-type:"))
+            .collect();
+        assert_eq!(
+            ct_lines.len(),
+            1,
+            "Content-Type 必须恰好一条，实际 {} 条: {head}",
+            ct_lines.len()
+        );
         assert!(
-            head.lines()
-                .any(|l| l.starts_with("content-type:") && l.contains("application/json")),
-            "Content-Type 必须仍是 application/json: {head}"
+            ct_lines[0].contains("application/json"),
+            "Content-Type 必须是 application/json: {head}"
         );
         assert_eq!(
             &raw[header_end + 4..],
