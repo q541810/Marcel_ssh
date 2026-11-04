@@ -1,23 +1,23 @@
 {
-    "version": "1.11.0",
-    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.11.0",
-    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel.SSH_1.11.0_x64-setup.exe",
+    "version": "1.11.1",
+    "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.11.1",
+    "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel.SSH_1.11.1_x64-setup.exe",
     "installer_mirrors": [
-        "https://ghfast.top/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel.SSH_1.11.0_x64-setup.exe",
-        "https://gh-proxy.com/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel.SSH_1.11.0_x64-setup.exe"
+        "https://ghfast.top/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel.SSH_1.11.1_x64-setup.exe",
+        "https://gh-proxy.com/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel.SSH_1.11.1_x64-setup.exe"
     ],
-    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZWg2MTZZZFhKRVRlTVNkYjYrd1VMY2xOZkJRY1o4ZW1rYzlrZHJybVBCTGVXQWx0YkxwYU1lM1doSmdkMUNGUEhiRjBPSzBDR1RNWVpUZXV5SVJza0dEeGhjR3JmU3dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMTkwNDUyCWZpbGU6TWFyY2VsIFNTSF8xLjExLjBfeDY0LXNldHVwLmV4ZQpXODNrWER0cS85N0piSlZWbjBicXRIRVVVb2ZSYnhQMGlwVll0SzlTck9OOGhkejJ3NXdoZzBOYjRkM1JuZUdoejJJWDJCVS9hU3VtZ3VwcTU3WFBEUT09Cg==",
-    "sha256": "b7aef28c696561cbd06fe31213b7b892e7f0887490598e4330ddd90635c12f73",
-    "size": 13147138,
+    "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRZWg2MTZZZFhKRVNLcmFmTDlaakpJbUxKM3l5MllxQ2NjSG5pR3lJeUFlUEY4T3U3QzFGSDdndmZQYW15K24zdDZKZFpLS3hobnM3S2dJWHR3cVhreTBod0dWQnFIRGc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzODAwMjU1CWZpbGU6TWFyY2VsIFNTSF8xLjExLjFfeDY0LXNldHVwLmV4ZQpMR0JDdTVRWUMzclBLcVdwaVlYbmVVc1g2ZGtUZlg1aW1iQWd5VS82K3R0bkNEM01BeFUvSFU5anhoOWRPNWN4dm4vbXRpdEp0Szg4UVpOaVJ1THNCUT09Cg==",
+    "sha256": "6e4133790eb7e38792c137e41976cc0b1d4c1662be73264c523326b7ec1da852",
+    "size": 13142955,
     "android": {
-        "version": "1.11.0",
-        "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.11.0",
-        "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel-SSH_1.11.0_arm64.apk",
+        "version": "1.11.1",
+        "release_url": "https://github.com/q541810/Marcel_ssh/releases/tag/v1.11.1",
+        "installer_url": "https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel-SSH_1.11.1_arm64.apk",
         "installer_mirrors": [
-            "https://ghfast.top/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel-SSH_1.11.0_arm64.apk",
-            "https://gh-proxy.com/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.0/Marcel-SSH_1.11.0_arm64.apk"
+            "https://ghfast.top/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel-SSH_1.11.1_arm64.apk",
+            "https://gh-proxy.com/https://github.com/q541810/Marcel_ssh/releases/download/v1.11.1/Marcel-SSH_1.11.1_arm64.apk"
         ],
-        "sha256": "f516d88c5e216fc4e3f0f122b9cd58ff190229d00d7e19c0f0de6c8cc69ea4a8",
-        "size": 31081151
+        "sha256": "98703825bc8f00587a4a81c01e4a013ebb307d2e85a3792d2a2137a1618fc1a8",
+        "size": 31080747
     }
 }
