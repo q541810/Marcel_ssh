@@ -603,14 +603,35 @@ impl SshManager {
                 // 密钥库里的密文不是它能读的格式，而 Android 上的 content:// 更不是。
                 let pem = key_store::resolve_pem(key_id.as_deref(), key_path.as_deref())?;
                 let key = key_material::decode_pem(&pem, passphrase.as_deref())?;
-                handle
-                    .authenticate_publickey(
-                        username,
-                        PrivateKeyWithHashAlg::new(Arc::new(key), None),
+                let key = Arc::new(key);
+                // RSA 的签名哈希必须按服务器接受的来选：`None` 在 russh 里是旧式
+                // ssh-rsa（SHA-1），OpenSSH 8.8+ 默认已不收，会被笼统地拒成"密钥被拒"。
+                // 其他类型的密钥忽略哈希参数，只试一次。
+                let candidates: Vec<Option<russh::keys::HashAlg>> = if key.algorithm().is_rsa() {
+                    rsa_hash_candidates(
+                        handle
+                            .best_supported_rsa_hash()
+                            .await
+                            .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?,
                     )
-                    .await
-                    .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?
-                    .success()
+                } else {
+                    vec![None]
+                };
+                let mut ok = false;
+                for hash in candidates {
+                    let result = handle
+                        .authenticate_publickey(
+                            username,
+                            PrivateKeyWithHashAlg::new(key.clone(), hash),
+                        )
+                        .await
+                        .map_err(|e| AppError::Ssh(format!("密钥认证错误: {}", e)))?;
+                    if result.success() {
+                        ok = true;
+                        break;
+                    }
+                }
+                ok
             }
         };
         if !auth_success {
@@ -1122,6 +1143,52 @@ fn map_target_err(e: AppError, host: &str, via_jump: bool) -> AppError {
             strip_ssh_prefix(&other.to_string())
         )),
         other => other,
+    }
+}
+
+/// RSA 私钥认证要依次尝试的签名哈希。
+///
+/// `best_supported_rsa_hash` 的三种返回：`Some(h)` = 服务器经 server-sig-algs（RFC 8308）
+/// 声明了偏好，直接用；`None` = 服务器没发这个扩展（老服务器），按
+/// rsa-sha2-512 → rsa-sha2-256 → ssh-rsa(SHA-1) 逐个试。声明了偏好但被拒时同样兜底到
+/// 其余两种，避免扩展信息不准导致误拒。
+fn rsa_hash_candidates(
+    best: Option<Option<russh::keys::HashAlg>>,
+) -> Vec<Option<russh::keys::HashAlg>> {
+    use russh::keys::HashAlg;
+    let mut list = Vec::with_capacity(3);
+    if let Some(preferred) = best {
+        list.push(preferred);
+    }
+    for h in [Some(HashAlg::Sha512), Some(HashAlg::Sha256), None] {
+        if !list.contains(&h) {
+            list.push(h);
+        }
+    }
+    list
+}
+
+#[cfg(test)]
+mod rsa_hash_tests {
+    use super::rsa_hash_candidates;
+    use russh::keys::HashAlg;
+
+    #[test]
+    fn 服务器声明偏好时优先用它() {
+        let l = rsa_hash_candidates(Some(Some(HashAlg::Sha256)));
+        assert_eq!(l, vec![Some(HashAlg::Sha256), Some(HashAlg::Sha512), None]);
+    }
+
+    #[test]
+    fn 没有扩展时先试_sha2_最后才是_sha1() {
+        let l = rsa_hash_candidates(None);
+        assert_eq!(l, vec![Some(HashAlg::Sha512), Some(HashAlg::Sha256), None]);
+    }
+
+    #[test]
+    fn 服务器只接受_sha1_时不重复() {
+        let l = rsa_hash_candidates(Some(None));
+        assert_eq!(l, vec![None, Some(HashAlg::Sha512), Some(HashAlg::Sha256)]);
     }
 }
 
