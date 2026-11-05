@@ -6,7 +6,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
-import { getTaskVisualStatus, getActiveRunningTasks } from '@/stores/agentStatusSelectors';
+import { getTaskVisualStatus, getListedTasks } from '@/stores/agentStatusSelectors';
 import { AgentStatusIndicator } from './AgentStatusIndicator';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import {
@@ -59,7 +59,7 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
 
   if (!presence.mounted) return null;
 
-  const runningTasks = getActiveRunningTasks(tasks);
+  const runningTasks = getListedTasks(tasks);
   const jobList = Object.values(jobs).sort((a, b) => b.startedAtMillis - a.startedAtMillis);
   const runningJobs = jobList.filter((j) => j.status === 'running');
 
@@ -199,7 +199,7 @@ export const AgentTasksDrawer: React.FC<AgentTasksDrawerProps> = ({ open, onClos
                         {(() => {
                           const badge = taskStatusBadge(task);
                           return badge && (
-                            <span className={`text-[10px] font-medium ${badge.tone === 'sky' ? 'text-sky-400' : 'text-amber-400'}`}>{badge.text}</span>
+                            <span className={`text-[10px] font-medium ${badge.tone === 'amber' ? 'text-amber-400' : 'text-zinc-500'}`}>{badge.text}</span>
                           );
                         })()}
                       </div>

@@ -236,11 +236,11 @@ describe('跳转解析', () => {
     expect(resolveSubagentThreadMessageId(msgs, 'zzz')).toBeNull();
   });
 
-  it('resolveJumpRequest 三种 kind；text 沿用原有解析', () => {
+  it('resolveJumpRequest 两种 kind；找不到返回 null', () => {
     const msgs = [user('u'), asked('d1')];
     expect(resolveJumpRequest(msgs, { kind: 'thread', toolCallId: SUB })).toEqual({ id: 'd1' });
     expect(resolveJumpRequest(msgs, { kind: 'tool', toolCallId: 'd1-call' })).toEqual({ id: 'd1' });
-    expect(resolveJumpRequest(msgs, { toolCallId: 'q-none' })).toBeNull();
+    expect(resolveJumpRequest(msgs, { kind: 'tool', toolCallId: 'q-none' })).toBeNull();
   });
 });
 

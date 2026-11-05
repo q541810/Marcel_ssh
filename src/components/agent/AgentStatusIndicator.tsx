@@ -105,9 +105,9 @@ export const AgentStatusIndicator: React.FC<AgentStatusIndicatorProps> = ({
       )}
 
       {status === 'asking_parent' && (
+        // 中性灰点：子 agent 在等主 agent，用户没什么可做的，不配颜色
         <span className={`relative inline-flex items-center justify-center ${sizeClasses.ring}`}>
-          <span className="absolute inset-0 rounded-full bg-sky-500/30 blur-[1.5px]" />
-          <span className={`relative rounded-full bg-sky-400 shadow-sm shadow-sky-500/50 ${sizeClasses.dot}`} />
+          <span className={`relative rounded-full bg-zinc-500 ${sizeClasses.dot}`} />
         </span>
       )}
 

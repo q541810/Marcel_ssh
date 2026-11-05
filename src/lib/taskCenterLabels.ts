@@ -112,18 +112,18 @@ export function canJumpToSession(
  * 任务卡片上状态指示点旁边的文字徽标：需要有人介入或在等别人的状态才有字。
  * 桌面抽屉与移动端面板共用（此前各自写死「待审批」）。
  *
- * - `waiting_approval`：等**你**点批准 —— 琥珀色；
- * - `awaiting_parent`：子 agent 在等**主 agent** 回答它的提问 —— 天蓝色，和「待审批」区分开
- *   （前者要用户动手，后者用户通常什么都不用做）。
+ * - `waiting_approval`：等**你**点批准 —— 琥珀色（颜色只留给「要你动手」的状态）；
+ * - `awaiting_parent`：子 agent 在等**主 agent** 回答它的提问 —— 中性灰。它处在两个 agent
+ *   之间，用户通常什么都不用做，所以不配颜色，也不会让入口胶囊亮灯。
  */
 export function taskStatusBadge(
   task: Pick<AgentTask, 'status'>,
-): { text: string; tone: 'amber' | 'sky' } | null {
+): { text: string; tone: 'amber' | 'neutral' } | null {
   switch (task.status) {
     case 'waiting_approval':
       return { text: '待审批', tone: 'amber' };
     case 'awaiting_parent':
-      return { text: '提问中', tone: 'sky' };
+      return { text: '提问中', tone: 'neutral' };
     case 'planning':
     case 'executing':
     case 'completed':

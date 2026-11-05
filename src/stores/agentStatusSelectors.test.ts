@@ -7,6 +7,7 @@ import {
   buildConversationAgentStatusMap,
   getSessionAgentStatus,
   getActiveRunningTasks,
+  getListedTasks,
   taskCenterEntry,
 } from './agentStatusSelectors';
 
@@ -150,11 +151,13 @@ describe('agentStatusSelectors', () => {
       expect(active.map((t) => t.id)).toEqual(['t1', 't2']);
     });
 
-    it('停在 ask_parent 上的子任务仍列出（标「提问中」），但不让对话 / 会话变忙', () => {
+    it('停在 ask_parent 上的子任务：列表里仍列出（标「提问中」），但不算「在跑」——不点亮入口、不让对话 / 会话变忙', () => {
       const tasks: Record<string, AgentTask> = {
         t1: mockTask({ id: 't1', status: 'awaiting_parent', parentTaskId: 'p', conversationId: 'sub' }),
       };
-      expect(getActiveRunningTasks(tasks).map((t) => t.id)).toEqual(['t1']);
+      expect(getActiveRunningTasks(tasks)).toEqual([]);
+      expect(getListedTasks(tasks).map((t) => t.id)).toEqual(['t1']);
+      expect(taskCenterEntry(tasks, {}, null).visible).toBe(false);
       expect(getSessionAgentStatus('session-1', tasks)).toBe('idle');
       expect(getConversationAgentStatus('sub', tasks)).toBe('idle');
     });

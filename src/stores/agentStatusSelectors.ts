@@ -1,7 +1,7 @@
 import type { AgentTask, JobInfo } from '@/lib/types';
 import type { AgentVisualStatus } from '@/components/agent/AgentStatusIndicator';
 import { useConversationStore } from '@/stores/conversationStore';
-import { isTaskActive, isTaskAlive } from '@/lib/agentStatus';
+import { isTaskActive, isTaskAlive, isTaskBusy } from '@/lib/agentStatus';
 import type { ReadInterruptedJobs } from '@/lib/jobReadState';
 
 /**
@@ -153,6 +153,17 @@ export function getSessionAgentStatus(
  * 它会进抽屉；抽屉那边按 `isLocalSessionId` 显示「本机」、跳转时不切终端标签。
  */
 export function getActiveRunningTasks(tasks: Record<string, AgentTask>): AgentTask[] {
+  return Object.values(tasks).filter((t) => !!t.sessionId && isTaskBusy(t.status));
+}
+
+/**
+ * 任务中心**列表**里要列出的任务：在忙的，外加停在 ask_parent 上等主 agent 回答的子任务
+ * （用户要能看到「有个子 agent 在等主 agent 回话」，而不是它一暂停就从列表里消失）。
+ *
+ * 只给列表用。入口胶囊 / 计数 / 退出确认 / 更新药丸一律读 `getActiveRunningTasks`：
+ * 停在提问上的子 agent 处于两个 agent 之间，用户没有什么可做的，不该因它亮灯、涨数字。
+ */
+export function getListedTasks(tasks: Record<string, AgentTask>): AgentTask[] {
   return Object.values(tasks).filter((t) => !!t.sessionId && isTaskAlive(t.status));
 }
 
