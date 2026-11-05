@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { MENU_EDGE_GAP, useMenuViewportFit } from '@/hooks/useMenuViewportFit';
 
 export interface ContextMenuItem {
   label: string;
@@ -25,17 +26,10 @@ interface ContextMenuProps {
 
 export default function ContextMenu({ x, y, anchor = 'below', items, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuBounds = { maxHeight: window.innerHeight - MENU_EDGE_GAP * 2, overflowY: 'auto' as const };
 
-  // 菜单项多时（目录树右键有十来项）靠近窗口下/右缘会被裁掉：量实际尺寸后往回收。
-  useLayoutEffect(() => {
-    const node = menuRef.current;
-    if (!node || anchor === 'above') return;
-    const rect = node.getBoundingClientRect();
-    const overflowY = rect.bottom - window.innerHeight;
-    const overflowX = rect.right - window.innerWidth;
-    if (overflowY > 0) node.style.top = `${Math.max(4, y - overflowY - 4)}px`;
-    if (overflowX > 0) node.style.left = `${Math.max(4, x - overflowX - 4)}px`;
-  }, [x, y, anchor]);
+  // 菜单项多时（目录树右键有十来项）靠近窗口下/右缘会被裁掉：整张菜单收进屏内（见 hook 注释）。
+  useMenuViewportFit(menuRef, x, y, { anchor });
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -56,11 +50,12 @@ export default function ContextMenu({ x, y, anchor = 'below', items, onClose }: 
       // overflow-hidden 且容器不留上下内边距：悬停高亮是铺满整行的方块，留着内边距它既碰不到
       // 菜单边缘（上下各空一截），方角又会戳出圆角轮廓；改成由菜单自己裁切，高亮就铺到边、
       // 角被圆角裁掉。首项/末项用自己的 pt/pb 补回这段间距（见下），文字位置不变。
-      className="context-menu-enter fixed z-50 bg-zinc-800 border border-edge rounded-xl shadow-lg overflow-hidden min-w-32"
+      className="context-menu-enter fixed z-50 bg-zinc-800 border border-edge rounded-xl shadow-xl overflow-hidden min-w-32"
+      // 菜单比窗口还高时（窗口很矮）封顶并允许内部滚动，末项至少够得着
       style={
         anchor === 'above'
-          ? { bottom: window.innerHeight - y, left: x, transformOrigin: 'bottom left' }
-          : { top: y, left: x }
+          ? { bottom: window.innerHeight - y, left: x, transformOrigin: 'bottom left', ...menuBounds }
+          : { top: y, left: x, ...menuBounds }
       }
       onClick={(e) => e.stopPropagation()}
     >

@@ -903,8 +903,14 @@ button:active {
 }
 
 /* Context menu：快进快出，退出直接卸载（贴近原生菜单行为） */
+/* 只缩放、不淡入：菜单从第一帧起就是不透明的。带 opacity 0→1 的话，入场那 120ms 里菜单是半透明的，
+   底下的文字会透出来，看着像「菜单没有底色」。 */
+@keyframes contextMenuIn {
+  from { transform: scale(0.96); }
+  to { transform: scale(1); }
+}
 .context-menu-enter {
-  animation: scaleIn 120ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
+  animation: contextMenuIn 120ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
   transform-origin: top left;
 }
 

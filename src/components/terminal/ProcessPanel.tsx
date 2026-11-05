@@ -4,6 +4,7 @@ import { sshListProcesses, sshTerminateProcess } from '@/lib/tauri';
 import type { RemoteProcessInfo } from '@/lib/remoteSystem';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { getErrorMessage } from '@/lib/errors';
+import { useMenuViewportFit } from '@/hooks/useMenuViewportFit';
 
 type ProcessInfo = RemoteProcessInfo;
 
@@ -25,6 +26,7 @@ export default function ProcessPanel({ sessionId }: ProcessPanelProps) {
   const [sortKey, setSortKey] = useState<SortKey>('cpu');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const menuRef = useRef<HTMLDivElement>(null);
+  useMenuViewportFit(menuRef, menuPos.x, menuPos.y, { enabled: menuProcess !== null });
 
   const loadProcesses = useCallback(async () => {
     setLoading(true);
