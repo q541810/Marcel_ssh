@@ -43,6 +43,62 @@ function tool(
   };
 }
 
+function suggestCarrier(id: string, content: string): AgentMessage {
+  return {
+    id, role: 'assistant', content, timestamp: new Date().toISOString(),
+    toolCalls: [{ id: `${id}-s`, name: 'suggest_next', arguments: {}, disposition: 'Auto' as never }],
+  };
+}
+
+describe('segmentTurns · 结论带小建议卡片', () => {
+  const process = () => [
+    assistantToolCalls('a-tc', 3),
+    ...Array.from({ length: 3 }, (_, i) => tool(`t${i}`)),
+  ];
+
+  it('结论和 suggest_next 同一条消息：它是答案，不被折进过程', () => {
+    const msgs = [user('u'), ...process(), suggestCarrier('c', '已完成'), tool('s', 'suggest_next')];
+    const seg = segmentTurns(msgs)[0];
+    expect(msgs[seg.answerIndex!].id).toBe('c');
+    expect(seg.foldMembers.map((m) => m.id)).not.toContain('c');
+    expect(seg.foldable).toBe(true);
+    expect(seg.toolCallCount).toBe(3);
+  });
+
+  it('工具返回后模型又多说了一句：答案仍是带卡片的结论，多出来的话排在卡片后面', () => {
+    const msgs = [
+      user('u'), ...process(), suggestCarrier('c', '已完成'), tool('s', 'suggest_next'),
+      assistantText('z', '好的'),
+    ];
+    const seg = segmentTurns(msgs)[0];
+    expect(msgs[seg.answerIndex!].id).toBe('c');
+    expect(seg.foldMembers.map((m) => m.id)).not.toContain('c');
+  });
+
+  it('中间夹着空 assistant 也一样', () => {
+    const msgs = [
+      user('u'), ...process(), suggestCarrier('c', '已完成'), tool('s', 'suggest_next'),
+      assistantThinking('e', ''), assistantText('z', '好的'),
+    ];
+    const seg = segmentTurns(msgs)[0];
+    expect(msgs[seg.answerIndex!].id).toBe('c');
+  });
+
+  it('卡片之后又有别的过程：不往回认，仍按最后的纯文本答案', () => {
+    const msgs = [
+      user('u'), suggestCarrier('c', '先给个建议'), tool('s', 'suggest_next'),
+      assistantToolCalls('a2', 1), tool('t9'), assistantText('z', '后来又做了点事'),
+    ];
+    const seg = segmentTurns(msgs)[0];
+    expect(msgs[seg.answerIndex!].id).toBe('z');
+  });
+
+  it('只调了别的工具的 assistant 不是结论', () => {
+    const msgs = [user('u'), ...process(), assistantText('z', '完成')];
+    expect(segmentTurns(msgs)[0].answerIndex).toBe(5);
+  });
+});
+
 describe('segmentTurns', () => {
   it('把 user 到 user 切成独立回合，短回合不可折叠', () => {
     const u1 = user('u1');

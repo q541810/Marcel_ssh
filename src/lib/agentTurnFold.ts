@@ -16,6 +16,8 @@
  *   现为 render_html 可视化图表）不是过程 —— 不计入 toolCallCount（也不占
  *   TOOL_FOLD_MIN 阈值），折叠态下仍恒渲染（`TurnSegment.deliverableMembers`）；
  *   失败 / 被拦的调用照旧算过程。
+ * - 带「小建议卡片」的结论（`isSuggestCarrier`）算答案：`suggest_next` 的调用和结论文字在同一
+ *   条 assistant 上，不特判的话整句结论会被当成过程折叠起来，只剩卡片。
  * - compaction 卡片 / system 消息 / user 是「不折叠锚点」：过程区不含它们。
  * - **收尾状态优先**：回合首条 user 消息上带 `turnState`（后端在 agent loop
  *   停止时记录并持久化的停止原因）时，只有 `completed` 允许折叠；停下来
@@ -28,6 +30,7 @@
 import type { AgentMessage, TurnState } from "@/lib/types";
 import { isSubagentTool } from "@/lib/toolCatalog";
 import { isDeliveredToolResult } from "@/lib/toolCallSummary";
+import { SUGGEST_NEXT_TOOL } from "@/lib/suggestNext";
 
 /** 已完成回合的过程 tool 消息达到该条数才默认折叠。 */
 export const TOOL_FOLD_MIN = 3;
@@ -53,6 +56,26 @@ export function isFinalAnswer(msg: AgentMessage): boolean {
   if (msg.toolCall) return false;
   if (msg.toolCalls && msg.toolCalls.length > 0) return false;
   return true;
+}
+
+/**
+ * 「结论 + 小建议卡片」所在的那条 assistant：结论文字和 `suggest_next` 调用是**同一轮 LLM
+ * 输出**，所以落在同一条消息里（content = 结论，toolCalls = 只有 suggest_next）。
+ * `suggest_next` 不是过程：它不阻塞、调用完本轮就结束，那段文字就是用户要读的结论。
+ * 按「带 tool_calls = 过程」的通则它会被当成过程折叠起来，所以这里单独认出它。
+ */
+export function isSuggestCarrier(msg: AgentMessage): boolean {
+  if (msg.role !== "assistant" || msg.isLoading || !msg.content) return false;
+  const calls = msg.toolCalls && msg.toolCalls.length > 0
+    ? msg.toolCalls
+    : msg.toolCall ? [msg.toolCall] : [];
+  return calls.length > 0 && calls.every((c) => c.name === SUGGEST_NEXT_TOOL);
+}
+
+/** `suggest_next` 的收尾夹层：它的工具结果，以及工具返回后没写出内容的空 assistant。 */
+function isSuggestClosing(msg: AgentMessage): boolean {
+  if (msg.role === "tool") return msg.toolResult?.toolName === SUGGEST_NEXT_TOOL;
+  return msg.role === "assistant" && !hasAssistantContent(msg);
 }
 
 export interface TurnSegment {
@@ -220,9 +243,21 @@ export function segmentTurns(
     // 找最后一条纯文本答案。
     let answerIndex: number | null = null;
     for (let k = turn.length - 1; k >= 0; k -= 1) {
-      if (isFinalAnswer(turn[k])) {
+      if (isFinalAnswer(turn[k]) || isSuggestCarrier(turn[k])) {
         answerIndex = k;
         break;
+      }
+    }
+    // 结论带着小建议卡片时，答案是带卡片的那条，而不是它后面可能多出来的收尾文字：
+    // 否则结论本身落进「答案之前」被折叠起来，用户只看到卡片看不到它问的是什么。
+    if (answerIndex !== null && !isSuggestCarrier(turn[answerIndex])) {
+      // 夹层往前走，碰到带卡片的结论就以它为答案；碰到别的东西说明中间有过程，不动。
+      for (let k = answerIndex - 1; k >= 0; k -= 1) {
+        if (isSuggestCarrier(turn[k])) {
+          answerIndex = k;
+          break;
+        }
+        if (!isSuggestClosing(turn[k])) break;
       }
     }
     // 半截回合（没有纯文本答案）→ 不可折叠，原样渲染。

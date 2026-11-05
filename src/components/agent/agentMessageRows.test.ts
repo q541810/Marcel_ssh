@@ -30,6 +30,19 @@ describe('virtual message row model', () => {
     expect(open[0].key).toBe(closed[0].key);
     expect(open[open.length - 1].key).toBe(closed[closed.length - 1].key);
   });
+  it('folds the process but keeps the conclusion that carries a suggest_next card', () => {
+    const conclusion: AgentMessage = {
+      ...message('conclusion'),
+      toolCalls: [{ id: 'sc', name: 'suggest_next', arguments: {}, disposition: 'Auto' as never }],
+    };
+    const messages = [
+      message('user', 'user'), tool('a'), tool('b'), tool('c'),
+      conclusion, tool('card', 'suggest_next'), { ...message('tail'), content: '好的' },
+    ];
+    const closed = buildMessageRows(messages, defaults).rows;
+    expect(ids(closed)).toEqual(['user', 'conclusion', 'card', 'tail']);
+    expect(closed.some((r) => r.kind === 'turn')).toBe(true);
+  });
   it('keeps deliverables in both folded and open views exactly once', () => {
     const messages = [message('user', 'user'), tool('a'), tool('viz', 'render_html'), tool('b'), tool('c'), message('answer')];
     const closed = buildMessageRows(messages, defaults).rows;
