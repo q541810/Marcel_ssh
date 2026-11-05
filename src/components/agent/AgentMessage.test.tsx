@@ -69,21 +69,17 @@ describe('AgentMessage user actions', () => {
 });
 
 describe('AgentMessage retry indicator', () => {
-  it('shows countdown and attempt count in waiting phase', () => {
+  it('倒计时阶段：一行灰字交代「几秒后…（第 N 次）」，时钟图标', () => {
     // timestamp = now, so remaining ≈ full 5s → waiting phase
     const html = renderToStaticMarkup(
       <AgentMessage message={makeRetryingMessage()} />,
     );
 
-    // waiting phase: shows "Ns 后重试 (2/4)"
-    expect(html).toMatch(/\d+s 后重试/);
-    expect(html).toContain('(2/4)');
-    // clock icon present (waiting), not spinner-only
+    expect(html).toMatch(/请求失败，\d+ 秒后重试…（第 2 次）/);
     expect(html).toContain('cx="12" cy="12" r="9"');
   });
 
-  it('shows retrying phase when countdown has elapsed', () => {
-    // timestamp 10s ago, delay 5s → remaining = 0 → retrying phase
+  it('倒计时走完：正在重试，转圈', () => {
     const tenSecondsAgo = new Date(Date.now() - 10_000).toISOString();
     const html = renderToStaticMarkup(
       <AgentMessage
@@ -91,46 +87,49 @@ describe('AgentMessage retry indicator', () => {
       />,
     );
 
-    expect(html).toContain('正在重试请求');
-    expect(html).toContain('(2/4)');
+    expect(html).toContain('请求失败，正在重试…（第 2 次）');
     expect(html).toContain('animate-spin');
   });
 
-  it('shows error summary and is expandable when error is long', () => {
-    const longError = 'x'.repeat(120);
+  it('流中途断线：文案是「网络中断，正在重新连接…（第 N 次）」', () => {
+    const tenSecondsAgo = new Date(Date.now() - 10_000).toISOString();
     const html = renderToStaticMarkup(
       <AgentMessage
-        message={makeRetryingMessage({ retryLastError: longError })}
+        message={makeRetryingMessage({ timestamp: tenSecondsAgo, retryMidStream: true })}
       />,
     );
 
-    // summary truncated to 80 chars + ellipsis
-    expect(html).toContain('x'.repeat(80) + '…');
-    // expandable: has title attribute for toggle
-    expect(html).toContain('点击展开完整错误');
+    expect(html).toContain('网络中断，正在重新连接…（第 2 次）');
   });
 
-  it('shows full short error inline without expand control', () => {
+  it('原始错误默认不显示（收在「详情」里），也没有琥珀 / 天蓝胶囊', () => {
     const html = renderToStaticMarkup(
-      <AgentMessage
-        message={makeRetryingMessage({ retryLastError: 'timeout' })}
-      />,
+      <AgentMessage message={makeRetryingMessage()} />,
     );
 
-    expect(html).toContain('timeout');
-    // short error: no expand title
-    expect(html).not.toContain('点击展开完整错误');
+    expect(html).not.toContain('HTTP 429 Too Many Requests');
+    expect(html).toContain('详情');
+    expect(html).not.toMatch(/amber|sky-/);
   });
 
-  it('hides attempt count when maxAttempts is 0', () => {
+  it('没有错误文本就没有「详情」', () => {
     const html = renderToStaticMarkup(
-      <AgentMessage
-        message={makeRetryingMessage({ retryMaxAttempts: 0 })}
-      />,
+      <AgentMessage message={makeRetryingMessage({ retryLastError: '' })} />,
     );
 
-    expect(html).not.toContain('(2/0)');
-    expect(html).not.toContain('(2/');
+    expect(html).not.toContain('详情');
+  });
+
+  it('被丢弃的半截正文淡淡地留在原处（不可交互），并带「网络中断」文案', () => {
+    const html = renderToStaticMarkup(
+      <AgentMessage message={makeRetryingMessage({ retryPartialText: '读到一半的**结论**' })} />,
+    );
+
+    expect(html).toContain('data-testid="retry-partial"');
+    expect(html).toContain('读到一半的');
+    expect(html).toContain('opacity-40');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('网络中断');
   });
 });
 

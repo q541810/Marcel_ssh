@@ -7,14 +7,15 @@ const blank = (questions: QuestionItem[]): QuestionAnswer[] =>
 /**
  * 提问表单的状态与动作（题号、答案、选项点选、上一题 / 下一题 / 提交）。
  *
- * 桌面浮层面板（QuestionPanel）、桌面内联卡片（InlineQuestionCard）、手机内联卡片
- * （MobileQuestionSheet）三处共用：外观各有各的，答案怎么攒、什么时候算提交只此一份。
+ * 桌面浮层面板（QuestionPanel）与手机底部面板（MobileQuestionPanel）共用：外观各有各的，
+ * 答案怎么攒、什么时候算提交只此一份。
  */
 export function useQuestionForm({
   questionId,
   questions,
   onSubmit,
   focusOnQuestionChange = true,
+  focusOnNavigate = true,
 }: {
   questionId: string;
   questions: QuestionItem[];
@@ -22,6 +23,8 @@ export function useQuestionForm({
   /** 换题时把焦点给输入框。内联卡片首次出现不能抢焦点（会把视口拽向卡片、手机还会弹键盘），
    *  所以只在用户自己点「下一题 / 上一题」之后才聚焦。 */
   focusOnQuestionChange?: boolean;
+  /** 用户点「上一题 / 下一题」后是否把焦点给输入框。手机上要关：程序化 focus 会唤起软键盘。 */
+  focusOnNavigate?: boolean;
 }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<QuestionAnswer[]>(() => blank(questions));
@@ -50,8 +53,9 @@ export function useQuestionForm({
 
   useEffect(() => {
     if (!focusOnQuestionChange && !navigated.current) return;
+    if (navigated.current && !focusOnNavigate) return;
     inputRef.current?.focus({ preventScroll: true });
-  }, [index, focusOnQuestionChange]);
+  }, [index, focusOnQuestionChange, focusOnNavigate]);
 
   const goTo = useCallback(
     (next: number) => {

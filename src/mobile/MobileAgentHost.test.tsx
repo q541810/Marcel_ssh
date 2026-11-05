@@ -72,7 +72,6 @@ vi.mock('@/components/agent/ReasoningEffortPicker', () => ({
 }));
 vi.mock('./MobileActiveAgentsSheet', () => ({ default: () => null }));
 vi.mock('./MobileApprovalSheet', () => ({ default: () => null }));
-vi.mock('./MobileQuestionSheet', () => ({ default: () => null }));
 vi.mock('./MobileChatHistorySheet', () => ({ default: () => null }));
 vi.mock('./MobileMultiHostPicker', () => ({ default: () => null }));
 

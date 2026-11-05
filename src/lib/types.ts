@@ -516,6 +516,14 @@ export interface UserInputMetadata {
   textAttachments: UserTextAttachment[];
   /** 手动引用的 skill；旧消息没有该字段。 */
   skills?: UserSkillRef[];
+  /** 这条消息是对 agent 某张「小建议卡片」（`suggest_next`）的回信；普通消息没有该字段。 */
+  replyTo?: UserReplyRef;
+}
+
+/** 回信指向的那次 `suggest_next` 调用与它当时的问题（给模型看，也给气泡上的灰色引用行）。 */
+export interface UserReplyRef {
+  toolCallId: string;
+  question: string;
 }
 
 export interface AgentMessage {
@@ -578,6 +586,14 @@ export interface AgentMessage {
   retryTotalDelaySecs?: number;
   /** Last error message that triggered the retry */
   retryLastError?: string;
+  /**
+   * 流中途断线重试时，被丢弃的那半截正文（只有可见的文字；从不入库、不进模型历史）。
+   * 重试指示条把它淡淡地留在原处，等重试后的新输出开始上屏、指示条随之撤掉时被替换。
+   * 连续多次重试、中间没有新输出时沿用上一次的。
+   */
+  retryPartialText?: string;
+  /** 这次重试是流中途断线（已有半截输出被丢弃）：文案说「网络中断」而不是泛泛的「请求失败」。 */
+  retryMidStream?: boolean;
   /** Model approval phase — shown as a distinct progress step on the tool card. */
   modelApproval?: {
     status: 'checking' | 'done';
@@ -598,12 +614,6 @@ export interface AgentMessage {
     shadowedTokens?: number;
     reason?: string;
   };
-  /**
-   * 仅 live 阶段的 tool 消息：发出这次调用的那条 assistant 消息 id（同一轮 LLM 调用
-   * 写下的正文）。「跳转到提问前的结论」据此结构定位；重载后由 assistant 消息自带的
-   * `toolCalls` 反查，不依赖此字段。本轮没写正文 = 缺省。
-   */
-  callerMessageId?: string;
   /**
    * **仅渲染期派生**（`lib/subagentThread`，从不落库、不进 store）：这条 subagent / local_subagent
    * 工具消息是同一个子对话的「时间线卡」锚点，后续的续派调用已并入它。
@@ -1283,11 +1293,6 @@ export interface QuestionItem {
   header: string;
   options?: QuestionOption[];
   multiple: boolean;
-  /**
-   * 这个问题对应提问前正文里哪个小标题（后端已校验并归一化过的原文）。缺省 = 跳到正文开头。
-   * 前端只拿它和渲染出的标题做归一化后相等比较，不做任何模糊搜索。
-   */
-  anchor?: string;
 }
 
 export type InteractionKind = 'approval' | 'question';

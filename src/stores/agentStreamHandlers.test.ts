@@ -636,6 +636,66 @@ describe('agentStreamHandlers', () => {
       expect(handler._messages[convId].some((m) => m.content.includes('more'))).toBe(false);
     });
 
+    it('被丢弃的半截正文留在重试指示消息上（淡出显示用），不留在对话消息里', () => {
+      const handler = mockHandler({ [convId]: [{ id: 'u1', role: 'user', content: 'hi', timestamp: '' }] });
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '读到一半' });
+      flush();
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '的内容' });
+      handleRetrying(handler, taskId, convId, ev);
+      const msgs = handler._messages[convId];
+      const indicator = msgs.find((m) => m.isRetrying)!;
+      expect(indicator.retryPartialText).toBe('读到一半');
+      expect(indicator.retryMidStream).toBe(true);
+      // 其余消息里没有半截（不会入库 / 进模型历史 / 与新输出重复）
+      expect(msgs.filter((m) => !m.isRetrying).some((m) => m.content.includes('读到一半'))).toBe(false);
+    });
+
+    it('追加进已有气泡的那一段：只淡出本轮追加的尾巴，前面已提交的不动', () => {
+      const handler = mockHandler({
+        [convId]: [{ id: 'a0', role: 'assistant', content: '上一轮的正文', timestamp: '' }],
+      });
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '本轮半截' });
+      flush();
+      handleRetrying(handler, taskId, convId, ev);
+      const msgs = handler._messages[convId];
+      expect(msgs.find((m) => m.id === 'a0')?.content).toBe('上一轮的正文');
+      expect(msgs.find((m) => m.isRetrying)?.retryPartialText).toBe('本轮半截');
+    });
+
+    it('连续重试中间没有新输出：沿用上一次的半截，不丢', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '半截' });
+      flush();
+      handleRetrying(handler, taskId, convId, ev);
+      handleRetrying(handler, taskId, convId, { ...ev, attempt: 3 });
+      const indicators = handler._messages[convId].filter((m) => m.isRetrying);
+      expect(indicators).toHaveLength(1);
+      expect(indicators[0].retryPartialText).toBe('半截');
+      expect(indicators[0].retryAttempt).toBe(2);
+    });
+
+    it('重试后的新输出开始上屏：指示消息（连同半截）被替换，只剩新输出', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '旧半截' });
+      flush();
+      handleRetrying(handler, taskId, convId, ev);
+      expect(handler._messages[convId].some((m) => m.retryPartialText === '旧半截')).toBe(true);
+
+      handleTextDelta(handler, taskId, convId, '', { type: 'textDelta', text: '新输出' });
+      flush();
+      const msgs = handler._messages[convId];
+      expect(msgs.some((m) => m.isRetrying)).toBe(false);
+      expect(msgs.some((m) => m.retryPartialText)).toBe(false);
+      expect(msgs.filter((m) => m.role === 'assistant' && !m.isLoading).map((m) => m.content)).toEqual(['新输出']);
+    });
+
+    it('没有半截（还没出字就断了）：指示消息不带 retryPartialText', () => {
+      const handler = mockHandler({ [convId]: [] });
+      handleRetrying(handler, taskId, convId, ev);
+      const indicator = handler._messages[convId].find((m) => m.isRetrying)!;
+      expect(indicator.retryPartialText).toBeUndefined();
+    });
+
     it('drops tool cards opened this round', () => {
       const handler = mockHandler({ [convId]: [] });
       handleToolCallStart(handler, taskId, convId, { type: 'toolCallStart', id: 'tc-d1', name: 'execute_command' });

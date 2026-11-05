@@ -67,7 +67,6 @@ vi.mock('@/stores/taskStore', () => ({
 
 import MobileGlobalInteractionOverlay from './MobileGlobalInteractionOverlay';
 import './backHandler';
-import { useVisibleTranscriptStore } from '@/stores/visibleTranscriptStore';
 import { useMessageJumpStore } from '@/stores/messageJumpStore';
 
 const TS = '2026-09-28T10:00:00.000Z';
@@ -317,43 +316,36 @@ function questionInteraction(
 }
 
 /**
- * 提问不再是盖住聊天的上拉面板：它所属对话正显示在聊天页里 → 内联在聊天末尾（本组件什么
- * 都不画）；否则只留一条提醒条，点它切到聊天页、打开对话并落到提问前的结论。
- * 答题表单（含 2026-10-06 的换题崩溃回归）的用例在 MobileQuestionSheet.test.tsx。
+ * 提问永远是底部面板（可收起成胶囊、返回键 = 收起），无论用户在哪一页。
+ * 答题表单（含 2026-10-06 的换题崩溃回归）的用例在 MobileQuestionPanel 的测试里。
  */
-describe('提问的内联 / 提醒条分流', () => {
+describe('提问底部面板', () => {
   const ASK: QuestionItem[] = [{ header: '方案', question: '走哪条', multiple: false, options: [] }];
-  const bar = () => document.body.querySelector('[data-region="mobile-question-bar"]');
+  const panel = () => document.body.querySelector('[data-region="mobile-question-panel"]');
 
   afterEach(() => {
-    useVisibleTranscriptStore.setState({ byInstance: {} });
     useMessageJumpStore.setState({ request: null });
   });
 
-  it('对话不在聊天页可见 → 只出提醒条，没有答题表单也没有返回键占用', () => {
+  it('提问 → 底部面板', () => {
     mocks.interaction = questionInteraction(ASK);
     render();
-    expect(bar()).not.toBeNull();
-    expect(document.body.querySelector('textarea')).toBeNull();
-    expect(window.__marcelHandleBack?.()).toBe(false);
+    expect(panel()).not.toBeNull();
+    expect(document.body.textContent).toContain('走哪条');
   });
 
-  it('对话正显示在聊天页里 → 本组件不画任何东西（提问已内联）', () => {
+  it('返回键 = 收起成浮动条（不退出会话）', () => {
     mocks.interaction = questionInteraction(ASK);
-    useVisibleTranscriptStore.getState().register('t1', 'conv-remote');
     render();
-    expect(bar()).toBeNull();
-    expect(document.body.textContent).toBe('');
+    let handled: boolean | undefined;
+    act(() => {
+      handled = window.__marcelHandleBack?.();
+    });
+    expect(handled).toBe(true);
+    expect(panel()).toBeNull();
   });
 
-  it('聊天页显示的是别的对话 → 仍是提醒条', () => {
-    mocks.interaction = questionInteraction(ASK);
-    useVisibleTranscriptStore.getState().register('t1', 'conv-other');
-    render();
-    expect(bar()).not.toBeNull();
-  });
-
-  it('点提醒条：切到聊天页 + 打开该对话 + 发出跳转到上文的请求', () => {
+  it('点「跳转」只切会话 / 对话，不发滚动请求、不强切聊天页', () => {
     mocks.interaction = questionInteraction(ASK);
     mocks.activeConversationId = MAIN_CONV;
     mocks.activeSessionId = OTHER_SESSION;
@@ -361,15 +353,11 @@ describe('提问的内联 / 提醒条分流', () => {
     const onTab = (e: Event) => tabs.push((e as CustomEvent<{ tab: string }>).detail.tab);
     window.addEventListener('mobile:switch-tab', onTab);
     render();
-    act(() => {
-      (bar()!.querySelector('button') as HTMLButtonElement).click();
-    });
+    clickButton('跳转');
     window.removeEventListener('mobile:switch-tab', onTab);
 
-    expect(tabs).toEqual(['agent']);
     expect(mocks.switchConversation).toHaveBeenCalledWith('conv-remote');
-    expect(mocks.setActiveSession).toHaveBeenCalledWith('session-remote');
-    const req = useMessageJumpStore.getState().request;
-    expect(req).toMatchObject({ conversationId: 'conv-remote', toolCallId: 'q-1' });
+    expect(tabs).toEqual([]);
+    expect(useMessageJumpStore.getState().request).toBeNull();
   });
 });

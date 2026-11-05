@@ -141,6 +141,7 @@ function userSection(message: AgentMessage): string {
   // 否则复制出来的「用户」段会被整份文件撑爆。
   const text = (input ? input.text : message.content).trim();
   const lines: string[] = [];
+  if (input?.replyTo) lines.push(`（回复建议卡片：${input.replyTo.question}）`);
   if (text) lines.push(text);
   const names = input?.textAttachments.map((file) => file.name) ?? [];
   if (names.length > 0) lines.push(`（附件：${names.join('、')}）`);

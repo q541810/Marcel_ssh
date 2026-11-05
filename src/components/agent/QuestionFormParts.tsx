@@ -1,13 +1,16 @@
 import type { QuestionForm } from './useQuestionForm';
 
-/** 题干 + 选项 + 自由输入框（桌面浮层面板与内联卡片共用的正文）。 */
-export function QuestionFormBody({ form }: { form: QuestionForm }) {
+/**
+ * 题干 + 选项 + 自由输入框（桌面浮层面板与内联卡片共用的正文）。
+ * `compact`：收尾提问的紧凑卡片用——题干更醒目、选项与输入框更矮。
+ */
+export function QuestionFormBody({ form, compact = false }: { form: QuestionForm; compact?: boolean }) {
   const { current, currentAnswer, toggleOption, setCustom, next } = form;
   if (!current) return null;
   const hasOptions = !!current.options?.length;
   return (
     <>
-      <p className="text-sm text-zinc-200 leading-relaxed">{current.question}</p>
+      <p className={`text-sm leading-relaxed ${compact ? 'text-zinc-100' : 'text-zinc-200'}`}>{current.question}</p>
 
       {hasOptions && (
         <div className="space-y-1.5">
@@ -20,7 +23,7 @@ export function QuestionFormBody({ form }: { form: QuestionForm }) {
                 key={opt.label}
                 type="button"
                 onClick={() => toggleOption(opt.label)}
-                className={`w-full text-left px-3 py-2 rounded-lg border transition-all ${
+                className={`w-full text-left px-3 ${compact ? 'py-1.5' : 'py-2'} rounded-lg border transition-all ${
                   isSelected
                     ? 'border-indigo-500 bg-indigo-600/15 text-indigo-200'
                     : 'border-edge bg-zinc-800/50 text-zinc-300 hover:border-edge-strong hover:bg-state-mid/50'
@@ -61,7 +64,7 @@ export function QuestionFormBody({ form }: { form: QuestionForm }) {
 
       <textarea
         ref={form.inputRef}
-        rows={2}
+        rows={compact ? 1 : 2}
         value={currentAnswer.custom}
         onChange={(e) => setCustom(e.target.value)}
         onKeyDown={(e) => {
@@ -79,11 +82,11 @@ export function QuestionFormBody({ form }: { form: QuestionForm }) {
   );
 }
 
-/** 上一题 / 下一题 / 提交（桌面浮层面板与内联卡片共用）。 */
-export function QuestionFormFooter({ form }: { form: QuestionForm }) {
+/** 上一题 / 下一题 / 提交（桌面浮层面板与内联卡片共用）。`compact`：不带分隔线与自己的内边距。 */
+export function QuestionFormFooter({ form, compact = false }: { form: QuestionForm; compact?: boolean }) {
   const { isFirst, isLast, prev, next } = form;
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-t border-edge">
+    <div className={`flex items-center justify-between ${compact ? '' : 'px-4 py-3 border-t border-edge'}`}>
       <div className="text-xs text-zinc-500">
         <kbd className="px-1 py-0.5 rounded bg-zinc-700 text-zinc-300">Enter</kbd>{' '}
         {isLast ? '提交' : '下一题'}

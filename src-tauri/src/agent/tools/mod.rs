@@ -54,8 +54,8 @@ pub mod memory;
 pub mod open_cloud_page;
 pub mod plan;
 pub mod plugin_tool;
-pub mod present_file;
 pub mod question;
+pub mod suggest_next;
 pub mod render_html;
 pub mod search;
 // SFTP 远端探测（stat）：调度器「写前必须已读」预检里「远端目标存在吗」的回落实现。
@@ -194,11 +194,6 @@ pub struct ToolContext {
     /// `None` = 没注入（测试 / 未来的其它调用方），工具应回落到实时设置并在日志 /
     /// 注释里说清楚这一点。
     pub agent_mode_settings: Option<Arc<crate::config::settings::AgentModeSettings>>,
-    /// **发出本次工具调用的那条 assistant 消息的正文**（同一轮 LLM 回复里、工具
-    /// 调用之前写的文字；agent_loop 组装 ctx 时从刚入历史的 assistant 消息取）。
-    /// `ask_user` 用它校验问题的 `anchor` 是否真是正文里的小标题。该轮没有正文 /
-    /// 未注入（测试）为 `None`。
-    pub assistant_text: Option<String>,
 }
 
 impl ToolContext {
@@ -227,14 +222,7 @@ impl ToolContext {
             owner_conversation_id: None,
             local_side: false,
             agent_mode_settings: None,
-            assistant_text: None,
         }
-    }
-
-    /// 注入发出本次调用的 assistant 消息正文（见字段说明）。
-    pub fn with_assistant_text(mut self, text: Option<String>) -> Self {
-        self.assistant_text = text;
-        self
     }
 
     /// 声明这个上下文的目标是**用户自己这台电脑**（本机子 agent 组装 ctx 时调用）。
@@ -792,7 +780,6 @@ pub(crate) const LOCAL_SUB_EXCLUDED_TOOLS: &[&str] = &[
     "list_directory",
     "search_files",
     "system_info",
-    "present_file",
     // 查的是当前 SSH 会话（本机子 agent 的 ctx.session_id 是哨兵 "local"，
     // 调它只会报「当前会话不存在」—— 别给它一条注定失败的工具）。
     "connection_info",
@@ -1089,19 +1076,6 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         prompt_section: None,
         build: || Arc::new(file_ops::ReadFileTool::new()),
     },
-    // 把产出的文件「交付」给用户（界面画交付卡片）：只 stat 路径，不读不改，所以不审批、
-    // Plan 模式也可用。参数里的 path 刻意不声明 `path_arg`——那会让它被记成「已读」，
-    // 白白放行后续的 write 前检查。
-    BuiltinToolSpec {
-        name: "present_file",
-        side: ToolSide::Remote,
-        modes: ToolModes::ALL,
-        roles: ToolRoles::Both,
-        switch: None,
-        semantics: ToolSemantics::NONE,
-        prompt_section: None,
-        build: || Arc::new(present_file::PresentFileTool::new()),
-    },
     BuiltinToolSpec {
         name: "list_directory",
         side: ToolSide::Remote,
@@ -1185,6 +1159,17 @@ static BUILTIN_TOOLS_COMMON: &[BuiltinToolSpec] = &[
         semantics: ToolSemantics::NONE,
         prompt_section: None,
         build: || Arc::new(question::QuestionTool::new(false)),
+    },
+    // ── 任务做完后的小建议卡片：不阻塞，用户点选 = 一条新的用户消息（机制见 `suggest_next.rs`）──
+    BuiltinToolSpec {
+        name: "suggest_next",
+        side: ToolSide::App,
+        modes: ToolModes::EXECUTE,
+        roles: ToolRoles::MainOnly,
+        switch: None,
+        semantics: ToolSemantics::NONE,
+        prompt_section: None,
+        build: || Arc::new(suggest_next::SuggestNextTool::new()),
     },
     // ── 子 agent 向主 agent 提问：暂停并交回（机制见 `ask_parent.rs`）──
     // 子 agent 没有 `ask_user`（它的提问要经主 agent 转手，不直接打断用户）。
@@ -1380,16 +1365,6 @@ static BUILTIN_TOOLS_DESKTOP: &[BuiltinToolSpec] = &[
         semantics: ToolSemantics::reads_path("path"),
         prompt_section: None,
         build: || Arc::new(local_file_ops::LocalReadFileTool::new()),
-    },
-    BuiltinToolSpec {
-        name: "local_present_file",
-        side: ToolSide::Local,
-        modes: ToolModes::ALL,
-        roles: ToolRoles::LocalSubOnly,
-        switch: None,
-        semantics: ToolSemantics::NONE,
-        prompt_section: None,
-        build: || Arc::new(present_file::LocalPresentFileTool::new()),
     },
     BuiltinToolSpec {
         name: "local_list_directory",
@@ -1700,7 +1675,6 @@ mod tests {
             "job_kill",
             "memory",
             "render_html",
-            "present_file",
         ] {
             assert!(names.iter().any(|n| n == expected), "缺 {expected}");
         }
@@ -1899,7 +1873,6 @@ mod tests {
             "connection_info",
             "bash",
             "read_file",
-            "present_file",
             "read_history",
             "list_directory",
             "search_files",
@@ -1941,7 +1914,6 @@ mod tests {
         for name in [
             "bash",
             "read_file",
-            "present_file",
             "read_history",
             "write_file",
             "edit_file",
@@ -2258,7 +2230,6 @@ mod tests {
             // 这里只核对「平台门控」——移动端连声明的条目都没有。
             "local_bash",
             "local_read_file",
-            "local_present_file",
             "local_write_file",
             "local_edit_file",
             "local_list_directory",

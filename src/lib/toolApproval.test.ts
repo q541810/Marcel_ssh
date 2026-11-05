@@ -136,6 +136,7 @@ describe('toolApproval', () => {
         'job_list',
         'ask_user',
         'ask_parent',
+        'suggest_next',
         'write_file',
         'edit_file',
         'create_plan',
@@ -148,7 +149,6 @@ describe('toolApproval', () => {
         'render_html',
         'upload_file',
         'download_file',
-        'present_file',
       ];
       for (const name of backend) {
         expect(KNOWN_TOOL_NAMES, `${name} 缺显示名`).toContain(name);

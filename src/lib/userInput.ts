@@ -1,4 +1,4 @@
-import type { UserInputMetadata, UserSkillRef, UserTextAttachment } from './types';
+import type { UserInputMetadata, UserReplyRef, UserSkillRef, UserTextAttachment } from './types';
 import { wrapTextAttachment } from './attachmentAttach';
 
 /** 手动引用的 skill 在模型输入里的包裹形式（与文本附件同为「正文之后的段落」）。 */
@@ -6,9 +6,16 @@ export function wrapSkillRef(name: string, content: string): string {
   return `\n\n===== 用户指定使用的 Skill: ${name} =====\n${content}`;
 }
 
+/** 回信给模型看的开头：交代这是对哪张建议卡片的回复（模型不一定还记得自己问了什么）。 */
+export function wrapReplyNote(question: string): string {
+  return `（这是对你刚才放的建议卡片「${question}」的回复）
+`;
+}
+
 /** 完整模型输入的唯一拼装入口；不 trim 文件内容，不从普通文本猜附件。 */
 export function composeUserInput(input: UserInputMetadata): string {
-  return input.text
+  return (input.replyTo ? wrapReplyNote(input.replyTo.question) : '')
+    + input.text
     + input.textAttachments
       .map((file) => wrapTextAttachment(file.name, file.content))
       .join('')
@@ -60,11 +67,19 @@ export function validateUserInput(
       skills.push({ id: skill.id, skillId: skill.skillId, name: skill.name, content: skill.content });
     }
   }
+  let replyTo: UserReplyRef | undefined;
+  if (value.replyTo !== undefined) {
+    const r = value.replyTo;
+    if (!isRecord(r) || typeof r.toolCallId !== 'string' || r.toolCallId.length === 0
+      || typeof r.question !== 'string') return undefined;
+    replyTo = { toolCallId: r.toolCallId, question: r.question };
+  }
   const input: UserInputMetadata = {
     version: 1,
     text: value.text,
     textAttachments,
     ...(skills.length > 0 ? { skills } : {}),
+    ...(replyTo ? { replyTo } : {}),
   };
   return composeUserInput(input) === content ? input : undefined;
 }

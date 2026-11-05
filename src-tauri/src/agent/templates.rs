@@ -48,7 +48,7 @@
 //!
 //! # 改 X 要动哪里
 //!
-//! - 运行模式 / 需求澄清 / 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析）/ 风险分级 / 上下文管理 / 收尾
+//! - 运行模式 / 需求澄清 / ask_user（干活途中弹窗，卡片须自足）与 suggest_next（做完后的不阻塞小建议卡片）/ 沟通风格 / 结论放哪 / 文件路径写成可点击链接的约定（前端按 `remote:` / `local:` 解析，文件交付只靠它）/ 风险分级 / 上下文管理 / 收尾
 //!   → `templates/agent/沟通.hbs`（仅主 agent，见 `render_agent_prompt` 的 `audience` 门控）
 //! - 人设、规则优先级、语言与风格、主动性、做事方式、命令规范、文档同步、临时文件清理、
 //!   后台作业、停止命令与残余进程 → `templates/agent/角色.hbs`（各段用无编号标题，
@@ -1179,5 +1179,22 @@ mod tests {
         let text = TemplateManager.render_fragment("沟通", &json!({}));
         assert!(text.contains("source_subagent"));
         assert!(text.contains("continue_id"));
+    }
+
+    /// ask_user（途中弹窗）与 suggest_next（做完后的小卡片）的使用规则只在沟通段说一次
+    /// （结论分段 + anchor 也属于后者）；文件交付只剩链接约定，不再有 `present_file`。
+    #[test]
+    fn communication_teaches_ask_user_suggest_next_and_links_only() {
+        let text = TemplateManager.render_fragment("沟通", &json!({}));
+        assert!(text.contains("suggest_next"));
+        assert!(!text.contains("wrap_up"));
+        assert!(text.contains("提问卡片必须自足"));
+        assert!(!text.contains("anchor"));
+        assert!(text.contains("remote:/绝对路径"));
+        assert!(text.contains("文件夹"));
+        for name in ["沟通", "多机", "本机子agent"] {
+            let t = TemplateManager.render_fragment(name, &json!({}));
+            assert!(!t.contains("present_file"), "{name}: present_file 已移除");
+        }
     }
 }

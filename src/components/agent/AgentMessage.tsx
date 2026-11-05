@@ -59,14 +59,24 @@ function highlightPlainText(text: string, keyword?: string): ReactNode {
 const MARKDOWN_CLASS =
   'text-[15px] leading-relaxed text-zinc-100 break-words prose marcel-prose prose-sm max-w-none prose-p:my-0.5 prose-code:text-[var(--marcel-md-code-text)] prose-code:bg-zinc-900 prose-code:px-1 prose-code:py-0.5 prose-code:rounded-lg prose-code:before:content-none prose-code:after:content-none prose-pre:bg-zinc-900 prose-pre:border prose-pre:border-edge prose-a:text-indigo-400 prose-headings:my-2 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-blockquote:border-l-edge-strong prose-blockquote:text-zinc-400 prose-blockquote:italic [&_.katex-display]:my-2 [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-0.5 [&_.katex]:text-zinc-100 [&_.katex-error]:text-red-400 [&_.katex-error]:text-[0.9em]';
 
-// ─── Retry indicator: 倒计时 + 错误折叠 ───
+// ─── Retry indicator ───
 // 后端发完 Retrying 事件就 sleep，前端基于消息 timestamp + retryTotalDelaySecs
 // 自己算剩余秒数，区分"等待"和"正在重试"两个阶段。
+//
+// 设计（用户视角）：断线重试是「系统在自己处理」的事，不该吓人也不该抢眼——
+// 1. 已经上屏的半截文字**不立刻消失**，淡淡地留在原处（用户读到一半的东西不被抽走），
+//    下面一行灰字交代「网络中断，正在重新连接…（第 N 次）」；重试后的新输出开始上屏时，
+//    这条指示消息被撤掉，半截文字随之被真正的输出替换（`agentStreamHandlers` 保证半截
+//    从不入库、不进模型历史、不会和新输出重复）。
+// 2. 全程中性灰，没有琥珀 / 天蓝的胶囊；重试耗尽走后面的「LLM 错误」系统消息，那才是错误态。
+// 3. 底层的英文错误（HTTP 429 …）默认不显示，收在「详情」里，要看才点开。
 function RetryIndicator({ message }: { message: AgentMessageType }) {
-  const attempt = message.retryAttempt ?? 0;
+  const attempt = Math.max(message.retryAttempt ?? 0, 1);
   const maxAttempts = message.retryMaxAttempts ?? 0;
   const totalDelay = message.retryTotalDelaySecs ?? 0;
-  const lastError = message.retryLastError ?? '';
+  const lastError = (message.retryLastError ?? '').trim();
+  const partial = message.retryPartialText ?? '';
+  const midStream = message.retryMidStream === true || !!partial;
 
   const startMs = new Date(message.timestamp).getTime();
   const endMs = startMs + totalDelay * 1000;
@@ -75,7 +85,7 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
     const r = (endMs - Date.now()) / 1000;
     return r > 0 ? r : 0;
   });
-  const [errorExpanded, setErrorExpanded] = useMessageViewState('retry-error-expanded', false);
+  const [detailsOpen, setDetailsOpen] = useMessageViewState('retry-details-open', false);
   const endMsRef = useRef(endMs);
   endMsRef.current = endMs;
 
@@ -91,92 +101,57 @@ function RetryIndicator({ message }: { message: AgentMessageType }) {
 
   const waiting = remaining > 0;
   const remainingCeil = Math.ceil(remaining);
-
-  // 错误展示：首行截断 80 字符
-  const errorFirstLine = lastError.split('\n')[0] ?? '';
-  const errorSummary =
-    errorFirstLine.length > 80
-      ? errorFirstLine.slice(0, 80) + '…'
-      : errorFirstLine;
-  const hasMore = errorFirstLine.length > 80 || lastError.includes('\n');
+  const nth = `（第 ${attempt} 次）`;
+  const lead = midStream ? '网络中断' : '请求失败';
+  const line = waiting
+    ? `${lead}，${remainingCeil} 秒后${midStream ? '重新连接' : '重试'}…${nth}`
+    : `${lead}，正在${midStream ? '重新连接' : '重试'}…${nth}`;
 
   return (
-    <div className="flex justify-center my-1">
-      <div className="flex flex-col items-center gap-1 max-w-[90%]">
-        <div
-          className={`flex items-center gap-1.5 text-xs rounded-full px-3 py-1 border transition-colors ${
-            waiting
-              ? 'text-amber-400 bg-amber-400/10 border-amber-400/20'
-              : 'text-sky-400 bg-sky-400/10 border-sky-400/20'
-          }`}
-        >
+    <div className="my-1 flex justify-start" data-testid="retry-indicator">
+      <div className="min-w-0 max-w-[90%]">
+        {partial && (
+          // 被丢弃的半截正文：淡出留在原处，不可选中 / 不可交互——它只是「刚才读到哪」的参照
+          <div
+            data-testid="retry-partial"
+            aria-hidden="true"
+            className={`${MARKDOWN_CLASS} pointer-events-none select-none opacity-40`}
+          >
+            <MarkdownBody content={partial} />
+          </div>
+        )}
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-zinc-500" role="status">
           {waiting ? (
-            // 时钟图标：等待阶段
-            <svg
-              className="w-3 h-3"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg className="h-3 w-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="12" r="9" strokeWidth={2} />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 7v5l3 2"
-              />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 7v5l3 2" />
             </svg>
           ) : (
-            // spinner：正在重试阶段
-            <svg
-              className="w-3 h-3 animate-spin"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-              />
+            <svg className="h-3 w-3 flex-shrink-0 animate-spin motion-reduce:animate-none" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
           )}
-          {waiting ? (
-            <span>
-              {remainingCeil}s 后重试
-              {maxAttempts > 0 && ` (${attempt}/${maxAttempts})`}
-            </span>
-          ) : (
-            <span>
-              正在重试请求{maxAttempts > 0 && ` (${attempt}/${maxAttempts})`}…
-            </span>
+          <span className="min-w-0">{line}</span>
+          {lastError && (
+            <button
+              type="button"
+              aria-expanded={detailsOpen}
+              onClick={() => setDetailsOpen((v) => !v)}
+              className="flex-shrink-0 rounded px-1 text-zinc-500 underline-offset-2 transition-colors hover:text-zinc-300 hover:underline [@media(pointer:coarse)]:py-1.5"
+            >
+              详情
+            </button>
           )}
         </div>
-        {/* 错误信息：默认折叠，点击展开 */}
-        {lastError && (
-          <button
-            type="button"
-            onClick={() => hasMore && setErrorExpanded((v) => !v)}
-            className={`text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors max-w-full text-left break-words [overflow-wrap:anywhere] ${
-              hasMore ? 'cursor-pointer' : 'cursor-default'
-            }`}
-            title={
-              hasMore
-                ? errorExpanded
-                  ? '点击折叠'
-                  : '点击展开完整错误'
-                : undefined
-            }
+        {lastError && detailsOpen && (
+          <div
+            data-testid="retry-details"
+            className="mt-0.5 max-w-full break-words text-[11px] text-zinc-500 [overflow-wrap:anywhere]"
           >
-            {errorExpanded ? lastError : errorSummary}
-          </button>
+            {lastError}
+            {maxAttempts > 0 && <span className="block">最多重试 {maxAttempts} 次</span>}
+          </div>
         )}
       </div>
     </div>
@@ -279,6 +254,14 @@ function AgentMessage({
           {!searchKeyword?.trim() && (userInput?.skills?.length ?? 0) > 0 && (
             <div className="mb-1.5 max-w-full">
               <SkillChips skills={userInput!.skills!} mobile={alwaysShowActions} justify="end" />
+            </div>
+          )}
+          {!searchKeyword?.trim() && userInput?.replyTo && (
+            <div
+              className="mb-1 max-w-full truncate text-[12px] leading-5 text-zinc-500"
+              title={userInput.replyTo.question}
+            >
+              回复：{userInput.replyTo.question}
             </div>
           )}
           {displayContent ? (

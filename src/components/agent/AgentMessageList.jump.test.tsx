@@ -66,7 +66,7 @@ afterEach(() => {
 const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 
 describe('AgentMessageList.jumpToMessage', () => {
-  it('目标藏在已折叠的完成回合里：先展开该回合，再滚过去并闪一下标题块；dbId 同样能定位', async () => {
+  it('目标藏在已折叠的完成回合里：先展开该回合，再滚过去并闪一下整条消息；dbId 同样能定位', async () => {
     const handle = createRef<AgentMessageListHandle>();
     act(() => root.render(
       <AgentMessageList messages={MESSAGES} conversationId="c1" listRef={handle} foldTurns />,
@@ -74,7 +74,7 @@ describe('AgentMessageList.jumpToMessage', () => {
     expect(host.querySelector('[data-message-id="mid"]')).toBeNull();
 
     let ok = false;
-    act(() => { ok = handle.current!.jumpToMessage('db-mid', '风险'); });
+    act(() => { ok = handle.current!.jumpToMessage('db-mid'); });
     expect(ok).toBe(true);
     expect(useTurnFoldStore.getState().expanded.c1?.['u:u1']).toBe(true);
 
@@ -82,19 +82,6 @@ describe('AgentMessageList.jumpToMessage', () => {
     const target = host.querySelector('[data-message-id="mid"]');
     expect(target).not.toBeNull();
     expect(scrollIntoView).toHaveBeenCalled();
-    // 有 anchor 且找得到标题 → 闪的是那个标题块，不是整条消息
-    const flashed = host.querySelector('.jump-flash');
-    expect(flashed?.tagName).toBe('P');
-    expect(flashed?.textContent).toBe('风险');
-  });
-
-  it('anchor 找不到 → 退回闪整条消息（正文开头）', async () => {
-    const handle = createRef<AgentMessageListHandle>();
-    act(() => root.render(
-      <AgentMessageList messages={MESSAGES} conversationId="c1" listRef={handle} foldTurns />,
-    ));
-    act(() => { handle.current!.jumpToMessage('mid', '不存在的标题'); });
-    await wait(500);
     expect(host.querySelector('.jump-flash')?.getAttribute('data-message-id')).toBe('mid');
   });
 

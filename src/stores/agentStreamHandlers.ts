@@ -165,12 +165,6 @@ export function handleToolCallStart(
       }
     }
 
-    // 记下发出这次调用的那条 assistant 消息（同一轮 LLM 调用写下的正文）：
-    // 「跳转到提问前的结论」据此做结构定位，不靠往前找文本。本轮没写正文 = 没有。
-    const callerId = getStreamState(taskId).assistantMessageId;
-    if (callerId && newMsgs.some((m) => m.id === callerId && m.role === 'assistant')) {
-      toolMessage.callerMessageId = callerId;
-    }
     newMsgs.push(toolMessage);
 
     // Register the mapping so handleToolResult can find it later
@@ -942,9 +936,20 @@ export function handleRetrying(
   const discard = ev.discardPartial === true;
   if (discard) discardRoundPartial(taskId);
   handler.updateMessages(conversationId, (convMsgs) => {
+    // 上一次重试留下的半截文字：这次没有新输出（连续失败）时要沿用，不能因为换了一条
+    // 指示消息就把它丢了。
+    const previous = convMsgs.find((m) => m.role === 'system' && m.isRetrying);
     let newMsgs = convMsgs
       .filter((m) => !(m.role === 'system' && m.isRetrying));
-    if (discard) newMsgs = dropRoundPartial(taskId, newMsgs);
+    let partialText = previous?.retryPartialText;
+    let midStream = previous?.retryMidStream === true;
+    if (discard) {
+      // 先取文字、再撤销：撤销之后消息里就没有它了
+      const dropped = roundPartialText(taskId, newMsgs);
+      if (dropped) partialText = dropped;
+      newMsgs = dropRoundPartial(taskId, newMsgs);
+      midStream = true;
+    }
     return [
       ...newMsgs,
       {
@@ -957,9 +962,23 @@ export function handleRetrying(
         retryMaxAttempts: ev.maxAttempts - 1,
         retryTotalDelaySecs: ev.delaySecs,
         retryLastError: ev.lastError,
+        // 被丢弃的半截正文只放在这条临时指示消息上：界面里淡淡地留在原处，新输出一上屏
+        // 指示条被撤掉、它也随之被替换；消息列表本身（以及入库、模型历史）里没有它。
+        ...(partialText ? { retryPartialText: partialText } : {}),
+        ...(midStream ? { retryMidStream: true } : {}),
       },
     ];
   });
+}
+
+/** 本轮已上屏的半截正文（`dropRoundPartial` 会撤掉的那部分里的可见文字；不含思考与工具卡）。 */
+function roundPartialText(taskId: string, msgs: AgentMessage[]): string {
+  const mark = getStreamState(taskId).roundMark;
+  if (!mark) return '';
+  const m = msgs.find((x) => x.id === mark.id);
+  if (!m) return '';
+  const text = mark.created ? m.content : m.content.slice(mark.contentLen);
+  return text.trim() ? text : '';
 }
 
 /**

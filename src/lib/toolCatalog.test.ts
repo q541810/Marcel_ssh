@@ -287,6 +287,9 @@ describe('toolDisplayName / 分组判定', () => {
     expect(isDeliverableTool('read_file')).toBe(false);
     expect(isDeliverableTool('subagent')).toBe(false);
     expect(isDeliverableTool('unknown_tool')).toBe(false);
+    // present_file / local_present_file 已移除（路径链接取代了交付卡片）：旧会话里的调用当普通工具
+    expect(isDeliverableTool('present_file')).toBe(false);
+    expect(isDeliverableTool('local_present_file')).toBe(false);
   });
 
   it('流式输出的**传输事实**照实声明（决定后续有没有实时部分输出可看）', () => {
@@ -543,8 +546,8 @@ describe('已登记的消费方不再自带工具名判定（白名单制，见�
     'connection_info',
     // 子 agent 向主 agent 提问（只在子 agent 的工具集里）
     'ask_parent',
-    'present_file',
-    'local_present_file',
+    // 任务做完后的小建议卡片
+    'suggest_next',
     'bash',
     'read_history',
     'read_file',

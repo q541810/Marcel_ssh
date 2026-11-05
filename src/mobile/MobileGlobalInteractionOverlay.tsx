@@ -7,11 +7,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
 import MobileApprovalSheet from '@/mobile/MobileApprovalSheet';
-import MobileQuestionBar from '@/mobile/MobileQuestionBar';
-import { requestMobileTab } from '@/mobile/tabs';
-import { useVisibleConversationIds } from '@/stores/visibleTranscriptStore';
-import { shouldShowQuestionInline } from '@/lib/questionPlacement';
-import { requestQuestionTextJump } from '@/stores/messageJumpStore';
+import MobileQuestionPanel from '@/mobile/MobileQuestionPanel';
 import { InteractionFloatingCapsule } from '@/components/agent/InteractionFloatingCapsule';
 import { openRiskRule } from '@/lib/riskRuleNav';
 import { usePrivacyMode } from '@/hooks/usePrivacyMode';
@@ -53,6 +49,7 @@ export default function MobileGlobalInteractionOverlay() {
   const current = useInteractionStore((s) => s.currentInteraction);
   const approve = useInteractionStore((s) => s.approve);
   const reject = useInteractionStore((s) => s.reject);
+  const answerQuestion = useInteractionStore((s) => s.answerQuestion);
   const stopTask = useTaskStore((s) => s.stopTask);
   const privacyMode = usePrivacyMode();
 
@@ -60,10 +57,6 @@ export default function MobileGlobalInteractionOverlay() {
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
 
   const activeConversationId = useConversationStore((s) => s.activeConversationId);
-
-  // 提问所属对话正显示在聊天页里 → 已内联在聊天末尾（InlineQuestion），这里不画任何东西。
-  const visibleConversationIds = useVisibleConversationIds();
-  const questionInline = shouldShowQuestionInline(current, visibleConversationIds);
 
   // 用户是否主动最小化了当前交互
   const [minimized, setMinimized] = useState(false);
@@ -94,30 +87,11 @@ export default function MobileGlobalInteractionOverlay() {
     if (current.conversationId && activeConversationId !== current.conversationId) {
       void sessionConversationBindingManager.openConversation(current.conversationId);
     }
-    if (current.kind === 'question' && current.question) {
-      // 切到聊天页，并在对话显示出来后落到提问前那段结论的开头
-      requestMobileTab('agent');
-      requestQuestionTextJump(current.conversationId, current.question.questionId);
-    }
     // 点击跳转后自动最小化弹窗，避免遮挡聊天内容
     setMinimized(true);
   }, [current, activeSessionId, activeConversationId, setActiveSession]);
 
-  if (!current || questionInline) return null;
-
-  // 提问：不再是盖住聊天的上拉面板。不在聊天页时只留一条提醒条，点它回到聊天页作答。
-  if (current.kind === 'question' && current.question) {
-    return (
-      <MobileQuestionBar
-        conversationTitle={current.conversationTitle}
-        sessionName={formatInteractionSessionLabel(current.sessionTarget, privacyMode)}
-        questionCount={current.question.questions.length}
-        queueLength={current.queueLength}
-        source={current.question.sourceSubagent}
-        onOpen={() => handleNavigate()}
-      />
-    );
-  }
+  if (!current) return null;
 
   // 最小化展示状态：渲染右下角半透明悬浮胶囊
   if (minimized) {
@@ -193,6 +167,32 @@ export default function MobileGlobalInteractionOverlay() {
         queueLength={current.queueLength}
         onMinimize={() => setMinimized(true)}
       />
+    );
+  }
+
+  // 任务进行中的提问：agent 在等答案，像审批一样从底部升起（无论用户在哪一页）。
+  if (current.kind === 'question' && current.question) {
+    return (
+      <div className="pointer-events-auto fixed inset-x-0 bottom-0 z-50 shadow-2xl animate-fadeIn">
+        {/* key：交互切换必须重挂载。面板内部题号/答案按首份 questions 定格，
+            不重挂的话 2 题切 1 题会越界渲染崩掉整棵树（2026-10-06 线上爆炸） */}
+        <MobileQuestionPanel
+          key={current.interactionId}
+          questionId={current.question.questionId}
+          questions={current.question.questions}
+          source={current.question.sourceSubagent}
+          onSubmit={(_qid, answers) => {
+            if (current.question) {
+              void answerQuestion(current.taskId, current.question.questionId, answers);
+            }
+          }}
+          sessionName={formatInteractionSessionLabel(current.sessionTarget, privacyMode)}
+          conversationTitle={current.conversationTitle}
+          onNavigateToContext={handleNavigate}
+          queueLength={current.queueLength}
+          onMinimize={() => setMinimized(true)}
+        />
+      </div>
     );
   }
 

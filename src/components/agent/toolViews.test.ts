@@ -28,6 +28,13 @@ function toolMessage(
 }
 
 describe("toolViews", () => {
+  it("旧会话里的 present_file / local_present_file（工具已移除）没有专属 view，回退到通用工具卡", () => {
+    for (const name of ["present_file", "local_present_file"]) {
+      expect(getToolView(name, false)).toBeUndefined();
+      expect(getToolView(name, true)).toBeUndefined();
+    }
+  });
+
   it("gives render_html its own mobile view while ordinary tools fall back", () => {
     const desktopView = getToolView("render_html", false);
     const mobileView = getToolView("render_html", true);

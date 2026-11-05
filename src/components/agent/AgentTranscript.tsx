@@ -9,9 +9,7 @@ import AgentRunStatus, { useConversationLoopRunning } from './AgentRunStatus';
 import { MarkdownVisibility } from './markdownVisibility';
 import { useAgentScrollIntent } from '@/hooks/useAgentScrollIntent';
 import { JUMP_TTL_MS, useMessageJumpStore } from '@/stores/messageJumpStore';
-import { useRegisterVisibleTranscript } from '@/stores/visibleTranscriptStore';
 import { resolveJumpRequest } from '@/lib/jumpResolve';
-import InlineQuestion from './InlineQuestion';
 import SubagentAwaitingNotice from './SubagentAwaitingNotice';
 import { MessageJumpContext, type MessageJumpScope } from './messageJumpContext';
 
@@ -54,9 +52,6 @@ export default memo(function AgentTranscript({
   const previousConversation = useRef(conversationId);
   const lastMessage = messages[messages.length - 1];
 
-  // 登记「我正显示这条对话」：提问放哪儿（内联 / 全局浮层）读这份登记。
-  useRegisterVisibleTranscript(conversationId, visible && canInteract);
-
   // 跳转请求的执行方：请求属于本对话、本面板可见时，解析目标消息并交给列表句柄。
   // 对话还没切过来 / 消息还没载入时请求留在 store 里，messages 变化时重试；过期丢弃。
   const jumpRequest = useMessageJumpStore((s) => s.request);
@@ -71,13 +66,11 @@ export default memo(function AgentTranscript({
       const timer = setTimeout(settle, Math.max(0, JUMP_TTL_MS - (Date.now() - jumpRequest.requestedAt)));
       return () => clearTimeout(timer);
     }
-    if (listRef.current?.jumpToMessage(target.id, target.anchor)) settle();
+    if (listRef.current?.jumpToMessage(target.id)) settle();
   }, [jumpRequest, visible, canInteract, conversationId, messages]);
 
-  const messagesRef = useRef<readonly AgentMessage[]>(messages);
-  messagesRef.current = messages;
   const jumpScope = useMemo<MessageJumpScope | null>(
-    () => (conversationId ? { conversationId, messagesRef } : null),
+    () => (conversationId ? { conversationId } : null),
     [conversationId],
   );
   const onManualLayout = useCallback(() => {
@@ -175,9 +168,6 @@ export default memo(function AgentTranscript({
           {canInteract && loopRunning && conversationId && <AgentRunStatus conversationId={conversationId} />}
           {canInteract && conversationId && (
             <SubagentAwaitingNotice conversationId={conversationId} messages={messages} mobile={mobile} />
-          )}
-          {canInteract && visible && conversationId && (
-            <InlineQuestion conversationId={conversationId} mobile={mobile} />
           )}
         </div>
       </div>

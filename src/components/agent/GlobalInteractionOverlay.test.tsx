@@ -64,7 +64,6 @@ vi.mock('@/stores/capsuleFlyAnimation', () => ({
 }));
 
 import GlobalInteractionOverlay from './GlobalInteractionOverlay';
-import { useVisibleTranscriptStore } from '@/stores/visibleTranscriptStore';
 import { useMessageJumpStore } from '@/stores/messageJumpStore';
 
 const TS = '2026-09-28T10:00:00.000Z';
@@ -402,51 +401,31 @@ describe('提问交互的队列切换（不重挂载就崩的回归）', () => {
 });
 
 /**
- * 提问放哪儿：对话正显示在可见的 Agent 面板里 → 内联在消息流末尾（本浮层一个字都不画，
- * 胶囊也不出）；否则保持全局浮层，且「跳转查看」落到提问前那段结论。审批不受影响。
+ * 提问永远是全局浮层（审批同理）：无论对话此刻是否显示着。「跳转查看」只切会话 / 对话。
  */
-describe('提问的内联 / 全局浮层分流', () => {
+describe('提问浮层', () => {
   const ASK: QuestionItem[] = [{ header: '方案', question: '走哪条', multiple: false, options: [] }];
 
   afterEach(() => {
-    useVisibleTranscriptStore.setState({ byInstance: {} });
     useMessageJumpStore.setState({ request: null });
   });
 
-  it('对话在可见面板里 → 浮层与胶囊都不出', () => {
+  it('对话正显示着，提问也是全局浮层', () => {
     mocks.interaction = questionInteraction(ASK);
-    useVisibleTranscriptStore.getState().register('t1', 'conv-remote');
-    render();
-    expect(document.body.textContent).toBe('');
-  });
-
-  it('面板显示别的对话 / 没有可见面板 → 全局浮层照旧', () => {
-    mocks.interaction = questionInteraction(ASK);
-    useVisibleTranscriptStore.getState().register('t1', 'conv-other');
     render();
     expect(document.body.textContent).toContain('走哪条');
   });
 
-  it('审批即使对话可见也照旧走全局弹窗', () => {
-    mocks.interaction = localApproval({ conversationId: 'conv-remote', sessionId: 'session-remote' });
-    useVisibleTranscriptStore.getState().register('t1', 'conv-remote');
-    render();
-    expect(document.body.textContent).not.toBe('');
-  });
-
-  it('点「跳转查看」：打开对话并发出落到提问前结论的跳转请求', () => {
+  it('点「跳转查看」：只切对话，不发滚动请求', () => {
     mocks.interaction = questionInteraction(ASK);
     mocks.activeConversationId = MAIN_CONV;
     render();
     clickButton('跳转查看');
     expect(mocks.switchConversation).toHaveBeenCalledWith('conv-remote');
-    expect(useMessageJumpStore.getState().request).toMatchObject({
-      conversationId: 'conv-remote',
-      toolCallId: 'q-1',
-    });
+    expect(useMessageJumpStore.getState().request).toBeNull();
   });
 
-  it('提问收成胶囊后，当前对话在面板外（面板收起）也给跳转入口', () => {
+  it('收成胶囊后，已在那条对话里 → 不再催「跳转」', () => {
     mocks.interaction = questionInteraction(ASK);
     mocks.activeConversationId = 'conv-remote';
     mocks.activeSessionId = 'session-remote';
@@ -454,6 +433,6 @@ describe('提问的内联 / 全局浮层分流', () => {
     act(() => {
       container.querySelector<HTMLButtonElement>('button[aria-label="最小化"]')!.click();
     });
-    expect(hasButton('跳转')).toBe(true);
+    expect(hasButton('跳转')).toBe(false);
   });
 });
