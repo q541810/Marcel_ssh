@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2, ArrowUpCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Puzzle, Eye, Wrench, Shield, FolderOpen, Check, Settings, Syringe, AlertCircle, RotateCw, Trash2, ArrowUpCircle, Store } from 'lucide-react';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { subscribeTauriEventReady } from '@/lib/tauriEvent';
 import { getPluginDir, openPluginDir, pluginUninstall, pluginUpdate, pluginInstallCancel } from '@/lib/tauri';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useMarketStore } from '@/stores/marketStore';
+import { useMarketPageStore } from '@/stores/marketPageStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PluginManifest } from '@/lib/types';
 import { satisfiesMinVersion } from '@/lib/semver';
@@ -670,6 +671,7 @@ export function PluginSection() {
 
   const updateMap = usePluginUpdates(manifests, marketPlugins);
   const updateCount = updateMap.size;
+  const openMarketPage = useMarketPageStore((s) => s.openPage);
 
   return (
     <div className="space-y-6">
@@ -714,6 +716,19 @@ export function PluginSection() {
               刷新
             </Button>
           </div>
+        </SettingItem>
+        <SettingItem
+          id="plugins-market"
+          label="插件市场"
+          description="浏览并安装社区发布的插件"
+          sectionId="settings-plugins"
+          keywords={['market', 'store', 'install', '插件市场', '市场', '安装', '商店']}
+        >
+          <Button variant="secondary" size="sm" onClick={openMarketPage}>
+            <Store className="w-3.5 h-3.5" />
+            浏览插件市场
+            <ChevronRight className="w-3.5 h-3.5" />
+          </Button>
         </SettingItem>
       </Card>
 

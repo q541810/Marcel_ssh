@@ -125,8 +125,8 @@ export function AgentPolicySection() {
     <div className="space-y-6">
       <Card
         id="settings-command-policy"
-        title="命令执行策略"
-        description="控制 Agent 在哪些情况下要先问你"
+        title="安全与审批"
+        description="控制 Agent 在哪些情况下要先问你、哪些命令直接拒绝"
       >
         <div className="px-6 py-5">
           <ApprovalOverview agent={agent} onChange={updateAgent} />
@@ -306,8 +306,28 @@ export function AgentPolicySection() {
           />
         </Reveal>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * 执行限制：单次任务轮数与单条命令超时。
+ *
+ * 从「安全与审批」里拆出来单独成段：Agent 页的顺序是 安全与审批 → 用户附加指令 → 执行限制，
+ * 讲的是三件不同的事，不该挤在一张卡里。
+ */
+export function AgentLimitsSection() {
+  const { settings, update } = useSettingsActions();
+  const agent = settings.agentModeSettings;
+
+  const updateAgent = (patch: Partial<typeof agent>) => {
+    update({ agentModeSettings: { ...agent, ...patch } });
+  };
+
+  return (
+    <div className="space-y-6">
       <Card
-        id="settings-agent-rounds"
+        id="settings-agent-limits"
         title="执行限制"
         description="控制 Agent 单次任务和单条命令的上限"
       >
@@ -315,7 +335,7 @@ export function AgentPolicySection() {
           id="cmd-timeout"
           label="命令超时时间"
           description="Agent 执行单条命令的最大等待时间"
-          sectionId="settings-agent-rounds"
+          sectionId="settings-agent-limits"
           keywords={['timeout', '超时', '命令执行策略', 'Agent']}
         >
           <div className="flex items-center gap-3 w-80">
@@ -337,7 +357,7 @@ export function AgentPolicySection() {
           id="cmd-max-rounds"
           label="最大执行轮数"
           description="Agent 单次任务最多执行的工具调用轮数，超限自动停止"
-          sectionId="settings-agent-rounds"
+          sectionId="settings-agent-limits"
           keywords={['max', 'rounds', '轮数', '最大', '执行轮数', 'Agent']}
         >
           <ValidatedInput

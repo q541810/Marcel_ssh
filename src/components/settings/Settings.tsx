@@ -3,6 +3,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { usePluginStore } from '@/stores/pluginStore';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
 import { useRiskRuleFocusStore } from '@/stores/riskRuleFocusStore';
+import { useMarketPageStore } from '@/stores/marketPageStore';
 import { getErrorMessage } from '@/lib/errors';
 import type { AppSettings } from '@/lib/types';
 import { resolveSettingsLayout } from '@/lib/settingsLayout';
@@ -20,7 +21,7 @@ export default function Settings() {
   const storeSetPreview = useSettingsStore((s) => s.setPreview);
   const storeClearPreview = useSettingsStore((s) => s.clearPreview);
 
-  const [activeCategory, setActiveCategory] = useState('interface');
+  const [activeCategory, setActiveCategory] = useState('appearance');
   const [searchQuery, setSearchQuery] = useState('');
   const [draft, setDraft] = useState<AppSettings | null>(() => {
     const state = useSettingsStore.getState();
@@ -176,6 +177,7 @@ export default function Settings() {
               onChange={(category) => {
                 // 换分类就从「内置风险规则」二级页退出，回来看到的是主页面。
                 useRiskRuleFocusStore.getState().closePage();
+                useMarketPageStore.getState().closePage();
                 setActiveCategory(category);
               }}
               searchQuery={searchQuery}

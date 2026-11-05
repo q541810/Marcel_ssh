@@ -3,9 +3,9 @@ import { useRiskRuleFocusStore } from '@/stores/riskRuleFocusStore';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
 import { useViewStore } from '@/stores/viewStore';
 
-/** 设置里承载「命令执行策略」（及其下「内置风险规则」二级页）的分类 id：桌面是「Agent」，手机是「命令策略」。 */
+/** 设置里承载「安全与审批」（及其下「内置风险规则」二级页）的分类 id：两端都是「Agent」页（目录见 `settingsCatalog`）。 */
 export const RISK_RULES_DESKTOP_CATEGORY = 'agent';
-export const RISK_RULES_MOBILE_CATEGORY = 'agent-policy';
+export const RISK_RULES_MOBILE_CATEGORY = 'agent';
 
 /**
  * 打开设置里的「内置风险规则」二级页并定位到某一条（审批弹窗里"调整这条规则"用）。

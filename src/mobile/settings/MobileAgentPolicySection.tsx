@@ -26,7 +26,10 @@ import { MobileSettingRow } from './MobileSettingRow';
 const inputClass =
   'w-full rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500 disabled:opacity-40';
 
-/** Full agent command policy for mobile — same settings surface as desktop. */
+/**
+ * Agent 页（手机）：安全与审批 → 用户附加指令 → 执行限制，与桌面同序。
+ * 三段在桌面是三张卡，这里用小标题分段。
+ */
 export function MobileAgentPolicySection() {
   const { settings, update } = useSettingsActions();
   const agent = settings.agentModeSettings;
@@ -56,6 +59,9 @@ export function MobileAgentPolicySection() {
 
   return (
     <div className="flex flex-col gap-2">
+      <div className="mb-1 px-1 text-xs font-medium text-zinc-500">
+        安全与审批
+      </div>
       {/* 什么时候问你：总览表 + 命令确认方式 + Plan / Auto 开关（与桌面共用） */}
       <div className="rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3">
         <ApprovalOverview agent={agent} onChange={updateAgent} compact />
@@ -192,6 +198,29 @@ export function MobileAgentPolicySection() {
         </Reveal>
       </MobileSettingRow>
 
+      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+        用户附加指令
+      </div>
+      {/* User system prompt — appended to the agent system prompt (desktop parity) */}
+      <MobileSettingRow
+        label="用户附加指令"
+        description="Agent 调用 LLM 时追加到系统提示词末尾，留空则不注入"
+      >
+        <textarea
+          value={agent.systemPrompt ?? ''}
+          onChange={(e) => updateAgent({ systemPrompt: e.target.value })}
+          rows={5}
+          placeholder="在此输入需要附加到系统提示词中的内容，将在每次 Agent 任务调用 LLM 时生效"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="mt-2 w-full resize-none rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
+        />
+      </MobileSettingRow>
+
+      <div className="mt-2 mb-1 px-1 text-xs font-medium text-zinc-500">
+        执行限制
+      </div>
       {/* Command timeout */}
       <MobileSettingRow
         label="命令超时时间"
@@ -235,23 +264,6 @@ export function MobileAgentPolicySection() {
             updateAgent({ maxToolRounds: Number(e.target.value) })
           }
           className="mt-1 h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-700 accent-indigo-500"
-        />
-      </MobileSettingRow>
-
-      {/* User system prompt — appended to the agent system prompt (desktop parity) */}
-      <MobileSettingRow
-        label="用户附加指令"
-        description="Agent 调用 LLM 时追加到系统提示词末尾，留空则不注入"
-      >
-        <textarea
-          value={agent.systemPrompt ?? ''}
-          onChange={(e) => updateAgent({ systemPrompt: e.target.value })}
-          rows={5}
-          placeholder="在此输入需要附加到系统提示词中的内容，将在每次 Agent 任务调用 LLM 时生效"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          className="mt-2 w-full resize-none rounded-lg border border-edge bg-zinc-800 px-3 py-2.5 text-sm text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-indigo-500"
         />
       </MobileSettingRow>
 

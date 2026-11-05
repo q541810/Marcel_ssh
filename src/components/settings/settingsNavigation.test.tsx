@@ -56,10 +56,25 @@ describe('settingsNavigation', () => {
     expect(allSections).toContain('settings-mcp-server');
     expect(allSections).toContain('settings-transfer');
     expect(allSections).toContain('settings-about');
+    expect(allSections).toContain('settings-agent-limits');
+    expect(allSections).toContain('settings-plugins');
+  });
+
+  it('Agent 页顺序：安全与审批 → 用户附加指令 → 执行限制', () => {
+    expect(SETTINGS_CATEGORY_SECTIONS.agent).toEqual([
+      'settings-command-policy',
+      'settings-agent-system-prompt',
+      'settings-agent-limits',
+    ]);
+  });
+
+  it('每个分区只出现在一个页里（不重复挂载）', () => {
+    const all = SETTINGS_CATEGORIES.flatMap((category) => category.sections);
+    expect(new Set(all).size).toBe(all.length);
   });
 
   it('labels known categories and falls back for unknown category ids', () => {
-    expect(getSettingsCategoryLabel('transfer')).toBe('文件传输');
+    expect(getSettingsCategoryLabel('appearance')).toBe('外观与终端');
     expect(getSettingsCategoryLabel('model')).toBe('模型');
     expect(getSettingsCategoryLabel('missing')).toBe('设置');
   });

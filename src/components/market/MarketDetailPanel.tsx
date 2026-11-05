@@ -26,6 +26,7 @@ import { openExternalLink } from '@/lib/externalLinks';
 import { satisfiesMinVersion } from '@/lib/semver';
 import { capabilityLabel, capabilityRisk } from '@/lib/pluginCapabilities';
 import { useSettingsNavStore } from '@/stores/settingsNavStore';
+import { useMarketPageStore } from '@/stores/marketPageStore';
 import { useMarketStore } from '@/stores/marketStore';
 import { useSettingsLayout } from '@/components/settings/helpers';
 import { STAR_PROMPT_INSTALL_EVENT } from '@/components/star/StarPromptModal';
@@ -322,7 +323,9 @@ export function MarketDetailPanel({
   const { high, medium, low } = groupByRisk(plugin.capabilities);
 
   const goToPluginSettings = () => {
-    useSettingsNavStore.getState().requestNavigate('plugins');
+    // 插件列表在「工具与扩展」页的「插件」卡片里；先退出市场二级页再跳，落地就能看到刚装的插件。
+    useMarketPageStore.getState().closePage();
+    useSettingsNavStore.getState().requestNavigate('tools');
   };
 
   return (

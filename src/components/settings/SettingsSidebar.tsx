@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AlertCircle, Check, Loader2, Save, Search, Undo2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import { groupSettingsPages } from '@/lib/settingsCatalog';
 import { SETTINGS_CATEGORIES } from './settingsNavigation';
 import { useSettingsLayout } from './helpers';
 
@@ -63,23 +64,32 @@ export function SettingsSidebar({
           />
         </div>
       </div>
-      <nav className="flex-1 px-2 space-y-1 overflow-y-auto">
-        {SETTINGS_CATEGORIES.map((cat) => (
-          <button
-            key={cat.id}
-            onClick={() => {
-              onChange(cat.id);
-              onSearchChange('');
-            }}
-            className={`w-full flex items-center gap-3 px-3 ${layout.mode === 'wide' ? 'py-2.5' : 'py-2'} rounded-lg text-sm transition-colors ${
-              activeCategory === cat.id && !searchQuery
-                ? 'bg-state-selected text-zinc-100'
-                : 'text-zinc-400 hover:bg-state-soft/60 hover:text-zinc-200'
-            }`}
-          >
-            {cat.icon}
-            <span className="truncate">{cat.label}</span>
-          </button>
+      <nav className="flex-1 px-2 overflow-y-auto">
+        {groupSettingsPages(SETTINGS_CATEGORIES).map(({ group, pages }) => (
+          <div key={group.id} className="space-y-1 [&:not(:first-child)]:mt-3">
+            {group.title && (
+              <div className="px-3 pb-0.5 pt-1 text-[11px] font-medium tracking-wide text-zinc-500">
+                {group.title}
+              </div>
+            )}
+            {pages.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => {
+                  onChange(cat.id);
+                  onSearchChange('');
+                }}
+                className={`w-full flex items-center gap-3 px-3 ${layout.mode === 'wide' ? 'py-2.5' : 'py-2'} rounded-lg text-sm transition-colors ${
+                  activeCategory === cat.id && !searchQuery
+                    ? 'bg-state-selected text-zinc-100'
+                    : 'text-zinc-400 hover:bg-state-soft/60 hover:text-zinc-200'
+                }`}
+              >
+                {cat.icon}
+                <span className="truncate">{cat.title}</span>
+              </button>
+            ))}
+          </div>
         ))}
       </nav>
       {!searchQuery && (

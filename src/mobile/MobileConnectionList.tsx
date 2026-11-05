@@ -140,7 +140,7 @@ export default function MobileConnectionList({
   const handleKeepAliveJump = () => {
     window.dispatchEvent(
       new CustomEvent('mobile:open-settings', {
-        detail: { category: 'notification-background' },
+        detail: { category: 'notification' },
       }),
     );
   };

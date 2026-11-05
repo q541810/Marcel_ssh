@@ -1,8 +1,10 @@
 import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useSearchRegistry } from './helpers';
-import { AgentPolicySection } from './AgentPolicySection';
+import { ChevronLeft } from 'lucide-react';
+import { AgentLimitsSection, AgentPolicySection } from './AgentPolicySection';
 import { RiskRulesPage } from './RiskRulesPage';
 import { useRiskRuleFocusStore } from '@/stores/riskRuleFocusStore';
+import { useMarketPageStore } from '@/stores/marketPageStore';
 import { AgentSystemPromptSection } from './AgentSystemPromptSection';
 import AboutSection from './AboutSection';
 import { ConversationDisplaySection } from './ConversationDisplaySection';
@@ -18,7 +20,12 @@ import { SyncSection } from './SyncSection';
 import { McpServerSection } from './McpServerSection';
 import { PluginSection } from './PluginSection';
 import { MarketSection } from '@/components/market/MarketSection';
-import { getSettingsCategoryLabel, SETTINGS_CATEGORY_SECTIONS, SETTINGS_SECTION_SPAN } from './settingsNavigation';
+import {
+  getSettingsCategoryLabel,
+  SETTINGS_CATEGORIES,
+  SETTINGS_CATEGORY_SECTIONS,
+  SETTINGS_SECTION_SPAN,
+} from './settingsNavigation';
 import { useSettingsLayout } from './helpers';
 
 interface SettingsContentProps {
@@ -45,6 +52,15 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
       }
     }
 
+    // 搜页名 / 旧页名（如「工具能力」「会话与归档」）→ 直接列出那一页的全部分区，
+    // 改名后老用户按旧名搜仍然能找到。
+    for (const category of SETTINGS_CATEGORIES) {
+      const names = [category.title, ...category.aliases].map((n) => n.toLowerCase());
+      if (names.some((n) => n.includes(query))) {
+        for (const id of category.sections) matching.add(id);
+      }
+    }
+
     return Array.from(matching);
   }, [activeCategory, searchQuery, items]);
 
@@ -68,11 +84,26 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     wasRulesPage.current = showRulesPage;
   }, [showRulesPage]);
 
-  // 市场是浏览型界面，不走设置项的 section grid 框架，全宽渲染。
-  if (activeCategory === 'market' && !isSearching) {
+  // 插件市场二级页：挂在「工具与扩展」下面（入口在「插件」卡片里）。市场是浏览型界面，
+  // 不走设置项的 section grid 框架，全宽渲染；搜索时不进，换分类即退出。
+  const marketOpen = useMarketPageStore((s) => s.open);
+  const closeMarketPage = useMarketPageStore((s) => s.closePage);
+  if (marketOpen && activeCategory === 'tools' && !isSearching) {
     return (
-      <div className="flex-1 overflow-hidden bg-zinc-900">
-        <MarketSection />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-zinc-900">
+        <div className="flex-shrink-0 border-b border-edge-subtle px-4 py-2">
+          <button
+            type="button"
+            onClick={closeMarketPage}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-zinc-400 transition-colors hover:bg-state-soft/60 hover:text-zinc-200"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            返回{getSettingsCategoryLabel('tools')}
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <MarketSection />
+        </div>
       </div>
     );
   }
@@ -84,6 +115,7 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-llm', element: <ModelServiceSection /> },
     { id: 'settings-command-policy', element: <AgentPolicySection /> },
     { id: 'settings-agent-system-prompt', element: <AgentSystemPromptSection /> },
+    { id: 'settings-agent-limits', element: <AgentLimitsSection /> },
     { id: 'settings-notification', element: <NotificationSection /> },
     { id: 'settings-conversations', element: <ConversationArchiveSection /> },
     { id: 'settings-memory', element: <MemorySection /> },
@@ -94,7 +126,6 @@ export function SettingsContent({ activeCategory, searchQuery }: SettingsContent
     { id: 'settings-sync', element: <SyncSection /> },
     { id: 'settings-about', element: <AboutSection /> },
     { id: 'settings-plugins', element: <PluginSection /> },
-    { id: 'settings-market', element: <MarketSection /> },
   ];
   // 搜索时渲染全部 Section（隐藏不匹配的），确保所有 SettingItem 注册到搜索索引；
   // 非搜索时只渲染当前分类，零额外开销。

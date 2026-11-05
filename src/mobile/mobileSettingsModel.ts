@@ -1,4 +1,10 @@
 import { DEFAULT_TERMINAL_COLORS } from '@/lib/constants';
+import {
+  SETTINGS_PAGES,
+  isSettingsPageId,
+  type SettingsPage,
+  type SettingsPageId,
+} from '@/lib/settingsCatalog';
 import { buildTerminalFontFamily } from '@/lib/terminalFont';
 import type { AppSettings, TerminalColors } from '@/lib/types';
 
@@ -17,82 +23,13 @@ export function withMobileSelectionContrast(
   };
 }
 
-export type MobileSettingsCategoryId =
-  | 'appearance'
-  | 'llm'
-  | 'agent-policy'
-  | 'agent-tools'
-  | 'memory'
-  | 'conversations'
-  | 'commands-skills'
-  | 'mcp-server'
-  | 'notification-background'
-  | 'sync'
-  | 'about';
+/** 页 id / 页名 / 分组 / 顺序与桌面共用同一份目录（`lib/settingsCatalog`），这里只管手机端的组合。 */
+export type MobileSettingsCategoryId = SettingsPageId;
 
-export interface MobileSettingsCategory {
-  id: MobileSettingsCategoryId;
-  title: string;
-  description: string;
-}
+export type MobileSettingsCategory = SettingsPage;
 
-export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] = [
-  {
-    id: 'appearance',
-    title: '外观与显示',
-    description: '终端配色、字号、字体与对话呈现',
-  },
-  {
-    id: 'llm',
-    title: '模型服务',
-    description: 'API 与模型配置',
-  },
-  {
-    id: 'agent-policy',
-    title: 'Agent 策略',
-    description: '命令安全边界、审批与执行限制',
-  },
-  {
-    id: 'agent-tools',
-    title: 'Agent 工具',
-    description: '联网搜索、网页抓取与搜索 API',
-  },
-  {
-    id: 'memory',
-    title: '记忆',
-    description: '长期记忆、后台复盘与整理助手',
-  },
-  {
-    id: 'conversations',
-    title: '会话与归档',
-    description: '归档保留天数与到期清理',
-  },
-  {
-    id: 'commands-skills',
-    title: '快捷命令与技能',
-    description: '管理终端快捷命令与 Agent 技能',
-  },
-  {
-    id: 'mcp-server',
-    title: 'MCP 服务',
-    description: '让手机上的 Agent 或局域网设备通过 HTTP 接入',
-  },
-  {
-    id: 'notification-background',
-    title: '通知与后台',
-    description: 'Agent 事件提醒与后台保活（仅 Android）',
-  },
-  {
-    id: 'sync',
-    title: '跨设备同步',
-    description: '端到端加密，在你的设备之间同步配置',
-  },
-  {
-    id: 'about',
-    title: '关于',
-    description: '版本信息与检查更新',
-  },
-] as const;
+export const MOBILE_SETTINGS_CATEGORIES: readonly MobileSettingsCategory[] =
+  SETTINGS_PAGES;
 
 export function getMobileSettingsCategory(
   id: string,
@@ -103,7 +40,7 @@ export function getMobileSettingsCategory(
 export function isMobileSettingsCategoryId(
   id: string,
 ): id is MobileSettingsCategoryId {
-  return MOBILE_SETTINGS_CATEGORIES.some((c) => c.id === id);
+  return isSettingsPageId(id);
 }
 
 export interface TerminalAppearanceResolved {

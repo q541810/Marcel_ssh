@@ -6,6 +6,7 @@ import { useSyncStore } from '@/stores/syncStore';
 import { needsAttention } from '@/lib/syncModel';
 import { StatusDot } from '@/components/settings/sync/syncUi';
 import { RiskRulesPage } from '@/components/settings/RiskRulesPage';
+import { groupSettingsPages } from '@/lib/settingsCatalog';
 import type { AppSettings } from '@/lib/types';
 import { getErrorMessage } from '@/lib/errors';
 import {
@@ -18,12 +19,9 @@ import {
 } from './mobileSettingsModel';
 import { MobileAboutSection } from './settings/MobileAboutSection';
 import { MobileAgentPolicySection } from './settings/MobileAgentPolicySection';
-import { MobileAgentToolsSection } from './settings/MobileAgentToolsSection';
-import { MobileAppearanceSection } from './settings/MobileAppearanceSection';
-import { MobileCommandsSkillsSection } from './settings/MobileCommandsSkillsSection';
-import { MobileMcpServerSection } from './settings/MobileMcpServerSection';
+import { MobileAppearancePage } from './settings/MobileAppearancePage';
+import { MobileToolsPage } from './settings/MobileToolsPage';
 import { MobileModelSection } from './settings/MobileModelSection';
-import { MobileArchiveSection } from './settings/MobileArchiveSection';
 import { MobileMemorySection } from './settings/MobileMemorySection';
 import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
 import { MobileSyncSection } from './settings/MobileSyncSection';
@@ -87,10 +85,10 @@ export default function MobileSettings({
     useRiskRuleFocusStore.getState().closePage();
   }, [visible, storeClearPreview, initialCategory]);
 
-  // 「内置风险规则」二级页：命令策略分类里再推一层。打开时替换分类内容，返回键先退这一层。
+  // 「内置风险规则」二级页：Agent 页里再推一层。打开时替换分类内容，返回键先退这一层。
   const rulesPageOpen = useRiskRuleFocusStore((s) => s.pageOpen);
   const closeRulesPage = useRiskRuleFocusStore((s) => s.closePage);
-  const showRulesPage = rulesPageOpen && activeCategory === 'agent-policy';
+  const showRulesPage = rulesPageOpen && activeCategory === 'agent';
   useEffect(() => {
     if (!visible || !showRulesPage) return;
     return registerBackHandler(() => closeRulesPage());
@@ -193,7 +191,7 @@ export default function MobileSettings({
               className="mb-1 flex items-center gap-1 text-xs text-indigo-400 active:text-indigo-300"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
-              {showRulesPage ? '返回命令策略' : '返回设置'}
+              {showRulesPage ? '返回 Agent' : '返回设置'}
             </button>
           ) : null}
           <h1 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
@@ -206,7 +204,7 @@ export default function MobileSettings({
           ) : (
             !activeCategory && (
               <p className="mt-0.5 text-xs text-zinc-500">
-                外观、模型、策略与快捷命令
+                模型、Agent、工具与同步
               </p>
             )
           )}
@@ -227,61 +225,70 @@ export default function MobileSettings({
           className="mobile-panel-enter min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
           {!activeCategory && (
-            <nav className="flex flex-col gap-1 p-3">
-              {MOBILE_SETTINGS_CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setActiveCategory(cat.id)}
-                  className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-left transition-transform duration-100 active:scale-[0.99]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
-                      {cat.title}
-                      {cat.id === 'sync' && needsAttention(syncState) && (
-                        <>
-                          <StatusDot tone={syncState === 'error' ? 'error' : 'warn'} />
-                          <span className="sr-only">需要处理</span>
-                        </>
-                      )}
+            <nav className="flex flex-col p-3">
+              {groupSettingsPages(MOBILE_SETTINGS_CATEGORIES).map(({ group, pages }) => (
+                <div key={group.id} className="flex flex-col gap-1 [&:not(:first-child)]:mt-4">
+                  {group.title && (
+                    <div className="px-1 pb-0.5 text-xs font-medium text-zinc-500">
+                      {group.title}
                     </div>
-                    <div className="mt-0.5 text-xs text-zinc-500">
-                      {cat.description}
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 flex-shrink-0 text-zinc-600" />
-                </button>
+                  )}
+                  {pages.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setActiveCategory(cat.id)}
+                      className="flex items-center gap-3 rounded-xl border border-edge-subtle bg-zinc-900 px-3 py-3 text-left transition-transform duration-100 active:scale-[0.99]"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                          {cat.title}
+                          {cat.id === 'sync' && needsAttention(syncState) && (
+                            <>
+                              <StatusDot tone={syncState === 'error' ? 'error' : 'warn'} />
+                              <span className="sr-only">需要处理</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-xs text-zinc-500">
+                          {cat.description}
+                        </div>
+                      </div>
+                      <ChevronRight className="h-4 w-4 flex-shrink-0 text-zinc-600" />
+                    </button>
+                  ))}
+                </div>
               ))}
             </nav>
           )}
 
           {activeCategory === 'appearance' && (
             <div className="p-3">
-              <MobileAppearanceSection />
+              <MobileAppearancePage />
             </div>
           )}
 
-          {activeCategory === 'llm' && (
+          {activeCategory === 'model' && (
             <div className="p-3">
               <MobileModelSection />
             </div>
           )}
 
-          {activeCategory === 'agent-policy' && !showRulesPage && (
+          {activeCategory === 'agent' && !showRulesPage && (
             <div className="p-3">
               <MobileAgentPolicySection />
             </div>
           )}
 
-          {activeCategory === 'agent-policy' && showRulesPage && (
+          {activeCategory === 'agent' && showRulesPage && (
             <div key="risk-rules" className="mobile-panel-enter p-3">
               <RiskRulesPage compact />
             </div>
           )}
 
-          {activeCategory === 'agent-tools' && (
+          {activeCategory === 'tools' && (
             <div className="p-3">
-              <MobileAgentToolsSection />
+              <MobileToolsPage />
             </div>
           )}
 
@@ -291,25 +298,7 @@ export default function MobileSettings({
             </div>
           )}
 
-          {activeCategory === 'conversations' && (
-            <div className="p-3">
-              <MobileArchiveSection />
-            </div>
-          )}
-
-          {activeCategory === 'commands-skills' && (
-            <div className="p-3">
-              <MobileCommandsSkillsSection />
-            </div>
-          )}
-
-          {activeCategory === 'mcp-server' && (
-            <div className="p-3">
-              <MobileMcpServerSection />
-            </div>
-          )}
-
-          {activeCategory === 'notification-background' && (
+          {activeCategory === 'notification' && (
             <div className="p-3">
               <MobileNotificationBackgroundSection />
             </div>

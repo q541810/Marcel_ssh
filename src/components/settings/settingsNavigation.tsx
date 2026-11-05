@@ -1,11 +1,18 @@
 import type React from 'react';
-import { Bookmark, Bot, Cloud, Cpu, Info, Monitor, Plug, Store, UploadCloud, Wrench } from 'lucide-react';
+import { Bell, Bookmark, Bot, Cloud, Cpu, Info, Monitor, Wrench } from 'lucide-react';
+import {
+  SETTINGS_PAGES,
+  type SettingsGroupId,
+  type SettingsPage,
+  type SettingsPageId,
+} from '@/lib/settingsCatalog';
 
-export interface SettingsCategory {
-  id: string;
-  label: string;
+export interface SettingsCategory extends SettingsPage {
   icon: React.ReactNode;
+  /** 这一页里挂哪些分区（桌面端的组合；页名、分组、顺序来自 `lib/settingsCatalog`）。 */
   sections: string[];
+  /** 组 id，侧栏据此画组标题。 */
+  group: SettingsGroupId;
 }
 
 export type SettingsSectionSpan = 'half' | 'full';
@@ -17,6 +24,7 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-llm': 'full',
   'settings-command-policy': 'full',
   'settings-agent-system-prompt': 'full',
+  'settings-agent-limits': 'full',
   'settings-notification': 'half',
   'settings-conversations': 'half',
   'settings-memory': 'full',
@@ -30,76 +38,49 @@ export const SETTINGS_SECTION_SPAN: Record<string, SettingsSectionSpan> = {
   'settings-sync': 'full',
   'settings-about': 'half',
   'settings-plugins': 'full',
-  'settings-market': 'full',
 };
 
-export const SETTINGS_CATEGORIES: SettingsCategory[] = [
-  {
-    id: 'interface',
-    label: '界面',
-    icon: <Monitor className="w-4 h-4" />,
-    sections: ['settings-theme', 'settings-layout', 'settings-display'],
-  },
-  {
-    id: 'model',
-    label: '模型',
+/** 桌面端每一页的图标与分区组合；页本身的定义（名字 / 分组 / 顺序）在 `lib/settingsCatalog`。 */
+const DESKTOP_PAGE_LAYOUT: Record<SettingsPageId, { icon: React.ReactNode; sections: string[] }> = {
+  model: {
     icon: <Cpu className="w-4 h-4" />,
     sections: ['settings-llm'],
   },
-  {
-    id: 'agent',
-    label: 'Agent',
+  // 先讲「它会不会乱来」（安全与审批），再讲附加指令，最后是执行上限
+  agent: {
     icon: <Bot className="w-4 h-4" />,
-    sections: [
-      'settings-command-policy',
-      'settings-agent-system-prompt',
-      'settings-notification',
-      'settings-conversations',
-    ],
+    sections: ['settings-command-policy', 'settings-agent-system-prompt', 'settings-agent-limits'],
   },
-  {
-    id: 'memory',
-    label: '记忆',
+  memory: {
     icon: <Bookmark className="w-4 h-4" />,
     sections: ['settings-memory', 'settings-memory-manage'],
   },
-  {
-    id: 'tools',
-    label: '工具能力',
+  tools: {
     icon: <Wrench className="w-4 h-4" />,
-    sections: ['settings-experimental', 'settings-mcp-server'],
+    sections: ['settings-experimental', 'settings-mcp-server', 'settings-plugins'],
   },
-  {
-    id: 'transfer',
-    label: '文件传输',
-    icon: <UploadCloud className="w-4 h-4" />,
-    sections: ['settings-transfer'],
+  appearance: {
+    icon: <Monitor className="w-4 h-4" />,
+    sections: ['settings-theme', 'settings-layout', 'settings-display', 'settings-transfer'],
   },
-  {
-    id: 'sync',
-    label: '跨设备同步',
+  notification: {
+    icon: <Bell className="w-4 h-4" />,
+    sections: ['settings-notification'],
+  },
+  sync: {
     icon: <Cloud className="w-4 h-4" />,
-    sections: ['settings-sync'],
+    sections: ['settings-sync', 'settings-conversations'],
   },
-  {
-    id: 'plugins',
-    label: '插件',
-    icon: <Plug className="w-4 h-4" />,
-    sections: ['settings-plugins'],
-  },
-  {
-    id: 'market',
-    label: '插件市场',
-    icon: <Store className="w-4 h-4" />,
-    sections: ['settings-market'],
-  },
-  {
-    id: 'about',
-    label: '关于',
+  about: {
     icon: <Info className="w-4 h-4" />,
     sections: ['settings-about'],
   },
-];
+};
+
+export const SETTINGS_CATEGORIES: SettingsCategory[] = SETTINGS_PAGES.map((page) => ({
+  ...page,
+  ...DESKTOP_PAGE_LAYOUT[page.id],
+}));
 
 /**
  * `分类 id → section id 列表` 的查表形式。
@@ -113,5 +94,5 @@ export const SETTINGS_CATEGORY_SECTIONS: Record<string, string[]> = Object.fromE
 );
 
 export function getSettingsCategoryLabel(id: string) {
-  return SETTINGS_CATEGORIES.find((category) => category.id === id)?.label ?? '设置';
+  return SETTINGS_CATEGORIES.find((category) => category.id === id)?.title ?? '设置';
 }
