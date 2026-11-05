@@ -389,10 +389,13 @@ describe('模型审批完成事件的跨语言契约', () => {
       'ModelApprovalDonePayload',
       'decision',
     );
+    // 两种发法都算：直接构造事件的 `decision: "error".to_string()`，以及
+    // 判定后经 `done("block", …)` 闭包构造事件（后者是三个正常取值的出口）。
     const emitted = new Set(
-      [...dispatcherRs.matchAll(/decision: "([^"]+)"\.to_string\(\)/g)].map(
-        (m) => m[1],
-      ),
+      [
+        ...dispatcherRs.matchAll(/decision: "([^"]+)"\.to_string\(\)/g),
+        ...dispatcherRs.matchAll(/\bdone\(\s*"([^"]+)"/g),
+      ].map((m) => m[1]),
     );
     expect(
       emitted.size,
