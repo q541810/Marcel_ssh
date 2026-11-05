@@ -1,5 +1,6 @@
 import { Volume2, VolumeX } from 'lucide-react';
 import type { NotificationSettings } from '@/lib/types';
+import Button from '@/components/ui/Button';
 import Toggle from '@/components/ui/Toggle';
 import { Card, SettingItem } from './helpers';
 import { useSettingsActions } from './SettingsActionsContext';
@@ -153,6 +154,40 @@ export function NotificationSection() {
             onChange={(checked) => updateNotification({ agentTaskFailed: checked })}
           />
         </div>
+      </SettingItem>
+      <SettingItem
+        id="exp-notification"
+        label="通知测试"
+        description="测试系统通知功能是否正常"
+        sectionId="settings-notification"
+        keywords={['notification', 'test', '通知', '测试', '权限']}
+      >
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={async () => {
+            try {
+              const { sendNotification, isPermissionGranted, requestPermission } = await import(
+                '@tauri-apps/plugin-notification'
+              );
+              let granted = await isPermissionGranted();
+              if (!granted) {
+                const permission = await requestPermission();
+                granted = permission === 'granted';
+              }
+              if (granted) {
+                sendNotification({
+                  title: 'Marcel SSH 测试通知',
+                  body: '这是一条测试消息，通知功能正常工作！',
+                });
+              }
+            } catch (err) {
+              console.error('发送通知失败:', err);
+            }
+          }}
+        >
+          发送测试通知
+        </Button>
       </SettingItem>
     </Card>
   );

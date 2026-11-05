@@ -21,7 +21,6 @@ import {
 } from '@/lib/updateMode';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUpdateStore } from '@/stores/updateStore';
-import ChatHistoryModal from './ChatHistoryModal';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useViewStore } from '@/stores/viewStore';
 import { useDebugUnlock } from '@/hooks/useDebugUnlock';
@@ -34,7 +33,6 @@ export default function AboutSection() {
   const [downloading, setDownloading] = useState(false);
   const [result, setResult] = useState<UpdateCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
   const update = useSettingsStore((s) => s.update);
   const updateMode = useSettingsStore((s) => s.settings?.updateMode ?? 'auto');
   // 本机平台能力：决定「自动更新」这一档是否可选、以及结果区给不给「后台下载」
@@ -65,10 +63,6 @@ export default function AboutSection() {
     getVersion().then(setAppVersion).catch(() => setAppVersion('0.1.3'));
     fetchConnections();
   }, [fetchConnections]);
-
-  useEffect(() => {
-    import('./ChatHistoryModal');
-  }, []);
 
   const handleCheck = useCallback(async () => {
     setChecking(true);
@@ -291,17 +285,6 @@ export default function AboutSection() {
             重新运行引导
           </Button>
         </SettingItem>
-        <SettingItem
-          id="about-chat-history"
-          label="聊天历史记录"
-          description="查看所有 SSH 连接的历史聊天记录"
-          sectionId="settings-about"
-          keywords={['chat', 'history', 'conversation', '聊天', '历史', '会话']}
-        >
-          <Button variant="secondary" onClick={() => setShowHistory(true)}>
-            查看聊天历史
-          </Button>
-        </SettingItem>
       <SettingItem
           id="about-support"
           label="技术支持 / Bug 反馈"
@@ -336,7 +319,6 @@ export default function AboutSection() {
           </div>
         )}
       </Card>
-      <ChatHistoryModal open={showHistory} onClose={() => setShowHistory(false)} />
     </>
   );
 }
