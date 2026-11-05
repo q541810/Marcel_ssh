@@ -264,6 +264,11 @@ pub struct AgentTask {
     /// 绝不当成"不限上界"）。主任务恒为 `None`。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_history_upto: Option<String>,
+    /// 任务以 `Failed` 收场时 agent loop 记下的**具体原因**（API 错误原文、连续哑火、
+    /// 达到最大轮数等）。只在失败时写入、只给 `subagent` / `local_subagent` 读：主 agent
+    /// 据此判断该重试还是换模型。成功 / 取消 / 崩溃（没机会写）恒为 `None`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 impl AgentTask {
@@ -303,6 +308,7 @@ mod tests {
             model_id: None,
             turn_anchor_id: None,
             parent_history_upto: None,
+            failure: None,
         }
     }
 

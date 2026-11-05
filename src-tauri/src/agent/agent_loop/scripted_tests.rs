@@ -565,6 +565,7 @@ fn scripted_production_loop_roundtrip_reload_and_approval_cancel() {
                 model_id: Some(MODEL_ID.into()),
                 turn_anchor_id: None,
                 parent_history_upto: None,
+                failure: None,
             },
         );
         let events: Arc<Mutex<Vec<Value>>> = Arc::default();
@@ -867,6 +868,7 @@ fn parent_task_fixture(task_id: &str, conversation_id: &str) -> AgentTask {
         model_id: Some(MODEL_ID.into()),
         turn_anchor_id: None,
         parent_history_upto: None,
+        failure: None,
     }
 }
 
@@ -1717,6 +1719,13 @@ fn scripted_production_loop_stream_failures_keep_history_clean() {
         assert_eq!(
             state.agent_tasks.read()["scripted-disconnect"].status,
             AgentStatus::Failed
+        );
+        assert!(
+            state.agent_tasks.read()["scripted-disconnect"]
+                .failure
+                .as_deref()
+                .is_some_and(|reason| !reason.trim().is_empty()),
+            "失败必须把具体原因记在任务上，子 agent 工具才能把它交回主 agent"
         );
         {
             let rows = state.conversation_db.load_messages(&conv_abort.id).unwrap();

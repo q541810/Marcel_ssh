@@ -49,10 +49,10 @@ use crate::agent::task::{AgentMode, AgentStatus};
 use crate::agent::templates::TemplateManager;
 use crate::agent::tools::subagent::{
     apply_parent_answer, ask_handback, classify_subagent_result, continue_hint, continue_id_schema,
-    conversation_has_running_task, lookup_model_choice, model_param_schema, optional_continue_id,
-    render_model_selection_section, resolved_sub_model_label, truncate_chars, unknown_model_note,
-    validate_continue_target, AppliedAnswer, ContinueClaim, ContinueTarget, ModelChoiceLookup,
-    SubTaskStartEvent, SubagentModelCandidate, SubagentOutcome,
+    conversation_has_running_task, failure_detail, lookup_model_choice, model_param_schema,
+    optional_continue_id, render_model_selection_section, resolved_sub_model_label, truncate_chars,
+    unknown_model_note, validate_continue_target, AppliedAnswer, ContinueClaim, ContinueTarget,
+    ModelChoiceLookup, SubTaskStartEvent, SubagentModelCandidate, SubagentOutcome,
 };
 use crate::agent::tools::{AgentTool, ToolContext, ToolOutput};
 use crate::config::settings::AgentModeSettings;
@@ -821,7 +821,9 @@ impl AgentTool for LocalSubagentTool {
                 Ok(ToolOutput::fail(
                     format!("本机子agent失败：{}{}", description, model_note),
                     format!(
-                        "本机子agent执行失败（LLM 错误或达到最大轮数），未返回结果。{}",
+                        "本机子agent执行失败，未返回结果。
+{}{}",
+                        failure_detail(&state, &sub_task_id),
                         continue_hint(&sub_conversation_id)
                     ),
                 )

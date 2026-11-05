@@ -1187,6 +1187,7 @@ mod tests {
             model_id: None,
             turn_anchor_id: None,
             parent_history_upto: None,
+            failure: None,
         }
     }
 

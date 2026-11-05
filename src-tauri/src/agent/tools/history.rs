@@ -293,6 +293,7 @@ fn parent_context_comes_from_my_own_frozen_anchor() {
             model_id: None,
             turn_anchor_id: None,
             parent_history_upto: upto.map(String::from),
+            failure: None,
         }
     }
 

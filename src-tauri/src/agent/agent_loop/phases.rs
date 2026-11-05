@@ -549,6 +549,7 @@ pub(super) async fn request_round_reply(
                     return RoundOutcome::Stop;
                 }
             }
+            record_task_failure(state, task_id, &err_msg);
             emit_final_plan_normalized(app, state, task_id);
             emit_event(
                 app,
@@ -630,6 +631,7 @@ pub(super) async fn finish_text_reply(
                 *empty_reply_retries
             );
             log::warn!("Agent {} {}", task_id, msg);
+            record_task_failure(state, task_id, &msg);
             emit_final_plan_normalized(app, state, task_id);
             emit_event(
                 app,
@@ -840,6 +842,15 @@ pub(super) fn persist_assistant_tool_calls(
     db_id
 }
 
+/// 把任务的失败原因记到任务上（见 `AgentTask::failure`）：`Error` 流事件只发给前端、
+/// 不留存，而 `subagent` 工具要在子 agent 失败后把原因交回主 agent。先写再发事件，
+/// 任务一进终态读到的就是它。
+fn record_task_failure(state: &AppState, task_id: &str, message: &str) {
+    if let Some(task) = state.agent_tasks.write().get_mut(task_id) {
+        task.failure = Some(message.to_string());
+    }
+}
+
 /// 超过最大执行轮数的收尾（原 `run_agent_loop` 循环后的收尾段，原样搬出）：
 /// 归一化计划终态、发错误事件与非子任务的失败通知。
 pub(super) async fn report_max_rounds_exceeded(
@@ -852,6 +863,7 @@ pub(super) async fn report_max_rounds_exceeded(
 ) {
     // Exceeded max rounds
     let msg = format!("Agent 达到最大执行轮数 ({max_rounds})，已停止");
+    record_task_failure(state, task_id, &msg);
     emit_final_plan_normalized(app, state, task_id);
     emit_event(
         app,

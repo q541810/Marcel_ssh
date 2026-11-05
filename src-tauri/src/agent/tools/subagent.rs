@@ -291,6 +291,30 @@ pub(super) fn continue_id_schema() -> serde_json::Value {
     })
 }
 
+/// 失败原因交回主 agent 时的最大字符数（API 错误体可能很长，只留够判断的前部）。
+const MAX_FAILURE_CHARS: usize = 600;
+
+/// 子任务失败时给主 agent 看的「原因」一行（纯函数便于单测）。
+///
+/// `reason` 是 agent loop 记在任务上的具体原因（API 错误原文、连续哑火、达到最大轮数）；
+/// 没有记录（loop 异常退出 / panic，没机会写）就老实说「未记录」，不猜。
+pub(super) fn format_failure_detail(reason: Option<&str>) -> String {
+    match reason.map(str::trim).filter(|r| !r.is_empty()) {
+        Some(r) => format!("失败原因：{}", truncate_chars(r, MAX_FAILURE_CHARS)),
+        None => "失败原因未记录（可能是程序异常中断）。".to_string(),
+    }
+}
+
+/// 读取子任务失败原因并格式化（`subagent` 与 `local_subagent` 的失败分支共用）。
+pub(super) fn failure_detail(state: &AppState, sub_task_id: &str) -> String {
+    let reason = state
+        .agent_tasks
+        .read()
+        .get(sub_task_id)
+        .and_then(|t| t.failure.clone());
+    format_failure_detail(reason.as_deref())
+}
+
 /// 附在每种结果（完成 / 失败 / 取消 / 空结论）末尾的一行，让模型知道怎么接着用它。
 pub(super) fn continue_hint(sub_conversation_id: &str) -> String {
     format!(
@@ -1190,7 +1214,9 @@ impl AgentTool for SubagentTool {
                 Ok(ToolOutput::fail(
                     format!("子agent失败：{}{}", description, model_note),
                     format!(
-                        "子agent执行失败（LLM 错误或达到最大轮数），未返回调研结果。{}",
+                        "子agent执行失败，未返回调研结果。
+{}{}",
+                        failure_detail(&state, &sub_task_id),
                         continue_hint(&sub_conversation_id)
                     ),
                 )
@@ -1268,6 +1294,35 @@ mod tests {
             SubagentOutcome::Failed,
             "有终态却没文本 → 失败（绝不能当成完成）"
         );
+    }
+
+    #[test]
+    fn failure_detail_carries_the_reason_and_truncates_long_ones() {
+        assert_eq!(
+            format_failure_detail(Some("  HTTP 429: rate limited ")),
+            "失败原因：HTTP 429: rate limited"
+        );
+        let long = "x".repeat(MAX_FAILURE_CHARS + 50);
+        let out = format_failure_detail(Some(&long));
+        assert!(out.ends_with('…'));
+        assert_eq!(
+            out.chars().count(),
+            "失败原因：".chars().count() + MAX_FAILURE_CHARS + 1
+        );
+    }
+
+    #[test]
+    fn failure_detail_is_honest_when_nothing_was_recorded() {
+        for none in [
+            None,
+            Some(""),
+            Some(
+                "  
+",
+            ),
+        ] {
+            assert!(format_failure_detail(none).contains("未记录"));
+        }
     }
 
     #[test]
