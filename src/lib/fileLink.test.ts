@@ -4,7 +4,6 @@ import {
   fileLinkActionItems,
   findConnectionByHost,
   parseFileLink,
-  parsePresentFileMeta,
   relativeCandidates,
   relativePathUnder,
   resolveFileMachine,
@@ -91,18 +90,36 @@ describe('relativeCandidates', () => {
 });
 
 describe('actions', () => {
-  it('offers editor for text, preview for images, neither for binaries', () => {
+  it('offers open for text and images only, never a second name for the same action', () => {
     const ids = (path: string, isDir = false) =>
       fileLinkActionItems({ side: 'remote', path, isDir }).map((i) => i.id);
-    expect(ids('/a/b.md')).toContain('editor');
-    expect(ids('/a/b.md')).not.toContain('preview');
-    expect(ids('/a/b.png')).toContain('preview');
-    expect(ids('/a/b.png')).not.toContain('editor');
-    expect(ids('/a/b.zip')).not.toContain('editor');
-    expect(ids('/a', true)).not.toContain('editor');
+    expect(ids('/a/b.md')).toContain('open');
+    expect(ids('/a/b.png')).toContain('open');
+    for (const path of ['/a/b.md', '/a/b.png', '/a/b.zip']) {
+      expect(ids(path)).not.toContain('editor');
+      expect(ids(path)).not.toContain('preview');
+    }
+    expect(ids('/a/b.zip')).not.toContain('open');
+    expect(ids('/a', true)).not.toContain('open');
+  });
+  it('keeps the first level short and puts terminal / relative paths below a divider', () => {
+    const ids = (path: string, opts = {}, isDir = false) =>
+      fileLinkActionItems({ side: 'remote', path, isDir }, opts).map((i) => i.id);
+    const relative = [{ id: 'home' as const, label: '相对家目录', text: '~/b.md' }];
+    expect(ids('/a/b.md', { relative })).toEqual([
+      'open', 'reveal', 'copyPath', 'divider', 'cd', 'copyRelative',
+    ]);
+    expect(ids('/a/b.png')).toEqual(['open', 'reveal', 'copyPath', 'divider', 'cd']);
+    // 二进制 / 目录的「打开」就是在文件管理中显示，不重复列
+    expect(ids('/a/b.zip')).toEqual(['reveal', 'copyPath', 'divider', 'cd']);
+    expect(ids('/a', {}, true)).toEqual(['reveal', 'copyPath', 'divider', 'cd']);
+  });
+  it('hides every file-manager item when the bottom panel has nowhere to show it', () => {
+    const ids = fileLinkActionItems({ side: 'remote', path: '/a/b.md' }, { fileManager: false }).map((i) => i.id);
+    expect(ids).toEqual(['copyPath', 'divider', 'cd']);
   });
   it('local files only get reveal and copy; unresolved machines only copy', () => {
-    expect(fileLinkActionItems({ side: 'local', path: 'C:/a.txt' }).map((i) => i.id)).toEqual(['reveal', 'divider', 'copyPath']);
+    expect(fileLinkActionItems({ side: 'local', path: 'C:/a.txt' }).map((i) => i.id)).toEqual(['reveal', 'copyPath']);
     expect(fileLinkActionItems({ side: 'remote', path: '/a.txt' }, { unresolved: true }).map((i) => i.id)).toEqual(['copyPath']);
   });
   it('shows the exact copied text as hints and a relative submenu only when there are candidates', () => {
@@ -162,16 +179,6 @@ describe('resolveFileMachine', () => {
   it('local paths need the desktop', () => {
     expect(resolveFileMachine({ side: 'local', host: null }, ctx(null))).toMatchObject({ ok: true, sessionId: null });
     expect(resolveFileMachine({ side: 'local', host: null }, { ...ctx(null), mobile: true })).toMatchObject({ ok: false });
-  });
-});
-
-describe('parsePresentFileMeta', () => {
-  it('reads the backend metadata and rejects other shapes', () => {
-    expect(
-      parsePresentFileMeta({ kind: 'presentFile', path: '/o.csv', isDir: false, size: 12, side: 'remote', host: 'web', title: 'T', note: null }),
-    ).toEqual({ ref: { side: 'remote', host: 'web', path: '/o.csv', isDir: false }, title: 'T', note: null, size: 12 });
-    expect(parsePresentFileMeta({ kind: 'other' })).toBeNull();
-    expect(parsePresentFileMeta(undefined)).toBeNull();
   });
 });
 

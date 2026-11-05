@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { OpenIntent } from '@/lib/sftpFileOpen';
+import type { MobileTabId } from '@/mobile/tabs';
 
 /**
  * 「带我去那个文件」的待办信箱 + 一条轻提示。
@@ -21,6 +22,11 @@ export interface FileNavRequest {
   /** stat 得到的大小；不知道时为 0。 */
   size: number;
   intent: FileNavIntent;
+  /**
+   * 手机：请求发出时用户在哪个页签（agent 对话等）。文件页据此在编辑器 / 预览关闭或点「返回」时
+   * 把用户送回原处。桌面端对话与文件管理并排可见，不需要，恒为 null。
+   */
+  returnTo?: MobileTabId | null;
   requestedAt: number;
 }
 

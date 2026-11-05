@@ -9,7 +9,6 @@ import { readWebToolStatus, webToolChips, webToolDetails, webToolNotice } from '
 import {
   asArgString,
   fileChangeToolName,
-  isExplorationTool,
   isSubagentTool,
   toolDisplayName,
   toolPreview,
@@ -269,8 +268,9 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
           </>
         }
       >
-        {/* 文件类工具的路径芯片：读文件只在展开后给（探索分组里不让它们占行） */}
-        {!isExecuting && tr.success && !tr.blocked && (expanded || !isExplorationTool(tr.toolName)) && (
+        {/* 文件类工具的路径芯片：只在卡片展开后给——过程信息保持安静，每张卡下面都挂一排芯片
+            会让对话变吵；要找文件时用户本来就会展开它（成品文件由正文里的路径链接承载） */}
+        {!isExecuting && tr.success && !tr.blocked && expanded && (
           <ToolFileChips toolName={tr.toolName} args={tr.arguments as Record<string, unknown> | undefined} />
         )}
         {/* 运行中的 subagent 卡片：提供"查看"入口跳转子对话（实时调研过程） */}

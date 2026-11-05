@@ -13,8 +13,10 @@
 
 import { exists, stat } from '@tauri-apps/plugin-fs';
 import { collectPlatformHints, isMobilePlatform } from '@/platform';
-import { requestMobileTab } from '@/mobile/tabs';
-import { requestBottomTab } from '@/lib/bottomPanelNav';
+import { currentMobileTab, requestMobileTab } from '@/mobile/tabs';
+import { isBottomPanelMounted, requestBottomTab } from '@/lib/bottomPanelNav';
+import { requestOpenAgentPanel } from '@/lib/agentPanelNav';
+import { DEFAULT_WORKSPACE_LAYOUT, dockPanelOf } from '@/lib/workspaceLayout';
 import { copyText } from '@/lib/copyText';
 import { getErrorMessage } from '@/lib/errors';
 import { sftpHomeDir, sftpListDir, revealLocalPath } from '@/lib/tauri';
@@ -33,6 +35,7 @@ import {
 import { sessionConversationBindingManager } from '@/stores/sessionConversationBindingManager';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useFileNavStore, type FileNavIntent } from '@/stores/fileNavStore';
 
 // ──────────── 机器解析（读 store 的快照） ────────────
@@ -192,16 +195,43 @@ export async function copyWithNotice(text: string): Promise<void> {
   }
 }
 
+/**
+ * 文件管理器现在够不够得着（桌面）：底栏挂着就行；没挂着时，唯一能请出来的情形是
+ * 「Agent 占主区域」且右侧栏（终端停靠处）被收起——展开它终端就会挂上。独占视图（设置 / 调试）
+ * 下 Agent 面板本身就不在，没人会点到这里。手机的文件页永远在。
+ * 菜单据此把「在文件管理中显示」这类项藏起来，别留一个点了没反应的按钮。
+ */
+export function canShowFileManager(): boolean {
+  if (isMobileShell() || isBottomPanelMounted()) return true;
+  const layout = useSettingsStore.getState().settings.workspaceLayout;
+  const dockOpen = layout?.agentOpen ?? DEFAULT_WORKSPACE_LAYOUT.agentOpen;
+  return dockPanelOf(layout) === 'terminal' && !dockOpen;
+}
+
 /** 把「去文件管理器」的请求递出去，并把文件管理器亮出来。 */
 function deliverToFileManager(
   sessionId: string,
   info: { path: string; isDir: boolean; size: number },
   intent: FileNavIntent,
 ): void {
-  useFileNavStore.getState().push({ sessionId, ...info, intent });
+  const mobile = isMobileShell();
+  // 手机：记下用户从哪一页来，文件页据此提供「返回」（桌面对话就在旁边，不需要）
+  const origin = mobile ? currentMobileTab() : null;
+  useFileNavStore.getState().push({
+    sessionId,
+    ...info,
+    intent,
+    returnTo: origin && origin !== 'files' ? origin : null,
+  });
   useSessionStore.getState().setActiveSession(sessionId);
-  if (isMobileShell()) requestMobileTab('files');
-  else requestBottomTab('file-manager');
+  if (mobile) {
+    requestMobileTab('files');
+    return;
+  }
+  // 底栏还没挂（Agent 占主区域、终端那一栏被收起）：先把那一栏请出来，终端挂上时会按
+  // 记下的标签直接打开文件管理，待办也还在信箱里等着
+  if (!isBottomPanelMounted()) requestOpenAgentPanel();
+  requestBottomTab('file-manager');
 }
 
 async function runLocal(action: FileActionId, ref: FileRef): Promise<void> {
@@ -236,6 +266,11 @@ export async function runFileAction(
   const machine = resolveMachineNow(ref, scope.conversationId);
   if (!machine.ok) {
     notify(machine.reason);
+    return;
+  }
+  const needsFileManager = ref.side === 'remote' && action !== 'cd';
+  if (needsFileManager && !canShowFileManager()) {
+    notify('现在没有可用的文件管理，先回到终端视图再试');
     return;
   }
   if (ref.side === 'local') {

@@ -11,4 +11,6 @@ export interface ImagePreviewProps {
   /** 历史附件可能没有大小信息；缺失时不展示大小。 */
   fileSize?: number;
   onClose: () => void;
+  /** 关闭开始的那一刻（退出动画之前）；见 `useAnimatedClose`。 */
+  onCloseStart?: () => void;
 }

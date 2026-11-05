@@ -42,6 +42,7 @@ export default function MobileImageViewer({
   fileName,
   fileSize,
   onClose,
+  onCloseStart,
 }: ImagePreviewProps) {
   const { imageSrc, loading, progress, error, status, unavailableKind, onImageError } =
     useImagePreviewSource({
@@ -68,7 +69,7 @@ export default function MobileImageViewer({
     closing,
     requestClose,
     onAnimationEnd: onExitAnimationEnd,
-  } = useAnimatedClose(onClose);
+  } = useAnimatedClose(onClose, onCloseStart);
 
   const viewRef = useRef(view);
   viewRef.current = view;

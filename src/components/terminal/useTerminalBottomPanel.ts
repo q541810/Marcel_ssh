@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { OPEN_BOTTOM_TAB_EVENT, registerBottomPanelHost } from '@/lib/bottomPanelNav';
 
 const PANEL_RATIO_KEY = 'marcel:panelHeightRatio';
 const ACTIVE_TAB_KEY = 'marcel:terminalActiveTab';
@@ -53,6 +54,22 @@ export function useTerminalBottomPanel() {
       // localStorage can be unavailable in restricted WebView contexts.
     }
   }, []);
+
+  // 别处（agent 的文件链接「在文件管理中显示」等）请求切到某个底栏标签：收着就展开。
+  // 只「设为」不「切换」——请求的标签已经开着时什么都不做，不会把它收起来。
+  // 展开 / 收起的过渡与终端行数协调由 Terminal.tsx 盯着 activeTab 自己接，这里不用管。
+  useEffect(() => {
+    const unregister = registerBottomPanelHost();
+    const onOpenTab = (event: Event) => {
+      const tab = (event as CustomEvent<{ tab?: unknown }>).detail?.tab;
+      if (typeof tab === 'string' && tab) setActiveTab(tab);
+    };
+    window.addEventListener(OPEN_BOTTOM_TAB_EVENT, onOpenTab);
+    return () => {
+      window.removeEventListener(OPEN_BOTTOM_TAB_EVENT, onOpenTab);
+      unregister();
+    };
+  }, [setActiveTab]);
 
   const savePanelRatio = useCallback((ratio: number) => {
     panelRatioRef.current = ratio;

@@ -8,6 +8,7 @@ import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
 import { formatSize, modeToString, getErrorMessage, isDialogCancelled, isPreviewableImage } from '@/lib/sftp-helpers';
 import { decideOpen, joinRemotePath, sortFileEntries, type OpenIntent } from '@/lib/sftpFileOpen';
 import { flashElement } from '@/lib/flashElement';
+import { useMenuViewportFit } from '@/hooks/useMenuViewportFit';
 import { cdInTerminal } from '@/lib/fileNav';
 import { useFileNavStore } from '@/stores/fileNavStore';
 import { loadRememberedPath, rememberPath } from '@/lib/fileManagerPathMemory';
@@ -70,7 +71,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
   /** entries 对应的目录（列目录成功时与 entries 同批更新）：定位文件要等「这个目录的列表」到了才行。 */
   const [loadedPath, setLoadedPath] = useState<string | null>(null);
-  /** agent 链接 / 交付卡片请求定位的条目，列表到位后选中并闪一下。 */
+  /** agent 链接请求定位的条目，列表到位后设为焦点（持久高亮）并闪一下。 */
   const [revealTarget, setRevealTarget] = useState<{ dir: string; name: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +91,12 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [deleteConfirm, setDeleteConfirm] = useState<FileTarget[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  /**
+   * 当前焦点条目（文件管理器里「点一下选中」的那一行，单选高亮）。与上面的 `selected`（勾选、批量操作）
+   * 是两回事：agent 链接「在文件管理中显示」只是把这一行标出来，不能让用户突然进入「已选 1 个」的
+   * 批量模式。点列表空白处 / 点别的行 / 换目录 / 勾选任何一行时清掉。
+   */
+  const [focusedName, setFocusedName] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<FileTarget | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
@@ -242,6 +249,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
   useEffect(() => {
     loadDirectory(currentPath);
     setSelected(new Set());
+    setFocusedName(null);
   }, [currentPath, loadDirectory]);
 
   // 目录记忆走 localStorage（同步、不广播），不再经 settings.update 整份落盘：
@@ -263,21 +271,10 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // 菜单展开后测实际尺寸，超出窗口边界时反向调整
-  useEffect(() => {
-    if (!menuEntry || menuTargets.length === 0) return;
-    const node = menuRef.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    const overflowY = rect.bottom - window.innerHeight;
-    const overflowX = rect.right - window.innerWidth;
-    if (overflowY > 0 || overflowX > 0) {
-      setMenuPos((prev) => ({
-        x: overflowX > 0 ? Math.max(0, prev.x - overflowX) : prev.x,
-        y: overflowY > 0 ? Math.max(0, prev.y - overflowY) : prev.y,
-      }));
-    }
-  }, [menuEntry, menuTargets]);
+  // 行内右键菜单：整张收进窗口（旧写法在入场动画缩小的尺寸上量，末项「删除」会被切掉）
+  useMenuViewportFit(menuRef, menuPos.x, menuPos.y, {
+    enabled: menuEntry !== null && menuTargets.length > 0,
+  });
 
   // 把「正在看的目录」发布出去，agent 链接的「复制相对路径」据此给出相对文件管理目录的写法。
   useEffect(() => {
@@ -331,7 +328,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     }
   };
 
-  // agent 链接 / 工具卡 / 交付卡片发来的「带我去那个文件」：领走本会话的待办，
+  // agent 链接 / 工具卡发来的「带我去那个文件」：领走本会话的待办，
   // 先导航到所在目录，再打开（编辑器 / 预览）或只是定位。
   const pendingNav = useFileNavStore((s) => s.pending[sessionId]);
   useEffect(() => {
@@ -357,13 +354,13 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
     const hit = entries.some((e) => e.name === revealTarget.name);
     setRevealTarget(null);
     if (!hit) return;
-    setSelected(new Set([revealTarget.name]));
+    setFocusedName(revealTarget.name);
     requestAnimationFrame(() => {
       const row = Array.from(
         panelRef.current?.querySelectorAll<HTMLElement>('[data-file-name]') ?? [],
       ).find((el) => el.dataset.fileName === revealTarget.name);
       if (!row) return;
-      row.scrollIntoView({ block: 'nearest' });
+      row.scrollIntoView?.({ block: 'nearest' });
       flashElement(row);
     });
   }, [revealTarget, loadedPath, entries, currentPath]);
@@ -1028,7 +1025,13 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
           </div>
         </div>
 
-        <div className="flex-1 min-w-0 overflow-auto relative">
+        <div
+          className="flex-1 min-w-0 overflow-auto relative"
+          // 点列表里行以外的地方（空白、表头）= 取消焦点高亮；点行由行自己处理
+          onClick={(e) => {
+            if (!(e.target as HTMLElement).closest('[data-file-name]')) setFocusedName(null);
+          }}
+        >
           {isDragging && treeDropHover.kind === 'outside' && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-indigo-500/10 border-2 border-dashed border-indigo-400 rounded-lg pointer-events-none">
               <div className="text-center">
@@ -1049,6 +1052,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                     type="checkbox"
                     checked={selected.size > 0 && selected.size === filteredEntries.length}
                     onChange={() => {
+                      setFocusedName(null);
                       if (selected.size === filteredEntries.length) {
                         setSelected(new Set());
                       } else {
@@ -1086,20 +1090,28 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               filteredEntries.map((entry) => {
               const entryPath = joinRemotePath(currentPath, entry.name);
               const isSelected = selected.has(entry.name);
+              const isFocused = focusedName === entry.name && selected.size === 0;
               return (
                 <tr
                   key={entryPath}
                   data-file-name={entry.name}
-                  className={`hover:bg-state-soft/50 transition-colors cursor-pointer ${isSelected ? 'bg-indigo-500/10' : ''}`}
+                  aria-selected={isFocused || undefined}
+                  className={`transition-colors cursor-pointer ${
+                    isFocused ? 'bg-state-selected' : isSelected ? 'bg-indigo-500/10 hover:bg-state-soft/50' : 'hover:bg-state-soft/50'
+                  }`}
                   onDoubleClick={() => handleNavigate(entry)}
                   onClick={(e) => {
                     if (e.ctrlKey || e.metaKey) {
+                      setFocusedName(null);
                       setSelected((prev) => {
                         const next = new Set(prev);
                         if (next.has(entry.name)) next.delete(entry.name);
                         else next.add(entry.name);
                         return next;
                       });
+                    } else {
+                      // 普通点击 = 把焦点放到这一行（资源管理器的「选中」），不进入批量选择
+                      setFocusedName(entry.name);
                     }
                   }}
                   onContextMenu={(e) => handleContextMenu(e, entry)}
@@ -1110,6 +1122,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => {
+                          setFocusedName(null);
                           setSelected((prev) => {
                             const next = new Set(prev);
                             if (next.has(entry.name)) next.delete(entry.name);

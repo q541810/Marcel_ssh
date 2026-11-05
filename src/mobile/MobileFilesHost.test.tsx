@@ -62,8 +62,26 @@ vi.mock('./MobileCompressSheet', () => ({
   ),
 }));
 vi.mock('./MobileFileEditor', () => ({
-  default: ({ filePath }: { filePath: string }) => (
-    <div data-editor-path={filePath} />
+  default: ({
+    filePath,
+    onClose,
+    onCloseStart,
+  }: {
+    filePath: string;
+    onClose: () => void;
+    onCloseStart?: () => void;
+  }) => (
+    <div data-editor-path={filePath}>
+      {/* 与真实编辑器一致：关闭开始先通知，退出动画结束再 onClose */}
+      <button
+        type="button"
+        data-editor-close=""
+        onClick={() => {
+          onCloseStart?.();
+          onClose();
+        }}
+      />
+    </div>
   ),
 }));
 vi.mock('./MobileImageViewer', () => ({ default: () => null }));
@@ -103,6 +121,8 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useTransferStore } from '@/stores/transferStore';
 import { resetBackHandlers } from './backHandler';
 import { useFileClipboardStore } from '@/stores/fileClipboardStore';
+import { useFileNavStore } from '@/stores/fileNavStore';
+import { requestMobileTab } from './tabs';
 import { FILE_MANAGER_PATH_MEMORY_STORAGE_KEY } from '@/lib/fileManagerPathMemory';
 
 const SESSION = {
@@ -814,5 +834,98 @@ describe('传输进度与宿主重渲染', () => {
       });
     }
     expect(sessionUiSpies.sessionStatusLabel.mock.calls.length).toBe(baseline);
+  });
+});
+
+/**
+ * 从 Agent 对话点路径链接过来：用户得能看见结果、也得能回到原来的位置。
+ * 编辑器 / 预览关闭、或「返回对话」，都回到对话页（Agent 页一直挂着，阅读位置还在）。
+ */
+describe('从 Agent 对话跳到文件：能回去', () => {
+  const request = (intent: 'auto' | 'reveal') => {
+    act(() => {
+      useFileNavStore.getState().push({
+        sessionId: 's1',
+        path: '/home/user/a.txt',
+        isDir: false,
+        size: 12,
+        intent,
+        returnTo: 'agent',
+      });
+      requestMobileTab('files');
+    });
+  };
+
+  async function startFromAgent(intent: 'auto' | 'reveal') {
+    await act(async () => {
+      root.render(<MobileApp />);
+    });
+    await switchTab('Agent');
+    await act(async () => {
+      request(intent);
+    });
+    await act(async () => {});
+  }
+
+  it('打开编辑器后关闭：直接回到对话页，不停在文件页', async () => {
+    await startFromAgent('auto');
+    expect(activeTabLabel()).toContain('文件');
+    expect(container.querySelector('[data-editor-path="/home/user/a.txt"]')).toBeTruthy();
+
+    await click(container.querySelector('[data-editor-close]') as HTMLElement);
+    expect(activeTabLabel()).toContain('Agent');
+    expect(container.querySelector('[data-editor-path]')).toBeNull();
+  });
+
+  it('只是在文件管理中显示：该行持久高亮、不进入选择模式，并给出「返回对话」', async () => {
+    await startFromAgent('reveal');
+    expect(activeTabLabel()).toContain('文件');
+    const row = container.querySelector('[data-file-name="a.txt"]') as HTMLElement;
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(row.className).toContain('bg-state-selected');
+    expect(container.textContent).not.toContain('已选');
+    expect(container.textContent).toContain('返回对话');
+
+    await click(findButton('返回对话'));
+    expect(activeTabLabel()).toContain('Agent');
+    // 离开文件页后，返回条不能留到下次
+    await switchTab('文件');
+    expect(container.textContent).not.toContain('返回对话');
+  });
+
+  it('返回键先回对话（而不是先回上一级目录）', async () => {
+    await startFromAgent('reveal');
+    await act(async () => {
+      window.__marcelHandleBack?.();
+    });
+    await act(async () => {});
+    expect(activeTabLabel()).toContain('Agent');
+  });
+
+  it('用户自己换目录后，返回条与高亮都撤掉', async () => {
+    await startFromAgent('reveal');
+    expect(container.textContent).toContain('返回对话');
+    await click(findButton('docs'));
+    expect(container.textContent).not.toContain('返回对话');
+    expect(container.querySelector('[aria-current="true"]')).toBeNull();
+  });
+
+  it('不是从别的页签来的（没有 returnTo）：没有返回条', async () => {
+    await act(async () => {
+      root.render(<MobileApp />);
+    });
+    await switchTab('文件');
+    await act(async () => {
+      useFileNavStore.getState().push({
+        sessionId: 's1',
+        path: '/home/user/a.txt',
+        isDir: false,
+        size: 12,
+        intent: 'reveal',
+      });
+    });
+    await act(async () => {});
+    expect(container.textContent).not.toContain('返回对话');
+    expect(container.querySelector('[data-file-name="a.txt"]')?.getAttribute('aria-current')).toBe('true');
   });
 });

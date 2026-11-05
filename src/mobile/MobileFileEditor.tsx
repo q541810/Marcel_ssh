@@ -18,6 +18,8 @@ interface MobileFileEditorProps {
   fileName: string;
   fileSize: number;
   onClose: () => void;
+  /** 关闭开始的那一刻（退出动画之前）；见 `useAnimatedClose`。 */
+  onCloseStart?: () => void;
   onSaved: () => void;
 }
 
@@ -35,6 +37,7 @@ export default function MobileFileEditor({
   fileName,
   fileSize,
   onClose,
+  onCloseStart,
   onSaved,
 }: MobileFileEditorProps) {
   const [loading, setLoading] = useState(false);
@@ -56,7 +59,7 @@ export default function MobileFileEditor({
     closing,
     requestClose,
     onAnimationEnd: onExitAnimationEnd,
-  } = useAnimatedClose(onClose);
+  } = useAnimatedClose(onClose, onCloseStart);
 
   // 每次编辑后同步「是否有未保存修改」与撤销/重做可用性。脏判断先比长度再比全文：
   // 绝大多数按键会改变长度，不必每次都拼接整份文本（上限 2 MB）。

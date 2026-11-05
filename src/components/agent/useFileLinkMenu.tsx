@@ -10,7 +10,13 @@ import {
   type FileRef,
   type MachineResolution,
 } from '@/lib/fileLink';
-import { copyWithNotice, isMobileShell, runDefaultFileAction, runFileAction } from '@/lib/fileNav';
+import {
+  canShowFileManager,
+  copyWithNotice,
+  isMobileShell,
+  runDefaultFileAction,
+  runFileAction,
+} from '@/lib/fileNav';
 import { useFileNavStore } from '@/stores/fileNavStore';
 import { MessageJumpContext } from './messageJumpContext';
 
@@ -25,7 +31,7 @@ export interface FileLinkBehavior {
 }
 
 /**
- * 文件链接、工具卡路径芯片、交付卡片共用的交互：解析机器、左键默认动作、右键 / 长按菜单。
+ * 文件链接与工具卡路径芯片共用的交互：解析机器、左键默认动作、右键 / 长按菜单。
  * 菜单条目来自 `fileLinkActionItems`（桌面右键菜单与手机面板同一份），动作执行都走 `fileNav`。
  */
 export function useFileLinkBehavior(file: FileRef): FileLinkBehavior {
@@ -40,9 +46,17 @@ export function useFileLinkBehavior(file: FileRef): FileLinkBehavior {
 
   const sessionId = machine.ok ? machine.sessionId : null;
   const relative = useRelativeCandidates(file, sessionId, menuOpen && machine.ok);
+  // 文件管理器够不着时（桌面底栏当下无处可开）把借它的项藏起来；菜单每次打开时重新判断。
+  // 项目根目录这类要发请求才知道的候选，到了才由 `relative` 带进来——菜单不等它，先出现，
+  // 之后多出的「复制相对路径」排在分隔线以下的进阶项里，不挤动上面的常用项。
   const items = useMemo(
-    () => fileLinkActionItems(file, { relative, unresolved: !machine.ok }),
-    [file, relative, machine.ok],
+    () =>
+      fileLinkActionItems(file, {
+        relative,
+        unresolved: !machine.ok,
+        fileManager: !menuOpen || canShowFileManager(),
+      }),
+    [file, relative, machine.ok, menuOpen],
   );
 
   const run = useCallback(

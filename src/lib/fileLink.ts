@@ -235,44 +235,50 @@ export function defaultFileAction(ref: Pick<FileRef, 'side' | 'path' | 'isDir'>)
 }
 
 /**
- * 右键菜单 / 手机面板的条目。桌面与手机共用，所以「某类文件有哪些动作」只写这一处：
- *  - 在预览中打开：只对有预览的类型（目前是图片）；
- *  - 在编辑器中打开：只对能当文本编辑的文件；
- *  - 相对路径：二级菜单，只列路径确实位于其下的基准（见 `relativeCandidates`），一个都没有就不出现；
+ * 右键菜单 / 手机面板的条目。桌面与手机共用，所以「某类文件有哪些动作」只写这一处。
+ *
+ * 一级只放最常用的几项，保持短：打开、在编辑器 / 预览中打开（只出现适用的那一个）、
+ * 在文件管理中显示、复制路径。分隔线以下是进阶项：在终端中进入所在目录、复制相对路径（二级菜单）。
+ *  - 「打开」只给文本 / 图片：目录与二进制文件的「打开」就是在文件管理中显示，不重复列；
+ *  - 在预览中打开：只对有预览的类型（目前是图片）；在编辑器中打开：只对能当文本编辑的文件；
+ *  - 相对路径：只列路径确实位于其下的基准（见 `relativeCandidates`），一个都没有就不出现。
+ *    候选里有要发请求才知道的（项目根目录），调用方可以先传已知的、解析到了再带上，菜单不必等；
  *  - 本机：没有编辑器 / 终端 / 家目录这些，只有「在文件夹中显示」与复制路径。
  *
  * `unresolved`（机器不在线）时只剩复制路径——复制不碰机器。
+ * `fileManager: false`（桌面底栏当下无处可开文件管理）时，所有要借文件管理器的项都不列，
+ * 免得点了没有任何反应。
  */
 export function fileLinkActionItems(
   ref: Pick<FileRef, 'side' | 'path' | 'isDir'>,
-  options: { relative?: RelativeCandidate[]; unresolved?: boolean } = {},
+  options: { relative?: RelativeCandidate[]; unresolved?: boolean; fileManager?: boolean } = {},
 ): FileActionItem[] {
-  const items: FileActionItem[] = [];
   const kind = fileLinkKind(ref);
-  const copy: FileActionItem[] = [
-    {
-      id: 'copyPath',
-      label: ref.side === 'local' ? '复制路径' : '复制绝对路径',
-      hint: ref.path,
-    },
-  ];
-  if (options.relative && options.relative.length > 0) {
-    copy.push({ id: 'copyRelative', label: '复制相对路径', children: options.relative });
-  }
+  const head: FileActionItem[] = [];
+  const tail: FileActionItem[] = [];
+  const canUseFileManager = options.fileManager !== false;
 
   if (!options.unresolved) {
     if (ref.side === 'local') {
-      items.push({ id: 'reveal', label: '在文件夹中显示' });
+      head.push({ id: 'reveal', label: '在文件夹中显示' });
     } else {
-      items.push({ id: 'open', label: kind === 'dir' ? '在文件管理中打开' : '打开' });
-      if (kind === 'text') items.push({ id: 'editor', label: '在编辑器中打开' });
-      if (kind === 'image') items.push({ id: 'preview', label: '在预览中打开' });
-      items.push({ id: 'reveal', label: '在文件管理中显示' });
-      items.push({ id: 'cd', label: kind === 'dir' ? '在终端中进入该目录' : '在终端中进入所在目录' });
+      if (canUseFileManager) {
+        // 「打开」对文本就是进编辑器、对图片就是进预览，不再另列同一动作的两种叫法。
+        if (kind === 'text' || kind === 'image') head.push({ id: 'open', label: '打开' });
+        head.push({ id: 'reveal', label: '在文件管理中显示' });
+      }
+      tail.push({ id: 'cd', label: kind === 'dir' ? '在终端中进入该目录' : '在终端中进入所在目录' });
     }
-    items.push({ id: 'divider', label: '' });
   }
-  return [...items, ...copy];
+  head.push({
+    id: 'copyPath',
+    label: '复制路径',
+    hint: ref.path,
+  });
+  if (options.relative && options.relative.length > 0) {
+    tail.push({ id: 'copyRelative', label: '复制相对路径', children: options.relative });
+  }
+  return tail.length > 0 ? [...head, { id: 'divider', label: '' }, ...tail] : head;
 }
 
 // ──────────── 工具调用里的文件 ────────────
@@ -391,39 +397,4 @@ export function resolveFileMachine(ref: Pick<FileRef, 'side' | 'host'>, ctx: Mac
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!live) return { ok: false, reason: `「${conn.name}」当前没有在线的会话，先连接它再打开` };
   return { ok: true, sessionId: live.id, label: conn.name };
-}
-
-// ──────────── 「交付文件」卡片的 metadata ────────────
-
-export interface PresentFileMeta {
-  ref: FileRef;
-  title: string | null;
-  note: string | null;
-  size: number | null;
-}
-
-const nonEmptyString = (v: unknown): string | null =>
-  typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
-
-/**
- * 后端 `present_file` / `local_present_file` 的结果 metadata
- * （`{ kind: "presentFile", path, isDir, size, side, host, title, note }`）→ 卡片数据。
- * 不是这个形状（旧会话、失败的调用没有 metadata）返回 null，调用方退回通用工具卡。
- */
-export function parsePresentFileMeta(meta: Record<string, unknown> | undefined | null): PresentFileMeta | null {
-  if (!meta || meta.kind !== 'presentFile') return null;
-  const path = nonEmptyString(meta.path);
-  const side = meta.side === 'local' ? 'local' : meta.side === 'remote' ? 'remote' : null;
-  if (!path || !side) return null;
-  return {
-    ref: {
-      side,
-      host: side === 'remote' ? nonEmptyString(meta.host) : null,
-      path,
-      isDir: meta.isDir === true,
-    },
-    title: nonEmptyString(meta.title),
-    note: nonEmptyString(meta.note),
-    size: typeof meta.size === 'number' ? meta.size : null,
-  };
 }

@@ -25,7 +25,13 @@ import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { panelVisibilityClass } from './sessionUi';
-import { DEFAULT_MOBILE_TAB, MOBILE_SWITCH_TAB_EVENT, isMobileTab, type MobileTabId } from './tabs';
+import {
+  DEFAULT_MOBILE_TAB,
+  MOBILE_SWITCH_TAB_EVENT,
+  isMobileTab,
+  reportMobileTab,
+  type MobileTabId,
+} from './tabs';
 import type { MobileSettingsCategoryId } from './mobileSettingsModel';
 import { isMobileSettingsCategoryId } from './mobileSettingsModel';
 
@@ -121,6 +127,8 @@ export default function MobileApp() {
   // 在文件页内导航一次后才排到上面。layout 阶段先于整棵树的 passive 阶段提交，
   // 这样本层（兜底）永远在新出现的页面级 handler 之下。
   useLayoutEffect(() => {
+    // 登记当前页签：跨页跳转（agent 里点路径 → 文件页）靠它记下「从哪来」
+    reportMobileTab(activeTab);
     if (activeTab === DEFAULT_MOBILE_TAB) return;
     return registerBackHandler(() => setActiveTab(DEFAULT_MOBILE_TAB));
   }, [activeTab]);

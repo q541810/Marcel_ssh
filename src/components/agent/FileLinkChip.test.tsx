@@ -3,12 +3,11 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileLinkChip from './FileLinkChip';
-import PresentFileView from './PresentFileCard';
 import MarkdownBody from './MarkdownBody';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useFileNavStore } from '@/stores/fileNavStore';
-import type { AgentMessage, Session } from '@/lib/types';
+import type { Session } from '@/lib/types';
 
 const nav = vi.hoisted(() => ({
   runFileAction: vi.fn(async () => {}),
@@ -19,6 +18,7 @@ const nav = vi.hoisted(() => ({
 vi.mock('@/lib/fileNav', () => ({
   ...nav,
   isMobileShell: () => false,
+  canShowFileManager: () => true,
   boundSessionOf: () => 's1',
   findProjectRoot: async () => null,
   getRemoteHome: async () => '/home/u',
@@ -67,6 +67,16 @@ describe('FileLinkChip', () => {
     expect(nav.runDefaultFileAction).toHaveBeenCalledWith(file, expect.anything());
   });
 
+  it('a folder is plain blue path text: full path shown, no pill, no icon, click goes to it', async () => {
+    const file = { side: 'remote' as const, host: null, path: '/srv/app/logs', isDir: true };
+    await act(async () => root.render(<FileLinkChip file={file} />));
+    expect(chip().textContent).toBe('/srv/app/logs');
+    expect(chip().querySelector('svg')).toBeNull();
+    expect(chip().className).not.toContain('bg-state-soft');
+    await act(async () => chip().click());
+    expect(nav.runDefaultFileAction).toHaveBeenCalledWith(file, expect.anything());
+  });
+
   it('right click opens the menu and runs the chosen action', async () => {
     const file = { side: 'remote' as const, host: null, path: '/data/a.md' };
     await act(async () => root.render(<FileLinkChip file={file} />));
@@ -74,13 +84,13 @@ describe('FileLinkChip', () => {
       chip().dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     });
     const labels = Array.from(document.querySelectorAll('[role="menu"] button')).map((b) => b.textContent ?? '');
-    expect(labels.some((l) => l.includes('在编辑器中打开'))).toBe(true);
+    expect(labels.some((l) => l.includes('在编辑器中打开'))).toBe(false);
     expect(labels.some((l) => l.includes('/data/a.md'))).toBe(true);
-    const editor = Array.from(document.querySelectorAll('[role="menu"] button')).find((b) =>
-      (b.textContent ?? '').includes('在编辑器中打开'),
+    const reveal = Array.from(document.querySelectorAll('[role="menu"] button')).find((b) =>
+      (b.textContent ?? '').includes('在文件管理中显示'),
     ) as HTMLButtonElement;
-    await act(async () => editor.click());
-    expect(nav.runFileAction).toHaveBeenCalledWith('editor', file, expect.anything());
+    await act(async () => reveal.click());
+    expect(nav.runFileAction).toHaveBeenCalledWith('reveal', file, expect.anything());
   });
 
   it('is disabled with the reason when the machine is not connected, and click explains instead of opening', async () => {
@@ -112,42 +122,5 @@ describe('MarkdownBody file links', () => {
       expect.anything(),
     );
     expect(host.querySelectorAll('a').length).toBe(1);
-  });
-});
-
-describe('PresentFileView', () => {
-  const msg = (success: boolean, metadata?: Record<string, unknown>): AgentMessage =>
-    ({
-      id: 'm1',
-      role: 'tool',
-      toolResult: { toolName: 'present_file', success, result: 'ok', arguments: {}, metadata },
-    }) as unknown as AgentMessage;
-
-  it('renders the delivery card and wires the buttons', async () => {
-    await act(async () =>
-      root.render(
-        <PresentFileView
-          message={msg(true, {
-            kind: 'presentFile', path: '/data/out.csv', isDir: false, size: 2048,
-            side: 'remote', host: null, title: '导出结果', note: '共 12 行',
-          })}
-        />,
-      ),
-    );
-    expect(host.textContent).toContain('交付文件');
-    expect(host.textContent).toContain('导出结果');
-    expect(host.textContent).toContain('共 12 行');
-    expect(host.textContent).toContain('/data/out.csv');
-    const buttons = Array.from(host.querySelectorAll('button'));
-    await act(async () => buttons.find((b) => b.textContent === '在文件管理中显示')!.click());
-    expect(nav.runFileAction).toHaveBeenCalledWith('reveal', expect.objectContaining({ path: '/data/out.csv' }), expect.anything());
-    await act(async () => buttons.find((b) => b.textContent === '打开')!.click());
-    expect(nav.runDefaultFileAction).toHaveBeenCalled();
-  });
-
-  it('falls back to the plain tool card for failed calls', async () => {
-    vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} unobserve() {} });
-    await act(async () => root.render(<PresentFileView message={msg(false)} />));
-    expect(host.textContent).not.toContain('打开');
   });
 });

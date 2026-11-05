@@ -95,7 +95,14 @@ export function useAnimatedPresence(open: boolean): AnimatedPresence {
  * />
  * ```
  */
-export function useAnimatedClose(onClose: () => void): {
+export function useAnimatedClose(
+  onClose: () => void,
+  /**
+   * 关闭**开始**的那一刻（退出动画之前）调用一次。给「关完要去别处」的场景：
+   * 例如从 Agent 对话点开的编辑器，返回时直接切回对话，而不是先露出下面的文件页再跳。
+   */
+  onStart?: () => void,
+): {
   closing: boolean;
   requestClose: () => void;
   onAnimationEnd: (e?: AnimationEndLike) => void;
@@ -105,6 +112,8 @@ export function useAnimatedClose(onClose: () => void): {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const onStartRef = useRef(onStart);
+  onStartRef.current = onStart;
 
   useEffect(
     () => () => {
@@ -128,6 +137,7 @@ export function useAnimatedClose(onClose: () => void): {
     closingRef.current = true;
     setClosing(true);
     timerRef.current = setTimeout(finish, EXIT_FALLBACK_MS);
+    onStartRef.current?.();
   }, [finish]);
 
   const onAnimationEnd = useCallback(

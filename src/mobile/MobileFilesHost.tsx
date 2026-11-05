@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { copyText } from '@/lib/copyText';
-import { Loader2, MoreVertical } from 'lucide-react';
+import { ArrowLeft, Loader2, MoreVertical } from 'lucide-react';
 import FileEntryIcon from './FileEntryIcon';
 import MobileCompressSheet from './MobileCompressSheet';
 import MobileFileEditor from './MobileFileEditor';
@@ -46,7 +46,7 @@ import { useConnectionStore } from '@/stores/connectionStore';
 import { isDebugSession } from '@/lib/debugServer';
 import { loadRememberedPath, rememberPath } from '@/lib/fileManagerPathMemory';
 import { resolveHomeFallback } from '@/lib/sftpHomeFallback';
-import { requestMobileTab } from './tabs';
+import { requestMobileTab, type MobileTabId } from './tabs';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { withForegroundKeepAlive } from './mobileBridge';
@@ -137,6 +137,18 @@ export default function MobileFilesHost({
   const [entries, setEntries] = useState<SftpFileEntry[]>([]);
   const [loadedPath, setLoadedPath] = useState<string | null>(null);
   const [revealTarget, setRevealTarget] = useState<{ dir: string; name: string } | null>(null);
+  /**
+   * 当前焦点条目（agent 链接「在文件管理中显示」定位到的那一行，持久单选高亮）。与选择模式的勾选
+   * 是两回事：定位只是把这行标出来，不进入批量选择。点别的行 / 点空白 / 换目录时清掉。
+   */
+  const [focusedName, setFocusedName] = useState<string | null>(null);
+  /**
+   * 这次定位是从哪个页签来的（agent 对话等）。有值时列表下方出现「← 返回对话」，返回键也先回去
+   * ——「我在哪、怎么回去」要一直答得上。用户自己操作文件页（换目录、点开文件）、离开文件页即清掉。
+   */
+  const [returnTrip, setReturnTrip] = useState<{ tab: MobileTabId; name: string } | null>(null);
+  /** 编辑器 / 预览是从哪个页签点开的：关闭时直接回那里，而不是停在文件页。 */
+  const fileReturnRef = useRef<MobileTabId | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNewMenu, setShowNewMenu] = useState(false);
@@ -281,6 +293,7 @@ export default function MobileFilesHost({
     // 切换目录时退出选择模式（对齐桌面：路径变化清空 selected）
     setSelectMode(false);
     setMultiSelected(new Set());
+    setFocusedName(null);
   }, [sessionId, pathReady, currentPath, loadDirectory]);
 
   const filteredEntries = useMemo(
@@ -376,20 +389,52 @@ export default function MobileFilesHost({
   const uploadBusy = useTransferStore((s) => selectActiveOf(s, 'upload') !== null);
   const downloadBusy = useTransferStore((s) => selectActiveOf(s, 'download') !== null);
 
+  /** 用户自己换目录（点文件夹、路径栏、上级）：不再是「从对话来定位的」那次，清掉返回条与焦点。 */
   const navigateTo = useCallback((path: string) => {
+    setReturnTrip(null);
+    setFocusedName(null);
     setCurrentPath(path || '/');
   }, []);
 
-  /** 按统一决策打开一个文件（点按、面板「打开」、agent 链接共用）。 */
+  /**
+   * 按统一决策打开一个文件（点按、面板「打开」、agent 链接共用）。返回是否真的打开了
+   * （被拒绝时只给提示，调用方据此决定要不要留返回入口）。
+   * `from` = 从哪个页签来的（agent 链接）：编辑器 / 预览关闭时回到那里。
+   */
   const openFileByPath = useCallback(
-    (fullPath: string, name: string, size: number, intent: OpenIntent = 'auto') => {
+    (
+      fullPath: string,
+      name: string,
+      size: number,
+      intent: OpenIntent = 'auto',
+      from: MobileTabId | null = null,
+    ): boolean => {
       const decision = decideOpen(name, size, intent);
-      if (decision.kind === 'refuse') setError(decision.message);
-      else if (decision.kind === 'preview') setPreviewFile({ path: fullPath, name, size });
+      if (decision.kind === 'refuse') {
+        setError(decision.message);
+        return false;
+      }
+      fileReturnRef.current = from;
+      if (decision.kind === 'preview') setPreviewFile({ path: fullPath, name, size });
       else setEditorFile({ path: fullPath, name, size });
+      return true;
     },
     [],
   );
+
+  /** 编辑器 / 预览开始关闭：若是从别的页签点开的，当场切回去（不先露出下面的文件页再跳）。 */
+  const handleViewerCloseStart = useCallback(() => {
+    const back = fileReturnRef.current;
+    fileReturnRef.current = null;
+    if (back) requestMobileTab(back);
+  }, []);
+
+  /** 「← 返回对话」：回到发起定位的页签。 */
+  const handleReturnTrip = useCallback(() => {
+    const trip = returnTrip;
+    setReturnTrip(null);
+    if (trip) requestMobileTab(trip.tab);
+  }, [returnTrip]);
 
   const openFile = useCallback(
     (entry: SftpFileEntry) => {
@@ -418,12 +463,17 @@ export default function MobileFilesHost({
     if (!req) return;
     const name = req.path.slice(req.path.lastIndexOf('/') + 1) || '/';
     const parent = parentPath(req.path);
+    // 不是用户自己换目录，直接设路径（navigateTo 会把刚设好的返回条清掉）
     if (req.path !== '/') {
       setRevealTarget({ dir: parent, name });
-      if (currentPathRef.current !== parent) navigateTo(parent);
+      if (currentPathRef.current !== parent) setCurrentPath(parent || '/');
     }
-    if (!req.isDir && req.intent !== 'reveal') openFileByPath(req.path, name, req.size, req.intent);
-  }, [pendingNav, sessionId, pathReady, navigateTo, openFileByPath]);
+    const from = req.returnTo && req.returnTo !== 'files' ? req.returnTo : null;
+    const opened =
+      !req.isDir && req.intent !== 'reveal' && openFileByPath(req.path, name, req.size, req.intent, from);
+    // 打开了编辑器 / 预览：返回在它关闭时发生；只是定位（或没能打开）：文件页上给「← 返回对话」
+    setReturnTrip(!opened && from ? { tab: from, name } : null);
+  }, [pendingNav, sessionId, pathReady, openFileByPath]);
 
   useEffect(() => {
     if (!revealTarget || loadedPath === null) return;
@@ -431,18 +481,22 @@ export default function MobileFilesHost({
     const hit = entries.some((e) => e.name === revealTarget.name);
     setRevealTarget(null);
     if (!hit) return;
+    setFocusedName(revealTarget.name);
     requestAnimationFrame(() => {
       const row = Array.from(document.querySelectorAll<HTMLElement>('[data-file-name]')).find(
         (el) => el.dataset.fileName === revealTarget.name,
       );
       if (!row) return;
-      row.scrollIntoView({ block: 'nearest' });
+      row.scrollIntoView?.({ block: 'nearest' });
       flashElement(row);
     });
   }, [revealTarget, loadedPath, entries, currentPath]);
 
   const handleEntryTap = useCallback(
     (entry: SftpFileEntry) => {
+      // 点了别的行：定位用的焦点高亮到此为止；用户自己点开的文件也不再「返回对话」
+      setFocusedName(null);
+      setReturnTrip(null);
       // 选择模式下：点按 = 勾选/取消勾选，不导航不打开
       if (selectMode) {
         setMultiSelected((prev) => toggleSelectionName(prev, entry.name));
@@ -537,10 +591,21 @@ export default function MobileFilesHost({
   // Android back gesture: when no sheet/editor is open (those register on top),
   // swipe-back matches the path-bar "↑" — go to parent dir. At root we do not
   // register, so the press falls through to App (switch tab / finish).
+  //
+  // 从对话定位过来时（返回条在），返回键先回对话——用户是从那儿来的，要去的也是那儿。
+  // 注册只有这一个 effect：两个 effect 各管一个的话，谁后注册谁在栈顶，目录一变顺序就乱。
   useEffect(() => {
-    if (!visible || emptyReason !== 'ready' || currentPath === '/') return;
+    if (!visible || emptyReason !== 'ready') return;
+    if (returnTrip) return registerBackHandler(handleReturnTrip);
+    if (currentPath === '/') return;
     return registerBackHandler(handleGoUp);
-  }, [visible, emptyReason, currentPath, handleGoUp]);
+  }, [visible, emptyReason, currentPath, handleGoUp, returnTrip, handleReturnTrip]);
+
+  // 离开文件页：返回条作废（下次来文件页不该还挂着一条陈旧的「返回对话」）。
+  // 只在 visible 变化时跑：定位请求在页签切过来之前就可能已落地，不能因为它而误清。
+  useEffect(() => {
+    if (!visible) setReturnTrip(null);
+  }, [visible]);
 
   const handleRefresh = useCallback(() => {
     void loadDirectory(currentPath);
@@ -856,7 +921,13 @@ export default function MobileFilesHost({
         </div>
       </header>
 
-      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div
+        className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        // 点列表里行以外的地方 = 取消定位用的焦点高亮
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest('[data-file-name]')) setFocusedName(null);
+        }}
+      >
         {listLoadingMode === 'empty' ? (
           <div
             className="flex h-40 flex-col items-center justify-center gap-2 text-sm text-zinc-500"
@@ -875,12 +946,14 @@ export default function MobileFilesHost({
           <ul className="divide-y divide-edge-subtle/80">
             {filteredEntries.map((entry) => {
               const selected = selectMode && multiSelected.has(entry.name);
+              const focused = !selectMode && focusedName === entry.name;
               return (
                 <li
                   key={`${entry.is_dir ? 'd' : 'f'}:${entry.name}`}
                   data-file-name={entry.name}
-                  className={`flex items-center pr-1 ${
-                    selected ? 'bg-indigo-500/10' : ''
+                  aria-current={focused || undefined}
+                  className={`flex items-center pr-1 transition-colors ${
+                    selected ? 'bg-indigo-500/10' : focused ? 'bg-state-selected' : ''
                   }`}
                 >
                   <button
@@ -968,6 +1041,33 @@ export default function MobileFilesHost({
         长按进选择模式），放在列表上方就会把列表整体往下顶，手指正要点的那一行
         跑掉。接在下方只是列表底边上移，屏幕上已有的行一动不动。
       */}
+      {returnTrip && (
+        <div
+          className="flex flex-shrink-0 items-center gap-1 border-t border-edge-subtle bg-zinc-900/80 py-1 pl-1.5 pr-1"
+          role="status"
+        >
+          <button
+            type="button"
+            onClick={handleReturnTrip}
+            className="flex flex-shrink-0 items-center gap-1 rounded-lg px-2.5 py-2 text-xs font-medium text-indigo-300 active:bg-state-soft"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" aria-hidden />
+            返回{RETURN_TAB_LABEL[returnTrip.tab]}
+          </button>
+          <span className="min-w-0 flex-1 truncate text-[11px] text-zinc-500">
+            已定位到 {returnTrip.name}
+          </span>
+          <button
+            type="button"
+            onClick={() => setReturnTrip(null)}
+            className="flex-shrink-0 px-2.5 py-2 text-zinc-500 active:text-zinc-300"
+            aria-label="关闭"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {opStatus && (
         <div
           className="flex flex-shrink-0 items-center gap-2 border-t border-edge-subtle bg-zinc-900/80 px-3 py-2 text-xs text-zinc-300"
@@ -1589,6 +1689,7 @@ export default function MobileFilesHost({
           fileName={editorFile.name}
           fileSize={editorFile.size}
           onClose={() => setEditorFile(null)}
+          onCloseStart={handleViewerCloseStart}
           onSaved={() => {
             void loadDirectory(currentPath);
           }}
@@ -1603,11 +1704,20 @@ export default function MobileFilesHost({
           fileName={previewFile.name}
           fileSize={previewFile.size}
           onClose={() => setPreviewFile(null)}
+          onCloseStart={handleViewerCloseStart}
         />
       )}
     </div>
   );
 }
+
+/** 「返回 X」里的 X：与底部页签的名字一致。 */
+const RETURN_TAB_LABEL: Record<MobileTabId, string> = {
+  terminal: '终端',
+  agent: '对话',
+  files: '文件',
+  settings: '设置',
+};
 
 function TransferBar({
   statusText,

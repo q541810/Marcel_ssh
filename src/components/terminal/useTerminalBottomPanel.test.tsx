@@ -4,6 +4,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useTerminalBottomPanel } from './useTerminalBottomPanel';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { isBottomPanelMounted, requestBottomTab } from '@/lib/bottomPanelNav';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -125,5 +126,29 @@ describe('useTerminalBottomPanel 落库门控', () => {
     });
     dispatchMouse('mouseup', 700);
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('useTerminalBottomPanel 响应「请求切到某个标签」', () => {
+  it('底栏收着时：展开并切到请求的标签，且登记为在场宿主', () => {
+    expect(latest!.activeTab).toBeNull();
+    expect(isBottomPanelMounted()).toBe(true);
+    act(() => requestBottomTab('file-manager'));
+    expect(latest!.activeTab).toBe('file-manager');
+  });
+
+  it('开着别的标签时切过去；请求的标签已经开着时不会把它收起来', () => {
+    act(() => latest!.setActiveTab('process'));
+    act(() => requestBottomTab('file-manager'));
+    expect(latest!.activeTab).toBe('file-manager');
+    act(() => requestBottomTab('file-manager'));
+    expect(latest!.activeTab).toBe('file-manager');
+  });
+
+  it('卸载后注销宿主，不再响应', () => {
+    act(() => root.unmount());
+    expect(isBottomPanelMounted()).toBe(false);
+    // afterEach 还会 unmount 一次：重新挂一个空壳，避免对已卸载的 root 重复操作
+    root = createRoot(container);
   });
 });
