@@ -433,6 +433,10 @@ html[data-marcel-theme='light'] .prose.marcel-prose :not(pre) > code {
   min-height: 0;
   overflow: hidden;
 }
+/* 进场动画播完后放开裁切：里面的下拉菜单 / 弹出层会超出这一块，不能被截断（见 Reveal.tsx） */
+.transient-reveal-settled > * {
+  overflow: visible;
+}
 .transient-reveal-enter {
   animation: transient-reveal-in 260ms var(--spring-smooth, cubic-bezier(0.22, 1, 0.36, 1)) both;
 }
