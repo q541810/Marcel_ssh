@@ -7,19 +7,24 @@ interface AuxKeyDef {
   label: ReactNode;
   /** Wider key (col-span-2 of the 10-col grid). */
   wide?: boolean;
+  /** Smaller label so a 4-letter word fits a single column. */
+  compact?: boolean;
 }
 
 /**
  * Two fixed rows, exactly 10 columns each — every key always visible, nothing
  * scrolls or wraps. Laid out like a physical keyboard: Esc top-left, Ctrl
  * bottom-left, and an inverted-T arrow cluster on the right (↑ sits directly
- * above ↓).
+ * above ↓). Row 1 keeps only Esc double-width so Home/End fit without a third row;
+ * ↑ stays in column 9, above ↓.
  */
 const ROW1: AuxKeyDef[] = [
   { id: 'esc', label: 'Esc', wide: true },
-  { id: 'tab', label: 'Tab', wide: true },
-  { id: 'ctrl-c', label: '^C', wide: true },
+  { id: 'tab', label: 'Tab' },
+  { id: 'ctrl-c', label: '^C' },
   { id: 'ctrl-d', label: '^D' },
+  { id: 'home', label: 'Home', compact: true },
+  { id: 'end', label: 'End', compact: true },
   { id: 'copy', label: <Copy className="mx-auto h-4 w-4" /> },
   { id: 'up', label: '↑' },
   { id: 'paste', label: <ClipboardPaste className="mx-auto h-4 w-4" /> },
@@ -77,7 +82,7 @@ export default function MobileAuxKeyBar({
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onKey(key.id)}
             aria-label={isCopy ? (copied ? '已复制' : '复制选中内容') : undefined}
-            className={`rounded-md border py-2 text-center text-xs font-medium transition-colors duration-100 active:scale-95 disabled:opacity-40 disabled:active:scale-100 ${
+            className={`rounded-md border py-2 text-center font-medium ${key.compact ? 'text-[10px]' : 'text-xs'} transition-colors duration-100 active:scale-95 disabled:opacity-40 disabled:active:scale-100 ${
               key.wide ? 'col-span-2' : 'col-span-1'
             } ${colorClass}`}
           >

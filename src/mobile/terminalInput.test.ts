@@ -37,6 +37,8 @@ describe('resolveAuxKeyInput', () => {
     expect(resolveAuxKeyInput(initial, 'down').write).toBe('\x1b[B');
     expect(resolveAuxKeyInput(initial, 'left').write).toBe('\x1b[D');
     expect(resolveAuxKeyInput(initial, 'right').write).toBe('\x1b[C');
+    expect(resolveAuxKeyInput(initial, 'home').write).toBe('\x1b[H');
+    expect(resolveAuxKeyInput(initial, 'end').write).toBe('\x1b[F');
     expect(resolveAuxKeyInput(initial, 'slash').write).toBe('/');
   });
 

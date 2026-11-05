@@ -8,6 +8,8 @@ export type AuxKeyId =
   | 'down'
   | 'left'
   | 'right'
+  | 'home'
+  | 'end'
   | 'slash'
   | 'pipe'
   | 'dash'
@@ -34,6 +36,8 @@ const AUX_SEQUENCES: Record<
   down: '\x1b[B',
   left: '\x1b[D',
   right: '\x1b[C',
+  home: '\x1b[H',
+  end: '\x1b[F',
   slash: '/',
   pipe: '|',
   dash: '-',
