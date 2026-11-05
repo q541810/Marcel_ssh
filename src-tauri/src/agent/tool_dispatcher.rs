@@ -177,6 +177,66 @@ struct ResolvedDisposition {
     resolved_approval_mode: AgentMode,
 }
 
+/// [`ToolDispatcher::resolve_call`] 的产物：一次调用「是什么、定什么档」。
+/// `dispatch` 与模型审批预取共用，两边对同一个调用的结论因此不可能分叉。
+struct CallFacts<'t> {
+    tool: std::sync::Arc<dyn AgentTool>,
+    semantics: Option<ToolSemantics>,
+    /// 命令文本（命令类工具才有；插件 `kind=ssh` 是渲染后的）。
+    command: Option<String>,
+    path: Option<&'t str>,
+    path_write: PathWrite,
+    plan: ResolvedDisposition,
+    auto_force_approval: bool,
+}
+
+/// 模型审批换算成调度语义后的结论（与档位判定的「要不要人确认」合并留给 `dispatch`）。
+enum ModelVerdict {
+    /// 放行（含「转人审但当前模式没有人可问」的那一档）。
+    Proceed,
+    /// 要人点头；附模型给的理由（空 = 没给）。
+    RouteToHuman(Option<Vec<String>>),
+    /// 模型阻止，或判定本身失败：直接作为工具结果返回。
+    Blocked(DispatchResult),
+}
+
+/// 一个调用的预判结果，连同**当时用的输入**一起带回，`dispatch` 据此核对能不能用。
+struct PrefetchedVerdict {
+    command: String,
+    disposition: Disposition,
+    auto_force_approval: bool,
+    verdict: ModelVerdict,
+}
+
+/// 预取的投递端：一个调用一个，由 [`ToolDispatcher::prefetch_approval`] 填。
+pub(crate) struct ApprovalSlot(tokio::sync::oneshot::Sender<PrefetchedVerdict>);
+
+/// 一轮工具调用的模型审批预取表（tool_call_id → 等待中的判定）。
+///
+/// **为什么要预取**：命令是按顺序一条条执行的（执行顺序就是因果顺序，不能动），
+/// 但模型审批只看「命令文本 + 本轮之前的对话」，和同轮前面那条命令的执行结果
+/// 无关。以前一轮发了 N 条命令，就是「审 1 → 跑 1 → 审 2 → 跑 2 …」，每次审批
+/// 都是一次完整的模型往返；现在 N 次审批在轮次开始时一起发出，执行仍按原顺序，
+/// 轮到谁就取谁的结论，于是总等待从 N 次往返缩到约 1 次。
+///
+/// 人工审批弹窗、执行顺序、取消语义都不变：预取只把「去问审批模型」提前了，
+/// 不改变谁先执行、谁弹窗。
+pub(crate) struct ApprovalPrefetch {
+    pending: parking_lot::Mutex<
+        std::collections::HashMap<String, tokio::sync::oneshot::Receiver<PrefetchedVerdict>>,
+    >,
+}
+
+impl ApprovalPrefetch {
+    /// 取走某个调用的判定（只能取一次；锁不跨 await）。
+    fn take(
+        &self,
+        tool_call_id: &str,
+    ) -> Option<tokio::sync::oneshot::Receiver<PrefetchedVerdict>> {
+        self.pending.lock().remove(tool_call_id)
+    }
+}
+
 /// Dispatches tool calls through the registry with mode-aware security policy.
 pub(crate) struct ToolDispatcher {
     mode: AgentMode,
@@ -369,62 +429,33 @@ impl ToolDispatcher {
         }
     }
 
+    /// 执行一次工具调用：定档 → 预检 → 模型审批 → 人工审批 → 执行。
+    ///
+    /// `prefetch` = 本轮的模型审批预取（见 [`ApprovalPrefetch`]）。给了且里面有
+    /// 这个调用的判定，模型审批段直接取它，不再现发一次请求；没有就照旧现判。
     pub async fn dispatch(
         &self,
         tc: &ToolCall,
         ctx: &ToolContext,
         event_name: &str,
         recent_messages: &[LlmMessage],
+        prefetch: Option<&ApprovalPrefetch>,
     ) -> DispatchResult {
-        let Some(tool) = self.registry.get(&tc.name) else {
-            return DispatchResult::unknown(&tc.name);
-        };
-        // 参数语义来自内置工具声明表（`tools/mod.rs` 的 BUILTIN_TOOLS_*）：
-        // 哪个参数键是命令、哪个是路径、会不会写路径。
-        // 动态工具（skill / 插件 / MCP）没有条目 → 走通用路径。
-        let semantics = self.registry.semantics(&tc.name);
-        // 命令文本有两个来源：内置工具从声明的参数键里取；动态工具（插件
-        // `kind=ssh`）的命令要先渲染模板才成型，所以问工具自己。
-        // 两个来源都没有，就不是命令类工具。
-        let mut rendered_command: Option<String> = None;
-        let command = match semantics
-            .and_then(|s| s.command_arg)
-            .and_then(|key| tc.arguments.get(key))
-            .and_then(|v| v.as_str())
-        {
-            Some(c) => Some(c),
-            None => {
-                rendered_command = tool.rendered_command(&tc.arguments, ctx).await;
-                rendered_command.as_deref()
-            }
-        };
-        let declares_command = command.is_some();
-        let path = semantics
-            .and_then(|s| s.path_arg)
-            .and_then(|key| tc.arguments.get(key))
-            .and_then(|v| v.as_str());
-        let path_write = semantics.map(|s| s.path_write).unwrap_or(PathWrite::None);
-
-        // 处置档位合成（三个来源按严取一）+「直接拒绝」短路。
-        let plan = match self.resolve_call_disposition(
-            tc,
-            tool.as_ref(),
-            ctx,
+        let CallFacts {
+            tool,
+            semantics,
             command,
-            declares_command,
             path,
             path_write,
-        ) {
-            Ok(plan) => plan,
-            Err(blocked) => return blocked,
+            plan,
+            auto_force_approval,
+        } = match self.resolve_call(tc, ctx).await {
+            Ok(facts) => facts,
+            Err(early) => return early,
         };
+        let command = command.as_deref();
+        let declares_command = command.is_some();
         let effective_disposition = plan.effective_disposition;
-        // Auto 的「强制审批仍要问人」开关：只对**真正的 Auto** 生效，不能顺着
-        // `effective_approval_mode` 把「默认静默的 Plan」也算进来。也只有
-        // `ForceApproval` 这一档会被它放行到人工。
-        let auto_force_approval = matches!(self.raw_approval_mode(), AgentMode::Auto)
-            && self.agent_settings.auto_mode_force_approval
-            && effective_disposition == Disposition::ForceApproval;
 
         let requires_default_approval = tool.requires_approval_by_default();
 
@@ -470,6 +501,7 @@ impl ToolDispatcher {
                 effective_disposition,
                 assessed_needs_confirm,
                 auto_force_approval,
+                prefetch,
             )
             .await
         {
@@ -529,6 +561,146 @@ impl ToolDispatcher {
                 disposition: effective_disposition,
             },
         }
+    }
+
+    /// `dispatch` 的定档段：找到工具、取出命令文本与路径、合成最终档位（含「直接
+    /// 拒绝」短路），算出 Auto 的强制审批开关。
+    ///
+    /// 单独提出来，是因为模型审批预取（[`Self::prefetch_approval`]）必须和真正
+    /// 执行时**用同一套判据**决定「这条调用要不要过模型审批、拿什么去审」——
+    /// 两边各写一份，迟早会出现「预取审了 A、执行时审的是 B」。
+    async fn resolve_call<'t>(
+        &self,
+        tc: &'t ToolCall,
+        ctx: &ToolContext,
+    ) -> Result<CallFacts<'t>, DispatchResult> {
+        let Some(tool) = self.registry.get(&tc.name) else {
+            return Err(DispatchResult::unknown(&tc.name));
+        };
+        // 参数语义来自内置工具声明表（`tools/mod.rs` 的 BUILTIN_TOOLS_*）：
+        // 哪个参数键是命令、哪个是路径、会不会写路径。
+        // 动态工具（skill / 插件 / MCP）没有条目 → 走通用路径。
+        let semantics = self.registry.semantics(&tc.name);
+        // 命令文本有两个来源：内置工具从声明的参数键里取；动态工具（插件
+        // `kind=ssh`）的命令要先渲染模板才成型，所以问工具自己。
+        // 两个来源都没有，就不是命令类工具。
+        let command = match semantics
+            .and_then(|s| s.command_arg)
+            .and_then(|key| tc.arguments.get(key))
+            .and_then(|v| v.as_str())
+        {
+            Some(c) => Some(c.to_string()),
+            None => tool.rendered_command(&tc.arguments, ctx).await,
+        };
+        let declares_command = command.is_some();
+        let path = semantics
+            .and_then(|s| s.path_arg)
+            .and_then(|key| tc.arguments.get(key))
+            .and_then(|v| v.as_str());
+        let path_write = semantics.map(|s| s.path_write).unwrap_or(PathWrite::None);
+
+        // 处置档位合成（三个来源按严取一）+「直接拒绝」短路。
+        let plan = self.resolve_call_disposition(
+            tc,
+            tool.as_ref(),
+            ctx,
+            command.as_deref(),
+            declares_command,
+            path,
+            path_write,
+        )?;
+        // Auto 的「强制审批仍要问人」开关：只对**真正的 Auto** 生效，不能顺着
+        // `effective_approval_mode` 把「默认静默的 Plan」也算进来。也只有
+        // `ForceApproval` 这一档会被它放行到人工。
+        let auto_force_approval = matches!(self.raw_approval_mode(), AgentMode::Auto)
+            && self.agent_settings.auto_mode_force_approval
+            && plan.effective_disposition == Disposition::ForceApproval;
+
+        Ok(CallFacts {
+            tool,
+            semantics,
+            command,
+            path,
+            path_write,
+            plan,
+            auto_force_approval,
+        })
+    }
+
+    /// 为本轮的工具调用备好模型审批预取的「信箱」。
+    ///
+    /// 返回 `None` = 这一轮不值得预取：没开模型审批，或只有一个调用（一个调用
+    /// 没有可并行的对象，照旧在执行时现判，路径与以前逐字一致）。否则返回
+    /// 预取表与每个调用（按 `calls` 顺序）对应的投递端，交给
+    /// [`Self::prefetch_approval`] 逐个填。
+    pub(crate) fn plan_approval_prefetch(
+        &self,
+        calls: &[ToolCall],
+    ) -> Option<(ApprovalPrefetch, Vec<ApprovalSlot>)> {
+        if self.approver.is_none() || calls.len() < 2 {
+            return None;
+        }
+        let mut pending = std::collections::HashMap::with_capacity(calls.len());
+        let mut slots = Vec::with_capacity(calls.len());
+        for tc in calls {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            pending.insert(tc.id.clone(), rx);
+            slots.push(ApprovalSlot(tx));
+        }
+        Some((
+            ApprovalPrefetch {
+                pending: parking_lot::Mutex::new(pending),
+            },
+            slots,
+        ))
+    }
+
+    /// 提前做一个调用的模型审批，结果投进 `slot`，等 `dispatch` 轮到它时取用。
+    ///
+    /// 只做**与执行顺序无关**的那部分：定档（`resolve_call`）与必填参数检查都是
+    /// 纯函数，拿到的结论和执行时一样；「写前必须已读」依赖同轮前面调用的结果，
+    /// 这里不碰，仍由 `dispatch` 按顺序做（命令类工具也没有写路径声明）。
+    /// 不该过模型审批的调用（非命令工具、直接拒绝、参数不全）什么都不发，`slot`
+    /// 随之丢弃 —— `dispatch` 那边本来就不会走到模型审批段。
+    pub(crate) async fn prefetch_approval(
+        &self,
+        tc: &ToolCall,
+        ctx: &ToolContext,
+        event_name: &str,
+        recent_messages: &[LlmMessage],
+        slot: ApprovalSlot,
+    ) {
+        let Some(approver) = self.approver.as_deref() else {
+            return;
+        };
+        let Ok(facts) = self.resolve_call(tc, ctx).await else {
+            return;
+        };
+        let Some(command) = facts.command.as_deref() else {
+            return;
+        };
+        if facts.tool.validate_arguments(&tc.arguments).is_err() {
+            return;
+        }
+        let verdict = self
+            .judge_command(
+                approver,
+                tc,
+                ctx,
+                event_name,
+                recent_messages,
+                command,
+                &facts.plan.resolved_approval_mode,
+                facts.plan.effective_disposition,
+                facts.auto_force_approval,
+            )
+            .await;
+        let _ = slot.0.send(PrefetchedVerdict {
+            command: command.to_string(),
+            disposition: facts.plan.effective_disposition,
+            auto_force_approval: facts.auto_force_approval,
+            verdict,
+        });
     }
 
     /// 处置档位合成段 —— 本次调用的最终档位，与「直接拒绝」短路。
@@ -702,7 +874,9 @@ impl ToolDispatcher {
     /// 判，不能改写命令；返回并集后的「要不要人确认」与模型给的理由，模型
     /// `Block` / 判定失败在这里短路。
     ///
-    /// 纯提取自 `dispatch`（原 517-657 行）：事件顺序、放行/转人审语义不变。
+    /// 判定本身在 [`Self::judge_command`]。同一轮有多个调用时，判定已经由
+    /// 预取并行发出（[`ApprovalPrefetch`]），这里只取结果；取不到（没预取、
+    /// 预取时它不该审、或预取后命令文本 / 档位变了）就现判一次，结论语义不变。
     #[allow(clippy::too_many_arguments)]
     async fn run_model_approval(
         &self,
@@ -716,6 +890,7 @@ impl ToolDispatcher {
         effective_disposition: Disposition,
         assessed_needs_confirm: bool,
         auto_force_approval: bool,
+        prefetch: Option<&ApprovalPrefetch>,
     ) -> Result<(bool, Option<Vec<String>>), DispatchResult> {
         // 2. Model-based approval — runs for tools that declare a command
         //    argument (i.e. `bash`) when an approver is configured, regardless
@@ -727,140 +902,165 @@ impl ToolDispatcher {
         let mut model_reasons: Option<Vec<String>> = None;
 
         if declares_command {
-            if let Some(ref approver) = self.approver {
+            if let Some(approver) = self.approver.as_deref() {
                 let cmd = command.unwrap_or("");
-
-                // Signal the frontend that model approval is in progress.
-                emit_event(
-                    &ctx.app_handle,
-                    event_name,
-                    ModelApprovalStartEvent {
-                        event_type: "modelApprovalStart".to_string(),
-                        tool_call_id: tc.id.clone(),
-                    },
-                );
-
-                let eval_result = approver.evaluate(cmd, recent_messages).await;
-
-                match eval_result {
-                    Ok(judgement) => {
-                        // 判定元信息只用于**展示**（弹窗上标注这次是谁判的、
-                        // 把握多大）。下面的分支只看 `decision`——置信度不参与
-                        // 任何判定，两个引擎的决策语义因此完全等价。
-                        let engine = Some(judgement.engine.to_string());
-                        let confidence = judgement.confidence;
-                        match judgement.decision {
-                            ModelApprovalDecision::Block(rs) => {
-                                emit_event(
-                                    &ctx.app_handle,
-                                    event_name,
-                                    ModelApprovalDoneEvent {
-                                        event_type: "modelApprovalDone".to_string(),
-                                        tool_call_id: tc.id.clone(),
-                                        decision: "block".to_string(),
-                                        reasons: rs.clone(),
-                                        engine,
-                                        confidence,
-                                    },
-                                );
-                                let reason = if rs.is_empty() {
-                                    "模型审批阻止".to_string()
-                                } else {
-                                    format!("模型审批阻止: {}", rs.join("; "))
-                                };
-                                let hint = "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
-                                return Err(DispatchResult::blocked(
-                                    format!("$ {}", cmd),
-                                    format!("{}{}", reason, hint),
-                                    effective_disposition,
-                                ));
-                            }
-                            ModelApprovalDecision::RouteToHuman(rs) => {
-                                // 判据与「开不开窗」同源（`can_ask_human`）：
-                                // 没有人工介入的场合，"转人审"就没有落点。Auto 下这一档
-                                // 的实际结果就是放行，事件按**实际结果**发 `approve` ——
-                                // 否则工具卡上会一直挂着「模型建议人工审批」，而根本
-                                // 没有问过任何人，用户会以为自己漏掉了什么。模型的原判据
-                                // 留在日志里备查。
-                                if can_ask_human(resolved_approval_mode, true, auto_force_approval)
-                                {
-                                    // Agent 模式弹窗（Plan 默认也走 Auto 那一支，除非开了
-                                    // 「Plan 模式也需要审批」——判定同样遵循
-                                    // `resolved_approval_mode`）。
-                                    emit_event(
-                                        &ctx.app_handle,
-                                        event_name,
-                                        ModelApprovalDoneEvent {
-                                            event_type: "modelApprovalDone".to_string(),
-                                            tool_call_id: tc.id.clone(),
-                                            decision: "route_to_human".to_string(),
-                                            reasons: rs.clone(),
-                                            engine,
-                                            confidence,
-                                        },
-                                    );
-                                    final_needs_confirm = true;
-                                    model_reasons = if rs.is_empty() { None } else { Some(rs) };
-                                } else {
-                                    log::info!(
-                                        "模型审批判定 route_to_human，但当前模式没有人工介入的落点，直接放行：$ {}",
-                                        cmd
-                                    );
-                                    emit_event(
-                                        &ctx.app_handle,
-                                        event_name,
-                                        ModelApprovalDoneEvent {
-                                            event_type: "modelApprovalDone".to_string(),
-                                            tool_call_id: tc.id.clone(),
-                                            decision: "approve".to_string(),
-                                            reasons: vec![],
-                                            engine,
-                                            confidence,
-                                        },
-                                    );
-                                }
-                            }
-                            ModelApprovalDecision::Approve => {
-                                emit_event(
-                                    &ctx.app_handle,
-                                    event_name,
-                                    ModelApprovalDoneEvent {
-                                        event_type: "modelApprovalDone".to_string(),
-                                        tool_call_id: tc.id.clone(),
-                                        decision: "approve".to_string(),
-                                        reasons: vec![],
-                                        engine,
-                                        confidence,
-                                    },
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        emit_event(
-                            &ctx.app_handle,
+                let prefetched = match prefetch.and_then(|p| p.take(&tc.id)) {
+                    // 投递端被丢弃（预取判定它不该审，或预取被取消）→ 现判。
+                    Some(rx) => rx.await.ok(),
+                    None => None,
+                };
+                // 预取用的输入必须和现在一字不差才能用它的结论：命令文本、档位
+                // （设置在两次定档之间被改过会让它变）、Auto 强制审批开关。
+                // 对不上就丢掉重判 —— 审批结论绝不能张冠李戴。
+                let reusable = prefetched.filter(|p| {
+                    p.command == cmd
+                        && p.disposition == effective_disposition
+                        && p.auto_force_approval == auto_force_approval
+                });
+                let verdict = match reusable {
+                    Some(p) => p.verdict,
+                    None => {
+                        self.judge_command(
+                            approver,
+                            tc,
+                            ctx,
                             event_name,
-                            ModelApprovalDoneEvent {
-                                event_type: "modelApprovalDone".to_string(),
-                                tool_call_id: tc.id.clone(),
-                                decision: "error".to_string(),
-                                reasons: vec![err_msg.clone()],
-                                engine: None,
-                                confidence: None,
-                            },
-                        );
-                        return Err(DispatchResult::blocked(
-                            format!("$ {}", cmd),
-                            format!("模型审批失败: {}", err_msg),
+                            recent_messages,
+                            cmd,
+                            resolved_approval_mode,
                             effective_disposition,
-                        ));
+                            auto_force_approval,
+                        )
+                        .await
                     }
+                };
+                match verdict {
+                    ModelVerdict::Proceed => {}
+                    ModelVerdict::RouteToHuman(reasons) => {
+                        final_needs_confirm = true;
+                        model_reasons = reasons;
+                    }
+                    ModelVerdict::Blocked(blocked) => return Err(blocked),
                 }
             }
         }
 
         Ok((final_needs_confirm, model_reasons))
+    }
+
+    /// 问一次审批模型，并把结论换算成调度语义（事件也在这里发）。
+    ///
+    /// 只依赖调用本身与任务级的静态配置，**不依赖同轮其它调用的执行结果**：
+    /// 同一轮的工具结果要等整轮跑完才写回历史，所以第 N 个调用不论是现判还是
+    /// 和前面的调用一起预判，审批模型看到的上下文都是同一份。这正是它能并行的前提。
+    ///
+    /// 事件按**实际结果**发：开判时 `modelApprovalStart`，出结论时
+    /// `modelApprovalDone`（并行预判时，后面的调用可能先于前面的出结论，卡片上
+    /// 就先看到它的判定，这是真实发生的顺序）。
+    #[allow(clippy::too_many_arguments)]
+    async fn judge_command(
+        &self,
+        approver: &dyn CommandApprover,
+        tc: &ToolCall,
+        ctx: &ToolContext,
+        event_name: &str,
+        recent_messages: &[LlmMessage],
+        cmd: &str,
+        resolved_approval_mode: &AgentMode,
+        effective_disposition: Disposition,
+        auto_force_approval: bool,
+    ) -> ModelVerdict {
+        // Signal the frontend that model approval is in progress.
+        emit_event(
+            &ctx.app_handle,
+            event_name,
+            ModelApprovalStartEvent {
+                event_type: "modelApprovalStart".to_string(),
+                tool_call_id: tc.id.clone(),
+            },
+        );
+
+        let judgement = match approver.evaluate(cmd, recent_messages).await {
+            Ok(judgement) => judgement,
+            Err(e) => {
+                let err_msg = e.to_string();
+                emit_event(
+                    &ctx.app_handle,
+                    event_name,
+                    ModelApprovalDoneEvent {
+                        event_type: "modelApprovalDone".to_string(),
+                        tool_call_id: tc.id.clone(),
+                        decision: "error".to_string(),
+                        reasons: vec![err_msg.clone()],
+                        engine: None,
+                        confidence: None,
+                    },
+                );
+                return ModelVerdict::Blocked(DispatchResult::blocked(
+                    format!("$ {}", cmd),
+                    format!("模型审批失败: {}", err_msg),
+                    effective_disposition,
+                ));
+            }
+        };
+
+        // 判定元信息只用于**展示**（弹窗上标注这次是谁判的、把握多大）。下面的
+        // 分支只看 `decision`——置信度不参与任何判定，两个引擎的决策语义因此完全等价。
+        let engine = Some(judgement.engine.to_string());
+        let confidence = judgement.confidence;
+        let done = |decision: &str, reasons: Vec<String>| ModelApprovalDoneEvent {
+            event_type: "modelApprovalDone".to_string(),
+            tool_call_id: tc.id.clone(),
+            decision: decision.to_string(),
+            reasons,
+            engine: engine.clone(),
+            confidence,
+        };
+        match judgement.decision {
+            ModelApprovalDecision::Block(rs) => {
+                emit_event(&ctx.app_handle, event_name, done("block", rs.clone()));
+                let reason = if rs.is_empty() {
+                    "模型审批阻止".to_string()
+                } else {
+                    format!("模型审批阻止: {}", rs.join("; "))
+                };
+                let hint =
+                    "\n如果你认为这个命令是被冤枉阻止的，请先解释你的理由，然后重新尝试执行。";
+                ModelVerdict::Blocked(DispatchResult::blocked(
+                    format!("$ {}", cmd),
+                    format!("{}{}", reason, hint),
+                    effective_disposition,
+                ))
+            }
+            ModelApprovalDecision::RouteToHuman(rs) => {
+                // 判据与「开不开窗」同源（`can_ask_human`）：没有人工介入的场合，
+                // "转人审"就没有落点。Auto 下这一档的实际结果就是放行，事件按
+                // **实际结果**发 `approve` —— 否则工具卡上会一直挂着「模型建议人工
+                // 审批」，而根本没有问过任何人，用户会以为自己漏掉了什么。模型的
+                // 原判据留在日志里备查。
+                if can_ask_human(resolved_approval_mode, true, auto_force_approval) {
+                    // Agent 模式弹窗（Plan 默认也走 Auto 那一支，除非开了
+                    // 「Plan 模式也需要审批」——判定同样遵循 `resolved_approval_mode`）。
+                    emit_event(
+                        &ctx.app_handle,
+                        event_name,
+                        done("route_to_human", rs.clone()),
+                    );
+                    ModelVerdict::RouteToHuman(if rs.is_empty() { None } else { Some(rs) })
+                } else {
+                    log::info!(
+                        "模型审批判定 route_to_human，但当前模式没有人工介入的落点，直接放行：$ {}",
+                        cmd
+                    );
+                    emit_event(&ctx.app_handle, event_name, done("approve", vec![]));
+                    ModelVerdict::Proceed
+                }
+            }
+            ModelApprovalDecision::Approve => {
+                emit_event(&ctx.app_handle, event_name, done("approve", vec![]));
+                ModelVerdict::Proceed
+            }
+        }
     }
 
     /// 人工审批段 —— 打开审批对话框（预演、状态迁移、拒绝路径都在这里）。

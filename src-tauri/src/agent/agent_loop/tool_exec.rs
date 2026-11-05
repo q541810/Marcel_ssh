@@ -1,9 +1,8 @@
-//! 工具调用分批与执行（纯提取，自原 `agent_loop.rs` 搬出，除引用适配外
-//! 逐字符一致）：
+//! 工具调用分批与执行（自原 `agent_loop.rs` 搬出）：
 //! - `ToolCallBatch` / `group_tool_calls_into_batches`：按并发安全性分批；
 //! - `execute_tool_batches`：逐批执行 + 结果回填（原 `run_agent_loop`
-//!   回合体的工具批次段）；
-//! - `SingleToolExecution` / `execute_single_tool`：单工具执行与上下文组装；
+//!   回合体的工具批次段），并与本轮的模型审批预取并行推进；
+//! - `build_tool_ctx` / `execute_single_tool`：上下文组装与单工具执行；
 //! - `owner_conversation_for` / `interruption_notice`：作业归属与中断文案。
 
 use tauri::AppHandle;
@@ -12,7 +11,9 @@ use super::{is_task_cancelled, PersistedToolResult, MAX_CONCURRENT_TOOL_EXECUTIO
 use crate::agent::conversation_persister::ConversationPersister;
 use crate::agent::plan_handler::handle_plan_tool_output;
 use crate::agent::risk::Disposition;
-use crate::agent::tool_dispatcher::{ToolDispatcher, ToolResultEvent};
+use crate::agent::tool_dispatcher::{
+    ApprovalPrefetch, ApprovalSlot, ToolDispatcher, ToolResultEvent,
+};
 use crate::agent::tools::{ToolContext, ToolRegistry};
 use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
@@ -33,6 +34,26 @@ struct SingleToolExecution {
     persisted: PersistedToolResult,
     tool_msg: LlmMessage,
     was_cancelled_or_aborted: bool,
+}
+
+/// 一轮工具执行共用的环境（整轮不变的那些引用）。
+///
+/// 以前这十来个参数在 `execute_tool_batches` → 并发闭包 → `execute_single_tool`
+/// 之间逐个手传；模型审批预取也要拿同一套去组装工具上下文，收成一个结构体，
+/// 保证执行与预取用的是**同一份**环境（尤其是本机 / 远端的分流依据 `local_side`）。
+struct RoundEnv<'a> {
+    state: &'a AppState,
+    app: &'a AppHandle,
+    event_name: &'a str,
+    task_id: &'a str,
+    session_id: &'a str,
+    conversation_id: &'a str,
+    ssh: &'a SshManager,
+    dispatcher: &'a ToolDispatcher,
+    registry: &'a ToolRegistry,
+    config_dir: &'a std::path::Path,
+    local_side: bool,
+    agent_settings: &'a std::sync::Arc<AgentModeSettings>,
 }
 
 /// Groups a slice of `ToolCall`s into contiguous batches based on `is_concurrent_safe`.
@@ -74,11 +95,15 @@ pub(super) fn group_tool_calls_into_batches<'a>(
 }
 
 /// 执行整批 tool 调用并回填结果（原 `run_agent_loop` 的工具批次段 +
-/// 结果排序/持久化段，原样搬出）。
+/// 结果排序/持久化段）。
 ///
 /// Concurrent-safe tools (like `SubagentTool`) are batched and run in parallel using
 /// `futures::future::join_all`. Sequential tools are run one by one to preserve
 /// causal order, security policies (read-before-edit), and approval flows.
+///
+/// 开了模型审批、且这一轮不止一个调用时，各命令的模型审批在轮次开始时**一起**
+/// 发出（[`prefetch_approvals`]），与按顺序执行并行推进：执行顺序、人工审批、
+/// 取消都不变，只是轮到某条命令时它的审批结论多半已经在等着了。
 ///
 /// 返回 `task_was_cancelled`（批次执行期间是否观测到取消）。
 #[allow(clippy::too_many_arguments)]
@@ -99,91 +124,47 @@ pub(super) async fn execute_tool_batches(
     agent_settings_snapshot: &std::sync::Arc<AgentModeSettings>,
     tool_calls: &[ToolCall],
 ) -> bool {
-    let batches = group_tool_calls_into_batches(tool_calls, registry);
-    let mut all_results: Vec<SingleToolExecution> = Vec::with_capacity(tool_calls.len());
-    let mut task_was_cancelled = false;
+    let env = RoundEnv {
+        state,
+        app,
+        event_name,
+        task_id,
+        session_id,
+        conversation_id,
+        ssh,
+        dispatcher,
+        registry,
+        config_dir,
+        local_side,
+        agent_settings: agent_settings_snapshot,
+    };
 
-    for batch in batches {
-        if is_task_cancelled(state, task_id) {
-            task_was_cancelled = true;
-            break;
-        }
-
-        if batch.is_concurrent && batch.calls.len() > 1 {
-            log::info!(
-                "Agent task {} executing batch of {} concurrent tools in parallel (max concurrency: {})",
-                task_id,
-                batch.calls.len(),
-                MAX_CONCURRENT_TOOL_EXECUTIONS
-            );
-            let semaphore =
-                std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_TOOL_EXECUTIONS));
-            let mut futures = Vec::with_capacity(batch.calls.len());
-            for (idx, tc) in batch.calls {
-                let sem = semaphore.clone();
-                let disp = &dispatcher;
-                let s_ssh = &ssh;
-                let sid = &session_id;
-                let tid = &task_id;
-                let cid = &conversation_id;
-                let evn = &event_name;
-                let a = &app;
-                let st = &state;
-                let cdir = &config_dir;
-                let reg = &registry;
-                let msgs = &messages;
-                let local = local_side;
-                let asnap = &agent_settings_snapshot;
-                futures.push(async move {
-                    let _permit = sem.acquire().await.ok();
-                    execute_single_tool(
-                        idx, tc, disp, s_ssh, sid, tid, cid, evn, a, st, cdir, reg, msgs, local,
-                        asnap,
-                    )
-                    .await
-                });
-            }
-            let batch_results = futures::future::join_all(futures).await;
-            for res in batch_results {
-                if res.was_cancelled_or_aborted {
-                    task_was_cancelled = true;
-                }
-                all_results.push(res);
-            }
+    let (mut all_results, task_was_cancelled) = {
+        // 本轮执行期间历史只读：工具结果整轮跑完才写回（下方），所以执行与
+        // 审批预取看到的是同一份上下文。
+        let history: &[LlmMessage] = messages;
+        let (prefetch, slots) = match dispatcher.plan_approval_prefetch(tool_calls) {
+            Some((prefetch, slots)) => (Some(prefetch), slots),
+            None => (None, Vec::new()),
+        };
+        let work = run_batches(&env, tool_calls, history, prefetch.as_ref());
+        if slots.is_empty() {
+            work.await
         } else {
-            for (idx, tc) in batch.calls {
-                let res = execute_single_tool(
-                    idx,
-                    tc,
-                    dispatcher,
-                    ssh,
-                    session_id,
-                    task_id,
-                    conversation_id,
-                    event_name,
-                    app,
-                    state,
-                    config_dir,
-                    registry,
-                    messages,
-                    local_side,
-                    agent_settings_snapshot,
-                )
-                .await;
-                if res.was_cancelled_or_aborted {
-                    task_was_cancelled = true;
-                }
-                all_results.push(res);
-                if task_was_cancelled {
-                    break;
-                }
+            // 预取与执行在同一个 future 里并行推进；执行一结束（含取消）就整个
+            // 丢弃预取 —— 还在路上的审批请求随之取消，不会留下无主的后台请求。
+            let driver = async {
+                prefetch_approvals(&env, tool_calls, history, slots).await;
+                std::future::pending::<()>().await
+            };
+            tokio::pin!(work);
+            tokio::pin!(driver);
+            tokio::select! {
+                out = &mut work => out,
+                () = &mut driver => unreachable!("审批预取的驱动永不结束"),
             }
         }
-
-        if task_was_cancelled {
-            break;
-        }
-    }
+    };
 
     // Sort results by original index to ensure strict order alignment with tool_calls
     all_results.sort_by_key(|r| r.index);
@@ -215,6 +196,96 @@ pub(super) async fn execute_tool_batches(
     }
 
     task_was_cancelled
+}
+
+/// 逐批执行（并发安全的相邻调用并行、其余按序），返回各调用结果与是否观测到取消。
+async fn run_batches(
+    env: &RoundEnv<'_>,
+    tool_calls: &[ToolCall],
+    history: &[LlmMessage],
+    prefetch: Option<&ApprovalPrefetch>,
+) -> (Vec<SingleToolExecution>, bool) {
+    let batches = group_tool_calls_into_batches(tool_calls, env.registry);
+    let mut all_results: Vec<SingleToolExecution> = Vec::with_capacity(tool_calls.len());
+    let mut task_was_cancelled = false;
+
+    for batch in batches {
+        if is_task_cancelled(env.state, env.task_id) {
+            task_was_cancelled = true;
+            break;
+        }
+
+        if batch.is_concurrent && batch.calls.len() > 1 {
+            log::info!(
+                "Agent task {} executing batch of {} concurrent tools in parallel (max concurrency: {})",
+                env.task_id,
+                batch.calls.len(),
+                MAX_CONCURRENT_TOOL_EXECUTIONS
+            );
+            let semaphore = tokio::sync::Semaphore::new(MAX_CONCURRENT_TOOL_EXECUTIONS);
+            let futures = batch.calls.into_iter().map(|(idx, tc)| {
+                let sem = &semaphore;
+                async move {
+                    let _permit = sem.acquire().await.ok();
+                    execute_single_tool(env, idx, tc, history, prefetch).await
+                }
+            });
+            let batch_results = futures::future::join_all(futures).await;
+            for res in batch_results {
+                if res.was_cancelled_or_aborted {
+                    task_was_cancelled = true;
+                }
+                all_results.push(res);
+            }
+        } else {
+            for (idx, tc) in batch.calls {
+                let res = execute_single_tool(env, idx, tc, history, prefetch).await;
+                if res.was_cancelled_or_aborted {
+                    task_was_cancelled = true;
+                }
+                all_results.push(res);
+                if task_was_cancelled {
+                    break;
+                }
+            }
+        }
+
+        if task_was_cancelled {
+            break;
+        }
+    }
+
+    (all_results, task_was_cancelled)
+}
+
+/// 把本轮各调用的模型审批一起发出去，结论投进各自的 `slot`。
+///
+/// 并发上限沿用工具并发的上限（桌面 10 / 移动 2）。`join_all` 按调用顺序首次
+/// 轮询、tokio 信号量先到先得，所以超出上限时排在前面的调用先拿到名额 —— 最先
+/// 要执行的那条最先出结论，后面的在它执行期间继续判。
+async fn prefetch_approvals(
+    env: &RoundEnv<'_>,
+    tool_calls: &[ToolCall],
+    history: &[LlmMessage],
+    slots: Vec<ApprovalSlot>,
+) {
+    let semaphore = tokio::sync::Semaphore::new(MAX_CONCURRENT_TOOL_EXECUTIONS);
+    let futures = tool_calls.iter().zip(slots).map(|(tc, slot)| {
+        let sem = &semaphore;
+        async move {
+            let Ok(_permit) = sem.acquire().await else {
+                return;
+            };
+            if is_task_cancelled(env.state, env.task_id) {
+                return;
+            }
+            let ctx = build_tool_ctx(env, tc).await;
+            env.dispatcher
+                .prefetch_approval(tc, &ctx, env.event_name, history, slot)
+                .await;
+        }
+    });
+    futures::future::join_all(futures).await;
 }
 
 /// 作业归属的**根对话**。
@@ -272,62 +343,66 @@ pub(super) fn interruption_notice(tool_name: &str) -> String {
     }
 }
 
-/// Executes a single tool call with context assembly, cancellation checks, plan override,
-/// and frontend event emission.
+/// 组装一次工具调用的上下文（执行与模型审批预取共用这一处）。
 ///
 /// `local_side` = 本机子 agent（`LoopContext::local_side`）：ctx 的目标是用户自己这台电脑。
 /// `agent_settings` = 本任务启动时的设置快照（与 dispatcher 手里同一份），注入 ctx
 /// 供需要重算审批结论的工具使用（见 [`ToolContext::with_agent_mode_settings`]）。
-#[allow(clippy::too_many_arguments)]
+async fn build_tool_ctx(env: &RoundEnv<'_>, tc: &ToolCall) -> ToolContext {
+    let settings = env.state.settings.read().await;
+    let policy = std::sync::Arc::new(crate::agent::risk::SecurityPolicy::from_app_settings(
+        &settings,
+    ));
+    let ctx = ToolContext::new(
+        env.ssh.clone(),
+        env.session_id.to_string(),
+        env.conversation_id,
+        env.app.clone(),
+    )
+    .with_policy(policy)
+    .with_owner_conversation(owner_conversation_for(
+        env.state,
+        env.task_id,
+        env.conversation_id,
+    ))
+    .with_task_id(env.task_id)
+    .with_tool_call_id(&tc.id)
+    .with_event_name(env.event_name)
+    .with_config_dir(env.config_dir.to_path_buf())
+    .with_local_handlers(env.registry.local_handlers_arc())
+    .with_agent_mode_settings(env.agent_settings.clone());
+    // 命令执行管理器按**任务的目标机器**分流：本机子 agent 挂本机管理器并置
+    // `local_side`（`local_bash` 的最后一道闸门，见 `ToolContext::with_local_side`），
+    // 其余任务一字不变地挂远端管理器。
+    //
+    // 只在这里分流（而不是让工具自己判断）是刻意的：拿错 ctx 会把「本机命令」
+    // 顺着 SSH 打到服务器上，路由依据必须是组装处的事实，不能是模型给的参数。
+    if env.local_side {
+        ctx.with_command_exec(env.state.local_command_exec.clone())
+            .with_local_side(true)
+    } else {
+        ctx.with_command_exec(env.state.command_exec.clone())
+    }
+}
+
+/// Executes a single tool call with context assembly, cancellation checks, plan override,
+/// and frontend event emission.
 async fn execute_single_tool(
+    env: &RoundEnv<'_>,
     index: usize,
     tc: &ToolCall,
-    dispatcher: &ToolDispatcher,
-    ssh: &SshManager,
-    session_id: &str,
-    task_id: &str,
-    conversation_id: &str,
-    event_name: &str,
-    app: &AppHandle,
-    state: &AppState,
-    config_dir: &std::path::Path,
-    registry: &ToolRegistry,
     messages: &[LlmMessage],
-    local_side: bool,
-    agent_settings: &std::sync::Arc<AgentModeSettings>,
+    prefetch: Option<&ApprovalPrefetch>,
 ) -> SingleToolExecution {
-    let tool_ctx = {
-        let settings = state.settings.read().await;
-        let policy = std::sync::Arc::new(crate::agent::risk::SecurityPolicy::from_app_settings(
-            &settings,
-        ));
-        let ctx = ToolContext::new(
-            ssh.clone(),
-            session_id.to_string(),
-            conversation_id,
-            app.clone(),
-        )
-        .with_policy(policy)
-        .with_owner_conversation(owner_conversation_for(state, task_id, conversation_id))
-        .with_task_id(task_id)
-        .with_tool_call_id(&tc.id)
-        .with_event_name(event_name)
-        .with_config_dir(config_dir.to_path_buf())
-        .with_local_handlers(registry.local_handlers_arc())
-        .with_agent_mode_settings(agent_settings.clone());
-        // 命令执行管理器按**任务的目标机器**分流：本机子 agent 挂本机管理器并置
-        // `local_side`（`local_bash` 的最后一道闸门，见 `ToolContext::with_local_side`），
-        // 其余任务一字不变地挂远端管理器。
-        //
-        // 只在这里分流（而不是让工具自己判断）是刻意的：拿错 ctx 会把「本机命令」
-        // 顺着 SSH 打到服务器上，路由依据必须是组装处的事实，不能是模型给的参数。
-        if local_side {
-            ctx.with_command_exec(state.local_command_exec.clone())
-                .with_local_side(true)
-        } else {
-            ctx.with_command_exec(state.command_exec.clone())
-        }
-    };
+    let RoundEnv {
+        state,
+        app,
+        event_name,
+        task_id,
+        dispatcher,
+        ..
+    } = *env;
+    let tool_ctx = build_tool_ctx(env, tc).await;
 
     if is_task_cancelled(state, task_id) {
         log::info!(
@@ -368,7 +443,7 @@ async fn execute_single_tool(
     }
 
     let mut exec = dispatcher
-        .dispatch(tc, &tool_ctx, event_name, messages)
+        .dispatch(tc, &tool_ctx, event_name, messages, prefetch)
         .await;
 
     let cancelled_after = is_task_cancelled(state, task_id);

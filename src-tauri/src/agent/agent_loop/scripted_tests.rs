@@ -70,7 +70,13 @@ struct ModelScript {
     steps: VecDeque<ModelStep>,
     requests: Vec<Value>,
     errors: Vec<String>,
+    /// 并发闸门：命中判据的请求要等到闸门凑齐人数才回应（等不齐记一条错误）。
+    /// 用来证明「这几个请求是同时在路上的」—— 顺序发的话第一个会一直等不到第二个。
+    concurrency_gate: Option<ConcurrencyGate>,
 }
+
+/// 并发闸门：（哪些请求要被卡住，凑齐几个才放行的屏障）。
+type ConcurrencyGate = (fn(&Value) -> bool, Arc<tokio::sync::Barrier>);
 
 struct ScriptedModel {
     base_url: String,
@@ -138,7 +144,7 @@ async fn scripted_completion(
     State(script): State<Arc<Mutex<ModelScript>>>,
     Json(request): Json<Value>,
 ) -> Response {
-    let (frames, error_status, abort_stream) = {
+    let (frames, error_status, abort_stream, gate) = {
         let mut script = script.lock();
         script.requests.push(request.clone());
         let Some(step) = script.steps.pop_front() else {
@@ -150,8 +156,23 @@ async fn scripted_completion(
             script.errors.push(error.clone());
             return (StatusCode::BAD_REQUEST, error).into_response();
         }
-        (step.frames, step.error_status, step.abort_stream)
+        let gate = script
+            .concurrency_gate
+            .as_ref()
+            .filter(|(matches, _)| matches(&request))
+            .map(|(_, barrier)| (step.label, barrier.clone()));
+        (step.frames, step.error_status, step.abort_stream, gate)
     };
+    if let Some((label, barrier)) = gate {
+        if tokio::time::timeout(Duration::from_secs(3), barrier.wait())
+            .await
+            .is_err()
+        {
+            script.lock().errors.push(format!(
+                "{label}: 3 秒内没等到同批的其它请求 —— 这些请求是一个接一个发的，不是并行"
+            ));
+        }
+    }
     if let Some(status) = error_status {
         // Probing 阶段失败：请求根本没进流，客户端按 NetPolicy 决定是否重试。
         return (
@@ -3309,6 +3330,209 @@ fn scripted_production_loop_subagent_ask_parent_pause_and_resume() {
         );
 
         model.assert_consumed();
+        app.unlisten(event_listener);
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}
+
+// ═══════════════════════ 场景：同一轮多条命令的模型审批并行 ═══════════════════════
+//
+// 开启「执行前模型审批」，一轮里两条命令。审批模型的请求被并发闸门卡住：两个
+// 审批请求都到了才一起回应 —— 旧的「审 1 → 跑 1 → 审 2 → 跑 2」里第一个审批会
+// 一直等不到第二个，闸门超时记错。验收：两条审批同时在路上、命令仍按调用顺序
+// 执行、结果按序回灌。
+
+const PAR_CMD_A: &str = "Write-Output approve-first";
+const PAR_OUT_A: &str = "approve-first\n";
+const PAR_CMD_B: &str = "Write-Output approve-second";
+const PAR_OUT_B: &str = "approve-second\n";
+const PAR_PROMPT: &str = "开着模型审批，一轮里跑两条命令";
+const PAR_FINAL: &str = "两条命令都审过并跑完了。";
+
+/// 命令审批请求（`ModelApprover` 发的）：不带工具，user 消息里带「待审批命令」。
+fn is_approval_request(request: &Value) -> bool {
+    let no_tools = request["tools"]
+        .as_array()
+        .map_or(true, |tools| tools.is_empty());
+    let asks_approval = request["messages"].as_array().is_some_and(|messages| {
+        messages.iter().any(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("待审批命令"))
+        })
+    });
+    no_tools && asks_approval
+}
+
+fn approval_step(label: &'static str) -> ModelStep {
+    ModelStep {
+        label,
+        check: Box::new(|request| {
+            require(is_approval_request(request), "不是命令审批请求")?;
+            let text = request.to_string();
+            require(
+                text.contains(PAR_CMD_A) || text.contains(PAR_CMD_B),
+                "审批请求里没有本轮的命令",
+            )
+        }),
+        frames: text_frames(r#"{"decision":"approve","reasons":[]}"#),
+        error_status: None,
+        abort_stream: false,
+    }
+}
+
+#[test]
+fn scripted_production_loop_model_approvals_run_in_parallel() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let model = ScriptedModel::start(vec![
+            ModelStep {
+                label: "parallel initial",
+                check: Box::new(|request| {
+                    let messages = request_messages(request)?;
+                    require(
+                        messages
+                            .last()
+                            .is_some_and(|m| m["role"] == "user" && m["content"] == PAR_PROMPT),
+                        "missing parallel scenario prompt",
+                    )
+                }),
+                frames: two_tool_frames("par-a", PAR_CMD_A, "par-b", PAR_CMD_B),
+                error_status: None,
+                abort_stream: false,
+            },
+            approval_step("approval #1"),
+            approval_step("approval #2"),
+            ModelStep {
+                label: "parallel feedback",
+                check: Box::new(|request| {
+                    let messages = request_messages(request)?;
+                    require(
+                        messages
+                            .iter()
+                            .map(|m| m["role"].as_str().unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            == vec!["system", "user", "assistant", "tool", "tool"],
+                        "两个工具结果必须按序回灌",
+                    )?;
+                    require(
+                        messages[3]["tool_call_id"] == "par-a"
+                            && messages[3]["content"] == PAR_OUT_A,
+                        "first result missing or out of order",
+                    )?;
+                    require(
+                        messages[4]["tool_call_id"] == "par-b"
+                            && messages[4]["content"] == PAR_OUT_B,
+                        "second result missing or out of order",
+                    )
+                }),
+                frames: text_frames(PAR_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+        ])
+        .await;
+        model.script.lock().concurrency_gate =
+            Some((is_approval_request, Arc::new(tokio::sync::Barrier::new(2))));
+
+        let exec = Arc::new(
+            ScriptedExec::default()
+                .with_output(PAR_CMD_A, PAR_OUT_A)
+                .with_output(PAR_CMD_B, PAR_OUT_B),
+        );
+        let state = isolated_state(dir.path(), &model.base_url, exec.clone());
+        state
+            .settings
+            .mutate_transient(|s| {
+                s.agent_mode_settings.enable_model_command_approval = true;
+                s.agent_mode_settings.command_approval_engine =
+                    crate::config::settings::CommandApprovalEngine::Model;
+            })
+            .await;
+        app.manage(state.clone());
+        let parent = state
+            .conversation_db
+            .create_conversation("scripted-connection", "parent")
+            .unwrap();
+        state.agent_tasks.write().insert(
+            "scripted-parent".into(),
+            parent_task_fixture("scripted-parent", &parent.id),
+        );
+        let (events, event_listener) = capture_events(&app);
+        let manager = AgentManager::new(state.clone());
+        let conversation = state
+            .conversation_db
+            .create_sub_conversation("scripted-connection", "parallel", &parent.id)
+            .unwrap();
+
+        let handle = manager
+            .spawn(
+                app.handle(),
+                local_spec(
+                    "scripted-parallel",
+                    &conversation.id,
+                    PAR_PROMPT,
+                    AgentMode::Auto,
+                ),
+            )
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("parallel approval round completed");
+        model.assert_consumed();
+        assert_eq!(result.as_deref(), Some(PAR_FINAL));
+        assert_eq!(
+            *exec.commands.lock(),
+            vec![PAR_CMD_A, PAR_CMD_B],
+            "审批并行，但命令仍按调用顺序到达 transport"
+        );
+
+        // 两条命令的「审批中」都要在第一条命令出结果之前亮起（同时在审）。
+        let channel = "agent://stream/scripted-parallel";
+        let stream: Vec<Value> = events
+            .lock()
+            .iter()
+            .filter(|e| e["event"] == channel)
+            .map(|e| e["data"].clone())
+            .collect();
+        let position = |kind: &str, id: &str| {
+            stream
+                .iter()
+                .position(|d| d["type"] == kind && d["toolCallId"] == id)
+                .unwrap_or_else(|| panic!("缺少 {kind} 事件（{id}）"))
+        };
+        let first_result = position("toolResult", "par-a");
+        assert!(position("modelApprovalStart", "par-a") < first_result);
+        assert!(
+            position("modelApprovalStart", "par-b") < first_result,
+            "第二条命令的审批必须在第一条执行完之前就已发出"
+        );
+        for id in ["par-a", "par-b"] {
+            let done = stream
+                .iter()
+                .find(|d| d["type"] == "modelApprovalDone" && d["toolCallId"] == id)
+                .unwrap_or_else(|| panic!("缺少 modelApprovalDone（{id}）"));
+            assert_eq!(done["decision"], "approve");
+            // 每个调用只审一次：预取的结论被执行段取用，没有再现判一遍。
+            assert_eq!(
+                stream
+                    .iter()
+                    .filter(|d| d["type"] == "modelApprovalStart" && d["toolCallId"] == id)
+                    .count(),
+                1,
+                "{id} 被审了不止一次"
+            );
+        }
+
         app.unlisten(event_listener);
     });
     drop(runtime);
