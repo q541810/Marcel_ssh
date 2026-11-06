@@ -12,6 +12,8 @@ import { JUMP_TTL_MS, useMessageJumpStore } from '@/stores/messageJumpStore';
 import { resolveJumpRequest } from '@/lib/jumpResolve';
 import SubagentAwaitingNotice from './SubagentAwaitingNotice';
 import { MessageJumpContext, type MessageJumpScope } from './messageJumpContext';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { MascotPerch, PERCH_RESERVE_PX } from '@/components/mascot/MascotPerch';
 
 const EMPTY_MESSAGES: AgentMessage[] = [];
 
@@ -51,6 +53,9 @@ export default memo(function AgentTranscript({
   const [nearBottom, setNearBottom] = useState(true);
   const previousConversation = useRef(conversationId);
   const lastMessage = messages[messages.length - 1];
+  const showMascot = useSettingsStore((s) => s.settings.showMascot ?? true);
+  // 有消息时玛瑟尔坐在消息区右下角；空白页（没消息 / 用不了助手）由 emptyState 里的大图负责
+  const perched = showMascot && canInteract && !!conversationId && messages.length > 0;
 
   // 跳转请求的执行方：请求属于本对话、本面板可见时，解析目标消息并交给列表句柄。
   // 对话还没切过来 / 消息还没载入时请求留在 store 里，messages 变化时重试；过期丢弃。
@@ -169,9 +174,17 @@ export default memo(function AgentTranscript({
           {canInteract && conversationId && (
             <SubagentAwaitingNotice conversationId={conversationId} messages={messages} mobile={mobile} />
           )}
+          {perched && <div aria-hidden="true" style={{ height: PERCH_RESERVE_PX }} />}
         </div>
       </div>
-      {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (mobile ? (
+      {mobile && perched && conversationId && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
+          <div className="agent-content-column flex justify-end">
+            <MascotPerch conversationId={conversationId} />
+          </div>
+        </div>
+      )}
+      {mobile && shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
@@ -181,23 +194,28 @@ export default memo(function AgentTranscript({
         >
           回到底部
         </button>
-      ) : (
+      )}
+      {!mobile && (perched || shouldShowScrollToBottomFab(nearBottom, messages.length > 0)) && (
         // 桌面端贴内容列右缘而不是面板右缘：限宽布局下面板右缘在两侧留白里，会压在宽度把手上。
-        // 整层 pointer-events-none，只有按钮接事件，不挡下面的消息。
-        <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 px-3">
-          <div className="agent-content-column flex justify-end">
-            <button
-              type="button"
-              onClick={() => scrollToBottom('smooth')}
-              title="回到底部"
-              aria-label="回到底部"
-              className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-state-mid"
-            >
-              <ArrowDown className="h-4 w-4" />
-            </button>
+        // 整层 pointer-events-none，只有按钮和玛瑟尔的身子接事件，不挡下面的消息。
+        // 玛瑟尔坐在消息区下沿（= 计划条 / 输入框上沿），「回到底部」排在它左边，两者不重叠。
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3">
+          <div className="agent-content-column flex items-end justify-end gap-2">
+            {shouldShowScrollToBottomFab(nearBottom, messages.length > 0) && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom('smooth')}
+                title="回到底部"
+                aria-label="回到底部"
+                className="pointer-events-auto mb-3 flex h-8 w-8 items-center justify-center rounded-full border border-edge-strong bg-zinc-800/95 text-zinc-100 shadow-lg backdrop-blur-sm transition-colors hover:bg-state-mid"
+              >
+                <ArrowDown className="h-4 w-4" />
+              </button>
+            )}
+            {perched && conversationId && <MascotPerch conversationId={conversationId} />}
           </div>
         </div>
-      ))}
+      )}
     </div>
   );
 });

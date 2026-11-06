@@ -244,6 +244,7 @@ fn setting_label(key: &str) -> &str {
         "uiTheme" => "应用主题",
         "defaultAgentMode" => "默认 Agent 模式",
         "privacyMode" => "隐私模式",
+        "showMascot" => "显示玛瑟尔",
         "llmRegistry" => "模型服务",
         "agentModeSettings" => "Agent 策略",
         "experimentalSettings" => "工具能力",

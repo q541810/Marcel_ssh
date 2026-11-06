@@ -927,6 +927,10 @@ pub struct AppSettings {
     /// 同上：后端不读，只负责持久化。
     #[serde(default)]
     pub privacy_mode: bool,
+    /// 显示吉祥物玛瑟尔（Agent 面板空白页与消息区右下角的像素小人）。
+    /// 后端不读，只负责持久化。
+    #[serde(default = "default_true")]
+    pub show_mascot: bool,
     /// 更新方式（三态）：自动更新 / 仅提醒 / 关闭。旧配置（1.4.0 及更早）没有
     /// 这个字段，由下面的 `auto_update` 推导 —— 见 `migrate_update_mode_from_legacy`。
     #[serde(default)]
@@ -1016,6 +1020,7 @@ impl Default for AppSettings {
             disable_all_injections: false,
             fold_completed_turns: true,
             privacy_mode: false,
+            show_mascot: true,
             update_mode: UpdateMode::Auto,
             auto_update: default_true(),
         }

@@ -34,6 +34,19 @@ export function ConversationDisplaySection() {
         />
       </SettingItem>
       <SettingItem
+        id="show-mascot"
+        label="显示玛瑟尔"
+        description="Agent 面板里的像素小人：干活时按遥控器、等你确认时举手、做完了跳起来；关掉后只保留文字状态"
+        sectionId="settings-display"
+        keywords={['mascot', 'marcel', 'pet', '吉祥物', '玛瑟尔', '小人', '动画', '对话显示']}
+      >
+        <Toggle
+          checked={settings.showMascot ?? true}
+          onChange={(checked) => update({ showMascot: checked })}
+          label="开启后玛瑟尔会跟着任务状态做动作"
+        />
+      </SettingItem>
+      <SettingItem
         id="privacy-mode"
         label="隐私模式"
         description="开启后所有界面隐藏 IP 地址和端口（连接功能不受影响）"

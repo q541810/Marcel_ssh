@@ -51,6 +51,8 @@ import { SubconversationBar } from "./panel/SubconversationBar";
 import { RollbackNoticeBar } from "./panel/RollbackNoticeBar";
 import { ForkOriginBar } from "./panel/ForkOriginBar";
 import { getErrorMessage } from "@/lib/errors";
+import { MascotHero } from "@/components/mascot/MascotPerch";
+import { mascotForEmptyState, type MascotEmptyReason } from "@/lib/mascot/mood";
 
 export default function AgentPanel() {
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
@@ -116,6 +118,13 @@ export default function AgentPanel() {
   );
 
   const canInteract = activeSession?.status === "connected";
+  const showMascot = useSettingsStore((s) => s.settings.showMascot ?? true);
+  // 空白页上的玛瑟尔跟连接状态走；有玛瑟尔时文字贴着它，没有时保持原来的上边距
+  const emptyReason: MascotEmptyReason = !activeSession
+    ? "no-session"
+    : activeSession.status === "connected" ? "ready" : activeSession.status === "connecting"
+      ? "connecting" : activeSession.status === "error" ? "error" : "disconnected";
+  const emptyTextGap = showMascot ? "mt-3" : "mt-8";
 
   // 当前对话是否为子agent对话（subagent 工具派发）：输入区替换为"返回主对话"条
   const activeConversation = activeConversationId
@@ -462,36 +471,41 @@ export default function AgentPanel() {
         onFork={canInteract && !isSubConversation ? handleForkAt : undefined}
         userJustSentRef={userJustSentRef}
         emptyState={<>
+          {showMascot && (
+            <div className="mt-8">
+              <MascotHero state={mascotForEmptyState(emptyReason)} />
+            </div>
+          )}
           {!activeSession && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>请先连接 SSH 服务器。</p>
               <p className="mt-1">连接成功后即可使用智能助手。</p>
             </div>
           )}
           {activeSession?.status === "connecting" && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>正在连接 SSH 服务器...</p>
               <p className="mt-1">连接完成后将加载智能助手会话。</p>
             </div>
           )}
           {activeSession?.status === "error" && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>连接失败，请在标签栏重新连接。</p>
             </div>
           )}
           {activeSession?.status === "disconnected" && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>连接已断开，请在标签栏重新连接。</p>
             </div>
           )}
           {canInteract && !activeConversationId && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>暂无会话。</p>
               <p className="mt-1">点击左上角 + 新建会话。</p>
             </div>
           )}
           {canInteract && activeConversationId && (
-            <div className="text-center text-zinc-500 text-sm mt-8">
+            <div className={`text-center text-zinc-500 text-sm ${emptyTextGap}`}>
               <p>暂无消息。</p>
               <p className="mt-1">描述您想要做的事情，智能助手将为您提供帮助。</p>
             </div>

@@ -65,6 +65,8 @@ import {
   type AgentEmptyStateReason,
 } from "./agentUi";
 import { resolveSessionDisplayName, sessionStatusLabel } from "./sessionUi";
+import { MascotHero } from "@/components/mascot/MascotPerch";
+import { mascotForEmptyState } from "@/lib/mascot/mood";
 
 interface MobileAgentHostProps {
   /** When false, host stays mounted but hidden (tab keep-alive). */
@@ -112,6 +114,7 @@ export default function MobileAgentHost({
     (s) => s.forceReasoningEffortPicker,
   );
   const emptyReason = agentEmptyStateReason(activeSession);
+  const showMascot = useSettingsStore((s) => s.settings.showMascot ?? true);
 
   const {
     stopActiveTask,
@@ -613,8 +616,13 @@ export default function MobileAgentHost({
         mobile
         visible={visible}
         emptyState={<>
+          {showMascot && (
+            <div className="mt-10">
+              <MascotHero state={mascotForEmptyState(emptyReason)} />
+            </div>
+          )}
           {emptyReason !== "ready" && (
-            <div className="mt-10 text-center text-sm text-zinc-500">
+            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-sm text-zinc-500`}>
               <p className="font-medium text-zinc-400">
                 {EMPTY_STATE_COPY[emptyReason].title}
               </p>
@@ -622,7 +630,7 @@ export default function MobileAgentHost({
             </div>
           )}
           {emptyReason === "ready" && (
-            <div className="mt-10 text-center text-sm text-zinc-500">
+            <div className={`${showMascot ? "mt-3" : "mt-10"} text-center text-sm text-zinc-500`}>
               <p className="font-medium text-zinc-400">
                 {activeConversationId ? "暂无消息" : "暂无会话"}
               </p>

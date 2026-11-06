@@ -1072,6 +1072,8 @@ export interface AppSettings {
    *  descriptions, etc.). The actual SSH connection still uses the real
    *  values — only their on-screen display is masked. */
   privacyMode: boolean;
+  /** 显示吉祥物玛瑟尔：Agent 面板空白页的大图，以及消息区右下角跟着任务状态动的小人。默认开。 */
+  showMascot: boolean;
   /**
    * 归档会话保留天数（**0 = 永不清理**），默认 30。
    * 归档项超过这个天数后，启动时由前端调用 `agent_purge_expired_archived` 永久删除。

@@ -137,6 +137,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   /** 默认开启：只折叠「已完成且过程较长的回合」。 */
   foldCompletedTurns: true,
   privacyMode: false,
+  showMascot: true,
   /** 归档会话保留 30 天后自动清理（0 = 永不清理），与后端默认值一致。 */
   archiveRetentionDays: 30,
   notificationSettings: DEFAULT_NOTIFICATION_SETTINGS,

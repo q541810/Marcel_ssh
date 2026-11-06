@@ -106,6 +106,16 @@ export function MobileAppearanceSection() {
         }
       />
       <MobileSettingRow
+        label="显示玛瑟尔"
+        description="Agent 页里的像素小人：干活时按遥控器、等你确认时举手、做完了跳起来；关掉后只保留文字状态"
+        trailing={
+          <Toggle
+            checked={settings.showMascot ?? true}
+            onChange={(checked) => update({ showMascot: checked })}
+          />
+        }
+      />
+      <MobileSettingRow
         label="隐私模式"
         description="开启后所有界面隐藏 IP 地址和端口（连接功能不受影响）"
         trailing={
