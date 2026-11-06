@@ -16,7 +16,7 @@ RUN set -e; \
     apt-get install -y --no-install-recommends \
         openssh-server sudo curl wget procps psmisc iproute2 net-tools lsof nginx python3 cron jq less vim-tiny nano \
         file tar gzip bzip2 xz-utils unzip zip git rsync ca-certificates tree findutils grep sed gawk coreutils util-linux \
-        netcat-openbsd tzdata; \
+        netcat-openbsd tzdata g++ make; \
     rm -rf /var/lib/apt/lists/*
 
 RUN set -e; \

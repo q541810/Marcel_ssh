@@ -8,11 +8,11 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureImage, IMAGE } from './image.mjs';
 
 const exec = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TASKS = path.join(HERE, '..', 'tasks');
-const IMAGE = 'marcel-eval-target:latest';
 
 const docker = async (...args) => {
   try {
@@ -71,6 +71,7 @@ async function selftest(id) {
   }
 }
 
+await ensureImage((l) => console.log(l));
 const ids = process.argv.slice(2).length ? process.argv.slice(2) : fs.readdirSync(TASKS).filter((d) => fs.existsSync(path.join(TASKS, d, 'task.json')));
 const queue = [...ids];
 const results = [];

@@ -19,6 +19,7 @@ import crypto from 'node:crypto';
 import net from 'node:net';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { ensureImage, IMAGE } from './docker/image.mjs';
 
 const execFileP = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +30,6 @@ const RESULTS_DIR = process.env.EVAL_RESULTS_DIR ? path.resolve(process.env.EVAL
 const LOCAL_DIR = path.join(HERE, '.local');
 const CONFIG_PATH = path.join(LOCAL_DIR, 'config.json');
 const WORK_DIR = path.join(LOCAL_DIR, 'work');
-const IMAGE = 'marcel-eval-target:latest';
 /** 用户硬要求：对 API 的并发不超过 4。中转站与「同时考几道」都按它封顶。 */
 const MAX_API_CONCURRENCY = 4;
 const SSH_PASSWORD = 'marcel-eval';
@@ -364,14 +364,6 @@ function startProxy() {
 }
 
 // ═══════════════════════ 靶机 ═══════════════════════
-
-async function ensureImage(onLog) {
-  const inspect = await docker('image', 'inspect', IMAGE, '--format', '{{.Id}}');
-  if (inspect.code === 0) return;
-  onLog?.('第一次使用：构建靶机镜像（几分钟）…');
-  const res = await run('docker', ['build', '-t', IMAGE, path.join(HERE, 'docker')]);
-  if (res.code !== 0) throw new Error(`靶机镜像构建失败：${res.stderr.slice(-2000)}`);
-}
 
 function tcpReady(port) {
   return new Promise((resolve) => {
