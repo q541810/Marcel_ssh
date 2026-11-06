@@ -2734,6 +2734,185 @@ fn scripted_production_loop_multi_tool_round_and_reload_closure() {
     dir.close().expect("remove the isolated scenario directory");
 }
 
+// ═══════════════════════ 场景 5b：建议卡片放完即收尾 ═══════════════════════
+//
+// 主 agent 一轮里「结论 + 只调 suggest_next」→ 卡片执行完就结束本轮，**不再请求
+// 模型**（再请求一次模型几乎必然补一句废话挂在卡片下面）。参数不合规的卡片照常
+// 回到模型让它改正。脚本里只排了该排的请求，多发一次就会被 `assert_consumed` /
+// 「没有脚本步骤」的报错抓到。
+
+const CARD_PROMPT: &str = "看一下服务状态";
+const CARD_CONCLUSION: &str = "服务一切正常 SCRIPTED-CARD-CONCLUSION。";
+const CARD_RETRY_PROMPT: &str = "再看一次";
+const CARD_RETRY_FINAL: &str = "改好了参数再放一次卡片。";
+
+fn conclusion_with_card_frames(call_id: &str, text: &str, arguments: &Value) -> Vec<Value> {
+    vec![
+        json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": call_id, "type": "function",
+             "function": {"name": "suggest_next", "arguments": arguments.to_string()}}
+        ]}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
+    ]
+}
+
+const CARD_SESSION: &str = "card-session";
+
+/// 主任务要有一条在册的 SSH 会话（`register_loopback_session`），否则开局即收场。
+fn main_spec(task_id: &str, conversation_id: &str, prompt: &str) -> AgentSpec {
+    AgentSpec {
+        role: AgentRole::Main,
+        session_id: CARD_SESSION.into(),
+        ..local_spec(task_id, conversation_id, prompt, AgentMode::Auto)
+    }
+}
+
+/// 主 agent 的请求只校验模型与流式（主 agent 的工具集里没有 `local_bash`）。
+fn main_request_messages(request: &Value) -> Result<&Vec<Value>, String> {
+    require(request["model"] == MODEL_NAME, "wrong model")?;
+    let messages = request["messages"].as_array().ok_or("missing messages")?;
+    require(
+        request["tools"].as_array().is_some_and(|tools| {
+            tools
+                .iter()
+                .any(|t| t["function"]["name"] == "suggest_next")
+        }),
+        "主 agent 的工具集里应有 suggest_next",
+    )?;
+    Ok(messages)
+}
+
+#[test]
+fn scripted_production_loop_suggest_card_ends_turn_without_extra_request() {
+    let Scenario { dir, app, runtime } = build_scenario();
+    runtime.block_on(async {
+        let good_card = json!({"question": "要我继续盯着吗？", "options": ["好的", "不用了"]});
+        let bad_card = json!({"question": "要我继续盯着吗？", "options": ["只有一个"]});
+        let model = ScriptedModel::start(vec![
+            ModelStep {
+                label: "conclusion with card",
+                check: Box::new(|request| {
+                    let messages = main_request_messages(request)?;
+                    require(
+                        messages.last().is_some_and(|m| m["content"] == CARD_PROMPT),
+                        "missing card prompt",
+                    )
+                }),
+                frames: conclusion_with_card_frames("card-1", CARD_CONCLUSION, &good_card),
+                error_status: None,
+                abort_stream: false,
+            },
+            ModelStep {
+                label: "invalid card",
+                check: Box::new(|request| {
+                    let messages = main_request_messages(request)?;
+                    require(
+                        messages
+                            .last()
+                            .is_some_and(|m| m["content"] == CARD_RETRY_PROMPT),
+                        "missing retry prompt",
+                    )
+                }),
+                frames: conclusion_with_card_frames("card-2", "先放一张", &bad_card),
+                error_status: None,
+                abort_stream: false,
+            },
+            ModelStep {
+                label: "invalid card feedback",
+                check: Box::new(|request| {
+                    let messages = main_request_messages(request)?;
+                    require(
+                        messages
+                            .last()
+                            .is_some_and(|m| m["role"] == "tool" && m["tool_call_id"] == "card-2"),
+                        "不合规的卡片必须把报错交回模型",
+                    )
+                }),
+                frames: text_frames(CARD_RETRY_FINAL),
+                error_status: None,
+                abort_stream: false,
+            },
+        ])
+        .await;
+        let state = isolated_state(
+            dir.path(),
+            &model.base_url,
+            Arc::new(ScriptedExec::default()),
+        );
+        app.manage(state.clone());
+        state
+            .ssh_manager
+            .register_loopback_session(CARD_SESSION)
+            .await;
+        let (events, event_listener) = capture_events(&app);
+        let manager = AgentManager::new(state.clone());
+        let conversation = state
+            .conversation_db
+            .create_conversation("scripted-connection", "card")
+            .unwrap();
+
+        // 1) 合规卡片：只发一次请求，结论就是返回值，回合正常完成
+        let handle = manager
+            .spawn(
+                app.handle(),
+                main_spec("scripted-card", &conversation.id, CARD_PROMPT),
+            )
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("card round completed");
+        model.assert_no_errors();
+        assert_eq!(result.as_deref(), Some(CARD_CONCLUSION));
+        assert_eq!(model.requests().len(), 1, "卡片放完后不得再请求模型");
+        let rows = state
+            .conversation_db
+            .load_messages(&conversation.id)
+            .unwrap();
+        assert_eq!(
+            rows.iter().map(|m| m.role.as_str()).collect::<Vec<_>>(),
+            vec!["user", "assistant", "tool"],
+            "卡片之后不应再有一条 assistant"
+        );
+        assert_eq!(rows[1].content, CARD_CONCLUSION);
+        assert_eq!(rows[0].turn_state.as_deref(), Some("completed"));
+        assert!(events_contain(
+            &events.lock(),
+            "agent://stream/scripted-card",
+            "done"
+        ));
+
+        // 2) 不合规卡片：报错交回模型，模型再说一句才结束
+        let reloaded = state
+            .conversation_db
+            .load_messages(&conversation.id)
+            .unwrap();
+        let mut spec = main_spec("scripted-card-retry", &conversation.id, CARD_RETRY_PROMPT);
+        spec.history = state
+            .conversation_db
+            .resolve_llm_history(&conversation.id, &snapshot_from_rows(&reloaded))
+            .unwrap();
+        let handle = manager.spawn(app.handle(), spec).await.unwrap();
+        let result = tokio::time::timeout(DEADLINE, handle.join())
+            .await
+            .expect("invalid card round completed");
+        model.assert_no_errors();
+        assert_eq!(result.as_deref(), Some(CARD_RETRY_FINAL));
+
+        model.assert_consumed();
+        app.unlisten(event_listener);
+    });
+    drop(runtime);
+    #[allow(deprecated)]
+    let managed_state = app
+        .unmanage::<AppState>()
+        .expect("unmanage isolated AppState");
+    drop(managed_state);
+    drop(app);
+    dir.close().expect("remove the isolated scenario directory");
+}
+
 // ═══════════════════════════ 场景 6：子代理回读窗口 ═══════════════════════════
 //
 // spawn 冻结 `parent_history_upto`（派发那一刻父会话最后一条已落库消息）→

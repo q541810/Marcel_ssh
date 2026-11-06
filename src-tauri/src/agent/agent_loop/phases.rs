@@ -717,8 +717,35 @@ pub(super) async fn finish_text_reply(
     //    见 `plan_finish_reminder`；提醒过之后仍要结束就放行，绝不把
     //    任务卡死）。唤醒轮不提醒：那个「已提醒」标记按任务算，唤醒一次
     //    就重来一遍，模型会被反复念同一句话。
-    let final_text = cleaned_content.clone();
+    finish_turn(
+        state,
+        app,
+        event_name,
+        task_id,
+        messages,
+        persister,
+        is_subtask,
+        is_notice_turn,
+        cleaned_content,
+    )
+    .await
+}
 
+/// 回合收尾守卫（自然结束与「只放了建议卡片」两条结束路径共用）：
+/// 作业结算告知注入 → 计划收尾提醒 → 取消兜底 → 发 Done 与完成通知。
+/// 调用前这一轮的消息必须已经落库并进了消息链。
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn finish_turn(
+    state: &AppState,
+    app: &AppHandle,
+    event_name: &str,
+    task_id: &str,
+    messages: &mut Vec<LlmMessage>,
+    persister: &ConversationPersister,
+    is_subtask: bool,
+    is_notice_turn: bool,
+    final_text: String,
+) -> TextReplyOutcome {
     // (a) 已结算待通知的作业：注入为一条通知，然后 continue 'round——
     //     回 for round 下一轮，让模型看到 notice 并 job_output 收集
     //     （不能 break 走 Done，那会把结局丢掉）。

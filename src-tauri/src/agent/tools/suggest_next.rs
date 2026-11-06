@@ -1,7 +1,10 @@
 //! `suggest_next` —— 任务做完后，在结论下面放一张「小建议」卡片，让用户一键回复。
 //!
 //! 和 `ask_user` 的本质区别：**不阻塞**。`ask_user` 停下 agent、等用户答完才继续；
-//! 这个工具只是把问题和几个选项记进对话，工具立刻返回，agent 本轮就此结束。用户
+//! 这个工具只是把问题和几个选项记进对话，工具立刻返回，agent 本轮就此结束。
+//! 「就此结束」由 agent loop 兑现（[`ends_turn`]）：一轮里只调了合规的卡片，执行完
+//! 就走收尾，**不再请求模型**——再请求一次，模型几乎每次都会补一句「本轮已结束」
+//! 之类的废话挂在卡片下面，还白花一轮（评测里 16 次卡片 16 次都这样）。用户
 //! 点某个选项，前端把它当作一条普通的用户消息发出（消息里带着「这是对哪次调用的
 //! 回信」），agent 在下一轮收到。卡片由前端按对话内容渲染，后端不维护任何待答状态。
 //!
@@ -60,6 +63,16 @@ fn parse_suggestion(params: &serde_json::Value) -> Result<(String, Vec<String>),
     Ok((question, options))
 }
 
+/// 这一轮的工具调用是不是「只放了一张（或几张）合规的建议卡片」：是的话 agent loop
+/// 执行完就收尾，不再请求模型。参数不合规的卡片会执行失败，模型得看到报错改正，
+/// 所以不算；和别的工具混在一起时，别的工具的结果模型还没看过，也不算。
+pub(crate) fn ends_turn(calls: &[crate::llm::provider::ToolCall]) -> bool {
+    !calls.is_empty()
+        && calls
+            .iter()
+            .all(|call| call.name == SUGGEST_NEXT_TOOL && parse_suggestion(&call.arguments).is_ok())
+}
+
 #[async_trait]
 impl AgentTool for SuggestNextTool {
     fn name(&self) -> &str {
@@ -101,7 +114,7 @@ impl AgentTool for SuggestNextTool {
             Ok((question, options)) => Ok(ToolOutput::ok(
                 "已展示建议卡片",
                 format!(
-                    "建议卡片「{question}」已显示在你的结论下面（选项：{}）。这是本轮的最后一个动作：不要再输出任何内容，直接结束本轮。用户点选后，会以一条新消息回复你。",
+                    "建议卡片「{question}」已显示在你的结论下面（选项：{}）。本轮已结束；用户点选后，会以一条新消息回复你。",
                     options.join(" / ")
                 ),
             )),
@@ -130,8 +143,39 @@ mod tests {
         assert!(parse_suggestion(&json!({"question": " ", "options": ["a", "b"]})).is_err());
         assert!(parse_suggestion(&json!({"question": "q", "options": ["a"]})).is_err());
         assert!(parse_suggestion(&json!({"question": "q", "options": ["a", " ", "b"]})).is_ok());
-        assert!(parse_suggestion(&json!({"question": "q", "options": ["a", "b", "c", "d", "e"]})).is_err());
+        assert!(
+            parse_suggestion(&json!({"question": "q", "options": ["a", "b", "c", "d", "e"]}))
+                .is_err()
+        );
         assert!(parse_suggestion(&json!({"question": "q"})).is_err());
+    }
+
+    #[test]
+    fn only_valid_card_only_rounds_end_the_turn() {
+        use crate::llm::provider::ToolCall;
+        let call = |name: &str, arguments: serde_json::Value| ToolCall {
+            id: format!("id-{name}"),
+            name: name.into(),
+            arguments,
+        };
+        let card = || {
+            call(
+                SUGGEST_NEXT_TOOL,
+                json!({"question": "要推送吗？", "options": ["好", "不要"]}),
+            )
+        };
+        assert!(ends_turn(&[card()]));
+        assert!(!ends_turn(&[]));
+        // 参数不合规：执行会失败，模型得看到报错改正
+        assert!(!ends_turn(&[call(
+            SUGGEST_NEXT_TOOL,
+            json!({"question": "q", "options": ["a"]})
+        )]));
+        // 和别的工具混在一起：别的工具的结果模型还没看过
+        assert!(!ends_turn(&[
+            card(),
+            call("bash", json!({"command": "ls"}))
+        ]));
     }
 
     #[test]

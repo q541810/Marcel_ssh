@@ -15,6 +15,7 @@ use crate::agent::task::AgentMode;
 use crate::agent::thinking_filter::strip_thinking_tags;
 use crate::agent::tool_dispatcher::ToolDispatcher;
 use crate::agent::tools::ask_parent::{mark_paused, parse_ask_arguments, ASK_PARENT_TOOL};
+use crate::agent::tools::suggest_next;
 use crate::agent::tools::ToolRegistry;
 use crate::config::settings::AgentModeSettings;
 use crate::emit_event;
@@ -32,8 +33,9 @@ mod tool_exec;
 mod scripted_tests;
 
 use self::phases::{
-    finish_text_reply, persist_assistant_tool_calls, prepare_turn, report_max_rounds_exceeded,
-    request_round_reply, resolve_summarizer_manager, RoundOutcome, TextReplyOutcome,
+    finish_text_reply, finish_turn, persist_assistant_tool_calls, prepare_turn,
+    report_max_rounds_exceeded, request_round_reply, resolve_summarizer_manager, RoundOutcome,
+    TextReplyOutcome,
 };
 use self::tool_exec::execute_tool_batches;
 
@@ -533,6 +535,11 @@ pub(crate) async fn run_agent_loop(
             }
         }
 
+        // 这一轮只放了建议卡片：卡片执行完就收尾，结论文字就是这条消息的正文
+        // （机制见 `tools/suggest_next.rs`）。要在正文被落库搬走之前取出来。
+        let card_conclusion = suggest_next::ends_turn(&tool_calls)
+            .then(|| strip_thinking_tags(&assistant_msg.content));
+
         // 3. 将带 tool_calls 的 assistant 消息写入 history。（原样搬出）
         //    落库 id 一并广播：这轮若带正文，前端那条 live 文本消息由此对上
         //    库内身份（无正文的纯工具轮前端没有对应消息，事件会被无害忽略）。
@@ -629,6 +636,28 @@ pub(crate) async fn run_agent_loop(
                 },
             );
             return None;
+        }
+
+        // 建议卡片已经展示：本轮就此结束，不再请求模型。收尾守卫与自然结束同一套
+        // （有作业刚结算仍会注入告知、回下一轮让模型读结局；计划没收尾仍会提醒）。
+        if let Some(conclusion) = card_conclusion {
+            match finish_turn(
+                &state,
+                &app,
+                &event_name,
+                &task_id,
+                &mut messages,
+                &persister,
+                is_subtask,
+                is_notice_turn,
+                conclusion,
+            )
+            .await
+            {
+                TextReplyOutcome::Continue => continue 'round,
+                TextReplyOutcome::Stop => return None,
+                TextReplyOutcome::Done(text) => return Some(text),
+            }
         }
     }
 
