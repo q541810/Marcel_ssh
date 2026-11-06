@@ -235,6 +235,16 @@ src-tauri/gen/android/app/build/outputs/apk/universal/release/
 
 正式签名需要自行配置仓库外的 keystore 与 `key.properties`。未配置时生成未签名 APK，可自行签名用于测试。
 
+### 评测 Agent 表现
+
+修改提示词或 Agent 能力后，可以用评测台检验效果：同一批考题，交给真实的 Marcel Agent 在全新的 Docker 靶机里独立完成，再自动判卷，统计通过率、token、用时与花费。两轮评测可以直接对比，看出哪些题变好或变差，以及这个差别是不是只是运气。
+
+```bash
+pnpm eval
+```
+
+需要先安装并打开 Docker Desktop。详细用法与出题方法见 [评测台使用教程](evals/README.md)。
+
 ### 开发插件
 
 - [插件开发指南](docs/plugin-development.md)：从零开始创建插件。
