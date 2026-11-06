@@ -1,8 +1,0 @@
-{
-  "title": "写个站点备份脚本",
-  "category": "长任务",
-  "difficulty": "hard",
-  "prompt": "帮我写个备份脚本放在 /usr/local/bin/backup-site.sh：把 /srv/site 打包成带日期的 tar.gz 存到 /backups 目录，旧的只保留最近 3 份。写好后顺手跑一遍。",
-  "timeoutSecs": 900,
-  "hidden": true
-}

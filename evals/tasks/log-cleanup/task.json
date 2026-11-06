@@ -1,8 +1,0 @@
-{
-  "title": "清理旧日志释放磁盘",
-  "category": "文件",
-  "difficulty": "medium",
-  "prompt": "/var/log/myapp 里的日志太占地方了，把 7 天前的旧日志清掉腾点空间。现在正在写的 app.log 和 audit 目录里的东西千万别动。",
-  "timeoutSecs": 600,
-  "hidden": false
-}

@@ -14,6 +14,7 @@
 import type { AgentMessage, ToolCallInfo } from '@/lib/types';
 import { isTurnStart, segmentTurns } from '@/lib/agentTurnFold';
 import { validateUserInput } from '@/lib/userInput';
+import { SUGGEST_NEXT_TOOL } from '@/lib/suggestNext';
 
 /** 一个已结束任务的收尾条信息（按「挂在哪条消息下面」索引）。 */
 export interface TurnFooter {
@@ -37,7 +38,9 @@ function isModelReply(message: AgentMessage): boolean {
  * - 任务还在跑：尾回合且 `tailActive`，或回合里还有执行中 / 加载中的消息；
  * - 回合收尾状态是 `running`：上次进程崩溃留下的半截回合，没有可信的终点；
  * - 任务不是以文字结束的（最后一段话之后还跟着工具消息 —— 比如在一次工具调用
- *   中途被停止）：此时那段话并不是「最后一条消息」，挂在它下面会夹在工具卡中间；
+ *   中途被停止）：此时那段话并不是「最后一条消息」，挂在它下面会夹在工具卡中间。
+ *   **`suggest_next` 除外**：小建议卡片的调用和结论在同一条消息里，它的结果（那张卡片）
+ *   跟在结论后面，不是「被打断」，而是任务正常的收尾；
  * - 回合里模型一句话都没说。
  */
 export function turnFooters(
@@ -62,7 +65,7 @@ export function turnFooters(
       }
     }
     if (target < 0) return;
-    if (turn.slice(target + 1).some((m) => m.role === 'tool')) return;
+    if (turn.slice(target + 1).some((m) => m.role === 'tool' && m.toolResult?.toolName !== SUGGEST_NEXT_TOOL)) return;
 
     footers.set(turn[target].id, {
       messageId: turn[target].id,

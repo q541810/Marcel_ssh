@@ -76,6 +76,21 @@ describe('turnFooters：收尾条挂在哪', () => {
     expect(turnFooters(msgs, { tailActive: false }).size).toBe(0);
   });
 
+  it('结论后面跟着小建议卡片（suggest_next 的结果）：照挂，复制 / 分叉不能因为出了卡片就没了', () => {
+    const carrier: AgentMessage = {
+      ...reply('a1', '搞定了', 9),
+      toolCalls: [{ id: 'c-s', name: 'suggest_next', arguments: {}, disposition: 'Auto' as never }],
+    };
+    const msgs = [user('u1'), reply('a0', '先看一下', 2), tool('t1', 'bash', 3), carrier, tool('s1', 'suggest_next', 10)];
+    const footers = turnFooters(msgs, { tailActive: false });
+    expect([...footers.keys()]).toEqual(['a1']);
+  });
+
+  it('小建议卡片之前还有别的工具在最后一段话之后：仍按「被打断」不挂', () => {
+    const msgs = [user('u1'), reply('a1', '我来执行', 2), tool('t1', 'bash', 3), tool('s1', 'suggest_next', 4)];
+    expect(turnFooters(msgs, { tailActive: false }).size).toBe(0);
+  });
+
   it('上次崩溃留下的 running 回合没有可信终点：不挂', () => {
     const anchor = { ...user('u1'), turnState: 'running' as const };
     expect(turnFooters([anchor, reply('a1', '半截', 5)], { tailActive: false }).size).toBe(0);
