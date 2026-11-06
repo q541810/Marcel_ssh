@@ -1145,6 +1145,7 @@ pub fn run() {
 
             // 无感更新器：启动清理 + 恢复未装上的安装包 + 后台检查循环。
             // 全平台启动；退出时静默安装只在 Windows 有意义（见下方 RunEvent::Exit）。
+            // 开发构建默认不跑自动更新（见 `updater::automatic_updates_enabled`）。
             crate::updater::init(app.handle());
 
             // 跨设备同步：清理旧版同步残留，起 actor。首轮同步要等前端订阅好事件后

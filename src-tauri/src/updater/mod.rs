@@ -165,9 +165,48 @@ impl UpdaterState {
     }
 }
 
-/// 应用启动时调用（`lib.rs` setup，仅 Windows）：清理上次残留、恢复
-/// 未装上的安装包、拉起后台检查循环。
+/// 开发构建（`pnpm tauri dev` / `pnpm tauri android dev`）里读这个环境变量
+/// 指向本地模拟更新源；设了它才算「开发者主动要测更新链路」。
+#[cfg(debug_assertions)]
+const DEV_UPDATE_SOURCE_ENV: &str = "MARCEL_LATEST_JSON_URL";
+
+/// 是否运行**自动**更新行为（后台检查循环、自动下载、退出时自动安装、启动时
+/// 清理更新缓存目录）。
+///
+/// 发布版恒为 `true`，实际行为再由 `settings.updateMode` 决定。开发版默认
+/// `false`：dev 的版本号与本机装着的发布版相同、更新缓存目录也是**同一个**
+/// （按 identifier 定位），放开会出两种事故 —— 后台把正式包下进来、关掉 dev
+/// 时退出钩子静默运行安装器覆盖本机发布版；以及启动清理按 dev 的版本号把发布版
+/// 下好待装的包当成「已装过」删掉。只有设了 [`DEV_UPDATE_SOURCE_ENV`]（配合
+/// `scripts/update-test-source.mjs` 测整条链路）才放开。
+///
+/// 设置页里用户当面点的「检查更新 / 后台下载 / 立即安装」不受此限制 —— 那是
+/// 显式动作，dev 下也要能点来看界面。
+pub(crate) fn automatic_updates_enabled() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        std::env::var_os(DEV_UPDATE_SOURCE_ENV).is_some()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        true
+    }
+}
+
+/// 应用启动时调用（`lib.rs` setup，全平台）：清理上次残留、恢复
+/// 未装上的安装包、拉起后台检查循环。开发版默认只挂状态、其余全跳过
+/// （见 [`automatic_updates_enabled`]）。
 pub fn init(app: &AppHandle) {
+    if !automatic_updates_enabled() {
+        log::info!(
+            "开发构建：已停用自动更新（不清理更新缓存、不后台检查、退出不自动安装）；\
+             要测更新链路请设 MARCEL_LATEST_JSON_URL，见 scripts/update-test-source.mjs"
+        );
+        // 状态仍要挂上：设置页的手动「检查更新」等命令依赖它。
+        app.manage(UpdaterState::new(UpdateState::Idle, None));
+        return;
+    }
+
     let current_version = app.package_info().version.clone();
 
     let restored = match update_dir(app) {
@@ -476,6 +515,10 @@ pub fn on_update_mode_changed(app: &AppHandle, previous: UpdateMode, next: Updat
         return;
     }
     if previous.checks_for_updates() {
+        return;
+    }
+    // 开发版停用了自动更新：打开开关也不补查（否则等于绕过 `init` 的门控）。
+    if !automatic_updates_enabled() {
         return;
     }
     log::info!("更新方式已打开，立即检查一次新版本");

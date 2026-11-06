@@ -49,7 +49,7 @@ pub(super) fn install_on_exit(app: &AppHandle) {
         if !inner.manual_install_requested && !auto_install_allowed(app) {
             if let Some(p) = &inner.pending {
                 log::info!(
-                    "更新方式为「关闭」，跳过退出时自动安装 v{}（安装包保留，可在设置页手动安装）",
+                    "自动更新未启用（更新方式为「关闭」或开发构建），跳过退出时自动安装 v{}（安装包保留，可在设置页手动安装）",
                     p.version
                 );
             }
@@ -83,6 +83,11 @@ pub(super) fn install_on_exit(app: &AppHandle) {
 /// 正常完成的自动下载）。
 #[cfg(windows)]
 fn auto_install_allowed(app: &AppHandle) -> bool {
+    // 开发版：手动下载好的包也不许在关掉 dev 时静默覆盖本机发布版
+    // （见 `super::automatic_updates_enabled`）；点过「立即安装」的照装。
+    if !super::automatic_updates_enabled() {
+        return false;
+    }
     let Some(state) = app.try_state::<crate::AppState>() else {
         return true;
     };
