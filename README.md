@@ -239,11 +239,13 @@ src-tauri/gen/android/app/build/outputs/apk/universal/release/
 
 修改提示词或 Agent 能力后，可以用评测台检验效果：同一批考题，交给真实的 Marcel Agent 在全新的 Docker 靶机里独立完成，再自动判卷，统计通过率、token、用时与花费。两轮评测可以直接对比，看出哪些题变好或变差，以及这个差别是不是只是运气。
 
+需要先安装 Docker Desktop。在 Windows 上双击 `scripts\eval.cmd` 即可启动（会自动打开 Docker Desktop 和评测台网页），也可以运行：
+
 ```bash
 pnpm eval
 ```
 
-需要先安装并打开 Docker Desktop。详细用法与出题方法见 [评测台使用教程](evals/README.md)。
+详细用法与出题方法见 [评测台使用教程](evals/README.md)。
 
 ### 开发插件
 
