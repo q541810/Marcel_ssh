@@ -172,7 +172,27 @@ h2 { font-size: 17px; letter-spacing: -0.01em; margin: 32px 0 12px; font-weight:
 .d { width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2); border: 1.5px solid var(--line-strong); }
 .d.pass { background: var(--pass); border-color: var(--pass); }
 .d.fail { background: var(--fail); border-color: var(--fail); }
+.d.partial { border-color: var(--pass); }
+.d.redline { border-radius: 2px; background: var(--fail); border-color: var(--fail); transform: rotate(45deg) scale(.82); }
 .d.void { background: transparent; border-color: var(--void); border-style: dashed; }
+/* 一个模型的成绩分布：满分 / 部分 / 零分 / 红线 */
+.dist { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--surface-2); margin-top: 10px; gap: 1px; }
+.dist i { display: block; height: 100%; }
+.dist .full { background: var(--pass); } .dist .part { background: color-mix(in srgb, var(--pass) 45%, transparent); }
+.dist .zero { background: color-mix(in srgb, var(--fail) 55%, transparent); } .dist .red { background: var(--fail); }
+.dist-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12px; color: var(--text-2); }
+.dist-legend b { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+.dist-legend .redtxt, .dist-legend .redtxt b { color: var(--fail); }
+.points { list-style: none; margin: 10px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.points li { display: flex; gap: 10px; align-items: baseline; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.points li:last-child { border-bottom: none; }
+.points .ic { width: 16px; flex: none; font-weight: 700; text-align: center; }
+.points .ok .ic { color: var(--pass); } .points .no .ic { color: var(--text-3); } .points .no { color: var(--text-2); }
+.points .ded .ic, .points .ded { color: var(--fail); } .points .red { background: var(--fail-soft); color: var(--fail); font-weight: 600; }
+.points .w { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--text-3); font-size: 12px; white-space: nowrap; }
+.points .src { font-size: 11px; color: var(--text-3); margin-left: 6px; }
+.report-box { margin-top: 12px; padding: 10px 14px; border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.report-box.bad { background: var(--fail-soft); }
 .d.run { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
 .d.prep { border-color: var(--accent); background: var(--accent-soft); }
 .frac { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
@@ -186,6 +206,8 @@ h2 { font-size: 17px; letter-spacing: -0.01em; margin: 32px 0 12px; font-weight:
 .verdict-pill.pass { background: var(--pass-soft); color: var(--pass); }
 .verdict-pill.fail { background: var(--fail-soft); color: var(--fail); }
 .verdict-pill.void { background: var(--void-soft); color: var(--void); }
+.verdict-pill.partial { background: var(--accent-soft); color: var(--accent); }
+.verdict-pill.redline { background: var(--fail); color: #fff; }
 .verdict-pill.noise { background: var(--surface-2); color: var(--text-2); }
 .note-box { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
 
@@ -338,27 +360,48 @@ function toast(text) {
 }
 
 // ═══════════════════════ 统计 ═══════════════════════
+/** 一场的分数。打分改造前的老成绩没有 score：通过算 100，没过算 0。 */
+const scoreOf = (s) => (s.score != null ? s.score : s.verdict === 'pass' ? 100 : 0);
+/** 一组考试的分数统计（作废的不算）。 */
 function counted(attempts) {
   const done = attempts.filter((a) => a.state === 'done' && a.summary && a.summary.verdict !== 'void');
-  const pass = done.filter((a) => a.summary.verdict === 'pass').length;
-  return { n: done.length, pass, rate: done.length ? pass / done.length : null };
+  const scores = done.map((a) => scoreOf(a.summary));
+  const n = scores.length;
+  const mean = n ? scores.reduce((x, y) => x + y, 0) / n : null;
+  const variance = n > 1 ? scores.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1) : 0;
+  const by = (v) => done.filter((a) => a.summary.verdict === v).length;
+  return { n, mean, variance, full: by('pass'), partial: by('partial'), zero: by('fail'), red: by('redline') };
 }
-/** Wilson 区间：小样本下比 ±2σ 靠谱。 */
-function wilson(pass, n, z = 1.96) {
-  if (!n) return [0, 1];
-  const p = pass / n, d = 1 + z * z / n;
-  const c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
-  return [Math.max(0, c - h), Math.min(1, c + h)];
+/** 平均分大概落在哪个范围（约 95%）。样本少于 2 场算不出来。 */
+function meanRange(c) {
+  if (c.n < 2) return null;
+  const h = 1.96 * Math.sqrt(c.variance / c.n);
+  return [Math.max(0, c.mean - h), Math.min(100, c.mean + h)];
 }
-/** 两比例差异是否显著（双侧 z 检验，约 95%）。 */
+/** 两组平均分的差别是否超出运气范围（约 95%）。 */
 function significant(a, b) {
   if (!a.n || !b.n) return false;
-  const p = (a.pass + b.pass) / (a.n + b.n);
-  const se = Math.sqrt(p * (1 - p) * (1 / a.n + 1 / b.n));
-  if (se === 0) return a.rate !== b.rate;
-  return Math.abs((a.rate - b.rate) / se) >= 1.96;
+  const se = Math.sqrt(a.variance / a.n + b.variance / b.n);
+  if (se === 0) return a.mean !== b.mean;
+  return Math.abs((a.mean - b.mean) / se) >= 1.96;
 }
 const pct = (r) => (r == null ? '—' : `${Math.round(r * 100)}%`);
+const fmtScore = (x) => (x == null ? '—' : `${Math.round(x)}`);
+const scoreCls = (c) => (c.mean == null ? '' : c.red ? 'bad' : c.mean >= 90 ? 'good' : c.mean <= 10 ? 'bad' : 'mid');
+function distBlock(c) {
+  if (!c.n) return '';
+  const seg = (k, v) => (v ? `<i class="${k}" style="flex:${v}"></i>` : '');
+  return `<div class="dist">${seg('full', c.full)}${seg('part', c.partial)}${seg('zero', c.zero)}${seg('red', c.red)}</div>
+    <div class="dist-legend"><span>满分 <b>${c.full}</b></span><span>部分得分 <b>${c.partial}</b></span><span>零分 <b>${c.zero}</b></span>${c.red ? `<span class="redtxt">踩红线 <b>${c.red}</b></span>` : ''}</div>`;
+}
+const GROUP_TEXT = { regression: '回归组', challenge: '挑战组' };
+const VERDICT_TEXT ={ pass: '满分', partial: '部分得分', fail: '零分', redline: '踩红线', void: '作废' };
+function verdictPill(s) {
+  if (s.verdict === 'void') return '<span class="verdict-pill void">作废</span>';
+  if (s.verdict === 'redline') return '<span class="verdict-pill redline">踩红线 · 0 分</span>';
+  const sc = scoreOf(s);
+  return `<span class="verdict-pill ${s.verdict === 'pass' ? 'pass' : s.verdict === 'partial' ? 'partial' : 'fail'}">${sc} 分</span>`;
+}
 const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${Math.round(n)}`);
 const fmtDur = (ms) => (ms == null ? '—' : ms >= 60000 ? `${Math.floor(ms / 60000)}分${Math.round((ms % 60000) / 1000)}秒` : `${Math.round(ms / 1000)}秒`);
 const fmtTime = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
@@ -370,8 +413,15 @@ function modelStats(run, modelId) {
   const sums = atts.filter((a) => a.state === 'done' && a.summary && a.summary.verdict !== 'void').map((a) => a.summary);
   const costs = sums.map((s) => s.cost).filter((v) => v != null);
   const totalCost = costs.length ? costs.reduce((a, b) => a + b, 0) : null;
+  const scoreSum = sums.reduce((a, s) => a + scoreOf(s), 0);
+  const reports = sums.map((s) => s.report).filter((r) => r && r.score != null);
   return {
     ...c,
+    reportScore: avg(reports.map((r) => r.score)),
+    reportN: reports.length,
+    misreports: reports.filter((r) => r.misreport).length,
+    // 每拿到 100 分（相当于做满一道题）花多少钱
+    costPerFull: totalCost != null && scoreSum ? totalCost / (scoreSum / 100) : null,
     tokens: avg(sums.map((s) => s.tokens)),
     cachedRatio: (() => { const p = sums.reduce((a, s) => a + s.promptTokens, 0); return p ? sums.reduce((a, s) => a + s.cachedTokens, 0) / p : null; })(),
     agentMs: avg(sums.map((s) => s.agentMs ?? s.durationMs)),
@@ -381,7 +431,6 @@ function modelStats(run, modelId) {
     questions: sums.reduce((a, s) => a + s.questions, 0),
     voids: atts.filter((a) => a.summary?.verdict === 'void').length,
     totalCost,
-    costPerPass: totalCost != null && c.pass ? totalCost / c.pass : null,
   };
 }
 
@@ -406,7 +455,7 @@ function renderRunList() {
     return `<button class="run-item ${S.view === 'run' && run.id === S.selectedRunId ? 'active' : ''}" data-run="${esc(run.id)}">
       <span class="cmp ${cmpIdx >= 0 ? 'on' : ''}" data-cmp="${esc(run.id)}" title="选来对比">${cmpIdx >= 0 ? (cmpIdx === 0 ? 'A' : 'B') : ''}</span>
       <div class="label">${esc(run.label)}</div>
-      <div class="rate" style="color:${c.rate == null ? 'var(--text-3)' : 'inherit'}">${pct(c.rate)}</div>
+      <div class="rate" style="color:${c.mean == null ? 'var(--text-3)' : 'inherit'}" title="平均分">${fmtScore(c.mean)}</div>
       <div class="meta">${fmtTime(run.createdAt)} · ${esc(run.version?.commit ?? '')}${run.version?.dirty ? '*' : ''} · ${esc(models)}</div>
       ${live ? `<div class="mini-progress"><i style="width:${run.attempts.length ? (done / run.attempts.length) * 100 : 0}%"></i></div>` : ''}
     </button>`;
@@ -452,17 +501,20 @@ function phaseBlock(run) {
 function renderRun(main, run) {
   const modelTiles = run.models.map((m) => {
     const st = modelStats(run, m.id);
-    const [lo, hi] = wilson(st.pass, st.n);
+    const range = meanRange(st);
     return `<div class="tile">
       <div class="name">${esc(m.displayName || m.modelName)}</div>
-      <div class="big">${pct(st.rate)}<small>${st.pass}/${st.n} 通过</small></div>
-      <div class="faint">${st.n ? `大概在 ${pct(lo)}–${pct(hi)} 之间（样本越多越准）` : '还没有成绩'}</div>
+      <div class="big">${fmtScore(st.mean)}<small>分 · 平均 ${st.n} 场</small></div>
+      <div class="faint">${!st.n ? '还没有成绩' : range ? `平均分大概在 ${fmtScore(range[0])}–${fmtScore(range[1])} 之间（场次越多越准）` : '只有 1 场，看不出稳不稳'}</div>
+      ${distBlock(st)}
       <div class="kv">
+        ${st.reportN ? `<span>汇报分（判官打）</span><b>${fmtScore(st.reportScore)}${st.misreports ? ` · <span style="color:var(--fail)">谎报 ${st.misreports} 场</span>` : ''}</b>` : ''}
         <span>平均每题 token</span><b>${st.tokens == null ? '—' : fmtTok(st.tokens)}</b>
         <span>缓存命中</span><b>${st.cachedRatio == null ? '—' : pct(st.cachedRatio)}</b>
         <span>平均用时</span><b>${fmtDur(st.agentMs)}</b>
         <span>平均轮数</span><b>${st.rounds == null ? '—' : st.rounds.toFixed(1)}</b>
-        ${st.totalCost != null ? `<span>总花费 / 每过一题</span><b>¥${st.totalCost.toFixed(2)} / ${st.costPerPass == null ? '—' : '¥' + st.costPerPass.toFixed(2)}</b>` : ''}
+        ${st.totalCost != null ? `<span>总花费</span><b>¥${st.totalCost.toFixed(2)}</b>
+        <span title="总花费 ÷（总得分 ÷ 100）：做满一道题平均要花的钱，越低越划算">每拿 100 分花</span><b>${st.costPerFull == null ? '—' : '¥' + st.costPerFull.toFixed(2)}</b>` : ''}
         <span>工具报错 · 审批 · 提问</span><b>${st.toolErrors} · ${st.approvals} · ${st.questions}</b>
         ${st.voids ? `<span>作废（已重考）</span><b style="color:var(--void)">${st.voids}</b>` : ''}
       </div></div>`;
@@ -471,9 +523,10 @@ function renderRun(main, run) {
   let rows = '';
   let lastCat = null;
   for (const t of run.tasks) {
-    if (t.category !== lastCat) {
-      lastCat = t.category;
-      rows += `<tr class="cat"><td colspan="${run.models.length + 1}">${esc(t.category)}</td></tr>`;
+    const catKey = `${t.group ?? ''}|${t.category}`;
+    if (catKey !== lastCat) {
+      lastCat = catKey;
+      rows += `<tr class="cat"><td colspan="${run.models.length + 1}">${t.group ? `${GROUP_TEXT[t.group]} · ` : ''}${esc(t.category)}</td></tr>`;
     }
     rows += `<tr><td><div class="task-name">${esc(t.title)}${t.hidden ? '<span class="hidden-tag">暗题</span>' : ''}</div><div class="task-id">${esc(t.id)}</div></td>`;
     for (const m of run.models) {
@@ -481,12 +534,16 @@ function renderRun(main, run) {
       const c = counted(atts);
       const dots = atts.map((a) => {
         const v = a.summary?.verdict;
-        const cls = a.state === 'done' ? (v || 'fail') : a.state === 'running' || a.state === 'grading' ? 'run' : a.state === 'preparing' ? 'prep' : '';
-        const tip = a.state === 'done' ? `第${a.round}次：${v === 'pass' ? '通过' : v === 'void' ? '作废' : '没过'}` : `第${a.round}次：${{ queued: '排队中', preparing: '准备靶机', running: '答题中', grading: '判卷中', cancelled: '已取消' }[a.state] ?? a.state}`;
-        return `<i class="d ${cls}" title="${tip}"></i>`;
+        const done = a.state === 'done';
+        const cls = done ? (v || 'fail') : ['running', 'grading', 'reviewing'].includes(a.state) ? 'run' : a.state === 'preparing' ? 'prep' : '';
+        const sc = done && a.summary ? scoreOf(a.summary) : null;
+        // 部分得分：圆点按分数填一部分，一眼看出是拿了一点还是差一点
+        const style = done && v === 'partial' ? ` style="background:conic-gradient(var(--pass) ${sc}%, transparent 0)"` : '';
+        const tip = done ? `第${a.round}次：${v === 'void' ? '作废' : v === 'redline' ? '踩红线，0 分' : `${sc} 分`}`
+          : `第${a.round}次：${{ queued: '排队中', preparing: '准备靶机', running: '答题中', grading: '判卷中', reviewing: '判官看汇报', cancelled: '已取消' }[a.state] ?? a.state}`;
+        return `<i class="d ${cls}"${style} title="${tip}"></i>`;
       }).join('');
-      const fracCls = c.rate == null ? '' : c.rate >= 0.99 ? 'good' : c.rate <= 0.01 ? 'bad' : 'mid';
-      rows += `<td><button class="cell" data-cell="${esc(t.id)}|${esc(m.id)}"><span class="dots">${dots}</span><span class="frac ${fracCls}">${c.n ? `${c.pass}/${c.n}` : ''}</span></button></td>`;
+      rows += `<td><button class="cell" data-cell="${esc(t.id)}|${esc(m.id)}" title="平均分"><span class="dots">${dots}</span><span class="frac ${scoreCls(c)}">${c.n ? fmtScore(c.mean) : ''}</span></button></td>`;
     }
     rows += '</tr>';
   }
@@ -494,13 +551,13 @@ function renderRun(main, run) {
   main.innerHTML = `
     <div class="head-row"><div class="grow">
       <h1><span class="editable" contenteditable="true" spellcheck="false" id="runLabel">${esc(run.label)}</span></h1>
-      <div class="subtle" style="margin-top:6px">${fmtTime(run.createdAt)} · 代码 ${esc(run.version?.commit)}${run.version?.dirty ? '（含未提交改动）' : ''}「${esc(run.version?.subject ?? '')}」 · ${run.mode === 'auto' ? 'Auto 模式' : 'Agent 模式（审批自动批准）'} · 每题 ${run.repeat} 次</div>
+      <div class="subtle" style="margin-top:6px">${fmtTime(run.createdAt)} · 代码 ${esc(run.version?.commit)}${run.version?.dirty ? '（含未提交改动）' : ''}「${esc(run.version?.subject ?? '')}」 · ${run.mode === 'auto' ? 'Auto 模式' : 'Agent 模式（审批自动批准）'} · 每题 ${run.repeat} 次${run.judgeModel ? ` · 汇报判官 ${esc(run.judgeModel)}` : ''}</div>
     </div>
     <button class="btn small" onclick="rerun('${esc(run.id)}')">用同样设置再考一轮</button>
     ${run.finishedAt ? `<button class="btn small ghost danger" onclick="deleteRun('${esc(run.id)}')">删除</button>` : ''}</div>
     ${phaseBlock(run)}
     <div class="tiles">${modelTiles}</div>
-    <h2>每道题的成绩 <span class="faint" style="font-weight:400">· 点格子看完整过程</span></h2>
+    <h2>每道题的成绩 <span class="faint" style="font-weight:400">· 数字是平均分（满分 100），圆点是每一次：实心绿满分、部分填充是部分得分、红色零分、红菱形踩红线 · 点格子看得分明细和完整过程</span></h2>
     <table class="matrix"><thead><tr><th>题目</th>${run.models.map((m) => `<th>${esc(m.displayName || m.modelName)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
 
   const label = $('#runLabel');
@@ -517,12 +574,18 @@ function renderCompare(main) {
   if (!A || !B) { S.view = 'run'; renderMain(); return; }
   const key = (m) => m.modelName;
   const sharedModels = A.models.filter((m) => B.models.some((n) => key(n) === key(m)));
-  const sharedTasks = A.tasks.filter((t) => B.tasks.some((u) => u.id === t.id));
+  // 题目改过（版本不同）的不比：分数口径变了，比出来没有意义。
+  const sameVersion = (t, u) => u.id === t.id && (u.version ?? null) === (t.version ?? null);
+  const sharedTasks = A.tasks.filter((t) => B.tasks.some((u) => sameVersion(t, u)));
+  const changedTasks = A.tasks.filter((t) => B.tasks.some((u) => u.id === t.id) && !B.tasks.some((u) => sameVersion(t, u)));
+  const sharedIds = new Set(sharedTasks.map((t) => t.id));
+  const onShared = (run) => ({ ...run, attempts: run.attempts.filter((a) => sharedIds.has(a.taskId)) });
+  const A2 = onShared(A), B2 = onShared(B);
   const modelOf = (run, m) => run.models.find((n) => key(n) === key(m));
 
   const tiles = sharedModels.map((m) => {
-    const sa = modelStats(A, m.id), sb = modelStats(B, modelOf(B, m).id);
-    const d = sa.rate != null && sb.rate != null ? sb.rate - sa.rate : null;
+    const sa = modelStats(A2, m.id), sb = modelStats(B2, modelOf(B, m).id);
+    const d = sa.mean != null && sb.mean != null ? sb.mean - sa.mean : null;
     const sig = significant(sa, sb);
     const verdict = d == null ? '' : !sig ? '<span class="verdict-pill noise">差别在运气范围内，别当真</span>'
       : d > 0 ? '<span class="verdict-pill pass">B 确实更好</span>' : '<span class="verdict-pill fail">B 确实更差</span>';
@@ -530,9 +593,12 @@ function renderCompare(main) {
     const timeD = sa.agentMs && sb.agentMs ? (sb.agentMs - sa.agentMs) / sa.agentMs : null;
     const sign = (x, invert) => x == null ? '—' : `<span class="delta ${Math.abs(x) < 0.05 ? 'flat' : (x > 0) !== invert ? 'up' : 'down'}">${x > 0 ? '+' : ''}${Math.round(x * 100)}%</span>`;
     return `<div class="tile"><div class="name">${esc(m.displayName || m.modelName)}</div>
-      <div class="big">${pct(sa.rate)} → ${pct(sb.rate)}</div>
+      <div class="big">${fmtScore(sa.mean)} → ${fmtScore(sb.mean)}<small>分</small></div>
       <div style="margin-top:6px">${verdict}</div>
-      <div class="kv"><span>样本（A / B）</span><b>${sa.n} / ${sb.n}</b>
+      <div class="kv"><span>场次（A / B）</span><b>${sa.n} / ${sb.n}</b>
+      <span>满分场次</span><b>${sa.full} → ${sb.full}</b>
+      ${sa.red || sb.red ? `<span>踩红线</span><b style="color:var(--fail)">${sa.red} → ${sb.red}</b>` : ''}
+      ${sa.reportN && sb.reportN ? `<span>汇报分</span><b>${fmtScore(sa.reportScore)} → ${fmtScore(sb.reportScore)}</b>` : ''}
       <span>每题 token 变化</span><b>${sign(tokD, true)}</b>
       <span>用时变化</span><b>${sign(timeD, true)}</b></div></div>`;
   }).join('');
@@ -541,28 +607,30 @@ function renderCompare(main) {
   for (const t of sharedTasks) for (const m of sharedModels) {
     const ca = counted(A.attempts.filter((a) => a.taskId === t.id && a.modelId === m.id));
     const cb = counted(B.attempts.filter((a) => a.taskId === t.id && a.modelId === modelOf(B, m).id));
-    if (ca.rate == null || cb.rate == null) continue;
-    changes.push({ t, m, ca, cb, d: cb.rate - ca.rate });
+    if (ca.mean == null || cb.mean == null) continue;
+    changes.push({ t, m, ca, cb, d: cb.mean - ca.mean });
   }
-  const better = changes.filter((c) => c.d > 0).sort((x, y) => y.d - x.d);
-  const worse = changes.filter((c) => c.d < 0).sort((x, y) => x.d - y.d);
+  // 平均分差 5 分以内算没变：几分的上下浮动多半是随机性。
+  const better = changes.filter((c) => c.d >= 5).sort((x, y) => y.d - x.d);
+  const worse = changes.filter((c) => c.d <= -5).sort((x, y) => x.d - y.d);
   const same = changes.length - better.length - worse.length;
   const list = (items) => items.length ? `<table class="matrix"><thead><tr><th>题目</th><th>模型</th><th>A</th><th>B</th><th>变化</th></tr></thead><tbody>${items.map((c) => `<tr>
       <td><div class="task-name">${esc(c.t.title)}</div><div class="task-id">${esc(c.t.id)}</div></td><td>${esc(c.m.displayName || c.m.modelName)}</td>
-      <td><button class="cell" data-xcell="${esc(A.id)}|${esc(c.t.id)}|${esc(c.m.id)}"><span class="frac">${c.ca.pass}/${c.ca.n}</span></button></td>
-      <td><button class="cell" data-xcell="${esc(B.id)}|${esc(c.t.id)}|${esc(modelOf(B, c.m).id)}"><span class="frac">${c.cb.pass}/${c.cb.n}</span></button></td>
-      <td><span class="delta ${c.d > 0 ? 'up' : 'down'}">${c.d > 0 ? '+' : ''}${Math.round(c.d * 100)}%</span></td></tr>`).join('')}</tbody></table>` : '<div class="faint">没有</div>';
+      <td><button class="cell" data-xcell="${esc(A.id)}|${esc(c.t.id)}|${esc(c.m.id)}"><span class="frac ${scoreCls(c.ca)}">${fmtScore(c.ca.mean)}</span></button></td>
+      <td><button class="cell" data-xcell="${esc(B.id)}|${esc(c.t.id)}|${esc(modelOf(B, c.m).id)}"><span class="frac ${scoreCls(c.cb)}">${fmtScore(c.cb.mean)}</span></button></td>
+      <td><span class="delta ${c.d > 0 ? 'up' : 'down'}">${c.d > 0 ? '+' : ''}${Math.round(c.d)} 分</span></td></tr>`).join('')}</tbody></table>` : '<div class="faint">没有</div>';
 
   main.innerHTML = `
     <div class="head-row"><div class="grow"><h1>对比</h1>
       <div class="subtle" style="margin-top:6px"><b>A</b> ${esc(A.label)}（${esc(A.version?.commit)}${A.version?.dirty ? '*' : ''}） → <b>B</b> ${esc(B.label)}（${esc(B.version?.commit)}${B.version?.dirty ? '*' : ''}）</div></div>
       <button class="btn small" onclick="swapCompare()">交换 A/B</button>
       <button class="btn small ghost" onclick="S.view='run';renderAll()">返回</button></div>
-    <div class="note-box">只比两轮都考过的题和模型。通过率的差别要足够大、样本要足够多，才算「确实」变了；否则可能只是这次运气好。想让判断更准，就多考几次（每题次数调高）。</div>
+    <div class="note-box">只比两轮都考过、而且题目没改过的题和模型。平均分的差别要足够大、场次要足够多，才算「确实」变了；否则可能只是这次运气好。想让判断更准，就多考几次（每题次数调高）。
+      ${changedTasks.length ? `<div style="margin-top:6px">这几道题两轮之间改过题，没算进对比：${changedTasks.map((t) => esc(t.title)).join('、')}</div>` : ''}</div>
     <div class="tiles">${tiles || '<div class="faint">两轮没有共同的模型</div>'}</div>
     <h2>变好了的 <span class="faint" style="font-weight:400">· ${better.length} 项</span></h2>${list(better)}
     <h2>变差了的 <span class="faint" style="font-weight:400">· ${worse.length} 项</span></h2>${list(worse)}
-    <div class="faint" style="margin-top:16px">另有 ${same} 项没有变化。点分数可以看那一边的完整过程。</div>`;
+    <div class="faint" style="margin-top:16px">另有 ${same} 项变化不到 5 分，算没变。点分数可以看那一边的得分明细和完整过程。</div>`;
 }
 
 function swapCompare() { S.compare.reverse(); renderAll(); }
@@ -607,6 +675,9 @@ function openSettings() {
         <div class="row" style="margin-top:8px"><button class="btn small" id="sAdd">手动添加</button><button class="btn small" id="sFetch">从接口读取可用模型</button><span class="faint" id="sFetchHint"></span></div>
         <div class="pick-list" id="sPicks"></div>
         <div class="hint">上下文窗口不填就按 Marcel 的默认值；它决定什么时候压缩上下文，最好和你实际使用时一致。价格不填就不算钱。</div></div>
+      <div class="field"><label>汇报判官</label>
+        <select class="input" id="sJudge"></select>
+        <div class="hint">每场考完，请这个模型读一遍 agent 最后给用户的汇报，对照判卷结果打「汇报分」，并标出谎报（没做到却说做到了）。汇报分单独一列，不掺进主分数。判官的请求同样受「同时最多 ${S.maxConcurrency} 个」的限制，每场多花一次请求的钱。</div></div>
       <div class="field"><label>同时考几道题</label>
         <div class="row"><div class="stepper"><button id="pMinus">−</button><span id="pVal">${cfg.parallelTasks || 4}</span><button id="pPlus">+</button></div>
         <span class="faint">最多 ${S.maxConcurrency}。不管这里填几，发往 API 的请求同一时刻都不会超过 ${S.maxConcurrency} 个。</span></div></div>
@@ -622,7 +693,15 @@ function openSettings() {
       <input class="input" data-k="priceIn" placeholder="—" value="${esc(m.priceIn ?? '')}">
       <input class="input" data-k="priceOut" placeholder="—" value="${esc(m.priceOut ?? '')}">
       <button class="btn small ghost danger" data-del="${i}" title="移除">✕</button></div>`).join('') || '<div class="faint">还没有模型</div>';
+    renderJudge();
   };
+  let judgeId = cfg.judgeModelId || '';
+  const renderJudge = () => {
+    const named = models.filter((m) => m.modelName?.trim());
+    if (judgeId && !named.some((m) => (m.id || m.modelName) === judgeId)) judgeId = '';
+    $('#sJudge', panel).innerHTML = `<option value="">不请判官</option>${named.map((m) => `<option value="${esc(m.id || m.modelName)}" ${(m.id || m.modelName) === judgeId ? 'selected' : ''}>${esc(m.displayName || m.modelName)}</option>`).join('')}`;
+  };
+  panel.addEventListener('change', (e) => { if (e.target.id === 'sJudge') judgeId = e.target.value; });
   renderModels();
   panel.addEventListener('input', (e) => {
     const row = e.target.closest('.model-row');
@@ -652,7 +731,7 @@ function openSettings() {
   $('#sSave', panel).onclick = async () => {
     const clean = models.filter((m) => m.modelName?.trim()).map((m) => ({ ...m, modelName: m.modelName.trim(), displayName: (m.displayName || m.modelName).trim() }));
     try {
-      S.config = await api('/api/config', { method: 'POST', body: { baseUrl: $('#sBase', panel).value, apiKey: $('#sKey', panel).value, models: clean, parallelTasks: par } });
+      S.config = await api('/api/config', { method: 'POST', body: { baseUrl: $('#sBase', panel).value, apiKey: $('#sKey', panel).value, models: clean, parallelTasks: par, judgeModelId: judgeId } });
       close(); toast('已保存'); renderAll();
     } catch (e) { toast(e.message); }
   };
@@ -664,11 +743,14 @@ function openNewRun(preset) {
   const models = S.config.models;
   const sel = {
     models: new Set(preset?.modelIds ?? models.map((m) => m.id)),
-    tasks: new Set(preset?.taskIds ?? tasks.filter((t) => !t.hidden).map((t) => t.id)),
+    tasks: new Set(preset?.taskIds ?? tasks.filter((t) => t.group === 'regression' && !t.hidden).map((t) => t.id)),
     repeat: preset?.repeat ?? 3,
     mode: preset?.mode ?? 'agent',
   };
-  const cats = [...new Set(tasks.map((t) => t.category))];
+  const groups = [
+    { key: 'regression', title: '回归组', hint: '简单题，几分钟一场。改完提示词先跑它，确认没改坏' },
+    { key: 'challenge', title: '挑战组', hint: '难题，一场 10–20 分钟。用来真正比高低，大改动后做验收' },
+  ].filter((g) => tasks.some((t) => t.group === g.key));
   const { panel, close } = openLayer(`
     <header><h3>开始一轮评测</h3><button class="btn small ghost" data-close>关闭</button></header>
     <div class="body">
@@ -676,10 +758,10 @@ function openNewRun(preset) {
         <div class="hint">会按你现在的代码编译（${esc(S.version?.commit)}${S.version?.dirty ? '，含未提交改动' : ''}）。名字用来在对比时认出它。</div></div>
       <div class="field"><label>模型</label><div class="checklist">${models.map((m) => `<label class="check"><input type="checkbox" data-m="${esc(m.id)}" ${sel.models.has(m.id) ? 'checked' : ''}><span class="t">${esc(m.displayName || m.modelName)}</span><span class="s">${esc(m.modelName)}</span></label>`).join('')}</div></div>
       <div class="field"><label>题目 <span class="faint" style="font-weight:400" id="nTaskCount"></span></label>
-        <div class="checklist">${cats.map((c) => `<div class="group-h"><span>${esc(c)}</span><button class="linkish" data-catall="${esc(c)}">全选/全不选</button></div>` +
-          tasks.filter((t) => t.category === c).map((t) => `<label class="check"><input type="checkbox" data-t="${esc(t.id)}" ${sel.tasks.has(t.id) ? 'checked' : ''}><span class="t">${esc(t.title)}${t.hidden ? '<span class="hidden-tag">暗题</span>' : ''}</span><span class="s">${esc(t.difficulty)}</span></label>`).join('')).join('')}</div>
+        <div class="checklist">${groups.map((g) => `<div class="group-h"><span>${g.title} <span style="font-weight:400">· ${g.hint}</span></span><button class="linkish" data-groupall="${g.key}">全选/全不选</button></div>` +
+          tasks.filter((t) => t.group === g.key).map((t) => `<label class="check"><input type="checkbox" data-t="${esc(t.id)}" ${sel.tasks.has(t.id) ? 'checked' : ''}><span class="t">${esc(t.title)}${t.hidden ? '<span class="hidden-tag">暗题</span>' : ''}</span><span class="s">${esc(t.category)}</span></label>`).join('')).join('')}</div>
         ${S.taskProblems.length ? `<div class="note-box" style="background:var(--fail-soft);margin-top:8px">${S.taskProblems.length} 道题读不进来，没有列在上面：${S.taskProblems.map((p) => `<div><b>${esc(p.id)}</b>：${esc(p.error)}</div>`).join('')}</div>` : ''}
-        <div class="hint">暗题默认不选：平时调提示词别用它们，留到大改动之后做验收，防止提示词被调成「只会做这几道题」。</div></div>
+        <div class="hint">默认只选回归组。挑战组都是暗题：平时调提示词别盯着它们改，留到大改动之后做验收，防止提示词被调成「只会做这几道题」。</div></div>
       <div class="field"><label>每道题考几次</label>
         <div class="row"><div class="stepper"><button id="rMinus">−</button><span id="rVal">${sel.repeat}</span><button id="rPlus">+</button></div><span class="faint" id="nEstimate"></span></div>
         <div class="hint">模型每次回答都有随机性，至少 3 次才能看出通过率。</div></div>
@@ -705,10 +787,10 @@ function openNewRun(preset) {
     refresh();
   });
   panel.addEventListener('click', (e) => {
-    const c = e.target.dataset.catall;
-    if (c) {
+    const g = e.target.dataset.groupall;
+    if (g) {
       e.preventDefault();
-      const ids = tasks.filter((t) => t.category === c).map((t) => t.id);
+      const ids = tasks.filter((t) => t.group === g).map((t) => t.id);
       const all = ids.every((id) => sel.tasks.has(id));
       ids.forEach((id) => (all ? sel.tasks.delete(id) : sel.tasks.add(id)));
       panel.querySelectorAll('[data-t]').forEach((box) => (box.checked = sel.tasks.has(box.dataset.t)));
@@ -756,7 +838,7 @@ async function openReplay(runId, taskId, modelId) {
   const atts = run.attempts.filter((a) => a.taskId === taskId && a.modelId === modelId).sort((a, b) => a.round - b.round);
   const { panel } = openLayer(`
     <header><h3>${esc(task?.title ?? taskId)} · ${esc(model?.displayName || model?.modelName)}</h3><button class="btn small ghost" data-close>关闭</button></header>
-    <div class="body"><div class="tabs" id="rTabs">${atts.map((a, i) => `<button class="tab ${i === 0 ? 'on' : ''}" data-att="${esc(a.id)}">第 ${a.round} 次 ${a.summary ? (a.summary.verdict === 'pass' ? '✓' : a.summary.verdict === 'void' ? '◌' : '✕') : '…'}</button>`).join('')}</div><div id="rBody"><div class="faint">加载中…</div></div></div>`, 'drawer');
+    <div class="body"><div class="tabs" id="rTabs">${atts.map((a, i) => `<button class="tab ${i === 0 ? 'on' : ''}" data-att="${esc(a.id)}">第 ${a.round} 次 · ${!a.summary ? '…' : a.summary.verdict === 'void' ? '作废' : a.summary.verdict === 'redline' ? '红线' : `${scoreOf(a.summary)} 分`}</button>`).join('')}</div><div id="rBody"><div class="faint">加载中…</div></div></div>`, 'drawer');
   const show = async (attId) => {
     panel.querySelectorAll('#rTabs .tab').forEach((t) => t.classList.toggle('on', t.dataset.att === attId));
     const body = $('#rBody', panel);
@@ -792,11 +874,27 @@ function renderTry(t) {
   const s = t.summary;
   const r = t.result || {};
   const metric = (k, v) => `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
-  const pill = s.verdict === 'pass' ? '<span class="verdict-pill pass">通过</span>' : s.verdict === 'void' ? '<span class="verdict-pill void">作废</span>' : '<span class="verdict-pill fail">没过</span>';
   const convs = r.transcript || [];
+  // 打分改造后的成绩有得分明细；老成绩只有一串原因
+  const detailed = s.points && (s.points.length || (s.redlines || []).length);
+  const src = (p) => (p.source === 'answer' ? '<span class="src">看结论</span>' : '');
+  const pointList = detailed ? `<ul class="points">
+      ${(s.redlines || []).map((x) => `<li class="red"><span class="ic">!</span><span>踩红线：${esc(x)}</span><span class="w">整场 0 分</span></li>`).join('')}
+      ${s.points.map((p) => `<li class="${p.ok ? 'ok' : 'no'}"><span class="ic">${p.ok ? '✓' : '✕'}</span><span>${esc(p.desc)}${src(p)}</span><span class="w">${p.ok ? '+' : ''}${p.ok ? p.weight : `0 / ${p.weight}`}</span></li>`).join('')}
+      ${(s.deducts || []).map((d) => `<li class="ded"><span class="ic">−</span><span>${esc(d.desc)}${src(d)}</span><span class="w">−${d.weight}</span></li>`).join('')}
+    </ul>
+    ${s.status && s.status !== 'completed' ? `<div class="faint" style="margin-top:6px">${esc(s.reasons.find((x) => x.startsWith('agent 没有正常结束')) ?? '')}</div>` : ''}`
+    : `<ul class="reason-list">${s.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+  const rep = s.report;
+  const reportBox = !rep ? '' : rep.score == null
+    ? `<div class="report-box">汇报判官没打出分：${esc(rep.error || '未知原因')}</div>`
+    : `<div class="report-box ${rep.misreport ? 'bad' : ''}"><b>汇报分 ${rep.score}</b> <span class="faint">（判官 ${esc(rep.model)}，不计入主分数）</span>
+        ${rep.misreport ? `<div style="margin-top:4px;color:var(--fail);font-weight:600">谎报：${esc(rep.misreport)}</div>` : ''}
+        ${rep.comment ? `<div style="margin-top:4px">${esc(rep.comment)}</div>` : ''}</div>`;
   return `<div class="try">
-    <div>${pill}</div>
-    <ul class="reason-list">${s.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    <div>${verdictPill(s)}</div>
+    ${pointList}
+    ${reportBox}
     <div class="metrics">
       ${metric('用时', fmtDur(s.agentMs ?? s.durationMs))}
       ${metric('排队等 API', fmtDur(s.queueWaitMs))}
