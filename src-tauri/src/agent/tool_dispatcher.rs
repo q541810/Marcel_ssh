@@ -577,6 +577,20 @@ impl ToolDispatcher {
         let Some(tool) = self.registry.get(&tc.name) else {
             return Err(DispatchResult::unknown(&tc.name));
         };
+        // 评测沙箱（只存在于测试编译）：作用在用户本机的工具不放行，见 `eval_runner`。
+        #[cfg(test)]
+        if let Some(reason) = crate::eval_runner::host_side_block(&tc.name) {
+            return Err(DispatchResult {
+                summary: format!("{} (eval: host side unavailable)", tc.name),
+                output: reason,
+                success: false,
+                blocked: true,
+                was_timeout: false,
+                was_aborted: false,
+                metadata: None,
+                disposition: tool.disposition(),
+            });
+        }
         // 参数语义来自内置工具声明表（`tools/mod.rs` 的 BUILTIN_TOOLS_*）：
         // 哪个参数键是命令、哪个是路径、会不会写路径。
         // 动态工具（skill / 插件 / MCP）没有条目 → 走通用路径。

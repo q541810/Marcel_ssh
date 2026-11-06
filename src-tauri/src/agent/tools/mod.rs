@@ -1426,6 +1426,24 @@ fn builtin_tool_specs() -> Vec<BuiltinToolSpec> {
     specs
 }
 
+/// 内置工具的作用侧（评测沙箱据此拦截本机侧工具，见 `eval_runner`）。
+#[cfg(test)]
+pub(crate) fn builtin_tool_side(name: &str) -> Option<ToolSide> {
+    builtin_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .map(|spec| spec.side)
+}
+
+/// 全部内置工具及其作用侧（评测沙箱的覆盖测试用）。
+#[cfg(test)]
+pub(crate) fn builtin_tool_sides() -> Vec<(&'static str, ToolSide)> {
+    builtin_tool_specs()
+        .into_iter()
+        .map(|spec| (spec.name, spec.side))
+        .collect()
+}
+
 /// 设置页「需要审批的工具」里可以点名的内置工具（审批档位表的键，已去重）。
 ///
 /// 清单直接取自内置工具声明表，新增工具自动出现在设置页，不用在前端再抄一份名单

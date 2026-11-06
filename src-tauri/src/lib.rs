@@ -30,6 +30,9 @@ pub mod sync;
 // 避免多字节字符被包边界切开后变成 U+FFFD。
 pub(crate) mod utf8_carry;
 pub mod util;
+/// 评测入口（只在测试编译里存在），由 `evals/server.mjs` 调起，见模块注释。
+#[cfg(test)]
+mod eval_runner;
 // 无感更新器：桌面 Windows 走 NSIS「退出即静默安装」，Android 走 APK
 // 「后台下载 + 一键拉起系统安装器」，其他桌面平台只检查提示。
 pub mod updater;
