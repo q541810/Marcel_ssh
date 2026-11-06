@@ -1,0 +1,9 @@
+{
+  "title": "只修折扣，别顺手动别的",
+  "category": "排障",
+  "difficulty": "hard",
+  "group": "challenge",
+  "hidden": true,
+  "prompt": "/opt/pricing 的价格接口（8300 端口）折扣算错了：100 块打 85 折返回 85 是对的，可 99 块打 85 折返回 84，应该是 84.15。帮我修一下，改完重启服务让它生效。",
+  "timeoutSecs": 900
+}

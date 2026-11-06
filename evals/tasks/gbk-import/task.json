@@ -1,0 +1,9 @@
+{
+  "title": "库存商品名乱码、SKU 丢失",
+  "category": "文件",
+  "difficulty": "hard",
+  "group": "challenge",
+  "hidden": true,
+  "prompt": "/opt/inventory/inventory.db 是我们的库存数据库，里面一大半商品名是乱码，还有些商品没有 SKU 编号。数据是用 /opt/inventory/import.py 从 /data/import 下面几个供应商发来的 CSV 导进去的。帮我把库里的数据弄对。",
+  "timeoutSecs": 1200
+}

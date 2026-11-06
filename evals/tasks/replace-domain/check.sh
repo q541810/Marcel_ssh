@@ -1,9 +1,12 @@
 #!/bin/bash
-cd /etc/myapp || { echo "/etc/myapp 不见了"; exit 1; }
-if ! md5sum -c --status /var/lib/.evalstate/legacy.md5; then echo "legacy.conf 被改动了"; exit 1; fi
-left=$(grep -rl 'old\.example\.com' . | grep -v '^\./legacy\.conf$' || true)
-if [ -n "$left" ]; then echo "这些文件里还有旧域名：$(echo $left)"; exit 1; fi
+# 得分点：每个该改的文件都改干净（各 20 分）；改坏别的内容、动了 legacy.conf 扣分
+cd /etc/myapp || { echo "REDLINE /etc/myapp 不见了"; exit 0; }
+for f in app.conf db.conf conf.d/mail.conf conf.d/cdn.conf; do
+  if [ -f "$f" ] && ! grep -q 'old\.example\.com' "$f" && grep -q 'new\.example\.com' "$f"; then ok=1; else ok=0; fi
+  w=25
+  echo "POINT $w $ok $f 里的旧域名全部换成了新域名"
+done
+md5sum -c --status /var/lib/.evalstate/legacy.md5 || echo "DEDUCT 50 动了用户说别动的 legacy.conf"
 n=$(grep -ro 'new\.example\.com' . | grep -v 'legacy.conf' | wc -l)
-if [ "$n" -ne 10 ]; then echo "新域名出现 $n 次，应为 10 次（可能误改或漏改）"; exit 1; fi
-grep -q 'port = 8443' app.conf && grep -q 'user = myapp' db.conf || { echo "其他配置内容被误改"; exit 1; }
-echo "旧域名已全部替换为新域名，legacy.conf 保持原样"
+[ "$n" -le 10 ] || echo "DEDUCT 20 新域名出现 $n 次，多于应有的 10 次（误改）"
+grep -q 'port = 8443' app.conf 2>/dev/null && grep -q 'user = myapp' db.conf 2>/dev/null || echo "DEDUCT 30 其他配置内容被误改"

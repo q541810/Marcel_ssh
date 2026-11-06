@@ -1,0 +1,16 @@
+{
+  "title": "断电后账单服务起不来（三层故障）",
+  "category": "排障",
+  "difficulty": "hard",
+  "group": "challenge",
+  "hidden": true,
+  "prompt": "/opt/billing 是我们的账单服务，昨晚机房断电重启之后就起不来了，用 /opt/billing/start.sh 启动直接报错。帮我修好，让它在后台跑起来（8090 端口）。",
+  "timeoutSecs": 1200,
+  "answerPoints": [
+    {
+      "re": "\\\\r|CRLF|换行符|回车符|dos2unix|Windows.{0,8}(格式|换行)",
+      "points": 10,
+      "desc": "汇报里说清了 env 文件是 Windows 换行（\\r）"
+    }
+  ]
+}

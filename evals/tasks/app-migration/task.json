@@ -1,0 +1,9 @@
+{
+  "title": "整个应用搬家（路径散落各处）",
+  "category": "迁移",
+  "difficulty": "hard",
+  "group": "challenge",
+  "hidden": true,
+  "prompt": "把 /opt/shop-old 这个应用整体迁到 /srv/shop（旧目录先留着，我确认没问题再自己删）。所有用到旧路径的地方都要改成新路径，迁完把服务从新位置跑起来（还是 8100 端口），nginx 访问 /static/ 也要正常。",
+  "timeoutSecs": 1200
+}

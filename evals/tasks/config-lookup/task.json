@@ -5,5 +5,16 @@
   "prompt": "/opt/shop 这个项目，生产环境的应用到底连的是哪个端口的数据库？我配置翻晕了。",
   "timeoutSecs": 600,
   "hidden": false,
-  "expectInAnswer": ["6433"]
+  "answerPoints": [
+    {
+      "re": "6433",
+      "points": 70,
+      "desc": "答对生产库端口 6433"
+    },
+    {
+      "re": "production.yml|生产.{0,12}覆盖|覆盖.{0,12}生产",
+      "points": 30,
+      "desc": "说清是 env/production.yml 覆盖了默认值"
+    }
+  ]
 }

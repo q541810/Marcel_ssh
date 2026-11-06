@@ -2,8 +2,20 @@
   "title": "昨天谁的 5xx 最多",
   "category": "上下文压力",
   "difficulty": "hard",
+  "group": "challenge",
   "prompt": "/var/log/nginx-big/access.log 是我们网关的访问日志，帮我查一下昨天哪个接口返回 5xx 最多，具体多少次？接口按路径算，不带查询参数。",
   "timeoutSecs": 900,
   "hidden": true,
-  "expectInAnswer": ["/api/v2/orders/checkout", "1,?847"]
+  "answerPoints": [
+    {
+      "re": "/api/v2/orders/checkout",
+      "points": 50,
+      "desc": "找对 5xx 最多的接口"
+    },
+    {
+      "re": "1,?847",
+      "points": 50,
+      "desc": "次数准确（1847）"
+    }
+  ]
 }

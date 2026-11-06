@@ -1,0 +1,21 @@
+{
+  "title": "手动能跑、定时就不出报表",
+  "category": "排障",
+  "difficulty": "hard",
+  "group": "challenge",
+  "hidden": true,
+  "prompt": "我在 crontab 里加了每分钟跑一次 /opt/report/gen.sh 生成报表，手动跑完全正常，但定时跑就是一直没有报表出来。帮我看看，修好后要让它真的能定时生成到 /opt/report/out 里。",
+  "timeoutSecs": 1200,
+  "answerPoints": [
+    {
+      "re": "(cron|定时).{0,40}(环境变量|PATH|\\.profile|\\.bashrc|登录|login|非交互)|(环境变量|PATH|\\.profile|\\.bashrc).{0,40}(cron|定时)",
+      "points": 20,
+      "desc": "说清了定时任务的运行环境和手动登录时不一样（环境变量 / PATH）"
+    },
+    {
+      "re": "相对路径|工作目录|当前目录|cwd|/root/out|家目录|HOME",
+      "points": 15,
+      "desc": "说清了定时任务的工作目录不同（相对路径写到了别处）"
+    }
+  ]
+}
