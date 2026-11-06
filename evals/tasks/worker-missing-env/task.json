@@ -1,0 +1,8 @@
+{
+  "title": "worker 一启动就退出",
+  "category": "排障",
+  "difficulty": "medium",
+  "prompt": "/opt/worker 这个后台 worker 一启动就挂，我也不知道为啥。帮我修好，让它在后台跑起来。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

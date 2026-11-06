@@ -1,0 +1,8 @@
+{
+  "title": "批量替换旧域名",
+  "category": "文件",
+  "difficulty": "easy",
+  "prompt": "/etc/myapp 下面的配置文件里还写着旧域名 old.example.com，全部改成 new.example.com。注意 legacy.conf 是给老系统用的，别动它。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

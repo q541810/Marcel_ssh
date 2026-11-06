@@ -1,0 +1,8 @@
+{
+  "title": "配置每日凌晨备份",
+  "category": "部署",
+  "difficulty": "easy",
+  "prompt": "帮我设个定时任务，每天凌晨 3 点自动跑 /opt/backup/backup.sh。设好之后你先手动跑一次，确认备份真的能生成。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

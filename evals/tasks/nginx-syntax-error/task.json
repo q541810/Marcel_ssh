@@ -1,0 +1,8 @@
+{
+  "title": "nginx 配置写错起不来",
+  "category": "排障",
+  "difficulty": "easy",
+  "prompt": "我服务器上的 nginx 起不来了，帮我看看怎么回事，修好让首页能正常打开。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

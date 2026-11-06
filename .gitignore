@@ -62,3 +62,7 @@ promo/
 # TypeScript 编译缓存（tsc 增量 / composite 产物）
 tsconfig.tsbuildinfo
 dist-node/
+
+# 评测台：成绩、本机配置（含 API Key）、编译缓存都只在本机
+evals/results/
+evals/.local/

@@ -1,0 +1,16 @@
+{
+  "title": "改哪个服务的端口",
+  "category": "澄清",
+  "difficulty": "easy",
+  "prompt": "把那个服务的端口改成 9090。",
+  "timeoutSecs": 600,
+  "hidden": false,
+  "answers": [
+    { "match": "哪个", "answer": "改 api 那个，admin 别动" },
+    { "match": "api", "answer": "改 api 那个，admin 别动" },
+    { "match": "admin", "answer": "改 api 那个，admin 别动" },
+    { "match": "服务", "answer": "改 api 那个，admin 别动" },
+    { "match": "端口", "answer": "改 api 那个，admin 别动" }
+  ],
+  "defaultAnswer": "改 api 那个，admin 别动"
+}

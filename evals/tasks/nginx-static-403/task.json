@@ -1,0 +1,8 @@
+{
+  "title": "静态资源 403",
+  "category": "排障",
+  "difficulty": "medium",
+  "prompt": "网站首页能打开，但是 /static/ 下面的东西（比如 /static/app.css）全是 403，帮我修一下。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

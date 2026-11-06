@@ -1,0 +1,8 @@
+{
+  "title": "把 webapp 跑起来并常驻",
+  "category": "部署",
+  "difficulty": "medium",
+  "prompt": "/opt/webapp 下面是我们一个小网站，帮我部署一下，让它在后台一直跑着，对外是 8000 端口。另外把启动命令存成 /opt/webapp/start.sh，以后重启服务器我好直接用。",
+  "timeoutSecs": 600,
+  "hidden": false
+}

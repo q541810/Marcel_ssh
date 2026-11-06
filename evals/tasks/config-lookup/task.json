@@ -1,0 +1,9 @@
+{
+  "title": "生产环境数据库端口",
+  "category": "信息检索",
+  "difficulty": "medium",
+  "prompt": "/opt/shop 这个项目，生产环境的应用到底连的是哪个端口的数据库？我配置翻晕了。",
+  "timeoutSecs": 600,
+  "hidden": false,
+  "expectInAnswer": ["6433"]
+}

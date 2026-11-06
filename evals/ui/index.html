@@ -1,0 +1,930 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marcel 评测台</title>
+<style>
+:root {
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --surface-2: #f0f0f3;
+  --line: rgba(0, 0, 0, 0.08);
+  --line-strong: rgba(0, 0, 0, 0.14);
+  --text: #1d1d1f;
+  --text-2: #5f5f66;
+  --text-3: #8e8e93;
+  --accent: #0a66e8;
+  --accent-soft: rgba(10, 102, 232, 0.1);
+  --pass: #1f9d55;
+  --pass-soft: rgba(31, 157, 85, 0.12);
+  --fail: #d93636;
+  --fail-soft: rgba(217, 54, 54, 0.1);
+  --void: #b7791f;
+  --void-soft: rgba(183, 121, 31, 0.12);
+  --bar: rgba(255, 255, 255, 0.72);
+  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 28px rgba(0,0,0,.08);
+  --shadow-lg: 0 24px 80px rgba(0,0,0,.22);
+  --radius: 12px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111113;
+    --surface: #1c1c1f;
+    --surface-2: #26262a;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --text: #f2f2f4;
+    --text-2: #a8a8b0;
+    --text-3: #75757d;
+    --accent: #4d94ff;
+    --accent-soft: rgba(77, 148, 255, 0.16);
+    --pass: #3ccf7e;
+    --pass-soft: rgba(60, 207, 126, 0.14);
+    --fail: #ff6b6b;
+    --fail-soft: rgba(255, 107, 107, 0.14);
+    --void: #e0a54a;
+    --void-soft: rgba(224, 165, 74, 0.16);
+    --bar: rgba(28, 28, 31, 0.72);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+    --shadow-lg: 0 24px 80px rgba(0,0,0,.6);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* ── 工具栏：半透明材质，内容在下面滚动 ── */
+.toolbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 12px;
+  height: 56px; padding: 0 20px;
+  background: var(--bar);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-2); font-size: 12px; white-space: nowrap;
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.chip .dot.ok { background: var(--pass); }
+.chip .dot.bad { background: var(--fail); }
+.spacer { flex: 1; }
+
+.btn {
+  height: 32px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--line-strong); background: var(--surface);
+  font-weight: 550; transition: transform 100ms ease-out, background 120ms;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: scale(0.97); }
+.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+.btn.primary:hover { filter: brightness(1.07); background: var(--accent); }
+.btn.danger { color: var(--fail); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--surface-2); }
+.btn:disabled { opacity: .45; pointer-events: none; }
+.btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+
+/* ── 布局 ── */
+.layout { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 56px); }
+.sidebar { border-right: 1px solid var(--line); padding: 14px 12px; overflow-y: auto; height: calc(100vh - 56px); position: sticky; top: 56px; }
+.side-title { display: flex; align-items: center; justify-content: space-between; padding: 2px 6px 10px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.main { padding: 24px 28px 80px; min-width: 0; }
+
+.run-item {
+  position: relative;
+  display: block; width: 100%; text-align: left;
+  padding: 10px 12px 10px 36px; margin-bottom: 4px; border-radius: 10px;
+  border: 1px solid transparent; background: transparent;
+  transition: background 120ms, transform 100ms ease-out;
+}
+.run-item:hover { background: var(--surface-2); }
+.run-item:active { transform: scale(0.985); }
+.run-item.active { background: var(--surface); border-color: var(--line); box-shadow: var(--shadow); }
+.run-item .label { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 48px; }
+.run-item .meta { color: var(--text-3); font-size: 12px; margin-top: 2px; }
+.run-item .rate { position: absolute; right: 12px; top: 10px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.run-item .cmp {
+  position: absolute; left: 10px; top: 12px; width: 18px; height: 18px; border-radius: 5px;
+  border: 1.5px solid var(--line-strong); background: var(--surface); display: grid; place-items: center;
+  font-size: 10px; font-weight: 700; color: #fff;
+}
+.run-item .cmp.on { background: var(--accent); border-color: var(--accent); }
+.mini-progress { height: 3px; border-radius: 2px; background: var(--surface-2); margin-top: 8px; overflow: hidden; }
+.mini-progress > i { display: block; height: 100%; background: var(--accent); transition: width 300ms ease; }
+
+/* ── 卡片与数字 ── */
+h1 { font-size: 26px; line-height: 1.15; letter-spacing: -0.02em; margin: 0; font-weight: 700; }
+h2 { font-size: 17px; letter-spacing: -0.01em; margin: 32px 0 12px; font-weight: 650; }
+.subtle { color: var(--text-2); }
+.faint { color: var(--text-3); font-size: 12px; }
+.head-row { display: flex; align-items: flex-start; gap: 12px; }
+.head-row .grow { flex: 1; min-width: 0; }
+.editable { border-radius: 6px; padding: 0 4px; margin: 0 -4px; outline: none; }
+.editable:hover { background: var(--surface-2); }
+.editable:focus { background: var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.tile .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .big { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; margin-top: 6px; }
+.tile .big small { font-size: 13px; font-weight: 500; color: var(--text-3); letter-spacing: 0; margin-left: 4px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin-top: 10px; font-size: 12px; color: var(--text-2); }
+.kv b { font-weight: 550; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+
+.phase { margin-top: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+.phase .row { display: flex; align-items: center; gap: 10px; }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 10px; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 400ms cubic-bezier(.2,.8,.2,1); }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── 成绩矩阵 ── */
+/* overflow: clip 而不是 hidden：hidden 会让表格自成滚动容器，吸顶表头就按表格算偏移、压到第一行上。 */
+.matrix { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: clip; }
+.matrix th, .matrix td { padding: 9px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; }
+.matrix tr:last-child td { border-bottom: none; }
+.matrix th { font-size: 12px; color: var(--text-2); font-weight: 600; background: var(--surface-2); position: sticky; top: 56px; z-index: 1; }
+.matrix .cat td { background: var(--surface-2); color: var(--text-2); font-size: 12px; font-weight: 600; padding: 5px 12px; }
+.task-name { font-weight: 550; }
+.task-id { color: var(--text-3); font-size: 11px; font-family: ui-monospace, Consolas, monospace; }
+.cell {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 8px; margin: -4px -8px; border-radius: 8px;
+  border: none; background: transparent; transition: background 120ms, transform 100ms ease-out;
+}
+.cell:hover { background: var(--surface-2); }
+.cell:active { transform: scale(0.96); }
+.dots { display: inline-flex; gap: 4px; }
+.d { width: 10px; height: 10px; border-radius: 50%; background: var(--surface-2); border: 1.5px solid var(--line-strong); }
+.d.pass { background: var(--pass); border-color: var(--pass); }
+.d.fail { background: var(--fail); border-color: var(--fail); }
+.d.void { background: transparent; border-color: var(--void); border-style: dashed; }
+.d.run { border-color: var(--accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+.d.prep { border-color: var(--accent); background: var(--accent-soft); }
+.frac { font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; }
+.frac.good { color: var(--pass); } .frac.bad { color: var(--fail); } .frac.mid { color: var(--void); }
+.hidden-tag { font-size: 10px; padding: 1px 6px; border-radius: 4px; background: var(--void-soft); color: var(--void); margin-left: 6px; vertical-align: 1px; }
+
+/* ── 对比 ── */
+.delta { font-variant-numeric: tabular-nums; font-weight: 650; }
+.delta.up { color: var(--pass); } .delta.down { color: var(--fail); } .delta.flat { color: var(--text-3); }
+.verdict-pill { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.verdict-pill.pass { background: var(--pass-soft); color: var(--pass); }
+.verdict-pill.fail { background: var(--fail-soft); color: var(--fail); }
+.verdict-pill.void { background: var(--void-soft); color: var(--void); }
+.verdict-pill.noise { background: var(--surface-2); color: var(--text-2); }
+.note-box { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
+
+/* ── 空状态 ── */
+.empty { max-width: 520px; margin: 12vh auto 0; text-align: center; }
+.empty h1 { margin-bottom: 10px; }
+.empty p { color: var(--text-2); margin: 0 0 22px; }
+
+/* ── 浮层：sheet 与抽屉 ── */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.28); z-index: 40; opacity: 0; transition: opacity 220ms ease; }
+.scrim.show { opacity: 1; }
+.sheet {
+  position: fixed; z-index: 41; left: 50%; top: 7vh; width: min(720px, calc(100vw - 32px)); max-height: 86vh;
+  display: flex; flex-direction: column;
+  background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-lg); border: 1px solid var(--line);
+  transform: translate(-50%, 16px) scale(.98); opacity: 0;
+  transition: transform 320ms cubic-bezier(.2,.9,.25,1), opacity 220ms ease;
+}
+.sheet.show { transform: translate(-50%, 0) scale(1); opacity: 1; }
+.sheet header, .drawer header { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.sheet header h3, .drawer header h3 { margin: 0; font-size: 16px; font-weight: 650; flex: 1; min-width: 0; }
+.sheet .body { padding: 18px 20px; overflow-y: auto; }
+.sheet footer { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line); }
+.drawer {
+  position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; width: min(860px, 100vw);
+  display: flex; flex-direction: column;
+  background: var(--surface); box-shadow: var(--shadow-lg); border-left: 1px solid var(--line);
+  transform: translateX(100%); transition: transform 340ms cubic-bezier(.2,.9,.25,1);
+}
+.drawer.show { transform: translateX(0); }
+.drawer .body { overflow-y: auto; padding: 16px 20px 60px; flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .sheet, .drawer, .scrim { transition: opacity 160ms ease !important; transform: none !important; }
+  .sheet { left: calc(50% - min(360px, 50vw - 16px)); }
+  .sheet:not(.show), .drawer:not(.show) { opacity: 0; pointer-events: none; }
+}
+
+.field { margin-bottom: 16px; }
+.field > label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.field .hint { color: var(--text-3); font-size: 12px; margin-top: 4px; }
+.input {
+  width: 100%; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line-strong);
+  background: var(--surface); outline: none; transition: box-shadow 120ms;
+}
+textarea.input { height: auto; padding: 8px 10px; resize: vertical; }
+.input:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--accent); }
+.row { display: flex; gap: 10px; align-items: center; }
+.row > .grow { flex: 1; min-width: 0; }
+
+.seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--surface-2); }
+.seg button { border: none; background: transparent; height: 28px; padding: 0 12px; border-radius: 7px; font-weight: 550; color: var(--text-2); transition: background 150ms, color 150ms; }
+.seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
+.stepper button { width: 32px; height: 32px; border: none; background: var(--surface); font-size: 16px; }
+.stepper button:active { background: var(--surface-2); }
+.stepper span { min-width: 36px; text-align: center; font-weight: 650; font-variant-numeric: tabular-nums; }
+
+.checklist { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.check { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+.check:last-child { border-bottom: none; }
+.check:hover { background: var(--surface-2); }
+.check input { width: 16px; height: 16px; accent-color: var(--accent); margin: 0; }
+.check .t { flex: 1; min-width: 0; }
+.check .s { color: var(--text-3); font-size: 12px; }
+.group-h { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; background: var(--surface-2); font-size: 12px; font-weight: 600; color: var(--text-2); border-bottom: 1px solid var(--line); }
+.linkish { border: none; background: none; color: var(--accent); font-size: 12px; padding: 0; }
+
+.model-row { display: grid; grid-template-columns: 1.3fr 1.3fr .9fr .6fr .6fr .6fr auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.model-row .input { height: 30px; font-size: 13px; }
+.model-head { display: grid; grid-template-columns: 1.3fr 1.3fr .9fr .6fr .6fr .6fr auto; gap: 6px; font-size: 11px; color: var(--text-3); margin-bottom: 4px; padding-right: 30px; }
+.pick-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pick { height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; }
+.pick:hover { border-color: var(--accent); color: var(--accent); }
+.pick.added { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+
+/* ── 回放 ── */
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab { height: 28px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; font-weight: 550; }
+.tab.on { background: var(--text); color: var(--surface); border-color: var(--text); }
+.reason-list { margin: 8px 0 0; padding-left: 18px; }
+.metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 14px 0; }
+.metric { background: var(--surface-2); border-radius: 9px; padding: 8px 10px; }
+.metric .k { font-size: 11px; color: var(--text-3); }
+.metric .v { font-weight: 650; font-variant-numeric: tabular-nums; }
+.msg { margin: 10px 0; }
+.msg .who { font-size: 11px; font-weight: 650; color: var(--text-3); margin-bottom: 3px; text-transform: none; }
+.bubble { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+.msg.user .bubble { background: var(--accent-soft); }
+.toolcall { margin-top: 6px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.toolcall summary { list-style: none; cursor: pointer; padding: 7px 10px; font-size: 12px; display: flex; gap: 8px; align-items: center; }
+.toolcall summary::-webkit-details-marker { display: none; }
+.toolcall summary:hover { background: var(--surface-2); }
+.toolcall .nm { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+.toolcall .cmd { font-family: ui-monospace, Consolas, monospace; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.toolcall pre { margin: 0; padding: 10px; font-size: 12px; background: var(--bg); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--line); }
+.mark { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--text-3); }
+.mark.ok { background: var(--pass); } .mark.err { background: var(--fail); } .mark.blk { background: var(--void); }
+.reasoning { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+.reasoning summary { cursor: pointer; }
+pre.log { font-size: 11px; background: var(--bg); padding: 10px; border-radius: 8px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
+
+.toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 20px); opacity: 0; z-index: 60;
+  background: var(--text); color: var(--surface); padding: 10px 16px; border-radius: 10px; font-weight: 550; box-shadow: var(--shadow-lg);
+  transition: transform 260ms cubic-bezier(.2,.9,.25,1), opacity 200ms; max-width: 80vw; }
+.toast.show { transform: translate(-50%, 0); opacity: 1; }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <div class="brand">Marcel 评测台</div>
+  <span class="chip" id="versionChip" title="当前代码版本：开始一轮时会按它编译">…</span>
+  <span class="chip" id="dockerChip"><span class="dot"></span>Docker</span>
+  <div class="spacer"></div>
+  <button class="btn ghost" id="compareBtn" disabled>对比所选两轮</button>
+  <button class="btn" id="settingsBtn">设置</button>
+  <button class="btn primary" id="newRunBtn">开始一轮</button>
+</div>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-title"><span>评测记录</span><span class="faint" id="cmpHint">勾两轮可对比</span></div>
+    <div id="runList"></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════ 状态 ═══════════════════════
+const S = {
+  config: null, tasks: [], taskProblems: [], runs: [], version: null, docker: null, maxConcurrency: 4,
+  selectedRunId: null, compare: [], view: 'run',
+};
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { 'content-type': 'application/json' }, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json.error || `请求失败 ${res.status}`);
+  return json;
+}
+
+function toast(text) {
+  const el = $('#toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+// ═══════════════════════ 统计 ═══════════════════════
+function counted(attempts) {
+  const done = attempts.filter((a) => a.state === 'done' && a.summary && a.summary.verdict !== 'void');
+  const pass = done.filter((a) => a.summary.verdict === 'pass').length;
+  return { n: done.length, pass, rate: done.length ? pass / done.length : null };
+}
+/** Wilson 区间：小样本下比 ±2σ 靠谱。 */
+function wilson(pass, n, z = 1.96) {
+  if (!n) return [0, 1];
+  const p = pass / n, d = 1 + z * z / n;
+  const c = (p + z * z / (2 * n)) / d, h = (z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / d;
+  return [Math.max(0, c - h), Math.min(1, c + h)];
+}
+/** 两比例差异是否显著（双侧 z 检验，约 95%）。 */
+function significant(a, b) {
+  if (!a.n || !b.n) return false;
+  const p = (a.pass + b.pass) / (a.n + b.n);
+  const se = Math.sqrt(p * (1 - p) * (1 / a.n + 1 / b.n));
+  if (se === 0) return a.rate !== b.rate;
+  return Math.abs((a.rate - b.rate) / se) >= 1.96;
+}
+const pct = (r) => (r == null ? '—' : `${Math.round(r * 100)}%`);
+const fmtTok = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : `${Math.round(n)}`);
+const fmtDur = (ms) => (ms == null ? '—' : ms >= 60000 ? `${Math.floor(ms / 60000)}分${Math.round((ms % 60000) / 1000)}秒` : `${Math.round(ms / 1000)}秒`);
+const fmtTime = (iso) => { const d = new Date(iso); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+
+function modelStats(run, modelId) {
+  const atts = run.attempts.filter((a) => a.modelId === modelId);
+  const c = counted(atts);
+  const sums = atts.filter((a) => a.state === 'done' && a.summary && a.summary.verdict !== 'void').map((a) => a.summary);
+  const costs = sums.map((s) => s.cost).filter((v) => v != null);
+  const totalCost = costs.length ? costs.reduce((a, b) => a + b, 0) : null;
+  return {
+    ...c,
+    tokens: avg(sums.map((s) => s.tokens)),
+    cachedRatio: (() => { const p = sums.reduce((a, s) => a + s.promptTokens, 0); return p ? sums.reduce((a, s) => a + s.cachedTokens, 0) / p : null; })(),
+    agentMs: avg(sums.map((s) => s.agentMs ?? s.durationMs)),
+    rounds: avg(sums.map((s) => s.rounds)),
+    toolErrors: sums.reduce((a, s) => a + s.toolErrors, 0),
+    approvals: sums.reduce((a, s) => a + s.approvals, 0),
+    questions: sums.reduce((a, s) => a + s.questions, 0),
+    voids: atts.filter((a) => a.summary?.verdict === 'void').length,
+    totalCost,
+    costPerPass: totalCost != null && c.pass ? totalCost / c.pass : null,
+  };
+}
+
+// ═══════════════════════ 渲染：侧栏 ═══════════════════════
+function renderToolbar() {
+  const v = S.version;
+  $('#versionChip').innerHTML = v ? `${esc(v.commit)}${v.dirty ? ' · <b>有未提交改动</b>' : ''}` : '…';
+  const d = S.docker;
+  $('#dockerChip').innerHTML = `<span class="dot ${d?.ok ? 'ok' : 'bad'}"></span>${d?.ok ? 'Docker 就绪' : 'Docker 未启动'}`;
+  $('#compareBtn').disabled = S.compare.length !== 2;
+}
+
+function renderRunList() {
+  const el = $('#runList');
+  if (!S.runs.length) { el.innerHTML = '<div class="faint" style="padding:8px 6px">还没有评测记录</div>'; return; }
+  el.innerHTML = S.runs.map((run) => {
+    const c = counted(run.attempts);
+    const done = run.attempts.filter((a) => a.state === 'done').length;
+    const live = !run.finishedAt;
+    const cmpIdx = S.compare.indexOf(run.id);
+    const models = run.models.map((m) => m.displayName || m.modelName).join('、');
+    return `<button class="run-item ${S.view === 'run' && run.id === S.selectedRunId ? 'active' : ''}" data-run="${esc(run.id)}">
+      <span class="cmp ${cmpIdx >= 0 ? 'on' : ''}" data-cmp="${esc(run.id)}" title="选来对比">${cmpIdx >= 0 ? (cmpIdx === 0 ? 'A' : 'B') : ''}</span>
+      <div class="label">${esc(run.label)}</div>
+      <div class="rate" style="color:${c.rate == null ? 'var(--text-3)' : 'inherit'}">${pct(c.rate)}</div>
+      <div class="meta">${fmtTime(run.createdAt)} · ${esc(run.version?.commit ?? '')}${run.version?.dirty ? '*' : ''} · ${esc(models)}</div>
+      ${live ? `<div class="mini-progress"><i style="width:${run.attempts.length ? (done / run.attempts.length) * 100 : 0}%"></i></div>` : ''}
+    </button>`;
+  }).join('');
+}
+
+// ═══════════════════════ 渲染：主区 ═══════════════════════
+function renderMain() {
+  const main = $('#main');
+  if (!S.config?.apiKeySet || !S.config?.baseUrl || !S.config?.models?.length) {
+    main.innerHTML = `<div class="empty">
+      <h1>先接上你的模型</h1>
+      <p>填 API 地址和 Key，选好要考的模型。Key 只存在本机 <code>evals/.local/</code>，不会进仓库，也不会写进任何成绩文件。</p>
+      <button class="btn primary" onclick="openSettings()">去设置</button></div>`;
+    return;
+  }
+  if (S.view === 'compare' && S.compare.length === 2) { renderCompare(main); return; }
+  const run = S.runs.find((r) => r.id === S.selectedRunId);
+  if (!run) {
+    main.innerHTML = `<div class="empty">
+      <h1>来考第一轮</h1>
+      <p>选几道题、几个模型，每道题会在一台全新的 Docker 靶机里由真实的 Marcel agent 独立完成，再自动判卷。每题建议考 3 次：模型有随机性，只考一次的结果不可信。</p>
+      <button class="btn primary" onclick="openNewRun()">开始一轮</button></div>`;
+    return;
+  }
+  renderRun(main, run);
+}
+
+function phaseBlock(run) {
+  const total = run.attempts.length;
+  const done = run.attempts.filter((a) => a.state === 'done').length;
+  if (run.phase === 'error') return `<div class="phase" style="border-color:var(--fail)"><b style="color:var(--fail)">这一轮没能跑起来</b><pre class="log" style="margin-top:8px">${esc(run.error)}</pre></div>`;
+  if (run.finishedAt) return '';
+  const running = run.attempts.filter((a) => ['preparing', 'running', 'grading'].includes(a.state)).length;
+  const text = run.phase === 'building' ? `正在准备：${esc(run.phaseDetail)}`
+    : run.phase === 'cancelling' ? '正在停止：等手上这几道题收尾'
+    : `正在考试：${done} / ${total} 场已完成，${running} 场进行中`;
+  return `<div class="phase"><div class="row"><span class="spinner"></span><span class="grow">${text}</span>
+    ${run.phase !== 'cancelling' ? `<button class="btn small danger" onclick="cancelRun('${esc(run.id)}')">停止</button>` : ''}</div>
+    <div class="bar"><i style="width:${total ? (done / total) * 100 : 0}%"></i></div></div>`;
+}
+
+function renderRun(main, run) {
+  const modelTiles = run.models.map((m) => {
+    const st = modelStats(run, m.id);
+    const [lo, hi] = wilson(st.pass, st.n);
+    return `<div class="tile">
+      <div class="name">${esc(m.displayName || m.modelName)}</div>
+      <div class="big">${pct(st.rate)}<small>${st.pass}/${st.n} 通过</small></div>
+      <div class="faint">${st.n ? `大概在 ${pct(lo)}–${pct(hi)} 之间（样本越多越准）` : '还没有成绩'}</div>
+      <div class="kv">
+        <span>平均每题 token</span><b>${st.tokens == null ? '—' : fmtTok(st.tokens)}</b>
+        <span>缓存命中</span><b>${st.cachedRatio == null ? '—' : pct(st.cachedRatio)}</b>
+        <span>平均用时</span><b>${fmtDur(st.agentMs)}</b>
+        <span>平均轮数</span><b>${st.rounds == null ? '—' : st.rounds.toFixed(1)}</b>
+        ${st.totalCost != null ? `<span>总花费 / 每过一题</span><b>¥${st.totalCost.toFixed(2)} / ${st.costPerPass == null ? '—' : '¥' + st.costPerPass.toFixed(2)}</b>` : ''}
+        <span>工具报错 · 审批 · 提问</span><b>${st.toolErrors} · ${st.approvals} · ${st.questions}</b>
+        ${st.voids ? `<span>作废（已重考）</span><b style="color:var(--void)">${st.voids}</b>` : ''}
+      </div></div>`;
+  }).join('');
+
+  let rows = '';
+  let lastCat = null;
+  for (const t of run.tasks) {
+    if (t.category !== lastCat) {
+      lastCat = t.category;
+      rows += `<tr class="cat"><td colspan="${run.models.length + 1}">${esc(t.category)}</td></tr>`;
+    }
+    rows += `<tr><td><div class="task-name">${esc(t.title)}${t.hidden ? '<span class="hidden-tag">暗题</span>' : ''}</div><div class="task-id">${esc(t.id)}</div></td>`;
+    for (const m of run.models) {
+      const atts = run.attempts.filter((a) => a.taskId === t.id && a.modelId === m.id).sort((a, b) => a.round - b.round);
+      const c = counted(atts);
+      const dots = atts.map((a) => {
+        const v = a.summary?.verdict;
+        const cls = a.state === 'done' ? (v || 'fail') : a.state === 'running' || a.state === 'grading' ? 'run' : a.state === 'preparing' ? 'prep' : '';
+        const tip = a.state === 'done' ? `第${a.round}次：${v === 'pass' ? '通过' : v === 'void' ? '作废' : '没过'}` : `第${a.round}次：${{ queued: '排队中', preparing: '准备靶机', running: '答题中', grading: '判卷中', cancelled: '已取消' }[a.state] ?? a.state}`;
+        return `<i class="d ${cls}" title="${tip}"></i>`;
+      }).join('');
+      const fracCls = c.rate == null ? '' : c.rate >= 0.99 ? 'good' : c.rate <= 0.01 ? 'bad' : 'mid';
+      rows += `<td><button class="cell" data-cell="${esc(t.id)}|${esc(m.id)}"><span class="dots">${dots}</span><span class="frac ${fracCls}">${c.n ? `${c.pass}/${c.n}` : ''}</span></button></td>`;
+    }
+    rows += '</tr>';
+  }
+
+  main.innerHTML = `
+    <div class="head-row"><div class="grow">
+      <h1><span class="editable" contenteditable="true" spellcheck="false" id="runLabel">${esc(run.label)}</span></h1>
+      <div class="subtle" style="margin-top:6px">${fmtTime(run.createdAt)} · 代码 ${esc(run.version?.commit)}${run.version?.dirty ? '（含未提交改动）' : ''}「${esc(run.version?.subject ?? '')}」 · ${run.mode === 'auto' ? 'Auto 模式' : 'Agent 模式（审批自动批准）'} · 每题 ${run.repeat} 次</div>
+    </div>
+    <button class="btn small" onclick="rerun('${esc(run.id)}')">用同样设置再考一轮</button>
+    ${run.finishedAt ? `<button class="btn small ghost danger" onclick="deleteRun('${esc(run.id)}')">删除</button>` : ''}</div>
+    ${phaseBlock(run)}
+    <div class="tiles">${modelTiles}</div>
+    <h2>每道题的成绩 <span class="faint" style="font-weight:400">· 点格子看完整过程</span></h2>
+    <table class="matrix"><thead><tr><th>题目</th>${run.models.map((m) => `<th>${esc(m.displayName || m.modelName)}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+
+  const label = $('#runLabel');
+  label.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); label.blur(); } });
+  label.addEventListener('blur', async () => {
+    const text = label.textContent.trim();
+    if (text && text !== run.label) { await api(`/api/runs/${run.id}`, { method: 'PATCH', body: { label: text } }); run.label = text; renderRunList(); }
+  });
+}
+
+// ═══════════════════════ 对比 ═══════════════════════
+function renderCompare(main) {
+  const [A, B] = S.compare.map((id) => S.runs.find((r) => r.id === id));
+  if (!A || !B) { S.view = 'run'; renderMain(); return; }
+  const key = (m) => m.modelName;
+  const sharedModels = A.models.filter((m) => B.models.some((n) => key(n) === key(m)));
+  const sharedTasks = A.tasks.filter((t) => B.tasks.some((u) => u.id === t.id));
+  const modelOf = (run, m) => run.models.find((n) => key(n) === key(m));
+
+  const tiles = sharedModels.map((m) => {
+    const sa = modelStats(A, m.id), sb = modelStats(B, modelOf(B, m).id);
+    const d = sa.rate != null && sb.rate != null ? sb.rate - sa.rate : null;
+    const sig = significant(sa, sb);
+    const verdict = d == null ? '' : !sig ? '<span class="verdict-pill noise">差别在运气范围内，别当真</span>'
+      : d > 0 ? '<span class="verdict-pill pass">B 确实更好</span>' : '<span class="verdict-pill fail">B 确实更差</span>';
+    const tokD = sa.tokens && sb.tokens ? (sb.tokens - sa.tokens) / sa.tokens : null;
+    const timeD = sa.agentMs && sb.agentMs ? (sb.agentMs - sa.agentMs) / sa.agentMs : null;
+    const sign = (x, invert) => x == null ? '—' : `<span class="delta ${Math.abs(x) < 0.05 ? 'flat' : (x > 0) !== invert ? 'up' : 'down'}">${x > 0 ? '+' : ''}${Math.round(x * 100)}%</span>`;
+    return `<div class="tile"><div class="name">${esc(m.displayName || m.modelName)}</div>
+      <div class="big">${pct(sa.rate)} → ${pct(sb.rate)}</div>
+      <div style="margin-top:6px">${verdict}</div>
+      <div class="kv"><span>样本（A / B）</span><b>${sa.n} / ${sb.n}</b>
+      <span>每题 token 变化</span><b>${sign(tokD, true)}</b>
+      <span>用时变化</span><b>${sign(timeD, true)}</b></div></div>`;
+  }).join('');
+
+  const changes = [];
+  for (const t of sharedTasks) for (const m of sharedModels) {
+    const ca = counted(A.attempts.filter((a) => a.taskId === t.id && a.modelId === m.id));
+    const cb = counted(B.attempts.filter((a) => a.taskId === t.id && a.modelId === modelOf(B, m).id));
+    if (ca.rate == null || cb.rate == null) continue;
+    changes.push({ t, m, ca, cb, d: cb.rate - ca.rate });
+  }
+  const better = changes.filter((c) => c.d > 0).sort((x, y) => y.d - x.d);
+  const worse = changes.filter((c) => c.d < 0).sort((x, y) => x.d - y.d);
+  const same = changes.length - better.length - worse.length;
+  const list = (items) => items.length ? `<table class="matrix"><thead><tr><th>题目</th><th>模型</th><th>A</th><th>B</th><th>变化</th></tr></thead><tbody>${items.map((c) => `<tr>
+      <td><div class="task-name">${esc(c.t.title)}</div><div class="task-id">${esc(c.t.id)}</div></td><td>${esc(c.m.displayName || c.m.modelName)}</td>
+      <td><button class="cell" data-xcell="${esc(A.id)}|${esc(c.t.id)}|${esc(c.m.id)}"><span class="frac">${c.ca.pass}/${c.ca.n}</span></button></td>
+      <td><button class="cell" data-xcell="${esc(B.id)}|${esc(c.t.id)}|${esc(modelOf(B, c.m).id)}"><span class="frac">${c.cb.pass}/${c.cb.n}</span></button></td>
+      <td><span class="delta ${c.d > 0 ? 'up' : 'down'}">${c.d > 0 ? '+' : ''}${Math.round(c.d * 100)}%</span></td></tr>`).join('')}</tbody></table>` : '<div class="faint">没有</div>';
+
+  main.innerHTML = `
+    <div class="head-row"><div class="grow"><h1>对比</h1>
+      <div class="subtle" style="margin-top:6px"><b>A</b> ${esc(A.label)}（${esc(A.version?.commit)}${A.version?.dirty ? '*' : ''}） → <b>B</b> ${esc(B.label)}（${esc(B.version?.commit)}${B.version?.dirty ? '*' : ''}）</div></div>
+      <button class="btn small" onclick="swapCompare()">交换 A/B</button>
+      <button class="btn small ghost" onclick="S.view='run';renderAll()">返回</button></div>
+    <div class="note-box">只比两轮都考过的题和模型。通过率的差别要足够大、样本要足够多，才算「确实」变了；否则可能只是这次运气好。想让判断更准，就多考几次（每题次数调高）。</div>
+    <div class="tiles">${tiles || '<div class="faint">两轮没有共同的模型</div>'}</div>
+    <h2>变好了的 <span class="faint" style="font-weight:400">· ${better.length} 项</span></h2>${list(better)}
+    <h2>变差了的 <span class="faint" style="font-weight:400">· ${worse.length} 项</span></h2>${list(worse)}
+    <div class="faint" style="margin-top:16px">另有 ${same} 项没有变化。点分数可以看那一边的完整过程。</div>`;
+}
+
+function swapCompare() { S.compare.reverse(); renderAll(); }
+
+function renderAll() { renderToolbar(); renderRunList(); renderMain(); }
+
+// ═══════════════════════ 浮层通用 ═══════════════════════
+function openLayer(html, kind = 'sheet') {
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  const panel = document.createElement('div');
+  panel.className = kind;
+  panel.innerHTML = html;
+  document.body.append(scrim, panel);
+  requestAnimationFrame(() => { scrim.classList.add('show'); panel.classList.add('show'); });
+  const close = () => {
+    scrim.classList.remove('show'); panel.classList.remove('show');
+    document.removeEventListener('keydown', onKey);
+    setTimeout(() => { scrim.remove(); panel.remove(); }, 360);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  scrim.addEventListener('click', close);
+  panel.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', close));
+  return { panel, close };
+}
+
+// ═══════════════════════ 设置 ═══════════════════════
+function openSettings() {
+  const cfg = S.config;
+  let models = (cfg.models || []).map((m) => ({ ...m }));
+  const { panel, close } = openLayer(`
+    <header><h3>设置</h3><button class="btn small ghost" data-close>关闭</button></header>
+    <div class="body">
+      <div class="field"><label>API 地址</label><input class="input" id="sBase" placeholder="http://127.0.0.1:8000/v1" value="${esc(cfg.baseUrl)}">
+        <div class="hint">OpenAI 兼容接口，一般以 /v1 结尾（和你在 Marcel 里填渠道地址一样）。</div></div>
+      <div class="field"><label>API Key</label><input class="input" id="sKey" type="password" placeholder="${cfg.apiKeySet ? `已保存（${esc(cfg.apiKeyHint)}），不改就留空` : '粘贴 Key'}">
+        <div class="hint">只存在本机 evals/.local/config.json（已被 git 忽略）。考试时 agent 只连本地中转站，拿不到真实 Key。</div></div>
+      <div class="field"><label>要考的模型</label>
+        <div class="model-head"><span>显示名</span><span>模型名（接口里的 id）</span><span>上下文窗口</span><span>温度</span><span>入 ¥/M</span><span>出 ¥/M</span></div>
+        <div id="sModels"></div>
+        <div class="row" style="margin-top:8px"><button class="btn small" id="sAdd">手动添加</button><button class="btn small" id="sFetch">从接口读取可用模型</button><span class="faint" id="sFetchHint"></span></div>
+        <div class="pick-list" id="sPicks"></div>
+        <div class="hint">上下文窗口不填就按 Marcel 的默认值；它决定什么时候压缩上下文，最好和你实际使用时一致。价格不填就不算钱。</div></div>
+      <div class="field"><label>同时考几道题</label>
+        <div class="row"><div class="stepper"><button id="pMinus">−</button><span id="pVal">${cfg.parallelTasks || 4}</span><button id="pPlus">+</button></div>
+        <span class="faint">最多 ${S.maxConcurrency}。不管这里填几，发往 API 的请求同一时刻都不会超过 ${S.maxConcurrency} 个。</span></div></div>
+    </div>
+    <footer><span class="spacer"></span><button class="btn" data-close>取消</button><button class="btn primary" id="sSave">保存</button></footer>`);
+
+  const renderModels = () => {
+    $('#sModels', panel).innerHTML = models.map((m, i) => `<div class="model-row" data-i="${i}">
+      <input class="input" data-k="displayName" placeholder="比如 GLM" value="${esc(m.displayName)}">
+      <input class="input" data-k="modelName" placeholder="模型 id" value="${esc(m.modelName)}">
+      <input class="input" data-k="contextWindow" placeholder="128000" value="${esc(m.contextWindow ?? '')}">
+      <input class="input" data-k="temperature" placeholder="默认" value="${esc(m.temperature ?? '')}">
+      <input class="input" data-k="priceIn" placeholder="—" value="${esc(m.priceIn ?? '')}">
+      <input class="input" data-k="priceOut" placeholder="—" value="${esc(m.priceOut ?? '')}">
+      <button class="btn small ghost danger" data-del="${i}" title="移除">✕</button></div>`).join('') || '<div class="faint">还没有模型</div>';
+  };
+  renderModels();
+  panel.addEventListener('input', (e) => {
+    const row = e.target.closest('.model-row');
+    if (row && e.target.dataset.k) models[row.dataset.i][e.target.dataset.k] = e.target.value;
+  });
+  panel.addEventListener('click', (e) => {
+    if (e.target.dataset.del != null) { models.splice(Number(e.target.dataset.del), 1); renderModels(); }
+    if (e.target.dataset.pick) {
+      const name = e.target.dataset.pick;
+      if (!models.some((m) => m.modelName === name)) { models.push({ modelName: name, displayName: name }); renderModels(); }
+      e.target.classList.add('added');
+    }
+  });
+  $('#sAdd', panel).onclick = () => { models.push({ modelName: '', displayName: '' }); renderModels(); };
+  $('#sFetch', panel).onclick = async () => {
+    $('#sFetchHint', panel).textContent = '读取中…';
+    try {
+      const { models: list } = await api('/api/upstream-models', { method: 'POST', body: { baseUrl: $('#sBase', panel).value, apiKey: $('#sKey', panel).value } });
+      $('#sFetchHint', panel).textContent = `${list.length} 个，点一下加入`;
+      $('#sPicks', panel).innerHTML = list.map((n) => `<button class="pick ${models.some((m) => m.modelName === n) ? 'added' : ''}" data-pick="${esc(n)}">${esc(n)}</button>`).join('');
+    } catch (e) { $('#sFetchHint', panel).textContent = e.message; }
+  };
+  let par = cfg.parallelTasks || 4;
+  const setPar = (v) => { par = Math.max(1, Math.min(S.maxConcurrency, v)); $('#pVal', panel).textContent = par; };
+  $('#pMinus', panel).onclick = () => setPar(par - 1);
+  $('#pPlus', panel).onclick = () => setPar(par + 1);
+  $('#sSave', panel).onclick = async () => {
+    const clean = models.filter((m) => m.modelName?.trim()).map((m) => ({ ...m, modelName: m.modelName.trim(), displayName: (m.displayName || m.modelName).trim() }));
+    try {
+      S.config = await api('/api/config', { method: 'POST', body: { baseUrl: $('#sBase', panel).value, apiKey: $('#sKey', panel).value, models: clean, parallelTasks: par } });
+      close(); toast('已保存'); renderAll();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+// ═══════════════════════ 开始一轮 ═══════════════════════
+function openNewRun(preset) {
+  const tasks = S.tasks;
+  const models = S.config.models;
+  const sel = {
+    models: new Set(preset?.modelIds ?? models.map((m) => m.id)),
+    tasks: new Set(preset?.taskIds ?? tasks.filter((t) => !t.hidden).map((t) => t.id)),
+    repeat: preset?.repeat ?? 3,
+    mode: preset?.mode ?? 'agent',
+  };
+  const cats = [...new Set(tasks.map((t) => t.category))];
+  const { panel, close } = openLayer(`
+    <header><h3>开始一轮评测</h3><button class="btn small ghost" data-close>关闭</button></header>
+    <div class="body">
+      <div class="field"><label>这一轮叫什么</label><input class="input" id="nLabel" placeholder="比如：压缩提示词改短 / 基准" value="${esc(preset?.label ?? '')}">
+        <div class="hint">会按你现在的代码编译（${esc(S.version?.commit)}${S.version?.dirty ? '，含未提交改动' : ''}）。名字用来在对比时认出它。</div></div>
+      <div class="field"><label>模型</label><div class="checklist">${models.map((m) => `<label class="check"><input type="checkbox" data-m="${esc(m.id)}" ${sel.models.has(m.id) ? 'checked' : ''}><span class="t">${esc(m.displayName || m.modelName)}</span><span class="s">${esc(m.modelName)}</span></label>`).join('')}</div></div>
+      <div class="field"><label>题目 <span class="faint" style="font-weight:400" id="nTaskCount"></span></label>
+        <div class="checklist">${cats.map((c) => `<div class="group-h"><span>${esc(c)}</span><button class="linkish" data-catall="${esc(c)}">全选/全不选</button></div>` +
+          tasks.filter((t) => t.category === c).map((t) => `<label class="check"><input type="checkbox" data-t="${esc(t.id)}" ${sel.tasks.has(t.id) ? 'checked' : ''}><span class="t">${esc(t.title)}${t.hidden ? '<span class="hidden-tag">暗题</span>' : ''}</span><span class="s">${esc(t.difficulty)}</span></label>`).join('')).join('')}</div>
+        ${S.taskProblems.length ? `<div class="note-box" style="background:var(--fail-soft);margin-top:8px">${S.taskProblems.length} 道题读不进来，没有列在上面：${S.taskProblems.map((p) => `<div><b>${esc(p.id)}</b>：${esc(p.error)}</div>`).join('')}</div>` : ''}
+        <div class="hint">暗题默认不选：平时调提示词别用它们，留到大改动之后做验收，防止提示词被调成「只会做这几道题」。</div></div>
+      <div class="field"><label>每道题考几次</label>
+        <div class="row"><div class="stepper"><button id="rMinus">−</button><span id="rVal">${sel.repeat}</span><button id="rPlus">+</button></div><span class="faint" id="nEstimate"></span></div>
+        <div class="hint">模型每次回答都有随机性，至少 3 次才能看出通过率。</div></div>
+      <div class="field"><label>模式</label>
+        <div class="seg" id="nMode"><button data-mode="agent" class="${sel.mode === 'agent' ? 'on' : ''}">Agent（审批自动批准）</button><button data-mode="auto" class="${sel.mode === 'auto' ? 'on' : ''}">Auto</button></div>
+        <div class="hint">Agent 模式会像真实用户那样经过审批流程（自动批准并记下次数）；风险评估「直接拒绝」的命令照样会被拦。</div></div>
+    </div>
+    <footer><span class="faint" id="nFoot"></span><span class="spacer"></span><button class="btn" data-close>取消</button><button class="btn primary" id="nStart">开始</button></footer>`);
+
+  const refresh = () => {
+    const n = sel.tasks.size * sel.models.size * sel.repeat;
+    $('#nTaskCount', panel).textContent = `已选 ${sel.tasks.size} 道`;
+    $('#nEstimate', panel).textContent = `共 ${n} 场考试，同时考 ${Math.min(S.config.parallelTasks || 4, S.maxConcurrency)} 场`;
+    $('#rVal', panel).textContent = sel.repeat;
+    $('#nStart', panel).disabled = n === 0 || !S.docker?.ok;
+    $('#nFoot', panel).textContent = S.docker?.ok ? '' : 'Docker 没启动，先打开 Docker Desktop';
+  };
+  refresh();
+  panel.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.m) t.checked ? sel.models.add(t.dataset.m) : sel.models.delete(t.dataset.m);
+    if (t.dataset.t) t.checked ? sel.tasks.add(t.dataset.t) : sel.tasks.delete(t.dataset.t);
+    refresh();
+  });
+  panel.addEventListener('click', (e) => {
+    const c = e.target.dataset.catall;
+    if (c) {
+      e.preventDefault();
+      const ids = tasks.filter((t) => t.category === c).map((t) => t.id);
+      const all = ids.every((id) => sel.tasks.has(id));
+      ids.forEach((id) => (all ? sel.tasks.delete(id) : sel.tasks.add(id)));
+      panel.querySelectorAll('[data-t]').forEach((box) => (box.checked = sel.tasks.has(box.dataset.t)));
+      refresh();
+    }
+    if (e.target.dataset.mode) {
+      sel.mode = e.target.dataset.mode;
+      panel.querySelectorAll('#nMode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === sel.mode));
+    }
+  });
+  $('#rMinus', panel).onclick = () => { sel.repeat = Math.max(1, sel.repeat - 1); refresh(); };
+  $('#rPlus', panel).onclick = () => { sel.repeat = Math.min(20, sel.repeat + 1); refresh(); };
+  $('#nStart', panel).onclick = async () => {
+    try {
+      const run = await api('/api/runs', { method: 'POST', body: { label: $('#nLabel', panel).value, modelIds: [...sel.models], taskIds: [...sel.tasks], repeat: sel.repeat, mode: sel.mode } });
+      close();
+      upsertRun(run);
+      S.selectedRunId = run.id; S.view = 'run';
+      renderAll();
+    } catch (e) { toast(e.message); }
+  };
+}
+
+function rerun(runId) {
+  const run = S.runs.find((r) => r.id === runId);
+  const modelIds = S.config.models.filter((m) => run.models.some((n) => n.modelName === m.modelName)).map((m) => m.id);
+  openNewRun({ modelIds, taskIds: run.tasks.map((t) => t.id).filter((id) => S.tasks.some((t) => t.id === id)), repeat: run.repeat, mode: run.mode, label: '' });
+}
+
+async function cancelRun(id) { await api(`/api/runs/${id}/cancel`, { method: 'POST' }); toast('正在停止'); }
+async function deleteRun(id) {
+  if (!confirm('删除这一轮的全部成绩和回放？删了找不回来。')) return;
+  await api(`/api/runs/${id}`, { method: 'DELETE' });
+  S.runs = S.runs.filter((r) => r.id !== id);
+  S.compare = S.compare.filter((x) => x !== id);
+  S.selectedRunId = S.runs[0]?.id ?? null;
+  renderAll();
+}
+
+// ═══════════════════════ 回放抽屉 ═══════════════════════
+async function openReplay(runId, taskId, modelId) {
+  const run = S.runs.find((r) => r.id === runId);
+  const task = run.tasks.find((t) => t.id === taskId);
+  const model = run.models.find((m) => m.id === modelId);
+  const atts = run.attempts.filter((a) => a.taskId === taskId && a.modelId === modelId).sort((a, b) => a.round - b.round);
+  const { panel } = openLayer(`
+    <header><h3>${esc(task?.title ?? taskId)} · ${esc(model?.displayName || model?.modelName)}</h3><button class="btn small ghost" data-close>关闭</button></header>
+    <div class="body"><div class="tabs" id="rTabs">${atts.map((a, i) => `<button class="tab ${i === 0 ? 'on' : ''}" data-att="${esc(a.id)}">第 ${a.round} 次 ${a.summary ? (a.summary.verdict === 'pass' ? '✓' : a.summary.verdict === 'void' ? '◌' : '✕') : '…'}</button>`).join('')}</div><div id="rBody"><div class="faint">加载中…</div></div></div>`, 'drawer');
+  const show = async (attId) => {
+    panel.querySelectorAll('#rTabs .tab').forEach((t) => t.classList.toggle('on', t.dataset.att === attId));
+    const body = $('#rBody', panel);
+    const att = atts.find((a) => a.id === attId);
+    if (att.state !== 'done') { body.innerHTML = `<div class="faint">这一场还没考完（${esc(att.state)}）。</div>`; return; }
+    try {
+      const data = await api(`/api/runs/${runId}/attempts/${encodeURIComponent(attId)}`);
+      body.innerHTML = renderTries(data);
+    } catch (e) { body.innerHTML = `<div class="faint">${esc(e.message)}</div>`; }
+  };
+  panel.addEventListener('click', (e) => {
+    if (e.target.dataset.att) show(e.target.dataset.att);
+    if (e.target.dataset.conv) {
+      const wrap = e.target.closest('.try');
+      wrap.querySelectorAll('[data-conv]').forEach((b) => b.classList.toggle('on', b === e.target));
+      wrap.querySelectorAll('.conv').forEach((c) => (c.hidden = c.dataset.cid !== e.target.dataset.conv));
+    }
+  });
+  if (atts[0]) show(atts[0].id);
+}
+
+function renderTries(data) {
+  const tries = data.tries.filter(Boolean);
+  if (!tries.length) return '<div class="faint">没有记录</div>';
+  const last = tries[tries.length - 1];
+  const voided = tries.slice(0, -1);
+  return `${voided.length ? `<div class="note-box" style="background:var(--void-soft)">这一场之前作废过 ${voided.length} 次（${voided.map((t) => esc(t.summary.reasons.join('；'))).join(' / ')}），下面是最后一次。</div>` : ''}
+    ${renderTry(last)}
+    <details style="margin-top:20px"><summary class="faint" style="cursor:pointer">评测入口日志</summary><pre class="log">${esc(data.log || '（空）')}</pre></details>`;
+}
+
+function renderTry(t) {
+  const s = t.summary;
+  const r = t.result || {};
+  const metric = (k, v) => `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  const pill = s.verdict === 'pass' ? '<span class="verdict-pill pass">通过</span>' : s.verdict === 'void' ? '<span class="verdict-pill void">作废</span>' : '<span class="verdict-pill fail">没过</span>';
+  const convs = r.transcript || [];
+  return `<div class="try">
+    <div>${pill}</div>
+    <ul class="reason-list">${s.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+    <div class="metrics">
+      ${metric('用时', fmtDur(s.agentMs ?? s.durationMs))}
+      ${metric('排队等 API', fmtDur(s.queueWaitMs))}
+      ${metric('token', fmtTok(s.tokens))}
+      ${metric('缓存命中', s.promptTokens ? pct(s.cachedTokens / s.promptTokens) : '—')}
+      ${metric('轮数', s.rounds)}
+      ${metric('工具调用 / 报错', `${s.toolCalls} / ${s.toolErrors}`)}
+      ${metric('审批 / 提问', `${s.approvals} / ${s.questions}`)}
+      ${metric('子 agent / 压缩', `${s.subagents} / ${s.compactions}`)}
+      ${metric('API 请求 / 出错', `${s.apiRequests} / ${s.apiErrors}`)}
+      ${s.cost != null ? metric('花费', `¥${s.cost.toFixed(3)}`) : ''}
+    </div>
+    ${convs[0]?.messages?.length ? '' : `<div class="field"><label>考题（agent 没来得及开始）</label><div class="bubble">${esc(t.task.prompt)}</div></div>`}
+    ${(r.interactions || []).filter((i) => i.kind === 'question').map((i) => `<div class="field"><label>agent 问了用户</label><div class="bubble">${esc((i.questions || []).map((q) => q.question).join('\n'))}\n\n→ 自动回答：${esc(i.answer)}</div></div>`).join('')}
+    ${convs.length > 1 ? `<div class="tabs">${convs.map((c, i) => `<button class="tab ${i === 0 ? 'on' : ''}" data-conv="${esc(c.id)}">${i === 0 ? '主对话' : '子 agent：' + esc(c.title)}</button>`).join('')}</div>` : ''}
+    ${convs.map((c, i) => `<div class="conv" data-cid="${esc(c.id)}" ${i === 0 ? '' : 'hidden'}>${renderConversation(c)}</div>`).join('')}
+  </div>`;
+}
+
+function renderConversation(c) {
+  const results = new Map();
+  for (const m of c.messages) if (m.role === 'tool' && m.toolCalls?.id) results.set(m.toolCalls.id, m);
+  const out = [];
+  for (const m of c.messages) {
+    if (m.role === 'tool') continue;
+    if (m.role === 'user') { out.push(`<div class="msg user"><div class="who">用户</div><div class="bubble">${esc(m.content)}</div></div>`); continue; }
+    if (m.role === 'assistant') {
+      const calls = Array.isArray(m.toolCalls) ? m.toolCalls : [];
+      out.push(`<div class="msg"><div class="who">agent</div>
+        ${m.reasoning ? `<details class="reasoning"><summary>思考过程</summary><div class="bubble">${esc(m.reasoning)}</div></details>` : ''}
+        ${m.content.trim() ? `<div class="bubble">${esc(m.content)}</div>` : ''}
+        ${calls.map((call) => {
+          const res = results.get(call.id);
+          const meta = res?.toolCalls || {};
+          const cls = meta.blocked ? 'blk' : meta.success === false ? 'err' : meta.success ? 'ok' : '';
+          const brief = call.arguments?.command ?? call.arguments?.path ?? call.arguments?.prompt ?? '';
+          return `<details class="toolcall"><summary><span class="mark ${cls}"></span><span class="nm">${esc(call.name)}</span><span class="cmd">${esc(String(brief).split('\n')[0])}</span></summary>
+            <pre>${esc(JSON.stringify(call.arguments, null, 2))}</pre>${res ? `<pre>${esc(res.content)}</pre>` : ''}</details>`;
+        }).join('')}</div>`);
+      continue;
+    }
+    out.push(`<div class="msg"><div class="who">${esc(m.role)}</div><div class="bubble">${esc(m.content)}</div></div>`);
+  }
+  return out.join('');
+}
+
+// ═══════════════════════ 事件 ═══════════════════════
+function upsertRun(run) {
+  const i = S.runs.findIndex((r) => r.id === run.id);
+  if (i >= 0) S.runs[i] = run; else S.runs.unshift(run);
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    renderRunList();
+    // 正在编辑名字或看对比时不重画主区，免得打断输入。
+    if (document.activeElement?.id !== 'runLabel') renderMain();
+  });
+}
+
+function connectEvents() {
+  const es = new EventSource('/api/events');
+  es.addEventListener('run', (e) => { upsertRun(JSON.parse(e.data)); scheduleRender(); });
+  es.addEventListener('phase', (e) => {
+    const d = JSON.parse(e.data);
+    const run = S.runs.find((r) => r.id === d.runId);
+    if (run) { run.phase = d.phase; run.phaseDetail = d.detail; scheduleRender(); }
+  });
+  es.addEventListener('attempt', (e) => {
+    const d = JSON.parse(e.data);
+    const run = S.runs.find((r) => r.id === d.runId);
+    if (!run) return;
+    const i = run.attempts.findIndex((a) => a.id === d.attempt.id);
+    if (i >= 0) run.attempts[i] = d.attempt;
+    scheduleRender();
+  });
+}
+
+document.addEventListener('click', (e) => {
+  const cmp = e.target.closest('[data-cmp]');
+  if (cmp) {
+    e.stopPropagation();
+    const id = cmp.dataset.cmp;
+    if (S.compare.includes(id)) S.compare = S.compare.filter((x) => x !== id);
+    else { S.compare.push(id); if (S.compare.length > 2) S.compare.shift(); }
+    // 列表是新的在上：A 取较早的一轮，B 取较新的一轮。
+    S.compare.sort((a, b) => S.runs.find((r) => r.id === a).createdAt.localeCompare(S.runs.find((r) => r.id === b).createdAt));
+    renderToolbar(); renderRunList();
+    return;
+  }
+  const item = e.target.closest('[data-run]');
+  if (item) { S.selectedRunId = item.dataset.run; S.view = 'run'; renderRunList(); renderMain(); return; }
+  const cell = e.target.closest('[data-cell]');
+  if (cell) { const [t, m] = cell.dataset.cell.split('|'); openReplay(S.selectedRunId, t, m); return; }
+  const xcell = e.target.closest('[data-xcell]');
+  if (xcell) { const [r, t, m] = xcell.dataset.xcell.split('|'); openReplay(r, t, m); }
+});
+$('#settingsBtn').onclick = openSettings;
+$('#newRunBtn').onclick = () => {
+  if (!S.config?.apiKeySet || !S.config?.models?.length) { openSettings(); return; }
+  openNewRun();
+};
+$('#compareBtn').onclick = () => { S.view = 'compare'; renderAll(); };
+
+async function refreshState() {
+  const st = await api('/api/state');
+  Object.assign(S, { config: st.config, tasks: st.tasks, taskProblems: st.taskProblems ?? [], runs: st.runs, version: st.version, docker: st.docker, maxConcurrency: st.maxConcurrency });
+  if (!S.selectedRunId || !S.runs.some((r) => r.id === S.selectedRunId)) S.selectedRunId = S.runs[0]?.id ?? null;
+  S.compare = S.compare.filter((id) => S.runs.some((r) => r.id === id));
+}
+
+(async () => {
+  await refreshState();
+  renderAll();
+  connectEvents();
+  // 版本与 Docker 状态会在你改代码 / 开关 Docker 时变，定期刷新这两项。
+  setInterval(async () => {
+    try {
+      const st = await api('/api/state');
+      S.version = st.version; S.docker = st.docker; S.tasks = st.tasks; S.taskProblems = st.taskProblems ?? [];
+      renderToolbar();
+    } catch { /* 服务停了 */ }
+  }, 8000);
+})();
+</script>
+</body>
+</html>

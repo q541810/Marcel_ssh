@@ -1,0 +1,8 @@
+{
+  "title": "api 服务端口被占",
+  "category": "排障",
+  "difficulty": "medium",
+  "prompt": "/opt/api 那个小服务我想让它跑在 8080 上，但是一启动就报错，你帮我弄好，让它正常跑起来。",
+  "timeoutSecs": 600,
+  "hidden": true
+}
