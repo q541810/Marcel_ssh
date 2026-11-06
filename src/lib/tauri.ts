@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { isDebugSession } from "@/lib/debugServer";
 import {
   POSIX_INTERFACES_COMMAND,
+  POSIX_LISTEN_COMMAND,
   POSIX_NETWORK_COMMAND,
   POSIX_PROCESS_COMMAND,
   POSIX_UNAME_COMMAND,
@@ -19,6 +20,7 @@ import {
   windowsKillCommand,
   type RemoteNetworkSnapshot,
   type RemoteProcessInfo,
+  type RemoteSocketInfo,
 } from "./remoteSystem";
 import { getErrorMessage } from "./errors";
 import type { HistorySnapshot } from "./historySnapshot";
@@ -221,6 +223,55 @@ export async function sshListNetwork(
     sockets: parsePosixNetworkOutput(networkOutput),
     interfaces: parsePosixInterfaces(interfacesOutput),
   };
+}
+
+/** 服务器上正在监听的 TCP 端口（端口转发的“发现服务”）。Windows 复用完整网络快照。 */
+export async function sshListListeners(
+  sessionId: string,
+): Promise<RemoteSocketInfo[]> {
+  if (isDebugSession(sessionId)) return [];
+  const os = await detectRemoteOs(sessionId);
+  if (os === "windows") return (await sshListNetwork(sessionId)).sockets;
+  return parsePosixNetworkOutput(await sshExec(sessionId, POSIX_LISTEN_COMMAND));
+}
+
+// Port forward（本地端口转发，`ssh -L`）
+
+export interface PortForwardInfo {
+  id: string;
+  sessionId: string;
+  remoteHost: string;
+  remotePort: number;
+  localPort: number;
+  sessionOnline: boolean;
+  activeConnections: number;
+  totalConnections: number;
+  lastError: string | null;
+}
+
+export async function portForwardStart(
+  sessionId: string,
+  remoteHost: string,
+  remotePort: number,
+  localPort?: number,
+): Promise<PortForwardInfo> {
+  return invoke<PortForwardInfo>("port_forward_start", {
+    sessionId,
+    remoteHost,
+    remotePort,
+    localPort: localPort ?? null,
+  });
+}
+
+export async function portForwardStop(forwardId: string): Promise<void> {
+  return invoke("port_forward_stop", { forwardId });
+}
+
+export async function portForwardList(
+  sessionId: string,
+): Promise<PortForwardInfo[]> {
+  if (isDebugSession(sessionId)) return [];
+  return invoke<PortForwardInfo[]>("port_forward_list", { sessionId });
 }
 
 /**

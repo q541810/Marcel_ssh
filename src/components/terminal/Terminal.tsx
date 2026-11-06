@@ -8,6 +8,7 @@ import { useViewStore, byMount } from '@/stores/viewStore';
 import QuickCommandPanel from './QuickCommandPanel';
 import ProcessPanel from './ProcessPanel';
 import NetworkPanel from './NetworkPanel';
+import PortForwardPanel from './PortForwardPanel';
 import FileManagerPanel from '../sftp/FileManagerPanel';
 import BottomTabBar from './BottomTabBar';
 import PasteConfirmDialog from './PasteConfirmDialog';
@@ -358,6 +359,9 @@ export default function Terminal() {
               )}
               {displayTab === 'network' && (
                 <NetworkPanel sessionId={activeSessionId} />
+              )}
+              {displayTab === 'port-forward' && (
+                <PortForwardPanel sessionId={activeSessionId} />
               )}
               {displayTab === 'file-manager' && (
                 <FileManagerPanel

@@ -23,6 +23,7 @@ pub mod plugin_notification;
 pub mod plugin_uri;
 pub mod plugin_webview;
 pub mod plugin_window;
+pub mod port_forward;
 pub mod quick_command;
 pub mod settings;
 pub mod sftp;

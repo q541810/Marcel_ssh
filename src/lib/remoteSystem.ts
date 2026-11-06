@@ -272,6 +272,10 @@ export const POSIX_NETWORK_COMMAND =
   'echo "---CONNECTIONS---"; ' +
   '(ss -Htnp 2>/dev/null || ss -tnp 2>/dev/null)';
 
+/** 只读监听端口（端口转发的“服务器上有哪些服务”用），比 POSIX_NETWORK_COMMAND 少查一遍活动连接。 */
+export const POSIX_LISTEN_COMMAND =
+  '(ss -Htlnp 2>/dev/null || ss -tlnp 2>/dev/null)';
+
 export const POSIX_INTERFACES_COMMAND =
   'ip -j addr 2>/dev/null || ip addr 2>/dev/null || ifconfig 2>/dev/null';
 

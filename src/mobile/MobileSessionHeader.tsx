@@ -1,4 +1,7 @@
-import { RefreshCw, X } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeftRight, RefreshCw, X } from 'lucide-react';
+import PortForwardView from '@/components/terminal/PortForwardView';
+import MobileSheet from './ui/MobileSheet';
 import type { Session } from '@/lib/types';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useTaskStore } from '@/stores/taskStore';
@@ -21,6 +24,7 @@ export default function MobileSessionHeader({
   onDisconnect,
   onReconnect,
 }: MobileSessionHeaderProps) {
+  const [forwardOpen, setForwardOpen] = useState(false);
   const connections = useConnectionStore((s) => s.connections);
   const tasks = useTaskStore((s) => s.tasks);
   const unreadCompletedConversations = useTaskStore(
@@ -65,6 +69,17 @@ export default function MobileSessionHeader({
         </div>
       </div>
 
+      {session.status === 'connected' && (
+        <button
+          type="button"
+          onClick={() => setForwardOpen(true)}
+          className="rounded-lg bg-zinc-800 p-2 text-zinc-300 transition-transform duration-100 active:scale-95 active:bg-state-mid"
+          aria-label="端口转发"
+        >
+          <ArrowLeftRight className="h-4 w-4" />
+        </button>
+      )}
+
       {canReconnectSession(session) && (
         <button
           type="button"
@@ -84,6 +99,16 @@ export default function MobileSessionHeader({
       >
         <X className="h-4 w-4" />
       </button>
+      <MobileSheet
+        open={forwardOpen}
+        onClose={() => setForwardOpen(false)}
+        title="端口转发"
+        maxHeightClassName="max-h-[min(80dvh,calc(100dvh-var(--ime-bottom,0px)))]"
+      >
+        <div className="h-[60dvh]">
+          <PortForwardView sessionId={session.id} touch />
+        </div>
+      </MobileSheet>
     </header>
   );
 }

@@ -21,6 +21,7 @@ pub mod memory;
 pub mod multi_host;
 pub mod notification;
 pub mod plugins;
+pub mod port_forward;
 pub mod skills;
 pub mod ssh;
 // 跨设备同步：核心库（HLC / 镜像 / 差异 / 落地 / 加密与远端格式，纯逻辑无 IO）
@@ -973,6 +974,8 @@ pub fn run() {
             drop(init_rt);
 
             app.manage(app_state);
+            // 端口转发管理器：独立托管（不进 AppState），只有转发命令与 ssh_disconnect 用它
+            app.manage(crate::port_forward::PortForwardManager::new());
 
             // Load plugin manifests into the registry. Failure degrades to an
             // empty registry + log; the app still starts so the user can fix
@@ -1162,6 +1165,9 @@ pub fn run() {
             commands::app_bootstrap::app_get_bootstrap,
             commands::mobile_set_app_foreground,
             commands::ssh::ssh_connect,
+            commands::port_forward::port_forward_start,
+            commands::port_forward::port_forward_stop,
+            commands::port_forward::port_forward_list,
             commands::ssh::ssh_connect_with_saved_password,
             commands::ssh::ssh_connect_with_saved_passphrase,
             commands::ssh::ssh_reconnect,

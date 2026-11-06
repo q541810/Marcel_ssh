@@ -176,9 +176,12 @@ pub async fn ssh_connect(
 pub async fn ssh_disconnect(
     app: AppHandle,
     state: State<'_, AppState>,
+    forwards: State<'_, crate::port_forward::PortForwardManager>,
     session_id: String,
 ) -> Result<(), AppError> {
     crate::commands::sftp::cleanup_session_sysopen(&app, &state, &session_id).await;
+    // 用户主动关会话：名下的端口转发一并释放（远端掉线不走这里，转发留着等重连）
+    forwards.stop_session(&app, &session_id);
     state
         .agent_interaction
         .cancel_session_interactions(&app, &session_id);
