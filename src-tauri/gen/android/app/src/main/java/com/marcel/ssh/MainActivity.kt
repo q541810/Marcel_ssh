@@ -20,6 +20,7 @@ import android.view.Display
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebView
+import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -117,29 +118,86 @@ class MainActivity : TauriActivity() {
     // sub-pages register close callbacks in `window.__marcelHandleBack`
     // (src/mobile/backHandler.ts). If nothing consumes it there, fall through
     // to the system default (finish the activity).
-    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-      override fun handleOnBackPressed() {
-        val webView = webViewRef
-        if (webView == null) {
-          passThrough()
-          return
-        }
-        webView.evaluateJavascript(
-          "window.__marcelHandleBack ? window.__marcelHandleBack() : false"
-        ) { result ->
-          val consumed = result?.trim('"') == "true"
-          if (!consumed) {
-            passThrough()
-          }
-        }
-      }
+    onBackPressedDispatcher.addCallback(this, backCallback)
+  }
 
-      private fun passThrough() {
-        isEnabled = false
-        onBackPressedDispatcher.onBackPressed()
-        isEnabled = true
+  /**
+   * 返回手势回调（预见式返回，Android 14+ 才有进度事件；更低版本只会走 [handleOnBackPressed]）。
+   *
+   * **启用与否由网页同步告知**（[MobileBridge.setBackIntercept]）：网页层有东西可退
+   * （抽屉 / 子页 / 页内导航）→ 启用，手势由我们接管并把进度逐帧推给页面做预览；
+   * 网页层空了 → 停用，系统自己播「返回桌面」预览并退到后台。必须是同步开关而不是事后
+   * 询问：系统要在手势**开始前**就决定由谁来演这段动画，evaluateJavascript 是异步的，
+   * 等结果回来就晚了。
+   *
+   * 初始为停用：页面还没起来之前没有任何东西可退。
+   */
+  private val backCallback = object : OnBackPressedCallback(false) {
+    /** 逐帧进度只留最新一份，每个 vsync 最多往页面推一次。 */
+    private var pendingProgress: BackEventCompat? = null
+    private var progressScheduled = false
+
+    override fun handleOnBackStarted(backEvent: BackEventCompat) {
+      pendingProgress = null
+      evalBack(
+        "window.__marcelBackStart&&window.__marcelBackStart(" +
+          "${backEvent.swipeEdge},${backEvent.touchY})"
+      )
+    }
+
+    override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+      pendingProgress = backEvent
+      if (progressScheduled) return
+      val webView = webViewRef ?: return
+      progressScheduled = true
+      webView.postOnAnimation {
+        progressScheduled = false
+        // 取消 / 确认可能已经把它清掉了：不要在手势结束后再推一帧
+        val e = pendingProgress ?: return@postOnAnimation
+        pendingProgress = null
+        evalBack(
+          "window.__marcelBackProgress&&window.__marcelBackProgress(" +
+            "${e.progress},${e.swipeEdge},${e.touchY})"
+        )
       }
-    })
+    }
+
+    override fun handleOnBackCancelled() {
+      pendingProgress = null
+      evalBack("window.__marcelBackCancel&&window.__marcelBackCancel()")
+    }
+
+    override fun handleOnBackPressed() {
+      pendingProgress = null
+      val webView = webViewRef
+      if (webView == null) {
+        passThrough()
+        return
+      }
+      webView.evaluateJavascript(
+        "window.__marcelHandleBack ? window.__marcelHandleBack() : false"
+      ) { result ->
+        val consumed = result?.trim('"') == "true"
+        if (!consumed) {
+          passThrough()
+        }
+      }
+    }
+
+    private fun evalBack(js: String) {
+      webViewRef?.evaluateJavascript(js, null)
+    }
+
+    private fun passThrough() {
+      isEnabled = false
+      onBackPressedDispatcher.onBackPressed()
+      // 页面这次没接住，说明它的栈其实是空的：保持停用，等网页下次有层时再同步打开。
+    }
+  }
+
+  /** 网页同步过来的「有没有层可退」。必须在主线程调用。 */
+  fun setBackInterceptEnabled(enabled: Boolean) {
+    backCallback.isEnabled = enabled
   }
 
   /**

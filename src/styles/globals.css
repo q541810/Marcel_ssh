@@ -1404,6 +1404,64 @@ html[data-marcel-theme='light'] .marcel-code-block {
   animation: mobilePopoverExit 160ms ease-in both;
 }
 
+/* ── 预见式返回（Android 14+ 侧滑返回手势的实时预览） ──
+   姿态由 mobile/backPreview.ts 逐帧写进 --back-* 自定义属性，这里统一翻成 transform。
+   data-back 只在手势期间存在，className 仍归 React。
+   手势松手确认后，层自己的退出动画必须从「用户松手的那个姿态」接着走，所以退出关键帧
+   也用同一组变量作终点（函数列表与上面的 transform 一致，才会逐项平滑插值，
+   不会退化成矩阵插值）。 */
+[data-back] {
+  transform: translate3d(var(--back-x, 0px), var(--back-y, 0px), 0)
+    scale(var(--back-s, 1));
+  opacity: var(--back-o, 1);
+}
+
+/* 页面 / 页内导航：收缩后露出底下的内容，需要圆角裁切 + 一圈极淡的边，
+   否则深色页压在深色底上看不出它缩小了。 */
+[data-back='page'],
+[data-back='peek'] {
+  overflow: hidden;
+  border-radius: var(--back-r, 0px);
+}
+
+[data-back='page'] {
+  box-shadow:
+    0 0 0 1px rgb(128 128 128 / calc(var(--back-p, 0) * 0.28)),
+    0 14px 44px rgb(0 0 0 / calc(var(--back-p, 0) * 0.45));
+}
+
+@keyframes mobileSheetBackExit {
+  to {
+    transform: translate3d(var(--back-x, 0px), 100%, 0) scale(var(--back-s, 1));
+  }
+}
+
+@keyframes mobileFullscreenBackExit {
+  to {
+    opacity: 0;
+    transform: translate3d(
+        calc(var(--back-x, 0px) * 3),
+        var(--back-y, 0px),
+        0
+      )
+      scale(calc(var(--back-s, 1) * 0.86));
+  }
+}
+
+/* 退出走「松手后的惯性」曲线：起步就快，不能像普通退出那样 ease-in 先停顿一下。 */
+[data-back='sheet'].mobile-sheet-exit {
+  animation: mobileSheetBackExit 300ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+[data-back='page'].mobile-fullscreen-exit {
+  animation: mobileFullscreenBackExit 260ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+[data-back='fade'].mobile-backdrop-exit {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
 /* 锚定在触发按钮下方的下拉面板（Select、字体选择器等共用，配合 useAnimatedPresence 延迟卸载）。
    必须排在上面 `[role="listbox"]` 的通用入场规则之后，同一元素上才能盖过它。 */
 @keyframes dropdownEnter {

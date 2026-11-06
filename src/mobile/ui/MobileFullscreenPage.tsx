@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { registerBackHandler } from '../backHandler';
+import { pageBackPreview } from '../backPreview';
 
 interface MobileFullscreenPageProps {
   /** Page content (header / body / footer), laid out in a column flexbox. */
@@ -64,13 +65,20 @@ export default function MobileFullscreenPage({
   // stable registration keeps this layer's position in the back stack even
   // when the callback identity changes (e.g. a dirty-state dependency).
   const hasBack = onBack != null;
+  const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!hasBack) return;
-    return registerBackHandler(() => onBackRef.current?.());
+    // Predictive back: the page shrinks and follows the finger; on commit the
+    // exit animation (`[data-back].mobile-fullscreen-exit`) continues from there.
+    return registerBackHandler(
+      () => onBackRef.current?.(),
+      pageBackPreview(() => rootRef.current),
+    );
   }, [hasBack]);
 
   return createPortal(
     <div
+      ref={rootRef}
       onAnimationEnd={onExitAnimationEnd}
       className={`fixed inset-0 z-50 flex flex-col ${className} ${
         closing ? 'mobile-fullscreen-exit' : 'mobile-fullscreen-enter'

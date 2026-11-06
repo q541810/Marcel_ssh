@@ -29,6 +29,7 @@ import MobileQuickCommandBar from './MobileQuickCommandBar';
 import MobileSessionHeader from './MobileSessionHeader';
 import MobilePasteConfirmSheet from './ui/MobilePasteConfirmSheet';
 import { registerBackHandler } from './backHandler';
+import { peekBackPreview } from './backPreview';
 import {
   applyCtrlToggle,
   createInputBatcher,
@@ -197,7 +198,7 @@ export default function MobileTerminalHost({
   // Android back gesture leaves the forced connection-list overlay.
   useEffect(() => {
     if (!forceList) return;
-    return registerBackHandler(() => setForceList(false));
+    return registerBackHandler(() => setForceList(false), peekBackPreview());
   }, [forceList]);
 
   // xterm stays for host lifetime (tab keep-alive). List is overlay; container always laid out.

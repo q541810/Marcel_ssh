@@ -24,6 +24,7 @@ import { useUpdateStore } from '@/stores/updateStore';
 import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
+import { peekBackPreview } from './backPreview';
 import { panelVisibilityClass } from './sessionUi';
 import {
   DEFAULT_MOBILE_TAB,
@@ -130,7 +131,10 @@ export default function MobileApp() {
     // 登记当前页签：跨页跳转（agent 里点路径 → 文件页）靠它记下「从哪来」
     reportMobileTab(activeTab);
     if (activeTab === DEFAULT_MOBILE_TAB) return;
-    return registerBackHandler(() => setActiveTab(DEFAULT_MOBILE_TAB));
+    return registerBackHandler(
+      () => setActiveTab(DEFAULT_MOBILE_TAB),
+      peekBackPreview(),
+    );
   }, [activeTab]);
 
   // 文件页等处请求切到终端 / Agent
@@ -207,6 +211,7 @@ export default function MobileApp() {
       }}
     >
       <main
+        data-back-peek
         className="absolute inset-x-0 top-0 overflow-hidden"
         style={{
           bottom:

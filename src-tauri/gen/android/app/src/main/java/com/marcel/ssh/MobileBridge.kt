@@ -87,6 +87,18 @@ class MobileBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun getInsetBottoms(): String = "${activity.imeBottomCss},${activity.navBottomCss}"
 
+    // ---------- 预见式返回 ----------
+
+    /**
+     * 网页层有没有可以消费返回手势的层（抽屉 / 子页 / 页内导航）。
+     * 有 → 原生接管手势、把进度逐帧推给页面做预览；没有 → 交给系统播「返回桌面」动画。
+     * 见 `src/mobile/backHandler.ts`，栈在空与非空之间切换时才会调一次。
+     */
+    @JavascriptInterface
+    fun setBackIntercept(enabled: Boolean) {
+        activity.runOnUiThread { activity.setBackInterceptEnabled(enabled) }
+    }
+
     // ---------- 主题外框 ----------
 
     /**

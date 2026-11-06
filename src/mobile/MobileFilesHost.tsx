@@ -77,6 +77,7 @@ import {
   type TransferCompletionInfo,
 } from './filesUi';
 import { registerBackHandler } from './backHandler';
+import { peekBackPreview } from './backPreview';
 import { resolveSessionDisplayName, sessionStatusLabel } from './sessionUi';
 
 interface MobileFilesHostProps {
@@ -596,9 +597,9 @@ export default function MobileFilesHost({
   // 注册只有这一个 effect：两个 effect 各管一个的话，谁后注册谁在栈顶，目录一变顺序就乱。
   useEffect(() => {
     if (!visible || emptyReason !== 'ready') return;
-    if (returnTrip) return registerBackHandler(handleReturnTrip);
+    if (returnTrip) return registerBackHandler(handleReturnTrip, peekBackPreview());
     if (currentPath === '/') return;
-    return registerBackHandler(handleGoUp);
+    return registerBackHandler(handleGoUp, peekBackPreview());
   }, [visible, emptyReason, currentPath, handleGoUp, returnTrip, handleReturnTrip]);
 
   // 离开文件页：返回条作废（下次来文件页不该还挂着一条陈旧的「返回对话」）。

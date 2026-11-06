@@ -1,0 +1,241 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  registerBackHandler,
+  resetBackHandlers,
+  type BackGestureFrame,
+  type BackPreview,
+} from "./backHandler";
+
+function makePreview() {
+  const calls: string[] = [];
+  const frames: BackGestureFrame[] = [];
+  const preview: BackPreview = {
+    start: (edge) => calls.push(`start:${edge}`),
+    update: (f) => {
+      calls.push("update");
+      frames.push(f);
+    },
+    cancel: () => calls.push("cancel"),
+    commit: () => calls.push("commit"),
+  };
+  return { preview, calls, frames };
+}
+
+/** Manual frame clock so smoothing is deterministic. */
+let now = 0;
+let pending: FrameRequestCallback[] = [];
+function flushFrames(count = 1, stepMs = 16): void {
+  for (let i = 0; i < count; i++) {
+    now += stepMs;
+    const run = pending;
+    pending = [];
+    run.forEach((cb) => cb(now));
+  }
+}
+
+const setIntercept = vi.fn<(enabled: boolean) => void>();
+
+beforeEach(() => {
+  now = 0;
+  pending = [];
+  setIntercept.mockReset();
+  window.AndroidBridge = { setBackIntercept: setIntercept } as never;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    pending.push(cb);
+    return pending.length;
+  });
+  vi.stubGlobal("cancelAnimationFrame", () => {
+    pending = [];
+  });
+  resetBackHandlers();
+});
+
+afterEach(() => {
+  resetBackHandlers();
+  delete window.AndroidBridge;
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+async function settleNativeSync(): Promise<void> {
+  await Promise.resolve();
+}
+
+describe("native intercept sync", () => {
+  it("tells native when the stack goes empty → non-empty → empty", async () => {
+    await settleNativeSync();
+    setIntercept.mockClear();
+
+    const off = registerBackHandler(() => {});
+    await settleNativeSync();
+    expect(setIntercept).toHaveBeenLastCalledWith(true);
+
+    off();
+    await settleNativeSync();
+    expect(setIntercept).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not flicker when a layer re-registers within one task", async () => {
+    const off1 = registerBackHandler(() => {});
+    await settleNativeSync();
+    setIntercept.mockClear();
+
+    // React effect re-run: cleanup then register again, same task.
+    off1();
+    registerBackHandler(() => {});
+    await settleNativeSync();
+    expect(setIntercept).not.toHaveBeenCalled();
+  });
+
+  it("keeps native enabled while any layer remains", async () => {
+    const offA = registerBackHandler(() => {});
+    registerBackHandler(() => {});
+    await settleNativeSync();
+    setIntercept.mockClear();
+    offA();
+    await settleNativeSync();
+    expect(setIntercept).not.toHaveBeenCalled();
+  });
+});
+
+describe("commit (no preview)", () => {
+  it("closes the topmost layer and reports consumption", () => {
+    const order: string[] = [];
+    registerBackHandler(() => order.push("bottom"));
+    registerBackHandler(() => order.push("top"));
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(order).toEqual(["top"]);
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(order).toEqual(["top", "bottom"]);
+    expect(window.__marcelHandleBack?.()).toBe(false);
+  });
+
+  it("ignores gesture events when the top layer has no preview", () => {
+    const close = vi.fn();
+    registerBackHandler(close);
+    window.__marcelBackStart?.(0, 300);
+    window.__marcelBackProgress?.(0.5, 0, 320);
+    flushFrames(3);
+    window.__marcelBackCancel?.();
+    expect(close).not.toHaveBeenCalled();
+  });
+});
+
+describe("predictive back gesture", () => {
+  it("starts, smooths progress toward the target, and passes edge + dy", () => {
+    const { preview, calls, frames } = makePreview();
+    registerBackHandler(() => {}, preview);
+
+    window.__marcelBackStart?.(1, 400);
+    expect(calls).toEqual(["start:right"]);
+
+    window.__marcelBackProgress?.(0.6, 1, 450);
+    flushFrames(1);
+    const first = frames[0];
+    // Followed, but not teleported.
+    expect(first.progress).toBeGreaterThan(0);
+    expect(first.progress).toBeLessThan(0.6);
+    expect(first.edge).toBe("right");
+    expect(first.dy).toBeGreaterThan(0);
+
+    flushFrames(40);
+    const last = frames[frames.length - 1];
+    expect(last.progress).toBeCloseTo(0.6, 2);
+    expect(last.dy).toBeCloseTo(50, 0);
+  });
+
+  it("clamps out-of-range progress", () => {
+    const { preview, frames } = makePreview();
+    registerBackHandler(() => {}, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(7, 0, 0);
+    flushFrames(60);
+    expect(frames[frames.length - 1].progress).toBeLessThanOrEqual(1);
+    window.__marcelBackProgress?.(-3, 0, 0);
+    flushFrames(60);
+    expect(frames[frames.length - 1].progress).toBeGreaterThanOrEqual(0);
+  });
+
+  it("cancel settles the preview and leaves the layer open", () => {
+    const { preview, calls } = makePreview();
+    const close = vi.fn();
+    registerBackHandler(close, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.3, 0, 0);
+    flushFrames(2);
+    window.__marcelBackCancel?.();
+    expect(calls[calls.length - 1]).toBe("cancel");
+    expect(close).not.toHaveBeenCalled();
+
+    // Stray progress after cancel (a late native event) must not revive it.
+    const before = calls.length;
+    window.__marcelBackProgress?.(0.9, 0, 0);
+    flushFrames(5);
+    expect(calls.length).toBe(before);
+  });
+
+  it("commit freezes the preview, then closes the layer", () => {
+    const { preview, calls } = makePreview();
+    const close = vi.fn(() => calls.push("close"));
+    registerBackHandler(close, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.5, 0, 0);
+    flushFrames(3);
+
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(calls.slice(-2)).toEqual(["commit", "close"]);
+
+    // No further frames after the commit.
+    const before = calls.length;
+    flushFrames(5);
+    expect(calls.length).toBe(before);
+  });
+
+  it("a new gesture settles one the system never resolved", () => {
+    const a = makePreview();
+    registerBackHandler(() => {}, a.preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackStart?.(0, 0);
+    expect(a.calls).toEqual(["start:left", "cancel", "start:left"]);
+  });
+
+  it("cancels the preview of a layer that was covered mid-gesture", () => {
+    const lower = makePreview();
+    registerBackHandler(() => {}, lower.preview);
+    window.__marcelBackStart?.(0, 0);
+
+    const upperClose = vi.fn();
+    registerBackHandler(upperClose);
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(lower.calls).toContain("cancel");
+    expect(lower.calls).not.toContain("commit");
+    expect(upperClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the session quietly when its layer unregisters under the finger", () => {
+    const { preview, calls } = makePreview();
+    const off = registerBackHandler(() => {}, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.4, 0, 0);
+    off();
+    flushFrames(2);
+    expect(calls).toContain("cancel");
+    expect(calls.filter((c) => c === "update")).toHaveLength(0);
+  });
+
+  it("skips previews entirely under prefers-reduced-motion", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const { preview, calls } = makePreview();
+    const close = vi.fn();
+    registerBackHandler(close, preview);
+    window.__marcelBackStart?.(0, 0);
+    window.__marcelBackProgress?.(0.5, 0, 0);
+    flushFrames(3);
+    expect(calls).toEqual([]);
+    // Commit still works.
+    expect(window.__marcelHandleBack?.()).toBe(true);
+    expect(close).toHaveBeenCalled();
+  });
+});

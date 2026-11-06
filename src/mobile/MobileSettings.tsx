@@ -26,6 +26,7 @@ import { MobileMemorySection } from './settings/MobileMemorySection';
 import { MobileNotificationBackgroundSection } from './settings/MobileNotificationBackgroundSection';
 import { MobileSyncSection } from './settings/MobileSyncSection';
 import { registerBackHandler } from './backHandler';
+import { peekBackPreview } from './backPreview';
 import DebugPage from '@/components/debug/DebugPage';
 import MobileFullscreenPage from './ui/MobileFullscreenPage';
 
@@ -91,7 +92,7 @@ export default function MobileSettings({
   const showRulesPage = rulesPageOpen && activeCategory === 'agent';
   useEffect(() => {
     if (!visible || !showRulesPage) return;
-    return registerBackHandler(() => closeRulesPage());
+    return registerBackHandler(() => closeRulesPage(), peekBackPreview());
   }, [visible, showRulesPage, closeRulesPage]);
   // 进二级页回到顶部；返回时回到离开前的位置（分类内容是同一个滚动容器，不会自己记）。
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -111,7 +112,7 @@ export default function MobileSettings({
     return registerBackHandler(() => {
       storeClearPreview();
       setActiveCategory(null);
-    });
+    }, peekBackPreview());
   }, [visible, activeCategory, storeClearPreview]);
 
   const updateAndPersist = useCallback(

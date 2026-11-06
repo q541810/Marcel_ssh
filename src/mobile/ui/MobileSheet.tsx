@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 import { registerBackHandler } from '../backHandler';
+import { sheetBackPreview } from '../backPreview';
 
 interface MobileSheetProps {
   open: boolean;
@@ -57,6 +58,7 @@ export default function MobileSheet({
   footer,
 }: MobileSheetProps) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const dragStartYRef = useRef<number | null>(null);
   const dragDeltaRef = useRef(0);
@@ -94,10 +96,23 @@ export default function MobileSheet({
   // Android back gesture: dismissible sheets close; modal sheets still
   // consume the press (no-op) so the system doesn't finish the activity
   // out from under a mandatory interaction.
+  //
+  // onClose goes through a ref so an unstable callback identity doesn't
+  // re-register the layer: that would reshuffle the back stack and, mid
+  // predictive-back gesture, drop the in-flight preview.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
-    return registerBackHandler(dismissible ? onClose : () => {});
-  }, [open, dismissible, onClose]);
+    if (!dismissible) return registerBackHandler(() => {});
+    return registerBackHandler(
+      () => onCloseRef.current(),
+      sheetBackPreview(
+        () => sheetRef.current,
+        () => backdropRef.current,
+      ),
+    );
+  }, [open, dismissible]);
 
   const applyDragOffset = useCallback((rawDelta: number) => {
     const el = sheetRef.current;
@@ -218,6 +233,7 @@ export default function MobileSheet({
   return createPortal(
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
       <div
+        ref={backdropRef}
         className={`absolute inset-0 bg-black/60 ${
           exiting ? 'mobile-backdrop-exit' : 'mobile-backdrop-enter'
         }`}

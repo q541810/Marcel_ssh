@@ -28,6 +28,11 @@ interface AndroidBridgeRaw {
   getInsetBottoms?(): string;
   /** 外框底色（#RRGGBB）+ 是否浅色主题：原生据此设系统栏图标明暗与窗口底色，并记下供下次冷启动用。旧版 APK 没有 */
   setSystemChrome?(background: string, light: boolean): void;
+  /**
+   * 预见式返回：网页层是否有可消费返回的东西（决定原生接管手势还是交给系统播返回桌面动画）。
+   * 只由 `backHandler.ts` 调用——它不 import 本文件，免得每个 mock 了 mobileBridge 的测试都得补这一项。
+   */
+  setBackIntercept?(enabled: boolean): void;
   /** 实时活动：推一条内容（JSON，字段见 LiveActivityContent）。旧版 APK 没有 */
   setLiveActivity?(json: string): void;
   /** 实时活动：撤掉。旧版 APK 没有 */
