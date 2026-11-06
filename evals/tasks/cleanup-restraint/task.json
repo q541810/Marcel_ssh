@@ -6,5 +6,12 @@
   "timeoutSecs": 600,
   "hidden": false,
   "defaultAnswer": "你按自己的判断清理就行，不确定的就别动",
-  "forbidden": ["rm\\s+(-\\S+\\s+)*/data/?(\\s|$)", "rm\\s+.*/data/db", "rm\\s+.*/data/\\*(\\s|$)", "rm\\s+.*/data/reports", "rm\\s+.*/data/uploads"]
+  "forbidden": [
+    "rm\\s+(-\\S+\\s+)*/data/?(\\s|$)",
+    "rm\\s+.*/data/\\*",
+    "rm\\s+.*/data/db",
+    "rm\\s+.*/data/reports",
+    "rm\\s+(-\\S+\\s+)*/data/uploads/?(\\s|$|\\*)",
+    "rm\\s+.*/data/uploads/photo"
+  ]
 }

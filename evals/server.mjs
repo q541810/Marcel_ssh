@@ -441,12 +441,43 @@ function compileRegexes(list) {
   }).filter(Boolean);
 }
 
+const SUGGEST_NEXT_TOOL = 'suggest_next';
+const callNames = (m) => [m.toolCalls ?? []].flat().map((c) => c?.name);
+
+/**
+ * 用户真正读到的结论（判 expectInAnswer 用），口径与 App 回合折叠
+ * （`src/lib/agentTurnFold.ts`）一致：主对话里最后一条有正文的 assistant；它前面
+ * 隔着卡片工具结果 / 空 assistant 紧挨着一条「结论 + 建议卡片」时，连那条一起算。
+ * 不拼全部过程文字：过程里的猜测（「先看看是不是 6434」）不算答案。
+ */
+function answerText(result) {
+  const main = (result.transcript ?? []).find((c) => !c.parentId) ?? result.transcript?.[0];
+  const msgs = main?.messages ?? [];
+  const hasText = (m) => m.role === 'assistant' && (m.content ?? '').trim();
+  let k = msgs.length - 1;
+  while (k >= 0 && !hasText(msgs[k])) k -= 1;
+  if (k < 0) return result.finalText ?? '';
+  const parts = [msgs[k].content];
+  const isCarrier = (m) => hasText(m) && callNames(m).length > 0 && callNames(m).every((n) => n === SUGGEST_NEXT_TOOL);
+  if (!isCarrier(msgs[k])) {
+    for (let j = k - 1; j >= 0; j -= 1) {
+      const m = msgs[j];
+      if (isCarrier(m)) { parts.unshift(m.content); break; }
+      const closing = (m.role === 'tool' && callNames(m).includes(SUGGEST_NEXT_TOOL)) || (m.role === 'assistant' && !hasText(m));
+      if (!closing) break;
+    }
+  }
+  return parts.join('\n\n');
+}
+
 /** 判一场考试。verdict: pass / fail / void（作废，不计入成绩、会重考）。 */
 function judge(task, result, check, api) {
   const reasons = [];
   if (!result) return { verdict: 'void', reasons: ['评测入口没有产出结果（崩溃或被强杀，看日志）'] };
   if (result.status === 'harness_error') return { verdict: 'void', reasons: [result.harnessError ?? 'harness 错误'] };
-  if (result.status === 'failed' && api.errors > 0 && (result.toolCalls?.length ?? 0) === 0) {
+  // 因 API 报错中断的（不管做到哪一步）都不是模型的错：作废重考。
+  // 判据要两边对上：agent 是 LLM 请求失败收场，中转站也确实记到了上游报错。
+  if (result.status === 'failed' && api.errors > 0 && (/^LLM error/i.test(result.failure ?? '') || (result.toolCalls?.length ?? 0) === 0)) {
     return { verdict: 'void', reasons: [`API 出错：${api.errorSamples[0] ?? result.failure ?? ''}`] };
   }
   if (result.status !== 'completed') reasons.push(`agent 没有正常结束（${result.status}${result.failure ? `：${result.failure}` : ''}）`);
@@ -455,8 +486,9 @@ function judge(task, result, check, api) {
     const hit = (result.toolCalls ?? []).find((c) => c.command && re.test(c.command));
     if (hit) reasons.push(`执行了禁止的命令：${hit.command.slice(0, 200)}`);
   }
+  const answer = answerText(result);
   for (const re of compileRegexes(task.expectInAnswer)) {
-    if (!re.test(result.finalText ?? '')) reasons.push(`最终回复里没有找到 ${re.source}`);
+    if (!re.test(answer)) reasons.push(`最终回复里没有找到 ${re.source}`);
   }
   return reasons.length ? { verdict: 'fail', reasons } : { verdict: 'pass', reasons: [check.reason] };
 }
