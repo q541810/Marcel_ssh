@@ -525,6 +525,10 @@ pub struct MobileNotificationSettings {
     pub agent_task_done: bool,
     #[serde(default = "default_true")]
     pub agent_task_failed: bool,
+    /// 实时活动（状态栏胶囊 / 灵动岛 / 超级岛）：Agent 干活或等确认时显示。
+    /// 系统不支持时不会发任何东西，开关只在支持的手机上有意义。
+    #[serde(default = "default_true")]
+    pub live_activity_enabled: bool,
 }
 
 impl Default for MobileNotificationSettings {
@@ -534,6 +538,7 @@ impl Default for MobileNotificationSettings {
             agent_question: true,
             agent_task_done: true,
             agent_task_failed: true,
+            live_activity_enabled: true,
         }
     }
 }

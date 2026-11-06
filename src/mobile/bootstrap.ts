@@ -12,6 +12,7 @@ import {
   startForegroundService,
   syncSystemInsets,
 } from './mobileBridge';
+import { initLiveActivitySync } from './liveActivitySync';
 
 const VALID_AGENT_MODES: readonly AgentMode[] = ['plan', 'agent', 'auto'];
 
@@ -124,6 +125,8 @@ export async function bootstrapMobileApp(): Promise<void> {
         startForegroundService('Marcel SSH', '运行中');
       },
     });
+    // 实时活动：设置已水合，之后任务表的变化才有意义。非 Android 环境 no-op。
+    initLiveActivitySync();
   } catch (err) {
     bootstrapStarted = false;
     console.error('[mobile] bootstrap failed:', err);

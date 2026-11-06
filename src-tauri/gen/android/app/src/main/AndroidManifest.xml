@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Android 13+ (API 33) 运行时权限：系统通知（Agent 审批/提问/完成/失败 + 常驻通知） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 实时活动：允许系统把本应用的常驻通知提升为状态栏胶囊 / 灵动岛 / 超级岛
+         （normal|appop，安装时授予；用户可在系统设置里逐应用关闭）。旧系统不认识这个权限，忽略即可。 -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <!-- Agent 事件通知振动（O 以下设备由 NotificationCompat.setVibrate 控制，需显式声明权限） -->
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- 保持 CPU 唤醒，防止 Doze 冻结导致 SSH keepalive 发不出去 -->
@@ -21,6 +24,13 @@
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <!-- Android 11+ 包可见性：判断系统有没有「实时活动放行页」要先解析这个 Intent -->
+    <queries>
+        <intent>
+            <action android:name="android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS" />
+        </intent>
+    </queries>
 
     <application
         android:icon="@mipmap/ic_launcher"

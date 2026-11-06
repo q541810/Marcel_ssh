@@ -54,6 +54,30 @@ class MobileBridge(private val activity: MainActivity) {
         MarcelForegroundService.notifyAgentEvent(activity, id, title, body)
     }
 
+    // ---------- 实时活动（状态栏胶囊 / 灵动岛 / 超级岛） ----------
+
+    /** 推一条实时活动内容（JSON）。系统不会提升时 LiveActivity 内部直接不发。 */
+    @JavascriptInterface
+    fun setLiveActivity(json: String) {
+        LiveActivity.show(activity.applicationContext, json)
+    }
+
+    /** 撤掉实时活动。 */
+    @JavascriptInterface
+    fun clearLiveActivity() {
+        LiveActivity.clear(activity.applicationContext)
+    }
+
+    /** "ready" / "needsEnable" / "unsupported"。 */
+    @JavascriptInterface
+    fun getLiveActivitySupport(): String = LiveActivity.support(activity.applicationContext)
+
+    /** 跳到系统里放行本应用实时活动的页面。 */
+    @JavascriptInterface
+    fun openLiveActivitySettings() {
+        activity.runOnUiThread { LiveActivity.openSettings(activity) }
+    }
+
     // ---------- 系统栏 insets ----------
 
     /**

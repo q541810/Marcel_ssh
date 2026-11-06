@@ -963,6 +963,8 @@ export interface MobileNotificationSettings {
   agentQuestion: boolean;
   agentTaskDone: boolean;
   agentTaskFailed: boolean;
+  /** 实时活动（状态栏胶囊 / 灵动岛 / 超级岛）。系统不支持时开关无效果。 */
+  liveActivityEnabled: boolean;
 }
 
 /**

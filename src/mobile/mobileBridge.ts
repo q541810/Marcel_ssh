@@ -28,6 +28,14 @@ interface AndroidBridgeRaw {
   getInsetBottoms?(): string;
   /** 外框底色（#RRGGBB）+ 是否浅色主题：原生据此设系统栏图标明暗与窗口底色，并记下供下次冷启动用。旧版 APK 没有 */
   setSystemChrome?(background: string, light: boolean): void;
+  /** 实时活动：推一条内容（JSON，字段见 LiveActivityContent）。旧版 APK 没有 */
+  setLiveActivity?(json: string): void;
+  /** 实时活动：撤掉。旧版 APK 没有 */
+  clearLiveActivity?(): void;
+  /** 实时活动：当前手机的支持程度（LiveActivitySupport）。旧版 APK 没有 */
+  getLiveActivitySupport?(): string;
+  /** 实时活动：跳到系统里放行本 App 的页面。旧版 APK 没有 */
+  openLiveActivitySettings?(): void;
 }
 
 declare global {
@@ -275,4 +283,51 @@ export function requestNotificationPermission(): Promise<boolean> {
       resolve(isNotificationPermissionGranted());
     }
   });
+}
+
+// ---------- 实时活动（状态栏胶囊 / 灵动岛 / 超级岛） ----------
+
+/**
+ * 这台手机能不能显示实时活动：
+ * - `ready`：系统会提升本 App 的通知（Android 16 实时活动，或小米放行了焦点通知）
+ * - `needsEnable`：系统有这个功能，但没放行本 App，用户可以去系统设置里打开
+ * - `unsupported`：系统没有这个功能（含旧版 APK、非 Android），什么都不会发
+ */
+export type LiveActivitySupport = 'ready' | 'needsEnable' | 'unsupported';
+
+export function getLiveActivitySupport(): LiveActivitySupport {
+  try {
+    const raw = window.AndroidBridge?.getLiveActivitySupport?.();
+    if (raw === 'ready' || raw === 'needsEnable') return raw;
+  } catch (e) {
+    console.warn('[mobileBridge] getLiveActivitySupport failed:', e);
+  }
+  return 'unsupported';
+}
+
+/** 推送一条实时活动内容。旧版 APK / 非 Android 静默 no-op。 */
+export function setLiveActivity(content: unknown): void {
+  try {
+    window.AndroidBridge?.setLiveActivity?.(JSON.stringify(content));
+  } catch (e) {
+    console.warn('[mobileBridge] setLiveActivity failed:', e);
+  }
+}
+
+/** 撤掉实时活动。 */
+export function clearLiveActivity(): void {
+  try {
+    window.AndroidBridge?.clearLiveActivity?.();
+  } catch (e) {
+    console.warn('[mobileBridge] clearLiveActivity failed:', e);
+  }
+}
+
+/** 跳到系统里放行本 App 实时活动的页面（解析不到就是通知设置页）。 */
+export function openLiveActivitySettings(): void {
+  try {
+    window.AndroidBridge?.openLiveActivitySettings?.();
+  } catch (e) {
+    console.warn('[mobileBridge] openLiveActivitySettings failed:', e);
+  }
 }

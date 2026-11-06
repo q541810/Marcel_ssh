@@ -2,8 +2,10 @@ import { AlertCircle } from 'lucide-react';
 import Toggle from '@/components/ui/Toggle';
 import { useSettingsActions } from '@/components/settings/SettingsActionsContext';
 import {
+  getLiveActivitySupport,
   isAndroidBridgeAvailable,
   isNotificationPermissionGranted,
+  openLiveActivitySettings,
 } from '../mobileBridge';
 import { MobileSettingRow } from './MobileSettingRow';
 
@@ -36,6 +38,8 @@ export function MobileNotificationSection() {
       </div>
     );
   }
+
+  const liveSupport = getLiveActivitySupport();
 
   const setField = (key: keyof typeof ns, value: boolean) => {
     update({ mobileNotificationSettings: { ...ns, [key]: value } });
@@ -90,6 +94,36 @@ export function MobileNotificationSection() {
             checked={ns.agentTaskFailed}
             onChange={(v) => setField('agentTaskFailed', v)}
           />
+        }
+      />
+
+      <MobileSettingRow
+        label="实时活动"
+        description={
+          liveSupport === 'unsupported'
+            ? '当前系统不支持（需要 Android 16 的实时活动，或小米 HyperOS 超级岛）'
+            : liveSupport === 'needsEnable'
+              ? 'Agent 干活或等你确认时显示在状态栏胶囊 / 灵动岛。系统还没放行本应用，请先去开启'
+              : 'Agent 干活或等你确认时显示在状态栏胶囊 / 灵动岛，前后台都显示'
+        }
+        trailing={
+          <div className="flex items-center gap-2">
+            {liveSupport === 'needsEnable' && (
+              <button
+                type="button"
+                onClick={openLiveActivitySettings}
+                className="rounded-md border border-edge-subtle px-2 py-1 text-xs text-zinc-200"
+              >
+                去开启
+              </button>
+            )}
+            <Toggle
+              checked={ns.liveActivityEnabled}
+              disabled={liveSupport === 'unsupported'}
+              onChange={(v) => setField('liveActivityEnabled', v)}
+              ariaLabel="实时活动"
+            />
+          </div>
         }
       />
 

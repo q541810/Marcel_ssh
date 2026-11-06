@@ -101,6 +101,7 @@ export const DEFAULT_MOBILE_NOTIFICATION_SETTINGS: MobileNotificationSettings = 
   agentQuestion: true,
   agentTaskDone: true,
   agentTaskFailed: true,
+  liveActivityEnabled: true,
 };
 
 export const DEFAULT_MOBILE_BACKGROUND_SETTINGS: MobileBackgroundSettings = {
