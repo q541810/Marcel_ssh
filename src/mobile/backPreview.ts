@@ -36,6 +36,7 @@ import type { BackEdge, BackGestureFrame, BackPreview } from './backHandler';
 import { getBackFeel, type BackFeel } from './backFeel';
 import {
   clamp,
+  absorbable,
   ease,
   frontLoaded,
   hermite as hermiteOf,
@@ -239,7 +240,7 @@ class Surface {
 
   /** Cancelled gesture: spring back to rest from the current pose and speed. */
   release(from: Pose = this.last, v: Pose = this.velocity()): void {
-    const { path, ms } = spring(from, v, REST);
+    const { path, ms } = spring(from, absorbable(from, v, REST, SPRING_RESPONSE), REST);
     this.play(path, ms, () => this.cleanup());
   }
 

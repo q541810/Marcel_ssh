@@ -29,6 +29,7 @@ import type { BackGestureFrame, BackPreview } from './backHandler';
 import { getBackFeel, type BackFeel } from './backFeel';
 import { viewportHeight, viewportWidth } from './backPreview';
 import {
+  absorbable,
   Blend,
   clamp,
   frontLoaded,
@@ -123,7 +124,8 @@ function settleSpring(from: number, v: number, to: number, response: number) {
 
 /** Back down to rest from where the sheet is, at the speed it has. */
 export function flightHome(from: number, v: number, response: number) {
-  const { path, ms } = settleSpring(from, v, 0, response);
+  const calm = absorbable<Y>({ y: from }, { y: v }, { y: 0 }, response).y;
+  const { path, ms } = settleSpring(from, calm, 0, response);
   return { path, ms };
 }
 

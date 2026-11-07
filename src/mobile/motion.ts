@@ -88,6 +88,23 @@ export function hermite<T extends Channels>(
   };
 }
 
+/**
+ * A spring started from a position and speed: keep the position (no jump) but
+ * limit a speed that points at the target to what the spring can absorb without
+ * shooting past it. Used for settling back to rest — a finger returning to its
+ * starting point is moving toward rest fast, and a spring that kept all of that
+ * speed would overshoot rest and visibly bounce.
+ */
+export function absorbable<T extends Channels>(from: T, v: T, to: T, response: number): T {
+  const omega = (2 * Math.PI) / (response * 1000);
+  return mapChannels(v, (k) => {
+    const gap = to[k] - from[k];
+    const toward = v[k] * Math.sign(gap);
+    if (toward <= 0) return v[k];
+    return Math.sign(gap) * Math.min(toward, omega * Math.abs(gap));
+  });
+}
+
 export interface SpringOptions<T extends Channels> {
   /**
    * Apple's "response": roughly how long the spring takes to get there, s. It

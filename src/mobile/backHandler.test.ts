@@ -179,6 +179,21 @@ describe("predictive back gesture", () => {
     expect(second.frames[second.frames.length - 1].dx).toBeCloseTo(100, 0);
   });
 
+  it("finger back at the start: follows the finger even if the system's progress still lags", () => {
+    vi.stubGlobal("innerWidth", 400);
+    const { preview, frames } = makePreview();
+    registerBackHandler(() => {}, preview);
+    // Left edge, finger starts at x=10, goes in to x=210, then comes all the way back.
+    window.__marcelBackStart?.(0, 300, 10);
+    window.__marcelBackProgress?.(0.5, 0, 300, 210);
+    flushFrames(40);
+    expect(frames[frames.length - 1].dx).toBeCloseTo(200, 0);
+    // The system's spring-smoothed progress is still 0.3 when the finger is already home.
+    window.__marcelBackProgress?.(0.3, 0, 300, 10);
+    flushFrames(40);
+    expect(frames[frames.length - 1].dx).toBeLessThan(1);
+  });
+
   it("clamps out-of-range progress", () => {
     const { preview, frames } = makePreview();
     registerBackHandler(() => {}, preview);

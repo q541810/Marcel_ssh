@@ -125,6 +125,14 @@ describe('flights', () => {
     for (let t = 0; t <= ms; t += 4) expect(path(t).y).toBeGreaterThan(-8);
   });
 
+  it('a finger returning to rest at speed settles without bouncing past it', () => {
+    // 6px from rest, the finger heading home at 0.6 px/ms (a fast return).
+    const { path, ms } = flightHome(6, -0.6, RESPONSE);
+    expect(path(0).y).toBe(6);
+    for (let t = 0; t <= ms; t += 4) expect(path(t).y).toBeGreaterThan(-0.5);
+    expect(path(ms).y).toBe(0);
+  });
+
   it('rise into place from below the screen and settle exactly at rest, no bounce', () => {
     const { path, ms } = flightIn(G.off, 0, RESPONSE);
     expect(path(0).y).toBe(G.off);

@@ -194,6 +194,11 @@ interface GestureSession {
   startY: number;
   /** Finger X at the start (CSS px); null when native sends no X (old APKs). */
   startX: number | null;
+  /**
+   * The touch X has moved at least once this gesture — so it is trustworthy,
+   * and stays so even when the finger comes back to where it started.
+   */
+  touchMoved: boolean;
   target: BackGestureFrame;
   current: BackGestureFrame;
   raf: number | null;
@@ -307,6 +312,7 @@ function startGesture(edge: number, physicalY: number, physicalX?: number): void
     edge: e,
     startY: y,
     startX,
+    touchMoved: false,
     target: frame(),
     current: frame(),
     raf: null,
@@ -329,7 +335,12 @@ function inwardTravel(s: GestureSession, edge: BackEdge, progress: number, x: nu
   const fromProgress = progress * (window.innerWidth || 0);
   if (x == null || s.startX == null) return fromProgress;
   const fromTouch = Math.max(0, edge === 'left' ? x - s.startX : s.startX - x);
-  if (fromTouch < 2 && progress > 0.08) return fromProgress;
+  if (fromTouch >= 2) s.touchMoved = true;
+  // Only a touch X that has *never* moved is distrusted. One that moved and came
+  // back to the start (swipe in, then back out) is right — and the system's
+  // progress, spring-smoothed, is still catching up then: following it would make
+  // the page jump out again just as the finger returns.
+  if (!s.touchMoved && progress > 0.08) return fromProgress;
   return fromTouch;
 }
 

@@ -109,6 +109,19 @@ describe('flights', () => {
     expect(path(ms)).toEqual(rest);
   });
 
+  it('a fast return to rest does not overshoot it (no bump at the end of a cancel)', () => {
+    const rest = M.restCard(B);
+    const near: Card = { ...rest, w: rest.w * 0.97, h: rest.h * 0.97, cx: rest.cx - 6 };
+    // Moving home faster than the spring can absorb.
+    const fast: Card = { ...ZERO, cx: 0.4, w: 0.15, h: 0.3 };
+    const { path, ms } = M.flight(near, M.absorbable(near, fast, rest, 0.46), rest, 'plain', 0.46);
+    for (let t = 0; t <= ms; t += 4) {
+      const c = path(t);
+      expect(c.w).toBeLessThanOrEqual(rest.w + 0.5);
+      expect(c.cx).toBeLessThanOrEqual(rest.cx + 0.5);
+    }
+  });
+
   it('cancel settles back to full screen without any fade', () => {
     const rest = M.restCard(B);
     const { path, ms } = M.flight(held, v, rest, 'plain', 0.42);

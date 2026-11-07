@@ -50,6 +50,7 @@ import {
   type Pose,
 } from './backPreview';
 import {
+  absorbable,
   Blend,
   clamp,
   keyframes,
@@ -986,7 +987,9 @@ export function createPageMotion(
   function settleBack(): void {
     flyingHome = false;
     if (card.el) card.el.style.pointerEvents = '';
-    const [from, v] = card.now();
+    const [from, vNow] = card.now();
+    // Back to rest: keep the position, but not so much speed toward rest that it overshoots.
+    const v = absorbable(from, vNow, card.rest, feel.flight);
     const { path, ms } = flight(from, v, card.rest, 'plain', feel.flight);
     card.play(path, ms, () => card.cleanup());
     under.to(UNDER_COVERED, feel.flight, () => under.cleanupNow());
@@ -1092,4 +1095,5 @@ export const __pageMotionMath = {
   cardClip,
   flight,
   UNDER_COVERED,
+  absorbable,
 };
