@@ -257,11 +257,8 @@ export default function Select<T extends string = string>({
         aria-label={ariaLabel}
         onClick={() => setOpen((v) => !v)}
         className={`
-          pressable focus-ring w-full h-7 flex items-center gap-2 rounded-lg border px-3 text-body text-left
-          ${disabled
-            ? 'border-edge-subtle bg-field text-fg-disabled cursor-not-allowed'
-            : 'border-edge-strong bg-field text-fg hover:border-fg-tertiary focus:border-indigo-500'
-          }
+          field w-full h-9 flex items-center gap-2 rounded-lg px-3 text-body text-left
+          ${disabled ? 'text-fg-disabled cursor-not-allowed' : 'text-fg'}
         `}
       >
         <span className="flex-1 truncate">{selectedLabel}</span>

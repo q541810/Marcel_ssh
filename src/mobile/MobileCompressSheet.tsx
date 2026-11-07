@@ -288,7 +288,7 @@ export default function MobileCompressSheet({
             autoCapitalize="off"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 font-mono text-meta text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 disabled:opacity-50"
+            className="w-full rounded-lg field px-3 py-2.5 font-mono text-meta text-fg disabled:opacity-50"
           />
           <p className="mt-1 text-caption text-fg-disabled">
             默认压缩到源目录的父目录，避免递归包含

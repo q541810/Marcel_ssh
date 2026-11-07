@@ -73,7 +73,7 @@ export default function ModelListModal({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="过滤模型 ID…"
-          className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+          className="w-full rounded-lg field px-3 py-2 text-body font-mono text-fg"
         />
 
         <div className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-surface/40">

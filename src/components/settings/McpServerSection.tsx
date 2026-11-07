@@ -187,7 +187,7 @@ export function McpServerSection() {
                 aria-label="监听地址"
                 placeholder="127.0.0.1"
                 spellCheck={false}
-                className="w-40 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-40 rounded-lg field px-3 py-2 text-body text-fg font-mono disabled:opacity-50"
               />
               <span className="text-fg-disabled text-body">:</span>
               <input
@@ -196,7 +196,7 @@ export function McpServerSection() {
                 disabled={running || busy}
                 inputMode="numeric"
                 aria-label="端口"
-                className="w-24 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-24 rounded-lg field px-3 py-2 text-body text-fg font-mono disabled:opacity-50"
               />
             </div>
             {exposureWarning && (
@@ -231,7 +231,7 @@ export function McpServerSection() {
               aria-label="访问令牌"
               onChange={(e) => setPendingToken(e.target.value)}
               placeholder="启动时自动生成"
-              className="flex-1 min-w-0 rounded-lg bg-field border border-edge-strong px-3 py-2 text-meta text-fg-secondary font-mono focus:outline-none focus:border-indigo-500 read-only:opacity-70"
+              className="flex-1 min-w-0 rounded-lg field px-3 py-2 text-meta text-fg-secondary font-mono read-only:opacity-70"
             />
             {shownToken && <CopyButton text={shownToken} />}
             {!running && (

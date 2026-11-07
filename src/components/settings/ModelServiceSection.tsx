@@ -186,7 +186,7 @@ export function ModelServiceSection() {
                   value={choice.description}
                   onChange={(e) => updateSubagentChoice(i, { description: e.target.value })}
                   placeholder="选型提示，如：小模型，适合搜索等简单任务"
-                  className="flex-1 min-w-0 rounded-lg bg-field border border-edge-strong px-3 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500 transition-colors"
+                  className="flex-1 min-w-0 rounded-lg field px-3 py-2 text-body text-fg"
                 />
                 <button
                   type="button"

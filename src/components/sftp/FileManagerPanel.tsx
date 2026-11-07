@@ -853,7 +853,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFolder(false);
             }}
             placeholder="新文件夹名称"
-            className="flex-1 rounded-md bg-field border border-edge-strong px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+            className="flex-1 rounded-md field px-2 py-1 text-meta text-fg"
             autoFocus
           />
           <button
@@ -883,7 +883,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               if (e.key === 'Escape') setShowNewFile(false);
             }}
             placeholder="新文件名称"
-            className="flex-1 rounded-md bg-field border border-edge-strong px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+            className="flex-1 rounded-md field px-2 py-1 text-meta text-fg"
             autoFocus
           />
           <button
@@ -1382,7 +1382,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 if (e.key === 'Enter') handleRename();
                 if (e.key === 'Escape') setRenameTarget(null);
               }}
-              className="w-full rounded-md bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500 mb-3"
+              className="w-full rounded-md field px-2 py-1.5 text-meta text-fg mb-3"
               autoFocus
             />
             <div className="flex justify-end gap-2">

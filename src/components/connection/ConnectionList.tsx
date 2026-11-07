@@ -1002,7 +1002,7 @@ export default function ConnectionList() {
                       onClick={(e) => e.stopPropagation()}
                       onMouseDown={(e) => e.stopPropagation()}
                       autoFocus
-                      className="flex-1 bg-field text-fg px-2 py-0.5 rounded-md normal-case tracking-normal text-body focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="flex-1 field text-fg px-2 py-0.5 rounded-md normal-case tracking-normal text-body"
                     />
                   ) : (
                     <span>{group.name}</span>

@@ -863,7 +863,7 @@ export default function MobileAgentHost({
               }
             }}
             placeholder="请输入会话名称"
-            className="w-full rounded-xl border border-edge-strong bg-field px-3.5 py-2.5 text-body text-fg placeholder-fg-tertiary focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-xl field px-3.5 py-2.5 text-body text-fg"
             autoFocus
           />
           <div className="flex gap-2">

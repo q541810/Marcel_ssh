@@ -194,7 +194,7 @@ export default function ChatHistoryModal({ open, onClose }: Props) {
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="搜索聊天记录…"
-                className="w-full rounded-lg bg-field border border-edge-strong pl-9 pr-8 py-2 text-body text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500"
+                className="w-full rounded-lg field pl-9 pr-8 py-2 text-body text-fg"
               />
               {searchInput && (
                 <button

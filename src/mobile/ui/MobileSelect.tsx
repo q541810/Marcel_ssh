@@ -31,7 +31,7 @@ interface MobileSelectProps<T extends string> {
 }
 
 const DEFAULT_TRIGGER_CLASS =
-  'w-full rounded-lg border border-edge-strong bg-field px-3 py-2.5 text-body text-fg';
+  'w-full rounded-lg field px-3 py-2.5 text-body text-fg';
 
 /**
  * 移动端的下拉：一个看起来像下拉的按钮，点开从底部升起选项面板（`MobileSheet`）。

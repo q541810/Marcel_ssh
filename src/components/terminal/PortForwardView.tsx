@@ -78,7 +78,7 @@ export default function PortForwardView({ sessionId, touch = false }: PortForwar
               if (e.key === 'Enter') void submitManual();
             }}
             placeholder="服务器端口，如 3000（或 地址:端口）"
-            className={`min-w-0 flex-1 rounded-md border border-edge-strong bg-field px-2 text-fg outline-none placeholder:text-fg-tertiary focus:border-indigo-500 ${
+            className={`min-w-0 flex-1 rounded-md field px-2 text-fg ${
               touch ? 'py-2 text-read' : 'py-1 text-meta'
             }`}
           />

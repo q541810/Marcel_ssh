@@ -333,7 +333,7 @@ export default function MobileChatHistorySheet({
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder="搜索聊天记录…"
-                className="w-full rounded-lg border border-edge-strong bg-field py-2 pl-9 pr-9 text-body text-fg placeholder:text-fg-tertiary focus:border-indigo-500 focus:outline-none"
+                className="w-full rounded-lg field py-2 pl-9 pr-9 text-body text-fg"
               />
               {searchInput && (
                 <button
@@ -618,7 +618,7 @@ export default function MobileChatHistorySheet({
               }
             }}
             placeholder="请输入会话名称"
-            className="w-full rounded-xl border border-edge-strong bg-field px-3.5 py-2.5 text-body text-fg placeholder-fg-tertiary focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-xl field px-3.5 py-2.5 text-body text-fg"
             autoFocus
           />
           <div className="flex gap-2">

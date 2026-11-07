@@ -319,7 +319,7 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
                     const value = Number(event.currentTarget.value);
                     if (Number.isFinite(value)) setDebug67TokenLimit(value);
                   }}
-                  className="w-28 rounded-md border border-edge-strong bg-field px-2 py-1 text-right text-body text-fg outline-none focus:border-indigo-500"
+                  className="w-28 rounded-md field px-2 py-1 text-right text-body text-fg"
                   aria-label="67 模式输出 token 上限"
                 />
               </label>

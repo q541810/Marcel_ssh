@@ -121,7 +121,7 @@ export default function ModelEditModal({
   };
 
   const inputClass =
-    'flex-1 rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-3 py-2 text-body font-mono text-fg placeholder:text-fg-tertiary focus:outline-none focus:border-indigo-500';
+    'flex-1 rounded-lg field px-3 py-2 text-body font-mono text-fg';
 
   return (
     <Modal open={open} onClose={onClose} title={initial ? '编辑模型' : '添加模型'} size="md">
@@ -175,7 +175,7 @@ export default function ModelEditModal({
               step={0.1}
               value={temperature}
               onChange={(e) => setTemperature(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
-              className="w-20 rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-2 text-body font-mono text-fg focus:outline-none focus:border-indigo-500"
+              className="w-20 rounded-lg field px-2 py-2 text-body font-mono text-fg"
             />
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function ModelEditModal({
                   placeholder={'low\nmedium\nhigh'}
                   spellCheck={false}
                   rows={3}
-                  className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-3 py-2 text-meta font-mono text-fg placeholder:text-fg-disabled focus:outline-none focus:border-indigo-500 resize-y"
+                  className="w-full rounded-lg field px-3 py-2 text-meta font-mono text-fg resize-y"
                 />
                 <p className="text-caption text-fg-tertiary mt-1">
                   填写该模型支持的推理档位（如 OpenAI o 系 low/medium/high、DeepSeek low/high/max）。填了之后，

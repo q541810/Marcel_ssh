@@ -55,7 +55,7 @@ export function MobileArchiveSection() {
                 e.currentTarget.blur();
               }
             }}
-            className="w-24 rounded-lg border border-edge-strong bg-field px-3 py-2 text-body text-fg outline-none focus:border-indigo-500"
+            className="w-24 rounded-lg field px-3 py-2 text-body text-fg"
             aria-label="归档保留天数"
           />
           <span className="text-body text-fg-secondary">天</span>

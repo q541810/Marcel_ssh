@@ -15,6 +15,7 @@ const BANNED: { re: RegExp; use: string }[] = [
   { re: /(?<![\w\-[])text-(xs|sm)(?![\w-])/, use: 'text-meta / text-body / text-read' },
   { re: /(?<![\w\-[])transition-all(?![\w-])/, use: 'transition-colors / -opacity / -transform 或明确属性' },
   { re: /(?<![\w\-[])rounded(-[trblse]{1,2})?-\[\d+(\.\d+)?(px|rem)\](?![\w-])/, use: 'rounded-sm/md/lg/xl/2xl/full' },
+  { re: /(?<![\w\-[])bg-field(?![\w-])/, use: 'field 工具类（底色、描边、悬停、聚焦环、出错态一次给齐，别手拼 bg-field + border-*）' },
   { re: /<select[\s>]/, use: '@/components/ui/Select（桌面）或 MobileSelect（手机）：原生下拉弹出的是系统白底列表，不跟主题、没有连续圆角' },
 ];
 
@@ -23,6 +24,7 @@ const EXEMPT: Record<string, string> = {
   'lib/uiTheme.ts': '主题系统本身，注释里描述的是 Tailwind 调色板变量',
   'lib/uiTheme.test.ts': '同上',
   'lib/designTokens.test.ts': '本文件',
+  'components/settings/RiskLevelSelect.tsx': '手机档位下拉的触发按钮按档位染描边与文字色（RULE_LEVEL_TONE），只借输入槽底色',
 };
 
 function walk(dir: string, out: string[]) {

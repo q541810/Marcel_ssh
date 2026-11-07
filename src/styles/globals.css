@@ -32,10 +32,12 @@
   --color-surface-raised: var(--color-zinc-800);
   --color-surface-overlay: var(--color-zinc-800);
 
-  /* 输入槽：输入框、下拉框、文本域的底色。比卡片深、也比画布略深（浅色下是近白），
-     所以放在卡片里或画布上都像「凹进去的槽」。别用 surface-raised 当输入底——
-     深色下它和卡片、最淡边框同色，控件会隐形。描边用 border-edge（不是 edge-subtle）。 */
-  --color-field: color-mix(in oklab, var(--color-zinc-950) 55%, var(--color-zinc-900));
+  /* 输入槽：输入框、下拉框、文本域统一用 `field` 工具类（见下方），别再手拼 bg/border/focus。
+     底色是主文字色调出的 6% 半透明填充、描边是 11% 发丝线：放在卡片、弹窗、画布上都比底面亮一级，
+     像一块轻轻浮起的槽——不用深色凹井加灰框（那种组合显得粗笨，像默认暗色主题）。 */
+  --color-field: color-mix(in oklab, var(--color-fg) 6%, transparent);
+  --color-field-edge: color-mix(in oklab, var(--color-fg) 11%, transparent);
+  --color-field-edge-hover: color-mix(in oklab, var(--color-fg) 20%, transparent);
 
   /* 填充 3 档：用主文字色按比例调出的半透明灰（同 Apple 的 fill 系列）。放在任何面上都比底色深/亮
      一级，所以次要按钮、菜单行悬停/选中、分段控件底都用它——别再用 surface-raised / state-soft
@@ -90,6 +92,15 @@
   --color-indigo-950: #22274d;
 }
 
+/* 浅色主题：输入槽改成比底面更白的实底（macOS 浅色文本框的做法），发丝线略加深；
+   深色那套「主文字色 6% 填充」放到浅色下会变成灰底压在灰面上，发闷。 */
+html[data-marcel-theme='light'] {
+  /* 浅色主题里最亮的槽位是 zinc-900（画布，通常纯白）；zinc-950 是偏灰的下沉层 */
+  --color-field: var(--color-zinc-900);
+  --color-field-edge: color-mix(in oklab, var(--color-fg) 14%, transparent);
+  --color-field-edge-hover: color-mix(in oklab, var(--color-fg) 24%, transparent);
+}
+
 /* 手机：同一套令牌整体上调一档（触屏阅读距离更远） */
 html[data-marcel-platform='mobile'] {
   --text-caption: 12px;
@@ -116,6 +127,38 @@ html[data-marcel-platform='mobile'] {
   box-shadow: var(--shadow-overlay), inset 0 1px 0 rgb(255 255 255 / 0.05);
 }
 
+/* 输入控件：input / textarea / 自绘下拉的触发按钮都用它，尺寸（高度、内边距、字号、圆角）由调用处给。
+   聚焦：主色描边 + 3px 柔光环；出错：给元素加 aria-invalid="true" 或 field-invalid 类（优先级更高，盖过普通态）。 */
+@utility field {
+  background-color: var(--color-field);
+  border: 1px solid var(--color-field-edge);
+  outline: none;
+  transition-property: background-color, border-color, box-shadow;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-standard);
+  &::placeholder {
+    color: var(--color-fg-tertiary);
+  }
+  &:hover:not(:disabled):not(:focus) {
+    border-color: var(--color-field-edge-hover);
+  }
+  &:focus,
+  &[aria-expanded='true'] {
+    border-color: color-mix(in oklab, var(--color-indigo-500) 85%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-indigo-500) 22%, transparent);
+  }
+  &:is([aria-invalid='true'], .field-invalid) {
+    border-color: color-mix(in oklab, var(--color-red-500) 75%, transparent);
+  }
+  &:is([aria-invalid='true'], .field-invalid):focus {
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-red-500) 22%, transparent);
+  }
+  &:disabled {
+    color: var(--color-fg-disabled);
+    cursor: not-allowed;
+  }
+}
+
 /* 可按压：按下即时轻缩、不回弹（弹性只留给拖拽甩动这类有惯性的手势） */
 @utility pressable {
   transition-property: transform, background-color, color, border-color, opacity;
@@ -133,6 +176,11 @@ html[data-marcel-platform='mobile'] {
     outline: 2px solid var(--color-indigo-400);
     outline-offset: 2px;
   }
+}
+
+/* 浅色下浮层改用最亮的画布色、透明度提高：叠在 50% 黑遮罩上时 84% 的灰底会被压成发闷的灰 */
+html[data-marcel-theme='light'] .surface-glass {
+  background-color: color-mix(in oklab, var(--color-zinc-900) 94%, transparent);
 }
 
 @media (prefers-reduced-transparency: reduce) {

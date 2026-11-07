@@ -22,7 +22,7 @@ export function AgentSystemPromptSection() {
           value={agent.systemPrompt ?? ''}
           onChange={(e) => updateAgent({ systemPrompt: e.target.value })}
           rows={6}
-          className="w-full resize-y rounded-md bg-field border border-edge-strong px-3 py-2 text-body text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+          className="w-full resize-y rounded-md field px-3 py-2 text-body text-fg"
           placeholder="在此输入需要附加到系统提示词中的内容，将在每次 Agent 任务调用 LLM 时生效"
         />
       </SettingItem>

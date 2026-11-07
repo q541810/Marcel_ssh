@@ -386,7 +386,7 @@ export default function MobileConnectionList({
                       }
                     }}
                     autoFocus
-                    className="flex-1 bg-field text-fg px-2 py-1 rounded text-body focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    className="flex-1 field text-fg px-2 py-1 rounded text-body"
                   />
                 ) : (
                   <button

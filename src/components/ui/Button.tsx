@@ -21,9 +21,9 @@ const variantStyles: Record<ButtonVariant, string> = {
 };
 
 const sizeStyles: Record<ButtonSize, string> = {
-  sm: 'h-6 px-2 text-meta',
-  md: 'h-7 px-3 text-body',
-  lg: 'h-8 px-4 text-body',
+  sm: 'h-7 px-2.5 text-meta',
+  md: 'h-8 px-3.5 text-body',
+  lg: 'h-9 px-4 text-body',
 };
 
 export default function Button({

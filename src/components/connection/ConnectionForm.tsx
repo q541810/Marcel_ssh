@@ -280,7 +280,7 @@ export default function ConnectionForm({
   const selectedJumpKey = keys.find((k) => k.id === jumpKeyId);
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="px-4 pb-4 pt-1 space-y-4">
       <Input
         label="名称"
         value={name}
@@ -289,7 +289,7 @@ export default function ConnectionForm({
         error={errors.name}
       />
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-3">
         <div className="col-span-2">
           <Input
             label="主机"
@@ -349,7 +349,8 @@ export default function ConnectionForm({
             <Button
               variant="secondary"
               onClick={() => setPasswordPromptOpen(true)}
-              className="whitespace-nowrap py-2"
+              size="lg"
+              className="whitespace-nowrap"
             >
               重设密码
             </Button>
@@ -370,14 +371,14 @@ export default function ConnectionForm({
           <div className="flex gap-2">
             <Button
               variant="secondary"
-              className="py-1.5 text-meta"
+              size="sm"
               onClick={() => setPasswordPromptOpen(true)}
             >
               修改
             </Button>
             <Button
               variant="ghost"
-              className="py-1.5 text-meta"
+              size="sm"
               onClick={() => void clearLoginPassword()}
             >
               清除
@@ -415,7 +416,8 @@ export default function ConnectionForm({
               <Button
                 variant="secondary"
                 onClick={() => setKeyManagerTarget('main')}
-                className="whitespace-nowrap py-2"
+                size="lg"
+              className="whitespace-nowrap"
               >
                 选择 / 导入…
               </Button>
@@ -445,14 +447,14 @@ export default function ConnectionForm({
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
-                  className="py-1.5 text-meta"
+                  size="sm"
                   onClick={() => setPassphraseDirty(true)}
                 >
                   修改
                 </Button>
                 <Button
                   variant="ghost"
-                  className="py-1.5 text-meta"
+                  size="sm"
                   onClick={() => void clearPassphrase()}
                 >
                   清除
@@ -482,14 +484,14 @@ export default function ConnectionForm({
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
-                  className="py-1.5 text-meta"
+                  size="sm"
                   onClick={() => setLoginPasswordDirty(true)}
                 >
                   修改
                 </Button>
                 <Button
                   variant="ghost"
-                  className="py-1.5 text-meta"
+                  size="sm"
                   onClick={() => void clearLoginPassword()}
                 >
                   清除
@@ -528,22 +530,22 @@ export default function ConnectionForm({
       />
 
       {/* Jump host (ProxyJump) */}
-      <div className="rounded-lg border border-edge-subtle bg-surface/40">
+      <div className="rounded-xl border border-field-edge">
         <button
           type="button"
           onClick={() => setUseJump((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-body text-fg-secondary hover:bg-state-soft/50 rounded-lg transition-colors"
+          className="focus-ring w-full flex items-center justify-between rounded-xl px-3 h-11 text-body text-fg"
         >
           <span className="font-medium">跳板机（可选）</span>
           <span
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-              useJump ? 'bg-indigo-600' : 'bg-zinc-700'
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 ease-standard ${
+              useJump ? 'bg-indigo-600' : 'bg-fill-strong'
             }`}
             role="switch"
             aria-checked={useJump}
           >
             <span
-              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-raised transition-transform duration-200 ease-standard ${
                 useJump ? 'translate-x-[18px]' : 'translate-x-0.5'
               }`}
             />
@@ -551,8 +553,8 @@ export default function ConnectionForm({
         </button>
 
         {useJump && (
-          <div className="px-3 pb-3 space-y-3 border-t border-edge-subtle pt-3">
-            <div className="grid grid-cols-3 gap-2">
+          <div className="px-3 pb-3 space-y-4 border-t border-field-edge pt-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
                 <Input
                   label="主机"
@@ -621,7 +623,7 @@ export default function ConnectionForm({
                     <span className="text-body text-fg-secondary">密码：已设置</span>
                     <Button
                       variant="secondary"
-                      className="py-1.5 text-meta"
+                      size="sm"
                       onClick={() => setJumpCredDirty(true)}
                     >
                       修改
@@ -674,7 +676,8 @@ export default function ConnectionForm({
                     <Button
                       variant="secondary"
                       onClick={() => setKeyManagerTarget('jump')}
-                      className="whitespace-nowrap py-2"
+                      size="lg"
+              className="whitespace-nowrap"
                     >
                       选择 / 导入…
                     </Button>
@@ -701,7 +704,7 @@ export default function ConnectionForm({
                     <span className="text-body text-fg-secondary">密钥密码：已设置</span>
                     <Button
                       variant="secondary"
-                      className="py-1.5 text-meta"
+                      size="sm"
                       onClick={() => setJumpCredDirty(true)}
                     >
                       修改

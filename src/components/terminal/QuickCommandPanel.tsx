@@ -238,7 +238,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="搜索快捷指令..."
-          className="flex-1 rounded-md bg-field border border-edge-strong px-2 py-1 text-meta text-fg outline-none focus:border-indigo-500 placeholder:text-fg-tertiary"
+          className="flex-1 rounded-md field px-2 py-1 text-meta text-fg"
         />
         <button
           type="button"
@@ -351,7 +351,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500"
+                  className="w-full rounded-lg field px-2 py-1.5 text-meta text-fg"
                   placeholder="例如：查看磁盘"
                   autoFocus
                 />
@@ -379,7 +379,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                       min={0}
                       value={form.intervalMs}
                       onChange={(e) => setForm({ ...form, intervalMs: Number(e.target.value) })}
-                      className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 text-meta text-fg outline-none focus:border-indigo-500"
+                      className="w-full rounded-lg field px-2 py-1.5 text-meta text-fg"
                     />
                   </div>
                 )}
@@ -392,7 +392,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                   <input
                     value={form.commandsText}
                     onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
-                    className="w-full rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 font-mono text-meta text-fg outline-none focus:border-indigo-500"
+                    className="w-full rounded-lg field px-2 py-1.5 font-mono text-meta text-fg"
                     placeholder="例如：docker run -it --name app nginx"
                   />
                 ) : (
@@ -400,7 +400,7 @@ export default function QuickCommandPanel({ sessionId, sessionKey }: QuickComman
                     value={form.commandsText}
                     onChange={(e) => setForm({ ...form, commandsText: e.target.value })}
                     rows={4}
-                    className="w-full resize-none rounded-lg bg-field border border-edge-strong hover:border-fg-tertiary px-2 py-1.5 font-mono text-meta text-fg outline-none focus:border-indigo-500"
+                    className="w-full resize-none rounded-lg field px-2 py-1.5 font-mono text-meta text-fg"
                     placeholder={'pwd\ndf -h'}
                   />
                 )}
