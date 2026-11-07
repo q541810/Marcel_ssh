@@ -263,7 +263,7 @@ const DEFAULT_SEMANTIC: Record<
   "accent" | "danger" | "warning" | "success" | "info",
   string
 > = {
-  accent: "#6366f1",
+  accent: "#6c78e6",
   danger: "#ef4444",
   warning: "#f59e0b",
   success: "#10b981",

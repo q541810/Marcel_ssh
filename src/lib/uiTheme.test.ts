@@ -182,7 +182,7 @@ describe("resolveThemeVars", () => {
     expect(vars["--color-zinc-900"]).toBe("#18181b");
     expect(vars["--color-zinc-800"]).toBe("#27272a");
     expect(vars["--color-zinc-100"]).toBe("#f4f4f5");
-    expect(vars["--color-indigo-500"]).toBe("#6366f1");
+    expect(vars["--color-indigo-500"]).toBe("#6c78e6");
     expect(vars["--color-red-500"]).toBe("#ef4444");
     expect(vars["--color-amber-500"]).toBe("#f59e0b");
     expect(vars["--color-emerald-500"]).toBe("#10b981");

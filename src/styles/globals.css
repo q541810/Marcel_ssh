@@ -15,6 +15,127 @@
   --color-state-selected: var(--color-zinc-800);
 }
 
+/* ══ 玛瑟尔设计令牌（设计语言的唯一来源）══
+   组件只认这些名字，不再写 text-zinc-N / text-[10px] 这类具体值。
+   颜色令牌全部是现有主题槽位的别名，深浅色、预设、自定义主题自动跟随，主题系统零改动。
+   规则全文与用法见 src/lib/AGENTS.md「设计令牌」。 */
+@theme static {
+  /* 文字 4 档：主要 / 次要说明 / 弱提示（占位、时间戳）/ 禁用与装饰 */
+  --color-fg: var(--color-zinc-100);
+  --color-fg-secondary: var(--color-zinc-400);
+  --color-fg-tertiary: var(--color-zinc-500);
+  --color-fg-disabled: var(--color-zinc-600);
+
+  /* 面 4 层：靠明暗分区，少画线。overlay 只作实色兜底，玻璃材质用 surface-glass 工具类 */
+  --color-surface-sunken: var(--color-zinc-950);
+  --color-surface: var(--color-zinc-900);
+  --color-surface-raised: var(--color-zinc-800);
+  --color-surface-overlay: var(--color-zinc-800);
+
+  /* 字号阶梯 6 档（禁用 9/10px）。手机端在下方整体上调一档 */
+  --text-caption: 11px;
+  --text-caption--line-height: 16px;
+  --text-meta: 12px;
+  --text-meta--line-height: 16px;
+  --text-body: 13px;
+  --text-body--line-height: 20px;
+  --text-read: 14px;
+  --text-read--line-height: 22px;
+  --text-title: 16px;
+  --text-title--line-height: 24px;
+  --text-headline: 20px;
+  --text-headline--line-height: 28px;
+  --text-headline--letter-spacing: -0.01em;
+
+  /* 动效曲线：standard 默认（无过冲）/ emphasized 进入 / exit 退出更快。
+     时长只用 120（悬停按下）/ 200（展开切换）/ 320（页面大面板） */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 0.8, 0.15);
+
+  /* 阴影 2 档：raised 卡片轻浮起 / overlay 菜单弹窗 */
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.18), 0 2px 8px -2px rgb(0 0 0 / 0.16);
+  --shadow-overlay: 0 12px 32px -8px rgb(0 0 0 / 0.45), 0 4px 12px -4px rgb(0 0 0 / 0.3);
+
+  /* 界面字体：Windows 用 Segoe UI Variable + 微软雅黑 UI，苹果 PingFang，安卓走系统 */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "HarmonyOS Sans SC",
+    "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji";
+
+  /* 品牌强调色（主题「主色」默认值 #6c78e6 推导出的 11 档；与 uiTheme DEFAULT_SEMANTIC.accent
+     同步，保证主题加载前一帧与默认主题逐像素一致）。改主色时两处一起改。 */
+  --color-indigo-50: #fcfdff;
+  --color-indigo-100: #eff2fe;
+  --color-indigo-200: #d5ddfe;
+  --color-indigo-300: #b4bffa;
+  --color-indigo-400: #8c9af1;
+  --color-indigo-500: #6c78e6;
+  --color-indigo-600: #565dd8;
+  --color-indigo-700: #494fbf;
+  --color-indigo-800: #3d439c;
+  --color-indigo-900: #363d7e;
+  --color-indigo-950: #22274d;
+}
+
+/* 手机：同一套令牌整体上调一档（触屏阅读距离更远） */
+html[data-marcel-platform='mobile'] {
+  --text-caption: 12px;
+  --text-caption--line-height: 16px;
+  --text-meta: 13px;
+  --text-meta--line-height: 18px;
+  --text-body: 15px;
+  --text-body--line-height: 22px;
+  --text-read: 16px;
+  --text-read--line-height: 24px;
+  --text-title: 17px;
+  --text-title--line-height: 24px;
+  --text-headline: 22px;
+  --text-headline--line-height: 30px;
+}
+
+/* 浮层玻璃材质：菜单、下拉、弹窗、命令面板专用。结构区域（侧栏、标题栏）用实色，别用它；
+   不要在它上面再叠半透明面。顶部 1px 高光让材质「接住光」。 */
+@utility surface-glass {
+  background-color: color-mix(in oklab, var(--color-surface-overlay) 84%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  border: 1px solid var(--color-edge-subtle);
+  box-shadow: var(--shadow-overlay), inset 0 1px 0 rgb(255 255 255 / 0.05);
+}
+
+/* 可按压：按下即时轻缩、不回弹（弹性只留给拖拽甩动这类有惯性的手势） */
+@utility pressable {
+  transition-property: transform, background-color, color, border-color, opacity;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-standard);
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+    transition-duration: 60ms;
+  }
+}
+
+/* 键盘焦点环：只在键盘聚焦时出现，鼠标点击不出环 */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--color-indigo-400);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .surface-glass {
+    background-color: var(--color-surface-overlay);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressable:active:not(:disabled) {
+    transform: none;
+  }
+}
+
 /* ── 浅色主题下的代码高亮令牌（GitHub Light）──
    全局引入的是 github-dark（暗色令牌）；浅色主题在下面整层覆盖。
    从 highlight.js/styles/github.css 机械转写生成，升级 hljs 后如令牌变色重新对一遍。
@@ -145,11 +266,14 @@ html[data-marcel-theme='light'] .hljs-deletion {
   --spring-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --spring-snappy: cubic-bezier(0.68, -0.6, 0.32, 1.6);
 
-  /* Apple-style border radius */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  /* 圆角阶梯（设计令牌）：用途固定，别按手感挑——
+     sm 4 徽章/小标签 · md 6 紧凑控件 · lg 8 按钮/输入/列表行 · xl 12 卡片/菜单/弹层 ·
+     2xl 16 弹窗/底部面板 · full 胶囊/头像/状态点。嵌套时内圆角 = 外圆角 − 内边距。 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
   --radius-full: 9999px;
 
   /* Theme bridge for sandboxed in-conversation visualizations.
@@ -614,6 +738,17 @@ body,
   padding: 0;
   overflow: hidden;
   background-color: var(--color-zinc-900, #18181b);
+}
+
+/* 界面默认字号 = text-body（13px）；没写字号类的文字也落在阶梯上 */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  color: var(--color-fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /*
