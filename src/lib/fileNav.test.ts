@@ -148,3 +148,84 @@ describe('runFileAction 递交到文件管理器', () => {
     expect(useFileNavStore.getState().notice?.text ?? '').not.toContain('文件管理');
   });
 });
+
+describe('runFileAction 先跳后确认（点下去不能停顿）', () => {
+  /** 一个手动放行的 sftpListDir：模拟「确认路径」这一步还在等网络。 */
+  function slowListing() {
+    let release!: (entries: unknown[]) => void;
+    mocks.sftpListDir.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    return (entries: unknown[]) => release(entries);
+  }
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('确认路径还没回来时，界面已经跳了：切会话、切标签、待办已在信箱里', async () => {
+    const unregister = registerBottomPanelHost();
+    const release = slowListing();
+    const running = runFileAction('editor', REF);
+    await flush();
+    expect(useSessionStore.getState().activeSessionId).toBe('s1');
+    expect(events.some((e) => e.startsWith(OPEN_BOTTOM_TAB_EVENT) && e.includes('file-manager'))).toBe(true);
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ path: '/srv/app/a.md', intent: 'reveal' });
+    release([{ name: 'a.md', is_dir: false, size: 5 }]);
+    await running;
+    unregister();
+  });
+
+  it('确认回来后补发「打开」，带上真实大小；不再重复切标签把用户拽回来', async () => {
+    const unregister = registerBottomPanelHost();
+    const release = slowListing();
+    const running = runFileAction('editor', REF);
+    await flush();
+    const tabEvents = events.filter((e) => e.startsWith(OPEN_BOTTOM_TAB_EVENT)).length;
+    release([{ name: 'a.md', is_dir: false, size: 4096 }]);
+    await running;
+    unregister();
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ intent: 'editor', size: 4096, isDir: false });
+    expect(events.filter((e) => e.startsWith(OPEN_BOTTOM_TAB_EVENT)).length).toBe(tabEvents);
+  });
+
+  it('路径不存在：已经带用户过去了，再补一句「不存在」，不会再去打开', async () => {
+    const unregister = registerBottomPanelHost();
+    mocks.sftpListDir.mockResolvedValue([]);
+    await runFileAction('editor', REF);
+    unregister();
+    expect(useFileNavStore.getState().notice?.text).toContain('不存在');
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ intent: 'reveal' });
+  });
+
+  it('确认下来是目录：只定位，不补发打开', async () => {
+    const unregister = registerBottomPanelHost();
+    mocks.sftpListDir.mockResolvedValue([{ name: 'a.md', is_dir: true, size: 0 }]);
+    await runFileAction('open', REF);
+    unregister();
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ intent: 'reveal' });
+  });
+
+  it('手机：补发的「打开」仍记得用户最初是从哪个页签来的', async () => {
+    mocks.mobile = true;
+    reportMobileTab('agent' satisfies MobileTabId);
+    const release = slowListing();
+    const running = runFileAction('editor', REF);
+    await flush();
+    // 文件页已经亮出来了，当前页签变成 files；补发时不能把 files 当成来源
+    reportMobileTab('files');
+    release([{ name: 'a.md', is_dir: false, size: 5 }]);
+    await running;
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ intent: 'editor', returnTo: 'agent' });
+  });
+
+  it('确认期间用户又点了另一个链接：前一次的后续作废，不抢走新的那次', async () => {
+    const unregister = registerBottomPanelHost();
+    const release = slowListing();
+    const first = runFileAction('editor', REF);
+    await flush();
+    const other: FileRef = { side: 'remote', host: 'web', path: '/srv/app/b.md' };
+    mocks.sftpListDir.mockResolvedValueOnce([{ name: 'b.md', is_dir: false, size: 7 }]);
+    await runFileAction('editor', other);
+    release([{ name: 'a.md', is_dir: false, size: 5 }]);
+    await first;
+    unregister();
+    expect(useFileNavStore.getState().pending.s1).toMatchObject({ path: '/srv/app/b.md', intent: 'editor', size: 7 });
+  });
+});
+
