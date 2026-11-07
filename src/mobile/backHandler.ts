@@ -30,14 +30,23 @@ export type BackEdge = 'left' | 'right';
 
 /** One smoothed frame of the gesture, handed to the active preview. */
 export interface BackGestureFrame {
-  /** 0 (finger at the edge) → 1 (swiped all the way across). */
+  /** 0 (finger at the edge) → 1 (swiped all the way across), as the system reports it. */
   progress: number;
   /** Which screen edge the swipe started from. */
   edge: BackEdge;
+  /**
+   * How far the finger has travelled *inward* from where the swipe began, in CSS
+   * px (never negative). Taken from the raw touch position, so a layer can stay
+   * pinned under the finger — the system's `progress` is spring-smoothed and
+   * lags behind it. Falls back to `progress × width` when native sends no X.
+   */
+  dx: number;
   /** Vertical finger travel since the gesture began, in CSS px. */
   dy: number;
   /** Absolute finger Y in CSS px (viewport), for tilting toward the finger. */
   y: number;
+  /** Inward finger speed, CSS px per second (for flinging the layer out on commit). */
+  velocity: number;
 }
 
 /**
@@ -171,21 +180,30 @@ function queueNativeSync(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Smoothing time constant. Native progress events arrive in irregular bursts
- * (and cross a thread hop); following them raw looks twitchy. A short
- * exponential follow hides the jitter at the cost of ~1 frame of lag.
+ * Smoothing time constant. Native events cross a thread hop and sometimes land
+ * two in one frame and none in the next; a very short exponential follow evens
+ * that out. Keep it short: the system's progress is already spring-smoothed,
+ * and every extra millisecond here reads as the page dragging behind the finger.
  */
-const SMOOTH_TAU_MS = 38;
+const SMOOTH_TAU_MS = 14;
 const SETTLE_EPSILON = 0.002;
+/** Samples closer together than this are merged (a burst would spike the speed). */
+const VELOCITY_MIN_DT_MS = 6;
 
 interface GestureSession {
   entry: BackEntry;
   edge: BackEdge;
   startY: number;
+  /** Finger X at the start (CSS px); null when native sends no X (old APKs). */
+  startX: number | null;
   target: BackGestureFrame;
   current: BackGestureFrame;
   raf: number | null;
   lastT: number;
+  /** Last raw sample used for the speed estimate. */
+  sampleT: number;
+  sampleDx: number;
+  velocity: number;
 }
 
 /** Native reports Y in physical px; the page works in CSS px. */
@@ -233,19 +251,22 @@ function tick(now: number): void {
   const cur = s.current;
   const tgt = s.target;
   cur.progress += (tgt.progress - cur.progress) * k;
+  cur.dx += (tgt.dx - cur.dx) * k;
   cur.dy += (tgt.dy - cur.dy) * k;
   cur.y += (tgt.y - cur.y) * k;
   cur.edge = tgt.edge;
   const settled =
     Math.abs(tgt.progress - cur.progress) < SETTLE_EPSILON &&
+    Math.abs(tgt.dx - cur.dx) < 0.5 &&
     Math.abs(tgt.dy - cur.dy) < 0.5 &&
     Math.abs(tgt.y - cur.y) < 0.5;
   if (settled) {
     cur.progress = tgt.progress;
+    cur.dx = tgt.dx;
     cur.dy = tgt.dy;
     cur.y = tgt.y;
   }
-  s.entry.preview?.update({ ...cur });
+  s.entry.preview?.update({ ...cur, velocity: s.velocity });
   if (!settled) s.raf = requestAnimationFrame(tick);
 }
 
@@ -263,7 +284,12 @@ function endSession(mode: 'cancel' | 'commit'): void {
   if (mode === 'cancel') s.entry.preview?.cancel();
 }
 
-function startGesture(edge: number, physicalY: number): void {
+/** Native X is optional (APKs before it was sent pass only three arguments). */
+function optionalCssPx(physical: number | undefined): number | null {
+  return typeof physical === 'number' && Number.isFinite(physical) ? cssPx(physical) : null;
+}
+
+function startGesture(edge: number, physicalY: number, physicalX?: number): void {
   const y = cssPx(physicalY);
   // A previous gesture the system never resolved: settle it first.
   endSession('cancel');
@@ -276,30 +302,66 @@ function startGesture(edge: number, physicalY: number): void {
   });
   if (!top?.preview || reduced) return;
   const e = normalizeEdge(edge);
-  const frame = (): BackGestureFrame => ({ progress: 0, edge: e, dy: 0, y });
+  const frame = (): BackGestureFrame => ({
+    progress: 0,
+    edge: e,
+    dx: 0,
+    dy: 0,
+    y,
+    velocity: 0,
+  });
   session = {
     entry: top,
     edge: e,
     startY: y,
+    startX: optionalCssPx(physicalX),
     target: frame(),
     current: frame(),
     raf: null,
     lastT: 0,
+    sampleT: performance.now(),
+    sampleDx: 0,
+    velocity: 0,
   };
   top.preview.start(e);
 }
 
-function progressGesture(progress: number, edge: number, physicalY: number): void {
+/**
+ * Inward finger travel. Prefers the raw touch X; falls back to the system's
+ * progress when there is none — or when X never moves although progress does
+ * (a ROM reporting a constant X), so the preview still follows.
+ */
+function inwardTravel(s: GestureSession, edge: BackEdge, progress: number, x: number | null): number {
+  const fromProgress = progress * (window.innerWidth || 0);
+  if (x == null || s.startX == null) return fromProgress;
+  const fromTouch = Math.max(0, edge === 'left' ? x - s.startX : s.startX - x);
+  if (fromTouch < 2 && progress > 0.08) return fromProgress;
+  return fromTouch;
+}
+
+function progressGesture(
+  progress: number,
+  edge: number,
+  physicalY: number,
+  physicalX?: number,
+): void {
   bumpDiag({ frames: diag.frames + 1, lastProgress: progress });
   const s = session;
   if (!s) return;
   const y = cssPx(physicalY);
-  s.target = {
-    progress: Math.min(Math.max(progress, 0), 1),
-    edge: normalizeEdge(edge),
-    dy: y - s.startY,
-    y,
-  };
+  const e = normalizeEdge(edge);
+  const p = Math.min(Math.max(progress, 0), 1);
+  const dx = inwardTravel(s, e, p, optionalCssPx(physicalX));
+  const now = performance.now();
+  const dt = now - s.sampleT;
+  if (dt >= VELOCITY_MIN_DT_MS) {
+    const v = ((dx - s.sampleDx) / dt) * 1000;
+    // Light EMA: responsive to a flick at the end, not to one noisy sample.
+    s.velocity = s.velocity * 0.4 + v * 0.6;
+    s.sampleT = now;
+    s.sampleDx = dx;
+  }
+  s.target = { progress: p, edge: e, dx, dy: y - s.startY, y, velocity: s.velocity };
   ensureLoop(s);
 }
 
@@ -330,8 +392,13 @@ function popAndClose(): boolean {
 declare global {
   interface Window {
     __marcelHandleBack?: () => boolean;
-    __marcelBackStart?: (edge: number, touchY: number) => void;
-    __marcelBackProgress?: (progress: number, edge: number, touchY: number) => void;
+    __marcelBackStart?: (edge: number, touchY: number, touchX?: number) => void;
+    __marcelBackProgress?: (
+      progress: number,
+      edge: number,
+      touchY: number,
+      touchX?: number,
+    ) => void;
     __marcelBackCancel?: () => void;
   }
 }

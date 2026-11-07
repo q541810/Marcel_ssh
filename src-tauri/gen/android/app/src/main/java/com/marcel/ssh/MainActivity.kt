@@ -139,10 +139,14 @@ class MainActivity : TauriActivity() {
 
     override fun handleOnBackStarted(backEvent: BackEventCompat) {
       pendingProgress = null
-      Log.i(TAG, "back started edge=${backEvent.swipeEdge} y=${backEvent.touchY}")
+      Log.i(
+        TAG,
+        "back started edge=${backEvent.swipeEdge} x=${backEvent.touchX} y=${backEvent.touchY}"
+      )
+      // 手指横坐标一起送：网页用它把页面钉在手指下（系统的 progress 做过弹簧平滑，会落后手指）
       evalBack(
         "window.__marcelBackStart&&window.__marcelBackStart(" +
-          "${backEvent.swipeEdge},${backEvent.touchY})"
+          "${backEvent.swipeEdge},${backEvent.touchY},${backEvent.touchX})"
       )
     }
 
@@ -158,7 +162,7 @@ class MainActivity : TauriActivity() {
         pendingProgress = null
         evalBack(
           "window.__marcelBackProgress&&window.__marcelBackProgress(" +
-            "${e.progress},${e.swipeEdge},${e.touchY})"
+            "${e.progress},${e.swipeEdge},${e.touchY},${e.touchX})"
         )
       }
     }

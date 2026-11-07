@@ -147,6 +147,38 @@ describe("predictive back gesture", () => {
     expect(last.dy).toBeCloseTo(50, 0);
   });
 
+  it("follows the raw finger X inward (dx) and estimates its speed", () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const { preview, frames } = makePreview();
+    registerBackHandler(() => {}, preview);
+    // Right edge: finger starts at physical x=780 (390 CSS px) and moves left.
+    window.__marcelBackStart?.(1, 400, 780);
+    now += 16;
+    window.__marcelBackProgress?.(0.1, 1, 400, 580);
+    flushFrames(40);
+    const last = frames[frames.length - 1];
+    expect(last.dx).toBeCloseTo(100, 0);
+    expect(last.velocity).toBeGreaterThan(0);
+  });
+
+  it("falls back to progress × width when native sends no X or a frozen X", () => {
+    vi.stubGlobal("innerWidth", 400);
+    const { preview, frames } = makePreview();
+    registerBackHandler(() => {}, preview);
+    window.__marcelBackStart?.(0, 300);
+    window.__marcelBackProgress?.(0.5, 0, 300);
+    flushFrames(40);
+    expect(frames[frames.length - 1].dx).toBeCloseTo(200, 0);
+
+    resetBackHandlers();
+    const second = makePreview();
+    registerBackHandler(() => {}, second.preview);
+    window.__marcelBackStart?.(0, 300, 10);
+    window.__marcelBackProgress?.(0.25, 0, 300, 10);
+    flushFrames(40);
+    expect(second.frames[second.frames.length - 1].dx).toBeCloseTo(100, 0);
+  });
+
   it("clamps out-of-range progress", () => {
     const { preview, frames } = makePreview();
     registerBackHandler(() => {}, preview);
