@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, ArrowRight, Binary, Bug, Check, Eye, FlaskConical, Plus, PlugZap, Server, Sun } from "lucide-react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { Activity, AlertTriangle, ArrowLeft, ArrowRight, Binary, Bug, Check, Eye, FlaskConical, Plus, PlugZap, Server, Sun } from "lucide-react";
 import { isDebugConnection } from "@/lib/debugServer";
 import * as tauri from "@/lib/tauri";
 import ErrorScreen from "@/components/layout/ErrorScreen";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useViewStore } from "@/stores/viewStore";
 import { useDebugStore } from "@/stores/debugStore";
+import { getBackDiagnostics, subscribeBackDiagnostics } from "@/mobile/backHandler";
 
 /** 预览用的示例错误：手工 stack 让预览屏与真实崩溃形态一致（含缩进的调用栈）。 */
 const sampleError = new TypeError("Cannot read properties of undefined (reading 'map')");
@@ -16,6 +17,48 @@ sampleError.stack = [
   "    at beginWork (react-dom.development.js:19167:14)",
   "    at performUnitOfWork (react-dom.development.js:23179:12)",
 ].join("\n");
+
+/**
+ * 返回手势诊断（仅 Android）：原生有没有把手势进度送到网页。
+ * 本页自己就是一个返回层，从屏幕边缘慢慢滑一半再收回来，计数就会变。
+ */
+function BackGestureDiagnostics() {
+  const d = useSyncExternalStore(subscribeBackDiagnostics, getBackDiagnostics);
+  const rows: Array<[string, string]> = [
+    ["网页层返回栈深度", String(d.stackDepth)],
+    ["已通知原生接管手势", d.interceptSent == null ? "从未通知" : d.interceptSent ? "是" : "否"],
+    ["手势开始（原生→网页）", String(d.starts)],
+    ["手势进度帧（原生→网页）", `${d.frames}（最近 ${d.lastProgress.toFixed(2)}）`],
+    ["手势取消", String(d.cancels)],
+    ["确认返回", String(d.commits)],
+    ["栈顶层带预览", d.topHadPreview == null ? "—" : d.topHadPreview ? "是" : "否"],
+    ["系统开了减弱动画", d.reducedMotion ? "是（预览会被跳过）" : "否"],
+  ];
+  return (
+    <section
+      className="mt-4 rounded-xl border border-edge-subtle bg-zinc-950/50 p-4"
+      aria-labelledby="debug-back-title"
+    >
+      <div className="flex items-start gap-3">
+        <Activity className="mt-0.5 h-5 w-5 shrink-0 text-zinc-300" aria-hidden="true" />
+        <div className="min-w-0">
+          <h2 id="debug-back-title" className="text-sm font-medium text-zinc-200">返回手势诊断</h2>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            从屏幕边缘慢慢向内滑一半、再滑回去（别松手到底）。「手势开始」和「进度帧」不涨，说明系统没把手势进度交给应用；涨了说明链路是通的。
+          </p>
+        </div>
+      </div>
+      <dl className="mt-3 space-y-1.5 text-xs">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex items-baseline justify-between gap-3">
+            <dt className="text-zinc-500">{k}</dt>
+            <dd className="font-mono text-zinc-200">{v}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
 
 interface DebugPageProps {
   onBack?: () => void;
@@ -309,6 +352,8 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
             </div>
           )}
         </section>
+
+        {typeof window !== "undefined" && window.AndroidBridge && <BackGestureDiagnostics />}
       </div>
 
       {errorPreviewOpen && (

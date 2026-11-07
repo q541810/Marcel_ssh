@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getBackDiagnostics,
   registerBackHandler,
   resetBackHandlers,
   type BackGestureFrame,
@@ -237,5 +238,29 @@ describe("predictive back gesture", () => {
     // Commit still works.
     expect(window.__marcelHandleBack?.()).toBe(true);
     expect(close).toHaveBeenCalled();
+  });
+});
+
+describe('diagnostics', () => {
+  it('counts what native delivered, even for layers without a preview', async () => {
+    const before = getBackDiagnostics();
+    registerBackHandler(() => {});
+    await settleNativeSync();
+    expect(getBackDiagnostics().interceptSent).toBe(true);
+    expect(getBackDiagnostics().stackDepth).toBe(1);
+
+    window.__marcelBackStart?.(0, 10);
+    window.__marcelBackProgress?.(0.25, 0, 10);
+    window.__marcelBackProgress?.(0.5, 0, 10);
+    window.__marcelBackCancel?.();
+    window.__marcelHandleBack?.();
+
+    const d = getBackDiagnostics();
+    expect(d.starts - before.starts).toBe(1);
+    expect(d.frames - before.frames).toBe(2);
+    expect(d.cancels - before.cancels).toBe(1);
+    expect(d.commits - before.commits).toBe(1);
+    expect(d.lastProgress).toBe(0.5);
+    expect(d.topHadPreview).toBe(false);
   });
 });

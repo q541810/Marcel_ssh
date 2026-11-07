@@ -65,6 +65,64 @@ interface BackEntry {
 const stack: BackEntry[] = [];
 
 // ---------------------------------------------------------------------------
+// Diagnostics (shown on the mobile debug page)
+// ---------------------------------------------------------------------------
+
+/**
+ * What the web layer has seen from native, so "swiping does nothing on this
+ * phone" can be told apart on the device itself: did native ever receive
+ * progress events (starts / frames), or only the final commit?
+ */
+export interface BackDiagnostics {
+  /** Layers currently registered. */
+  stackDepth: number;
+  /** Last intercept value pushed to native (null = never pushed). */
+  interceptSent: boolean | null;
+  /** `__marcelBackStart` calls received — native delivers gesture start. */
+  starts: number;
+  /** `__marcelBackProgress` calls received — native delivers per-frame progress. */
+  frames: number;
+  cancels: number;
+  /** `__marcelHandleBack` calls — the commit path (also the legacy button). */
+  commits: number;
+  lastProgress: number;
+  /** Whether the top layer at the last gesture start had a preview. */
+  topHadPreview: boolean | null;
+  /** The webview reports prefers-reduced-motion (previews are skipped). */
+  reducedMotion: boolean;
+}
+
+let diag: BackDiagnostics = {
+  stackDepth: 0,
+  interceptSent: null,
+  starts: 0,
+  frames: 0,
+  cancels: 0,
+  commits: 0,
+  lastProgress: 0,
+  topHadPreview: null,
+  reducedMotion: false,
+};
+const diagListeners = new Set<() => void>();
+
+function bumpDiag(patch: Partial<BackDiagnostics>): void {
+  diag = { ...diag, ...patch };
+  diagListeners.forEach((l) => l());
+}
+
+/** Snapshot for `useSyncExternalStore` (a new object per change). */
+export function getBackDiagnostics(): BackDiagnostics {
+  return diag;
+}
+
+export function subscribeBackDiagnostics(listener: () => void): () => void {
+  diagListeners.add(listener);
+  return () => {
+    diagListeners.delete(listener);
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Native sync: "does the web layer have anything to consume?"
 // ---------------------------------------------------------------------------
 
@@ -96,9 +154,13 @@ function queueNativeSync(): void {
   queueMicrotask(() => {
     syncQueued = false;
     const want = stack.length > 0;
-    if (want === nativeEnabled) return;
+    if (want === nativeEnabled) {
+      if (diag.stackDepth !== stack.length) bumpDiag({ stackDepth: stack.length });
+      return;
+    }
     nativeEnabled = want;
     setBackInterceptEnabled(want);
+    bumpDiag({ stackDepth: stack.length, interceptSent: want });
   });
 }
 
@@ -194,7 +256,13 @@ function startGesture(edge: number, y: number): void {
   // A previous gesture the system never resolved: settle it first.
   endSession('cancel');
   const top = stack[stack.length - 1];
-  if (!top?.preview || prefersReducedMotion()) return;
+  const reduced = prefersReducedMotion();
+  bumpDiag({
+    starts: diag.starts + 1,
+    topHadPreview: top?.preview != null,
+    reducedMotion: reduced,
+  });
+  if (!top?.preview || reduced) return;
   const e = normalizeEdge(edge);
   const frame = (): BackGestureFrame => ({ progress: 0, edge: e, dy: 0 });
   session = {
@@ -210,6 +278,7 @@ function startGesture(edge: number, y: number): void {
 }
 
 function progressGesture(progress: number, edge: number, y: number): void {
+  bumpDiag({ frames: diag.frames + 1, lastProgress: progress });
   const s = session;
   if (!s) return;
   s.target = {
@@ -221,6 +290,7 @@ function progressGesture(progress: number, edge: number, y: number): void {
 }
 
 function popAndClose(): boolean {
+  bumpDiag({ commits: diag.commits + 1 });
   const top = stack[stack.length - 1];
   const s = session;
   if (s) {
@@ -256,7 +326,10 @@ if (typeof window !== 'undefined') {
   window.__marcelHandleBack = popAndClose;
   window.__marcelBackStart = startGesture;
   window.__marcelBackProgress = progressGesture;
-  window.__marcelBackCancel = () => endSession('cancel');
+  window.__marcelBackCancel = () => {
+    bumpDiag({ cancels: diag.cancels + 1 });
+    endSession('cancel');
+  };
   // A reloaded page starts with an empty stack while native may still believe
   // there is something to consume; say so explicitly.
   queueNativeSync();

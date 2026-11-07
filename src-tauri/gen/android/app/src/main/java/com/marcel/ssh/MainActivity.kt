@@ -139,6 +139,7 @@ class MainActivity : TauriActivity() {
 
     override fun handleOnBackStarted(backEvent: BackEventCompat) {
       pendingProgress = null
+      Log.i(TAG, "back started edge=${backEvent.swipeEdge} y=${backEvent.touchY}")
       evalBack(
         "window.__marcelBackStart&&window.__marcelBackStart(" +
           "${backEvent.swipeEdge},${backEvent.touchY})"
@@ -164,11 +165,13 @@ class MainActivity : TauriActivity() {
 
     override fun handleOnBackCancelled() {
       pendingProgress = null
+      Log.i(TAG, "back cancelled")
       evalBack("window.__marcelBackCancel&&window.__marcelBackCancel()")
     }
 
     override fun handleOnBackPressed() {
       pendingProgress = null
+      Log.i(TAG, "back committed")
       val webView = webViewRef
       if (webView == null) {
         passThrough()
@@ -197,6 +200,7 @@ class MainActivity : TauriActivity() {
 
   /** 网页同步过来的「有没有层可退」。必须在主线程调用。 */
   fun setBackInterceptEnabled(enabled: Boolean) {
+    Log.i(TAG, "back intercept enabled=$enabled")
     backCallback.isEnabled = enabled
   }
 
