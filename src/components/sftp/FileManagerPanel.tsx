@@ -39,6 +39,7 @@ import ImagePreviewModal from './ImagePreviewModal';
 import CompressModal from './CompressModal';
 import { useFileClipboardStore } from '@/stores/fileClipboardStore';
 import { clipboardLabel, pasteBlockedReason } from '@/lib/filePaste';
+import Button from '@/components/ui/Button';
 import ContextMenu, { type ContextMenuItem } from '@/components/ui/ContextMenu';
 import {
   parentDir,
@@ -1372,7 +1373,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {renameTarget && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 surface-glass rounded-2xl p-4">
+          <div className="modal-panel-enter w-[26rem] max-w-[calc(100vw-2rem)] surface-glass rounded-2xl p-5">
             <h3 className="text-title text-fg mb-3">重命名</h3>
             <input
               type="text"
@@ -1382,24 +1383,16 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 if (e.key === 'Enter') handleRename();
                 if (e.key === 'Escape') setRenameTarget(null);
               }}
-              className="w-full rounded-md field px-2 py-1.5 text-meta text-fg mb-3"
+              className="w-full h-9 rounded-lg field px-3 text-body text-fg mb-4"
               autoFocus
             />
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRenameTarget(null)}
-                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
-              >
+              <Button variant="secondary" size="lg" onClick={() => setRenameTarget(null)}>
                 取消
-              </button>
-              <button
-                type="button"
-                onClick={handleRename}
-                className="px-3 py-1.5 rounded-lg text-body text-white bg-indigo-600 hover:bg-indigo-500"
-              >
+              </Button>
+              <Button variant="primary" size="lg" onClick={handleRename}>
                 确认
-              </button>
+              </Button>
             </div>
           </div>
         </div>,
@@ -1408,8 +1401,8 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
 
       {deleteConfirm.length > 0 && createPortal(
         <div className="modal-backdrop-enter fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="modal-panel-enter w-80 surface-glass rounded-2xl p-4">
-            <h3 className="text-title text-red-300 mb-2">
+          <div className="modal-panel-enter w-[26rem] max-w-[calc(100vw-2rem)] surface-glass rounded-2xl p-5">
+            <h3 className="text-title text-red-300 mb-3">
               确认删除 {deleteConfirm.length > 1 ? `${deleteConfirm.length} 个文件` : ''}
             </h3>
             {deleteConfirm.length === 1 ? (
@@ -1429,30 +1422,28 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                 {deleteConfirm.length > 10 && <p className="text-fg-tertiary">等 {deleteConfirm.length} 个文件…</p>}
               </div>
             )}
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setDeleteConfirm([])}
-                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
-              >
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" size="lg" className="whitespace-nowrap" onClick={() => setDeleteConfirm([])}>
                 取消
-              </button>
-              <button
-                type="button"
+              </Button>
+              {deleteConfirm.length === 1 && deleteConfirm[0].isDir && (
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  className="whitespace-nowrap text-red-300"
+                  onClick={() => handleQuickDelete(deleteConfirm)}
+                >
+                  快速删除（打包成 rm）
+                </Button>
+              )}
+              <Button
+                variant="danger"
+                size="lg"
+                className="whitespace-nowrap"
                 onClick={() => handleDelete(deleteConfirm)}
-                className="px-3 py-1.5 rounded-lg text-body text-white bg-red-600 hover:bg-red-500"
               >
                 确认删除
-              </button>
-              {deleteConfirm.length === 1 && deleteConfirm[0].isDir && (
-                <button
-                  type="button"
-                  onClick={() => handleQuickDelete(deleteConfirm)}
-                  className="px-3 py-1.5 rounded-lg text-body text-white bg-red-600 hover:bg-red-500"
-                >
-                  快速删除（打包成rm）
-                </button>
-              )}
+              </Button>
             </div>
           </div>
         </div>,
@@ -1516,7 +1507,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   setPendingDropFiles(null);
                   actions.uploadPaths(paths, destDir);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">逐个上传</span>
                 <span className="block text-fg-tertiary mt-0.5">每个文件单独上传到目标目录</span>
@@ -1528,7 +1519,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   setPendingDropFiles(null);
                   await actions.uploadAsZip(paths, destDir, setDropWarning);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">打包上传</span>
                 <span className="block text-fg-tertiary mt-0.5">压缩为 zip 后上传并解压到目标目录</span>
@@ -1538,7 +1529,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => setPendingDropFiles(null)}
-                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
+                className="h-9 px-4 rounded-lg text-body text-fg bg-fill hover:bg-fill-strong"
               >
                 取消
               </button>
@@ -1560,7 +1551,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => runFolderUpload('folder')}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">上传到新建子文件夹</span>
                 <span className="block text-fg-tertiary mt-0.5">在当前目录下创建同名文件夹，文件落到该子文件夹内</span>
@@ -1568,7 +1559,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => runFolderUpload('flat')}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">上传到当前目录</span>
                 <span className="block text-fg-tertiary mt-0.5">文件直接落到当前目录；若存在同名条目将报错中止</span>
@@ -1578,7 +1569,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => setPendingFolderUpload(null)}
-                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
+                className="h-9 px-4 rounded-lg text-body text-fg bg-fill hover:bg-fill-strong"
               >
                 取消
               </button>
@@ -1603,7 +1594,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
                   const target = joinRemotePath(parentDir(extractConfirm.path), stem);
                   handleExtract(target);
                 }}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">解压到同名子文件夹</span>
                 <span className="block text-fg-tertiary mt-0.5">在当前目录下创建「{archiveStem(extractConfirm.name)}」文件夹并解压到其中</span>
@@ -1611,7 +1602,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => handleExtract(parentDir(extractConfirm.path))}
-                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-state-soft hover:bg-state-mid transition-colors"
+                className="w-full px-3 py-2 rounded-lg text-body text-left text-fg-secondary bg-fill hover:bg-fill-strong transition-colors"
               >
                 <span className="font-medium text-fg">解压到当前目录</span>
                 <span className="block text-fg-tertiary mt-0.5">直接解压到当前目录，保留压缩包内部结构</span>
@@ -1621,7 +1612,7 @@ export default function FileManagerPanel({ sessionId, connectionKey }: FileManag
               <button
                 type="button"
                 onClick={() => setExtractConfirm(null)}
-                className="px-3 py-1.5 rounded-lg text-body text-fg-secondary bg-state-soft hover:bg-state-mid"
+                className="h-9 px-4 rounded-lg text-body text-fg bg-fill hover:bg-fill-strong"
               >
                 取消
               </button>
