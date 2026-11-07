@@ -22,6 +22,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  // jsdom 没有 scrollIntoView（共享 Select 打开时会把当前项滚进视野）
+  Element.prototype.scrollIntoView = vi.fn();
   vi.clearAllMocks();
   tauriMock.quickCommandList.mockResolvedValue([]);
   useQuickCommandStore.setState({
@@ -90,6 +92,18 @@ async function setField(
   });
 }
 
+/** 作用域是自绘下拉（ui/Select）：点开触发按钮，再按下选项（列表挂在 document.body 上） */
+async function chooseScope(panel: HTMLElement, label: string) {
+  await click(panel.querySelector('button[aria-label="作用域"]')!);
+  const opt = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).find(
+    (o) => (o.textContent ?? '').trim() === label,
+  );
+  if (!opt) throw new Error(`作用域下拉里没有：${label}`);
+  await act(async () => {
+    opt.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+  });
+}
+
 /**
  * 新建/编辑弹窗的报错必须落在弹窗里。
  *
@@ -100,7 +114,7 @@ describe('快捷指令弹窗的内联提示', () => {
   it('校验失败（名称为空）显示在弹窗内，且不再重复渲染到弹窗背后', async () => {
     await renderPanel();
     await click(clickButton('新建'));
-    await setField(modalPanel().querySelector('select')!, 'global');
+    await chooseScope(modalPanel(), '全局');
     await click(clickButton('保存', modalPanel()));
 
     const panel = modalPanel();
@@ -119,7 +133,7 @@ describe('快捷指令弹窗的内联提示', () => {
     await click(clickButton('新建'));
 
     const panel = modalPanel();
-    await setField(panel.querySelector('select')!, 'global');
+    await chooseScope(panel, '全局');
     await setField(
       panel.querySelector('input[placeholder="例如：查看磁盘"]')!,
       '查看磁盘',
@@ -158,7 +172,7 @@ describe('快捷指令弹窗的内联提示', () => {
     await click(clickButton('新建'));
 
     const panel = modalPanel();
-    await setField(panel.querySelector('select')!, 'global');
+    await chooseScope(panel, '全局');
     await click(clickButton('保存', modalPanel()));
     expect(modalPanel().textContent).toContain('名称不能为空');
 

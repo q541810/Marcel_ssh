@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -141,7 +141,7 @@ export function ModelPicker({
               width: pos.width,
               maxHeight: pos.maxHeight,
             }}
-            className={`fixed z-[100] rounded-xl surface-glass py-1 overflow-y-auto ${
+            className={`fixed z-[100] rounded-xl surface-glass p-1 overflow-y-auto ${
               presence.phase === "exit"
                 ? "mobile-popover-exit"
                 : "mobile-popover-enter"
@@ -185,18 +185,16 @@ export function ModelPicker({
                         setOpen(false);
                       }}
                       className={`
-                        w-full text-left px-3 py-2 transition-colors
-                        ${active
-                          ? "bg-indigo-600/20 border-l-2 border-indigo-500"
-                          : "hover:bg-state-mid border-l-2 border-transparent"}
+                        w-full text-left rounded-lg px-3 py-2 transition-colors duration-120
+                        ${active ? "bg-indigo-500/15" : disabled ? "" : "hover:bg-fill-soft"}
                         ${disabled ? "opacity-40 cursor-not-allowed" : ""}
                       `}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className={`text-body truncate ${active ? "text-indigo-300" : "text-fg"}`}>
+                        <span className={`text-body truncate ${active ? "text-indigo-400" : "text-fg"}`}>
                           {modelLabel(m)}
                         </span>
-                        {active && <span className="text-meta text-indigo-400 flex-shrink-0">已选</span>}
+                        {active && <Check size={14} strokeWidth={2} className="flex-shrink-0 text-indigo-400" aria-hidden />}
                       </div>
                       <p className="text-meta text-fg-secondary mt-0.5 font-mono truncate">
                         {m.modelName}

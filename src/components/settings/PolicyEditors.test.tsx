@@ -158,7 +158,7 @@ describe('ToolApprovalEditor', () => {
         )!
         .click();
     });
-    const options = Array.from(host!.querySelectorAll('[role="option"]')).map(
+    const options = Array.from(document.querySelectorAll('[role="option"]')).map(
       (o) => o.textContent,
     );
     expect(options).toHaveLength(3);

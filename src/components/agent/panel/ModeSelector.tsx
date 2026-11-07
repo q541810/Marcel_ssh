@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from "react";
 import { useAnimatedPresence } from "@/hooks/useAnimatedPresence";
 import { AGENT_MODES } from "@/lib/constants";
@@ -55,7 +55,7 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
         <div
           role="listbox"
           onAnimationEnd={modeDrawerPresence.onAnimationEnd}
-          className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] origin-bottom-left rounded-xl surface-glass py-1 z-30 ${
+          className={`absolute bottom-full left-0 mb-2 w-64 max-w-[calc(100vw-2rem)] origin-bottom-left rounded-xl surface-glass p-1 z-30 ${
             modeDrawerPresence.phase === "exit"
               ? "mobile-popover-exit"
               : "mobile-popover-enter"
@@ -73,26 +73,20 @@ export function ModeSelector({ mode, setMode }: ModeSelectorProps) {
                   setModeDrawerOpen(false);
                 }}
                 className={`
-                        w-full text-left px-3 py-2 transition-colors
-                        ${
-                          active
-                            ? "bg-indigo-600/20 border-l-2 border-indigo-500"
-                            : "hover:bg-state-mid border-l-2 border-transparent"
-                        }
+                        w-full text-left rounded-lg px-3 py-2 transition-colors duration-120
+                        ${active ? "bg-indigo-500/15" : "hover:bg-fill-soft"}
                       `}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span
                     className={`text-body font-medium ${
-                      active ? "text-indigo-300" : "text-fg"
+                      active ? "text-indigo-400" : "text-fg"
                     }`}
                   >
                     {m.label}
                   </span>
                   {active && (
-                    <span className="text-meta text-indigo-400">
-                      已选
-                    </span>
+                    <Check size={14} strokeWidth={2} className="flex-shrink-0 text-indigo-400" aria-hidden />
                   )}
                 </div>
                 <p className="text-meta text-fg-secondary mt-0.5">

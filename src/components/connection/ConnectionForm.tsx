@@ -15,6 +15,7 @@ import { useConnectionStore } from '@/stores/connectionStore';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
+import Select from '@/components/ui/Select';
 import PasswordPrompt from './PasswordPrompt';
 import KeyManager from './KeyManager';
 
@@ -329,18 +330,20 @@ export default function ConnectionForm({
       />
 
       <div>
-        <label className="block text-read font-medium text-fg-secondary mb-1">
+        <label className="block text-meta font-medium text-fg-secondary mb-1">
           认证方式
         </label>
         <div className="flex gap-2 items-center">
-          <select
+          <Select
+            className="flex-1"
+            ariaLabel="认证方式"
             value={authMethod}
-            onChange={(e) => setAuthMethod(e.target.value)}
-            className="flex-1 rounded-lg bg-field border border-edge-strong px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
-          >
-            <option value="Password">密码</option>
-            <option value="PrivateKey">私钥</option>
-          </select>
+            onChange={setAuthMethod}
+            options={[
+              { value: 'Password', label: '密码' },
+              { value: 'PrivateKey', label: '私钥' },
+            ]}
+          />
           {/* 还没存过密码才给这个入口；存过则下面有「密码：已保存 / 修改 / 清除」 */}
           {authMethod === 'Password' && connection?.id && !hasLoginPassword && (
             <Button
@@ -363,7 +366,7 @@ export default function ConnectionForm({
       */}
       {authMethod === 'Password' && connection?.id && hasLoginPassword && (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-read text-fg-secondary">密码：已保存</span>
+          <span className="text-body text-fg-secondary">密码：已保存</span>
           <div className="flex gap-2">
             <Button
               variant="secondary"
@@ -386,28 +389,29 @@ export default function ConnectionForm({
       {authMethod === 'PrivateKey' && (
         <>
           <div>
-            <label className="block text-read font-medium text-fg-secondary mb-1">
+            <label className="block text-meta font-medium text-fg-secondary mb-1">
               私钥
             </label>
             <div className="flex gap-2 items-center">
-              <select
+              <Select
+                className="min-w-0 flex-1"
+                ariaLabel="私钥"
                 value={keyId}
-                onChange={(e) => {
-                  setKeyId(e.target.value);
-                  if (e.target.value) setKeyPath('');
+                onChange={(v) => {
+                  setKeyId(v);
+                  if (v) setKeyPath('');
                 }}
-                className="min-w-0 flex-1 rounded-lg bg-field border border-edge-strong px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
-              >
-                <option value="">
-                  {keys.length > 0 ? '未选择（也可在下方直接填路径）' : '还没有导入私钥'}
-                </option>
-                {keys.map((key) => (
-                  <option key={key.id} value={key.id}>
-                    {key.name}（{describeAlgorithm(key.algorithm)}
-                    {key.encrypted ? ' · 带密码' : ''}）
-                  </option>
-                ))}
-              </select>
+                options={[
+                  {
+                    value: '',
+                    label: keys.length > 0 ? '未选择（也可在下方直接填路径）' : '还没有导入私钥',
+                  },
+                  ...keys.map((key) => ({
+                    value: key.id,
+                    label: `${key.name}（${describeAlgorithm(key.algorithm)}${key.encrypted ? ' · 带密码' : ''}）`,
+                  })),
+                ]}
+              />
               <Button
                 variant="secondary"
                 onClick={() => setKeyManagerTarget('main')}
@@ -437,7 +441,7 @@ export default function ConnectionForm({
 
           {hasPassphrase && !passphraseDirty && !passphrase ? (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-read text-fg-secondary">密钥密码：已保存</span>
+              <span className="text-body text-fg-secondary">密钥密码：已保存</span>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
@@ -474,7 +478,7 @@ export default function ConnectionForm({
           {/* 登录密码：与 SSH 登录无关，只给 agent 执行 sudo 时用 */}
           {hasLoginPassword && !loginPasswordDirty && !loginPassword ? (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-read text-fg-secondary">登录密码：已保存</span>
+              <span className="text-body text-fg-secondary">登录密码：已保存</span>
               <div className="flex gap-2">
                 <Button
                   variant="secondary"
@@ -528,7 +532,7 @@ export default function ConnectionForm({
         <button
           type="button"
           onClick={() => setUseJump((v) => !v)}
-          className="w-full flex items-center justify-between px-3 py-2.5 text-read text-fg-secondary hover:bg-state-soft/50 rounded-lg transition-colors"
+          className="w-full flex items-center justify-between px-3 py-2.5 text-body text-fg-secondary hover:bg-state-soft/50 rounded-lg transition-colors"
         >
           <span className="font-medium">跳板机（可选）</span>
           <span
@@ -589,30 +593,32 @@ export default function ConnectionForm({
             />
 
             <div>
-              <label className="block text-read font-medium text-fg-secondary mb-1">
+              <label className="block text-meta font-medium text-fg-secondary mb-1">
                 认证方式
               </label>
-              <select
+              <Select<JumpAuthMethod>
+                className="w-full"
+                ariaLabel="跳板机认证方式"
                 value={jumpAuthMethod}
-                onChange={(e) => {
-                  setJumpAuthMethod(e.target.value as JumpAuthMethod);
+                onChange={(v) => {
+                  setJumpAuthMethod(v);
                   setJumpCredDirty(false);
                   setJumpPassword('');
                   setJumpPassphrase('');
                 }}
-                className="w-full rounded-lg bg-field border border-edge-strong px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
-              >
-                <option value="withTarget">和目标相同</option>
-                <option value="Password">密码</option>
-                <option value="PrivateKey">私钥</option>
-              </select>
+                options={[
+                  { value: 'withTarget', label: '和目标相同' },
+                  { value: 'Password', label: '密码' },
+                  { value: 'PrivateKey', label: '私钥' },
+                ]}
+              />
             </div>
 
             {jumpAuthMethod === 'Password' && (
               <div>
                 {hasJumpPassword && !jumpCredDirty && !jumpPassword ? (
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-read text-fg-secondary">密码：已设置</span>
+                    <span className="text-body text-fg-secondary">密码：已设置</span>
                     <Button
                       variant="secondary"
                       className="py-1.5 text-meta"
@@ -641,29 +647,30 @@ export default function ConnectionForm({
             {jumpAuthMethod === 'PrivateKey' && (
               <>
                 <div>
-                  <label className="block text-read font-medium text-fg-secondary mb-1">
+                  <label className="block text-meta font-medium text-fg-secondary mb-1">
                     私钥
                   </label>
                   <div className="flex gap-2 items-center">
-                    <select
+                    <Select
+                      className="min-w-0 flex-1"
+                      ariaLabel="跳板机私钥"
                       value={jumpKeyId}
-                      onChange={(e) => {
-                        setJumpKeyId(e.target.value);
-                        if (e.target.value) setJumpKeyPath('');
+                      onChange={(v) => {
+                        setJumpKeyId(v);
+                        if (v) setJumpKeyPath('');
                       }}
-                      className="min-w-0 flex-1 rounded-lg bg-field border border-edge-strong px-3 py-2 text-read text-fg focus:outline-none focus:border-indigo-500"
-                    >
-                      <option value="">
-                        {keys.length > 0
-                          ? '未选择（也可在下方直接填路径）'
-                          : '还没有导入私钥'}
-                      </option>
-                      {keys.map((key) => (
-                        <option key={key.id} value={key.id}>
-                          {key.name}（{describeAlgorithm(key.algorithm)}）
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        {
+                          value: '',
+                          label:
+                            keys.length > 0 ? '未选择（也可在下方直接填路径）' : '还没有导入私钥',
+                        },
+                        ...keys.map((key) => ({
+                          value: key.id,
+                          label: `${key.name}（${describeAlgorithm(key.algorithm)}）`,
+                        })),
+                      ]}
+                    />
                     <Button
                       variant="secondary"
                       onClick={() => setKeyManagerTarget('jump')}
@@ -691,7 +698,7 @@ export default function ConnectionForm({
                 )}
                 {hasJumpPassphrase && !jumpCredDirty && !jumpPassphrase ? (
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-read text-fg-secondary">密钥密码：已设置</span>
+                    <span className="text-body text-fg-secondary">密钥密码：已设置</span>
                     <Button
                       variant="secondary"
                       className="py-1.5 text-meta"

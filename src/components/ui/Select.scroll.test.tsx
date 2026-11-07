@@ -29,7 +29,7 @@ describe('Select 悬停与滚动', () => {
     // 刚打开：把当前值滚进视野，一次
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
 
-    const opts = host.querySelectorAll('[data-opt]');
+    const opts = document.querySelectorAll('[data-opt]');
     for (const i of [10, 11, 12, 13]) {
       act(() => {
         opts[i].dispatchEvent(new Event('pointerover', { bubbles: true }));

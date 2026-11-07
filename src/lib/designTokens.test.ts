@@ -15,6 +15,7 @@ const BANNED: { re: RegExp; use: string }[] = [
   { re: /(?<![\w\-[])text-(xs|sm)(?![\w-])/, use: 'text-meta / text-body / text-read' },
   { re: /(?<![\w\-[])transition-all(?![\w-])/, use: 'transition-colors / -opacity / -transform 或明确属性' },
   { re: /(?<![\w\-[])rounded(-[trblse]{1,2})?-\[\d+(\.\d+)?(px|rem)\](?![\w-])/, use: 'rounded-sm/md/lg/xl/2xl/full' },
+  { re: /<select[\s>]/, use: '@/components/ui/Select（桌面）或 MobileSelect（手机）：原生下拉弹出的是系统白底列表，不跟主题、没有连续圆角' },
 ];
 
 /** 相对 src/ 的路径 → 例外原因 */

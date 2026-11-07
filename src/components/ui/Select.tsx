@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, type CSSProperties, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { useAnimatedPresence } from '@/hooks/useAnimatedPresence';
 
@@ -29,11 +30,18 @@ interface Props<T extends string = string> {
   /** 触发按钮的无障碍名称。选项没有可见的字段标签时（行内下拉）必须给，否则读屏只会读当前值。 */
   ariaLabel?: string;
   /**
-   * 展开列表的横向定位/宽度类名，缺省与触发按钮等宽。选项带 `hint` 时按钮往往很窄，
-   * 列表需要比它宽（例如 `left-auto right-0 w-60`）。
+   * 展开列表的宽度类名，缺省与触发按钮等宽（至少等宽）。选项带 `hint` 时按钮往往很窄，
+   * 列表需要比它宽（例如 `w-60`），这时配合 `menuAlign="end"` 让列表右缘对齐按钮右缘。
    */
   menuClassName?: string;
+  /** 列表比按钮宽时的对齐边：start 左缘对齐（缺省）/ end 右缘对齐。 */
+  menuAlign?: 'start' | 'end';
 }
+
+/** 列表与按钮的间距、与视口边缘的最小留白、最大高度（px）。 */
+const MENU_GAP = 4;
+const VIEWPORT_MARGIN = 8;
+const MENU_MAX_HEIGHT = 240;
 
 const chevron = <ChevronDown size={16} strokeWidth={1.5} />;
 
@@ -50,13 +58,16 @@ export default function Select<T extends string = string>({
   disabled,
   className = '',
   ariaLabel,
-  menuClassName = 'left-0 right-0',
+  menuClassName = '',
+  menuAlign = 'start',
 }: Props<T>) {
   const [open, setOpen] = useState(false);
   const presence = useAnimatedPresence(open);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [focusIdx, setFocusIdx] = useState(-1);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>({ visibility: 'hidden' });
   /** 只有键盘导航 / 刚打开时才把高亮项滚进视野；鼠标悬停改变高亮不该滚动列表。 */
   const scrollToFocus = useRef(false);
 
@@ -96,9 +107,47 @@ export default function Select<T extends string = string>({
     el?.scrollIntoView({ block: 'nearest' });
   }, [focusIdx, open]);
 
+  // 列表挂到 body 上用 fixed 定位：放在弹窗（overflow-auto 的滚动区、带 backdrop-filter 的玻璃面）
+  // 里也不会被裁掉或撑出滚动条。下方放不下且上方更宽裕时向上弹；滚动/缩放时跟着按钮走。
+  const place = useCallback(() => {
+    const trigger = triggerRef.current;
+    const list = listRef.current;
+    if (!trigger || !list) return;
+    const r = trigger.getBoundingClientRect();
+    const vh = window.innerHeight;
+    const vw = window.innerWidth;
+    const natural = Math.min(list.scrollHeight, MENU_MAX_HEIGHT);
+    const below = vh - r.bottom - MENU_GAP - VIEWPORT_MARGIN;
+    const above = r.top - MENU_GAP - VIEWPORT_MARGIN;
+    const up = below < natural && above > below;
+    const maxHeight = Math.max(80, Math.min(MENU_MAX_HEIGHT, up ? above : below));
+    const width = Math.max(list.offsetWidth, r.width);
+    let left = menuAlign === 'end' ? r.right - width : r.left;
+    left = Math.max(VIEWPORT_MARGIN, Math.min(left, vw - width - VIEWPORT_MARGIN));
+    setMenuStyle({
+      left,
+      minWidth: r.width,
+      maxHeight,
+      transformOrigin: up ? 'bottom center' : 'top center',
+      ...(up ? { bottom: vh - r.top + MENU_GAP } : { top: r.bottom + MENU_GAP }),
+    });
+  }, [menuAlign]);
+
+  useLayoutEffect(() => {
+    if (!presence.mounted || !open) return;
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [presence.mounted, open, place]);
+
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) close();
+      const t = e.target as Node;
+      if (!containerRef.current?.contains(t) && !listRef.current?.contains(t)) close();
     };
     if (open) document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -173,10 +222,9 @@ export default function Select<T extends string = string>({
           setFocusIdx(flatIdx);
         }}
         className={`
-          flex items-center gap-2 px-3 py-1.5 min-h-7 text-body rounded-md cursor-pointer transition-colors duration-120
-          ${active ? 'bg-state-soft' : ''}
-          ${selected ? 'text-indigo-400' : 'text-fg'}
-          ${opt.disabled ? 'text-fg-disabled cursor-not-allowed' : 'hover:bg-state-soft'}
+          flex items-center gap-2 px-2.5 py-1.5 min-h-7 text-body rounded-lg cursor-pointer transition-colors duration-120
+          ${active && !opt.disabled ? 'bg-fill-soft' : ''}
+          ${opt.disabled ? 'text-fg-disabled cursor-not-allowed' : selected ? 'text-indigo-400' : 'text-fg'}
         `}
       >
         {selected ? (
@@ -201,6 +249,7 @@ export default function Select<T extends string = string>({
   return (
     <div ref={containerRef} className={`relative ${className}`} onKeyDown={onKeyDown}>
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         aria-haspopup="listbox"
@@ -221,17 +270,16 @@ export default function Select<T extends string = string>({
         </span>
       </button>
 
-      {presence.mounted && (
+      {presence.mounted && createPortal(
         <div
           ref={listRef}
           role="listbox"
           onAnimationEnd={presence.onAnimationEnd}
           className={`
-            absolute z-50 ${menuClassName} mt-1 max-h-60 overflow-auto
-            rounded-xl surface-glass p-1
+            fixed ${menuClassName} overflow-auto rounded-xl surface-glass p-1
             ${presence.phase === 'exit' ? 'dropdown-exit pointer-events-none' : 'dropdown-enter'}
           `}
-          style={{ top: '100%' }}
+          style={{ zIndex: 200, ...menuStyle }}
         >
           {options.map((entry, groupIdx) => {
             if ('options' in entry) {
@@ -254,7 +302,8 @@ export default function Select<T extends string = string>({
             const flatIdx = flatIndex.get(opt.value) ?? groupIdx;
             return renderOption(opt, flatIdx);
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

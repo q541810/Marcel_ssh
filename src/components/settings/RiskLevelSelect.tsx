@@ -57,7 +57,8 @@ export function LevelSelect({
   return (
     <Select<Disposition>
       className="w-32 flex-shrink-0"
-      menuClassName="left-auto right-0 w-60"
+      menuClassName="w-60"
+      menuAlign="end"
       ariaLabel={`${ariaLabel}（当前${RULE_LEVEL_LABELS[value]}）`}
       value={value}
       onChange={onChange}

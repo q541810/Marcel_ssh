@@ -120,7 +120,7 @@ async function openOptions(label: string): Promise<HTMLElement[]> {
   await act(async () => {
     trigger(label).click();
   });
-  return Array.from(host!.querySelectorAll<HTMLElement>('[role="option"]'));
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="option"]'));
 }
 
 /** 选一个选项（共享 Select 的选项走 pointerdown，不是 click）。 */

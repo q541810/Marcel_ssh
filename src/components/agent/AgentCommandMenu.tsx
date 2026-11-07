@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { AgentMode, Skill } from '@/lib/types';
 import { useSkillStore } from '@/stores/skillStore';
@@ -168,7 +169,7 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
         }`}
         style={{ transformOrigin: 'bottom left' }}
       >
-        <div ref={listRef} role="listbox" className="max-h-72 overflow-y-auto overscroll-contain py-1">
+        <div ref={listRef} role="listbox" className="max-h-72 overflow-y-auto overscroll-contain p-1">
           {entries.length === 0 && (
             <div className="px-3 py-3 text-meta text-fg-tertiary">无匹配的指令</div>
           )}
@@ -195,20 +196,18 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                   aria-selected={active}
                   onMouseEnter={() => setActiveIndex(itemIndex)}
                   onClick={() => executeEntry(entry)}
-                  className={`cursor-pointer px-3 py-2 transition-colors ${
-                    active ? 'bg-indigo-600/15' : 'hover:bg-state-soft/60'
+                  className={`cursor-pointer rounded-lg px-3 py-2 transition-colors duration-120 ${
+                    active ? 'bg-fill' : ''
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-read font-semibold ${
-                        active ? 'text-indigo-200' : 'text-fg'
-                      }`}
+                      className="text-read font-semibold text-fg"
                     >
                       {entry.mode.label}
                     </span>
                     {isCurrent && (
-                      <span className="text-caption font-medium text-indigo-400">已选</span>
+                      <Check size={14} strokeWidth={2} className="flex-shrink-0 text-indigo-400" aria-label="当前模式" />
                     )}
                   </div>
                   <div className="mt-0.5 text-meta leading-relaxed text-fg-tertiary">
@@ -226,15 +225,13 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                   aria-selected={active}
                   onMouseEnter={() => setActiveIndex(itemIndex)}
                   onClick={() => executeEntry(entry)}
-                  className={`cursor-pointer px-3 py-2 transition-colors ${
-                    active ? 'bg-indigo-600/15' : 'hover:bg-state-soft/60'
+                  className={`cursor-pointer rounded-lg px-3 py-2 transition-colors duration-120 ${
+                    active ? 'bg-fill' : ''
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span
-                      className={`text-read font-medium truncate ${
-                        active ? 'text-indigo-200' : 'text-fg'
-                      }`}
+                      className="text-read font-medium truncate text-fg"
                     >
                       {entry.skill.name}
                     </span>
@@ -259,14 +256,12 @@ const AgentCommandMenu = forwardRef<AgentCommandMenuHandle, AgentCommandMenuProp
                 aria-selected={active}
                 onMouseEnter={() => setActiveIndex(itemIndex)}
                 onClick={() => executeEntry(entry)}
-                className={`flex cursor-pointer items-center justify-between gap-2 px-3 py-2 transition-colors ${
-                  active ? 'bg-indigo-600/15' : 'hover:bg-state-soft/60'
+                className={`flex cursor-pointer items-center justify-between gap-2 rounded-lg px-3 py-2 transition-colors duration-120 ${
+                  active ? 'bg-fill' : ''
                 }`}
               >
                 <span
-                  className={`text-read ${
-                    active ? 'text-indigo-100' : 'text-fg'
-                  }`}
+                  className="text-read text-fg"
                 >
                   {entry.label}
                 </span>
