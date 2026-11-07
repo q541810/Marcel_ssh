@@ -201,6 +201,15 @@ class MainActivity : TauriActivity() {
   /** 网页同步过来的「有没有层可退」。必须在主线程调用。 */
   fun setBackInterceptEnabled(enabled: Boolean) {
     Log.i(TAG, "back intercept enabled=$enabled")
+    if (enabled) {
+      // 返回分发器是后登记者优先。Tauri 的 AppPlugin 在插件加载时登记了一个**常开**的返回回调，
+      // 晚于 onCreate 里登记的我们——于是系统的手势「开始 / 进度」全被它截走，它不往下转发，
+      // 只在最后「确认」时才把事件转手给下一个（也就是我们），表现为：只收得到确认、
+      // 永远收不到进度（模拟器上用最小对照应用验证：同样的回调写法，没有它就收得到）。
+      // 所以每次启用前先摘下来重新登记，保证排在最后＝优先级最高。
+      backCallback.remove()
+      onBackPressedDispatcher.addCallback(this, backCallback)
+    }
     backCallback.isEnabled = enabled
   }
 

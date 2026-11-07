@@ -25,7 +25,6 @@ import { mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { peekBackPreview } from './backPreview';
-import { installEdgeSwipeBack } from './edgeSwipeBack';
 import { panelVisibilityClass } from './sessionUi';
 import {
   DEFAULT_MOBILE_TAB,
@@ -118,10 +117,6 @@ export default function MobileApp() {
       vv?.removeEventListener('resize', snap);
     };
   }, []);
-
-  // 应用内边缘滑动返回：部分 ROM（如 HyperOS）不把系统返回手势的进度送给应用，
-  // 预览只能自己追手指；系统送进度的手机上两者会自动交接。见 edgeSwipeBack.ts。
-  useEffect(() => installEdgeSwipeBack(), []);
 
   // Android back gesture returns to the home tab before the system gets a
   // chance to finish the activity (sheets/overlays register on top of this).

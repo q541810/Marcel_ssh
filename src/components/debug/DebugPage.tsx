@@ -29,7 +29,6 @@ function BackGestureDiagnostics() {
     ["已通知原生接管手势", d.interceptSent == null ? "从未通知" : d.interceptSent ? "是" : "否"],
     ["手势开始（原生→网页）", String(d.starts)],
     ["手势进度帧（原生→网页）", `${d.frames}（最近 ${d.lastProgress.toFixed(2)}）`],
-    ["应用内边缘滑动（开始 / 确认）", `${d.touchStarts} / ${d.touchCommits}`],
     ["手势取消", String(d.cancels)],
     ["确认返回", String(d.commits)],
     ["栈顶层带预览", d.topHadPreview == null ? "—" : d.topHadPreview ? "是" : "否"],
@@ -45,7 +44,7 @@ function BackGestureDiagnostics() {
         <div className="min-w-0">
           <h2 id="debug-back-title" className="text-sm font-medium text-zinc-200">返回手势诊断</h2>
           <p className="mt-1 text-sm leading-6 text-zinc-400">
-            在本页从屏幕边缘（44dp 以内）向内滑，页面会跟手倾斜。「应用内边缘滑动」是应用自己追手指的次数；「手势开始 / 进度帧」是系统送来的，部分手机不送，为 0 属正常。
+            在本页从屏幕边缘慢慢向内滑一半、再滑回去（别松手到底）。「手势开始」和「进度帧」不涨，说明系统没把手势进度交给应用；涨了说明链路是通的。
           </p>
         </div>
       </div>
