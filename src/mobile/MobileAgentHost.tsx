@@ -584,7 +584,7 @@ export default function MobileAgentHost({
               setHistoryBrowserOpen(true);
             }
           }}
-          className="hit-area rounded-lg bg-surface-raised px-2.5 py-1.5 text-caption text-fg-secondary pressable active:bg-state-mid"
+          className="hit-area rounded-lg bg-surface-raised px-2.5 py-1.5 text-caption text-fg pressable active:bg-state-mid"
         >
           历史
         </button>

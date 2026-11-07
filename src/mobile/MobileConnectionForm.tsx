@@ -500,7 +500,7 @@ export default function MobileConnectionForm({
                 <button
                   type="button"
                   onClick={() => setSecretDirty(true)}
-                  className="rounded-lg bg-fill px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
+                  className="rounded-lg bg-state-mid px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
                 >
                   修改
                 </button>
@@ -559,7 +559,7 @@ export default function MobileConnectionForm({
                   <button
                     type="button"
                     onClick={() => setLoginPasswordDirty(true)}
-                    className="rounded-lg bg-fill px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
+                    className="rounded-lg bg-state-mid px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
                   >
                     修改
                   </button>

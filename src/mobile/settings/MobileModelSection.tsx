@@ -580,7 +580,7 @@ function MobileChannelEditorSheet({
                   setFetchFilter('');
                   void fetchModels();
                 }}
-                className="rounded-lg bg-fill px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
+                className="rounded-lg bg-state-mid px-3 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
               >
                 获取列表
               </button>
@@ -617,7 +617,7 @@ function MobileChannelEditorSheet({
                   <button
                     type="button"
                     onClick={() => setModelEditor({ open: true, initial: m })}
-                    className="rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg-secondary active:bg-state-mid hit-area"
+                    className="rounded-lg bg-state-mid px-2.5 py-1.5 text-caption text-fg-secondary active:bg-state-mid hit-area"
                   >
                     编辑
                   </button>
@@ -863,7 +863,7 @@ export function MobileModelSection() {
                   <button
                     type="button"
                     onClick={() => removeSubagentChoice(i)}
-                    className="flex-shrink-0 rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg-secondary active:bg-state-mid hit-area"
+                    className="flex-shrink-0 rounded-lg bg-state-mid px-2.5 py-1.5 text-caption text-fg-secondary active:bg-state-mid hit-area"
                   >
                     移除
                   </button>

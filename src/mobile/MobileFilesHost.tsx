@@ -871,7 +871,7 @@ export default function MobileFilesHost({
             type="button"
             onClick={handleRefresh}
             disabled={loading}
-            className="rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg active:bg-state-mid disabled:opacity-50 hit-area"
+            className="rounded-lg bg-state-mid px-2.5 py-1.5 text-caption text-fg active:bg-state-mid disabled:opacity-50 hit-area"
             aria-label="刷新"
           >
             刷新
@@ -887,7 +887,7 @@ export default function MobileFilesHost({
           <button
             type="button"
             onClick={() => setShowNewMenu(true)}
-            className="rounded-lg bg-fill px-2.5 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
+            className="rounded-lg bg-state-mid px-2.5 py-1.5 text-caption text-fg active:bg-state-mid hit-area"
           >
             新建
           </button>
