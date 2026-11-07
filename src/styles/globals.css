@@ -1628,10 +1628,9 @@ html[data-marcel-theme='light'] .marcel-code-block {
    手势期间会整屏重绘的东西一律恒定：页面圆角与阴影从第一帧起就固定（屏幕自身的圆角
    会盖住静止时的圆角），遮罩是单独一层只动 opacity，不用 filter。
    data-back 只在手势期间存在，className 仍归 React。
-   松手确认后，层自己的退出动画必须从「用户松手的那个姿态」接着走：backPreview 在确认时把
-   姿态记进 --back-*，退出关键帧用它作终点。transform 的函数列表必须与 backPreview 里的
-   poseTransform 完全一致（perspective / translate3d / rotateX / rotateY / scale），
-   才会逐项平滑插值，不会退化成矩阵插值。 */
+   松手（甩出）与取消（弹回）的动作全由 backPreview 用 Web Animations 播：从松手那一刻的
+   姿态和速度接着走，不等 React 换类名。这里的退出规则只负责「计时」——让层的卸载
+   等甩出播完（--back-ms），本身不动任何东西。 */
 
 /* 页面：收缩后露出底下的屏幕，需要圆角裁切 + 一圈极淡的边 + 投影，
    否则深色页压在深色底上看不出它缩小了。恒定值，手势期间不逐帧变。 */
@@ -1651,38 +1650,20 @@ html[data-marcel-theme='light'] .marcel-code-block {
   box-shadow: 0 0 0 1px rgb(128 128 128 / 0.2);
 }
 
-@keyframes mobileSheetBackExit {
+/* 只计时、不动东西；名字以 Exit 结尾，backPreview 靠它认出「层确实在关」。 */
+@keyframes mobileBackHoldExit {
+  from {
+    visibility: visible;
+  }
   to {
-    transform: perspective(800px)
-      translate3d(var(--back-x, 0px), 100%, 0)
-      rotateX(var(--back-rx, 0deg)) rotateY(var(--back-ry, 0deg))
-      scale(var(--back-s, 1));
+    visibility: visible;
   }
 }
 
-/* 浮起的卡片在原地继续缩小、淡出（不往侧边飞），倾斜回正。 */
-@keyframes mobileFullscreenBackExit {
-  to {
-    opacity: 0;
-    transform: perspective(800px)
-      translate3d(var(--back-x, 0px), var(--back-y, 0px), 0)
-      rotateX(0deg) rotateY(0deg)
-      scale(calc(var(--back-s, 1) * 0.8));
-  }
-}
-
-/* 退出走「松手后的惯性」曲线：起步就快，不能像普通退出那样 ease-in 先停顿一下。 */
-[data-back='sheet'].mobile-sheet-exit {
-  animation: mobileSheetBackExit 300ms cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-
-[data-back='page'].mobile-fullscreen-exit {
-  animation: mobileFullscreenBackExit 260ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
+[data-back='sheet'].mobile-sheet-exit,
+[data-back='page'].mobile-fullscreen-exit,
 [data-back='fade'].mobile-backdrop-exit {
-  animation-duration: 260ms;
-  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  animation: mobileBackHoldExit var(--back-ms, 300ms) linear both;
 }
 
 /* 锚定在触发按钮下方的下拉面板（Select、字体选择器等共用，配合 useAnimatedPresence 延迟卸载）。
