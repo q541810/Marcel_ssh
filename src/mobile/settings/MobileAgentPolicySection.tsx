@@ -224,7 +224,7 @@ export function MobileAgentPolicySection() {
       {/* Command timeout */}
       <MobileSettingRow
         label="命令超时时间"
-        description="Agent 执行单条命令的最大等待时间"
+        description="单条命令最长前台等待时间。到点不会被掐断，而是转为后台作业继续运行"
         trailing={
           <span className="w-14 text-right font-mono text-sm text-indigo-300">
             {settings.commandTimeoutSecs ?? 120}s

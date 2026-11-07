@@ -166,6 +166,71 @@ pub enum SubmitOutcome {
     Failed { error: AppError },
 }
 
+/// [`CommandExecutionManager::submit_detachable`] 的结果。
+#[derive(Debug)]
+pub enum DetachableOutcome {
+    /// 在软超时内结束（含取消、失败）：与普通 [`SubmitOutcome`] 完全一致。
+    Finished(SubmitOutcome),
+    /// 到软超时命令还没结束：**没有关通道、没有重跑**，同一个进程原地转成了后台
+    /// 作业继续跑。`output` 是转换那一刻之前已收到的输出（之后的输出进作业缓冲）。
+    Detached { job: JobInfo, output: String },
+}
+
+/// 可转后台命令的输出去向：转换前收进内存（并照常流式发给界面），转换后沉淀进作业缓冲。
+///
+/// 切换发生在同一把锁里（取走已收集的 + 改去向），所以转换瞬间到达的 chunk 不丢不重。
+enum DetachSinkState {
+    Collecting(String),
+    Job {
+        instance: Arc<PlMutex<JobInstance>>,
+        temp_dir: PathBuf,
+    },
+}
+
+struct DetachSink {
+    state: PlMutex<DetachSinkState>,
+    /// 流式目标（事件通道、工具调用 id）。只在转换前发：转换后工具结果已经交给模型，
+    /// 再往那张工具卡发 chunk 只会让界面错乱，输出改由作业缓冲承接。
+    stream: Option<(AppHandle, String, String)>,
+}
+
+impl DetachSink {
+    fn push(&self, chunk: &str) {
+        if chunk.is_empty() {
+            return;
+        }
+        {
+            let mut state = self.state.lock();
+            match &mut *state {
+                DetachSinkState::Collecting(buf) => buf.push_str(chunk),
+                DetachSinkState::Job { instance, temp_dir } => {
+                    instance.lock().append_output(chunk.as_bytes(), temp_dir);
+                    return;
+                }
+            }
+        }
+        if let Some((app, event_name, stream_id)) = &self.stream {
+            crate::emit_event(
+                app,
+                event_name,
+                &serde_json::json!({
+                    "type": "toolOutput",
+                    "toolCallId": stream_id,
+                    "chunk": chunk,
+                }),
+            );
+        }
+    }
+
+    /// 取走已收集的输出（前台正常结束时用）。
+    fn take_collected(&self) -> String {
+        match &mut *self.state.lock() {
+            DetachSinkState::Collecting(buf) => std::mem::take(buf),
+            DetachSinkState::Job { .. } => String::new(),
+        }
+    }
+}
+
 /// 内部执行记录。只保存展示命令（截断），不保存实际命令全文。
 pub(crate) struct ExecutionRecord {
     pub exec_id: u64,
@@ -385,6 +450,12 @@ impl FinalizeGuard {
         self.inner
             .finalize_execution(self.exec_id, task_id, status)
             .await;
+    }
+
+    /// 放弃落账：执行记录交给作业结算接管（前台命令超时转后台作业时），本守卫
+    /// Drop 时不再兜底写 Failed。
+    fn disarm(mut self) {
+        self.finalized = true;
     }
 }
 
@@ -628,6 +699,206 @@ impl CommandExecutionManager {
         };
         guard.finalize(status).await;
         outcome
+    }
+
+    /// 提交一条**超时不掐断、而是转成后台作业**的前台命令（Agent 的 `bash` /
+    /// `local_bash` 用）。
+    ///
+    /// `ticket.timeout` 在这里是「软超时」：到点命令还没结束，就把**正在跑的同一个进程**
+    /// 原地转成后台作业——不关通道、不重跑（重跑可能有副作用），已收到的输出带过去，
+    /// 之后的输出进作业缓冲，作业从此可 `job_output` / `job_kill`，跑完会通知模型。
+    ///
+    /// 做法是传输层不感知「软超时」：它始终按作业的长超时跑、输出交给 [`DetachSink`]；
+    /// 软超时的计时在这里。所以不需要把 SSH 通道 / 本机子进程在两条路径间移交，
+    /// 远端与本机两种传输天然都支持。
+    ///
+    /// 其余语义（取消注册、断连级联、执行记录）与 [`Self::submit_opt`] 一致。转换后沿用
+    /// 同一个 exec_id，任务停止的级联取消 / `job_kill` 都经它找到同一条取消通道。
+    /// 转换不受 [`MAX_RUNNING_JOBS_PER_OWNER`] 限制：命令已经在跑，拒绝只会逼我们回到
+    /// 「关通道、留下没人管的进程」。
+    pub async fn submit_detachable(
+        &self,
+        app: Option<&AppHandle>,
+        ticket: CommandTicket,
+        description: Option<String>,
+    ) -> DetachableOutcome {
+        let soft_timeout = ticket.timeout;
+        let exec_id = self.inner.next_exec_id.fetch_add(1, Ordering::Relaxed) + 1;
+        let (cancel_tx, cancel_rx) = watch::channel(CancelReason::User);
+
+        let record = ExecutionRecord {
+            exec_id,
+            session_id: ticket.session_id.clone(),
+            source: ticket.source,
+            task_id: ticket.task_id.clone(),
+            display_command: truncate_display(&ticket.display_command),
+            started_at: SystemTime::now(),
+            status: ExecutionStatus::Running,
+        };
+        if let Some(tid) = &ticket.task_id {
+            self.inner
+                .by_task_id
+                .lock()
+                .await
+                .insert(tid.clone(), exec_id);
+        }
+        self.inner
+            .running
+            .lock()
+            .await
+            .insert(exec_id, RunningExecution { record, cancel_tx });
+        let guard = FinalizeGuard {
+            inner: self.inner.clone(),
+            exec_id,
+            task_id: ticket.task_id.clone(),
+            finalized: false,
+        };
+
+        let sink = Arc::new(DetachSink {
+            state: PlMutex::new(DetachSinkState::Collecting(String::new())),
+            stream: match (&ticket.streaming, app) {
+                (Some(s), Some(app)) => {
+                    Some((app.clone(), s.event_name.clone(), s.stream_id.clone()))
+                }
+                _ => None,
+            },
+        });
+
+        // 传输层看到的 ticket：长超时 + 不带流式目标（流式由 sink 负责，转换后要停发）。
+        let mut transport_ticket = ticket.clone();
+        transport_ticket.timeout = BACKGROUND_JOB_TIMEOUT;
+        transport_ticket.streaming = None;
+
+        let transport = self.inner.transport.clone();
+        let app_owned = app.cloned();
+        let on_chunk: super::executor::ChunkCallback = {
+            let sink = sink.clone();
+            Arc::new(move |chunk: &str| sink.push(chunk))
+        };
+        let mut handle = tokio::spawn(async move {
+            transport
+                .exec_observable(
+                    &transport_ticket,
+                    app_owned.as_ref(),
+                    on_chunk,
+                    Some(&cancel_rx),
+                )
+                .await
+        });
+
+        let early = tokio::select! {
+            joined = &mut handle => Some(joined),
+            _ = tokio::time::sleep(soft_timeout) => None,
+        };
+        // 计时器恰好与结束同刻到：已经结束就按正常结束处理，别为一个刚跑完的命令
+        // 造一个作业再立刻结算（模型会先被告知「已转后台」、随后又收到「已完成」）。
+        let early = match early {
+            Some(joined) => Some(joined),
+            None if handle.is_finished() => Some((&mut handle).await),
+            None => None,
+        };
+
+        if let Some(joined) = early {
+            let outcome = match joined {
+                Ok(Ok(ExecOutcome::Completed { exit, .. })) => SubmitOutcome::Completed {
+                    output: sink.take_collected(),
+                    exit,
+                },
+                Ok(Ok(ExecOutcome::TimedOut { .. })) => SubmitOutcome::TimedOut {
+                    output: sink.take_collected(),
+                },
+                Ok(Ok(ExecOutcome::Cancelled { reason })) => SubmitOutcome::Cancelled { reason },
+                Ok(Err(error)) => SubmitOutcome::Failed { error },
+                Err(join_error) => SubmitOutcome::Failed {
+                    error: AppError::Other(format!("命令执行任务异常结束: {}", join_error)),
+                },
+            };
+            let status = match &outcome {
+                SubmitOutcome::Completed { .. } => ExecutionStatus::Completed,
+                SubmitOutcome::TimedOut { .. } => ExecutionStatus::TimedOut,
+                SubmitOutcome::Cancelled { reason } => match reason {
+                    CancelReason::User
+                    | CancelReason::Agent
+                    | CancelReason::Task
+                    | CancelReason::RuntimeRestart => ExecutionStatus::Killed,
+                    CancelReason::Disconnected => ExecutionStatus::Cancelled,
+                },
+                SubmitOutcome::Failed { .. } => ExecutionStatus::Failed,
+            };
+            guard.finalize(status).await;
+            return DetachableOutcome::Finished(outcome);
+        }
+
+        // —— 软超时到点，命令还在跑：原地转成后台作业 ——
+        let job_num = self.inner.ledger.allocate_job_num();
+        let job_id = format!("{}{}", *self.inner.job_id_prefix.read(), job_num);
+        let (notify_tx, _) = watch::channel(0usize);
+        let temp_dir = self.inner.temp_dir.clone();
+        let instance = Arc::new(PlMutex::new(JobInstance::new(
+            job_id.clone(),
+            exec_id,
+            ticket.session_id.clone(),
+            ticket.task_id.clone(),
+            ticket.owner_conversation_id.clone(),
+            description,
+            ticket.display_command.clone(),
+            notify_tx,
+        )));
+        // 取走已收到的输出 + 改输出去向，同一把锁里完成。
+        let collected = {
+            let mut state = sink.state.lock();
+            let collected = match &mut *state {
+                DetachSinkState::Collecting(buf) => std::mem::take(buf),
+                DetachSinkState::Job { .. } => String::new(),
+            };
+            instance
+                .lock()
+                .append_output(collected.as_bytes(), &temp_dir);
+            *state = DetachSinkState::Job {
+                instance: instance.clone(),
+                temp_dir: temp_dir.clone(),
+            };
+            collected
+        };
+        self.inner
+            .jobs
+            .lock()
+            .insert(job_id.clone(), instance.clone());
+        let info = instance.lock().info.clone();
+        if let Some(app) = app {
+            crate::emit_event(app, "job://started", &info);
+        }
+        self.record_job_started(&info);
+
+        // 执行记录由作业结算接管（沿用 exec_id），前台守卫不再落账。
+        guard.disarm();
+        let job_guard = JobFinalizeGuard {
+            inner: self.inner.clone(),
+            app: app.cloned(),
+            exec_id,
+            task_id: ticket.task_id.clone(),
+            instance: instance.clone(),
+            temp_dir,
+            finalized: false,
+        };
+        let inner = self.inner.clone();
+        let app_owned = app.cloned();
+        let task_id = ticket.task_id.clone();
+        tokio::spawn(async move {
+            let outcome = match handle.await {
+                Ok(outcome) => outcome,
+                Err(join_error) => Err(AppError::Other(format!(
+                    "命令执行任务异常结束: {}",
+                    join_error
+                ))),
+            };
+            settle_job(inner, app_owned, task_id, instance, job_guard, outcome).await;
+        });
+
+        DetachableOutcome::Detached {
+            job: info,
+            output: collected,
+        }
     }
 
     /// 便捷入口：等价旧 `SshManager::exec_command`（[`DEFAULT_EXEC_TIMEOUT`]
@@ -1599,6 +1870,23 @@ async fn run_background_worker(
         .exec_observable(&ticket, app.as_ref(), sink, Some(&cancel_rx))
         .await;
 
+    settle_job(inner, app, ticket.task_id.clone(), instance, guard, outcome).await;
+}
+
+/// 作业的统一结算：执行结果 → 执行记录 / 作业状态 / 台账 / 界面事件 / 任务资源回收。
+///
+/// 从 `run_background_worker` 里拆出来，是因为**有两条路径会走到作业结算**：直接派的
+/// 后台作业，和前台命令超时后转成的作业（[`CommandExecutionManager::submit_detachable`]）。
+/// 两边必须是同一份结算，否则同一个作业会因入口不同而有不同的终态语义。
+async fn settle_job(
+    inner: Arc<ManagerInner>,
+    app: Option<AppHandle>,
+    task_id: Option<String>,
+    instance: Arc<PlMutex<JobInstance>>,
+    guard: JobFinalizeGuard,
+    outcome: Result<ExecOutcome<()>, AppError>,
+) {
+    let temp_dir = inner.temp_dir.clone();
     let (exec_status, job_status, cancel_reason, detail) = match &outcome {
         // 非零退出码与「被信号打死」都算正常结束（与旧语义一致），但退出
         // 事实进 detail：模型据此知道命令到底成功没有，不必读输出猜。
@@ -1652,7 +1940,7 @@ async fn run_background_worker(
     // 末条作业结算 → 回收该任务的资源（多机自动拉起的会话等；见
     // `with_task_drain_hook`）。任务收尾时若还有作业在跑，那些会话会被
     // 留着（它们还得给作业用），由这里收尾。
-    inner.run_task_drain_hook(&ticket.task_id);
+    inner.run_task_drain_hook(&task_id);
 }
 
 /// 保证后台作业在任何退出路径（含 panic）都完成结算的守卫，
@@ -2868,6 +3156,102 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.cancel_reason, Some(CancelReason::Task));
+    }
+
+    /// 软超时到点命令还在跑：原地转成后台作业——带着已收到的输出、不关通道、
+    /// 之后可 job_kill，且来源按真实原因（Task 级联）落进作业。
+    #[tokio::test]
+    async fn detachable_command_past_soft_timeout_becomes_a_job() {
+        let mgr = manager(MockBehavior::OutputThenHang("compiling...\n"));
+        let ticket = CommandTicket::new("s1", "make", CommandSource::Agent)
+            .cancellable("agent-task-d1", "取消")
+            .timeout(Duration::from_millis(60));
+        let outcome = mgr
+            .submit_detachable(None, ticket, Some("编译".to_string()))
+            .await;
+        let (job, output) = match outcome {
+            DetachableOutcome::Detached { job, output } => (job, output),
+            other => panic!("expected Detached, got {:?}", other),
+        };
+        assert_eq!(output, "compiling...\n", "转换前已收到的输出要带出来");
+        assert_eq!(job.status, JobStatus::Running);
+        assert_eq!(job.description, "编译");
+
+        // 转换后作业缓冲里也有这段输出（job_output 从头读得到）。
+        let read = mgr
+            .job_output(
+                &job.job_id,
+                0,
+                JobOutputResult::MAX_READ_BYTES,
+                false,
+                Duration::ZERO,
+                JobCaller::Unscoped,
+            )
+            .await
+            .unwrap();
+        assert!(read.delta.contains("compiling"));
+
+        // 同一个 exec_id / 取消通道：停止任务的级联取消能把它停掉。
+        assert!(
+            mgr.cancel_with_reason("agent-task-d1", CancelReason::Task)
+                .await
+        );
+        let status = wait_for_job_settlement(&mgr, &job.job_id, "s1").await;
+        assert_eq!(status, JobStatus::Killed);
+        let out = mgr
+            .job_output(
+                &job.job_id,
+                0,
+                JobOutputResult::MAX_READ_BYTES,
+                false,
+                Duration::ZERO,
+                JobCaller::Unscoped,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.cancel_reason, Some(CancelReason::Task));
+        // 执行记录由作业结算接管：运行表里不留一条永远 Running 的前台记录。
+        assert!(mgr.inner.running.lock().await.is_empty());
+    }
+
+    /// 软超时之内结束：与普通前台命令一模一样，不产生作业。
+    #[tokio::test]
+    async fn detachable_command_finishing_in_time_is_plain_foreground() {
+        let mgr = manager(MockBehavior::ReturnExit("ok\n", 3));
+        let ticket = CommandTicket::new("s1", "echo ok", CommandSource::Agent)
+            .timeout(Duration::from_secs(30));
+        match mgr.submit_detachable(None, ticket, None).await {
+            DetachableOutcome::Finished(SubmitOutcome::Completed { output, exit }) => {
+                assert_eq!(output, "ok\n");
+                assert_eq!(exit.code, Some(3));
+            }
+            other => panic!("expected Finished(Completed), got {:?}", other),
+        }
+        assert!(mgr.list_jobs(JobFilter::All, None).await.is_empty());
+        assert!(mgr.inner.running.lock().await.is_empty());
+    }
+
+    /// 软超时之内被取消：仍是前台取消，不留作业。
+    #[tokio::test]
+    async fn detachable_command_cancelled_before_soft_timeout_stays_foreground() {
+        let mgr = manager(MockBehavior::Hang);
+        let ticket = CommandTicket::new("s1", "sleep 99", CommandSource::Agent)
+            .cancellable("agent-task-d2", "取消")
+            .timeout(Duration::from_secs(30));
+        let mgr2 = mgr.clone();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            mgr2.cancel_with_reason("agent-task-d2", CancelReason::Task)
+                .await
+        });
+        match mgr.submit_detachable(None, ticket, None).await {
+            DetachableOutcome::Finished(SubmitOutcome::Cancelled { reason }) => {
+                assert_eq!(reason, CancelReason::Task)
+            }
+            other => panic!("expected Finished(Cancelled), got {:?}", other),
+        }
+        assert!(canceller.await.unwrap());
+        assert!(mgr.list_jobs(JobFilter::All, None).await.is_empty());
     }
 
     #[tokio::test]

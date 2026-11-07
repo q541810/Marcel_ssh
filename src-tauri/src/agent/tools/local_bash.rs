@@ -152,10 +152,15 @@ impl LocalBashTool {
         if let Some(task_id) = &ctx.task_id {
             ticket = ticket.cancellable(task_id, "本机命令已取消");
         }
+        // 归属对话：命令超时转成后台作业时，作业台账与访问围栏要靠它认主。
+        if let Some(owner) = &ctx.owner_conversation_id {
+            ticket = ticket.owned_by(owner);
+        }
         if let (Some(tool_call_id), Some(event_name)) = (&ctx.tool_call_id, &ctx.event_name) {
             ticket = ticket.streaming(event_name, tool_call_id);
         }
-        let exec_result = ctx.exec_ticket(ticket).await;
+        // 超时不掐断：到点还没结束就把同一个进程原地转成后台作业（见 `exec_ticket`）。
+        let exec_result = ctx.exec_ticket(ticket, Some(description.clone())).await;
 
         match exec_result {
             Ok(shaped) => {
@@ -167,6 +172,20 @@ impl LocalBashTool {
                         truncated.push('\n');
                     }
                     truncated.push_str(&format!("[{}]", shaped.exit.describe()));
+                }
+                // 软超时到点还在跑：进程没被掐断，原地转成了后台作业。与远端 `bash`
+                // 共用同一份实现（含 metadata），别各写一份。
+                if let Some(job) = &shaped.detached {
+                    return Ok(super::detached_job_output(
+                        job,
+                        format!("$ {}", command),
+                        truncated,
+                        timeout_secs,
+                        json!({
+                            "disposition": assessment.disposition.label(),
+                            "was_timeout": false,
+                        }),
+                    ));
                 }
                 if shaped.was_timeout {
                     truncated.push_str(&timeout_message(timeout_secs));
@@ -263,8 +282,12 @@ impl AgentTool for LocalBashTool {
          catastrophic patterns (e.g. `rm -rf /`, mkfs/dd/wipefs onto a real block \
          device, or forms the analyzer cannot parse such as `$( )`/backticks) are \
          rejected outright; system-level writes and protected-path writes instead \
-         require the user's approval (including in Auto mode). Timeout is configured \
-         by the user (default 120s). \
+         require the user's approval (including in Auto mode). The foreground time \
+         limit is configured by the user (default 120s) and is NOT a kill switch: a \
+         command still running when it expires keeps running as the same process, \
+         converted into a background job (the result ends with its `job_id`; read more \
+         with `job_output`, stop with `job_kill`; you are notified when it finishes). \
+         So never retry a timed-out command — manage its job instead. \
          Set `run_in_background: true` for long-running commands (builds, large \
          downloads, servers/daemons, ongoing tasks) to receive a `job_id` immediately \
          and manage it via `job_output`, `job_kill`, and `job_list`. \
@@ -290,7 +313,7 @@ impl AgentTool for LocalBashTool {
                 },
                 "timeout_ms": {
                     "type": "integer",
-                    "description": "Optional timeout in milliseconds for foreground execution. Ignored when run_in_background is true."
+                    "description": "Optional foreground time limit in milliseconds (default: the user's setting). When it expires the still-running command is converted into a background job, not killed. Ignored when run_in_background is true."
                 }
             },
             "required": ["command", "description"]

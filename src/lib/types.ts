@@ -1100,7 +1100,7 @@ export interface AppSettings {
   riskRuleOverrides: Record<string, RiskRuleOverride>;
   /** 用户自己加的命令风险规则。 */
   customRiskRules: CustomRiskRule[];
-  /** Command execution timeout in seconds for Agent tools. */
+  /** Foreground wait limit (seconds) for Agent commands; on expiry the command is converted into a background job, not killed. */
   commandTimeoutSecs: number;
   /** Whether the user has completed the onboarding wizard. */
   hasCompletedOnboarding: boolean;

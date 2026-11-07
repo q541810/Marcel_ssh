@@ -334,7 +334,7 @@ export function AgentLimitsSection() {
         <SettingItem
           id="cmd-timeout"
           label="命令超时时间"
-          description="Agent 执行单条命令的最大等待时间"
+          description="Agent 执行单条命令的最长前台等待时间。到点命令不会被掐断，而是原地转为后台作业继续运行，Agent 可用 job_output 查看、job_kill 终止"
           sectionId="settings-agent-limits"
           keywords={['timeout', '超时', '命令执行策略', 'Agent']}
         >

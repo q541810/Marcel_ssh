@@ -41,7 +41,9 @@ pub use executor::ExecExit;
 pub use job::{JobInfo, JobOutputResult, JobStatus};
 pub use ledger::LEDGER_FILE_NAME;
 pub use local_transport::LocalExecTransport;
-pub use manager::{CommandExecutionManager, JobCaller, JobFilter, SubmitOutcome};
+pub use manager::{
+    CommandExecutionManager, DetachableOutcome, JobCaller, JobFilter, SubmitOutcome,
+};
 pub use ticket::{
     truncate_display, CancelReason, CommandSource, CommandTicket, ExecutionSnapshot,
     ExecutionStatus, StreamTarget,

@@ -265,6 +265,17 @@ function ToolCallCard({ message, autoExpand, messageId, onExpandChange }: Props)
             {!tr.blocked && !tr.wasAborted && tr.wasTimeout && (
               <span className="flex-shrink-0 text-xs text-amber-400 font-medium">超时</span>
             )}
+            {/* 前台命令到点没被掐断、原地转成了后台作业：告诉用户它还在跑，去任务中心能看到 */}
+            {!tr.blocked &&
+              !tr.wasAborted &&
+              (tr.metadata as Record<string, unknown> | undefined)?.detached_on_timeout === true && (
+                <span
+                  className="flex-shrink-0 text-xs text-sky-400 font-medium"
+                  title="命令超过超时时间仍未结束，没有被中断，已转为后台作业继续运行"
+                >
+                  转后台
+                </span>
+              )}
           </>
         }
       >

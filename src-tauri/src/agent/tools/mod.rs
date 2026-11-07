@@ -55,9 +55,9 @@ pub mod open_cloud_page;
 pub mod plan;
 pub mod plugin_tool;
 pub mod question;
-pub mod suggest_next;
 pub mod render_html;
 pub mod search;
+pub mod suggest_next;
 // SFTP 远端探测（stat）：调度器「写前必须已读」预检里「远端目标存在吗」的回落实现。
 pub(crate) mod sftp_probe;
 pub mod sftp_transfer;
@@ -337,21 +337,30 @@ impl ToolContext {
         &self,
         ticket: crate::command_exec::CommandTicket,
     ) -> Result<ExecTicketOutcome, AppError> {
-        use crate::command_exec::SubmitOutcome;
         let mgr = self.command_exec.as_ref().ok_or_else(|| {
             // 不可能到达：无 manager 时调用方走 ssh 回退分支
             AppError::Agent("command_exec manager not configured".into())
         })?;
-        match mgr.submit(&self.app_handle, ticket).await {
+        Self::map_finished(mgr.submit(&self.app_handle, ticket).await)
+    }
+
+    /// 前台命令的结果映射（`submit_full` 与可转后台的路径共用）。
+    fn map_finished(
+        outcome: crate::command_exec::SubmitOutcome,
+    ) -> Result<ExecTicketOutcome, AppError> {
+        use crate::command_exec::SubmitOutcome;
+        match outcome {
             SubmitOutcome::Completed { output, exit } => Ok(ExecTicketOutcome {
                 output,
                 was_timeout: false,
                 exit,
+                detached: None,
             }),
             SubmitOutcome::TimedOut { output } => Ok(ExecTicketOutcome {
                 output,
                 was_timeout: true,
                 exit: Default::default(),
+                detached: None,
             }),
             SubmitOutcome::Cancelled { reason } => Err(match reason {
                 crate::command_exec::CancelReason::User => AppError::Ssh("命令已取消".into()),
@@ -469,12 +478,18 @@ impl ToolContext {
     /// 以完整 ticket 提交执行（`bash` 等需要区分「实际命令」与
     /// 「展示命令」的调用方使用；sudo 重写后的命令只进 `command`，
     /// 原始命令进 `display_command`，密码绝不入记录）。
+    ///
+    /// **超时不掐断，而是转成后台作业**：`ticket.timeout` 是软超时，到点命令还没结束，
+    /// 就把正在跑的同一个进程原地转成后台作业（见
+    /// [`crate::command_exec::CommandExecutionManager::submit_detachable`]），结果里
+    /// `detached` 带着作业信息。`description` 是转成作业后在作业列表里显示的说明。
     pub async fn exec_ticket(
         &self,
         ticket: crate::command_exec::CommandTicket,
+        description: Option<String>,
     ) -> Result<ExecTicketOutcome, AppError> {
-        if self.command_exec.is_some() {
-            return self.submit_full(ticket).await;
+        if let Some(mgr) = &self.command_exec {
+            return self.submit_detachable_full(mgr, ticket, description).await;
         }
         // 测试回退：ticket 的 streaming / display 差异在此路径不可用，
         // 也没有管理器捕获退出码（退出事实为空，不猜）。
@@ -501,8 +516,79 @@ impl ToolContext {
             output,
             was_timeout,
             exit: Default::default(),
+            detached: None,
         })
     }
+
+    async fn submit_detachable_full(
+        &self,
+        mgr: &crate::command_exec::CommandExecutionManager,
+        ticket: crate::command_exec::CommandTicket,
+        description: Option<String>,
+    ) -> Result<ExecTicketOutcome, AppError> {
+        use crate::command_exec::{DetachableOutcome, SubmitOutcome};
+        match mgr
+            .submit_detachable(Some(&self.app_handle), ticket, description)
+            .await
+        {
+            DetachableOutcome::Detached { job, output } => Ok(ExecTicketOutcome {
+                output,
+                was_timeout: false,
+                exit: Default::default(),
+                detached: Some(job),
+            }),
+            DetachableOutcome::Finished(outcome) => Self::map_finished(outcome),
+        }
+    }
+}
+
+/// 前台命令到软超时仍未结束、已原地转成后台作业时，追在输出末尾给模型的说明。
+///
+/// `bash` / `local_bash` 共用这一份：进程没有被中断，生命周期已经交给作业系统，
+/// 模型要知道的就三件事——它还在跑、怎么看后续输出、怎么停；不用再去 `ps/pgrep` 找它。
+pub(crate) fn detached_job_message(
+    job: &crate::command_exec::JobInfo,
+    timeout_secs: u64,
+) -> String {
+    let id = &job.job_id;
+    format!(
+        "\n\n[命令运行超过 {timeout_secs} 秒仍未结束，没有被中断：\
+         已原地转为后台作业继续运行（上面是转后台前已收到的输出）。\
+         Job ID: {id}。用 job_output(job_id=\"{id}\", wait=true) 读取后续输出或等它结束，\
+         job_kill(job_id=\"{id}\") 终止它；它结束时系统会通知你。\
+         如果它其实是在等输入或已经卡死，直接 job_kill，不要放着不管。]"
+    )
+}
+
+/// 把「已转成后台作业」这件事落进工具结果：输出尾部接说明，metadata 带作业信息
+/// （界面卡片据此亮「转后台」，历史回放也还认得出这条结果带着一个作业）。
+///
+/// `bash` / `local_bash` 共用这一份。分开写会让两边慢慢漂移——远端曾经漏掉整段处理，
+/// 模型超时后只拿到半截输出、不知道命令还在跑，也没有 job_id 去收后续输出。
+/// `base_metadata` 是调用方原有的那几项（风险档位、多机归属等），在这里与作业信息合并。
+pub(crate) fn detached_job_output(
+    job: &crate::command_exec::JobInfo,
+    summary: String,
+    mut body: String,
+    timeout_secs: u64,
+    base_metadata: serde_json::Value,
+) -> ToolOutput {
+    body.push_str(&detached_job_message(job, timeout_secs));
+    let mut meta = match base_metadata {
+        serde_json::Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    meta.insert("job_id".to_string(), serde_json::json!(job.job_id));
+    meta.insert(
+        "status".to_string(),
+        serde_json::json!(job.status.to_string()),
+    );
+    meta.insert(
+        "description".to_string(),
+        serde_json::json!(job.description),
+    );
+    meta.insert("detached_on_timeout".to_string(), serde_json::json!(true));
+    ToolOutput::ok(summary, body).with_metadata(serde_json::Value::Object(meta))
 }
 
 /// 前台命令执行的返回形状：输出、是否超时、退出事实。
@@ -513,6 +599,9 @@ pub struct ExecTicketOutcome {
     pub output: String,
     pub was_timeout: bool,
     pub exit: crate::command_exec::ExecExit,
+    /// 命令到软超时还没结束、已原地转成后台作业时的作业信息。此时 `output` 是转换前
+    /// 已收到的部分输出，`was_timeout` 为 false（它没有被掐断，是在继续跑）。
+    pub detached: Option<crate::command_exec::JobInfo>,
 }
 
 /// Trait implemented by every agent tool.
@@ -2461,6 +2550,79 @@ mod tests {
         let meta = serde_json::json!({ "risk": "LowRisk", "was_timeout": true });
         let o = ToolOutput::ok("ok", "out").with_metadata(meta.clone());
         assert_eq!(o.metadata, Some(meta));
+    }
+
+    /// 转后台作业的收尾文案与 metadata 只此一份：`bash` 与 `local_bash` 都调这里。
+    /// 曾经远端那条路径漏了整段处理，模型超时后只拿到半截输出、既不知道命令还在跑、
+    /// 也没有 job_id 去收后续输出——所以这里把「输出尾部带说明」「metadata 带作业信息」
+    /// 「调用方原有 metadata 不被吞掉」三件事一起钉住。
+    #[test]
+    fn detached_job_output_merges_job_metadata_with_the_callers() {
+        let job = crate::command_exec::JobInfo {
+            job_id: "local_job_7".to_string(),
+            session_id: "s1".to_string(),
+            task_id: None,
+            owner_conversation_id: None,
+            description: "编译".to_string(),
+            command: "make".to_string(),
+            status: crate::command_exec::JobStatus::Running,
+            detail: None,
+            started_at_millis: 0,
+            finished_at_millis: None,
+            total_output_bytes: 0,
+        };
+        let out = detached_job_output(
+            &job,
+            "$ make".to_string(),
+            "compiling...\n".to_string(),
+            120,
+            serde_json::json!({ "disposition": "Allow" }),
+        );
+
+        assert!(out.success);
+        assert_eq!(out.summary, "$ make");
+        // 已收到的输出保留，说明追在后面。
+        assert!(out.output.starts_with("compiling...\n"), "{}", out.output);
+        assert!(
+            out.output.contains("运行超过 120 秒仍未结束"),
+            "{}",
+            out.output
+        );
+        assert!(out.output.contains("没有被中断"), "{}", out.output);
+        assert!(out.output.contains("local_job_7"), "{}", out.output);
+        assert!(out.output.contains("job_output"), "{}", out.output);
+        assert!(out.output.contains("job_kill"), "{}", out.output);
+
+        let meta = out.metadata.expect("转后台必须带 metadata");
+        assert_eq!(meta["job_id"], "local_job_7");
+        assert_eq!(meta["status"], "running");
+        assert_eq!(meta["description"], "编译");
+        assert_eq!(meta["detached_on_timeout"], true);
+        // 调用方原有的项（风险档位 / 多机归属）不能被作业信息顶掉。
+        assert_eq!(meta["disposition"], "Allow");
+    }
+
+    /// 非字符串 / 空 metadata 也不能让转换丢作业信息（`attach_target` 可能直接返回
+    /// 一个非对象值，或调用方给 None 语义的空值）。
+    #[test]
+    fn detached_job_output_tolerates_non_object_base_metadata() {
+        let job = crate::command_exec::JobInfo {
+            job_id: "job_1".to_string(),
+            session_id: "s1".to_string(),
+            task_id: None,
+            owner_conversation_id: None,
+            description: String::new(),
+            command: "sleep 99".to_string(),
+            status: crate::command_exec::JobStatus::Running,
+            detail: None,
+            started_at_millis: 0,
+            finished_at_millis: None,
+            total_output_bytes: 0,
+        };
+        for base in [serde_json::Value::Null, serde_json::json!("x")] {
+            let out = detached_job_output(&job, "s".to_string(), String::new(), 1, base);
+            assert_eq!(out.metadata.as_ref().unwrap()["job_id"], "job_1");
+        }
     }
 
     #[test]
