@@ -95,12 +95,12 @@ export default function MobileMultiHostPicker({
         }}
         disabled={buttonDisabled}
         className={[
-          'flex min-w-0 max-w-[7.5rem] items-center gap-1 rounded-full border px-2 py-1 text-caption font-medium pressable',
+          "relative flex h-9 min-w-0 max-w-[8.5rem] items-center gap-1.5 rounded-xl px-2.5 text-meta font-medium pressable before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']",
           buttonDisabled
-            ? 'cursor-not-allowed border-edge-subtle text-fg-disabled'
+            ? 'cursor-not-allowed bg-fill-soft text-fg-disabled'
             : selected.length > 0
-              ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-200'
-              : 'border-edge/80 bg-surface/60 text-fg-secondary',
+              ? 'bg-indigo-500/15 text-indigo-200'
+              : 'bg-fill-soft text-fg-secondary',
         ].join(' ')}
         title={
           currentLabel

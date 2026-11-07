@@ -567,7 +567,7 @@ export default function MobileAgentHost({
           type="button"
           onClick={() => void handleNewConversation()}
           disabled={!canInteract || !ids}
-          className="rounded-lg min-h-11 bg-indigo-600 px-2.5 py-1.5 text-body font-medium text-white pressable active:bg-indigo-500 disabled:opacity-40"
+          className="relative flex h-9 flex-shrink-0 items-center whitespace-nowrap rounded-xl bg-indigo-600 px-3.5 text-body font-medium text-white pressable active:bg-indigo-500 disabled:opacity-40 before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']"
         >
           新对话
         </button>
@@ -584,7 +584,7 @@ export default function MobileAgentHost({
               setHistoryBrowserOpen(true);
             }
           }}
-          className="rounded-lg min-h-11 bg-fill px-2.5 py-1.5 text-body text-fg pressable active:bg-state-mid"
+          className="relative flex h-9 flex-shrink-0 items-center whitespace-nowrap rounded-xl bg-fill px-3.5 text-body font-medium text-fg pressable active:bg-fill-strong before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']"
         >
           历史
         </button>
