@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUiTheme } from '@/hooks/useUiTheme';
 import MobileTabBar from './MobileTabBar';
@@ -21,7 +21,7 @@ import {
 } from '@/stores/sftpTransferManager';
 import { useJobStore } from '@/stores/jobStore';
 import { useUpdateStore } from '@/stores/updateStore';
-import { mobileSetAppForeground } from '@/lib/tauri';
+import { agentPurgeExpiredArchived, mobileSetAppForeground } from '@/lib/tauri';
 import { bootstrapMobileApp } from './bootstrap';
 import { registerBackHandler } from './backHandler';
 import { peekBackPreview } from './backPreview';
@@ -51,6 +51,24 @@ export default function MobileApp() {
   );
   const showOnboarding =
     settingsLoaded && !hasCompletedOnboarding && !onboardingDone;
+
+  // 归档清理：与桌面 App 同一约定——等设置加载完成后只跑一次（天数来自设置，0 = 永不清理）。
+  // 归档会话和「已删除的服务器」的对话都靠它到期清理，手机上不跑就永远不会清。
+  const archivePurgedRef = useRef(false);
+  useEffect(() => {
+    if (!settingsLoaded || archivePurgedRef.current) return;
+    archivePurgedRef.current = true;
+    const retentionDays =
+      useSettingsStore.getState().settings.archiveRetentionDays ?? 30;
+    if (retentionDays <= 0) return;
+    void agentPurgeExpiredArchived(retentionDays)
+      .then((count) => {
+        if (count > 0) console.info(`已清理 ${count} 条过期归档会话`);
+      })
+      .catch((err) => {
+        console.warn('清理过期归档会话失败:', err);
+      });
+  }, [settingsLoaded]);
 
   useEffect(() => {
     void bootstrapMobileApp().catch(() => {});

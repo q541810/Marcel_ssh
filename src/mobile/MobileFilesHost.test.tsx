@@ -30,6 +30,7 @@ vi.mock('@/lib/tauri', () => ({
   sftpPasteEntry: mocks.sftpPasteEntry,
   saveSettings: mocks.saveSettings,
   mobileSetAppForeground: vi.fn(async () => {}),
+  agentPurgeExpiredArchived: vi.fn(async () => 0),
   sftpExtractArchive: vi.fn(async () => {}),
   sftpLocalFileName: vi.fn(async () => 'x'),
   sftpMkdir: vi.fn(async () => {}),
