@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Activity, AlertTriangle, ArrowLeft, ArrowRight, Binary, Bug, Check, Eye, FlaskConical, Plus, PlugZap, Server, Sun } from "lucide-react";
+import { Activity, AlertTriangle, ArrowLeft, ArrowRight, Binary, Bug, Check, Eye, FlaskConical, Plus, PlugZap, Server, SlidersHorizontal, Sun } from "lucide-react";
 import { isDebugConnection } from "@/lib/debugServer";
 import * as tauri from "@/lib/tauri";
 import ErrorScreen from "@/components/layout/ErrorScreen";
@@ -7,6 +7,16 @@ import { useConnectionStore } from "@/stores/connectionStore";
 import { useViewStore } from "@/stores/viewStore";
 import { useDebugStore } from "@/stores/debugStore";
 import { getBackDiagnostics, subscribeBackDiagnostics } from "@/mobile/backHandler";
+import {
+  BACK_FEEL_RANGES,
+  DEFAULT_BACK_FEEL,
+  getBackFeel,
+  resetBackFeel,
+  setBackFeel,
+  subscribeBackFeel,
+} from "@/mobile/backFeel";
+import { copyText } from "@/lib/copyText";
+import Button from "@/components/ui/Button";
 
 /** 预览用的示例错误：手工 stack 让预览屏与真实崩溃形态一致（含缩进的调用栈）。 */
 const sampleError = new TypeError("Cannot read properties of undefined (reading 'map')");
@@ -56,6 +66,85 @@ function BackGestureDiagnostics() {
           </div>
         ))}
       </dl>
+    </section>
+  );
+}
+
+/**
+ * Live tuning for the predictive-back feel: every slider takes effect on the
+ * next swipe. Values stay on this phone; "复制参数" hands them over so they can
+ * become the defaults in backFeel.ts.
+ */
+function BackFeelTuner() {
+  const feel = useSyncExternalStore(subscribeBackFeel, getBackFeel);
+  const [copyState, setCopyState] = useState<"idle" | "done" | "failed">("idle");
+  const changed = BACK_FEEL_RANGES.some(({ key }) => feel[key] !== DEFAULT_BACK_FEEL[key]);
+  const copy = () => {
+    copyText(JSON.stringify(feel))
+      .then(() => setCopyState("done"))
+      .catch(() => setCopyState("failed"));
+  };
+  return (
+    <section
+      className="mt-4 rounded-xl border border-edge-subtle bg-surface-sunken/50 p-4"
+      aria-labelledby="debug-back-feel-title"
+    >
+      <div className="flex items-start gap-3">
+        <SlidersHorizontal className="mt-1 h-5 w-5 shrink-0 text-fg-secondary" aria-hidden="true" />
+        <div className="min-w-0">
+          <h2 id="debug-back-feel-title" className="text-body font-medium text-fg">返回手势调参</h2>
+          <p className="mt-1 text-body leading-6 text-fg-secondary">
+            拖动后下一次侧滑就生效，可以在本页直接划着试。调到满意后点「复制参数」发给开发者，会改成默认值。这些数只存在这台手机上。
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 space-y-3">
+        {BACK_FEEL_RANGES.map(({ key, label, min, max, step, unit }) => (
+          <label key={key} className="block">
+            <span className="flex items-baseline justify-between gap-3 text-body text-fg">
+              <span>{label}</span>
+              <span
+                className={`font-mono text-meta ${
+                  feel[key] === DEFAULT_BACK_FEEL[key] ? "text-fg-secondary" : "text-indigo-300"
+                }`}
+              >
+                {Number(feel[key].toFixed(2))}
+                {unit}
+              </span>
+            </span>
+            <input
+              type="range"
+              min={min}
+              max={max}
+              step={step}
+              value={feel[key]}
+              onChange={(event) => {
+                setCopyState("idle");
+                setBackFeel({ [key]: event.currentTarget.valueAsNumber });
+              }}
+              className="mt-2 w-full accent-indigo-500"
+              aria-label={label}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" onClick={copy}>
+          {copyState === "done" ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+          {copyState === "done" ? "已复制" : "复制参数"}
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={!changed}
+          onClick={() => {
+            setCopyState("idle");
+            resetBackFeel();
+          }}
+        >
+          恢复默认
+        </Button>
+        {copyState === "failed" ? <span className="text-meta text-red-400">复制失败</span> : null}
+      </div>
     </section>
   );
 }
@@ -353,7 +442,12 @@ export default function DebugPage({ onBack, onShowServers }: DebugPageProps) {
           )}
         </section>
 
-        {typeof window !== "undefined" && window.AndroidBridge && <BackGestureDiagnostics />}
+        {typeof window !== "undefined" && window.AndroidBridge && (
+          <>
+            <BackGestureDiagnostics />
+            <BackFeelTuner />
+          </>
+        )}
       </div>
 
       {errorPreviewOpen && (
