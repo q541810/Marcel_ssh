@@ -1424,13 +1424,17 @@ html[data-marcel-theme='light'] .marcel-code-block {
     0 18px 48px rgb(0 0 0 / 0.42);
 }
 
+/* 页内返回（回上一级文件夹、页签兜底）同样收成卡片：底下没有别的屏幕，
+   靠圆角 + 细边把它从深色背景里勾出来。 */
 [data-back='peek'] {
   overflow: hidden;
+  border-radius: 24px;
+  box-shadow: 0 0 0 1px rgb(128 128 128 / 0.2);
 }
 
 @keyframes mobileSheetBackExit {
   to {
-    transform: perspective(1000px)
+    transform: perspective(800px)
       translate3d(var(--back-x, 0px), 100%, 0)
       rotateX(var(--back-rx, 0deg)) rotateY(var(--back-ry, 0deg))
       scale(var(--back-s, 1));
@@ -1441,7 +1445,7 @@ html[data-marcel-theme='light'] .marcel-code-block {
 @keyframes mobileFullscreenBackExit {
   to {
     opacity: 0;
-    transform: perspective(1000px)
+    transform: perspective(800px)
       translate3d(var(--back-x, 0px), var(--back-y, 0px), 0)
       rotateX(0deg) rotateY(0deg)
       scale(calc(var(--back-s, 1) * 0.8));

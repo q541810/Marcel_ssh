@@ -54,7 +54,16 @@ const PEEK_SWAP_OUT_MS = 80;
  */
 const COMMIT_GRACE_MS = 220;
 /** Depth of the 3D effect: larger = flatter. Same value as in globals.css. */
-const PERSPECTIVE_PX = 1000;
+const PERSPECTIVE_PX = 800;
+/** Share of the card's half-size at which the press tilt is already at full strength. */
+const PRESS_REACH = 0.65;
+/** How far past the freed-up room the card may drift, px (see `cardPose`). */
+const ROAM_SLACK_PX = 8;
+
+/** `v` pulled smoothly toward ±`limit` (≈ linear when small, never beyond). */
+function softLimit(v: number, limit: number): number {
+  return limit > 0 ? limit * Math.tanh(v / limit) : 0;
+}
 
 type SurfaceKind = 'page' | 'sheet' | 'fade' | 'peek';
 
@@ -113,8 +122,8 @@ interface CardFeel {
   tilt: number;
 }
 
-const PAGE_FEEL: CardFeel = { shrink: 0.32, drift: 0.08, follow: 0.4, followMax: 90, tilt: 7 };
-const PEEK_FEEL: CardFeel = { shrink: 0.1, drift: 0.06, follow: 0.12, followMax: 24, tilt: 3 };
+const PAGE_FEEL: CardFeel = { shrink: 0.34, drift: 0.24, follow: 0.7, followMax: 160, tilt: 16 };
+const PEEK_FEEL: CardFeel = { shrink: 0.18, drift: 0.16, follow: 0.35, followMax: 80, tilt: 10 };
 
 /**
  * A card held by the finger. Shrink accelerates with travel (barely anything
@@ -131,11 +140,18 @@ function cardPose(frame: BackGestureFrame, feel: CardFeel): Pose {
   // Tilt and vertical follow come in quickly, so a small swipe already feels held.
   const grip = ease(frame.dx / (w * 0.4));
   const s = 1 - feel.shrink * Math.pow(t, 1.4);
-  const x = direction(frame.edge) * frame.dx * feel.drift;
-  const y = clamp(frame.dy * feel.follow, -feel.followMax, feel.followMax) * grip;
-  // Finger position relative to the card centre, -1 … 1 across the card.
-  const fx = clamp((frame.x - (w / 2 + x)) / ((w * s) / 2), -1, 1);
-  const fy = clamp((frame.y - (h / 2 + y)) / ((h * s) / 2), -1, 1);
+  // Movement is limited by the room the shrink has freed (plus a little slack),
+  // through a soft rubber band: the card roams further as it gets smaller but
+  // never wanders off the screen.
+  const x = softLimit(direction(frame.edge) * frame.dx * feel.drift, (w * (1 - s)) / 2 + ROAM_SLACK_PX);
+  const y = softLimit(
+    clamp(frame.dy * feel.follow, -feel.followMax, feel.followMax) * grip,
+    (h * (1 - s)) / 2 + ROAM_SLACK_PX,
+  );
+  // Finger position relative to the card centre, -1 … 1; saturates well before
+  // the card's edge so the tilt stays pronounced through most of the swipe.
+  const fx = clamp((frame.x - (w / 2 + x)) / ((w * s) / 2) / PRESS_REACH, -1, 1);
+  const fy = clamp((frame.y - (h / 2 + y)) / ((h * s) / 2) / PRESS_REACH, -1, 1);
   return {
     x,
     y,
@@ -306,29 +322,42 @@ class Surface {
   }
 }
 
+/** The shell's content area: what a full-screen page covers. */
+function shellContent(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-back-peek]');
+}
+
 /**
  * The screen a page lifts off from: pushed back and dimmed while covered, it
- * comes forward and brightens as the card shrinks away. One transform on
- * `<main>` plus one scrim whose opacity moves; nothing else on screen is touched.
+ * comes forward and brightens as the card shrinks away. One transform on the
+ * underlying screen plus one scrim whose opacity moves; nothing else on screen
+ * is touched.
  */
 class Underlay {
   private el: HTMLElement | null = null;
   private scrim: HTMLDivElement | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
-  begin(): void {
+  /**
+   * The scrim goes right below the card, in the card's own stacking context
+   * (same parent, same position type and z-index, inserted just before it), so
+   * it dims everything under the card — and only that — whether the card is a
+   * full-screen page on `<body>` or a page stacked inside a tab.
+   */
+  begin(under: HTMLElement | null, card: HTMLElement | null): void {
     this.cleanupNow();
-    const el = document.querySelector<HTMLElement>('[data-back-peek]');
-    if (!el) return;
-    this.el = el;
-    el.style.transition = 'none';
-    el.style.willChange = 'transform';
+    if (!under || !card?.parentElement) return;
+    this.el = under;
+    under.style.transition = 'none';
+    under.style.willChange = 'transform';
+    const cs = getComputedStyle(card);
     const scrim = document.createElement('div');
     scrim.dataset.backScrim = '';
     scrim.setAttribute('aria-hidden', 'true');
     scrim.style.cssText =
-      'position:fixed;inset:0;z-index:49;background:#000;pointer-events:none;opacity:0;will-change:opacity;';
-    document.body.appendChild(scrim);
+      `position:${cs.position === 'fixed' ? 'fixed' : 'absolute'};inset:0;z-index:${cs.zIndex};` +
+      'background:#000;pointer-events:none;opacity:0;will-change:opacity;';
+    card.parentElement.insertBefore(scrim, card);
     this.scrim = scrim;
     this.set(0);
   }
@@ -385,14 +414,21 @@ class Underlay {
   }
 }
 
-/** Full-screen sub-page: a floating card held by the finger; shrinks away on commit. */
-export function pageBackPreview(getEl: () => HTMLElement | null): BackPreview {
+/**
+ * Full-screen (or tab-stacked) sub-page: a floating card held by the finger;
+ * shrinks away on commit. `getUnder` is the screen it covers — by default the
+ * shell's content area, for a page stacked inside a tab the screen beneath it.
+ */
+export function pageBackPreview(
+  getEl: () => HTMLElement | null,
+  getUnder: () => HTMLElement | null = shellContent,
+): BackPreview {
   const page = new Surface(getEl, 'page');
   const under = new Underlay();
   return {
     start() {
       page.begin();
-      under.begin();
+      under.begin(getUnder(), page.element);
     },
     update(frame) {
       page.set(cardPose(frame, PAGE_FEEL));
