@@ -9,15 +9,15 @@
  */
 
 export interface BackFeel {
-  /** Scale lost at a full-width swipe (0.36 → the card ends at 64%). */
+  /** Scale lost at a full-width swipe (0.42 → the card ends at 58%); mostly in the second half. */
   shrink: number;
   /** Peak turn around the vertical axis while held, deg (toward the swipe direction). */
   turn: number;
   /** Peak pitch around the horizontal axis while held, deg (the finger's half presses in). */
   pitch: number;
-  /** Horizontal travel gain, × finger travel (soft-limited so the card stays on screen). */
+  /** Horizontal drift at a full-width swipe, × screen width (also how far the throw travels). */
   shift: number;
-  /** Peak vertical travel while held, px (supporting role; pitch carries the vertical). */
+  /** Peak vertical travel while held, px (barely any: pitch carries the vertical). */
   lift: number;
   /** Turn the card reaches when thrown off on release, deg. */
   exitTurn: number;
@@ -28,11 +28,11 @@ export interface BackFeel {
 }
 
 export const DEFAULT_BACK_FEEL: Readonly<BackFeel> = Object.freeze({
-  shrink: 0.36,
+  shrink: 0.42,
   turn: 28,
   pitch: 20,
-  shift: 0.9,
-  lift: 40,
+  shift: 0.085,
+  lift: 10,
   exitTurn: 60,
   exitScale: 0.45,
   exitMs: 340,
@@ -47,11 +47,11 @@ export const BACK_FEEL_RANGES: ReadonlyArray<{
   step: number;
   unit: string;
 }> = [
-  { key: 'shrink', label: '缩小程度', min: 0.1, max: 0.6, step: 0.01, unit: '' },
+  { key: 'shrink', label: '缩小程度', min: 0.1, max: 0.7, step: 0.01, unit: '' },
   { key: 'turn', label: '左右偏转', min: 0, max: 50, step: 1, unit: '°' },
   { key: 'pitch', label: '上下倾斜', min: 0, max: 40, step: 1, unit: '°' },
-  { key: 'shift', label: '左右位移', min: 0, max: 1.6, step: 0.05, unit: '×' },
-  { key: 'lift', label: '上下位移', min: 0, max: 120, step: 2, unit: 'px' },
+  { key: 'shift', label: '左右位移', min: 0, max: 0.3, step: 0.005, unit: '×屏宽' },
+  { key: 'lift', label: '上下位移', min: 0, max: 80, step: 2, unit: 'px' },
   { key: 'exitTurn', label: '松手转到', min: 20, max: 90, step: 1, unit: '°' },
   { key: 'exitScale', label: '松手缩到', min: 0.2, max: 0.9, step: 0.01, unit: '' },
   { key: 'exitMs', label: '松手动画时长', min: 160, max: 380, step: 10, unit: 'ms' },

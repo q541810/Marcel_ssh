@@ -49,21 +49,27 @@ describe('held card', () => {
     expect(Math.abs(bottom.y)).toBeLessThanOrEqual(feel.lift);
   });
 
-  it('travels generously but is damped before leaving the screen', () => {
+  it('shrinks and drifts like the reference frames (finger 50% / 69% / 87% across)', () => {
+    const at = (share: number) => M.cardPose(frame('right', W * share), feel, 1);
+    // Scale ≈ 0.93 / 0.82 / 0.70.
+    expect(at(0.5).s).toBeCloseTo(0.93, 1);
+    expect(at(0.69).s).toBeCloseTo(0.82, 1);
+    expect(at(0.87).s).toBeCloseTo(0.7, 1);
+    // Drift ≈ 0 / 2.4% / 5.8% of the width — a few percent, never more than ~8%.
+    expect(Math.abs(at(0.5).x)).toBeLessThan(W * 0.02);
+    expect(Math.abs(at(0.69).x) / W).toBeGreaterThan(0.015);
+    expect(Math.abs(at(0.69).x) / W).toBeLessThan(0.04);
+    expect(Math.abs(at(0.87).x) / W).toBeGreaterThan(0.04);
     for (let dx = 0; dx <= W; dx += 10) {
-      const p = M.cardPose(frame('right', dx), feel, 1);
-      const room = (W * (1 - p.s)) / 2;
-      // Never beyond the freed room plus what perspective pulls in (bounded by a quarter card).
-      expect(Math.abs(p.x)).toBeLessThanOrEqual(room + (W * p.s) / 8);
+      expect(Math.abs(M.cardPose(frame('right', dx), feel, 1).x)).toBeLessThanOrEqual(W * 0.085);
     }
-    const deep = M.cardPose(frame('right', W * 0.8), feel, 1);
-    expect(Math.abs(deep.x)).toBeGreaterThan(W * 0.12);
   });
 });
 
 describe('release continuity', () => {
-  const from = { x: -60, y: 12, s: 0.75, rx: 14, ry: -26, o: 1 };
-  const v = { x: -0.8, y: 0.05, s: -0.0004, rx: 0.02, ry: -0.05, o: 0 };
+  const from = { x: -20, y: 4, s: 0.75, rx: 14, ry: -26, o: 1 };
+  // Realistic on-screen speeds at release (the drift is small, so x moves slowly).
+  const v = { x: -0.08, y: 0.01, s: -0.0004, rx: 0.02, ry: -0.05, o: 0 };
 
   it('the throw starts exactly at the held pose, at the held speed', () => {
     const to = M.throwTarget(from, -1, feel, 1);
