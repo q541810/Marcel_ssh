@@ -29,7 +29,8 @@ use super::core::{ItemFilter, Scope, ScopeRules};
 ///   启停与授权、「安全模式」都只对本机的插件有意义；
 /// - `llmConfig`：旧版单配置遗留，迁移后恒为空；
 /// - `mobileBackgroundSettings`：Android 前台服务保活（耗电、常驻通知），**每台设备自己决定**
-///   （代码注释明确写着「设备本地行为」；两部手机不该因为其中一部打开了保活而互相影响）。
+///   （代码注释明确写着「设备本地行为」；两部手机不该因为其中一部打开了保活而互相影响）；
+/// - `showMascot`：像素吉祥物显不显示，每台设备各自决定（桌面屏大、手机屏小，喜好不必一致）。
 ///
 /// Platform（桌面一份、手机一份）：
 /// - `notificationSettings`（桌面通知）`mobileNotificationSettings`（手机通知）；
@@ -53,6 +54,7 @@ pub static SETTINGS_RULES: ScopeRules = ScopeRules {
         ("disableAllInjections", Scope::Local),
         ("llmConfig", Scope::Local),
         ("mobileBackgroundSettings", Scope::Local),
+        ("showMascot", Scope::Local),
         ("notificationSettings", Scope::Platform),
         ("mobileNotificationSettings", Scope::Platform),
         ("fontSize", Scope::Platform),
