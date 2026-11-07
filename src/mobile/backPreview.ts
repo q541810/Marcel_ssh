@@ -50,10 +50,6 @@ import {
 
 /** Depth of the 3D effect: larger = flatter. */
 export const PERSPECTIVE_PX = 800;
-/** Shape of the shrink over the swipe (exponent on the travelled share of the width). */
-const SHRINK_CURVE = 2.5;
-/** Shape of the horizontal drift over the swipe. */
-const DRIFT_CURVE = 3;
 /**
  * Gap the held card keeps from the screen edge, px — some slack for the corner
  * the pitch swings toward the viewer, which the travel limit doesn't model.
@@ -359,14 +355,15 @@ export function cardPose(frame: BackGestureFrame, feel: BackFeel, amp: number): 
   const t = clamp(frame.dx / w, 0, 1);
   // Pitch and lift come in quickly, so a short swipe already feels held.
   const grip = ease(frame.dx / (w * 0.35));
-  // Shrink and drift follow the reference the user picked (measured from its
-  // frames): almost nothing for the first half of the swipe, then clearly
-  // leaving — 0.93 / 0.82 / 0.70 and a drift of ~0 / 2.4% / 5.8% of the width
-  // with the finger 50% / 69% / 87% across.
-  const s = 1 - feel.shrink * amp * Math.pow(t, SHRINK_CURVE);
+  // Shrink and drift do not track the finger evenly (the user's call, 2026-11-08):
+  // quick at the start, easing through the middle, hardly any change at the
+  // end — a modest swipe already shows nearly the whole effect, instead of
+  // needing a long, fast one to get there.
+  const reach = 1 - Math.pow(1 - t, Math.max(1, feel.follow));
+  const s = 1 - feel.shrink * amp * reach;
   const ry = dir * feel.turn * amp * ease(t / 0.55);
   const roomX = Math.max(0, (w * (1 - s)) / 2 + tiltInset((w * s) / 2, ry) - EDGE_MARGIN_PX);
-  const x = dir * softLimit(w * feel.shift * amp * Math.pow(t, DRIFT_CURVE), roomX);
+  const x = dir * softLimit(w * feel.shift * amp * reach, roomX);
   // Finger height, -1 (top) … 1 (bottom); full strength well before the edge.
   const fy = clamp((frame.y - h / 2) / (h * 0.32), -1, 1);
   const rx = -fy * feel.pitch * amp * grip;

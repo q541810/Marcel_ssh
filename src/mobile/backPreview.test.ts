@@ -49,22 +49,30 @@ describe('held card', () => {
     expect(Math.abs(bottom.y)).toBeLessThanOrEqual(feel.lift);
   });
 
-  it('shrinks and drifts like the reference frames (finger 50% / 69% / 87% across)', () => {
-    // The reference fit (shrink 0.42); the shipped default may be tuned stronger.
-    const ref = { ...feel, shrink: 0.42 };
-    const at = (share: number) => M.cardPose(frame('right', W * share), ref, 1);
-    // Scale ≈ 0.93 / 0.82 / 0.70.
-    expect(at(0.5).s).toBeCloseTo(0.93, 1);
-    expect(at(0.69).s).toBeCloseTo(0.82, 1);
-    expect(at(0.87).s).toBeCloseTo(0.7, 1);
-    // Drift ≈ 0 / 2.4% / 5.8% of the width — a few percent, never more than ~8%.
-    expect(Math.abs(at(0.5).x)).toBeLessThan(W * 0.02);
-    expect(Math.abs(at(0.69).x) / W).toBeGreaterThan(0.015);
-    expect(Math.abs(at(0.69).x) / W).toBeLessThan(0.04);
-    expect(Math.abs(at(0.87).x) / W).toBeGreaterThan(0.04);
-    for (let dx = 0; dx <= W; dx += 10) {
-      expect(Math.abs(M.cardPose(frame('right', dx), ref, 1).x)).toBeLessThanOrEqual(W * 0.085);
+  it('responds front-loaded: quick at first, slower through the middle, almost still at the end', () => {
+    const at = (share: number) => M.cardPose(frame('right', W * share), feel, 1);
+    const lost = (share: number) => 1 - at(share).s;
+    const total = lost(1);
+    expect(total).toBeCloseTo(feel.shrink, 5);
+    // The first fifth already does a good part of the work…
+    expect(lost(0.2)).toBeGreaterThan(total * 0.3);
+    // …each further stretch adds less than the one before…
+    const steps = [0, 0.2, 0.4, 0.6, 0.8, 1].map(lost);
+    for (let i = 2; i < steps.length; i++) {
+      expect(steps[i] - steps[i - 1]).toBeLessThan(steps[i - 1] - steps[i - 2]);
     }
+    // …and the last fifth barely changes anything.
+    expect(total - lost(0.8)).toBeLessThan(total * 0.06);
+    // Drift is shaped the same way, never beyond its set share of the width.
+    for (let dx = 0; dx <= W; dx += 10) {
+      expect(Math.abs(M.cardPose(frame('right', dx), feel, 1).x)).toBeLessThanOrEqual(W * feel.shift + 1e-9);
+    }
+  });
+
+  it('follow = 1 gives an even response all the way', () => {
+    const even = { ...feel, follow: 1 };
+    const lost = (share: number) => 1 - M.cardPose(frame('right', W * share), even, 1).s;
+    expect(lost(0.5)).toBeCloseTo(even.shrink * 0.5, 5);
   });
 });
 

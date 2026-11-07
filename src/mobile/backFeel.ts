@@ -20,6 +20,12 @@ export interface BackFeel {
   /** Peak vertical travel while held, px (barely any: pitch carries the vertical). */
   lift: number;
   /**
+   * How front-loaded the card's response to the finger is (the exponent of
+   * 1 − (1 − t)ᵏ): 1 follows the finger evenly all the way; higher = the first
+   * stretch does most of the work, the middle slows, the end barely moves.
+   */
+  follow: number;
+  /**
    * How quickly a page flies home on release (and grows out on open): the
    * spring's response, s. Not a fixed duration — it settles when it settles.
    */
@@ -33,6 +39,7 @@ export const DEFAULT_BACK_FEEL: Readonly<BackFeel> = Object.freeze({
   pitch: 13,
   shift: 0.085,
   lift: 0,
+  follow: 2.2,
   flight: 0.46,
 });
 
@@ -50,6 +57,7 @@ export const BACK_FEEL_RANGES: ReadonlyArray<{
   { key: 'pitch', label: '上下倾斜', min: 0, max: 40, step: 1, unit: '°' },
   { key: 'shift', label: '左右位移', min: 0, max: 0.3, step: 0.005, unit: '×屏宽' },
   { key: 'lift', label: '上下位移', min: 0, max: 80, step: 2, unit: 'px' },
+  { key: 'follow', label: '前快后缓', min: 1, max: 4, step: 0.05, unit: '' },
   { key: 'flight', label: '飞回快慢', min: 0.25, max: 1.2, step: 0.01, unit: 's' },
 ];
 
